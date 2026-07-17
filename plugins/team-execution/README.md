@@ -9,7 +9,10 @@ embeds a `## Team Structure` plus validator plan into the approved plan.
 
 **Phase B** runs after plan approval. Workers complete the change, reviewers reach consensus,
 scanners validate the local result, CI and optional nonprod automation are coordinated, and
-testers/monitors validate the deployed nonprod result.
+testers/monitors validate the deployed nonprod result. The coordinator records every expected
+reviewer and validator, persists a spawn immediately before its host call, and derives settlement
+from returned structured evidence before opening the next gate. Casualties and open positions halt
+progression and remain visible through the derived dead-letter view until explicitly retried.
 
 Validators are available as a roster. They are selected by task context; they are not spawned
 all at once.
@@ -160,6 +163,8 @@ team-execution/
 │   │   └── SKILL.md
 │   └── team-execution/
 │       ├── SKILL.md
+│       ├── scripts/
+│       │   └── dispatch_settlement_adapter.py
 │       └── references/
 │           ├── consensus-protocol.md
 │           ├── review-criteria.md

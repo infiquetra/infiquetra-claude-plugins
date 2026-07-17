@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import importlib.util
 import json
 import os
@@ -159,6 +160,7 @@ _WORKFLOW_RUNTIME_GLOBAL_IDENTIFIERS = frozenset(
         "AggregateError",
         "Array",
         "ArrayBuffer",
+        "AsyncDisposableStack",
         "Atomics",
         "BigInt",
         "BigInt64Array",
@@ -177,12 +179,15 @@ _WORKFLOW_RUNTIME_GLOBAL_IDENTIFIERS = frozenset(
         "DataView",
         "Date",
         "DecompressionStream",
+        "DisposableStack",
         "Error",
+        "ErrorEvent",
         "EvalError",
         "Event",
         "EventTarget",
         "File",
         "FinalizationRegistry",
+        "Float16Array",
         "Float32Array",
         "Float64Array",
         "FormData",
@@ -213,6 +218,7 @@ _WORKFLOW_RUNTIME_GLOBAL_IDENTIFIERS = frozenset(
         "PerformanceResourceTiming",
         "Promise",
         "Proxy",
+        "QuotaExceededError",
         "RangeError",
         "ReadableByteStreamController",
         "ReadableStream",
@@ -227,10 +233,12 @@ _WORKFLOW_RUNTIME_GLOBAL_IDENTIFIERS = frozenset(
         "Response",
         "Set",
         "SharedArrayBuffer",
+        "Storage",
         "String",
         "SubtleCrypto",
         "Symbol",
         "SyntaxError",
+        "SuppressedError",
         "TextDecoder",
         "TextDecoderStream",
         "TextEncoder",
@@ -240,6 +248,7 @@ _WORKFLOW_RUNTIME_GLOBAL_IDENTIFIERS = frozenset(
         "TypeError",
         "URIError",
         "URL",
+        "URLPattern",
         "URLSearchParams",
         "Uint16Array",
         "Uint32Array",
@@ -250,6 +259,7 @@ _WORKFLOW_RUNTIME_GLOBAL_IDENTIFIERS = frozenset(
         "WeakSet",
         "WebAssembly",
         "WebSocket",
+        "CloseEvent",
         "WritableStream",
         "WritableStreamDefaultController",
         "WritableStreamDefaultWriter",
@@ -290,6 +300,7 @@ _WORKFLOW_RUNTIME_GLOBAL_IDENTIFIERS = frozenset(
         "inspector",
         "isFinite",
         "isNaN",
+        "localStorage",
         "module",
         "navigator",
         "net",
@@ -309,6 +320,7 @@ _WORKFLOW_RUNTIME_GLOBAL_IDENTIFIERS = frozenset(
         "setImmediate",
         "setInterval",
         "setTimeout",
+        "sessionStorage",
         "stream",
         "string_decoder",
         "structuredClone",
@@ -346,6 +358,7 @@ _WORKFLOW_RESERVED_IDENTIFIERS = (
             "__retryBackoffMs",
             "__verifierPrompt",
             "meta",
+            "settlement",
         }
     )
     | _WORKFLOW_GLOBAL_IDENTIFIERS
@@ -3165,6 +3178,95 @@ def patch_spec_tiers(
     return replace(spec, units=patched)
 
 
+def workflow_settlement_metadata(
+    spec: ExecutionSpec,
+    *,
+    invocation_id: str | None = None,
+    validate: bool = True,
+    engine_registry: Any | None = None,
+) -> dict[str, Any]:
+    """Export driver-materialized workflow settlement contracts (#351).
+
+    Generated workflow agents remain filesystem-free. The trusted root driver persists this metadata
+    before submission, records host handles, and settles returned structured results.  A driver must
+    mint one durable ``invocation_id`` before first submission and reuse it only when resuming that
+    invocation.  This keeps a crash replay on the same dispatch while separating a later run of the
+    unchanged spec.
+
+    ``Unit.returns`` intentionally remains the workflow's original result contract.  Settlement has
+    a narrower identifier vocabulary, so ``driver.units`` exposes the original result keys alongside
+    their safe deliverable names for the host-side receipt adapter.
+    """
+    import dispatch_settlement  # noqa: PLC0415 - sibling; avoid wider import-time coupling
+
+    if validate:
+        has_external_routes = any(
+            unit.engine is not None or unit.capability is not None for unit in spec.units
+        )
+        registry = (
+            _load_emission_registry()
+            if has_external_routes and engine_registry is None
+            else engine_registry
+        )
+        spec.validate(engine_registry=registry)
+    canonical = json.dumps(spec.to_dict(), sort_keys=True, separators=(",", ":"))
+    spec_digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    if invocation_id is not None and (not isinstance(invocation_id, str) or not invocation_id):
+        raise SpecError("workflow invocation_id must be a non-empty string when supplied")
+    invocation_digest = (
+        hashlib.sha256(invocation_id.encode("utf-8")).hexdigest()[:24]
+        if invocation_id is not None
+        else ""
+    )
+    dispatch_id = f"workflow:{spec_digest[:24]}"
+    if invocation_digest:
+        dispatch_id += f":invocation:{invocation_digest}"
+    units: list[dispatch_settlement.UnitSpec] = []
+    driver_units: list[dict[str, Any]] = []
+    for unit in spec.units:
+        settlement_unit_id = dispatch_settlement.safe_contract_identifier(
+            unit.unit_id, namespace="workflow-unit"
+        )
+        deliverables = ["structured-result"]
+        settlement_deliverables = {"structured-result"}
+        return_keys: list[dict[str, str]] = []
+        for name in unit.returns:
+            deliverable = "return:" + dispatch_settlement.safe_contract_identifier(
+                name, namespace="workflow-return"
+            )
+            if deliverable not in settlement_deliverables:
+                deliverables.append(deliverable)
+                settlement_deliverables.add(deliverable)
+            return_keys.append({"result_key": name, "deliverable": deliverable})
+        idempotency_source = f"{dispatch_id}:{settlement_unit_id}"
+        units.append(
+            dispatch_settlement.UnitSpec(
+                unit_id=settlement_unit_id,
+                idempotency_key=dispatch_settlement.safe_contract_identifier(
+                    idempotency_source, namespace="workflow-idempotency"
+                ),
+                deliverables=tuple(deliverables),
+            )
+        )
+        driver_units.append(
+            {
+                "workflow_unit_id": unit.unit_id,
+                "settlement_unit_id": settlement_unit_id,
+                "return_keys": return_keys,
+            }
+        )
+    metadata = dispatch_settlement.settlement_metadata(
+        dispatch_id=dispatch_id,
+        site="workflow",
+        units=units,
+    )
+    metadata["driver"] = {
+        "invocation_id": invocation_id,
+        "units": driver_units,
+    }
+    return metadata
+
+
 def emit_workflow_script(
     spec: ExecutionSpec,
     session_ceiling: Tier | None = None,
@@ -3199,6 +3301,7 @@ def emit_workflow_script(
     )
     emission_registry = _load_emission_registry() if has_external_routes else None
     spec.validate(engine_registry=emission_registry)
+    settlement_metadata = workflow_settlement_metadata(spec, validate=False)
 
     # #365 U3: a session tier ceiling clamps every unit DOWN before rendering (the operator's live
     # cap is the final word and never raises a tier). Clamping the spec's units means spec.unit_by_id
@@ -3260,6 +3363,14 @@ def emit_workflow_script(
     lines.append(f"  name: {_js_string(spec.name)},")
     lines.append(f"  description: {_js_string(spec.description)},")
     lines.append("}")
+    lines.append(
+        "export const settlement = "
+        + json.dumps(
+            settlement_metadata,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    )
     lines.append("")
     if spec.repo:
         lines.append(f"const REPO = {_js_string(spec.repo)}")
@@ -3808,6 +3919,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_spend.add_argument("spec", type=Path)
 
+    p_settlement = sub.add_parser(
+        "settlement", help="emit driver-owned dispatch-settlement metadata (#351)"
+    )
+    p_settlement.add_argument("spec", type=Path)
+    p_settlement.add_argument(
+        "--invocation-id",
+        required=True,
+        help="durable driver-owned invocation identity; reuse only to resume that Workflow run",
+    )
+
     args = parser.parse_args(argv)
     try:
         spec = _load_spec(args.spec)
@@ -3872,6 +3993,15 @@ def main(argv: list[str] | None = None) -> int:
                 f"spend_envelope: {spec.spend_envelope}"
                 if spec.spend_envelope is not None
                 else "spend_envelope: unset"
+            )
+            return 0
+        if args.cmd == "settlement":
+            print(
+                json.dumps(
+                    workflow_settlement_metadata(spec, invocation_id=args.invocation_id),
+                    indent=2,
+                    sort_keys=True,
+                )
             )
             return 0
         if args.cmd == "baseline":

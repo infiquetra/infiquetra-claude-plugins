@@ -15,6 +15,8 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
 
+import pytest
+
 ROOT = Path(__file__).parent.parent
 SCRIPTS = ROOT / "plugins" / "saga" / "scripts"
 
@@ -157,6 +159,38 @@ def test_stale_registry_entry_is_dropped_then_recreated(tmp_path: Path) -> None:
     fw.paths.clear()
     again = WT.ensure_worktree(tmp_path, spec, store, spec.nodes[0], ops, owner="me")
     assert again.state == "created"  # not wedged on the stale record
+
+
+def test_stale_worktree_debits_are_read_only(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    WT.register(
+        store,
+        "s1",
+        {"path": str(WT.worktree_path(tmp_path, "o", "s1")), "branch": "branch-s1"},
+    )
+    registry_before = WT._registry_path(store).read_bytes()
+    debits = WT.stale_worktree_debits(store, FakeWT().ops(), outcome_id="o")
+    assert debits == [
+        {
+            "dispatch_id": "outcome:o:worktrees",
+            "unit_id": "s1",
+            "attempt": 1,
+            "worktree": str(WT.worktree_path(tmp_path, "o", "s1")),
+        }
+    ]
+    assert WT._registry_path(store).read_bytes() == registry_before
+
+
+def test_stale_worktree_debits_leave_malformed_registry_untouched(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    registry = WT._registry_path(store)
+    registry.write_text("{broken\n", encoding="utf-8")
+
+    with pytest.raises(WT.WorktreeError, match="without repair"):
+        WT.stale_worktree_debits(store, FakeWT().ops(), outcome_id="o")
+
+    assert registry.read_text(encoding="utf-8") == "{broken\n"
+    assert list(store.quarantine_dir.iterdir()) == []
 
 
 # --------------------------------------------------------------------------- reap (R15)

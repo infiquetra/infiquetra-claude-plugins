@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.98.0] - 2026-07-16
+
+### Added - dispatch settlement and casualty reconciliation (#351)
+
+- Added a shared append-only settlement contract on the canonical run-fact ledger. Every dispatch
+  records a manifest, a durable pre-call spawn, and one evidence-derived terminal classification;
+  reports expose open positions and exact integer casualty thresholds without trusting agent
+  self-reports.
+- Added derived-on-read dead-letter and retry claims with stable idempotency keys. Retries increment
+  attempts atomically, late deliveries remain explicit facts, and reconciliation never reaps,
+  repairs, or mutates worktree state.
+- Wired outcome dispatch and canonical GitHub harvest evidence into settlement. Workflow emission
+  now publishes deterministic expected-unit metadata while the driving `/work` session remains the
+  only ledger writer; generated agents receive no ledger or filesystem capability.
+- Outcome settlement uses one complete ready-frontier cohort, binds every result to its exact
+  attempt, reconciles already-canonical completions after crashes, and blocks new cohorts while an
+  earlier cohort has missing evidence or unresolved casualties. Successful bounded retry clears the
+  live gate without erasing the earlier casualty history.
+- Added `dispatch_settlement.py` operations for manifests, spawns, settlements, late delivery,
+  reports, dead-letter inspection, retry claims, and leak reconciliation. The public `settle` verb
+  accepts only a descriptor for a persisted, schema-validated receipt, computes its digest from the
+  actual bytes, and derives classification. Team artifacts expose only closed reviewer-result and
+  validator-state payloads; Saga validates them and derives their deliverables instead of trusting a
+  caller-authored output list. Exact manifest replay is idempotent; terminal views also have
+  deterministic text output. This release does not change fan-out concurrency limits or introduce a
+  background reaper.
+- Retry thresholds use each attempt's own cohort, negative outcome terminals become retry-eligible,
+  runtime requests carry their stable dispatch identity, and pre-submit spawn appends are synced to
+  storage before the host call. Workflow drivers bind metadata to one persisted invocation identity
+  and safely map legacy result names into the settlement vocabulary.
+- **Compatibility:** the #433 `/outcome repost` verb and its `intent_revision` contract remain
+  unchanged; settlement records the committed outcome dispatch without redefining operator posture.
+
 ## [0.97.0] - 2026-07-15
 
 ### Added - one bounded concurrency policy for Saga workflow fan-out (#350)

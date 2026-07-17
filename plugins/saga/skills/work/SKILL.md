@@ -295,6 +295,57 @@ python3 plugins/saga/scripts/execution_spec.py emit <orchestration_ref_spec.json
 
 Then launch it:
 
+Before launch, render the driver-owned expected-unit metadata and persist the manifest plus one spawn
+attempt per unit in deterministic order. Generated agents still receive no filesystem or ledger-write
+permission; the driving `/work` session is the only writer. Mint `WORKFLOW_INVOCATION_ID` **once** for
+this logical Workflow launch, record it with the workflow handle in the saga tick, and reuse that exact
+value only after a crash or explicit resume. A later launch of the same unchanged spec must mint a new
+value. The following shell sequence is the complete driver-side pre-submit protocol; the `manifest`
+command is exact-replay idempotent. On resume, it replays that command and appends only spawn attempts
+that the ledger report proves are still absent:
+
+```bash
+export SAGA_ID=<saga-id>
+export SPEC=<orchestration_ref_spec.json>
+export WORKFLOW_INVOCATION_ID="${WORKFLOW_INVOCATION_ID:-$(uuidgen | tr '[:upper:]' '[:lower:]')}"
+mkdir -p .saga
+export SETTLEMENT_METADATA=".saga/workflow-settlement-${WORKFLOW_INVOCATION_ID}.json"
+python3 plugins/saga/scripts/execution_spec.py settlement "$SPEC" \
+  --invocation-id "$WORKFLOW_INVOCATION_ID" > "$SETTLEMENT_METADATA"
+python3 - "$SETTLEMENT_METADATA" "$SAGA_ID" <<'PY'
+import datetime
+import json
+import subprocess
+import sys
+
+metadata_path, saga_id = sys.argv[1:]
+metadata = json.load(open(metadata_path, encoding="utf-8"))
+at = datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z")
+base = [
+    "python3", "plugins/saga/scripts/dispatch_settlement.py", "--repo-root", ".",
+    "--subplot-id", saga_id,
+]
+subprocess.run(base + [
+    "manifest", "--dispatch-id", metadata["dispatch_id"], "--site", metadata["site"],
+    "--units-json", json.dumps(metadata["units"]), "--at", at,
+], check=True)
+report = json.loads(subprocess.check_output(
+    base + ["report", "--dispatch-id", metadata["dispatch_id"]], text=True
+))
+spawned = {
+    entry["unit_id"] for entry in report["entries"]
+    if entry["attempt"] == 1 and entry["spawned"]
+}
+for unit in metadata["units"]:
+    if unit["unit_id"] in spawned:
+        continue
+    subprocess.run(base + [
+        "spawn", "--dispatch-id", metadata["dispatch_id"], "--unit-id", unit["unit_id"],
+        "--attempt", "1", "--idempotency-key", unit["idempotency_key"], "--at", at,
+    ], check=True)
+PY
+```
+
 ```
 Workflow({ scriptPath: "docs/plans/<topic>.workflow.js" })
 ```
@@ -337,26 +388,80 @@ the operator picks a backend, `/work` records exactly that pick via `--orchestra
 `orchestration_operator_choice` derives equal to it — no divergence), and a genuine capability degrade is
 recorded as `orchestration_downgrade` WITH the divergence (operator-choice §6).
 
-**Post-run manifest persistence (U4/KTD7).** A Workflow script has no filesystem access, so it cannot
-write its own provenance manifest — the *driving session* (this `/work` run) is the producer of record
-for `cc-workflows-ultracode` units. Once the Workflow returns, before moving on to Phase 2 wrap-up:
+**Post-run settlement (U4/KTD7).** A Workflow script has no filesystem access, so it cannot write its
+own receipts — the *driving session* is the producer of record. After Workflow returns, collect its
+structured results as a JSON object keyed by the original workflow `unit_id`, save it as
+`$WORKFLOW_RESULTS`, and run this exact adapter before moving on. `metadata.driver.units` maps the
+original result contract to its bounded settlement identity; do not rename result keys to make them
+ledger-safe.
 
-1. Collect the run's per-unit returned results into a JSON object mapping `unit_id -> result` (the same
-   shape each unit returned to the Workflow — a dict of the unit's `returns` keys, a fan-out list, or
-   `null`/absent for a prose-only leaf).
-2. Persist one manifest per spec-declared unit:
+```bash
+export WORKFLOW_RESULTS=<workflow-returned-results.json>
+export EVIDENCE_DIR=".saga/workflow-evidence-${WORKFLOW_INVOCATION_ID}"
+export SETTLE_DESCRIPTORS="$EVIDENCE_DIR/descriptors.jsonl"
+mkdir -p "$EVIDENCE_DIR"
+python3 - "$SETTLEMENT_METADATA" "$WORKFLOW_RESULTS" "$EVIDENCE_DIR" <<'PY' > "$SETTLE_DESCRIPTORS"
+import json
+import sys
+from pathlib import Path
 
-   ```bash
-   python3 plugins/saga/scripts/manifest_store.py --repo-root . --saga-id <saga-id> \
-     record-completeness --spec <orchestration_ref_spec.json> --results <results.json>
-   ```
+metadata = json.load(open(sys.argv[1], encoding="utf-8"))
+results = json.load(open(sys.argv[2], encoding="utf-8"))
+evidence_dir = Path(sys.argv[3])
+for binding in metadata["driver"]["units"]:
+    result = results.get(binding["workflow_unit_id"])
+    if not isinstance(result, dict):
+        print("null")  # Missing or prose-only result: settle as silent-no-op.
+        continue
+    evidence_path = evidence_dir / (binding["settlement_unit_id"] + ".json")
+    evidence_path.write_text(json.dumps({
+        "schema": "dispatch.workflow-result.v1",
+        "unit_id": binding["settlement_unit_id"],
+        "result": result,
+    }, sort_keys=True), encoding="utf-8")
+    print(json.dumps({
+        "receipt_type": "workflow-result",
+        "unit_id": binding["settlement_unit_id"],
+        "evidence_path": str(evidence_path),
+    }))
+PY
+python3 - "$SETTLEMENT_METADATA" "$SETTLE_DESCRIPTORS" "$SAGA_ID" <<'PY'
+import datetime
+import json
+import subprocess
+import sys
 
-3. A non-zero exit means at least one **contract-bearing** unit (a unit with a non-empty `returns` or an
-   enumerated fan-out) tripped `missing-output` (R10) — every manifest is still written (the trip is
-   reported, not silently dropped), so treat this like any other Phase 3 completeness finding: investigate
-   the named unit before treating the round as PR-ready.
-4. Team-execution runs follow the same CLI, called by the worker at exit per `references/*` in
-   `team-execution` (U5) — `/work` does not additionally persist those on the worker's behalf.
+metadata = json.load(open(sys.argv[1], encoding="utf-8"))
+descriptors = open(sys.argv[2], encoding="utf-8")
+base = [
+    "python3", "plugins/saga/scripts/dispatch_settlement.py", "--repo-root", ".",
+    "--subplot-id", sys.argv[3], "settle", "--dispatch-id", metadata["dispatch_id"],
+]
+for unit, descriptor in zip(metadata["units"], descriptors, strict=True):
+    at = datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z")
+    subprocess.run(base + [
+        "--unit-id", unit["unit_id"], "--attempt", "1", "--evidence-json", descriptor.strip(),
+        "--at", at,
+    ], check=True)
+PY
+export DISPATCH_ID="$(python3 - "$SETTLEMENT_METADATA" <<'PY'
+import json
+import sys
+print(json.load(open(sys.argv[1], encoding="utf-8"))["dispatch_id"])
+PY
+)"
+python3 plugins/saga/scripts/dispatch_settlement.py --repo-root . report --dispatch-id "$DISPATCH_ID"
+python3 plugins/saga/scripts/dispatch_settlement.py --repo-root . dlq --dispatch-id "$DISPATCH_ID"
+```
+
+The only accepted delivery receipt is the exact evidence file schema above plus its descriptor. Never
+pass agent prose or a self-report as evidence: it settles as `silent-no-op`, not success.
+A missing structured result is `silent-no-op`: the driver emits `null` and records the casualty. HALT on a
+settlement error or a report with `halt_required=true`. The `dlq` read is the retry derivation; at the next Workflow
+boundary claim each operator-approved entry with `claim-retry --dispatch-id <id> --unit-id <id> --at
+<iso-time>`, append its returned attempt's spawn before submission, and retain its metadata
+`idempotency_key`. This is at-least-once and preserves the stable idempotency key; it is never
+exactly-once delivery.
 
 ---
 

@@ -49,11 +49,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # catches ``outcome_dispatcher.BackendHaltError`` per leaf. outcome_dispatcher does NOT import this
 # module (it duck-types the request), so there is no import cycle.
 import adjustment_envelope  # noqa: E402  (the #372 mid-run control surface, polled per tick)
+import dispatch_settlement  # noqa: E402  (#351 shared fan-out accounting contract)
 import intent_envelope  # noqa: E402  (the canonical #380 envelope schema, via the fleet shim)
 import outcome_dispatcher  # noqa: E402
 import outcome_intent  # noqa: E402  (the #433 posture-renegotiation engine; no import cycle)
 import outcome_spec  # noqa: E402  (after the sys.path shim, by design)
 import outcome_store  # noqa: E402
+import run_ledger  # noqa: E402  (#351 canonical hash-chained run-fact store)
 
 # Where the canonical spec lives on the outcome's own branch (KTD1/R26). The committed spec is the
 # structural source of truth; the store under the git-common-dir is its performance cache.
@@ -102,6 +104,11 @@ class DispatchRequest:
     # moment of dispatch (1 = the never-renegotiated run-start baseline). The leaf finishes under
     # THIS posture even if a later repost amends the campaign (R5 dispatch-time overlap).
     intent_revision: int = 1
+    # Dispatch-settlement identity. Empty identifiers preserve the pre-#351 dispatcher contract;
+    # settlement-backed production dispatches supply durable values for crash replay deduplication.
+    dispatch_id: str = ""
+    attempt: int = 1
+    idempotency_key: str = ""
 
 
 def _default_dispatcher(req: DispatchRequest) -> str:
@@ -619,6 +626,17 @@ def _dispatch_records(store: Any) -> dict[str, str]:
     return out
 
 
+def _dispatch_commit_records(store: Any) -> dict[str, dict[str, Any]]:
+    """Return the latest durable dispatch commit per subplot, including settlement binding."""
+    out: dict[str, dict[str, Any]] = {}
+    for rec in outcome_store.read_ledger(store):
+        if rec.get("kind") == "dispatch" and rec.get("phase") == "commit":
+            sid = str(rec.get("subplot_id", ""))
+            if sid:
+                out[sid] = dict(rec)
+    return out
+
+
 def _terminal_state_map(store: Any) -> dict[str, str]:
     """subplot_id -> its terminal completion state (done/failed/rejected/stalled), latest attempt wins."""
     out: dict[str, str] = {}
@@ -799,6 +817,7 @@ def advance(
     project: str = "operations",
     envelope_path: Path | None = None,
     envelope_poll: Callable[[], adjustment_envelope.PollDecision] | None = None,
+    settlement_ledger: run_ledger.RunLedger | None = None,
 ) -> AdvanceResult:
     """Run one (``loop=False``) or repeated (``loop=True``) reconcile ticks.
 
@@ -957,6 +976,7 @@ def advance(
                 available=available,
                 attending=attending,
                 retriable_seen=retriable_seen,
+                settlement_ledger=settlement_ledger,
             )
             all_dispatched.extend(tick_dispatched)
             all_halted.extend(tick_halted)
@@ -1064,6 +1084,7 @@ def _reconcile_once(
     available: Sequence[str] | None = None,
     attending: bool = True,
     retriable_seen: set[str] | None = None,
+    settlement_ledger: run_ledger.RunLedger | None = None,
 ) -> tuple[list[str], list[dict[str, Any]], list[str], list[dict[str, Any]], list[str], bool]:
     """One level-triggered pass: dispatch every ready, not-yet-settled leaf exactly once.
 
@@ -1127,18 +1148,72 @@ def _reconcile_once(
 
     success = outcome_store.completed_subplots(store)  # success-only -> the frontier input
     settled = set(_dispatch_records(store))  # subplots with a COMMIT dispatch record
+    frontier = outcome_spec.ready_frontier(spec, success)
     dispatched: list[str] = []
     halted: list[dict[str, Any]] = []
     gated: list[str] = []
     degraded: list[dict[str, Any]] = []
     retriable: list[str] = []
     stale = False
+    settlement_bindings: dict[str, tuple[str, dispatch_settlement.UnitSpec]] = {}
+    settlement_blocked: set[str] = set()
+    settlement_frontier = [sid for sid in frontier if sid not in settled]
+    if settlement_ledger is not None and settlement_frontier:
+        settlement_bindings = dispatch_settlement.outcome_dispatch_bindings(
+            settlement_ledger, spec.outcome_id, settlement_frontier
+        )
+        new_units = [sid for sid in settlement_frontier if sid not in settlement_bindings]
+        blocking_reports = [
+            report
+            for report in dispatch_settlement.outcome_reports(settlement_ledger, spec.outcome_id)
+            if report.halt_required
+        ]
+        if new_units and blocking_reports:
+            settlement_blocked.update(new_units)
+            for sid in new_units:
+                report_ids = ",".join(report.dispatch_id for report in blocking_reports)
+                gate_receipt: dict[str, Any] = {
+                    "kind": "settlement-halt",
+                    "outcome_id": spec.outcome_id,
+                    "subplot_id": sid,
+                    "reason": (
+                        "prior dispatch cohort has missing evidence or exceeds its casualty "
+                        f"threshold: {report_ids}"
+                    ),
+                    "dispatch_ids": [report.dispatch_id for report in blocking_reports],
+                }
+                _append_ledger_once(
+                    store,
+                    {
+                        "phase": "halt",
+                        "key": f"settlement-gate:{sid}:{dispatch_settlement.evidence_digest(report_ids)[:16]}",
+                        **gate_receipt,
+                    },
+                )
+                halted.append(gate_receipt)
+        elif new_units:
+            dispatch_id, units = dispatch_settlement.outcome_frontier_identity(
+                spec.outcome_id, new_units
+            )
+            dispatch_settlement.ensure_manifest(
+                settlement_ledger,
+                dispatch_settlement.manifest_fact(
+                    subplot_id=spec.outcome_id,
+                    at=dispatch_settlement.iso_at(now()),
+                    dispatch_id=dispatch_id,
+                    site="outcome",
+                    units=units,
+                ),
+            )
+            settlement_bindings.update({unit.unit_id: (dispatch_id, unit) for unit in units})
     # #433 R4: the posture era every dispatch THIS pass happens under. None (never renegotiated)
     # reads as the revision-1 run-start baseline.
     active_intent_revision = getattr(spec, "intent_revision", None) or 1
-    for sid in outcome_spec.ready_frontier(spec, success):
+    for sid in frontier:
         if sid in settled:
             continue  # settled dispatch record exists -> idempotent skip (no double-dispatch)
+        if sid in settlement_blocked:
+            continue  # a prior cohort blocks this new fan-out boundary until it is reconciled
         if retriable_seen is not None and sid in retriable_seen:
             continue  # already 429'd this advance() call -> don't hammer; re-picked on the next call
         if dispatch_gate is not None and not dispatch_gate(sid):
@@ -1268,6 +1343,39 @@ def _reconcile_once(
                 ).to_dict()
 
         key = f"dispatch:{sid}"
+        settlement_dispatch_id = ""
+        settlement_unit: dispatch_settlement.UnitSpec | None = None
+        settlement_attempt: int | None = None
+        if settlement_ledger is not None:
+            settlement_dispatch_id, settlement_unit = settlement_bindings[sid]
+            terminal = dispatch_settlement.terminal_attempt_status(
+                settlement_ledger,
+                dispatch_id=settlement_dispatch_id,
+                unit_id=settlement_unit.unit_id,
+            )
+            if terminal is not None:
+                outcome_store.release_lease(store, f"dispatch-{sid}", holder)
+                preexisting_terminal_receipt: dict[str, Any] = {
+                    "kind": "settlement-halt",
+                    "outcome_id": spec.outcome_id,
+                    "subplot_id": sid,
+                    "dispatch_id": settlement_dispatch_id,
+                    "attempt": int(terminal["attempt"]),
+                    "reason": (
+                        f"settlement is terminal ({terminal['status']}): "
+                        f"{terminal.get('reason', '')}"
+                    ),
+                }
+                _append_ledger_once(
+                    store,
+                    {
+                        "phase": "halt",
+                        "key": f"settlement-terminal:{sid}:{terminal['attempt']}",
+                        **preexisting_terminal_receipt,
+                    },
+                )
+                halted.append(preexisting_terminal_receipt)
+                continue
         # #433 R4/R5: the posture era is captured on the INTENT record too — the same snapshot
         # the commit record carries below. A leaf stranded in the crash-after-intent window
         # (backend effect possibly live, commit record never written) is in flight for EVERY
@@ -1296,6 +1404,45 @@ def _reconcile_once(
                 "posture": dict(era_posture),
             },
         )
+        if settlement_ledger is not None and settlement_unit is not None:
+            # The run-fact spawn is the last durable action before the host call. A crash or tool
+            # failure after this point remains an open position instead of disappearing.
+            prepared = dispatch_settlement.prepare_attempt(
+                settlement_ledger,
+                subplot_id=sid,
+                at=dispatch_settlement.iso_at(now()),
+                dispatch_id=settlement_dispatch_id,
+                site="outcome",
+                unit=settlement_unit,
+            )
+            if prepared.get("status") in {
+                "retry-exhausted",
+                "already-delivered",
+                "late-delivered",
+            }:
+                outcome_store.release_lease(store, f"dispatch-{sid}", holder)
+                terminal_receipt: dict[str, Any] = {
+                    "kind": "settlement-halt",
+                    "outcome_id": spec.outcome_id,
+                    "subplot_id": sid,
+                    "dispatch_id": settlement_dispatch_id,
+                    "attempt": int(prepared["attempt"]),
+                    "reason": (
+                        f"settlement is terminal ({prepared['status']}): "
+                        f"{prepared.get('reason', '')}"
+                    ),
+                }
+                _append_ledger_once(
+                    store,
+                    {
+                        "phase": "halt",
+                        "key": f"settlement-terminal:{sid}:{prepared['attempt']}",
+                        **terminal_receipt,
+                    },
+                )
+                halted.append(terminal_receipt)
+                continue
+            settlement_attempt = int(prepared["attempt"])
         try:
             leaf_saga_id = dispatch(
                 DispatchRequest(
@@ -1310,9 +1457,15 @@ def _reconcile_once(
                     # #433 R4/R5: the posture era this leaf runs under — captured at dispatch,
                     # never re-evaluated when a later repost amends the campaign.
                     intent_revision=active_intent_revision,
+                    # Preserve the durable pre-call spawn identity at the real runtime boundary.
+                    dispatch_id=settlement_dispatch_id,
+                    attempt=settlement_attempt if settlement_attempt is not None else 1,
+                    idempotency_key=(
+                        settlement_unit.idempotency_key if settlement_unit is not None else ""
+                    ),
                 )
             )
-        except outcome_dispatcher.BackendRateLimitError:
+        except outcome_dispatcher.BackendRateLimitError as rate_limit:
             # #348/R4/KTD4: a 429 during dispatch is TRANSIENT, not a HALT. Release the lock and write
             # NO commit -> the leaf's derived state stays `ready`, so the ready frontier re-picks it on
             # the next advance() call. `retriable-pending` is a derived-on-read RESULT label, never a
@@ -1323,6 +1476,22 @@ def _reconcile_once(
             retriable.append(sid)
             if retriable_seen is not None:
                 retriable_seen.add(sid)
+            if settlement_ledger is not None:
+                receipt = rate_limit.receipt.to_dict()
+                if settlement_attempt is None:
+                    raise OutcomeError("settlement attempt binding is missing") from rate_limit
+                dispatch_settlement.settle_attempt(
+                    settlement_ledger,
+                    subplot_id=sid,
+                    at=dispatch_settlement.iso_at(now()),
+                    dispatch_id=settlement_dispatch_id,
+                    unit_id=sid,
+                    attempt=settlement_attempt,
+                    classification=dispatch_settlement.RATE_KILLED,
+                    reason="outcome backend returned a trusted rate-limit receipt",
+                    evidence_ref="outcome-rate-limit",
+                    evidence_sha256=dispatch_settlement.evidence_digest(receipt),
+                )
             continue
         except outcome_dispatcher.BackendHaltError as halt:
             # A dispatcher-raised HALT (legacy / a restricted injected dispatcher). Release the lock so a
@@ -1331,6 +1500,19 @@ def _reconcile_once(
             receipt = halt.receipt.to_dict()
             _append_ledger_once(store, {"phase": "halt", "kind": "dispatch", "key": key, **receipt})
             halted.append(receipt)
+            if settlement_ledger is not None:
+                if settlement_attempt is None:
+                    raise OutcomeError("settlement attempt binding is missing") from halt
+                dispatch_settlement.settle_attempt(
+                    settlement_ledger,
+                    subplot_id=sid,
+                    at=dispatch_settlement.iso_at(now()),
+                    dispatch_id=settlement_dispatch_id,
+                    unit_id=sid,
+                    attempt=settlement_attempt,
+                    classification=dispatch_settlement.SILENT_NOOP,
+                    reason="backend halted before returning a dispatch handle",
+                )
             continue
         if degrade_receipt is not None:
             # A visible downgrade receipt (R23) — surfaced in the report's Degradations section.
@@ -1360,6 +1542,15 @@ def _reconcile_once(
                 # falls back to the spec's current intent.
                 "intent_revision": active_intent_revision,
                 "posture": dict(era_posture),
+                "settlement": (
+                    {
+                        "dispatch_id": settlement_dispatch_id,
+                        "unit_id": sid,
+                        "attempt": settlement_attempt,
+                    }
+                    if settlement_attempt is not None
+                    else None
+                ),
             },
         )
         dispatched.append(sid)
@@ -1517,7 +1708,11 @@ def graph_mermaid(repo_root: Path, outcome_id: str, *, store: Any | None = None)
 
 
 def production_harvester(
-    repo_root: Path, *, github_runner: Callable[..., Any] | None = None
+    repo_root: Path,
+    *,
+    github_runner: Callable[..., Any] | None = None,
+    settlement_ledger: run_ledger.RunLedger | None = None,
+    now: Callable[[], float] = time.time,
 ) -> Callable[[Any, Any], list[str]]:
     """Build the harvester ``advance`` runs each tick: it materializes GitHub-canonical completions
     (a merged PR / closed issue) into the store so the frontier unlocks the next Kahn layer (U5).
@@ -1553,13 +1748,73 @@ def production_harvester(
         return "done" if all_done else "running"
 
     def harvester(spec: Any, store: Any) -> list[str]:
-        return outcome_orchestrator.harvest(
+        harvested = outcome_orchestrator.harvest(
             spec,
             store=store,
             github_runner=github_runner,
             child_state_reader=child_state_reader,
             repo_root=repo_root,
         )
+        if settlement_ledger is not None:
+            commits = _dispatch_commit_records(store)
+            bindings = dispatch_settlement.outcome_dispatch_bindings(
+                settlement_ledger, spec.outcome_id, (node.subplot_id for node in spec.nodes)
+            )
+            # Reconcile every durable terminal completion on every tick. This closes the
+            # completion-written/settlement-write crash gap even when harvest returns no new IDs,
+            # including failed/rejected/stalled terminals absent from the success frontier.
+            for sid in sorted(bindings):
+                binding = bindings.get(sid)
+                if binding is None:
+                    continue
+                events = outcome_store.read_completion_events(store, sid)
+                if not events:
+                    continue
+                completion = events[-1]
+                dispatch_id, _unit = binding
+                commit_binding = commits.get(sid, {}).get("settlement")
+                attempt: int | None = None
+                if isinstance(commit_binding, dict) and (
+                    commit_binding.get("dispatch_id") == dispatch_id
+                    and commit_binding.get("unit_id") == sid
+                    and isinstance(commit_binding.get("attempt"), int)
+                    and not isinstance(commit_binding.get("attempt"), bool)
+                ):
+                    attempt = int(commit_binding["attempt"])
+                if attempt is None:
+                    attempt = dispatch_settlement.latest_attempt(
+                        settlement_ledger, dispatch_id=dispatch_id, unit_id=sid
+                    )
+                if attempt is None:
+                    continue
+                evidence = completion.to_dict()
+                is_success = completion.is_success
+                dispatch_settlement.settle_attempt(
+                    settlement_ledger,
+                    subplot_id=sid,
+                    at=dispatch_settlement.iso_at(now()),
+                    dispatch_id=dispatch_id,
+                    unit_id=sid,
+                    attempt=attempt,
+                    classification=(
+                        dispatch_settlement.DELIVERED
+                        if is_success
+                        else dispatch_settlement.SILENT_NOOP
+                    ),
+                    reason=(
+                        "outcome parent harvested durable successful completion evidence"
+                        if is_success
+                        else f"outcome terminal completion fail-closed: {completion.state}"
+                    ),
+                    # A silent-no-op is intentionally evidence-free in the closed settlement schema:
+                    # the durable negative event establishes fail-closed classification, while only a
+                    # successful delivery may carry digest-bound delivery evidence.
+                    evidence_ref=(f"outcome-completion:{completion.state}" if is_success else ""),
+                    evidence_sha256=(
+                        dispatch_settlement.evidence_digest(evidence) if is_success else ""
+                    ),
+                )
+        return harvested
 
     return harvester
 
@@ -1947,6 +2202,7 @@ def main(argv: list[str] | None = None) -> int:
             avail = outcome_dispatcher.resolve_available(
                 host_capable=args.host_capable, workflow_available=args.workflow_available
             )
+            settlement_ledger = run_ledger.RunLedger.resolve(root)
             # The dispatcher mints any backend the degrade decision resolves to (it never halts here —
             # _reconcile_once owns the HALT/degrade decision via degrade_decision with `avail`).
             result = advance(
@@ -1954,7 +2210,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.outcome_id,
                 loop=args.loop,
                 dispatcher=outcome_dispatcher.make_dispatcher(available=outcome_spec.NODE_BACKENDS),
-                harvester=production_harvester(root),
+                harvester=production_harvester(root, settlement_ledger=settlement_ledger),
                 merge_processor=production_merge_processor(repo_root=root),
                 worktree_processor=production_worktree_processor(root),
                 liveness_processor=production_liveness_processor(),
@@ -1963,6 +2219,7 @@ def main(argv: list[str] | None = None) -> int:
                 available=avail,
                 attending=not args.autonomous,
                 autonomous=args.autonomous,
+                settlement_ledger=settlement_ledger,
             )
             out = result.to_dict()
             if args.persist:

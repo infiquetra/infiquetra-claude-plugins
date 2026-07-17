@@ -1,4 +1,4 @@
-"""One append-only, hash-chained, leaf-produced run-fact ledger (`run_fact.v1`, #401).
+"""One append-only, hash-chained, producer-owned run-fact ledger (`run_fact.v1`, #401).
 
 A single canonical shape for realized-run telemetry — spend / cache / engine-usage / delegation — that
 the wave-1 writers (#349, #351, #366/#367, #386, #393, …) all append into, so the fleet inherits one
@@ -17,9 +17,10 @@ Design (KTD1-KTD7 of the #401 plan):
   a fresh consistent chain, nor against trailing truncation (a valid prefix is a valid chain) — that is
   out of scope and acceptable: the store lives in the machine-local, never-committed git-common-dir
   cache. The real threat this closes is accidental corruption + a *silent in-place bury* of a fact.
-* **Leaf-produced, derive-on-read.** Every fact carries its producing `subplot_id`; the coordinator
-  never writes, it reads via `rollup`/`reuse_ratio`/`last_n_prior`. There is **no committed
-  status/summary field** — views are computed from the record stream on each read.
+* **Producer-owned, derive-on-read.** Every fact carries the `subplot_id` it accounts for. Ordinary
+  runtime telemetry is leaf-produced; coordinator/driver-owned dispatch settlement is the explicit
+  exception because manifest and pre-submit spawn facts must exist before a leaf can write. There is
+  **no committed status/summary field** — views are computed from the record stream on each read.
 """
 
 from __future__ import annotations
@@ -40,7 +41,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import outcome_store  # noqa: E402  (after the sys.path shim, by design)
 
 RUN_FACT_SCHEMA = "run_fact.v1"
-FACT_KINDS = frozenset({"spend", "cache", "engine", "delegation", "reconciliation", "benchmark"})
+FACT_KINDS = frozenset(
+    {
+        "spend",
+        "cache",
+        "engine",
+        "delegation",
+        "reconciliation",
+        "benchmark",
+        "dispatch-settlement",
+    }
+)
 
 # Fields set by the ledger itself (chain links) — never part of a caller-supplied fact payload.
 _CHAIN_FIELDS = ("prev_hash", "this_hash")
@@ -91,16 +102,17 @@ class LedgerSnapshot:
 def build_fact(kind: str, *, subplot_id: str, at: str, **fields: Any) -> dict[str, Any]:
     """Build a `run_fact.v1` payload (without chain fields). ``fields`` are the kind-specific values.
 
-    Leaf-produced: ``subplot_id`` is the producing leaf. ``at`` is an ISO timestamp (caller-supplied —
-    the ledger does not read the clock, keeping it deterministic and testable). Rejects an unknown
-    ``kind`` and any attempt to set a reserved chain field.
+    ``subplot_id`` is the leaf or unit the fact accounts for. Most facts are leaf-produced;
+    ``dispatch-settlement`` facts are coordinator/driver-produced around that leaf's runtime call.
+    ``at`` is caller-supplied so the ledger remains deterministic. Rejects an unknown ``kind`` and
+    any attempt to set a reserved chain field.
     """
     if kind not in FACT_KINDS:
         raise RunLedgerError(
             f"unknown run-fact kind {kind!r} (expected one of {sorted(FACT_KINDS)})"
         )
     if not subplot_id:
-        raise RunLedgerError("a run-fact needs a non-empty subplot_id (leaf-produced, KTD4)")
+        raise RunLedgerError("a run-fact needs a non-empty accounted subplot_id (KTD4)")
     reserved = set(fields) & set(_CHAIN_FIELDS)
     if reserved:
         raise RunLedgerError(f"caller may not set reserved chain field(s): {sorted(reserved)}")
@@ -127,13 +139,28 @@ def _lock_path(ledger: RunLedger) -> Path:
     return ledger.path.with_suffix(ledger.path.suffix + ".lock")
 
 
+def _fsync_directory(path: Path) -> None:
+    """Persist directory-entry changes before a caller relies on a newly created ledger."""
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 @contextmanager
 def _write_locked(ledger: RunLedger) -> Iterator[None]:
     """Serialize ledger repair and writes with one creating exclusive advisory lock."""
+    parent_existed = ledger.path.parent.exists()
     ledger.path.parent.mkdir(parents=True, exist_ok=True)
+    if not parent_existed:
+        _fsync_directory(ledger.path.parent.parent)
     lock_path = _lock_path(ledger)
+    lock_existed = lock_path.exists()
     fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
     os.fchmod(fd, 0o600)
+    if not lock_existed:
+        _fsync_directory(lock_path.parent)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
         yield
@@ -232,14 +259,18 @@ def append_fact_atomic(
         record["prev_hash"] = prev_hash
         record["this_hash"] = _hash(record)
         payload = memoryview((_canonical(record) + "\n").encode("utf-8"))
+        ledger_existed = ledger.path.exists()
         fd = os.open(ledger.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
         os.fchmod(fd, 0o600)
         try:
             while payload:
                 written = os.write(fd, payload)
                 payload = payload[written:]
+            os.fsync(fd)
         finally:
             os.close(fd)
+        if not ledger_existed:
+            _fsync_directory(ledger.path.parent)
         return record
 
 

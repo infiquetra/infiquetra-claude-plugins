@@ -1066,7 +1066,7 @@ def test_engine_runtime_lease_wraps_runner_and_exact_settlement(
                 ),
                 "",
             )
-        return original_loader(name)
+        return cast(tuple[Any, str], original_loader(name))
 
     monkeypatch.setattr(D, "_load_fleet_module", load)
 

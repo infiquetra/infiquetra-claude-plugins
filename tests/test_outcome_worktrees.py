@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -305,14 +305,17 @@ def _reconcile_leases(
     ops: Any,
     broker: Any,
 ) -> dict[str, Any]:
-    return WT.reconcile_worktree_leases(
-        tmp_path,
-        spec,
-        store,
-        ops,
-        broker,
-        owner="coordinator",
-        store_resolver=lambda _outcome_id, _repo_root: store,
+    return cast(
+        dict[str, Any],
+        WT.reconcile_worktree_leases(
+            tmp_path,
+            spec,
+            store,
+            ops,
+            broker,
+            owner="coordinator",
+            store_resolver=lambda _outcome_id, _repo_root: store,
+        ),
     )
 
 
@@ -521,8 +524,12 @@ def test_reap_failure_retains_authority_then_retries(tmp_path: Path) -> None:
         paths.discard(target)
         return True
 
+    def add(target: str, _branch: str) -> bool:
+        paths.add(target)
+        return True
+
     ops = WT.WorktreeOps(
-        add=lambda target, _branch: not paths.add(target),
+        add=add,
         remove=remove,
         exists=lambda target: target in paths,
         list_paths=lambda: sorted(paths),
@@ -959,7 +966,7 @@ def test_real_git_dead_worktree_reclamation_retries_without_losing_authority(
         if path == paths["s1"] and first_failure:
             first_failure = False
             return False
-        return real_ops.remove(path)
+        return cast(bool, real_ops.remove(path))
 
     flaky_ops = WT.WorktreeOps(
         add=real_ops.add,

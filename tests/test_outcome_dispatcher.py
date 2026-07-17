@@ -12,7 +12,7 @@ import json
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -132,7 +132,7 @@ def test_make_dispatcher_holds_lease_across_backend_settlement(
         assert len(live) == 1
         assert live[0]["session_id"] == "outcome:ship-x"
         assert live[0]["mutation"] == "none"
-        return original_dispatch(req, available=available)
+        return cast(dict[str, Any], original_dispatch(req, available=available))
 
     monkeypatch.setattr(D, "dispatch", observing_dispatch)
     dispatcher = D.make_dispatcher(lease_authority=selected)

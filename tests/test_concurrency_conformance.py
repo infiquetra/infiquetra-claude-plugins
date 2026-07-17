@@ -19,6 +19,7 @@ SAGA_ROOT = ROOT / "plugins/saga"
 SCRIPT_DIR = SAGA_ROOT / "scripts"
 SOURCE_PATH = SCRIPT_DIR / "execution_spec.py"
 INVENTORY_PATH = SAGA_ROOT / "references/concurrency-spawn-sites.md"
+DECISIONS_PATH = ROOT / "docs/engineering-journal/DECISIONS.md"
 REL_SOURCE = SOURCE_PATH.relative_to(ROOT).as_posix()
 HELPER_NAME = "_emit_parallel_wave"
 ROW_RE = re.compile(
@@ -142,6 +143,29 @@ EXPECTED_EXECUTABLE_SPAWNS = frozenset(
         ("plugins/saga/scripts/outcome_worktrees.py", "ensure_worktree", "ops.add"),
     }
 )
+
+
+def test_issue_355_decision_uses_one_broker_authority() -> None:
+    text = DECISIONS_PATH.read_text(encoding="utf-8")
+    anchor = "{#orphan-evidence-fencing-355}"
+    assert text.count(anchor) == 1
+    section = text.split(anchor, 1)[1].split("\n---\n", 1)[0]
+    normalized = " ".join(section.split())
+
+    for required in (
+        "`LeaseBroker` as the sole mutation authority",
+        "prepare/commit/abort",
+        "atomic closed-registry replacement",
+        "closed-head CAS",
+        "root-only same-generation recovery",
+        "512 MiB and 256 entries",
+    ):
+        assert required in normalized
+
+    for obsolete in ("digest-named lock", "resource-scoped lock"):
+        assert obsolete not in section
+
+
 EXPECTED_LEASE_CALLS: dict[tuple[str, str], frozenset[str]] = {
     ("plugins/saga/scripts/engine_dispatch.py", "dispatch"): frozenset(
         {

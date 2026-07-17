@@ -130,7 +130,7 @@
       "depends_on": [
         "sub-356"
       ],
-      "leaf_saga_id": "",
+      "leaf_saga_id": "leaf-lease-safe-runtime-continuity-sub-355",
       "child_spec_ref": "",
       "github": {
         "repo": "infiquetra/infiquetra-claude-plugins",
@@ -166,7 +166,7 @@
         "sub-351",
         "sub-356"
       ],
-      "leaf_saga_id": "",
+      "leaf_saga_id": "leaf-lease-safe-runtime-continuity-sub-357",
       "child_spec_ref": "",
       "github": {
         "repo": "infiquetra/infiquetra-claude-plugins",

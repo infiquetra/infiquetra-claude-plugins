@@ -44,6 +44,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import lease_broker as fleet_leases  # noqa: E402
 import outcome_orchestrator  # noqa: E402  (after the sys.path shim, by design)
 import outcome_spec  # noqa: E402
 import outcome_store  # noqa: E402
@@ -118,7 +119,7 @@ def shared_install_ref(repo_root: Path, outcome_id: str) -> str:
 
 
 def _registry_path(store: Any) -> Path:
-    return store.root / "worktrees.json"
+    return Path(store.root) / "worktrees.json"
 
 
 def read_registry(store: Any) -> dict[str, dict[str, Any]]:
@@ -166,6 +167,36 @@ def register(store: Any, subplot_id: str, entry: dict[str, Any]) -> None:
     entries = read_registry(store)
     entries[subplot_id] = dict(entry)
     _write_registry(store, entries)
+
+
+def _lease_binding(entry: dict[str, Any], selected: Any) -> tuple[str, Any]:
+    try:
+        return fleet_leases.parse_worktree_lease_receipt(entry.get("lease"), selected)
+    except fleet_leases.HookInputError as exc:
+        raise WorktreeError(f"worktree registry lease binding is invalid: {exc}") from exc
+
+
+def _arm_worktree(
+    repo_root: Path,
+    spec: Any,
+    subplot_id: str,
+    *,
+    owner: str,
+    selected: Any,
+    ttl_seconds: int,
+) -> Any:
+    try:
+        return fleet_leases.acquire_outcome_worktree(
+            repo_root=repo_root,
+            outcome_id=spec.outcome_id,
+            subplot_id=subplot_id,
+            owner_id=owner,
+            session_id=f"outcome:{spec.outcome_id}",
+            selected=selected,
+            ttl_seconds=ttl_seconds,
+        )
+    except fleet_leases.authority.LeaseBrokerError as exc:
+        raise WorktreeError(f"worktree lease admission refused: {exc}") from exc
 
 
 def deregister(store: Any, subplot_id: str) -> None:
@@ -250,6 +281,8 @@ def ensure_worktree(
     owner: str,
     cap: int = WORKTREE_CAP,
     at: str = "",
+    lease_authority: Any | None = None,
+    lease_ttl_seconds: int = fleet_leases.authority.DEFAULT_TTL_SECONDS,
 ) -> WorktreeResult:
     """Ensure exactly one durable worktree for a sub-outcome node (R15). Idempotent + cap-bounded.
 
@@ -269,6 +302,24 @@ def ensure_worktree(
     path = str(worktree_path(repo_root, spec.outcome_id, sid))
     live = live_worktrees(store, ops)
     if sid in live:
+        if lease_authority is not None:
+            registry = read_registry(store)
+            entry = registry[sid]
+            if "lease" not in entry:
+                lease = _arm_worktree(
+                    repo_root,
+                    spec,
+                    sid,
+                    owner=owner,
+                    selected=lease_authority,
+                    ttl_seconds=lease_ttl_seconds,
+                )
+                entry["lease"] = fleet_leases.worktree_lease_receipt(lease, lease_authority)
+                entry["repo_root"] = str(Path(repo_root).resolve())
+                entry["outcome_id"] = spec.outcome_id
+                register(store, sid, entry)
+            else:
+                _lease_binding(entry, lease_authority)
         return WorktreeResult(
             sid, "reused", path, "durable worktree already live — reused across leaves"
         )
@@ -276,7 +327,10 @@ def ensure_worktree(
     # A registered-but-vanished entry must NOT block reuse: drop the stale record before re-creating.
     registry = read_registry(store)
     if sid in registry and not ops.exists(str(registry[sid].get("path", ""))):
-        deregister(store, sid)
+        if lease_authority is None:
+            deregister(store, sid)
+        elif not reap_worktree(store, sid, ops, lease_authority=lease_authority, at=at):
+            raise WorktreeError(f"cannot settle stale worktree authority for {sid!r}")
 
     if len(live) >= cap:
         return WorktreeResult(
@@ -284,23 +338,55 @@ def ensure_worktree(
         )
 
     branch = worktree_name(spec.outcome_id, sid)
-    if not ops.add(path, branch):
-        raise WorktreeError(f"git worktree add failed for {sid!r} at {path}")
-    register(
-        store,
-        sid,
-        {
-            "path": path,
-            "branch": branch,
-            "owner": owner,
-            "shared_install_ref": shared_install_ref(repo_root, spec.outcome_id),
-            "at": at,
-        },
+    lease = (
+        None
+        if lease_authority is None
+        else _arm_worktree(
+            repo_root,
+            spec,
+            sid,
+            owner=owner,
+            selected=lease_authority,
+            ttl_seconds=lease_ttl_seconds,
+        )
     )
+    if not ops.add(path, branch):
+        if lease is not None:
+            assert lease_authority is not None
+            lease_authority.release(lease.lease_id, owner_id=owner, token=lease.token)
+        raise WorktreeError(f"git worktree add failed for {sid!r} at {path}")
+    entry = {
+        "path": path,
+        "branch": branch,
+        "owner": owner,
+        "shared_install_ref": shared_install_ref(repo_root, spec.outcome_id),
+        "at": at,
+        "repo_root": str(Path(repo_root).resolve()),
+        "outcome_id": spec.outcome_id,
+    }
+    if lease is not None:
+        entry["lease"] = fleet_leases.worktree_lease_receipt(lease, lease_authority)
+    try:
+        register(store, sid, entry)
+    except Exception:
+        ops.remove(path)
+        if lease is not None:
+            assert lease_authority is not None
+            lease_authority.release(lease.lease_id, owner_id=owner, token=lease.token)
+        raise
     return WorktreeResult(sid, "created", path, "durable named+owned worktree provisioned (R15)")
 
 
-def reap_worktree(store: Any, subplot_id: str, ops: WorktreeOps, *, at: str = "") -> bool:
+def reap_worktree(
+    store: Any,
+    subplot_id: str,
+    ops: WorktreeOps,
+    *,
+    at: str = "",
+    lease_authority: Any | None = None,
+    release_authority: bool = True,
+    deregister_entry: bool = True,
+) -> bool:
     """Remove + deregister a sub-outcome's worktree on terminal/abandon (R15 reaping). Idempotent.
 
     Returns True if a worktree was reaped, False if there was nothing registered **or the removal
@@ -314,10 +400,149 @@ def reap_worktree(store: Any, subplot_id: str, ops: WorktreeOps, *, at: str = ""
     entry = entries.get(subplot_id)
     if entry is None:
         return False
+    lease_id = ""
+    token: Any | None = None
+    if lease_authority is not None and "lease" in entry:
+        lease_id, token = _lease_binding(entry, lease_authority)
+        repo_root = entry.get("repo_root")
+        outcome_id = entry.get("outcome_id")
+        if not isinstance(repo_root, str) or not isinstance(outcome_id, str):
+            raise WorktreeError("leased worktree registry entry lacks repo_root or outcome_id")
+        state = lease_authority.classify_token(
+            fleet_leases.worktree_resource(repo_root, outcome_id, subplot_id),
+            token,
+            pool="worktree",
+        )
+        if state not in {"current", "expired"}:
+            raise WorktreeError(
+                f"worktree lease {lease_id!r} is {state}; refusing to remove registry authority"
+            )
     if not ops.remove(str(entry.get("path", ""))):
         return False  # removal failed -> keep the entry so a later pass retries (no silent leak)
-    deregister(store, subplot_id)
+    if lease_authority is not None and release_authority and lease_id:
+        try:
+            released = lease_authority.release(lease_id, token=token)
+        except fleet_leases.authority.LeaseBrokerError:
+            return False
+        if not released:
+            return False
+    if deregister_entry:
+        deregister(store, subplot_id)
     return True
+
+
+def reconcile_worktree_leases(
+    repo_root: Path,
+    spec: Any,
+    store: Any,
+    ops: WorktreeOps,
+    lease_authority: Any,
+    *,
+    owner: str,
+    lease_ttl_seconds: int = fleet_leases.authority.DEFAULT_TTL_SECONDS,
+    store_resolver: Callable[[str, Path], Any] | None = None,
+) -> dict[str, Any]:
+    """Sweep expired ownership, adopt legacy entries, and renew live worktrees for one tick."""
+
+    canonical_root = Path(repo_root).resolve()
+    resolve_store = (
+        store_resolver
+        if store_resolver is not None
+        else lambda outcome_id, root: outcome_store.Store.for_outcome(outcome_id, root).ensure()
+    )
+    before = lease_authority.inspect()
+    lease_resources = {
+        lease["lease_id"]: dict(lease["resource_ref"])
+        for lease in before.get("leases", [])
+        if lease.get("pool") == "worktree" and isinstance(lease.get("resource_ref"), dict)
+    }
+
+    def _validated_reaper(resource: dict[str, str]) -> bool:
+        resource_root = Path(resource["repo_root"])
+        resolved = resolve_store(resource["outcome_id"], resource_root)
+        if (
+            resource_root == canonical_root
+            and resource["outcome_id"] == spec.outcome_id
+            and Path(resolved.root).resolve() != Path(store.root).resolve()
+        ):
+            raise WorktreeError("worktree lease resolves to a different current outcome store")
+        entries = _read_registry_without_repair(resolved)
+        entry = entries.get(resource["subplot_id"])
+        if entry is None:
+            raise WorktreeError("worktree lease has no matching outcome registry entry")
+        lease_id, _token = _lease_binding(entry, lease_authority)
+        if lease_resources.get(lease_id) != resource:
+            raise WorktreeError("worktree lease receipt does not match the sweep resource")
+        expected = worktree_path(
+            resource_root, resource["outcome_id"], resource["subplot_id"]
+        ).resolve(strict=False)
+        actual = Path(str(entry.get("path", ""))).resolve(strict=False)
+        try:
+            actual.relative_to(worktrees_root(resource_root).resolve(strict=False))
+        except ValueError as exc:
+            raise WorktreeError("worktree registry path escapes the managed root") from exc
+        if actual != expected:
+            raise WorktreeError("worktree registry path does not match its structured resource")
+        resource_ops = ops if resource_root == canonical_root else git_worktree_ops(resource_root)
+        return reap_worktree(
+            resolved,
+            resource["subplot_id"],
+            resource_ops,
+            lease_authority=lease_authority,
+            release_authority=False,
+            deregister_entry=True,
+        )
+
+    swept = lease_authority.sweep(worktree_reaper=_validated_reaper)
+
+    renewed: list[str] = []
+    adopted: list[str] = []
+    retained = dict(swept.retained)
+    registry = read_registry(store)
+    import outcome as outcome_engine
+
+    states = outcome_engine.derive_states(spec, store)
+    for sid, entry in sorted(registry.items()):
+        if not ops.exists(str(entry.get("path", ""))):
+            continue
+        if "lease" not in entry:
+            try:
+                lease = _arm_worktree(
+                    canonical_root,
+                    spec,
+                    sid,
+                    owner=owner,
+                    selected=lease_authority,
+                    ttl_seconds=lease_ttl_seconds,
+                )
+            except WorktreeError as exc:
+                retained[f"registry:{sid}"] = f"adoption-failed:{exc}"
+                continue
+            entry["lease"] = fleet_leases.worktree_lease_receipt(lease, lease_authority)
+            entry["repo_root"] = str(canonical_root)
+            entry["outcome_id"] = spec.outcome_id
+            register(store, sid, entry)
+            adopted.append(sid)
+            continue
+        lease_id, token = _lease_binding(entry, lease_authority)
+        if lease_id in retained:
+            continue
+        if states.get(sid) in outcome_spec.TERMINAL_STATES:
+            continue
+        try:
+            lease_authority.renew(lease_id, token=token)
+        except fleet_leases.authority.LeaseBrokerError as exc:
+            retained[lease_id] = f"renew-failed:{exc}"
+        else:
+            renewed.append(sid)
+    return {
+        "lease_reaped": list(swept.reaped_worktree_leases),
+        "lease_released_agents": list(swept.released_agent_leases),
+        "lease_adopted": adopted,
+        "lease_renewed": renewed,
+        "lease_retained": dict(sorted(retained.items())),
+        "lease_root_sha256": lease_authority.root_sha256,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -343,7 +568,14 @@ def _record_terminal(store: Any, sid: str, state: str, reason: str) -> None:
     )
 
 
-def harvest_worktrees(spec: Any, store: Any, ops: WorktreeOps, *, at: str = "") -> dict[str, Any]:
+def harvest_worktrees(
+    spec: Any,
+    store: Any,
+    ops: WorktreeOps,
+    *,
+    at: str = "",
+    lease_authority: Any | None = None,
+) -> dict[str, Any]:
     """One worktree-reconcile pass for ``advance`` (R15 reap + R32 worktree-removed terminal + R22).
 
     Three derived-on-read sweeps over the registry, each cross-checked against git (the liveness oracle):
@@ -377,7 +609,7 @@ def harvest_worktrees(spec: Any, store: Any, ops: WorktreeOps, *, at: str = "") 
         if node is None:
             # The node left the spec (pruned/elaborated away) but its worktree is still registered ->
             # reap the orphan so it does not hold a cap slot / leak disk forever.
-            if reap_worktree(store, sid, ops, at=at):
+            if reap_worktree(store, sid, ops, at=at, lease_authority=lease_authority):
                 orphaned.append(sid)
             else:
                 reap_failed.append(sid)
@@ -389,17 +621,19 @@ def harvest_worktrees(spec: Any, store: Any, ops: WorktreeOps, *, at: str = "") 
         if live_state in outcome_spec.TERMINAL_STATES:
             # Terminal sub-outcome -> reap its worktree, success or negative alike. A failed removal
             # keeps the entry (retried next pass) rather than silently leaking it.
-            if reap_worktree(store, sid, ops, at=at):
+            if reap_worktree(store, sid, ops, at=at, lease_authority=lease_authority):
                 reaped.append(sid)
             else:
                 reap_failed.append(sid)
             continue
         if not present:
             # Non-terminal but the worktree vanished out-of-band -> the R32 removed terminal + cascade.
+            if not reap_worktree(store, sid, ops, at=at, lease_authority=lease_authority):
+                reap_failed.append(sid)
+                continue
             _record_terminal(
                 store, sid, WORKTREE_REMOVED_STATE, "worktree removed out-of-band (R32)"
             )
-            deregister(store, sid)
             removed.append(sid)
 
     cascade = sorted(outcome_orchestrator.blocked_subtree(spec, set(removed)))
@@ -421,6 +655,8 @@ def provision_pending(
     owner: str,
     cap: int = WORKTREE_CAP,
     at: str = "",
+    lease_authority: Any | None = None,
+    lease_ttl_seconds: int = fleet_leases.authority.DEFAULT_TTL_SECONDS,
 ) -> dict[str, Any]:
     """Ensure a worktree for every **dispatched** sub-outcome that lacks one (cap-bounded, R15).
 
@@ -438,7 +674,18 @@ def provision_pending(
     for node in spec.nodes:
         if not node.is_outcome or states.get(node.subplot_id) != "dispatched":
             continue
-        result = ensure_worktree(repo_root, spec, store, node, ops, owner=owner, cap=cap, at=at)
+        result = ensure_worktree(
+            repo_root,
+            spec,
+            store,
+            node,
+            ops,
+            owner=owner,
+            cap=cap,
+            at=at,
+            lease_authority=lease_authority,
+            lease_ttl_seconds=lease_ttl_seconds,
+        )
         if result.state == "created":
             provisioned.append(node.subplot_id)
         elif result.state == "capped":

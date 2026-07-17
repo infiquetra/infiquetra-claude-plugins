@@ -13,7 +13,7 @@ import os
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any, NoReturn, cast
 
 import fleet_commons_shim
 
@@ -94,9 +94,7 @@ def admission_snapshot(
     env = os.environ if environment is None else environment
     defaults = concurrency_policy.AdmissionLimits()
     session_limit = _positive_env(env, SESSION_LIMIT_ENV, defaults.max_concurrent)
-    aggregate_limit = _positive_env(
-        env, AGGREGATE_LIMIT_ENV, defaults.aggregate_max_concurrent
-    )
+    aggregate_limit = _positive_env(env, AGGREGATE_LIMIT_ENV, defaults.aggregate_max_concurrent)
     if session_limit > aggregate_limit:
         raise HookInputError(f"{SESSION_LIMIT_ENV} must not exceed {AGGREGATE_LIMIT_ENV}")
     mutation = env.get(MUTATION_ENV, "read-write")
@@ -111,6 +109,74 @@ def broker(environment: Mapping[str, str] | None = None) -> Any:
     """Resolve the one runtime-neutral authority selected by the current environment."""
 
     return authority.LeaseBroker(environment=os.environ if environment is None else environment)
+
+
+def worktree_resource(repo_root: Path | str, outcome_id: str, subplot_id: str) -> dict[str, str]:
+    """Build the canonical closed resource identity for an outcome-owned worktree."""
+
+    root = Path(repo_root).resolve()
+    return cast(
+        dict[str, str],
+        authority.canonical_resource_ref(
+            "worktree",
+            {
+                "repo_root": str(root),
+                "outcome_id": outcome_id,
+                "subplot_id": subplot_id,
+            },
+        ),
+    )
+
+
+def acquire_outcome_worktree(
+    *,
+    repo_root: Path | str,
+    outcome_id: str,
+    subplot_id: str,
+    owner_id: str,
+    session_id: str,
+    selected: Any | None = None,
+    ttl_seconds: int = authority.DEFAULT_TTL_SECONDS,
+) -> Any:
+    """Acquire one worktree-pool lease through the canonical broker."""
+
+    active = broker() if selected is None else selected
+    return active.acquire_worktree(
+        owner_id=owner_id,
+        owner_pid=os.getpid(),
+        session_id=session_id,
+        resource_ref=worktree_resource(repo_root, outcome_id, subplot_id),
+        ttl_seconds=ttl_seconds,
+    )
+
+
+def worktree_lease_receipt(lease: Any, selected: Any) -> dict[str, Any]:
+    """Persist the minimum exact-token binding; never expose the authority path."""
+
+    return {
+        "lease_id": lease.lease_id,
+        "token": lease.token.to_dict(),
+        "root_sha256": selected.root_sha256,
+    }
+
+
+def parse_worktree_lease_receipt(value: Any, selected: Any) -> tuple[str, Any]:
+    """Validate a closed registry receipt and return its exact lease id/token."""
+
+    if not isinstance(value, dict) or set(value) != {"lease_id", "token", "root_sha256"}:
+        raise HookInputError(
+            "worktree lease receipt requires exactly lease_id, token, and root_sha256"
+        )
+    if value["root_sha256"] != selected.root_sha256:
+        raise HookInputError("worktree lease receipt names a different authority root")
+    lease_id = value["lease_id"]
+    if not isinstance(lease_id, str) or not lease_id:
+        raise HookInputError("worktree lease receipt requires a non-empty lease_id")
+    try:
+        token = authority.FencingToken.from_dict(value["token"])
+    except authority.LeaseBrokerError as exc:
+        raise HookInputError(f"worktree lease receipt token is invalid: {exc}") from exc
+    return lease_id, token
 
 
 def active_batch_id(
@@ -151,9 +217,7 @@ def reserve_hook_agent(
     tool_use_id = _required_text(payload, "tool_use_id")
     parent_agent = _optional_text(payload, "agent_id")
     policy_sha256, session_limit, aggregate_limit, mutation = admission_snapshot(env)
-    claim_ttl = _positive_env(
-        env, CLAIM_TTL_SECONDS_ENV, authority.DEFAULT_CLAIM_TTL_SECONDS
-    )
+    claim_ttl = _positive_env(env, CLAIM_TTL_SECONDS_ENV, authority.DEFAULT_CLAIM_TTL_SECONDS)
     batch_id = active_batch_id(payload, env)
     if batch_id:
         return broker(env).prepare_batch_call(
@@ -197,7 +261,7 @@ def claim_hook_agent(
 def record_hook_terminal(
     payload: Mapping[str, Any], environment: Mapping[str, str] | None = None
 ) -> bool:
-    return broker(environment).record_child_terminal(_required_text(payload, "agent_id"))
+    return bool(broker(environment).record_child_terminal(_required_text(payload, "agent_id")))
 
 
 def record_hook_parent(
@@ -212,7 +276,7 @@ def record_hook_parent(
     if batch_id:
         # PostToolUse is the existing collection seam. Renew the whole batch without a daemon.
         selected.renew_batch(batch_id)
-    return released
+    return cast(tuple[str, ...], released)
 
 
 def verify_hook_mutation(

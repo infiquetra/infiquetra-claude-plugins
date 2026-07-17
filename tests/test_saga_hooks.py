@@ -17,9 +17,7 @@ ROOT = Path(__file__).parent.parent
 SAGA = ROOT / "plugins" / "saga"
 LIFECYCLE_HOOK = SAGA / "hooks" / "lease_lifecycle_hook.py"
 MUTATION_HOOK = SAGA / "hooks" / "lease_mutation_hook.py"
-BROKER_PATH = (
-    ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "lease_broker.py"
-)
+BROKER_PATH = ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "lease_broker.py"
 POLICY_PATH = (
     ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "concurrency_policy.py"
 )
@@ -150,14 +148,22 @@ def _leases(authority: Path) -> list[dict[str, Any]]:
 def test_reserve_before_call_and_cross_ordered_same_type_claims(tmp_path: Path) -> None:
     authority = tmp_path / "authority"
     env = _environment(authority)
-    first = _run_hook(LIFECYCLE_HOOK, _spawn_payload(tmp_path, "tool-1"), cwd=tmp_path, environment=env)
-    second = _run_hook(LIFECYCLE_HOOK, _spawn_payload(tmp_path, "tool-2"), cwd=tmp_path, environment=env)
+    first = _run_hook(
+        LIFECYCLE_HOOK, _spawn_payload(tmp_path, "tool-1"), cwd=tmp_path, environment=env
+    )
+    second = _run_hook(
+        LIFECYCLE_HOOK, _spawn_payload(tmp_path, "tool-2"), cwd=tmp_path, environment=env
+    )
     assert first.returncode == second.returncode == 0
     assert {lease["tool_use_id"] for lease in _leases(authority)} == {"tool-1", "tool-2"}
 
     # SubagentStart has no parent tool id. Serialized oldest-compatible claims are safe.
-    start_b = _run_hook(LIFECYCLE_HOOK, _start_payload(tmp_path, "child-b"), cwd=tmp_path, environment=env)
-    start_a = _run_hook(LIFECYCLE_HOOK, _start_payload(tmp_path, "child-a"), cwd=tmp_path, environment=env)
+    start_b = _run_hook(
+        LIFECYCLE_HOOK, _start_payload(tmp_path, "child-b"), cwd=tmp_path, environment=env
+    )
+    start_a = _run_hook(
+        LIFECYCLE_HOOK, _start_payload(tmp_path, "child-a"), cwd=tmp_path, environment=env
+    )
     assert start_b.returncode == start_a.returncode == 0
     by_child = {lease["agent_id"]: lease for lease in _leases(authority)}
     assert by_child["child-b"]["tool_use_id"] == "tool-1"
@@ -185,7 +191,9 @@ def test_capacity_refusal_blocks_agent_tool_before_spawn(tmp_path: Path) -> None
         INFIQUETRA_FLEET_SESSION_LIMIT="1",
         INFIQUETRA_FLEET_AGGREGATE_LIMIT="1",
     )
-    first = _run_hook(LIFECYCLE_HOOK, _spawn_payload(tmp_path, "tool-1"), cwd=tmp_path, environment=env)
+    first = _run_hook(
+        LIFECYCLE_HOOK, _spawn_payload(tmp_path, "tool-1"), cwd=tmp_path, environment=env
+    )
     refused = _run_hook(
         LIFECYCLE_HOOK,
         _spawn_payload(tmp_path, "tool-2", session="other"),
@@ -234,6 +242,29 @@ def test_bound_child_mutation_passes_and_root_is_unchanged(tmp_path: Path, tool:
         environment=env,
     )
     assert child_result.returncode == 0, child_result.stderr
+
+
+@pytest.mark.parametrize("tool", ["Edit", "Bash"])
+def test_removed_bound_worktree_blocks_subsequent_mutation(tmp_path: Path, tool: str) -> None:
+    authority = tmp_path / "authority"
+    env = _environment(authority)
+    worktree = tmp_path / "leased-worktree"
+    worktree.mkdir()
+    _run_hook(LIFECYCLE_HOOK, _spawn_payload(worktree, "tool"), cwd=tmp_path, environment=env)
+    started = _run_hook(
+        LIFECYCLE_HOOK, _start_payload(worktree, "child"), cwd=tmp_path, environment=env
+    )
+    assert started.returncode == 0
+    worktree.rmdir()
+
+    blocked = _run_hook(
+        MUTATION_HOOK,
+        _mutation_payload(worktree, child="child", tool=tool),
+        cwd=tmp_path,
+        environment=env,
+    )
+    assert blocked.returncode == 2
+    assert "leased worktree is missing" in blocked.stderr
 
 
 def test_missing_expired_and_superseded_child_authority_block_mutation(tmp_path: Path) -> None:
@@ -302,8 +333,16 @@ def test_both_lifecycle_signals_are_required_in_either_order(
     env = _environment(authority)
     _run_hook(LIFECYCLE_HOOK, _spawn_payload(tmp_path, "tool"), cwd=tmp_path, environment=env)
     _run_hook(LIFECYCLE_HOOK, _start_payload(tmp_path, "child"), cwd=tmp_path, environment=env)
-    first = _parent_payload(tmp_path, "tool") if first_signal == "parent" else _stop_payload(tmp_path, "child")
-    second = _stop_payload(tmp_path, "child") if first_signal == "parent" else _parent_payload(tmp_path, "tool")
+    first = (
+        _parent_payload(tmp_path, "tool")
+        if first_signal == "parent"
+        else _stop_payload(tmp_path, "child")
+    )
+    second = (
+        _stop_payload(tmp_path, "child")
+        if first_signal == "parent"
+        else _parent_payload(tmp_path, "tool")
+    )
     assert _run_hook(LIFECYCLE_HOOK, first, cwd=tmp_path, environment=env).returncode == 0
     assert len(_leases(authority)) == 1
     assert _run_hook(LIFECYCLE_HOOK, second, cwd=tmp_path, environment=env).returncode == 0
@@ -343,8 +382,12 @@ def test_hooks_json_arms_every_required_lifecycle_seam() -> None:
         "lease_mutation_hook.py" in command
         for command in _commands(events["PreToolUse"], "Bash|Write|Edit|MultiEdit|NotebookEdit")
     )
-    assert any("lease_lifecycle_hook.py" in command for command in _commands(events["SubagentStart"]))
-    assert any("lease_lifecycle_hook.py" in command for command in _commands(events["SubagentStop"]))
+    assert any(
+        "lease_lifecycle_hook.py" in command for command in _commands(events["SubagentStart"])
+    )
+    assert any(
+        "lease_lifecycle_hook.py" in command for command in _commands(events["SubagentStop"])
+    )
     assert any(
         "lease_lifecycle_hook.py" in command
         for command in _commands(events["PostToolUse"], "Agent|Task")

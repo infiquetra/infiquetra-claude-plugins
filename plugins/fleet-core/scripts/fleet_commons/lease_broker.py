@@ -41,9 +41,7 @@ ResourceRef = dict[str, str]
 _TOP_KEYS = frozenset(
     {"schema", "broker_epoch", "next_fencing_sequence", "resource_fences", "leases"}
 )
-_FENCE_KEYS = frozenset(
-    {"resource_ref", "broker_epoch", "fencing_sequence", "lease_id"}
-)
+_FENCE_KEYS = frozenset({"resource_ref", "broker_epoch", "fencing_sequence", "lease_id"})
 _LEASE_KEYS = frozenset(
     {
         "pool",
@@ -237,9 +235,7 @@ def canonical_resource_ref(pool: Pool, value: Mapping[str, Any]) -> ResourceRef:
             )
         result = {"logical_unit_id": _bounded(data["logical_unit_id"], "logical_unit_id")}
         if "worktree_root" in data:
-            result["worktree_root"] = _safe_absolute_path(
-                data["worktree_root"], "worktree_root"
-            )
+            result["worktree_root"] = _safe_absolute_path(data["worktree_root"], "worktree_root")
         return result
     _closed_mapping(data, _WORKTREE_RESOURCE_KEYS, "worktree resource_ref")
     return {
@@ -274,7 +270,9 @@ def resolve_state_root(
     if STATE_ENV in env:
         return _safe_configured_root(env[STATE_ENV], STATE_ENV)
     if XDG_STATE_ENV in env:
-        return _safe_configured_root(env[XDG_STATE_ENV], XDG_STATE_ENV) / "infiquetra" / "fleet-leases"
+        return (
+            _safe_configured_root(env[XDG_STATE_ENV], XDG_STATE_ENV) / "infiquetra" / "fleet-leases"
+        )
     effective_home = Path.home() if home is None else home
     if not effective_home.is_absolute():
         raise UnsafeAuthorityError("home must be absolute when resolving fleet lease state")
@@ -359,9 +357,7 @@ class FencingToken:
     def from_dict(cls, data: Mapping[str, Any]) -> FencingToken:
         return cls(
             broker_epoch=_uuid_text(data.get("broker_epoch"), "token.broker_epoch"),
-            fencing_sequence=_positive(
-                data.get("fencing_sequence"), "token.fencing_sequence"
-            ),
+            fencing_sequence=_positive(data.get("fencing_sequence"), "token.fencing_sequence"),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -470,9 +466,7 @@ class Lease:
             ),
             claimed_at=claimed_at,
             child_terminal_at=_optional_utc(parsed["child_terminal_at"], "child_terminal_at"),
-            parent_completed_at=_optional_utc(
-                parsed["parent_completed_at"], "parent_completed_at"
-            ),
+            parent_completed_at=_optional_utc(parsed["parent_completed_at"], "parent_completed_at"),
             ttl_seconds=_positive(parsed["ttl_seconds"], "ttl_seconds"),
             broker_epoch=broker_epoch,
             fencing_sequence=_positive(parsed["fencing_sequence"], "fencing_sequence"),
@@ -566,8 +560,7 @@ class Registry:
         if not isinstance(fences_raw, dict) or not isinstance(leases_raw, dict):
             raise RegistryCorruptError("resource_fences and leases must be objects")
         fences = {
-            digest: ResourceFence.from_dict(digest, fence)
-            for digest, fence in fences_raw.items()
+            digest: ResourceFence.from_dict(digest, fence) for digest, fence in fences_raw.items()
         }
         leases = {
             lease_id: Lease.from_dict(lease_id, lease, epoch)
@@ -726,7 +719,9 @@ class LeaseBroker:
         try:
             payload = json.loads(b"".join(chunks).decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise RegistryCorruptError(f"fleet lease registry is not valid UTF-8 JSON: {exc}") from exc
+            raise RegistryCorruptError(
+                f"fleet lease registry is not valid UTF-8 JSON: {exc}"
+            ) from exc
         if not isinstance(payload, dict):
             raise RegistryCorruptError("fleet lease registry must contain an object")
         return Registry.from_dict(payload)
@@ -833,9 +828,7 @@ class LeaseBroker:
                 ),
             )
         live_limits = [
-            cast(int, lease.aggregate_limit)
-            for lease in live
-            if lease.aggregate_limit is not None
+            cast(int, lease.aggregate_limit) for lease in live if lease.aggregate_limit is not None
         ]
         effective_aggregate = min([aggregate_limit, *live_limits])
         if len(live) + count > effective_aggregate:
@@ -1168,9 +1161,7 @@ class LeaseBroker:
         kind = _bounded(agent_type, "agent_type")
         child = _bounded(agent_id, "agent_id")
         batch = _optional_bounded(batch_id, "batch_id")
-        resource = (
-            None if resource_ref is None else canonical_resource_ref("agent", resource_ref)
-        )
+        resource = None if resource_ref is None else canonical_resource_ref("agent", resource_ref)
         canonical_worktree = (
             None
             if worktree_root is None
@@ -1287,11 +1278,7 @@ class LeaseBroker:
                 raise CapacityExhaustedError(
                     f"workflow batch {batch!r} has no available reserved slot",
                     earliest_expiry=self._earliest_expiry(
-                        [
-                            lease
-                            for lease in registry.leases.values()
-                            if lease.batch_id == batch
-                        ],
+                        [lease for lease in registry.leases.values() if lease.batch_id == batch],
                         wall=wall,
                         monotonic=monotonic,
                         boot_id=boot_id,
@@ -1333,9 +1320,7 @@ class LeaseBroker:
             registry = cast(Registry, self._read_registry(create=True))
             wall, now_text, monotonic, boot_id = self._now()
             self._drop_superseded_resource_lease(registry, resource)
-            self._admit_worktree(
-                registry, count=1, monotonic=monotonic, boot_id=boot_id, wall=wall
-            )
+            self._admit_worktree(registry, count=1, monotonic=monotonic, boot_id=boot_id, wall=wall)
             lease = self._new_lease(
                 registry,
                 pool="worktree",
@@ -1397,9 +1382,9 @@ class LeaseBroker:
         if registry is None:
             return "superseded"
         _wall, _now_text, monotonic, boot_id = self._now()
-        return self._current_state(
-            registry, resource, token, monotonic=monotonic, boot_id=boot_id
-        )[0]
+        return self._current_state(registry, resource, token, monotonic=monotonic, boot_id=boot_id)[
+            0
+        ]
 
     def verify(
         self,
@@ -1454,7 +1439,9 @@ class LeaseBroker:
         lease = self.verify_agent(agent_id)
         if lease.mutation != "read-write":
             raise LeaseOwnershipError("agent lease does not authorize mutation")
-        worktree_raw = None if lease.resource_ref is None else lease.resource_ref.get("worktree_root")
+        worktree_raw = (
+            None if lease.resource_ref is None else lease.resource_ref.get("worktree_root")
+        )
         if worktree_raw is None:
             return lease
         worktree = Path(worktree_raw)
@@ -1615,9 +1602,7 @@ class LeaseBroker:
                 self._write_registry(registry)
             return tuple(selected)
 
-    def renew_batch(
-        self, batch_id: str, *, owner_id: str | None = None
-    ) -> tuple[Lease, ...]:
+    def renew_batch(self, batch_id: str, *, owner_id: str | None = None) -> tuple[Lease, ...]:
         """Renew every live slot in one named Workflow batch under one lock."""
 
         batch = _bounded(batch_id, "batch_id")
@@ -1739,9 +1724,7 @@ class LeaseBroker:
         for lease in sorted(registry.leases.values(), key=lambda item: item.lease_id):
             item = {"lease_id": lease.lease_id, **lease.to_dict()}
             item["derived_state"] = (
-                "expired"
-                if self._expired(lease, monotonic=monotonic, boot_id=boot_id)
-                else "live"
+                "expired" if self._expired(lease, monotonic=monotonic, boot_id=boot_id) else "live"
             )
             leases.append(item)
         return {
@@ -1757,6 +1740,8 @@ class LeaseBroker:
         }
 
     def _owner_state(self, lease: Lease) -> Literal["dead", "live", "unknown"]:
+        if lease.boot_id != _bounded(self.providers.boot_id(), "boot_id"):
+            return "dead"
         if lease.owner_pid is None:
             return "unknown"
         if not self.providers.process_exists(lease.owner_pid):

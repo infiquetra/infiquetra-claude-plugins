@@ -1869,22 +1869,39 @@ def production_worktree_processor(
     runner: Callable[..., Any] | None = None,
     owner: str = "",
     cap: int | None = None,
+    lease_authority: Any | None = None,
 ) -> Callable[[Any, Any], Any]:
     """Build the worktree processor ``advance`` runs each tick under the held coordinator lease (U7):
     it reaps terminal sub-outcomes' worktrees, records the worktree-removed terminal (R32) + cascade,
     and provisions a durable worktree for each dispatched sub-outcome (cap-bounded, R15)."""
+    import lease_broker as fleet_leases
     import outcome_worktrees
 
     ops = outcome_worktrees.git_worktree_ops(repo_root, runner=runner)
     owner = owner or _default_holder()
     wt_cap = cap if cap is not None else outcome_worktrees.WORKTREE_CAP
+    selected = fleet_leases.broker() if lease_authority is None else lease_authority
 
     def processor(spec: Any, store: Any) -> Any:
-        harvested = outcome_worktrees.harvest_worktrees(spec, store, ops)
-        provisioned = outcome_worktrees.provision_pending(
-            repo_root, spec, store, ops, owner=owner, cap=wt_cap
+        leases = outcome_worktrees.reconcile_worktree_leases(
+            repo_root,
+            spec,
+            store,
+            ops,
+            selected,
+            owner=owner,
         )
-        return {**harvested, **provisioned}
+        harvested = outcome_worktrees.harvest_worktrees(spec, store, ops, lease_authority=selected)
+        provisioned = outcome_worktrees.provision_pending(
+            repo_root,
+            spec,
+            store,
+            ops,
+            owner=owner,
+            cap=wt_cap,
+            lease_authority=selected,
+        )
+        return {**leases, **harvested, **provisioned}
 
     return processor
 

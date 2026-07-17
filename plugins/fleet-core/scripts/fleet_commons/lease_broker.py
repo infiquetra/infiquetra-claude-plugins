@@ -977,6 +977,35 @@ class LeaseBroker:
         with self._locked():
             registry = cast(Registry, self._read_registry(create=True))
             wall, now_text, monotonic, boot_id = self._now()
+            parsed_tool = _optional_bounded(tool_use_id, "tool_use_id")
+            if parsed_tool is not None:
+                existing = [
+                    lease
+                    for lease in registry.leases.values()
+                    if lease.pool == "agent"
+                    and lease.session_id == session
+                    and lease.tool_use_id == parsed_tool
+                    and lease.agent_id is None
+                    and not self._expired(lease, monotonic=monotonic, boot_id=boot_id)
+                ]
+                if len(existing) > 1:
+                    raise RegistryCorruptError(
+                        f"multiple provisional leases use tool_use_id {parsed_tool!r}"
+                    )
+                if existing:
+                    lease = existing[0]
+                    if (
+                        lease.owner_id != owner
+                        or lease.agent_type != _optional_bounded(agent_type, "agent_type")
+                        or lease.policy_sha256 != digest
+                        or lease.session_limit != session_cap
+                        or lease.aggregate_limit != aggregate_cap
+                        or lease.mutation != mutation
+                    ):
+                        raise LeaseOwnershipError(
+                            f"tool_use_id {parsed_tool!r} already identifies a different reservation"
+                        )
+                    return lease
             if resource is not None:
                 self._drop_superseded_resource_lease(registry, resource)
             self._admit_agent(
@@ -998,7 +1027,7 @@ class LeaseBroker:
                 owner_process_start=process_start,
                 session_id=session,
                 agent_id=parsed_agent,
-                tool_use_id=_optional_bounded(tool_use_id, "tool_use_id"),
+                tool_use_id=parsed_tool,
                 agent_type=_optional_bounded(agent_type, "agent_type"),
                 batch_id=_optional_bounded(batch_id, "batch_id"),
                 resource_ref=resource,
@@ -1096,7 +1125,8 @@ class LeaseBroker:
         session_id: str,
         agent_type: str,
         agent_id: str,
-        resource_ref: Mapping[str, Any],
+        resource_ref: Mapping[str, Any] | None = None,
+        worktree_root: Path | str | None = None,
         batch_id: str | None = None,
         execution_ttl_seconds: int = DEFAULT_TTL_SECONDS,
     ) -> Lease:
@@ -1106,11 +1136,37 @@ class LeaseBroker:
         kind = _bounded(agent_type, "agent_type")
         child = _bounded(agent_id, "agent_id")
         batch = _optional_bounded(batch_id, "batch_id")
-        resource = canonical_resource_ref("agent", resource_ref)
+        resource = (
+            None if resource_ref is None else canonical_resource_ref("agent", resource_ref)
+        )
+        canonical_worktree = (
+            None
+            if worktree_root is None
+            else _safe_absolute_path(str(worktree_root), "worktree_root")
+        )
         ttl = _positive(execution_ttl_seconds, "execution_ttl_seconds")
         with self._locked():
             registry = cast(Registry, self._read_registry(create=True))
             _wall, now_text, monotonic, boot_id = self._now()
+            bound = [
+                lease
+                for lease in registry.leases.values()
+                if lease.pool == "agent"
+                and lease.session_id == session
+                and lease.agent_type == kind
+                and lease.batch_id == batch
+                and lease.agent_id == child
+                and not self._expired(lease, monotonic=monotonic, boot_id=boot_id)
+            ]
+            if len(bound) > 1:
+                raise RegistryCorruptError(f"multiple leases are bound to agent {child!r}")
+            if bound:
+                existing = bound[0]
+                if resource is not None and existing.resource_ref != resource:
+                    raise LeaseOwnershipError(
+                        f"agent {child!r} is already bound to a different resource"
+                    )
+                return existing
             candidates = [
                 lease
                 for lease in registry.leases.values()
@@ -1127,6 +1183,12 @@ class LeaseBroker:
                     f"agent_type={kind!r}, batch_id={batch!r}"
                 )
             selected = min(candidates, key=lambda lease: (lease.fencing_sequence, lease.lease_id))
+            if resource is None:
+                logical_unit_id = selected.tool_use_id or f"{session}:{kind}:{child}"
+                derived: dict[str, str] = {"logical_unit_id": logical_unit_id}
+                if canonical_worktree is not None:
+                    derived["worktree_root"] = canonical_worktree
+                resource = canonical_resource_ref("agent", derived)
             sequence = registry.issue_sequence()
             claimed = replace(
                 selected,

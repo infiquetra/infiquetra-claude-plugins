@@ -56,6 +56,12 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     )
 
 
+def test_fleet_lease_runtime_adapters_are_packaged() -> None:
+    assert (PLUGIN_ROOT / "scripts" / "lease_broker.py").is_file()
+    assert (PLUGIN_ROOT / "hooks" / "lease_lifecycle_hook.py").is_file()
+    assert (PLUGIN_ROOT / "hooks" / "lease_mutation_hook.py").is_file()
+
+
 def test_work_skill_wires_driver_owned_workflow_settlement() -> None:
     work_skill = _read(PLUGIN_ROOT / "skills" / "work" / "SKILL.md")
     for required in (

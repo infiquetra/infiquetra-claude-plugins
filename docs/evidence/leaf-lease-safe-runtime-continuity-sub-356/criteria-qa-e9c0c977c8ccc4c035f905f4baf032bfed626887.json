@@ -1,0 +1,1 @@
+{"blocking_threshold":"critical, high, and medium findings block","in_scope":["behavior","security","api","config","docs"],"tier":"Standard"}

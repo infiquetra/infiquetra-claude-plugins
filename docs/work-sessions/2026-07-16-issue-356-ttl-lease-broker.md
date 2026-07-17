@@ -3,7 +3,7 @@ date: 2026-07-16
 kind: work-session
 issue: https://github.com/infiquetra/infiquetra-claude-plugins/issues/356
 plan: docs/plans/2026-07-15-issue-356-ttl-lease-broker-plan.md
-status: review-repair-complete-rereview-pending
+status: review-repair-round-2-complete-rereview-pending
 ---
 
 # Work Session - Fleet TTL Lease Broker and Runtime Continuity
@@ -89,3 +89,27 @@ issue PR.
 - Ruff check and format check on every changed Python file: passed.
 - `uv run mypy plugins/`: passed.
 - `git diff --check`: passed.
+
+## Review Repair Round 2
+
+- Closed the remaining architecture/security seams from the first rereview: advisory panel dispatch
+  now uses explicit session admission; nested parent validation and child grant are one transaction;
+  engine post-run shaping, integrity counters, and fact writes run inside exact-token settlement.
+- Renew/release CLI operations require the broker epoch and fencing sequence. Owner teardown is
+  session-scoped and trusts only broker-recorded terminal evidence, never caller-asserted child IDs.
+- Orphan admission pins have a same-boot monotonic TTL, are visible through `inspect`, and cannot
+  permanently consume the bounded admission registry.
+- Closed heads from both agent and worktree pools are bounded in the hot registry and archived under
+  owner-only no-follow sidecars, preserving exact closed versus superseded classification.
+- Updated the executable spawn inventory for the guarded engine adapter and migrated legacy
+  tripwire/panel test callers to the explicit admission contract.
+
+### Round 2 checks
+
+- Complete affected matrix: 478 passed in 99.12 seconds; the subsequently added CLI credential
+  contract passed independently.
+- Broker contract: 39 passed; engine dispatch: 135 passed; tripwire and conformance: 100 passed.
+- Ruff check and format check on all changed Python files: passed.
+- `uv run mypy plugins/`: passed.
+- `git diff --check`: passed.
+- Architecture/security rereviews and the full repository gate remain required before PR creation.

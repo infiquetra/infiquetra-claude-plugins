@@ -27,6 +27,29 @@
 
 ## 2026-07-16
 
+### A lease check protects a write only when the check and write share the exclusion window {#lease-settlement-window-356}
+
+**Context.** Issue #356 originally renewed and verified an external-engine token after the adapter
+returned, then released the broker lock before integrity counters and run-fact writes. Nested Agent
+admission similarly verified a parent in one transaction and granted its child in another.
+**Evidence.** Whole-diff security review reproduced both check-then-act windows. The repaired
+`LeaseBroker.agent_settlement()` holds the authority lock from post-run token validation through
+durable result writes and exact release; `acquire_agent()` and `prepare_batch_call()` validate the
+trusted parent inside the grant transaction. Focused tests block a competing retry behind settlement
+and assert advisory facts are written while the settlement guard is active. **Mechanism.** A current
+token is a point-in-time observation. Once its lock is released, another retry can supersede it before
+the protected side effect, making a successful check irrelevant. **Fix.** Move validation into the
+same locked transition as the grant or durable write, require exact fencing credentials for direct
+renew/release, expire abandoned admission pins, and keep exact closed heads in a cold archive outside
+the bounded hot registry. **Generalizable rule.** Treat lease validation as transaction scope, not a
+boolean precondition: every authority-dependent side effect must occur before the exclusion window
+closes, and preflight-only claims need an expiry and an operator-visible recovery path.
+
+**Refs.** Issue #356; DECISIONS `{#fleet-ttl-lease-broker-356}`; code review
+`docs/code-reviews/2026-07-16-issue-356-ttl-lease-broker-code-review.md`.
+
+---
+
 ### Reporting an error is not a failure contract until the process status agrees {#board-move-fail-loud-609}
 
 **Context.** Mission-control `board move` processed several possible Projects

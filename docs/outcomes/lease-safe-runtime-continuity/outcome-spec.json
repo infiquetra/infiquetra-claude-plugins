@@ -21,12 +21,13 @@
       "timeout_seconds": null,
       "heartbeat_seconds": null,
       "depends_on": [],
-      "leaf_saga_id": "",
+      "leaf_saga_id": "leaf-lease-safe-runtime-continuity-sub-350",
       "child_spec_ref": "",
       "github": {
         "repo": "infiquetra/infiquetra-claude-plugins",
         "issue": "infiquetra/infiquetra-claude-plugins#350",
-        "sub_issue": 350
+        "sub_issue": 350,
+        "pr": "https://github.com/infiquetra/infiquetra-claude-plugins/pull/607"
       },
       "worktree": {},
       "evidence": {
@@ -55,12 +56,13 @@
       "timeout_seconds": null,
       "heartbeat_seconds": null,
       "depends_on": [],
-      "leaf_saga_id": "",
+      "leaf_saga_id": "leaf-lease-safe-runtime-continuity-sub-351",
       "child_spec_ref": "",
       "github": {
         "repo": "infiquetra/infiquetra-claude-plugins",
         "issue": "infiquetra/infiquetra-claude-plugins#351",
-        "sub_issue": 351
+        "sub_issue": 351,
+        "pr": "https://github.com/infiquetra/infiquetra-claude-plugins/pull/611"
       },
       "worktree": {},
       "evidence": {

@@ -3,7 +3,7 @@ date: 2026-07-16
 kind: work-session
 issue: https://github.com/infiquetra/infiquetra-claude-plugins/issues/356
 plan: docs/plans/2026-07-15-issue-356-ttl-lease-broker-plan.md
-status: review-repair-round-3-complete-final-rereview-pending
+status: review-complete-pr-ready
 ---
 
 # Work Session - Fleet TTL Lease Broker and Runtime Continuity
@@ -62,9 +62,8 @@ status: review-repair-round-3-complete-final-rereview-pending
 
 ## Next Step
 
-Pin the repaired revision, rerun the affected whole-diff code-review lenses and independent
-concurrency/event-flow validators, then run the full repository gate and open, monitor, and merge the
-issue PR.
+Push the reviewed branch, open and monitor the issue PR, merge it, then close the issue and move its
+Operations card to Done.
 
 ## Review Repair Round 1
 
@@ -122,12 +121,16 @@ issue PR.
 - Bound advisory second-opinion dispatch to the originating Saga session identity as well as its
   pinned admission policy, so a fresh execution ID cannot bypass the source session's capacity.
 - Fixed the full CI mypy surface in the new tests without changing runtime behavior.
-- Replaced the per-call emergency boot identity with a cross-process boot-epoch fallback, preserving
-  Darwin `utmpx` boot-record fallback, preserving acquire/renew/verify continuity when a restricted
-  macOS host denies `kern.boottime` without coupling authority to wall-clock movement.
+- Replaced the per-call emergency boot identity with a cross-process Darwin `utmpx` boot-record
+  fallback, preserving acquire/renew/verify continuity when a restricted macOS host denies
+  `kern.boottime` without coupling authority to wall-clock movement.
 
 ### Round 3 checks
 
-- Panel settlement, originating-session capacity, and affected lease tests: final rerun pending.
-- Final affected matrix, static checks, fresh exact-revision reviews, and full repository CI remain
-  required before PR creation.
+- Panel settlement, originating-session capacity, and affected lease matrix: 302 passed.
+- Broker boot-identity suite: 42 passed.
+- Release-surface gate: 65 passed.
+- Full repository gate: 4,662 passed, zero failed, two skipped.
+- Ruff check, Ruff format check, mypy, changed-broker Bandit medium/high scan, and diff check: passed.
+- Exact-revision architecture, security/authority, and concurrency/event-flow rereviews: PASS with
+  no P0-P2 findings at `4ba47220`.

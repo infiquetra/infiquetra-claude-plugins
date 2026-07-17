@@ -2,24 +2,23 @@
 
 ## Verdict
 
-> **BLOCKED.** The implementation is scope-complete and its current quality gate is green, but the
-> pinned revision has two data-loss defects, nine other P1 lifecycle/admission defects, and required
-> concurrency/event-flow evidence gaps. No PR or merge is allowed until every finding below is fixed
-> and the affected lenses and validators pass again.
+> **PASS.** All original and residual P0-P2 findings are closed. The final exact revision passed the
+> architecture, security/authority, and concurrency/event-flow rereviews, the complete affected
+> matrix, static/release gates, and the full repository suite. The branch is PR-ready.
 
 | Field | Value |
 |---|---|
 | Target | `issue/356-ttl-lease-broker` against `origin/main` |
 | Merge base | `8052bf56020b0d781db6288f6a1cb243e039c12b` |
-| Reviewed revision | `8fa48fa747e465f5013eb989f116f65ee42ceec7` |
+| Reviewed revision | `4ba472200c1d0c0d63b8816e7c9ff743a00b24dd` |
 | Plan | `docs/plans/2026-07-15-issue-356-ttl-lease-broker-plan.md` |
 | Work session | `docs/work-sessions/2026-07-16-issue-356-ttl-lease-broker.md` |
 | Scope check | CLEAN |
-| Blocked | true |
+| Blocked | false |
 
 ## Scope Check
 
-The 46-file, 5,973-insertion diff implements the approved U1-U6 broker, adapters, hooks, worktree
+The 52-file, 9,339-insertion diff implements the approved U1-U6 broker, adapters, hooks, worktree
 integration, release surfaces, and tests. No unrelated product work or pre-existing worktree changes
 are present.
 
@@ -27,40 +26,40 @@ are present.
 
 | Unit | Status | Evidence |
 |---|---|---|
-| U1 — canonical broker and policy | DONE, review-blocked | fleet-core broker/policy plus broker tests |
-| U2 — hook reservation, binding, fencing | DONE, review-blocked | Saga hooks/adapter plus hook tests |
-| U3 — Workflow batch admission | DONE, review-blocked | execution metadata/emitter plus emitter tests |
-| U4 — team and direct-runtime adoption | DONE, review-blocked | team protocol, engine/outcome adapters and tests |
-| U5 — worktree ownership/reclamation | DONE, review-blocked | outcome worktree integration and tests |
-| U6 — conformance and release closure | DONE, review-blocked | inventory, manifests, changelogs, docs, full gate |
+| U1 — canonical broker and policy | DONE, accepted | fleet-core broker/policy plus broker tests |
+| U2 — hook reservation, binding, fencing | DONE, accepted | Saga hooks/adapter plus hook tests |
+| U3 — Workflow batch admission | DONE, accepted | execution metadata/emitter plus emitter tests |
+| U4 — team and direct-runtime adoption | DONE, accepted | team protocol, engine/outcome adapters and tests |
+| U5 — worktree ownership/reclamation | DONE, accepted | outcome worktree integration and tests |
+| U6 — conformance and release closure | DONE, accepted | inventory, manifests, changelogs, docs, full gate |
 
-COMPLETION: 6/6 built; 0/6 accepted until findings are resolved.
+COMPLETION: 6/6 built and accepted.
 
 ## Findings
 
 | # | Sev | File:line | Issue | Reviewer | Confidence | Route | Status |
 |---|---|---|---|---|---:|---|---|
-| 1 | P0 | `plugins/saga/scripts/outcome_worktrees.py:533` | Dead coordinator identity can reap active worktrees | devils | 100 | `manual -> review-fixer` | open |
-| 2 | P0 | `plugins/fleet-core/scripts/fleet_commons/lease_broker.py:1788` | Reacquisition races destructive worktree reaping | devils, architecture, security, concurrency | 100 | `manual -> review-fixer` | open |
-| 3 | P1 | `plugins/fleet-core/scripts/fleet_commons/lease_broker.py:1323` | Worktree acquisition steals live ownership | devils | 100 | `gated_auto -> review-fixer` | open |
-| 4 | P1 | `plugins/saga/scripts/outcome_worktrees.py:369` | Failed registration rollback can drop all authority | architecture | 100 | `gated_auto -> review-fixer` | open |
-| 5 | P1 | `plugins/saga/scripts/lease_broker.py:234` | Expired delegated parent can mint fresh authority | security | 100 | `gated_auto -> review-fixer` | open |
-| 6 | P1 | `plugins/saga/scripts/workflow_emitter.py:192` | Workflow release revokes still-live children | event-flow | 100 | `gated_auto -> review-fixer` | open |
-| 7 | P1 | `plugins/team-execution/skills/team-execution/scripts/lease_protocol.py:82` | Step B8 validation and release are not atomic | event-flow | 100 | `gated_auto -> review-fixer` | open |
-| 8 | P1 | `plugins/saga/scripts/lease_broker.py:107` | Normal Saga hooks ignore resolved concurrency | devils | 100 | `manual -> review-fixer` | open |
-| 9 | P1 | `plugins/fleet-core/scripts/fleet_commons/lease_broker.py:818` | Same-session admission can upshift a live ceiling | architecture | 100 | `gated_auto -> review-fixer` | open |
-| 10 | P1 | `plugins/saga/scripts/engine_dispatch.py:746` | Engine leases lose resolved policy and retry identity | devils, architecture | 100 | `gated_auto -> review-fixer` | open |
-| 11 | P1 | `plugins/saga/scripts/engine_dispatch.py:510` | Expired engine output is persisted before lease settlement | root | 100 | `gated_auto -> review-fixer` | open |
-| 12 | P1 | `plugins/fleet-core/scripts/fleet_commons/lease_broker.py:1456` | Symlinked targets escape leased worktrees | devils, security | 100 | `gated_auto -> review-fixer` | open |
-| 13 | P1 | `tests/test_concurrency_conformance.py:620` | Conformance ignores acquire, renew, and release edges | testing | 100 | `safe_auto -> review-fixer` | open |
-| 14 | P1 | `tests/test_saga_plugin.py:65` | Workflow test does not enforce prelaunch attestation order | testing | 100 | `safe_auto -> review-fixer` | open |
-| 15 | P1 | `tests/test_saga_hooks.py:148` | Parallel hook transitions are tested only serially | testing | 100 | `safe_auto -> review-fixer` | open |
-| 16 | P1 | `tests/test_fleet_lease_broker.py:528` | Multiprocess proof covers aggregate admission only | concurrency | 100 | `safe_auto -> review-fixer` | open |
-| 17 | P2 | `plugins/fleet-core/scripts/fleet_commons/lease_broker.py:1665` | Parent completion is not session-scoped | devils | 100 | `safe_auto -> review-fixer` | open |
-| 18 | P2 | `plugins/saga/scripts/engine_dispatch.py:797` | Lease cleanup masks primary dispatch failures | devils, architecture | 100 | `gated_auto -> review-fixer` | open |
-| 19 | P2 | `plugins/fleet-core/scripts/fleet_commons/lease_broker.py:923` | Hot resource-head history is unbounded | security | 100 | `manual -> review-fixer` | open |
-| 20 | P2 | `tests/test_fleet_lease_broker.py:357` | Wrong-owner and wrong-token refusal lack proof | testing | 100 | `safe_auto -> review-fixer` | open |
-| 21 | P2 | `tests/test_outcome_worktrees.py:342` | Reclamation acceptance bypasses real Git | testing | 100 | `safe_auto -> review-fixer` | open |
+| 1 | P0 | `plugins/saga/scripts/outcome_worktrees.py:533` | Dead coordinator identity can reap active worktrees | devils | 100 | `manual -> review-fixer` | closed |
+| 2 | P0 | `plugins/fleet-core/scripts/fleet_commons/lease_broker.py:1788` | Reacquisition races destructive worktree reaping | devils, architecture, security, concurrency | 100 | `manual -> review-fixer` | closed |
+| 3 | P1 | `plugins/fleet-core/scripts/fleet_commons/lease_broker.py:1323` | Worktree acquisition steals live ownership | devils | 100 | `gated_auto -> review-fixer` | closed |
+| 4 | P1 | `plugins/saga/scripts/outcome_worktrees.py:369` | Failed registration rollback can drop all authority | architecture | 100 | `gated_auto -> review-fixer` | closed |
+| 5 | P1 | `plugins/saga/scripts/lease_broker.py:234` | Expired delegated parent can mint fresh authority | security | 100 | `gated_auto -> review-fixer` | closed |
+| 6 | P1 | `plugins/saga/scripts/workflow_emitter.py:192` | Workflow release revokes still-live children | event-flow | 100 | `gated_auto -> review-fixer` | closed |
+| 7 | P1 | `plugins/team-execution/skills/team-execution/scripts/lease_protocol.py:82` | Step B8 validation and release are not atomic | event-flow | 100 | `gated_auto -> review-fixer` | closed |
+| 8 | P1 | `plugins/saga/scripts/lease_broker.py:107` | Normal Saga hooks ignore resolved concurrency | devils | 100 | `manual -> review-fixer` | closed |
+| 9 | P1 | `plugins/fleet-core/scripts/fleet_commons/lease_broker.py:818` | Same-session admission can upshift a live ceiling | architecture | 100 | `gated_auto -> review-fixer` | closed |
+| 10 | P1 | `plugins/saga/scripts/engine_dispatch.py:746` | Engine leases lose resolved policy and retry identity | devils, architecture | 100 | `gated_auto -> review-fixer` | closed |
+| 11 | P1 | `plugins/saga/scripts/engine_dispatch.py:510` | Expired engine output is persisted before lease settlement | root | 100 | `gated_auto -> review-fixer` | closed |
+| 12 | P1 | `plugins/fleet-core/scripts/fleet_commons/lease_broker.py:1456` | Symlinked targets escape leased worktrees | devils, security | 100 | `gated_auto -> review-fixer` | closed |
+| 13 | P1 | `tests/test_concurrency_conformance.py:620` | Conformance ignores acquire, renew, and release edges | testing | 100 | `safe_auto -> review-fixer` | closed |
+| 14 | P1 | `tests/test_saga_plugin.py:65` | Workflow test does not enforce prelaunch attestation order | testing | 100 | `safe_auto -> review-fixer` | closed |
+| 15 | P1 | `tests/test_saga_hooks.py:148` | Parallel hook transitions are tested only serially | testing | 100 | `safe_auto -> review-fixer` | closed |
+| 16 | P1 | `tests/test_fleet_lease_broker.py:528` | Multiprocess proof covers aggregate admission only | concurrency | 100 | `safe_auto -> review-fixer` | closed |
+| 17 | P2 | `plugins/fleet-core/scripts/fleet_commons/lease_broker.py:1665` | Parent completion is not session-scoped | devils | 100 | `safe_auto -> review-fixer` | closed |
+| 18 | P2 | `plugins/saga/scripts/engine_dispatch.py:797` | Lease cleanup masks primary dispatch failures | devils, architecture | 100 | `gated_auto -> review-fixer` | closed |
+| 19 | P2 | `plugins/fleet-core/scripts/fleet_commons/lease_broker.py:923` | Hot resource-head history is unbounded | security | 100 | `manual -> review-fixer` | closed |
+| 20 | P2 | `tests/test_fleet_lease_broker.py:357` | Wrong-owner and wrong-token refusal lack proof | testing | 100 | `safe_auto -> review-fixer` | closed |
+| 21 | P2 | `tests/test_outcome_worktrees.py:342` | Reclamation acceptance bypasses real Git | testing | 100 | `safe_auto -> review-fixer` | closed |
 
 ### Failure modes and required fixes
 
@@ -97,7 +96,19 @@ COMPLETION: 6/6 built; 0/6 accepted until findings are resolved.
 20. Prove wrong owner/token and stale-token release/renew leave registry authority unchanged.
 21. Add a temporary real-Git reclamation/retry acceptance test.
 
-All findings are introduced by this diff and require verification after repair.
+All findings were introduced by this diff and are closed in the reviewed final revision.
+
+### Final repair closure
+
+- The 21 original findings were repaired and covered by the focused lifecycle, real-Git,
+  multiprocess, ownership, and negative-conformance tests described above.
+- Residual review rounds closed exact-token engine settlement, originating-session admission,
+  aggregate advisory-panel settlement, and restricted-host boot identity continuity.
+- Two speculative patches from intermediate commit `f4279696`—bounded cold-fence eviction and
+  restartable worktree reaping phases—were rejected by review and removed in `b4b68052`; neither is
+  present in the final tree.
+- Darwin boot fallback now reads the root-owned libc `BOOT_TIME` record, survives wall-clock jumps,
+  changes on reboot, is stable across processes, and fails closed if no OS identity is available.
 
 ## Rejected Candidate Findings
 
@@ -110,19 +121,17 @@ All findings are introduced by this diff and require verification after repair.
 
 ## Coverage And Validator Evidence
 
-- Prior implementation gate: `4618 passed, 1 skipped`; Ruff check/format, mypy, and diff check passed.
-- Architecture/security/devil/testing reviews: all blocking; expected fixed profiles were
-  `gpt-5.6-sol/high`. The orchestrator supplied fixed `review_high` roles; child-local runtime receipts
-  were not exposed, so no stronger runtime-attestation claim is made.
-- Concurrency validator: 25 broker tests and five focused cases passed, but the required gate hard
-  failed on reaping/reacquisition and incomplete multiprocess proof.
-- Event-flow validator: 143 focused tests passed, but the required gate hard failed on premature
-  Workflow release and non-atomic Step B8 teardown.
-- Testing lens: 314 focused tests passed; four negative mutations incorrectly remained green.
-- Bandit's two high findings are pre-existing in unchanged files; changed production files have no
-  medium/high Bandit findings.
+- Final affected matrix: `302 passed`.
+- Full repository gate: `4662 passed, 0 failed, 2 skipped`.
+- Release-surface gate: `65 passed`.
+- Ruff check, Ruff format check, mypy, and `git diff --check`: passed.
+- Architecture, security/authority, and concurrency/event-flow rereviews: PASS with no P0-P2
+  findings at exact revision `4ba47220`.
+- Broker boot-identity suite: `42 passed`, including real cross-process Darwin identity, same-boot
+  wall jump, changed-record reboot invalidation, and all-source fail-closed behavior.
+- Bandit reports five low process-launch advisories in the broker and zero medium/high findings; the
+  repository's two high findings remain pre-existing in unchanged files.
 
 ## Route
 
-Return to `/work`, fix all P0-P2 findings, rerun affected reviewers/validators on the new revision,
-then run the full repository gate. PR/merge remains blocked.
+Proceed to PR creation, required-check monitoring, merge, issue closure, and Operations board Done.

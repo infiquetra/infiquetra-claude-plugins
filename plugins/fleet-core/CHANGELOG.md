@@ -5,6 +5,20 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-07-17
+
+### Added
+- Added broker-owned prepare, commit, abort, conservative retained-authority inspection, canonical
+  close receipts, and exact-receipt successor CAS for accepted external-runtime writes. Automatic
+  restart-safe producer replay remains lifecycle work for #358.
+- Added closed orphan-evidence schemas, bounded write-once quarantine, immutable refusal events and
+  close-seal mirrors, plus deterministic read-only candidate projection.
+- Kept authority and audit state owner-only, added Darwin process identity, and made generic release
+  fail closed while settlement authority is retained. These are cooperative local-plugin safeguards,
+  not a hostile same-user security boundary.
+- Advanced the lease protocol to version 2 for the incompatible prepare/commit/abort settlement
+  contract. Exact archived heads remain authoritative even after they leave bounded inspection.
+
 ## [0.12.0] - 2026-07-16
 
 ### Added

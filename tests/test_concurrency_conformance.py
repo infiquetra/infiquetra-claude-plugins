@@ -19,6 +19,7 @@ SAGA_ROOT = ROOT / "plugins/saga"
 SCRIPT_DIR = SAGA_ROOT / "scripts"
 SOURCE_PATH = SCRIPT_DIR / "execution_spec.py"
 INVENTORY_PATH = SAGA_ROOT / "references/concurrency-spawn-sites.md"
+DECISIONS_PATH = ROOT / "docs/engineering-journal/DECISIONS.md"
 REL_SOURCE = SOURCE_PATH.relative_to(ROOT).as_posix()
 HELPER_NAME = "_emit_parallel_wave"
 ROW_RE = re.compile(
@@ -83,8 +84,8 @@ EXPECTED_ROWS: frozenset[InventoryRow] = frozenset(
             "agent",
             "engine_dispatch.dispatch",
             "not-applicable:in-process-adapter",
-            "LeaseBroker.agent_settlement",
-            "LeaseBroker.agent_settlement",
+            "LeaseBroker.prepare_agent_settlement",
+            "LeaseBroker.commit_agent_settlement",
         ),
         (
             "plugins/saga/scripts/engine_dispatch.py",
@@ -93,8 +94,8 @@ EXPECTED_ROWS: frozenset[InventoryRow] = frozenset(
             "agent",
             "engine_dispatch.dispatch",
             "not-applicable:in-process-adapter",
-            "LeaseBroker.agent_settlement",
-            "LeaseBroker.agent_settlement",
+            "LeaseBroker.prepare_agent_settlement",
+            "LeaseBroker.commit_agent_settlement",
         ),
         (
             "plugins/saga/scripts/engine_dispatch.py",
@@ -104,7 +105,7 @@ EXPECTED_ROWS: frozenset[InventoryRow] = frozenset(
             "engine_dispatch.dispatch_advisory_panel",
             "not-applicable:in-process-adapter",
             "LeaseBroker.renew",
-            "LeaseBroker.agent_settlement",
+            "LeaseBroker.commit_agent_settlement",
         ),
         (
             "plugins/saga/scripts/outcome.py",
@@ -142,18 +143,51 @@ EXPECTED_EXECUTABLE_SPAWNS = frozenset(
         ("plugins/saga/scripts/outcome_worktrees.py", "ensure_worktree", "ops.add"),
     }
 )
+
+
+def test_issue_355_decision_uses_one_broker_authority() -> None:
+    text = DECISIONS_PATH.read_text(encoding="utf-8")
+    anchor = "{#orphan-evidence-fencing-355}"
+    assert text.count(anchor) == 1
+    section = text.split(anchor, 1)[1].split("\n---\n", 1)[0]
+    normalized = " ".join(section.split())
+
+    for required in (
+        "`LeaseBroker` as the sole mutation authority",
+        "prepare/commit/abort",
+        "atomic closed-registry replacement",
+        "closed-head CAS",
+        "does not claim automatic or restart-safe producer replay",
+        "same-effective-user processes and the operator are trusted",
+        "512 MiB and 256 entries",
+    ):
+        assert required in normalized
+
+    for obsolete in ("digest-named lock", "resource-scoped lock"):
+        assert obsolete not in section
+
+
 EXPECTED_LEASE_CALLS: dict[tuple[str, str], frozenset[str]] = {
     ("plugins/saga/scripts/engine_dispatch.py", "dispatch"): frozenset(
         {
             "selected.acquire_agent",
+            "selected.acquire_successor",
+            "selected.commit_agent_settlement",
+            "selected.abort_agent_settlement",
             "selected.release",
         }
     ),
     ("plugins/saga/scripts/engine_dispatch.py", "guarded_runner"): frozenset(
-        {"selected.agent_settlement"}
+        {"selected.prepare_agent_settlement"}
     ),
     ("plugins/saga/scripts/engine_dispatch.py", "dispatch_advisory_panel"): frozenset(
-        {"selected.acquire_agent", "selected.agent_settlement", "selected.release"}
+        {
+            "selected.acquire_agent",
+            "selected.prepare_agent_settlement",
+            "selected.commit_agent_settlement",
+            "selected.abort_agent_settlement",
+            "selected.release",
+        }
     ),
     ("plugins/saga/scripts/engine_dispatch.py", "guarded_panel_runner"): frozenset(
         {"selected.renew"}
@@ -990,7 +1024,8 @@ def test_injected_unguarded_executable_spawn_is_rejected() -> None:
     ("source_path", "call"),
     [
         ("plugins/saga/scripts/engine_dispatch.py", "selected.acquire_agent"),
-        ("plugins/saga/scripts/engine_dispatch.py", "selected.agent_settlement"),
+        ("plugins/saga/scripts/engine_dispatch.py", "selected.prepare_agent_settlement"),
+        ("plugins/saga/scripts/engine_dispatch.py", "selected.commit_agent_settlement"),
         ("plugins/saga/scripts/engine_dispatch.py", "selected.release"),
         ("plugins/saga/scripts/outcome_dispatcher.py", "selected.acquire_agent"),
         ("plugins/saga/scripts/outcome_dispatcher.py", "selected.renew"),

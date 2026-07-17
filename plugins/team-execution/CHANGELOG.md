@@ -4,6 +4,19 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [2.19.0] - 2026-07-17
+
+### Added - receipt-chained manifest acceptance (#355)
+
+- Chaperone manifest claims now name the registered dispatch close receipt and commit the manifest
+  plus strict audit mirror through an exact broker successor.
+- The documented production sequence now reuses one lease authority, admission, session, audit root,
+  and bounded attempt identity through dispatch, claim, adjudication, and gate acceptance.
+- Adjudication names the claim close receipt, compares the source-byte snapshot inside settlement, and
+  returns its own canonical close. Raw worker-manifest CLI output remains noncanonical evidence and
+  cannot satisfy a gate.
+- Advanced the Team Execution preflight to fleet-core lease protocol 2.
+
 ## [2.18.0] - 2026-07-16
 
 ### Added - lease-backed worker, reviewer, and validator lifecycles (#356)

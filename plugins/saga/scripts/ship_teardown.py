@@ -611,36 +611,62 @@ def _default_authorize(op_kind: str) -> Any:
 def _reap_via_registry(
     repo_root: Path, worktree_path: str, runner: Callable[..., Any] | None
 ) -> bool | None:
-    """If ``worktree_path`` is a ``.saga-worktrees``-registered outcome worktree, remove
-    it through ``outcome_worktrees.reap_worktree`` so the registry deregisters (R6's
-    reuse clause). Returns True (reaped + deregistered), False (removal failed → entry
-    kept, no silent leak), or None when the path is not a registered outcome worktree
-    (the caller then falls back to a plain ``git worktree remove``)."""
+    """Strictly route a managed outcome path through its registry-owned reaper.
+
+    ``None`` is reserved for paths outside ``.saga-worktrees``. Once a path enters the canonical
+    managed namespace, store resolution, strict registry parsing, exact entry lookup, and path binding
+    must all succeed; any ambiguity raises so the caller cannot fall through to raw Git removal.
+    """
     saga_root = _realpath(str(repo_root / ".saga-worktrees"))
     target = _realpath(worktree_path)
     if not saga_root or not (target == saga_root or target.startswith(saga_root + os.sep)):
         return None
     try:
         rel = os.path.relpath(target, saga_root)
-    except ValueError:
-        return None
+    except ValueError as exc:
+        raise ShipTeardownError(
+            f"managed outcome worktree path could not be resolved safely: {worktree_path}"
+        ) from exc
     parts = rel.split(os.sep)
-    if len(parts) < 2 or parts[0] in ("", os.pardir):
-        return None
+    if len(parts) != 2 or any(part in ("", os.curdir, os.pardir) for part in parts):
+        raise ShipTeardownError(
+            "managed outcome worktree retained: expected canonical "
+            f".saga-worktrees/<outcome>/<subplot> path, found {worktree_path}"
+        )
     outcome_id, subplot_id = parts[0], parts[1]
     try:
         import outcome_store  # noqa: PLC0415
         import outcome_worktrees  # noqa: PLC0415
 
         store = outcome_store.Store.for_outcome(outcome_id, repo_root, runner=runner)
-    except Exception:  # noqa: BLE001 — an unreadable store means "not registered here"
-        return None
-    registry = outcome_worktrees.read_registry(store)
+    except Exception as exc:  # noqa: BLE001 — plugin/store skew must retain managed resources
+        raise ShipTeardownError(
+            f"managed outcome worktree retained: cannot resolve store for {outcome_id!r}: {exc}"
+        ) from exc
+    try:
+        registry = outcome_worktrees.read_registry_strict(store)
+    except outcome_worktrees.WorktreeError as exc:
+        raise ShipTeardownError(
+            f"managed outcome worktree retained: registry is unreadable or corrupt: {exc}"
+        ) from exc
     entry = registry.get(subplot_id)
-    if entry is None or _realpath(str(entry.get("path", ""))) != target:
-        return None
+    if entry is None:
+        raise ShipTeardownError(
+            f"managed outcome worktree retained: registry entry {subplot_id!r} is missing"
+        )
+    if _realpath(str(entry.get("path", ""))) != target:
+        raise ShipTeardownError(
+            f"managed outcome worktree retained: registry entry {subplot_id!r} names a different path"
+        )
     ops = outcome_worktrees.git_worktree_ops(repo_root, runner=runner)
-    return outcome_worktrees.reap_worktree(store, subplot_id, ops)
+    try:
+        return outcome_worktrees.reap_worktree(store, subplot_id, ops)
+    except outcome_worktrees.WorktreeError as exc:
+        # Ship teardown has no coordinator lease/token.  A lease-bound entry must stay intact for
+        # the canonical outcome reaper; falling back to plain git removal would sever its fence.
+        raise ShipTeardownError(
+            f"registered outcome worktree retained for canonical lease-aware reap: {exc}"
+        ) from exc
 
 
 def _remove_worktree(
@@ -650,7 +676,10 @@ def _remove_worktree(
     through ``reap_worktree`` (registry deregisters); everything else uses a plain
     ``git worktree remove`` (no ``--force`` — a failed removal is kept + reported,
     mirroring ``reap_worktree``'s no-silent-leak discipline)."""
-    reaped = _reap_via_registry(repo_root, worktree_path, runner)
+    try:
+        reaped = _reap_via_registry(repo_root, worktree_path, runner)
+    except ShipTeardownError as exc:
+        return False, str(exc)
     if reaped is True:
         return True, "reaped via outcome_worktrees.reap_worktree (registry deregistered)"
     if reaped is False:

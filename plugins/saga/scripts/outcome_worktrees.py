@@ -62,6 +62,10 @@ class WorktreeError(ValueError):
     """A worktree lifecycle operation violated an invariant (bad id, ops failure surfaced loudly)."""
 
 
+class WorktreeAuthorityError(WorktreeError):
+    """A lease-bound worktree could not prove the exact broker authority required to reap it."""
+
+
 @dataclass
 class WorktreeOps:
     """The git-worktree operations the lifecycle needs — injected so it is testable with no real git.
@@ -75,6 +79,15 @@ class WorktreeOps:
     remove: Callable[[str], bool]  # (path) -> removed?  (idempotent: already-gone is success)
     exists: Callable[[str], bool]  # (path) -> definitely present? (ambiguity degrades to True)
     list_paths: Callable[[], list[str]]  # the live worktree paths git knows about
+
+
+@dataclass(frozen=True)
+class ReapPreflight:
+    """Strict, non-mutating authority proof for one registered worktree reap."""
+
+    entry: dict[str, Any]
+    lease_id: str = ""
+    token: Any | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -133,7 +146,7 @@ def read_registry(store: Any) -> dict[str, dict[str, Any]]:
     return {str(k): dict(v) for k, v in entries.items() if isinstance(v, dict)}
 
 
-def _read_registry_without_repair(store: Any) -> dict[str, dict[str, Any]]:
+def read_registry_strict(store: Any) -> dict[str, dict[str, Any]]:
     """Read the registry without invoking the normal quarantine/repair path.
 
     Settlement reconciliation is observational: even malformed input must not move, rewrite, or
@@ -149,10 +162,17 @@ def _read_registry_without_repair(store: Any) -> dict[str, dict[str, Any]]:
         raise WorktreeError(f"cannot read worktree registry without repair: {exc}") from exc
     if not isinstance(data, dict):
         raise WorktreeError("worktree registry must be a JSON object")
-    entries = data.get("worktrees", {})
+    if set(data) != {"worktrees"}:
+        raise WorktreeError("worktree registry requires exactly the 'worktrees' field")
+    entries = data["worktrees"]
     if not isinstance(entries, dict):
         raise WorktreeError("worktree registry 'worktrees' must be an object")
-    return {str(k): dict(v) for k, v in entries.items() if isinstance(v, dict)}
+    invalid = [str(key) for key, value in entries.items() if not isinstance(value, dict)]
+    if invalid:
+        raise WorktreeError(
+            "worktree registry entries must be objects: " + ", ".join(sorted(invalid))
+        )
+    return {str(k): dict(v) for k, v in entries.items()}
 
 
 def _write_registry(store: Any, entries: dict[str, dict[str, Any]]) -> None:
@@ -173,7 +193,86 @@ def _lease_binding(entry: dict[str, Any], selected: Any) -> tuple[str, Any]:
     try:
         return fleet_leases.parse_worktree_lease_receipt(entry.get("lease"), selected)
     except fleet_leases.HookInputError as exc:
-        raise WorktreeError(f"worktree registry lease binding is invalid: {exc}") from exc
+        raise WorktreeAuthorityError(f"worktree registry lease binding is invalid: {exc}") from exc
+
+
+def prevalidate_reap_authority(
+    store: Any,
+    subplot_id: str,
+    lease_authority: Any | None,
+    *,
+    expected_outcome_id: str | None = None,
+) -> ReapPreflight | None:
+    """Strictly prove a registry entry's exact lease authority without mutating any state.
+
+    An absent entry returns ``None`` and a legacy unleased entry returns a preflight with an empty
+    ``lease_id``. A lease-bound entry requires the broker named by its receipt and proves the exact
+    lease id, resource, fencing token, and deterministic worktree path before a caller may mutate Git,
+    the registry, or an outcome spec. Registry corruption is surfaced, never repaired/quarantined.
+    """
+    outcome_store._safe_name(subplot_id, what="subplot_id")
+    entry = read_registry_strict(store).get(subplot_id)
+    if entry is None:
+        return None
+    if "lease" not in entry:
+        return ReapPreflight(entry=entry)
+    if lease_authority is None:
+        raise WorktreeAuthorityError(
+            f"worktree {subplot_id!r} is lease-bound; refusing authority-free reap. "
+            "Retry through the canonical outcome reaper with the exact lease authority; "
+            "the registry entry and broker authority were retained."
+        )
+
+    lease_id, token = _lease_binding(entry, lease_authority)
+    repo_root = entry.get("repo_root")
+    outcome_id = entry.get("outcome_id")
+    path = entry.get("path")
+    if not isinstance(repo_root, str) or not isinstance(outcome_id, str):
+        raise WorktreeAuthorityError("leased worktree registry entry lacks repo_root or outcome_id")
+    if expected_outcome_id is not None and outcome_id != expected_outcome_id:
+        raise WorktreeAuthorityError(
+            f"leased worktree registry outcome {outcome_id!r} does not match "
+            f"expected outcome {expected_outcome_id!r}"
+        )
+    if not isinstance(path, str) or not path:
+        raise WorktreeAuthorityError("leased worktree registry entry lacks path")
+    resource = fleet_leases.worktree_resource(repo_root, outcome_id, subplot_id)
+    expected_path = worktree_path(Path(repo_root), outcome_id, subplot_id).resolve(strict=False)
+    actual_path = Path(path).resolve(strict=False)
+    if actual_path != expected_path:
+        raise WorktreeAuthorityError(
+            "leased worktree registry path does not match its broker resource"
+        )
+    try:
+        state = lease_authority.classify_token(resource, token, pool="worktree")
+        inspected = lease_authority.inspect()
+    except (fleet_leases.authority.LeaseBrokerError, OSError, ValueError) as exc:
+        raise WorktreeAuthorityError(f"cannot validate worktree lease {lease_id!r}: {exc}") from exc
+    if state not in {"current", "expired"}:
+        raise WorktreeAuthorityError(
+            f"worktree lease {lease_id!r} is {state}; refusing to remove registry authority"
+        )
+    leases = inspected.get("leases") if isinstance(inspected, dict) else None
+    if not isinstance(leases, list):
+        raise WorktreeAuthorityError(
+            "worktree lease authority inspection did not return a lease list"
+        )
+    matches = [lease for lease in leases if lease.get("lease_id") == lease_id]
+    if len(matches) != 1:
+        raise WorktreeAuthorityError(
+            f"worktree lease {lease_id!r} is not the exact live broker lease; refusing reap"
+        )
+    lease = matches[0]
+    if (
+        lease.get("pool") != "worktree"
+        or lease.get("resource_ref") != resource
+        or inspected.get("broker_epoch") != token.broker_epoch
+        or lease.get("fencing_sequence") != token.fencing_sequence
+    ):
+        raise WorktreeAuthorityError(
+            f"worktree lease {lease_id!r} receipt does not match broker resource/token authority"
+        )
+    return ReapPreflight(entry=entry, lease_id=lease_id, token=token)
 
 
 def _arm_worktree(
@@ -239,7 +338,7 @@ def stale_worktree_debits(
     """
     outcome_store._safe_name(outcome_id, what="outcome_id")
     debits: list[dict[str, Any]] = []
-    for sid, entry in sorted(_read_registry_without_repair(store).items()):
+    for sid, entry in sorted(read_registry_strict(store).items()):
         path = str(entry.get("path", ""))
         if path and not ops.exists(path):
             debits.append(
@@ -416,27 +515,38 @@ def reap_worktree(
     of which worktrees we own). ``ops.remove`` is idempotent for an already-gone path (that returns
     True), so reaping a vanished worktree still cleans the registry.
     """
-    entries = read_registry(store)
-    entry = entries.get(subplot_id)
-    if entry is None:
+    preflight = prevalidate_reap_authority(store, subplot_id, lease_authority)
+    if preflight is None:
         return False
-    lease_id = ""
-    token: Any | None = None
-    if lease_authority is not None and "lease" in entry:
-        lease_id, token = _lease_binding(entry, lease_authority)
-        repo_root = entry.get("repo_root")
-        outcome_id = entry.get("outcome_id")
-        if not isinstance(repo_root, str) or not isinstance(outcome_id, str):
-            raise WorktreeError("leased worktree registry entry lacks repo_root or outcome_id")
-        state = lease_authority.classify_token(
-            fleet_leases.worktree_resource(repo_root, outcome_id, subplot_id),
-            token,
-            pool="worktree",
+    return _reap_prevalidated(
+        store,
+        subplot_id,
+        ops,
+        preflight,
+        lease_authority=lease_authority,
+        release_authority=release_authority,
+        deregister_entry=deregister_entry,
+    )
+
+
+def _reap_prevalidated(
+    store: Any,
+    subplot_id: str,
+    ops: WorktreeOps,
+    preflight: ReapPreflight,
+    *,
+    lease_authority: Any | None,
+    release_authority: bool,
+    deregister_entry: bool,
+) -> bool:
+    """Apply one already-proven reap; used inside the broker's non-reentrant sweep lock."""
+    if read_registry_strict(store).get(subplot_id) != preflight.entry:
+        raise WorktreeAuthorityError(
+            f"worktree {subplot_id!r} registry changed after authority prevalidation"
         )
-        if state not in {"current", "expired"}:
-            raise WorktreeError(
-                f"worktree lease {lease_id!r} is {state}; refusing to remove registry authority"
-            )
+    entry = preflight.entry
+    lease_id = preflight.lease_id
+    token = preflight.token
     if not ops.remove(str(entry.get("path", ""))):
         return False  # removal failed -> keep the entry so a later pass retries (no silent leak)
     if lease_authority is not None and release_authority and lease_id:
@@ -502,8 +612,8 @@ def reconcile_worktree_leases(
                 register(store, sid, entry)
 
     before = lease_authority.inspect()
-    lease_resources = {
-        lease["lease_id"]: dict(lease["resource_ref"])
+    lease_snapshots = {
+        lease["lease_id"]: dict(lease)
         for lease in before.get("leases", [])
         if lease.get("pool") == "worktree" and isinstance(lease.get("resource_ref"), dict)
     }
@@ -517,13 +627,19 @@ def reconcile_worktree_leases(
             and Path(resolved.root).resolve() != Path(store.root).resolve()
         ):
             raise WorktreeError("worktree lease resolves to a different current outcome store")
-        entries = _read_registry_without_repair(resolved)
+        entries = read_registry_strict(resolved)
         entry = entries.get(resource["subplot_id"])
         if entry is None:
             raise WorktreeError("worktree lease has no matching outcome registry entry")
-        lease_id, _token = _lease_binding(entry, lease_authority)
-        if lease_resources.get(lease_id) != resource:
+        lease_id, token = _lease_binding(entry, lease_authority)
+        snapshot = lease_snapshots.get(lease_id)
+        if snapshot is None or snapshot.get("resource_ref") != resource:
             raise WorktreeError("worktree lease receipt does not match the sweep resource")
+        if (
+            before.get("broker_epoch") != token.broker_epoch
+            or snapshot.get("fencing_sequence") != token.fencing_sequence
+        ):
+            raise WorktreeError("worktree lease receipt does not match the sweep token")
         expected = worktree_path(
             resource_root, resource["outcome_id"], resource["subplot_id"]
         ).resolve(strict=False)
@@ -545,10 +661,11 @@ def reconcile_worktree_leases(
             # insufficient proof that its durable worktree is abandoned.
             return False
         resource_ops = ops if resource_root == canonical_root else git_worktree_ops(resource_root)
-        return reap_worktree(
+        return _reap_prevalidated(
             resolved,
             resource["subplot_id"],
             resource_ops,
+            ReapPreflight(entry, lease_id, token),
             lease_authority=lease_authority,
             release_authority=False,
             deregister_entry=True,

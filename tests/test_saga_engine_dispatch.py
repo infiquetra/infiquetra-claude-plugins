@@ -8,6 +8,7 @@ import importlib.util
 import json
 import shutil
 import sys
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -2560,6 +2561,118 @@ def test_advisory_panel_reconciles_deduplicated_and_empty_output_before_append(
     )
     with pytest.raises(D.DispatchError, match="advisory-only"):
         D.satisfy_gate(verified, reconciliation=_ready_reconciliation(verified))
+
+
+def test_advisory_panel_fences_stale_retry_through_both_fact_appends(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lease_module, _ = D._load_fleet_module("lease_broker")
+    assert lease_module is not None
+    selected = lease_module.LeaseBroker(tmp_path / "authority")
+    monkeypatch.setattr(
+        D.engine_resolver,
+        "resolve_role",
+        lambda *_args, **_kwargs: [_resolution(variant="panel-one")],
+    )
+    ledger = RC.run_ledger.RunLedger(tmp_path / "panel-facts.jsonl")
+    foreman_started = threading.Event()
+    allow_foreman = threading.Event()
+    failures: list[BaseException] = []
+    settlement_depth = 0
+    append_depths: list[int] = []
+    original_settlement = selected.agent_settlement
+    original_append = D.reconcile.append_reconciliation_fact
+
+    @contextlib.contextmanager
+    def tracking_settlement(*args: Any, **kwargs: Any) -> Any:
+        nonlocal settlement_depth
+        with original_settlement(*args, **kwargs) as lease:
+            settlement_depth += 1
+            try:
+                yield lease
+            finally:
+                settlement_depth -= 1
+
+    def tracking_append(*args: Any, **kwargs: Any) -> Any:
+        append_depths.append(settlement_depth)
+        return original_append(*args, **kwargs)
+
+    monkeypatch.setattr(selected, "agent_settlement", tracking_settlement)
+    monkeypatch.setattr(D.reconcile, "append_reconciliation_fact", tracking_append)
+
+    def panel_result(evidence: tuple[Any, ...], reconciliation_id: str) -> Any:
+        return RC.build_panel_reconciliation_result(
+            reconciliation_id=reconciliation_id,
+            execution_id="panel-execution",
+            intent="second-opinion",
+            adjudicator_id="claude/foreman",
+            evidence=evidence,
+            items=tuple(
+                RC.ReconciliationItem(
+                    item.source_finding_id,
+                    RC.ReconciliationStatus.RECONCILED,
+                    "claude/foreman",
+                    "Claude accounted for the panel evidence.",
+                )
+                for item in evidence
+            ),
+        )
+
+    def foreman(evidence: tuple[Any, ...]) -> Any:
+        foreman_started.set()
+        assert allow_foreman.wait(timeout=5)
+        return panel_result(evidence, "stale-panel-reconciliation")
+
+    def run_first() -> None:
+        try:
+            D.dispatch_advisory_panel(
+                D.AdvisoryPanelRequest("cross-family-review-panel"),
+                registry=object(),
+                runner=lambda _invocation: _review_payload("finding"),
+                foreman=foreman,
+                execution_id="panel-execution",
+                session_id="panel-session",
+                lease_admission=_lease_admission(),
+                lease_authority=selected,
+                intent="second-opinion",
+                ledger=ledger,
+                subplot_id="issue-393",
+                at="2026-07-09T00:00:00Z",
+            )
+        except BaseException as exc:  # pragma: no cover - asserted through failures
+            failures.append(exc)
+
+    first = threading.Thread(target=run_first)
+    first.start()
+    assert foreman_started.wait(timeout=5)
+    D.dispatch_advisory_panel(
+        D.AdvisoryPanelRequest("cross-family-review-panel"),
+        registry=object(),
+        runner=lambda _invocation: _review_payload("new finding"),
+        foreman=lambda evidence: panel_result(evidence, "current-panel-reconciliation"),
+        execution_id="panel-execution",
+        session_id="panel-session",
+        lease_admission=_lease_admission(),
+        lease_authority=selected,
+        intent="second-opinion",
+        ledger=ledger,
+        subplot_id="issue-393",
+        at="2026-07-09T00:00:00Z",
+    )
+    allow_foreman.set()
+    first.join(timeout=5)
+
+    assert first.is_alive() is False
+    assert len(failures) == 1
+    assert isinstance(failures[0], D.DispatchError)
+    assert "expired before settlement" in str(failures[0])
+    assert append_depths == [1, 1]
+    assert [fact["action"] for fact in RC.read_reconciliation_facts(ledger)] == [
+        "reconcile",
+        "apply",
+    ]
+    assert selected.inspect()["leases"] == []
 
 
 def test_advisory_panel_unavailable_member_blocks_all_dispatch_and_append(

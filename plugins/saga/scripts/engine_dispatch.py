@@ -983,93 +983,175 @@ def dispatch_advisory_panel(
     if halt is not None:
         raise DispatchError(f"advisory panel halted before dispatch: {halt}")
 
-    member_evidence: list[AdvisoryEvidence] = []
-    total_output_bytes = 0
-    for member_index, resolution in enumerate(resolutions):
-        dispatched = dispatch(
-            resolution,
-            runner=runner,
-            execution_id=execution_id,
+    lease_module, lease_degradation = _load_fleet_module("lease_broker")
+    if lease_module is None:
+        raise DispatchError(
+            "advisory panel requires lease-capable fleet-core; install/update fleet-core: "
+            + lease_degradation
+        )
+    _require_lease_protocol(lease_module)
+    selected = lease_module.LeaseBroker() if lease_authority is None else lease_authority
+    owner_id = f"engine-panel:{session_id}"
+    resource_ref = _engine_resource_ref(execution_id, "panel:aggregate")
+    try:
+        lease = selected.acquire_agent(
+            owner_id=owner_id,
+            owner_pid=os.getpid(),
             session_id=session_id,
-            lease_admission=lease_admission,
-            lease_authority=lease_authority,
-            attempt_id=f"panel:{member_index}",
-            intent=intent,
-            role_kind="panel",
+            policy_sha256=lease_admission.policy_sha256,
+            session_limit=lease_admission.session_limit,
+            aggregate_limit=lease_admission.aggregate_limit,
+            mutation=lease_admission.mutation,
+            ttl_seconds=lease_module.DEFAULT_TTL_SECONDS,
+            resource_ref=resource_ref,
+            agent_type="external-engine-panel",
         )
-        if isinstance(dispatched, RequeueDisposition):
-            raise DispatchError("advisory panel dispatch unexpectedly requested a gated requeue")
-        panel_evidence = dispatched
-        if panel_evidence.halt is not None:
+    except lease_module.LeaseBrokerError as exc:
+        raise DispatchError(f"advisory panel lease admission refused: {exc}") from exc
+
+    settlement_started = False
+    primary_error: BaseException | None = None
+
+    def guarded_panel_runner(invocation: dict[str, Any]) -> dict[str, Any]:
+        try:
+            selected.renew(lease.lease_id, owner_id=owner_id, token=lease.token)
+        except lease_module.LeaseBrokerError as exc:
             raise DispatchError(
-                "advisory panel member failed; no reconciliation fact was written: "
-                f"{panel_evidence.engine_id}/{panel_evidence.variant}: {panel_evidence.halt}"
-            )
-        output_bytes = len(panel_evidence.evidence.encode("utf-8"))
-        if output_bytes > PANEL_MEMBER_OUTPUT_BYTES_CAP:
+                f"advisory panel lease expired before member dispatch: {exc}"
+            ) from exc
+        result = runner(invocation)
+        try:
+            selected.renew(lease.lease_id, owner_id=owner_id, token=lease.token)
+        except lease_module.LeaseBrokerError as exc:
             raise DispatchError(
-                "advisory panel member output exceeds "
-                f"PANEL_MEMBER_OUTPUT_BYTES_CAP={PANEL_MEMBER_OUTPUT_BYTES_CAP} bytes: "
-                f"{panel_evidence.engine_id}/{panel_evidence.variant} produced {output_bytes}"
-            )
-        total_output_bytes += output_bytes
-        if total_output_bytes > PANEL_TOTAL_OUTPUT_BYTES_CAP:
-            raise DispatchError(
-                "advisory panel cumulative output exceeds "
-                f"PANEL_TOTAL_OUTPUT_BYTES_CAP={PANEL_TOTAL_OUTPUT_BYTES_CAP} bytes: "
-                f"observed {total_output_bytes}"
-            )
-        member_evidence.append(panel_evidence)
+                f"advisory panel lease expired before member acceptance: {exc}"
+            ) from exc
+        return result
 
     try:
-        gathered = reconcile.gather_panel_evidence(
-            (
-                f"{evidence.engine_id}/{evidence.variant}",
-                evidence.source_findings,
+        member_evidence: list[AdvisoryEvidence] = []
+        total_output_bytes = 0
+        for resolution in resolutions:
+            panel_evidence = _dispatch_once(
+                resolution,
+                runner=guarded_panel_runner,
+                execution_id=execution_id,
+                session_id=session_id,
+                intent=intent,
+                role_kind="panel",
             )
-            for evidence in member_evidence
-        )
-        foreman_result = foreman(gathered)
-    except Exception as exc:  # noqa: BLE001 - foreman failure is a named no-append boundary
-        raise DispatchError(f"Claude panel foreman failed before ledger append: {exc}") from exc
-    try:
-        result = reconcile.validate_panel_reconciliation(
-            foreman_result,
-            execution_id=execution_id,
-            intent=intent,
-            evidence=gathered,
-        )
-    except reconcile.ReconciliationError as exc:
-        raise DispatchError(f"Claude panel foreman reconciliation failed: {exc}") from exc
+            if isinstance(panel_evidence, RequeueDisposition):
+                raise DispatchError(
+                    "advisory panel dispatch unexpectedly requested a gated requeue"
+                )
+            if panel_evidence.halt is not None:
+                raise DispatchError(
+                    "advisory panel member failed; no reconciliation fact was written: "
+                    f"{panel_evidence.engine_id}/{panel_evidence.variant}: {panel_evidence.halt}"
+                )
+            output_bytes = len(panel_evidence.evidence.encode("utf-8"))
+            if output_bytes > PANEL_MEMBER_OUTPUT_BYTES_CAP:
+                raise DispatchError(
+                    "advisory panel member output exceeds "
+                    f"PANEL_MEMBER_OUTPUT_BYTES_CAP={PANEL_MEMBER_OUTPUT_BYTES_CAP} bytes: "
+                    f"{panel_evidence.engine_id}/{panel_evidence.variant} produced {output_bytes}"
+                )
+            total_output_bytes += output_bytes
+            if total_output_bytes > PANEL_TOTAL_OUTPUT_BYTES_CAP:
+                raise DispatchError(
+                    "advisory panel cumulative output exceeds "
+                    f"PANEL_TOTAL_OUTPUT_BYTES_CAP={PANEL_TOTAL_OUTPUT_BYTES_CAP} bytes: "
+                    f"observed {total_output_bytes}"
+                )
+            member_evidence.append(panel_evidence)
 
-    # Panel-member attribution (#459 R4): which members produced each gathered finding, so the
-    # capability_elo reducer can derive head-to-head matches from this reconciliation. Metadata
-    # only — it never enters the canonical result hash and grants no authority.
-    member_attribution = {item.source_finding_id: list(item.member_ids) for item in gathered}
-    reconcile_fact = reconcile.append_reconciliation_fact(
-        ledger,
-        result,
-        action=reconcile.ReconciliationAction.RECONCILE,
-        subplot_id=subplot_id,
-        at=at,
-        member_index=member_attribution,
-    )
-    apply_fact = reconcile.append_reconciliation_fact(
-        ledger,
-        result,
-        action=reconcile.ReconciliationAction.APPLY,
-        subplot_id=subplot_id,
-        at=at,
-        member_index=member_attribution,
-    )
-    return PanelDispatchResult(
-        role_name=role_name,
-        member_evidence=tuple(member_evidence),
-        gathered_evidence=gathered,
-        reconciliation=result,
-        reconcile_fact=reconcile_fact,
-        apply_fact=apply_fact,
-    )
+        try:
+            gathered = reconcile.gather_panel_evidence(
+                (
+                    f"{evidence.engine_id}/{evidence.variant}",
+                    evidence.source_findings,
+                )
+                for evidence in member_evidence
+            )
+            foreman_result = foreman(gathered)
+        except Exception as exc:  # noqa: BLE001 - foreman failure is a named no-append boundary
+            raise DispatchError(f"Claude panel foreman failed before ledger append: {exc}") from exc
+        try:
+            result = reconcile.validate_panel_reconciliation(
+                foreman_result,
+                execution_id=execution_id,
+                intent=intent,
+                evidence=gathered,
+            )
+        except reconcile.ReconciliationError as exc:
+            raise DispatchError(f"Claude panel foreman reconciliation failed: {exc}") from exc
+
+        # Panel-member attribution (#459 R4): which members produced each gathered finding, so the
+        # capability_elo reducer can derive head-to-head matches from this reconciliation. Metadata
+        # only — it never enters the canonical result hash and grants no authority.
+        member_attribution = {item.source_finding_id: list(item.member_ids) for item in gathered}
+        try:
+            with selected.agent_settlement(
+                lease.lease_id,
+                owner_id=owner_id,
+                token=lease.token,
+            ):
+                settlement_started = True
+                lease_receipt = {
+                    "lease_id": lease.lease_id,
+                    "root_sha256": selected.root_sha256,
+                    "policy_sha256": lease_admission.policy_sha256,
+                }
+                for evidence in member_evidence:
+                    evidence.provenance["lease"] = lease_receipt
+                reconcile_fact = reconcile.append_reconciliation_fact(
+                    ledger,
+                    result,
+                    action=reconcile.ReconciliationAction.RECONCILE,
+                    subplot_id=subplot_id,
+                    at=at,
+                    member_index=member_attribution,
+                )
+                apply_fact = reconcile.append_reconciliation_fact(
+                    ledger,
+                    result,
+                    action=reconcile.ReconciliationAction.APPLY,
+                    subplot_id=subplot_id,
+                    at=at,
+                    member_index=member_attribution,
+                )
+        except lease_module.LeaseBrokerError as exc:
+            raise DispatchError(f"advisory panel lease expired before settlement: {exc}") from exc
+        return PanelDispatchResult(
+            role_name=role_name,
+            member_evidence=tuple(member_evidence),
+            gathered_evidence=gathered,
+            reconciliation=result,
+            reconcile_fact=reconcile_fact,
+            apply_fact=apply_fact,
+        )
+    except BaseException as exc:
+        primary_error = exc
+        raise
+    finally:
+        if not settlement_started:
+            try:
+                released = selected.release(lease.lease_id, owner_id=owner_id, token=lease.token)
+            except Exception as exc:  # noqa: BLE001 - preserve the panel primary failure.
+                cleanup_error = DispatchError(f"advisory panel lease cleanup refused: {exc}")
+                if primary_error is not None:
+                    primary_error.add_note(f"secondary lease cleanup failure: {cleanup_error}")
+                else:
+                    raise cleanup_error from exc
+            else:
+                if not released:
+                    cleanup_error = DispatchError(
+                        "advisory panel lease disappeared before authoritative settlement"
+                    )
+                    if primary_error is not None:
+                        primary_error.add_note(f"secondary lease cleanup failure: {cleanup_error}")
+                    else:
+                        raise cleanup_error
 
 
 def _offload_economics_metadata(

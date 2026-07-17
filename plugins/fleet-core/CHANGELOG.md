@@ -22,7 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the exact fencing token, delegated parent validation and child grant share one transaction,
   abandoned pre-spawn admission pins expire and remain inspectable, owner teardown trusts only
   broker-recorded terminal evidence, and closed resource heads move to permission-checked cold
-  archives when the hot registry reaches its bound without losing closed/superseded classification.
+  archives when the hot registry reaches its bound. Hot and cold dispositions now share explicit
+  count and byte ceilings; recent exact closed history is retained while evicted older history
+  fails closed as superseded, and inspection reports the active retention budget.
 
 ## [0.11.0] - 2026-07-14
 

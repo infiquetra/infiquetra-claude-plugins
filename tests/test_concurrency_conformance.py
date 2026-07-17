@@ -97,6 +97,16 @@ EXPECTED_ROWS: frozenset[InventoryRow] = frozenset(
             "LeaseBroker.agent_settlement",
         ),
         (
+            "plugins/saga/scripts/engine_dispatch.py",
+            "guarded_panel_runner",
+            "concurrency_policy.AdmissionLimits",
+            "agent",
+            "engine_dispatch.dispatch_advisory_panel",
+            "not-applicable:in-process-adapter",
+            "LeaseBroker.renew",
+            "LeaseBroker.agent_settlement",
+        ),
+        (
             "plugins/saga/scripts/outcome.py",
             "_reconcile_once",
             "concurrency_policy.AdmissionLimits",
@@ -127,6 +137,7 @@ EXPECTED_EXECUTABLE_SPAWNS = frozenset(
     {
         ("plugins/saga/scripts/engine_dispatch.py", "_dispatch_once", "runner"),
         ("plugins/saga/scripts/engine_dispatch.py", "guarded_runner", "runner"),
+        ("plugins/saga/scripts/engine_dispatch.py", "guarded_panel_runner", "runner"),
         ("plugins/saga/scripts/outcome.py", "_reconcile_once", "dispatch"),
         ("plugins/saga/scripts/outcome_worktrees.py", "ensure_worktree", "ops.add"),
     }
@@ -140,6 +151,12 @@ EXPECTED_LEASE_CALLS: dict[tuple[str, str], frozenset[str]] = {
     ),
     ("plugins/saga/scripts/engine_dispatch.py", "guarded_runner"): frozenset(
         {"selected.agent_settlement"}
+    ),
+    ("plugins/saga/scripts/engine_dispatch.py", "dispatch_advisory_panel"): frozenset(
+        {"selected.acquire_agent", "selected.agent_settlement", "selected.release"}
+    ),
+    ("plugins/saga/scripts/engine_dispatch.py", "guarded_panel_runner"): frozenset(
+        {"selected.renew"}
     ),
     ("plugins/saga/scripts/outcome_dispatcher.py", "_dispatch"): frozenset(
         {"selected.acquire_agent", "selected.renew", "selected.release"}

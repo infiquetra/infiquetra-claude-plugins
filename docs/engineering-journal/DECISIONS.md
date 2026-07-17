@@ -4960,14 +4960,18 @@ time plus TTL; Saga alone validates and reaps an expired outcome worktree.
   process cannot write through file tools or Bash. A per-resource last-granted head survives lease
   removal, allowing later consumers to derive current, expired, closed, or superseded without a
   mutable status field. Closed heads beyond the bounded hot registry move to owner-only cold files
-  keyed by resource digest; exact closed/superseded classification survives compaction for both agent
-  and worktree pools.
+  keyed by resource digest. Hot and cold history share count and serialized-byte ceilings across both
+  pools; recent exact closed dispositions survive compaction, while evicted older history becomes
+  unknown and therefore fails closed as superseded.
 - **KTD6 - a durable worktree is outcome-owned, not coordinator-process-owned.** Same-boot monotonic
   time derives expiry, but a short-lived coordinator PID ending is not abandonment proof for an active
   child. Each active tick transfers the exact persisted token to its current coordinator before sweep;
   a `dispatched` node vetoes destructive reap. Transfer and sweep share the authority lock, and Saga
   persists registry/lease recovery state before physical Git creation. Terminal or otherwise inactive
-  resources still require dead-owner or explicit-terminal proof; failed reaps remain visible for retry.
+  resources still require dead-owner or explicit-terminal proof. Teardown writes a durable `reaping`
+  phase before Git removal and retains it until broker closure is observable; restart recovery removes
+  the entry only for an exact closed token and absent deterministic path. Failed and mismatched reaps
+  remain visible for retry.
 - **KTD7 - hook enforcement is cooperative runtime safety.** Missing, corrupt, or version-skewed
   authority fails closed on armed delegated paths. A local operator able to disable or replace hooks
   remains outside the security boundary.
@@ -4975,15 +4979,18 @@ time plus TTL; Saga alone validates and reaps an expired outcome worktree.
   carries same-boot monotonic creation time and a 300-second orphan TTL; live leases keep their exact
   pin, while abandoned pins expire, remain inspectable as derived state, and are swept before the
   64-session cap is applied. The registry retains only 128 closed resource heads across both pools;
-  older exact heads move to owner-only, no-follow archive sidecars so closed and superseded remain
-  distinguishable without unbounded read-modify-write cost on the hot registry.
+  up to 128 older exact heads move to owner-only, no-follow archive sidecars, and hot plus cold
+  serialized dispositions remain under a one-MiB ceiling. Evicted history is intentionally
+  unknown-to-superseded, preserving safety without unbounded files, inodes, or bytes.
 - **KTD9 - grant and settlement are indivisible authority transitions.** Nested parent validation and
   child grant occur under one broker lock, eliminating verify-then-acquire races. Registered engine
   adapters enter a persisted, exact-token settlement window immediately after runner return; the
   broker lock then spans disarm, integrity accounting, evidence shaping, and durable fact writes
-  before exact release. No accepted output is written after its lease can be superseded. Direct renew
-  and release require the exact fencing token; owner teardown accepts only broker-recorded terminal
-  evidence.
+  before exact release. Advisory panels additionally hold one stable aggregate resource fence across
+  every member and enter exact-token settlement for both final reconciliation facts; a newer retry
+  either supersedes the stale panel before any append or waits for its settled facts. No accepted
+  output is written after its lease can be superseded. Direct renew and release require the exact
+  fencing token; owner teardown accepts only broker-recorded terminal evidence.
 
 **Revisit when** Claude exposes an atomic pre-spawn child identity, a durable host lease API replaces
 file-backed coordination, or team-execution gains a generic teardown contract under issue #358.

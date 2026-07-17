@@ -20,10 +20,16 @@
 - Expanded the concurrency inventory into a machine-readable lease lifecycle map covering acquire,
   bind, renewal, and release. Conformance now rejects newly injected executable spawn calls without
   an inventory row and parses the installed hook metadata.
-- Registered advisory-panel members now consume the caller's exact session admission and stable
-  per-member attempt identity. Engine post-run validation, integrity accounting, reconciliation, and
-  fact persistence execute inside exact-token settlement; the CLI requires fencing credentials for
-  renew/release and owner teardown accepts no caller-authored terminal assertion.
+- Registered advisory panels now consume the caller's exact session admission under one stable
+  aggregate fence. A newer retry supersedes the entire stale panel before it can persist; both
+  reconciliation facts append inside exact-token settlement. Engine post-run validation, integrity
+  accounting, reconciliation, and fact persistence execute inside exact-token settlement; the CLI
+  requires fencing credentials for renew/release and owner teardown accepts no caller-authored
+  terminal assertion.
+- Worktree provisioning records `provisioning`/`ready` phases and teardown persists a `reaping`
+  marker before Git removal. Restart reconciliation accepts only the exact closed token plus an
+  absent deterministic path, retains mismatches, and converges crashes on either side of broker
+  closure without manual registry edits.
 - Bound advisory second-opinion dispatches to their originating Saga session as well as its pinned
   admission policy, so per-session capacity remains authoritative across the external-engine path.
 - **Compatibility:** the #433 `/outcome repost` verb and its `intent_revision` contract remain

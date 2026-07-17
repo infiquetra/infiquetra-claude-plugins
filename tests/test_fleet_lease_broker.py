@@ -119,6 +119,46 @@ def _raw_registry(broker: Any) -> dict[str, Any]:
     return cast(dict[str, Any], json.loads(broker.registry_path.read_text(encoding="utf-8")))
 
 
+def test_boot_id_fallback_stays_stable_across_acquire_renew_and_verify(
+    tmp_path: Path,
+    runtime: FakeRuntime,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_read_text = B.Path.read_text
+    original_run = B.subprocess.run
+
+    def deny_linux_boot_id(path: Path, *args: Any, **kwargs: Any) -> str:
+        if path == Path("/proc/sys/kernel/random/boot_id"):
+            raise OSError("proc boot identity unavailable")
+        return original_read_text(path, *args, **kwargs)
+
+    def deny_darwin_boot_time(command: list[str], *args: Any, **kwargs: Any) -> Any:
+        if command == ["sysctl", "-n", "kern.boottime"]:
+            raise OSError("sysctl boot identity unavailable")
+        return original_run(command, *args, **kwargs)
+
+    monkeypatch.setattr(B.Path, "read_text", deny_linux_boot_id)
+    monkeypatch.setattr(B.subprocess, "run", deny_darwin_boot_time)
+    monkeypatch.setattr(B.time, "monotonic_ns", lambda: runtime.monotonic)
+    monkeypatch.setattr(B.time, "time_ns", lambda: int(runtime.wall.timestamp() * 1_000_000_000))
+    providers = B.Providers(
+        wall_now=lambda: runtime.wall,
+        monotonic_ns=lambda: runtime.monotonic,
+        boot_id=B._default_boot_id,
+        uuid4=runtime.uuid4,
+        process_identity=lambda _pid: "stable-process",
+        process_exists=lambda _pid: True,
+    )
+    selected = B.LeaseBroker(tmp_path / "fallback-authority", providers=providers)
+
+    lease = _agent(selected, resource="fallback-boot-id")
+    runtime.advance(1)
+    renewed = selected.renew(lease.lease_id, owner_id=lease.owner_id, token=lease.token)
+
+    assert renewed.boot_id == lease.boot_id
+    assert selected.verify(lease.resource_ref, lease.token).lease_id == lease.lease_id
+
+
 def _all_keys(value: Any) -> set[str]:
     if isinstance(value, dict):
         keys = set(value)

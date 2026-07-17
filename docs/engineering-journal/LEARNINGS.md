@@ -3364,3 +3364,22 @@ external side effect, and retain it whenever compensation is uncertain.
 **Refs.** `plugins/saga/scripts/outcome_worktrees.py`,
 `plugins/fleet-core/scripts/fleet_commons/lease_broker.py`, and
 `tests/test_outcome_worktrees.py`; decision `{#fleet-ttl-lease-broker-356}`.
+
+---
+
+### A lease boot identity fallback must be stable across cooperating processes {#restricted-boot-identity-356}
+
+**Evidence.** A restricted macOS runtime denied `sysctl kern.boottime`. The emergency fallback
+included the current PID and a fresh monotonic reading, so acquire and immediate renew calculated
+different boot identities and treated a new lease as reboot-expired.
+
+**Mechanism.** When kernel boot metadata is unavailable, fleet-core now derives a quantized boot
+epoch from paired wall and monotonic clocks. Cooperating processes on the same boot calculate the
+same value; a wall-clock correction changes the value and safely expires authority.
+
+**Generalizable rule.** A persisted authority marker cannot fall back to process-local or per-call
+identity. Exercise degraded platform probes through the full acquire-to-renew path, not only by
+asserting that the fallback returns a nonempty string.
+
+**Refs.** `plugins/fleet-core/scripts/fleet_commons/lease_broker.py` and
+`tests/test_fleet_lease_broker.py`; decision `{#fleet-ttl-lease-broker-356}`.

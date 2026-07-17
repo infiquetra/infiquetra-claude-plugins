@@ -308,6 +308,22 @@ def root_identity_sha256(root: Path | str) -> str:
     return _sha256(os.path.normpath(str(path)))
 
 
+def _fallback_boot_id() -> str:
+    """Derive a cross-process boot identity when kernel boot metadata is unavailable."""
+
+    samples: list[tuple[int, int]] = []
+    for _ in range(3):
+        before = time.monotonic_ns()
+        wall = time.time_ns()
+        after = time.monotonic_ns()
+        samples.append((after - before, wall - ((before + after) // 2)))
+    _span, boot_epoch_ns = min(samples)
+    # A one-second quantum absorbs cross-process sampling jitter. A wall-clock correction changes
+    # the identity and therefore expires authority, which is the safe fallback behavior.
+    boot_epoch_second = (boot_epoch_ns + 500_000_000) // 1_000_000_000
+    return f"fallback:{boot_epoch_second}"
+
+
 def _default_boot_id() -> str:
     linux = Path("/proc/sys/kernel/random/boot_id")
     try:
@@ -329,8 +345,7 @@ def _default_boot_id() -> str:
             return f"darwin:{_sha256(value)}"
     except (OSError, subprocess.SubprocessError):
         pass
-    # Stable for one process and fail-safe across a restart: a changed value only expires authority.
-    return f"process:{os.getpid()}:{time.monotonic_ns()}"
+    return _fallback_boot_id()
 
 
 def _default_process_identity(pid: int) -> str | None:

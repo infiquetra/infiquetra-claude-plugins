@@ -122,6 +122,8 @@ issue PR.
 - Bound advisory second-opinion dispatch to the originating Saga session identity as well as its
   pinned admission policy, so a fresh execution ID cannot bypass the source session's capacity.
 - Fixed the full CI mypy surface in the new tests without changing runtime behavior.
+- Replaced the per-call emergency boot identity with a cross-process boot-epoch fallback, preserving
+  acquire/renew/verify continuity when a restricted macOS host denies `kern.boottime`.
 
 ### Round 3 checks
 

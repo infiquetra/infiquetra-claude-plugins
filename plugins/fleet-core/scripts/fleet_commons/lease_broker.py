@@ -96,9 +96,6 @@ _MAX_ID = 256
 _MAX_PATH = 4096
 _MAX_SESSION_ADMISSIONS = 64
 _MAX_CLOSED_FENCES = 128
-_MAX_COLD_CLOSED_FENCES = 128
-_MAX_CLOSED_FENCE_DISPOSITION_BYTES = 1024 * 1024
-_MAX_CLOSED_FENCE_FILE_BYTES = 16 * 1024
 
 
 class LeaseBrokerError(RuntimeError):
@@ -181,10 +178,6 @@ def _sha256(value: str) -> str:
 
 def _canonical_json(value: Mapping[str, Any]) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-
-
-def _closed_fence_bytes(fence: ResourceFence) -> bytes:
-    return (json.dumps(fence.to_dict(), indent=2, sort_keys=True) + "\n").encode("utf-8")
 
 
 def _utc_text(value: datetime) -> str:
@@ -906,9 +899,7 @@ class LeaseBroker:
         temp = self.closed_fences_dir / (
             f".{digest}.{os.getpid()}.{threading.get_ident()}.{self.providers.monotonic_ns()}.tmp"
         )
-        encoded = _closed_fence_bytes(fence)
-        if len(encoded) > _MAX_CLOSED_FENCE_FILE_BYTES:
-            raise RegistryCorruptError("closed fence exceeds the per-record byte limit")
+        encoded = (json.dumps(fence.to_dict(), indent=2, sort_keys=True) + "\n").encode()
         try:
             fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW, 0o600)
             try:
@@ -944,9 +935,7 @@ class LeaseBroker:
                 or stat.S_IMODE(opened.st_mode) != 0o600
             ):
                 raise UnsafeAuthorityError("closed fence changed identity while opening")
-            if opened.st_size > _MAX_CLOSED_FENCE_FILE_BYTES:
-                raise RegistryCorruptError("closed fence exceeds the per-record byte limit")
-            payload = json.loads(os.read(fd, _MAX_CLOSED_FENCE_FILE_BYTES + 1).decode("utf-8"))
+            payload = json.loads(os.read(fd, 65536).decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise RegistryCorruptError(f"closed fence is not valid UTF-8 JSON: {exc}") from exc
         finally:
@@ -955,94 +944,20 @@ class LeaseBroker:
             raise RegistryCorruptError("closed fence must contain an object")
         return ResourceFence.from_dict(digest, payload)
 
-    def _archived_fences(self) -> dict[str, ResourceFence]:
-        """Return every cold disposition after validating the closed authority directory."""
-
-        if not self.closed_fences_dir.exists() and not self.closed_fences_dir.is_symlink():
-            return {}
-        self._validate_node(self.closed_fences_dir, mode=0o700, kind="root")
-        archived: dict[str, ResourceFence] = {}
-        for path in sorted(self.closed_fences_dir.iterdir(), key=lambda item: item.name):
-            if path.suffix != ".json":
-                raise UnsafeAuthorityError(
-                    f"closed fence directory contains unsupported entry {path.name!r}"
-                )
-            digest = path.stem
-            _sha256_text(digest, "closed fence digest")
-            fence = self._read_archived_fence(digest)
-            if fence is None:
-                raise RegistryCorruptError(f"closed fence {digest!r} disappeared during validation")
-            if resource_sha256(fence.resource_ref) != digest:
-                raise RegistryCorruptError("closed fence filename does not match its resource")
-            archived[digest] = fence
-        return archived
-
-    def _remove_archived_fence(self, digest: str) -> None:
-        path = self._archived_fence_path(digest)
-        self._validate_node(path, mode=0o600, kind="closed fence")
-        path.unlink()
-
     def _compact_closed_fences(self, registry: Registry) -> None:
-        """Bound hot and cold closed dispositions, retaining the newest exact history."""
+        """Bound hot closed heads while preserving exact closed/superseded classification."""
 
-        archived = self._archived_fences()
-        current_closed = {
-            digest: fence
-            for digest, fence in registry.resource_fences.items()
-            if fence.lease_id not in registry.leases
-        }
-        # A current resource head supersedes any older cold record with the same digest.
-        candidates = {
-            digest: fence
-            for digest, fence in archived.items()
-            if digest not in registry.resource_fences
-        }
-        candidates.update(current_closed)
-        newest = sorted(
-            candidates.items(),
+        closed = sorted(
+            (
+                (digest, fence)
+                for digest, fence in registry.resource_fences.items()
+                if fence.lease_id not in registry.leases
+            ),
             key=lambda item: item[1].fencing_sequence,
-            reverse=True,
         )
-        max_total = _MAX_CLOSED_FENCES + _MAX_COLD_CLOSED_FENCES
-        retained: list[tuple[str, ResourceFence]] = []
-        retained_bytes = 0
-        for digest, fence in newest:
-            encoded_size = len(_closed_fence_bytes(fence))
-            if encoded_size > _MAX_CLOSED_FENCE_FILE_BYTES:
-                raise RegistryCorruptError("closed fence exceeds the per-record byte limit")
-            if len(retained) >= max_total:
-                break
-            if retained_bytes + encoded_size > _MAX_CLOSED_FENCE_DISPOSITION_BYTES:
-                break
-            retained.append((digest, fence))
-            retained_bytes += encoded_size
-
-        retained_map = dict(retained)
-        desired_hot = {
-            digest
-            for digest, _fence in sorted(
-                (item for item in current_closed.items() if item[0] in retained_map),
-                key=lambda item: item[1].fencing_sequence,
-                reverse=True,
-            )[:_MAX_CLOSED_FENCES]
-        }
-        cold_candidates = [item for item in retained if item[0] not in desired_hot]
-        desired_cold = dict(cold_candidates[:_MAX_COLD_CLOSED_FENCES])
-
-        removed_archive = False
-        for digest in archived:
-            if digest not in desired_cold:
-                self._remove_archived_fence(digest)
-                removed_archive = True
-        if removed_archive:
-            self._fsync_directory(self.closed_fences_dir)
-        # Evict before archiving newly cold heads so even a process crash never exceeds the cap.
-        for digest, fence in desired_cold.items():
-            if archived.get(digest) != fence:
-                self._archive_closed_fence(digest, fence)
-        for digest in tuple(current_closed):
-            if digest not in desired_hot:
-                del registry.resource_fences[digest]
+        for digest, fence in closed[:-_MAX_CLOSED_FENCES]:
+            self._archive_closed_fence(digest, fence)
+            del registry.resource_fences[digest]
 
     def _now(self) -> tuple[datetime, str, int, str]:
         wall = self.providers.wall_now()
@@ -2516,16 +2431,6 @@ class LeaseBroker:
                 )
             )
             admissions[session] = item
-        archived = self._archived_fences()
-        hot_closed = {
-            digest: fence
-            for digest, fence in registry.resource_fences.items()
-            if fence.lease_id not in registry.leases
-        }
-        archive_bytes = sum(len(_closed_fence_bytes(fence)) for fence in archived.values())
-        disposition_bytes = archive_bytes + sum(
-            len(_closed_fence_bytes(fence)) for fence in hot_closed.values()
-        )
         return {
             "exists": True,
             "root_sha256": self.root_sha256,
@@ -2536,15 +2441,6 @@ class LeaseBroker:
             "session_admissions": admissions,
             "resource_fences": {
                 key: value.to_dict() for key, value in sorted(registry.resource_fences.items())
-            },
-            "closed_fence_retention": {
-                "hot_records": len(hot_closed),
-                "archive_files": len(archived),
-                "archive_bytes": archive_bytes,
-                "disposition_bytes": disposition_bytes,
-                "max_hot_records": _MAX_CLOSED_FENCES,
-                "max_archive_files": _MAX_COLD_CLOSED_FENCES,
-                "max_disposition_bytes": _MAX_CLOSED_FENCE_DISPOSITION_BYTES,
             },
         }
 

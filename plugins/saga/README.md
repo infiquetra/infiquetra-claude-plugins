@@ -34,7 +34,7 @@ Every supported delegated runtime path is also lease-armed through fleet-core. D
 calls reserve in the installed hook before launch; generated Workflow waves reserve atomically;
 engine and outcome dispatch adapters hold a lease across settlement; advisory panels keep one
 aggregate fence through both reconciliation facts; and outcome-owned worktrees carry a separate
-resource lease plus restartable provisioning/reaping phases. See
+resource lease. See
 [`concurrency-spawn-sites.md`](references/concurrency-spawn-sites.md) for the machine-checked
 lifecycle and operator recovery commands.
 

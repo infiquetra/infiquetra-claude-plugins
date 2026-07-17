@@ -119,18 +119,12 @@ issue PR.
 - Replaced individually settled panel-member leases with one stable panel aggregate fence. Member
   calls renew that authority, a concurrent retry supersedes the whole stale panel, and both final
   reconciliation facts append inside one exact-token settlement window.
-- Bounded closed-fence retention across both pools: at most 128 hot and 128 cold records under a
-  one-MiB serialized-disposition ceiling. Cold sidecars are fully validated before mutation;
-  eviction retains the newest exact history and classifies older unknown tokens as superseded.
-- Added durable worktree `provisioning`, `ready`, and `reaping` phases. A sweep retains the reaping
-  marker through broker closure; restart recovery accepts only an exact closed token plus an absent
-  deterministic path. Orphan broker leases with no registry and no physical path are safely swept.
+- Bound advisory second-opinion dispatch to the originating Saga session identity as well as its
+  pinned admission policy, so a fresh execution ID cannot bypass the source session's capacity.
 - Fixed the full CI mypy surface in the new tests without changing runtime behavior.
 
 ### Round 3 checks
 
-- Panel settlement and retry-race tests: 19 passed.
-- Broker retention and authority tests: 42 passed.
-- Worktree crash-recovery and real-Git tests: 41 passed.
+- Panel settlement, originating-session capacity, and affected lease tests: final rerun pending.
 - Final affected matrix, static checks, fresh exact-revision reviews, and full repository CI remain
   required before PR creation.

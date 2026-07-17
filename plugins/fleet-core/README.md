@@ -52,9 +52,7 @@ fallbacks.
 Operators inspect the redacted view through `plugins/saga/scripts/lease_broker.py inspect` and run
 the canonical dead-owner selection through `... sweep`. Do not hand-edit the registry or fabricate
 tokens. Live owners, ambiguous children, and failed worktree reaps remain retained for the owning
-coordinator. Inspection also reports the shared hot/cold closed-fence count and byte budget; recent
-exact dispositions are retained within that bound and older evicted history fails closed as
-superseded. See Saga's
+coordinator. See Saga's
 [`concurrency-spawn-sites.md`](../saga/references/concurrency-spawn-sites.md) for the complete
 acquire, bind, renew, and release inventory.
 

@@ -554,7 +554,7 @@ def test_reap_failure_retains_authority_then_retries(tmp_path: Path) -> None:
     assert WT.read_registry(store) == {}
 
 
-def test_registry_reap_exception_keeps_recovery_marker_retryable(
+def test_registry_reap_exception_keeps_broker_authority_retryable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runtime = FakeLeaseRuntime()
@@ -582,68 +582,13 @@ def test_registry_reap_exception_keeps_recovery_marker_retryable(
     monkeypatch.setattr(WT, "deregister", fail_deregister)
 
     first = _reconcile_leases(tmp_path, spec, store, fw.ops(), broker)
-    assert first["lease_retained"][lease_id] == "post-sweep-cleanup-failed"
-    assert broker.inspect()["leases"] == []
-    assert WT.read_registry(store)["s1"]["phase"] == "reaping"
+    assert first["lease_retained"][lease_id] == "reap-failed"
+    assert broker.inspect()["leases"][0]["lease_id"] == lease_id
+    assert "s1" in WT.read_registry(store)
 
     monkeypatch.setattr(WT, "deregister", original)
     second = _reconcile_leases(tmp_path, spec, store, fw.ops(), broker)
     assert second["lease_reaped"] == [lease_id]
-    assert broker.inspect()["leases"] == []
-
-
-def test_restart_recovers_reaping_marker_before_sweep_closes_the_lease(tmp_path: Path) -> None:
-    runtime = FakeLeaseRuntime()
-    broker = _lease_broker(tmp_path, runtime)
-    spec = _spec([_sub("s1")])
-    store = _store(tmp_path)
-    fw = FakeWT()
-    WT.ensure_worktree(
-        tmp_path,
-        spec,
-        store,
-        spec.nodes[0],
-        fw.ops(),
-        owner="coordinator",
-        lease_authority=broker,
-        lease_ttl_seconds=1,
-    )
-    entry = WT.read_registry(store)["s1"]
-    lease_id = entry["lease"]["lease_id"]
-    entry["phase"] = "reaping"
-    WT.register(store, "s1", entry)
-    assert fw.ops().remove(entry["path"])
-    runtime.advance(1)
-
-    recovered = _reconcile_leases(tmp_path, spec, store, fw.ops(), broker)
-
-    assert recovered["lease_reaped"] == [lease_id]
-    assert recovered["lease_recovered"] == ["s1"]
-    assert WT.read_registry(store) == {}
-    assert broker.inspect()["leases"] == []
-
-
-def test_sweep_releases_orphan_broker_lease_only_when_deterministic_path_is_absent(
-    tmp_path: Path,
-) -> None:
-    runtime = FakeLeaseRuntime()
-    broker = _lease_broker(tmp_path, runtime)
-    spec = _spec([_sub("s1")])
-    store = _store(tmp_path)
-    lease = WT._arm_worktree(
-        tmp_path,
-        spec,
-        "s1",
-        owner="crashed-before-registry",
-        selected=broker,
-        ttl_seconds=1,
-    )
-    runtime.advance(1)
-
-    recovered = _reconcile_leases(tmp_path, spec, store, FakeWT().ops(), broker)
-
-    assert recovered["lease_reaped"] == [lease.lease_id]
-    assert WT.read_registry(store) == {}
     assert broker.inspect()["leases"] == []
 
 

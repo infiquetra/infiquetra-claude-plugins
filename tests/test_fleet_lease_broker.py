@@ -285,6 +285,43 @@ def test_unclaimed_failed_parent_releases_reservation(broker: Any) -> None:
     assert broker.inspect()["leases"] == []
 
 
+def test_session_renewal_is_atomic_and_release_is_agent_pool_scoped(
+    broker: Any, runtime: FakeRuntime, tmp_path: Path
+) -> None:
+    first = _agent(broker, owner="parent-a", session="team-session", resource="unit-a")
+    second = _agent(broker, owner="parent-b", session="team-session", resource="unit-b")
+    worktree = broker.acquire_worktree(
+        owner_id="outcome-owner",
+        session_id="team-session",
+        resource_ref=_worktree_resource(tmp_path),
+    )
+
+    runtime.advance(30)
+    renewed = broker.renew_session("team-session")
+    assert {lease.lease_id for lease in renewed} == {first.lease_id, second.lease_id}
+    assert all(lease.renewed_monotonic_ns == runtime.monotonic for lease in renewed)
+
+    released = broker.release_session("team-session")
+    assert set(released) == {first.lease_id, second.lease_id}
+    assert [lease["lease_id"] for lease in broker.inspect()["leases"]] == [worktree.lease_id]
+    assert broker.release_session("team-session") == ()
+
+
+def test_session_renewal_refuses_expired_member_without_partial_write(
+    broker: Any, runtime: FakeRuntime
+) -> None:
+    short = _agent(broker, session="team-session", resource="short", ttl=5)
+    long = _agent(broker, session="team-session", resource="long", ttl=60)
+    before = broker.registry_path.read_bytes()
+
+    runtime.advance(6)
+    with pytest.raises(B.LeaseExpiredError, match=short.lease_id):
+        broker.renew_session("team-session")
+
+    assert broker.registry_path.read_bytes() == before
+    assert broker.verify(long.resource_ref, long.token).lease_id == long.lease_id
+
+
 def test_monotonic_expiry_ignores_wall_jump_and_renew_prevents_expiry(
     broker: Any, runtime: FakeRuntime
 ) -> None:

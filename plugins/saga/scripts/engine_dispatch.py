@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import os
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -349,7 +350,7 @@ def build_agy_envelope(
     return envelope
 
 
-def dispatch(
+def _dispatch_once(
     resolution: Resolution,
     *,
     runner: Runner,
@@ -670,6 +671,124 @@ def dispatch(
         ledger, invocation, evidence, result, subplot_id=subplot_id, at=at, resolution=resolution
     )
     return evidence
+
+
+def dispatch(
+    resolution: Resolution,
+    *,
+    runner: Runner,
+    model: Any | None = None,
+    sandbox: Any = None,
+    write_set: list[str] | None = None,
+    ledger: run_ledger.RunLedger | None = None,
+    subplot_id: str = "",
+    at: str = "",
+    gated: bool = False,
+    session_id: str = "",
+    workspace_root: Path | str | None = None,
+    expected_identity: str | None = None,
+    chaperone: dict[str, Any] | None = None,
+    economics: dict[str, Any] | None = None,
+    execution_id: str = "",
+    intent: str = "offload",
+    role_kind: str = "worker",
+    lease_authority: Any | None = None,
+) -> AdvisoryEvidence | RequeueDisposition:
+    """Dispatch through one lease-held adapter call when a trusted session is supplied.
+
+    The lease is acquired before the existing dispatch/runner path, renewed only after that path
+    returns its authoritative evidence disposition, and released with the exact owner and fencing
+    token. Omitting ``session_id`` preserves the compatibility path for pure builders and tests;
+    registered runtime consumers must provide their trusted session id.
+    """
+
+    if not session_id:
+        return _dispatch_once(
+            resolution,
+            runner=runner,
+            model=model,
+            sandbox=sandbox,
+            write_set=write_set,
+            ledger=ledger,
+            subplot_id=subplot_id,
+            at=at,
+            gated=gated,
+            session_id=session_id,
+            workspace_root=workspace_root,
+            expected_identity=expected_identity,
+            chaperone=chaperone,
+            economics=economics,
+            execution_id=execution_id,
+            intent=intent,
+            role_kind=role_kind,
+        )
+
+    lease_module, lease_degradation = _load_fleet_module("lease_broker")
+    policy_module, policy_degradation = _load_fleet_module("concurrency_policy")
+    if lease_module is None or policy_module is None:
+        reason = lease_degradation or policy_degradation
+        raise DispatchError(
+            "engine dispatch requires lease-capable fleet-core; install/update fleet-core: " + reason
+        )
+    selected = lease_module.LeaseBroker() if lease_authority is None else lease_authority
+    limits = policy_module.AdmissionLimits()
+    owner_id = f"engine-dispatch:{session_id}"
+    try:
+        lease = selected.acquire_agent(
+            owner_id=owner_id,
+            owner_pid=os.getpid(),
+            session_id=session_id,
+            policy_sha256=limits.policy_sha256(),
+            session_limit=limits.max_concurrent,
+            aggregate_limit=limits.aggregate_max_concurrent,
+            mutation="none",
+            ttl_seconds=lease_module.DEFAULT_TTL_SECONDS,
+            agent_type="external-engine",
+        )
+    except lease_module.LeaseBrokerError as exc:
+        raise DispatchError(f"engine dispatch lease admission refused: {exc}") from exc
+
+    try:
+        evidence = _dispatch_once(
+            resolution,
+            runner=runner,
+            model=model,
+            sandbox=sandbox,
+            write_set=write_set,
+            ledger=ledger,
+            subplot_id=subplot_id,
+            at=at,
+            gated=gated,
+            session_id=session_id,
+            workspace_root=workspace_root,
+            expected_identity=expected_identity,
+            chaperone=chaperone,
+            economics=economics,
+            execution_id=execution_id,
+            intent=intent,
+            role_kind=role_kind,
+        )
+        try:
+            selected.renew(lease.lease_id, owner_id=owner_id, token=lease.token)
+        except lease_module.LeaseBrokerError as exc:
+            raise DispatchError(f"engine dispatch lease expired before settlement: {exc}") from exc
+        lease_receipt = {
+            "lease_id": lease.lease_id,
+            "root_sha256": selected.root_sha256,
+            "policy_sha256": limits.policy_sha256(),
+        }
+        if isinstance(evidence, RequeueDisposition):
+            evidence.evidence.provenance["lease"] = lease_receipt
+        else:
+            evidence.provenance["lease"] = lease_receipt
+        return evidence
+    finally:
+        try:
+            released = selected.release(lease.lease_id, owner_id=owner_id, token=lease.token)
+        except lease_module.LeaseBrokerError as exc:
+            raise DispatchError(f"engine dispatch lease settlement refused: {exc}") from exc
+        if not released:
+            raise DispatchError("engine dispatch lease disappeared before authoritative settlement")
 
 
 def dispatch_advisory_panel(

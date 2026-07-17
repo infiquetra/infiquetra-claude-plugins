@@ -8,7 +8,7 @@ import json
 import shutil
 import sys
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -1033,6 +1033,86 @@ def _valid_receipt(
 
 def _ok_runner(_invocation: dict[str, Any]) -> dict[str, Any]:
     return {"status": "ok", "output": "external finding", "receipt": _valid_receipt()}
+
+
+def test_engine_runtime_lease_wraps_runner_and_exact_settlement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lease_module, _ = D._load_fleet_module("lease_broker")
+    assert lease_module is not None
+    selected = lease_module.LeaseBroker(tmp_path / "authority")
+    original_loader = D._load_fleet_module
+    lifecycle: list[str] = []
+
+    def load(name: str) -> tuple[Any, str]:
+        if name == "delegation_state":
+            return (
+                SimpleNamespace(
+                    arm=lambda *_args, **_kwargs: SimpleNamespace(armed_at=1.0),
+                    disarm=lambda *_args, **_kwargs: lifecycle.append("disarmed"),
+                ),
+                "",
+            )
+        return original_loader(name)
+
+    monkeypatch.setattr(D, "_load_fleet_module", load)
+
+    def runner(_invocation: dict[str, Any]) -> dict[str, str]:
+        live = selected.inspect()["leases"]
+        assert len(live) == 1
+        assert live[0]["session_id"] == "runtime-session"
+        assert live[0]["mutation"] == "none"
+        lifecycle.append("runner")
+        return {"status": "ok", "output": "leased evidence"}
+
+    evidence = D.dispatch(
+        _resolution(),
+        runner=runner,
+        session_id="runtime-session",
+        execution_id="execution-1",
+        lease_authority=selected,
+    )
+
+    assert lifecycle == ["runner", "disarmed"]
+    assert selected.inspect()["leases"] == []
+    assert evidence.provenance["lease"]["root_sha256"] == selected.root_sha256
+    assert "token" not in evidence.provenance["lease"]
+
+
+def test_engine_runtime_dispatch_refuses_session_capacity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lease_module, _ = D._load_fleet_module("lease_broker")
+    policy_module, _ = D._load_fleet_module("concurrency_policy")
+    assert lease_module is not None and policy_module is not None
+    selected = lease_module.LeaseBroker(tmp_path / "authority")
+    limits = policy_module.AdmissionLimits()
+    for index in range(limits.max_concurrent):
+        selected.acquire_agent(
+            owner_id=f"owner-{index}",
+            session_id="full-session",
+            policy_sha256=limits.policy_sha256(),
+            session_limit=limits.max_concurrent,
+            aggregate_limit=limits.aggregate_max_concurrent,
+            mutation="none",
+            resource_ref={"logical_unit_id": f"existing-{index}"},
+        )
+    monkeypatch.setattr(
+        D,
+        "_load_fleet_module",
+        lambda name: (
+            (lease_module if name == "lease_broker" else policy_module),
+            "",
+        ),
+    )
+
+    with pytest.raises(D.DispatchError, match="lease admission refused"):
+        D.dispatch(
+            _resolution(),
+            runner=lambda _invocation: pytest.fail("capacity denial must precede runner"),
+            session_id="full-session",
+            lease_authority=selected,
+        )
 
 
 def _store(tmp_path: Path) -> Any:

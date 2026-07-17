@@ -604,6 +604,13 @@ class SweepResult:
     reaped_worktree_leases: tuple[str, ...]
     retained: Mapping[str, str]
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "released_agent_leases": list(self.released_agent_leases),
+            "reaped_worktree_leases": list(self.reaped_worktree_leases),
+            "retained": dict(self.retained),
+        }
+
 
 class LeaseBroker:
     """One file-backed broker handle. Construction and inspection are side-effect free."""
@@ -1536,6 +1543,71 @@ class LeaseBroker:
                 lease_id
                 for lease_id, lease in registry.leases.items()
                 if lease.owner_id == owner and (session is None or lease.session_id == session)
+            )
+            for lease_id in selected:
+                del registry.leases[lease_id]
+            if selected:
+                self._write_registry(registry)
+            return tuple(selected)
+
+    def renew_session(self, session_id: str) -> tuple[Lease, ...]:
+        """Atomically renew every live agent lease owned by one runtime session."""
+
+        session = _bounded(session_id, "session_id")
+        with self._locked():
+            registry = cast(Registry, self._read_registry(create=True))
+            selected = sorted(
+                (
+                    lease
+                    for lease in registry.leases.values()
+                    if lease.pool == "agent" and lease.session_id == session
+                ),
+                key=lambda lease: lease.lease_id,
+            )
+            if not selected:
+                raise LeaseNotFoundError(f"session {session!r} has no agent leases")
+            _wall, now_text, monotonic, boot_id = self._now()
+            for lease in selected:
+                if self._expired(lease, monotonic=monotonic, boot_id=boot_id):
+                    raise LeaseExpiredError(
+                        f"session {session!r} contains expired lease {lease.lease_id!r}"
+                    )
+                if lease.resource_ref is not None:
+                    state, _ = self._current_state(
+                        registry,
+                        lease.resource_ref,
+                        lease.token,
+                        monotonic=monotonic,
+                        boot_id=boot_id,
+                    )
+                    if state != "current":
+                        raise LeaseSupersededError(
+                            f"session {session!r} contains non-current lease {lease.lease_id!r}"
+                        )
+            renewed = tuple(
+                replace(
+                    lease,
+                    renewed_at=now_text,
+                    renewed_monotonic_ns=monotonic,
+                    boot_id=boot_id,
+                )
+                for lease in selected
+            )
+            for lease in renewed:
+                registry.leases[lease.lease_id] = lease
+            self._write_registry(registry)
+            return renewed
+
+    def release_session(self, session_id: str) -> tuple[str, ...]:
+        """Release all agent leases for a terminal runtime session under one lock."""
+
+        session = _bounded(session_id, "session_id")
+        with self._locked():
+            registry = cast(Registry, self._read_registry(create=True))
+            selected = sorted(
+                lease_id
+                for lease_id, lease in registry.leases.items()
+                if lease.pool == "agent" and lease.session_id == session
             )
             for lease_id in selected:
                 del registry.leases[lease_id]

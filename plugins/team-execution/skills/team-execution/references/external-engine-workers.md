@@ -201,6 +201,7 @@ invocation = (
 )
 evidence = engine_dispatch.dispatch(
     resolution, runner=runner, model=model, sandbox=unit_sandbox, write_set=unit_files,
+    session_id=CLAUDE_CODE_SESSION_ID,
     execution_id=f"{worker_id}-{unit_id}", intent=unit_intent,
     expected_identity=(
         f"{plan_time_resolution_preview['engine_id']}/{plan_time_resolution_preview['variant']}"

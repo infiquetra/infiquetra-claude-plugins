@@ -61,7 +61,9 @@ Use one JSON file per validator run:
 ## Dispatch settlement boundary
 
 The selected validator roster is a `site=team-execution` dispatch. Before any validator Agent call,
-the coordinator runs the packaged adapter's `preflight`, then writes the complete manifest through
+the coordinator renews the trusted Claude session through `scripts/lease_protocol.py renew`; Saga's
+installed `PreToolUse` lifecycle hook reserves each exact call before provider dispatch. The
+coordinator then runs the packaged adapter's `preflight` and writes the complete manifest through
 `dispatch_settlement_adapter.py manifest`; immediately before each call it appends that unit's `spawn`
 through `dispatch_settlement_adapter.py saga -- ... spawn`. The state file above is the validator's
 expected source evidence, but it is not itself a caller-trusted receipt. The coordinator validates it,

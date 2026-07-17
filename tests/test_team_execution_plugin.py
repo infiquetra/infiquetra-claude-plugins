@@ -40,6 +40,7 @@ VALIDATOR_REFERENCES = {
 
 WORKER_REFERENCES = {
     "external-engine-workers.md",
+    "lease-protocol.md",
 }
 
 
@@ -210,6 +211,9 @@ def test_skill_documents_validator_state_and_automation_gates() -> None:
         "github.com/infiquetra/*",
         "nonprod",
         "maximum 3 remediation loops",
+        "Step B8",
+        "CLAUDE_CODE_SESSION_ID",
+        "lease_protocol.py teardown",
     ):
         assert required in skill_doc
 

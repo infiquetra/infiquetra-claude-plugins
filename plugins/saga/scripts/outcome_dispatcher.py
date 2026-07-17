@@ -28,6 +28,7 @@ House pattern (mirrors the other ``outcome_*`` modules): pure functions over exp
 
 from __future__ import annotations
 
+import os
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -37,6 +38,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import execution_spec  # noqa: E402  (after the sys.path shim, by design)
+import fleet_commons_shim  # noqa: E402  (after the sys.path shim, by design)
 import intent_envelope  # noqa: E402  (the #373 run-start posture schema, by design)
 import outcome_spec  # noqa: E402  (after the sys.path shim, by design)
 
@@ -211,11 +213,81 @@ def dispatch(req: Any, *, available: Sequence[str] = DEFAULT_AVAILABLE) -> dict[
     }
 
 
-def make_dispatcher(*, available: Sequence[str] = DEFAULT_AVAILABLE) -> Callable[[Any], str]:
-    """A ``Dispatcher`` for ``outcome.advance``: leaf saga id on dispatch, HALT raises (never silent)."""
+def default_lease_authority() -> Any:
+    """Resolve the canonical fleet lease authority or fail closed with install guidance."""
+
+    try:
+        authority = fleet_commons_shim.load("lease_broker")
+        return authority.LeaseBroker()
+    except Exception as exc:  # noqa: BLE001 - plugin skew must be named at the runtime boundary
+        raise DispatcherError(
+            "outcome dispatch requires lease-capable fleet-core; install/update fleet-core: "
+            f"{exc}"
+        ) from exc
+
+
+def make_dispatcher(
+    *,
+    available: Sequence[str] = DEFAULT_AVAILABLE,
+    lease_authority: Any | None = None,
+) -> Callable[[Any], str]:
+    """A lease-aware production ``Dispatcher``; ``None`` preserves injected compatibility paths."""
 
     def _dispatch(req: Any) -> str:
-        result = dispatch(req, available=available)
+        selected = lease_authority
+        lease: Any | None = None
+        owner_id = f"outcome-dispatch:{req.outcome_id}:{req.subplot_id}"
+        if selected is not None:
+            try:
+                authority = fleet_commons_shim.load("lease_broker")
+                policy = fleet_commons_shim.load("concurrency_policy")
+                limits = policy.AdmissionLimits()
+                dispatch_identity = str(getattr(req, "dispatch_id", "")) or str(
+                    getattr(req, "attempt", 1)
+                )
+                lease = selected.acquire_agent(
+                    owner_id=owner_id,
+                    owner_pid=os.getpid(),
+                    session_id=f"outcome:{req.outcome_id}",
+                    policy_sha256=limits.policy_sha256(),
+                    session_limit=limits.max_concurrent,
+                    aggregate_limit=limits.aggregate_max_concurrent,
+                    mutation="none",
+                    ttl_seconds=authority.DEFAULT_TTL_SECONDS,
+                    resource_ref={
+                        "logical_unit_id": (
+                            f"outcome:{req.outcome_id}:{req.subplot_id}:{dispatch_identity}"
+                        )
+                    },
+                    agent_type="outcome-dispatch",
+                )
+            except Exception as exc:  # noqa: BLE001 - normalize fleet version/admission failures
+                raise DispatcherError(f"outcome dispatch lease admission refused: {exc}") from exc
+        try:
+            result = dispatch(req, available=available)
+            if lease is not None:
+                assert selected is not None
+                try:
+                    selected.renew(lease.lease_id, owner_id=owner_id, token=lease.token)
+                except Exception as exc:  # noqa: BLE001 - normalize fleet version/expiry failures
+                    raise DispatcherError(
+                        f"outcome dispatch lease expired before settlement: {exc}"
+                    ) from exc
+        finally:
+            if lease is not None:
+                assert selected is not None
+                try:
+                    released = selected.release(
+                        lease.lease_id, owner_id=owner_id, token=lease.token
+                    )
+                except Exception as exc:  # noqa: BLE001 - wrong token must fail closed
+                    raise DispatcherError(
+                        f"outcome dispatch lease settlement refused: {exc}"
+                    ) from exc
+                if not released:
+                    raise DispatcherError(
+                        "outcome dispatch lease disappeared before authoritative settlement"
+                    )
         if result["status"] == "halt":
             raise BackendHaltError(HaltReceipt(**_receipt_kwargs(result["receipt"])))
         # #348 KTD4: a ``rate_limited`` dispatch result surfaces as a TRANSIENT 429, distinct from a
@@ -653,7 +725,7 @@ def recommend_outcome_backend(
             "frontier_width": frontier_width,
         }
 
-    rec = dict(lifecycle_state.recommend_execution_backend(**leaf_signals))
+    rec: dict[str, Any] = dict(lifecycle_state.recommend_execution_backend(**leaf_signals))
     rec["frontier_width"] = frontier_width
     if (
         frontier_width > _FRONTIER_BUDGET_THRESHOLD

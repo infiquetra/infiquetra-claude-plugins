@@ -2209,7 +2209,10 @@ def main(argv: list[str] | None = None) -> int:
                 root,
                 args.outcome_id,
                 loop=args.loop,
-                dispatcher=outcome_dispatcher.make_dispatcher(available=outcome_spec.NODE_BACKENDS),
+                dispatcher=outcome_dispatcher.make_dispatcher(
+                    available=outcome_spec.NODE_BACKENDS,
+                    lease_authority=outcome_dispatcher.default_lease_authority(),
+                ),
                 harvester=production_harvester(root, settlement_ledger=settlement_ledger),
                 merge_processor=production_merge_processor(repo_root=root),
                 worktree_processor=production_worktree_processor(root),

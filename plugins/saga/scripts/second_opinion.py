@@ -990,6 +990,7 @@ def dispatch_second_opinion(
             subplot_id=subplot_id,
             at=at,
             gated=False,
+            session_id=prepared.execution_id,
             execution_id=prepared.execution_id,
             intent="second-opinion",
             role_kind="advisory-reviewer",

@@ -3,7 +3,7 @@ date: 2026-07-16
 kind: work-session
 issue: https://github.com/infiquetra/infiquetra-claude-plugins/issues/356
 plan: docs/plans/2026-07-15-issue-356-ttl-lease-broker-plan.md
-status: review-complete-pr-ready
+status: post-merge-repair-pr-ready
 ---
 
 # Work Session - Fleet TTL Lease Broker and Runtime Continuity
@@ -134,3 +134,21 @@ Operations card to Done.
 - Ruff check, Ruff format check, mypy, changed-broker Bandit medium/high scan, and diff check: passed.
 - Exact-revision architecture, security/authority, and concurrency/event-flow rereviews: PASS with
   no P0-P2 findings at `4ba47220`.
+
+## Post-Merge Repair Round 4
+
+- Reopened #356 after exact-head outcome evidence review found that generic ship teardown and direct
+  prune could sever a managed worktree from its broker lease authority.
+- Added strict, non-repairing registry reads and a side-effect-free exact receipt/resource/token/path
+  preflight before any graph, issue, Git, registry, or broker mutation.
+- Managed `.saga-worktrees/<outcome>/<subplot>` paths now fail closed on missing, malformed, unreadable,
+  or mismatched registry state; raw Git fallback remains available only outside that namespace or for a
+  positively identified legacy unleased entry.
+- Bumped Saga to 0.99.1 and repaired the two stale release-contract tests.
+
+### Round 4 checks
+
+- Focused outcome/worktree/ship suite: 117 passed.
+- Exact release-contract and release-triad suite: 41 passed; broader release group: 116 passed.
+- Final authority/prune, managed-path, and regression/release rereviews: PASS with no P0-P2 findings.
+- Ruff, format, affected mypy, marketplace sync/parity, release diff guard, and diff check: passed.

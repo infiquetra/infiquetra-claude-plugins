@@ -51,7 +51,9 @@ def _run_audit(*paths: Path) -> subprocess.CompletedProcess[str]:
 
 def test_real_reviewer_and_coder_fixtures_pass_when_bundles_exist(tmp_path: Path) -> None:
     reviewer_bundle = _make_bundle(tmp_path / "reviewer", "live-reviewer")
-    coder_bundle = _make_bundle(tmp_path / "coder", "live-coder", status="applied")
+    # This fixture is a harness provenance proof, not a live-write proof.  Applied results need
+    # a broker-owned settlement close, which is covered by the wrapper integration tests.
+    coder_bundle = _make_bundle(tmp_path / "coder", "live-coder", status="success")
     reviewer = _rewrite_fixture_paths(tmp_path, "real-reviewer.jsonl", reviewer_bundle)
     coder = _rewrite_fixture_paths(tmp_path, "real-coder.jsonl", coder_bundle)
 
@@ -64,7 +66,18 @@ def test_real_reviewer_and_coder_fixtures_pass_when_bundles_exist(tmp_path: Path
         "real",
         "real",
     ]
-    assert [audit["result_statuses"] for audit in payload["audits"]] == [["success"], ["applied"]]
+    assert [audit["result_statuses"] for audit in payload["audits"]] == [["success"], ["success"]]
+
+
+def test_applied_result_without_accepted_canonical_close_fails(tmp_path: Path) -> None:
+    bundle = _make_bundle(tmp_path / "coder", "live-coder", status="applied")
+    transcript = _rewrite_fixture_paths(tmp_path, "real-coder.jsonl", bundle)
+
+    completed = _run_audit(transcript)
+    payload = json.loads(completed.stdout)
+
+    assert completed.returncode == 1
+    assert payload["passed"] is False
 
 
 def test_clone_fallback_fixture_fails_closed() -> None:

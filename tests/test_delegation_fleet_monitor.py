@@ -418,10 +418,10 @@ def test_standalone_transcript_matching_no_bridge_reports_once(tmp_path: Path) -
 
 
 def test_real_proofs_directory_excludes_examples_and_sweeps_clean() -> None:
-    """examples/ is documentation, not enforcement surface: the shipped example proof and
-    transcript are never loaded, and the honest tree sweeps clean (exit 0)."""
+    """Examples stay documentation-only while shipped release proofs remain enforced."""
     proofs = cdp.load_proofs(REAL_PROOFS_DIR)
-    assert proofs == [], "examples/ must be excluded from the enforcement surface"
+    assert [proof.data["run_id"] for proof in proofs] == ["issue-355-genuine-20260717"]
+    assert all("examples" not in proof.path.parts for proof in proofs)
     findings = cdp.sweep(_manifest(), proofs, base_dir=REAL_PROOFS_DIR)
     assert findings == [], [f.render() for f in findings]
     rc = cdp.main(

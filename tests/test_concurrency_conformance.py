@@ -84,8 +84,8 @@ EXPECTED_ROWS: frozenset[InventoryRow] = frozenset(
             "agent",
             "engine_dispatch.dispatch",
             "not-applicable:in-process-adapter",
-            "LeaseBroker.agent_settlement",
-            "LeaseBroker.agent_settlement",
+            "LeaseBroker.prepare_agent_settlement",
+            "LeaseBroker.commit_agent_settlement",
         ),
         (
             "plugins/saga/scripts/engine_dispatch.py",
@@ -94,8 +94,8 @@ EXPECTED_ROWS: frozenset[InventoryRow] = frozenset(
             "agent",
             "engine_dispatch.dispatch",
             "not-applicable:in-process-adapter",
-            "LeaseBroker.agent_settlement",
-            "LeaseBroker.agent_settlement",
+            "LeaseBroker.prepare_agent_settlement",
+            "LeaseBroker.commit_agent_settlement",
         ),
         (
             "plugins/saga/scripts/engine_dispatch.py",
@@ -105,7 +105,7 @@ EXPECTED_ROWS: frozenset[InventoryRow] = frozenset(
             "engine_dispatch.dispatch_advisory_panel",
             "not-applicable:in-process-adapter",
             "LeaseBroker.renew",
-            "LeaseBroker.agent_settlement",
+            "LeaseBroker.commit_agent_settlement",
         ),
         (
             "plugins/saga/scripts/outcome.py",
@@ -157,7 +157,8 @@ def test_issue_355_decision_uses_one_broker_authority() -> None:
         "prepare/commit/abort",
         "atomic closed-registry replacement",
         "closed-head CAS",
-        "root-only same-generation recovery",
+        "does not claim automatic or restart-safe producer replay",
+        "same-effective-user processes and the operator are trusted",
         "512 MiB and 256 entries",
     ):
         assert required in normalized
@@ -170,14 +171,23 @@ EXPECTED_LEASE_CALLS: dict[tuple[str, str], frozenset[str]] = {
     ("plugins/saga/scripts/engine_dispatch.py", "dispatch"): frozenset(
         {
             "selected.acquire_agent",
+            "selected.acquire_successor",
+            "selected.commit_agent_settlement",
+            "selected.abort_agent_settlement",
             "selected.release",
         }
     ),
     ("plugins/saga/scripts/engine_dispatch.py", "guarded_runner"): frozenset(
-        {"selected.agent_settlement"}
+        {"selected.prepare_agent_settlement"}
     ),
     ("plugins/saga/scripts/engine_dispatch.py", "dispatch_advisory_panel"): frozenset(
-        {"selected.acquire_agent", "selected.agent_settlement", "selected.release"}
+        {
+            "selected.acquire_agent",
+            "selected.prepare_agent_settlement",
+            "selected.commit_agent_settlement",
+            "selected.abort_agent_settlement",
+            "selected.release",
+        }
     ),
     ("plugins/saga/scripts/engine_dispatch.py", "guarded_panel_runner"): frozenset(
         {"selected.renew"}
@@ -1014,7 +1024,8 @@ def test_injected_unguarded_executable_spawn_is_rejected() -> None:
     ("source_path", "call"),
     [
         ("plugins/saga/scripts/engine_dispatch.py", "selected.acquire_agent"),
-        ("plugins/saga/scripts/engine_dispatch.py", "selected.agent_settlement"),
+        ("plugins/saga/scripts/engine_dispatch.py", "selected.prepare_agent_settlement"),
+        ("plugins/saga/scripts/engine_dispatch.py", "selected.commit_agent_settlement"),
         ("plugins/saga/scripts/engine_dispatch.py", "selected.release"),
         ("plugins/saga/scripts/outcome_dispatcher.py", "selected.acquire_agent"),
         ("plugins/saga/scripts/outcome_dispatcher.py", "selected.renew"),

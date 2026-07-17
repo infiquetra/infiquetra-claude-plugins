@@ -20,6 +20,13 @@ Destination is merge. Execution uses an operator-approved Verified Workflow. Roo
 implementation, Git, integration, PR, merge, issue closure, and board reconciliation. Agent-lens
 roles independently review or validate and authorize no repository mutation.
 
+### Execution checkpoint - 2026-07-17
+
+Implementation and remediation are active and uncommitted pending the final Verified Workflow gate.
+The remaining delivery gates are the integrated Python 3.12 checks, a scope-corrected Verified
+Workflow review/validation run, genuine private delegation proof and fixed command receipts, Saga
+code review and QA, then PR/merge/board closeout.
+
 ---
 
 ## Problem Frame and Current State
@@ -47,6 +54,12 @@ The agy bundle under `.claude/agy/runs/<run_id>` remains local forensic material
 clone verification finish before settlement prepare; only bounded validation and broker-owned commit
 callbacks occur under the broker lock. Terminal bundle files still record what happened when live
 acceptance is denied, but neither they nor ordinary `manifest_store` output are canonical acceptance.
+
+This is an owner-local Claude Code plugin, not a multi-tenant service. Processes running as the same
+effective user are inside the trust boundary, as is the operator who can replace or disable the
+plugin. The containment contract protects against stale runners, crashes, accidental corruption,
+and untrusted external-engine output. It does not attempt to resist a malicious same-user process
+that deliberately replaces plugin state or invokes internal Python APIs.
 
 `plugins/saga/scripts/outcome_liveness.py:35-142` already derives fixed-budget heartbeat stalls from
 the outcome ledger. #355 may adapt that evidence into an orphan projection, but issue #357 owns the
@@ -91,14 +104,16 @@ writes use `agent_settlement`. No resource-lock directory, second registry, hear
 caller-authored token is introduced.
 
 R2. **Bind agy apply to trusted resource identity.** Agy `auto-if-clean` requires a trusted outer
-`--lease-resource-key`; launched `auto-if-clean` is rejected without it. The CLI accepts no other
-admission identity. `agy_delegate.main()` calls
+resource key in an owner-private `0600` regular file passed as `--lease-resource-key-file`; launched
+`auto-if-clean` is rejected without it, and raw argv keys are rejected. The CLI accepts no other
+admission identity. `agy_delegate.main()` reads the key, immediately derives a repository-scoped
+digest, and calls
 `plugins/agy/scripts/agy_lease_admission.py::resolve_direct_agy_admission(repo_root, resource_key,
 run_id, providers)` after strict Git-root resolution and before any clone or subprocess. The resolver
 imports fleet-core `concurrency_policy.AdmissionLimits` packaged defaults and broker providers,
 immediately calls `configure_session_admission`, and returns an immutable typed
-`agy.lease-admission.v1` record directly in memory to `run_agy_supervised`; it uses no file,
-environment variable, envelope, prompt, bundle, or engine transport. It derives `session_id` from
+`agy.lease-admission.v1` record directly in memory to `run_agy_supervised`; no raw key or admission
+record uses environment, envelope, prompt, bundle, or engine transport. It derives `session_id` from
 canonical repository identity plus `run_id`; fixes `owner_id` to `agy-direct:<effective-uid>`;
 uses the current PID and provider-derived process start; copies policy digest and session/aggregate
 limits from packaged `AdmissionLimits`; sets `mutation=read-write` and the broker-default TTL;
@@ -122,18 +137,10 @@ linearization point. A caught callback or receipt-validation failure best-effort
 releases exact authority; after any callback may have started it never releases. Callback output
 without a matching closed registry receipt is unaccepted, quarantine-only evidence. Sweep and acquire
 retain or block `prepared`, `committing`, and `ambiguous` regardless of TTL.
-`LeaseBroker.recover_agent_settlement(...)` is the only recovery API. Only the root coordinator may
-call it through the non-child production adapter, with a typed `settlement_recovery_intent.v1` carrying
-the exact original `Lease`, token, resource, settlement ID, session and policy, expected retained
-phase, original protected-write intent digest, and root recovery-owner identity. Under the broker
-lock it requires the current head to match exactly; phase to be `prepared`, `committing`, or
-`ambiguous`; original owner death or boot change; the caller's effective UID to own the safe broker
-root; original owner ID, session, and policy to match; and no live successor. `prepared` may abort the
-exact settlement or restart commit. `committing` and `ambiguous` may only replay idempotent protected
-writers whose declared input and output digests match the prepared intent, then use the same
-closed-registry CAS linearization; otherwise authority remains retained and the operator is paged.
-An identical completed replay returns the existing receipt. Mismatched, stale, live-owner, or
-wrong-identity recovery refuses. Recovery never creates a generation or an ordinary successor.
+Issue #355 deliberately stops at conservative retention: it does not claim automatic or restart-safe
+producer replay. The low-level `SettlementRecoveryCoordinator` remains a test/experimental seam, not
+a production guarantee. An ambiguous producer stays visible and blocks a successor until the owner
+can make an explicit, producer-aware decision. Issue #358 owns lifecycle recovery and teardown.
 
 R4. **Superseded writes are metadata-only.** Superseded settlement emits `ORPHAN_WRITE_BLOCKED`; the
 live target and current evidence remain unchanged.
@@ -150,6 +157,9 @@ evidence-integrity error, never accepted or silently called late-after-close.
 
 R7. **Current paths preserve compatibility.** Current agy apply and registered Saga dispatch retain
 their successful schemas and behavior. Saga's already-settled fact path is extended, not replaced.
+Exact pre-binding `settlement_close.v1` records remain readable only to classify previously closed
+resource heads. They retain their legacy shape and cannot pass current close validation, recovery,
+successor admission, manifest gating, or new proof production.
 
 R8. **Quarantine is bounded, reserved, and tamper-evident.** Each item is strictly `<128 MiB`;
 committed plus staging bytes are capped at 512 MiB and reservations count toward a 256-entry cap.
@@ -198,18 +208,22 @@ registered Saga facts, Team Execution writers, unique-run forensics, and noncano
 
 R13. **Release integrity requires executable proof.** Bump fleet-core `0.12.0` to `0.13.0`, agy
 `0.4.0` to `0.5.0`, Saga `0.99.1` to `0.100.0`, and Team Execution to `2.19.0` for the protocol
-change. Require a genuine `delegation-proof.v1` plus matching transcript. The closed `run` and
+change. Advance the incompatible lease settlement contract to protocol version 2 and require it in
+Saga, Team Execution, and Agy live apply; keep Agy non-apply paths lazy across install skew. Require
+a genuine `delegation-proof.v1` plus matching transcript. The closed `run` and
 `verify` subcommands of `scripts/delegation_proof_receipt.py` are the only release-proof command path.
 `run` invokes the fixed internal `check_delegation_proof.py` argv for exactly one mode and atomically
 writes a distinct 0600 receipt at
 `docs/evidence/issue-355/version-gate-command-receipt.json` or
 `docs/evidence/issue-355/fleet-sweep-command-receipt.json`. Each receipt captures mode, exact argv,
-cwd, recorded merge-base, base and head SHA, proof and transcript digests, stdout, stderr, exit code,
-started/ended UTC, and its self-digest. `verify` recomputes schema and self-digest and requires the
-mode, expected argv, base/head, referenced proof/transcript artifacts and digests, and exit zero to
-match current release evidence. Missing, swapped, tampered, nonzero, wrong-argv, wrong-base, or
-wrong-digest receipts fail. Unit tests, dry runs, or direct unreceipted checks do not satisfy release
-proof.
+cwd, immutable merge-base SHA, the repository-relative `docs/delegation-proofs` artifacts, a
+deterministic candidate snapshot of every other tracked or untracked nonignored path and Git mode,
+stdout, stderr, exit code, started/ended UTC, and its self-digest. Only the two fixed receipt paths
+are excluded from the candidate snapshot, so a later commit that changes only those receipts remains
+valid. `verify` recomputes schema, self-digest, immutable base, merge-base, candidate snapshot, and
+proof/transcript bytes and modes before rerunning the fixed checker. Missing, swapped, symlinked,
+external, tampered, nonzero, wrong-argv, wrong-base, or wrong-digest evidence fails. Unit tests, dry
+runs, or direct unreceipted checks do not satisfy release proof.
 
 ---
 
@@ -237,12 +251,10 @@ trusted runtime
             +-- failed registry write/signal/death -> last durable
                 prepared or committing state retains authority
     |
-    +-- root-only recovery of retained authority
-            +-- recover_agent_settlement with typed original intent
-            +-- exact current-head/owner/session/policy/death checks under lock
-            +-- prepared -> exact abort or restart commit
-            +-- committing/ambiguous -> digest-matched idempotent replay only
-            +-- same closed-registry CAS linearization; no new generation
+    +-- retained authority remains visible and blocks a successor
+            +-- low-level recovery coordinator remains a test seam
+            +-- no automatic or restart-safe producer replay in #355
+            +-- lifecycle recovery and teardown belong to #358
 
 broker + immutable forensics + existing outcome heartbeat
     |
@@ -251,8 +263,8 @@ broker + immutable forensics + existing outcome heartbeat
 
 Sweep never reclaims `prepared`, `committing`, or `ambiguous`, regardless of TTL, and acquisition
 cannot supersede those phases. Output produced without a matching closed registry receipt is
-unaccepted and quarantine-only. Retained-settlement recovery follows the root-only API above; ordinary
-retry can proceed only through
+unaccepted and quarantine-only. #355 retains ambiguous authority for inspection instead of claiming
+generic recovery; ordinary retry can proceed only through
 `acquire_successor(expected_predecessor_token, expected_receipt_sha256)` against the exact closed
 head. The audit close seal mirrors the canonical receipt embedded in `ResourceFence`; it does not
 authorize release or successor acquisition.
@@ -331,7 +343,7 @@ ending `_sha256` is lowercase hex64. `evidence_refs`,
 
 | schema | exact required fields | exact optional fields |
 |---|---|---|
-| `settlement_close.v1` | `schema`, `resource_ref`, `token`, `lease_id`, `generation`, `phase`, `producer`, `run_id`, `terminal`, `evidence_refs`, `expected_output_sha256`, `receipt_sha256`, `sha256` | none |
+| `settlement_close.v1` | `schema`, `resource_ref`, `token`, `lease_id`, `settlement_id`, `session_id`, `policy_sha256`, `generation`, `phase`, `producer`, `run_id`, `terminal`, `evidence_refs`, `expected_output_sha256`, `protected_write_intent_sha256`, `settlement_sha256`, `receipt_sha256`, `sha256` | none |
 | `settlement_recovery_intent.v1` | `schema`, `resource_ref`, `token`, `lease_id`, `generation`, `settlement_id`, `session_id`, `policy_sha256`, `expected_phase`, `protected_write_intent_sha256`, `recovery_owner_id`, `recovery_owner_pid`, `recovery_owner_process_start`, `recovery_owner_boot_id`, `recovery_owner_effective_uid`, `sha256` | none |
 | `agy.expected-output-template.v1` | `schema`, `trusted_source`, `source_id`, `required`, `artifact_keys`, `target_count`, `expected_output_template_sha256`, `sha256` | none |
 | `expected_output.v1` | `schema`, `expected_output_template_sha256`, `resource_ref`, `token`, `lease_id`, `generation`, `producer`, `run_id`, `expected_output_sha256`, `sha256` | none |
@@ -350,7 +362,9 @@ canonical repository identity and `run_id`, while the resulting lease/fence copi
 `resource_ref`, owner, policy, and expected-output-template binding.
 
 Evidence `sha256` is the digest of canonical JSON with only `sha256` omitted. `receipt_sha256` is the
-digest of the complete canonical `settlement_close.v1` with `receipt_sha256` and `sha256` omitted.
+digest of the complete canonical `settlement_close.v1`, including the exact settlement, session,
+policy, protected-write intent, and prepared-settlement bindings, with `receipt_sha256` and `sha256`
+omitted.
 `expected_output_sha256` is the digest of the complete canonical `expected_output.v1` with
 `expected_output_sha256` and `sha256` omitted. Validators require every applicable resource, token,
 lease, run, and generation binding to match the broker receipt and expected-output record; mismatch,
@@ -375,8 +389,10 @@ optional or no-output contracts yield no candidate.
 
 ## Key Technical Decisions
 
-- **KTD1 - #356/#613 broker is the sole authority.** `LeaseBroker` and its retained-authority cleanup
-  contract are authoritative; terminal bundle data remains forensic only.
+- **KTD1 - #356/#613 broker is the sole authority.** `LeaseBroker` and its retained-authority
+  inspection contract are authoritative; terminal bundle data remains forensic only. #355 retains
+  ambiguity rather than pretending it can replay every producer after restart; #358 owns that
+  lifecycle.
 - **KTD2 - prepare/commit/abort belongs to the broker.** Prepare renews and persists before writes;
   commit persists `committing` before callbacks, and the single atomic closed-registry replacement
   after receipt validation is the only commit linearization point. Pre-callback abort releases exact
@@ -464,8 +480,8 @@ sole commit linearization. A pre-callback abort releases exact authority. Once c
 have begun, a caught failure best-effort writes `ambiguous`, while failed fsync/rename/registry write,
 signal, or death leaves the last durable `prepared`/`committing` state as retained authority. Sweep
 and acquire retain/block all three states. Output without the matching closed registry receipt is
-unaccepted and quarantine-only; recovery can inspect it but can close only by rerunning an authorized
-CAS commit. `acquire_successor` requires the exact predecessor token and receipt hash.
+unaccepted and quarantine-only. The retained state remains inspectable but is not automatically
+replayed by #355. `acquire_successor` requires the exact predecessor token and receipt hash.
 
 **Patterns to follow:** Existing `LeaseBroker.agent_settlement`, `classify_token`, atomic registry
 replacement, exact release, and #613's fail-closed retained-authority contract.
@@ -474,8 +490,8 @@ replacement, exact release, and #613's fail-closed retained-authority contract.
 readers never accept callback output while the durable state is prepared/committing/ambiguous. Inject
 fsync, rename, and registry-write failure before and after callback start, plus signal and process
 death. A caught failure persists ambiguous when possible; an unwritable registry truthfully leaves
-prepared/committing. Restart/sweep/acquire retains each state. Recovery cannot synthesize close from
-callback files and must rerun exact CAS commit. Superseded resolves metadata-only; elapsed still-head
+prepared/committing. Restart/sweep/acquire retains each state. No startup path synthesizes close from
+callback files or claims restart-safe replay. Superseded resolves metadata-only; elapsed still-head
 resolves expired; matching closed receipt resolves late; mismatched or corrupt authority is evidence
 error. Include a real two-process stale-writer/successor race proving stale CAS failure and byte
 preservation.
@@ -550,8 +566,9 @@ canonical settlement while retaining terminal bundle truth and unique-run compat
 `tests/test_agy_delegate_contract.py`, `tests/test_agy_delegate_reliability.py`,
 `tests/test_agy_run_lease.py`, `tests/test_agy_apply_policy.py`, `tests/test_orphan_fencing.py`.
 
-**Approach:** Require `--lease-resource-key` only for launched `auto-if-clean`/`apply-if-clean`.
-Immediately after strict Git-root resolution and before clone/subprocess,
+**Approach:** Require an owner-private `0600` key file through `--lease-resource-key-file` only for
+launched `auto-if-clean`/`apply-if-clean`, reject raw argv keys, and immediately reduce the key to a
+repository-scoped digest. After strict Git-root resolution and before clone/subprocess,
 `agy_delegate.main()` calls
 `agy_lease_admission.resolve_direct_agy_admission(repo_root, resource_key, run_id, providers)`.
 That producer imports packaged fleet-core `concurrency_policy.AdmissionLimits` and broker providers;
@@ -697,9 +714,11 @@ publish all three plugins coherently, and satisfy the agy delegation-proof gate.
 for every canonical acceptance seam. Unique bundle files and ordinary manifest-store writes receive
 explicit noncanonical rows. Update release surfaces to fleet-core `0.13.0`, agy `0.5.0`, and Saga `0.100.0`;
 the agy bump is not PR-ready without genuine proof and transcript evidence.
-Run the receipt-producing wrapper from the recorded merge base. Its closed `run` subcommand invokes
-the fixed internal `check_delegation_proof.py` argv and writes the mode-specific receipt; `verify`
-then validates that receipt against current base, head, proof, and transcript bytes:
+Run the receipt-producing wrapper with the immutable recorded merge-base SHA. Its closed `run`
+subcommand accepts only repository `docs/delegation-proofs`, invokes the fixed internal
+`check_delegation_proof.py` argv, and writes the mode-specific fixed receipt; `verify` validates the
+receipt against the immutable base, live merge-base, receipt-excluded candidate snapshot, and proof
+and transcript bytes and modes:
 
 ```bash
 uv run python scripts/delegation_proof_receipt.py run --mode version-gate \
@@ -708,16 +727,18 @@ uv run python scripts/delegation_proof_receipt.py run --mode version-gate \
 uv run python scripts/delegation_proof_receipt.py verify \
   --receipt docs/evidence/issue-355/version-gate-command-receipt.json
 uv run python scripts/delegation_proof_receipt.py run --mode fleet-sweep \
+  --base-ref <recorded-merge-base-sha> \
   --proofs-dir docs/delegation-proofs --transcripts-dir docs/delegation-proofs \
   --receipt-out docs/evidence/issue-355/fleet-sweep-command-receipt.json
 uv run python scripts/delegation_proof_receipt.py verify \
   --receipt docs/evidence/issue-355/fleet-sweep-command-receipt.json
 ```
 
-Both mode-specific receipts bind exact argv, cwd, recorded merge-base SHA, base/head SHA, proof and
-transcript digests, stdout, stderr, exit code, UTC bounds, and a self-digest. Both `run` and `verify`
-commands must exit 0; unit tests, direct unreceipted checks, dry runs, fabricated proof, or a
-transcript mismatch do not satisfy release proof.
+Both mode-specific receipts bind exact argv, cwd, immutable recorded merge-base SHA, the complete
+receipt-excluded candidate snapshot, proof and transcript digests and modes, stdout, stderr, exit
+code, UTC bounds, and a self-digest. Both `run` and `verify` commands must exit 0; unit tests, direct
+unreceipted checks, dry runs, fabricated proof, or a transcript mismatch do not satisfy release
+proof.
 
 **Patterns to follow:** #350 concurrency and #356 lease lifecycle inventories; release triad/parity
 guards; journal decisions in the same behavioral commit.
@@ -759,7 +780,7 @@ commands and command-receipt validation, and full repository gates are green fro
 | `d355-schema-broker-types-conflict` | U2 / R10 | real UUID epoch and provider process-identity round trips through every closed schema |
 | `d355-expected-output-prelease-cycle` | U3 / R2 | lease-independent template first, then exact lease-bound expected-output record |
 | `d355-release-proof-receipt-unexecutable` | U6 / R13 | receipt wrapper `run` and `verify` with distinct mode-bound artifacts and tamper tests |
-| `d355-retained-settlement-recovery-undefined` | U1 / R3 | root-only same-generation recovery API with dead-owner, digest, phase, and CAS checks |
+| `d355-retained-settlement-recovery-undefined` | U1 / R3 | conservative retention and explicit #358 ownership instead of an unwired production-replay claim |
 
 ---
 
@@ -780,6 +801,9 @@ commands and command-receipt validation, and full repository gates are green fro
 - UI/dashboard surfacing, cross-host/distributed locking, quarantine encryption, retention policy
   beyond the required 30-day minimum, or automatic application of quarantined content.
 - Rewriting agy's existing bundle sequencing or replacing outcome R31 stalled semantics.
+- Turning the owner-local Claude Code plugin into a hostile same-user sandbox. OS isolation, an
+  environment secret broker, and adversarial path-swap defenses are separate runner-hardening work,
+  not orphan-fencing acceptance criteria.
 
 ### Deferred to follow-up work
 
@@ -827,6 +851,7 @@ uv run python scripts/delegation_proof_receipt.py run --mode version-gate \
 uv run python scripts/delegation_proof_receipt.py verify \
   --receipt docs/evidence/issue-355/version-gate-command-receipt.json
 uv run python scripts/delegation_proof_receipt.py run --mode fleet-sweep \
+  --base-ref <recorded-merge-base-sha> \
   --proofs-dir docs/delegation-proofs --transcripts-dir docs/delegation-proofs \
   --receipt-out docs/evidence/issue-355/fleet-sweep-command-receipt.json
 uv run python scripts/delegation_proof_receipt.py verify \
@@ -889,8 +914,8 @@ base/head SHA-256, proof/transcript SHA-256, stdout/stderr, and exit code.
 | review-security | implement | review | security-reviewer | agent-lens | preferred | review-high | review_high | auto | none | scored-review,findings | bf5bc1b66c0ee3d06071976b659c522c23057c56de5f6cc010556b2653c86980 | 42e86e00e054281b0a79e4b3b9b544c04a31eb2fd6b53c0489adc42ea639c9a8 | gpt-5.6-sol | high | n/a | n/a | - |
 | review-architecture | implement | review | architecture-reviewer | agent-lens | preferred | review-high | review_high | auto | none | scored-review,findings | e48b37cea0b26bf39cae4d6611b4219e907d52d284ba6b9489b523a4b16c835f | 42e86e00e054281b0a79e4b3b9b544c04a31eb2fd6b53c0489adc42ea639c9a8 | gpt-5.6-sol | high | n/a | n/a | - |
 | review-testing | implement | review | testing-reviewer | agent-lens | preferred | review-high | review_high | auto | none | scored-review,test-gaps | a867575e24c86b0573485d1d8bbd81514af3654d544342677b85f4bed0d9af63 | 42e86e00e054281b0a79e4b3b9b544c04a31eb2fd6b53c0489adc42ea639c9a8 | gpt-5.6-sol | high | n/a | n/a | - |
-| validate-concurrency | implement | validate | concurrency-tester | agent-lens | preferred | test-medium | test_medium | auto | none | tester-evidence,command-results | d40188645b7876e32ea592dd9799ee2ad7a2e230d82341611708dd492837b3da | 6d69bb4d5e477574ce186a353a3d2fcc7f8ab6b1f014b93aebb05084aecccc1b | gpt-5.6-terra | medium | true | false | - |
-| validate-event-flow | implement | validate | event-flow-tester | agent-lens | preferred | test-medium | test_medium | auto | none | event-trace,command-results | 2e20ab6935b1e17e363b5e28308a9288107532d0118a6a189f07b0e0eaaff356 | 6d69bb4d5e477574ce186a353a3d2fcc7f8ab6b1f014b93aebb05084aecccc1b | gpt-5.6-terra | medium | true | false | - |
+| validate-concurrency | implement | validate | concurrency-tester | agent-lens | preferred | test-medium | test_medium | auto | none | command-results | d40188645b7876e32ea592dd9799ee2ad7a2e230d82341611708dd492837b3da | 6d69bb4d5e477574ce186a353a3d2fcc7f8ab6b1f014b93aebb05084aecccc1b | gpt-5.6-terra | medium | true | false | - |
+| validate-event-flow | implement | validate | event-flow-tester | agent-lens | preferred | test-medium | test_medium | auto | none | command-results | 2e20ab6935b1e17e363b5e28308a9288107532d0118a6a189f07b0e0eaaff356 | 6d69bb4d5e477574ce186a353a3d2fcc7f8ab6b1f014b93aebb05084aecccc1b | gpt-5.6-terra | medium | true | false | - |
 | integrate | review-devils,review-security,review-architecture,review-testing,validate-concurrency,validate-event-flow | - | root | root | n/a | - | - | root | root-only | fixed-findings,full-gate,release-parity,delegation-proof,matching-transcript,version-gate-receipt,fleet-sweep-receipt,git-receipt | - | - | - | - | n/a | n/a | - |
 
 ## Workflow Operating Contract

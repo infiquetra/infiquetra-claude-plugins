@@ -43,6 +43,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import stat
 import threading
 import time
 from dataclasses import dataclass
@@ -89,7 +90,11 @@ def _write_temp_0600(tmp: Path, content: str) -> None:
     0o600)``) for the identical ``manifest.json`` content this module also mirrors, rather than
     the weaker unrestricted-mode ``outcome_store.py`` primitives this module otherwise matches.
     """
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    fd = os.open(
+        tmp,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
     try:
         os.fchmod(fd, 0o600)  # belt-and-suspenders against an inherited restrictive umask
         payload = memoryview(content.encode("utf-8"))
@@ -102,7 +107,7 @@ def _write_temp_0600(tmp: Path, content: str) -> None:
 
 def _atomic_write(path: Path, content: str) -> None:
     """Overwrite ``path`` atomically (temp + ``os.replace``) so no reader sees a torn file."""
-    path.parent.mkdir(parents=True, exist_ok=True)
+    _ensure_private_dir(path.parent)
     tmp = _unique_tmp(path)
     _write_temp_0600(tmp, content)
     os.replace(tmp, path)
@@ -114,7 +119,7 @@ def _write_once(path: Path, content: str) -> bool:
     Returns True if this call created the file, False if it already existed. Uses temp +
     ``os.link`` so a crash mid-write leaves only the temp file, never a torn final file.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
+    _ensure_private_dir(path.parent)
     tmp = _unique_tmp(path)
     _write_temp_0600(tmp, content)
     try:
@@ -137,6 +142,25 @@ def _read_json(path: Path) -> dict[str, Any] | None:
     except (json.JSONDecodeError, ValueError):
         return None
     return data if isinstance(data, dict) else None
+
+
+def _ensure_private_dir(path: Path) -> None:
+    missing: list[Path] = []
+    current = path
+    while not current.exists() and not current.is_symlink():
+        missing.append(current)
+        current = current.parent
+    for directory in reversed(missing):
+        directory.mkdir(mode=0o700)
+        os.chmod(directory, 0o700, follow_symlinks=False)
+    metadata = path.lstat()
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_uid != os.geteuid()
+        or stat.S_IMODE(metadata.st_mode) != 0o700
+    ):
+        raise AuditStoreError(f"audit-store directory is unsafe: {path}")
 
 
 # ---------------------------------------------------------------------------
@@ -174,6 +198,9 @@ class Store:
     def manifest_path(self, run_id: str) -> Path:
         return self.run_dir(run_id) / "manifest.json"
 
+    def noncanonical_manifest_path(self, run_id: str) -> Path:
+        return self.run_dir(run_id) / "noncanonical-manifest.json"
+
     def draft_dir(self, run_id: str) -> Path:
         return self.root / DRAFTS_NAMESPACE / _safe_name(run_id, what="run_id")
 
@@ -181,7 +208,7 @@ class Store:
         return self.draft_dir(run_id) / "raw.diff"
 
     def ensure(self) -> Store:
-        self.root.mkdir(parents=True, exist_ok=True)
+        _ensure_private_dir(self.root)
         return self
 
 
@@ -217,6 +244,14 @@ def mirror_manifest(store: Store, run_id: str, manifest: dict[str, Any]) -> Path
     return path
 
 
+def mirror_noncanonical_manifest(store: Store, run_id: str, manifest: dict[str, Any]) -> Path:
+    """Mirror compatibility evidence without replacing the canonical manifest mirror."""
+
+    path = store.noncanonical_manifest_path(run_id)
+    _atomic_write(path, json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    return path
+
+
 # ---------------------------------------------------------------------------
 # Resolve reads — never raise on absent/corrupt; that is data, not an error
 # ---------------------------------------------------------------------------
@@ -232,6 +267,12 @@ def resolve_result(store: Store, run_id: str) -> dict[str, Any] | None:
 
 def resolve_manifest(store: Store, run_id: str) -> dict[str, Any] | None:
     return _read_json(store.manifest_path(run_id))
+
+
+def resolve_noncanonical_manifest(store: Store, run_id: str) -> dict[str, Any] | None:
+    """Resolve compatibility evidence from its noncanonical audit namespace."""
+
+    return _read_json(store.noncanonical_manifest_path(run_id))
 
 
 def list_runs(store: Store) -> list[str]:

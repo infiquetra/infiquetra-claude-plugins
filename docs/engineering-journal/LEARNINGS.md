@@ -25,6 +25,67 @@
 
 ---
 
+## 2026-07-17
+
+### A release receipt cannot bind the commit that adds itself {#receipt-excluded-candidate-355}
+
+**Context.** Issue #355 initially recorded the live `HEAD` after running the delegation proof, then
+expected the receipt to remain valid after the receipt itself was committed. **Evidence.** The first
+post-run commit necessarily changed `HEAD`, so an otherwise unchanged proof failed its own verifier;
+an arbitrary receipt or proof root could also leave the shipped tree without the evidence named by
+the receipt. **Mechanism.** A content-bearing receipt creates a self-reference: its final bytes cannot
+be part of a preexisting commit hash that also contains those bytes. **Fix.** Bind an immutable
+merge-base plus every tracked or untracked nonignored candidate path, Git mode, and byte digest,
+excluding only the two fixed receipt paths. Require the fixed repository proof/transcript root and
+rerun the fixed checker during verification. **Validation.** Focused tests prove that receipt-only
+commits remain valid while candidate, mode, artifact, base, symlink, path, or checker drift fails.
+**Generalizable rule.** When a release artifact must attest the tree that will later contain it,
+bind a closed candidate projection with explicit self-exclusions, not the pre-artifact commit hash;
+fix both the evidence roots and output paths so the attestation is actually shipped.
+
+**Refs.** Issue #355; DECISIONS `{#orphan-evidence-fencing-355}`.
+
+---
+
+### A protected callback needs durable pre-write authority and a receipt-bearing close {#settlement-close-linearization-355}
+
+**Context.** Issue #355 extended external-runtime fencing beyond point-in-time token validation.
+**Evidence.** Broker failure and retry tests hold `prepared`, `committing`, or `ambiguous` authority
+across callback errors, sweep, generic release, and restart; registered Saga, Agy apply, and Team
+Execution manifest transitions close only through `commit_agent_settlement`. **Mechanism.** Holding a
+lock around a callback prevents a concurrent writer but cannot prove, after crash or callback error,
+whether external bytes changed. Releasing authority on that ambiguity creates false acceptance and
+lets a successor overwrite evidence. **Fix.** Persist `prepared` before any protected writer,
+`committing` immediately before callback execution, and embed `settlement_close.v1` only in the final
+registry replacement. A producer writes strict `acceptance-pending` evidence inside that callback;
+only the broker's canonical closed head upgrades it to accepted. Retain every nonclosed phase for
+inspection; #355 deliberately does not claim that a generic startup path can safely replay every
+producer. The low-level recovery coordinator is only an experimental test seam, while #358 owns
+lifecycle recovery. Require an exact predecessor token and receipt digest for a successor.
+**Validation.** Focused broker,
+quarantine, Agy, Saga, manifest-chain, final-registry-failure, and two-process claim-race suites prove
+stale predecessors cannot alter accepted bytes, while expired and post-close output remains forensic
+only. Lost-response retry returns the existing canonical close without replaying bytes. Quarantine
+recovery now precedes quota and event publication and validates staged bytes, schemas, identities,
+paths, and digests before exposing evidence. **Generalizable rule.** Crash-safe cooperative write
+authority is a state machine, not a context manager: persist intent before the side effect, bind
+recovery to the complete retained operation, validate forensic evidence before publication, and make
+one durable receipt-bearing transition the sole acceptance point. Do not confuse that local
+correctness contract with a hostile same-user security boundary.
+
+**Follow-up evidence.** Bounded inspection is not an authority lookup: an older close can remain in
+an exact archive sidecar after falling out of the newest-head projection. Ordinary acquisition,
+successor admission, and late-write classification now use exact hot-or-archive lookup. The
+incompatible settlement API is protocol 2, and non-apply Agy modes lazy-load it. Likewise, a
+completeness-shaped manifest is not by itself an output contract: empty-artifact projection now
+requires the bound `expected_output.v1` and matching trusted template; optional or absent contracts
+stay silent and contradictory evidence is classified as an integrity error.
+
+**Refs.** Issue #355; DECISIONS `{#orphan-evidence-fencing-355}`; Saga
+`references/evidence-write-sites.md`.
+
+---
+
 ## 2026-07-16
 
 ### A lease check protects a write only when the check and write share the exclusion window {#lease-settlement-window-356}

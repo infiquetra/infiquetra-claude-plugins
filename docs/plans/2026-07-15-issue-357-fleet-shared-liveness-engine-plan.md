@@ -11,10 +11,11 @@ deepened: 2026-07-17
 
 ## Summary
 
-Implement issue #357 on the merged #351/#356 baseline from PRs #611/#612 plus PR #613's repair for
-lease-authorized teardown. The change adds one fleet-core scoring engine, preserves Outcome R31, and
-adds a team-execution observation and re-ping protocol. #355 remains a serialized release sibling;
-#358 alone consumes confirmed liveness for destructive action.
+Implement issue #357 on the merged #351/#356/#355 baseline from PRs #611/#612/#614 plus PR #613's
+repair for lease-authorized teardown. The change adds one fleet-core scoring engine, preserves
+Outcome R31, and adds a team-execution observation and re-ping protocol. #355 remains a sibling
+ownership boundary already serialized into this baseline; #358 alone consumes confirmed liveness
+for destructive action.
 
 Destination is merge. Execution uses an operator-approved Verified Workflow. Root owns
 implementation, Git, integration, PR, merge, issue closure, and board reconciliation. Agent-lens
@@ -24,11 +25,13 @@ roles independently review or validate and authorize no repository mutation.
 
 ## Problem Frame and Current State
 
-The post-#613 baseline is `cb6f44ea002a776e9a3cd3eea125c384c90ea65a` on `origin/main`, with
-fleet-core 0.12.0, Saga 0.99.1, and team-execution 2.18.0. `run_ledger.py` now provides the
-lock-consistent `append_fact_atomic()` path and `kind=dispatch-settlement`. Fleet leases use
-boot-aware monotonic time and `DEFAULT_TTL_SECONDS = 300`; lease renewal preserves mutation
-authorization but is neither a worker heartbeat nor proof of progress.
+The merged #355 baseline is `a1dc0c2a247fd72e2c5fec723ac1334c511fe7a4` on `origin/main`, with
+fleet-core 0.13.0, Saga 0.100.0, and team-execution 2.19.0. The existing #357 branch preserves its
+plan/review commit and carries that baseline as the second parent of merge commit
+`df70b4ac7359f2eb5aa0e649cff83949656802d6`. `run_ledger.py` provides the lock-consistent
+`append_fact_atomic()` path and `kind=dispatch-settlement`. Fleet leases use boot-aware monotonic time
+and `DEFAULT_TTL_SECONDS = 300`; lease renewal preserves mutation authorization but is neither a
+worker heartbeat nor proof of progress.
 
 `outcome_liveness.py` remains the only production liveness implementation. It derives dispatch and
 heartbeat timestamps from the Outcome ledger, applies fixed heartbeat/absolute-timeout budgets,
@@ -71,13 +74,13 @@ destructive authority. Source: https://dspace.jaist.ac.jp/dspace/handle/10119/47
 - **Satisfied semantic prerequisites:** #351 and #356 are merged. PR #613's authority-retention rule
   is binding: failed or ambiguous teardown retains broker authority and cannot be treated as
   successful reclamation.
-- **Serialized release sibling:** #355 is not an API prerequisite, and #357 must not import or consume
-  #355 quarantine, close-seal, or orphan-projection code. Keep campaign merge serialization
-  `#355 -> #357` because both modify fleet-core and Saga release surfaces.
-- **Expected PR baseline:** before creating the #357 PR, rebase onto merged #355 and confirm
-  fleet-core 0.13.0, Saga 0.100.0, and team-execution 2.18.0. Target versions remain fleet-core
-  0.14.0, Saga 0.101.0, and team-execution 2.19.0. If merge order changes, recompute versions and
-  rerun document review and workflow approval.
+- **Serialized release sibling:** #355 is merged and the branch carries `origin/main` at PR #614 as
+  a true merge parent. #355 is not an API prerequisite, and #357 must not import or consume its
+  quarantine, close-seal, or orphan-projection code.
+- **PR baseline:** merged #355 supplies fleet-core 0.13.0, Saga 0.100.0, and team-execution 2.19.0.
+  Target versions are fleet-core 0.14.0, Saga 0.101.0, and team-execution 2.20.0. If merge order or
+  any current plugin version changes, recompute versions and rerun document review and workflow
+  approval.
 - **Downstream unlocks:** #358 consumes liveness decisions for non-skippable teardown; #353 audits
   the completed signal/action wiring after #355/#357/#358; the cross-runtime coordination/acceptance
   children consume the same shared result vocabulary.
@@ -216,8 +219,8 @@ or confirmation; only a verified projection can produce `confirmed-stalled`. For
 evidence failure cannot suppress a valid legacy heartbeat/absolute terminal, and malformed legacy
 records retain their current behavior. Evidence errors never confirm delivery or trigger teardown.
 
-R13. **Release integrity is atomic.** From the expected post-#355 base, bump fleet-core 0.13.0 to
-0.14.0, Saga 0.100.0 to 0.101.0, and team-execution 2.18.0 to 2.19.0. Update all manifests,
+R13. **Release integrity is atomic.** From the merged #355 base, bump fleet-core 0.13.0 to 0.14.0,
+Saga 0.100.0 to 0.101.0, and team-execution 2.19.0 to 2.20.0. Update all manifests,
 marketplace rows, changelogs, minimum-version/drift guards, operator contracts, tests, and engineering
 journal in the same PR. Refresh and reapprove exact increments if the base differs.
 
@@ -586,10 +589,10 @@ unattributed/provenance distinction.
 `tests/test_saga_plugin.py`, `tests/test_team_execution_plugin.py`, version/drift tests,
 `docs/engineering-journal/DECISIONS.md`, and operator references.
 
-**Approach:** Rebase merged #355 and confirm the expected fleet-core 0.13.0, Saga 0.100.0, and
-team-execution 2.18.0 base. Bump to fleet-core 0.14.0, Saga 0.101.0, and team-execution 2.19.0; update
-required fleet-core compatibility and release narratives. Run installed-plugin resolution so both
-shims prove the same engine bytes/version.
+**Approach:** Confirm the branch retains merged #355 as a parent and the expected fleet-core 0.13.0,
+Saga 0.100.0, and team-execution 2.19.0 base. Bump to fleet-core 0.14.0, Saga 0.101.0, and
+team-execution 2.20.0; update required fleet-core compatibility and release narratives. Run
+installed-plugin resolution so both shims prove the same engine bytes/version.
 
 **Test scenarios:** Local and installed layouts resolve the canonical module; an old/missing
 fleet-core fails armed liveness with named diagnostic; marketplace/manifests/changelogs agree; an
@@ -696,13 +699,14 @@ showing unattributed activity, one trusted exclusive-provenance upgrade, one una
 exactly one claimed and receipt-proven re-ping, one ack closing only notice delivery, and one
 production Outcome tick preserving legacy terminal/page-once/cascade behavior despite adaptive error.
 
-The prior document review, journal anchor, and Verified Workflow approval predate PR #613 and this
-material contract refresh. Before implementation, update the existing
-`{#fleet-shared-liveness-357}` journal anchor, rerun `/doc-review` to zero P0-P3 findings, regenerate
-and validate the exact workflow candidate/digest and role/lens/profile receipts, and obtain operator
-reapproval. Before PR creation, rebase onto merged #355 and run focused/full pytest, Ruff, mypy,
-Bandit, release parity, marketplace sync, diff guard, event-flow/scenario validators, and code review.
-Close #357 and reconcile board/outcome state only after merged-SHA and updated `origin/main` proof.
+The prior document review and Verified Workflow approval predate merged #355's release metadata. This
+baseline refresh must update the existing `{#fleet-shared-liveness-357}` journal anchor, rerun
+`/doc-review` to zero P0-P3 findings, and regenerate and validate the exact workflow candidate,
+digest, and role/lens/profile receipts. Any workflow semantic or digest change requires operator
+reapproval. Before PR creation, confirm the merged-#355 ancestry and run focused/full pytest, Ruff,
+mypy, Bandit, release parity, marketplace sync, diff guard, event-flow/scenario validators, and code
+review. Close #357 and reconcile board/outcome state only after merged-SHA and updated `origin/main`
+proof.
 
 ### Round 2 closure mapping
 

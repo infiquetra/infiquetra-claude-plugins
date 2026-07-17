@@ -21,6 +21,9 @@ cooperative-boundary` means a foreground Agent/Task has no safe boundary while t
 running: it may outlive its TTL, but later delegated mutation is rejected instead of silently
 renewed. These are explicit lifecycle postures, not blank exemptions.
 
+The public `reap_worktree` path prevalidates teardown authority and delegates removal plus exact
+lease release to `_reap_prevalidated`; the inventory names that helper as the release seam.
+
 | Source | Function or seam | Spawn form | Governor entry point | Lease pool | Acquire or reserve seam | Bind seam | Renewal seam | Release seam |
 |---|---|---|---|---|---|---|---|---|
 | `plugins/saga/scripts/execution_spec.py` | `_emit_panel_reconciliation` | verify-panel verdict agents | `concurrency_governor.ordered_chunks` | `agent` | `workflow_emitter.reserve` | `lease_broker.claim_hook_agent` | `workflow_emitter.renew` | `workflow_emitter.release` |
@@ -31,7 +34,7 @@ renewed. These are explicit lifecycle postures, not blank exemptions.
 | `plugins/saga/scripts/engine_dispatch.py` | `guarded_runner` | lease-settled external-engine adapter invocation | `concurrency_policy.AdmissionLimits` | `agent` | `engine_dispatch.dispatch` | `not-applicable:in-process-adapter` | `LeaseBroker.agent_settlement` | `LeaseBroker.agent_settlement` |
 | `plugins/saga/scripts/engine_dispatch.py` | `guarded_panel_runner` | panel-wide lease-settled external-engine adapter invocation | `concurrency_policy.AdmissionLimits` | `agent` | `engine_dispatch.dispatch_advisory_panel` | `not-applicable:in-process-adapter` | `LeaseBroker.renew` | `LeaseBroker.agent_settlement` |
 | `plugins/saga/scripts/outcome.py` | `_reconcile_once` | outcome backend dispatch | `concurrency_policy.AdmissionLimits` | `agent` | `outcome_dispatcher.make_dispatcher` | `not-applicable:in-process-adapter` | `LeaseBroker.renew` | `LeaseBroker.release` |
-| `plugins/saga/scripts/outcome_worktrees.py` | `ensure_worktree` | outcome-owned git worktree | `WORKTREE_CAP` | `worktree` | `_arm_worktree` | `worktree_lease_receipt` | `reconcile_worktree_leases` | `reap_worktree` |
+| `plugins/saga/scripts/outcome_worktrees.py` | `ensure_worktree` | outcome-owned git worktree | `WORKTREE_CAP` | `worktree` | `_arm_worktree` | `worktree_lease_receipt` | `reconcile_worktree_leases` | `_reap_prevalidated` |
 
 [`sandbox-spawn-sites.md`](sandbox-spawn-sites.md) separately inventories containment requirements.
 The inventories cross-link because verify-panel and external-engine rows are both concurrency-

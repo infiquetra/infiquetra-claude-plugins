@@ -48,6 +48,8 @@ under the documented threat model.
 - Independent validators confirmed findings 1-3 and rejected both false-positive candidates above.
 - Final authority/prune and managed-path rereviews: PASS with no P0-P2 findings.
 - Focused outcome/worktree/ship suite: 117 passed.
+- Concurrency conformance: 46 passed; the checked-in inventory names `_reap_prevalidated` as the
+  structural exact-release seam used by public `reap_worktree`.
 - Exact release-contract and release-triad suite: 41 passed.
 - Broader release group: 116 passed; release-surface diff guard passed.
 - Ruff check, Ruff format check, affected-file mypy, marketplace sync/parity, and `git diff --check`:

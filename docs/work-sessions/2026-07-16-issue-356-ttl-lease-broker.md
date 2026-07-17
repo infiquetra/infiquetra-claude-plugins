@@ -149,6 +149,8 @@ Operations card to Done.
 ### Round 4 checks
 
 - Focused outcome/worktree/ship suite: 117 passed.
+- Concurrency conformance: 46 passed after aligning the release-seam inventory with the prevalidated
+  helper that now owns exact broker release.
 - Exact release-contract and release-triad suite: 41 passed; broader release group: 116 passed.
 - Final authority/prune, managed-path, and regression/release rereviews: PASS with no P0-P2 findings.
 - Ruff, format, affected mypy, marketplace sync/parity, release diff guard, and diff check: passed.

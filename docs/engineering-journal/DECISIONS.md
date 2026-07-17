@@ -1,5 +1,32 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-07-17
+
+### Lease-bound outcome worktrees have one teardown authority {#lease-bound-worktree-teardown-356}
+
+**Decision.** A registry entry carrying a fleet worktree lease receipt may be removed only after a
+non-mutating proof of its receipt root, exact broker lease id, structured resource, fencing token, and
+managed path. Graph prune requires both the Git adapter and authority before changing revision, nodes,
+edges, or generated issue state. Generic ship teardown treats the entire canonical
+`.saga-worktrees/<outcome>/<subplot>` namespace as managed: store or registry ambiguity retains the
+path instead of falling through to raw Git. Production `/outcome prune` passes authority explicitly;
+positively identified legacy unleased and unmanaged worktrees retain existing teardown.
+
+**Rationale.** The registry entry and its broker fence are one authority pair. Removing only the Git
+worktree and registry record leaves a live lease that can block the bounded pool or let later recovery
+misclassify ownership. A missing or corrupt registry cannot prove the opposite; absence of readable
+evidence is therefore a retention case, not permission for a raw Git bypass.
+
+**Evidence.** Real-Git/broker regressions prove omitted-adapter, wrong-root, and invalid-token prunes
+preserve revision, nodes, edges, issue callback, path, registry, and lease. Missing, malformed, and
+unreadable managed registries retain their paths without repair; canonical reap releases its exact
+lease before deregistration, while legacy and unmanaged teardown remains green.
+
+**Refs.** Issue #356; `plugins/saga/scripts/outcome_worktrees.py`,
+`plugins/saga/scripts/outcome_decompose.py`, `plugins/saga/scripts/ship_teardown.py`.
+
+---
+
 ## 2026-07-14
 
 ### Tier campaign verification by leaf blast radius: full Fable refute-3 on trust-kernel leaves, single Fable spot-check on mechanical ones {#tiered-verification-by-leaf-risk}

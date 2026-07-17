@@ -3,7 +3,7 @@ date: 2026-07-16
 kind: work-session
 issue: https://github.com/infiquetra/infiquetra-claude-plugins/issues/356
 plan: docs/plans/2026-07-15-issue-356-ttl-lease-broker-plan.md
-status: implementation-complete-review-pending
+status: review-repair-complete-rereview-pending
 ---
 
 # Work Session - Fleet TTL Lease Broker and Runtime Continuity
@@ -62,5 +62,30 @@ status: implementation-complete-review-pending
 
 ## Next Step
 
-Run the approved whole-diff code-review lenses and independent concurrency/event-flow validators,
-fix every P0-P3 finding, rerun affected and full gates, then open, monitor, and merge the issue PR.
+Pin the repaired revision, rerun the affected whole-diff code-review lenses and independent
+concurrency/event-flow validators, then run the full repository gate and open, monitor, and merge the
+issue PR.
+
+## Review Repair Round 1
+
+- Repaired all 21 P0-P2 findings from
+  `docs/code-reviews/2026-07-16-issue-356-ttl-lease-broker-code-review.md`.
+- Durable outcome worktrees now transfer exact-token ownership to each one-shot coordinator before a
+  lock-held sweep; active dispatched nodes veto destructive reap, and physical Git creation follows
+  persisted registry/lease recovery authority.
+- Agent sessions pin exact admission snapshots; nested parents are current-session verified; Workflow
+  batches and resident sessions settle atomically from the required lifecycle signals.
+- Registered second-opinion engines consume the configured Saga admission snapshot, use stable retry
+  identity, and defer fact writes until post-run renew/verify. Cleanup failures preserve primary errors.
+- Added synchronized hook/broker contention, negative lifecycle-call conformance, wrong-token refusal,
+  symlink escape, workflow ordering, and real-Git reclamation/retry evidence.
+- Added exact legacy-v1 registry migration for authorities created before `session_admissions` existed.
+
+### Repair checks
+
+- Affected implementation matrix: 383 passed.
+- Concurrency conformance, including every required lifecycle-call negative mutation: 46 passed.
+- Focused real worktree and broker suites: 39 + 36 passed.
+- Ruff check and format check on every changed Python file: passed.
+- `uv run mypy plugins/`: passed.
+- `git diff --check`: passed.

@@ -3316,3 +3316,28 @@ authority and fail closed; it must never be resolved by oldest/latest guessing a
 `plugins/fleet-core/scripts/fleet_commons/lease_broker.py`, and
 `plugins/saga/references/concurrency-spawn-sites.md`; decision
 `{#fleet-ttl-lease-broker-356}`.
+
+---
+
+### A durable resource cannot inherit the lifetime of the one-shot process that provisioned it {#durable-worktree-owner-transfer-356}
+
+**Evidence.** Issue #356 initially recorded the provisioning coordinator's PID/start identity on an
+outcome worktree lease. Outcome ticks are intentionally one-shot processes, while a dispatched child
+and its worktree persist across ticks. After TTL, the broker correctly proved that PID dead and the
+reaper could therefore delete a still-active child's real Git worktree.
+
+**Mechanism.** Process liveness answers whether one coordinator is alive, not whether an outcome-owned
+resource is abandoned. Reconciliation must first load durable child state, transfer the exact current
+fencing token to the new coordinator, and only then sweep. The broker lock spans both ownership
+transfer and the reaper callback, while `dispatched` is an independent destructive-action veto. Git
+provisioning similarly records registry and lease recovery authority before physical creation so a
+failed rollback cannot erase every route to later cleanup.
+
+**Generalizable rule.** Match authority lifetime to resource lifetime. For durable resources managed
+by ephemeral coordinators, persist an exact transferable token and require durable terminal/inactive
+state in addition to dead-process evidence before deletion. Persist recovery authority before the
+external side effect, and retain it whenever compensation is uncertain.
+
+**Refs.** `plugins/saga/scripts/outcome_worktrees.py`,
+`plugins/fleet-core/scripts/fleet_commons/lease_broker.py`, and
+`tests/test_outcome_worktrees.py`; decision `{#fleet-ttl-lease-broker-356}`.

@@ -4937,8 +4937,9 @@ time plus TTL; Saga alone validates and reaps an expired outcome worktree.
 - **KTD1 - #350 owns resolution; fleet-core owns normalized limits.** Fleet-core holds the shared
   default constants and admission record so Saga and team-execution cannot drift. Saga's #350
   resolver alone interprets spec, environment, tier, lane, and run inputs; the broker records the
-  result and uses the minimum aggregate ceiling asserted by all live leases. Worktrees retain their
-  independent cap-four pool.
+  result, pins one exact snapshot per live session, rejects any mid-session upshift, and uses the
+  minimum aggregate ceiling asserted by all live leases. Worktrees retain their independent cap-four
+  pool.
 - **KTD2 - fleet-core owns the schema.** Saga and team-execution use thin adapters around one
   fleet-commons implementation and one lock/sequence authority. The authority root is runtime-neutral:
   explicit safe `INFIQUETRA_FLEET_STATE_DIR`, then safe absolute XDG state, then
@@ -4951,16 +4952,19 @@ time plus TTL; Saga alone validates and reaps an expired outcome worktree.
   another hook may block `SubagentStop`, and `SubagentStart` does not expose its parent tool-use ID.
   A foreground lease is removed only after its bound child records terminal intent and the exact
   provisional parent call records completion; resident workers release after explicit stop
-  confirmation. Cross-ordered same-type claims may delay release but cannot free a live child.
+  confirmation. Batch settlement and resident session teardown validate all signals and release under
+  the same broker lock. Cross-ordered same-type claims may delay release but cannot free a live child.
 - **KTD5 - fencing is looked up, not asserted.** Hooks use trusted `agent_id` to verify the broker's
   current resource token. Retrying a logical unit atomically supersedes the old token, so a stale
   process cannot write through file tools or Bash. A per-resource last-granted head survives lease
   removal, allowing later consumers to derive current, expired, closed, or superseded without a
   mutable status field.
-- **KTD6 - worktree deletion needs expiry plus dead-owner proof.** Same-boot monotonic time derives
-  expiry; a boot change invalidates process authority. Saga then proves the recorded PID/start identity
-  is absent or consumes explicit terminal evidence before `outcome_worktrees.reap_worktree`. A live
-  owner is diagnostic, and failed reaps remain visible for retry.
+- **KTD6 - a durable worktree is outcome-owned, not coordinator-process-owned.** Same-boot monotonic
+  time derives expiry, but a short-lived coordinator PID ending is not abandonment proof for an active
+  child. Each active tick transfers the exact persisted token to its current coordinator before sweep;
+  a `dispatched` node vetoes destructive reap. Transfer and sweep share the authority lock, and Saga
+  persists registry/lease recovery state before physical Git creation. Terminal or otherwise inactive
+  resources still require dead-owner or explicit-terminal proof; failed reaps remain visible for retry.
 - **KTD7 - hook enforcement is cooperative runtime safety.** Missing, corrupt, or version-skewed
   authority fails closed on armed delegated paths. A local operator able to disable or replace hooks
   remains outside the security boundary.

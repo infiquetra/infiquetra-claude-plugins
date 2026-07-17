@@ -521,3 +521,34 @@ def test_saga_adapter_rejects_lease_protocol_skew(monkeypatch: pytest.MonkeyPatc
 
     with pytest.raises(adapter.HookInputError, match="install/update fleet-core"):
         adapter.ensure_protocol()
+
+
+def test_saga_lease_cli_requires_exact_token_and_session_scoped_owner_release() -> None:
+    scripts = SAGA / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    adapter = _load(scripts / "lease_broker.py", "saga_lease_adapter_cli_contract_test")
+    parser = adapter._build_parser()
+
+    for argv in (
+        ["renew", "lease-id"],
+        ["release", "lease-id"],
+        ["release-owner", "owner-id"],
+    ):
+        with pytest.raises(SystemExit) as caught:
+            parser.parse_args(argv)
+        assert caught.value.code == 2
+
+    renewed = parser.parse_args(
+        [
+            "renew",
+            "lease-id",
+            "--broker-epoch",
+            "00000000-0000-0000-0000-000000000001",
+            "--fencing-sequence",
+            "7",
+        ]
+    )
+    assert renewed.fencing_sequence == 7
+    released_owner = parser.parse_args(["release-owner", "owner-id", "--session-id", "session-id"])
+    assert released_owner.session_id == "session-id"

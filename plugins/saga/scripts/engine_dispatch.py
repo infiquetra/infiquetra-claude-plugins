@@ -92,6 +92,46 @@ class DispatchError(ValueError):
 
 
 @dataclass(frozen=True)
+class LeaseAdmission:
+    """Saga-resolved capacity authority required for a registered engine run.
+
+    This adapter deliberately accepts the closed result of Saga's concurrency resolver; it must
+    never reconstruct resolver defaults after an engine lane or run cap has been selected.
+    """
+
+    policy_sha256: str
+    session_limit: int
+    aggregate_limit: int
+    mutation: Literal["read-write", "none"]
+
+    def to_dict(self) -> dict[str, str | int]:
+        return {
+            "policy_sha256": self.policy_sha256,
+            "session_limit": self.session_limit,
+            "aggregate_limit": self.aggregate_limit,
+            "mutation": self.mutation,
+        }
+
+    def validate(self) -> None:
+        if (
+            not isinstance(self.policy_sha256, str)
+            or len(self.policy_sha256) != 64
+            or any(char not in "0123456789abcdef" for char in self.policy_sha256)
+        ):
+            raise DispatchError("lease admission policy_sha256 must be a lowercase SHA-256 digest")
+        for field, value in (
+            ("session_limit", self.session_limit),
+            ("aggregate_limit", self.aggregate_limit),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise DispatchError(f"lease admission {field} must be a positive integer")
+        if self.session_limit > self.aggregate_limit:
+            raise DispatchError("lease admission session_limit must not exceed aggregate_limit")
+        if self.mutation not in {"read-write", "none"}:
+            raise DispatchError("lease admission mutation must be read-write or none")
+
+
+@dataclass(frozen=True)
 class AdvisoryEvidence:
     """Evidence returned by an external engine before Claude verification."""
 
@@ -379,6 +419,8 @@ def _dispatch_once(
     execution_id: str = "",
     intent: str = "offload",
     role_kind: str = "worker",
+    deferred_fact_writes: list[tuple[dict[str, Any], AdvisoryEvidence, dict[str, Any]]]
+    | None = None,
 ) -> AdvisoryEvidence | RequeueDisposition:
     """Run an external engine adapter and return advisory evidence only.
 
@@ -429,6 +471,21 @@ def _dispatch_once(
     except reconcile.ReconciliationError as exc:
         raise DispatchError(f"dispatch intent is invalid: {exc}") from exc
     _validate_role_kind(role_kind)
+
+    def record_facts(evidence: AdvisoryEvidence, result: dict[str, Any]) -> None:
+        if deferred_fact_writes is not None:
+            deferred_fact_writes.append((invocation, evidence, result))
+            return
+        _record_advisory_facts(
+            ledger,
+            invocation,
+            evidence,
+            result,
+            subplot_id=subplot_id,
+            at=at,
+            resolution=resolution,
+        )
+
     if resolution.halt is not None:
         halted_provenance: dict[str, Any] = {
             "engine": resolution.engine_id,
@@ -608,15 +665,7 @@ def _dispatch_once(
                     halt=reason,
                     runner_receipt=runner_receipt,
                 )
-                _record_advisory_facts(
-                    ledger,
-                    invocation,
-                    disputed,
-                    result,
-                    subplot_id=subplot_id,
-                    at=at,
-                    resolution=resolution,
-                )
+                record_facts(disputed, result)
                 return RequeueDisposition(reason=reason, attempt=attempt, evidence=disputed)
             # Advisory (non-gated) divergence: the existing downgrade_note mechanism with the
             # integrity reason attached -- NO re-queue loop (plan U5 edge scenario).
@@ -633,15 +682,7 @@ def _dispatch_once(
                 halt=note,
                 runner_receipt=runner_receipt,
             )
-            _record_advisory_facts(
-                ledger,
-                invocation,
-                evidence,
-                result,
-                subplot_id=subplot_id,
-                at=at,
-                resolution=resolution,
-            )
+            record_facts(evidence, result)
             return evidence
         if gated:
             _clear_integrity_attempts(session_id, resolution.engine_id, workspace_root)
@@ -677,9 +718,7 @@ def _dispatch_once(
             runner_receipt=runner_receipt,
         )
 
-    _record_advisory_facts(
-        ledger, invocation, evidence, result, subplot_id=subplot_id, at=at, resolution=resolution
-    )
+    record_facts(evidence, result)
     return evidence
 
 
@@ -703,13 +742,17 @@ def dispatch(
     intent: str = "offload",
     role_kind: str = "worker",
     lease_authority: Any | None = None,
+    lease_admission: LeaseAdmission | None = None,
+    attempt_id: str = "",
 ) -> AdvisoryEvidence | RequeueDisposition:
     """Dispatch through one lease-held adapter call when a trusted session is supplied.
 
     The lease is acquired before the existing dispatch/runner path, renewed only after that path
     returns its authoritative evidence disposition, and released with the exact owner and fencing
     token. Omitting ``session_id`` preserves the compatibility path for pure builders and tests;
-    registered runtime consumers must provide their trusted session id.
+    registered runtime consumers must provide their trusted session id, an exact Saga-resolved
+    admission snapshot, and bounded execution/attempt identity. The latter is transformed into a
+    stable broker resource reference so a retry supersedes any stale authority for that attempt.
     """
 
     if not session_id:
@@ -733,34 +776,44 @@ def dispatch(
             role_kind=role_kind,
         )
 
+    if lease_admission is None:
+        raise DispatchError(
+            "registered engine dispatch requires an explicit Saga-resolved lease admission snapshot"
+        )
+    if not isinstance(lease_admission, LeaseAdmission):
+        raise DispatchError("registered engine dispatch lease admission has an invalid type")
+    lease_admission.validate()
+    execution_identity = _bounded_lease_identity(execution_id, "execution_id")
+    attempt_identity = _bounded_lease_identity(attempt_id, "attempt_id")
     lease_module, lease_degradation = _load_fleet_module("lease_broker")
-    policy_module, policy_degradation = _load_fleet_module("concurrency_policy")
-    if lease_module is None or policy_module is None:
-        reason = lease_degradation or policy_degradation
+    if lease_module is None:
         raise DispatchError(
             "engine dispatch requires lease-capable fleet-core; install/update fleet-core: "
-            + reason
+            + lease_degradation
         )
     _require_lease_protocol(lease_module)
     selected = lease_module.LeaseBroker() if lease_authority is None else lease_authority
-    limits = policy_module.AdmissionLimits()
     owner_id = f"engine-dispatch:{session_id}"
+    resource_ref = _engine_resource_ref(execution_identity, attempt_identity)
     try:
         lease = selected.acquire_agent(
             owner_id=owner_id,
             owner_pid=os.getpid(),
             session_id=session_id,
-            policy_sha256=limits.policy_sha256(),
-            session_limit=limits.max_concurrent,
-            aggregate_limit=limits.aggregate_max_concurrent,
-            mutation="none",
+            policy_sha256=lease_admission.policy_sha256,
+            session_limit=lease_admission.session_limit,
+            aggregate_limit=lease_admission.aggregate_limit,
+            mutation=lease_admission.mutation,
             ttl_seconds=lease_module.DEFAULT_TTL_SECONDS,
+            resource_ref=resource_ref,
             agent_type="external-engine",
         )
     except lease_module.LeaseBrokerError as exc:
         raise DispatchError(f"engine dispatch lease admission refused: {exc}") from exc
 
+    primary_error: BaseException | None = None
     try:
+        deferred_fact_writes: list[tuple[dict[str, Any], AdvisoryEvidence, dict[str, Any]]] = []
         evidence = _dispatch_once(
             resolution,
             runner=runner,
@@ -779,28 +832,71 @@ def dispatch(
             execution_id=execution_id,
             intent=intent,
             role_kind=role_kind,
+            deferred_fact_writes=deferred_fact_writes,
         )
         try:
             selected.renew(lease.lease_id, owner_id=owner_id, token=lease.token)
+            selected.verify(resource_ref, lease.token, owner_id=owner_id)
         except lease_module.LeaseBrokerError as exc:
             raise DispatchError(f"engine dispatch lease expired before settlement: {exc}") from exc
         lease_receipt = {
             "lease_id": lease.lease_id,
             "root_sha256": selected.root_sha256,
-            "policy_sha256": limits.policy_sha256(),
+            "policy_sha256": lease_admission.policy_sha256,
         }
         if isinstance(evidence, RequeueDisposition):
             evidence.evidence.provenance["lease"] = lease_receipt
         else:
             evidence.provenance["lease"] = lease_receipt
+        for invocation, fact_evidence, result in deferred_fact_writes:
+            _record_advisory_facts(
+                ledger,
+                invocation,
+                fact_evidence,
+                result,
+                subplot_id=subplot_id,
+                at=at,
+                resolution=resolution,
+            )
         return evidence
+    except BaseException as exc:
+        primary_error = exc
+        raise
     finally:
         try:
             released = selected.release(lease.lease_id, owner_id=owner_id, token=lease.token)
-        except lease_module.LeaseBrokerError as exc:
-            raise DispatchError(f"engine dispatch lease settlement refused: {exc}") from exc
-        if not released:
-            raise DispatchError("engine dispatch lease disappeared before authoritative settlement")
+        except Exception as exc:  # noqa: BLE001 - cleanup must never mask the primary failure.
+            cleanup_error = DispatchError(f"engine dispatch lease settlement refused: {exc}")
+            if primary_error is not None:
+                primary_error.add_note(f"secondary lease cleanup failure: {cleanup_error}")
+            else:
+                raise cleanup_error from exc
+        else:
+            if not released:
+                cleanup_error = DispatchError(
+                    "engine dispatch lease disappeared before authoritative settlement"
+                )
+                if primary_error is not None:
+                    primary_error.add_note(f"secondary lease cleanup failure: {cleanup_error}")
+                else:
+                    raise cleanup_error
+
+
+def _bounded_lease_identity(value: str, field: str) -> str:
+    if not isinstance(value, str) or not value or len(value) > 256:
+        raise DispatchError(f"engine dispatch {field} must be a non-empty string <= 256 characters")
+    if any(ord(character) < 32 for character in value):
+        raise DispatchError(f"engine dispatch {field} must not contain control characters")
+    return value
+
+
+def _engine_resource_ref(execution_id: str, attempt_id: str) -> dict[str, str]:
+    """Return the bounded stable resource identity used to supersede retry authority."""
+
+    digest = hashlib.sha256(
+        f"{len(execution_id)}:{execution_id}{len(attempt_id)}:{attempt_id}".encode()
+    ).hexdigest()
+    return {"logical_unit_id": f"engine-dispatch:{digest}"}
 
 
 def dispatch_advisory_panel(

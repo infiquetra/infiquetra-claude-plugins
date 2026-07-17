@@ -35,6 +35,11 @@ RL = SO.run_ledger
 REG = SO.Registry.load(REGISTRY)
 
 
+@pytest.fixture(autouse=True)
+def _isolated_fleet_authority(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INFIQUETRA_FLEET_STATE_DIR", str(tmp_path / "fleet-leases"))
+
+
 def _excerpt(content: str = "assert verdict is computed from Claude-owned state") -> Any:
     return SO.SourceExcerpt(
         path="plugins/saga/scripts/engine_dispatch.py",
@@ -72,6 +77,15 @@ def _resolution() -> Any:
     )
 
 
+def _lease_admission() -> Any:
+    return D.LeaseAdmission(
+        policy_sha256="a" * 64,
+        session_limit=1,
+        aggregate_limit=1,
+        mutation="none",
+    )
+
+
 def _prepared(monkeypatch: pytest.MonkeyPatch, **kwargs: Any) -> Any:
     monkeypatch.setattr(SO.engine_resolver, "resolve", lambda *_args, **_kwargs: _resolution())
     return SO.prepare_second_opinion(
@@ -79,6 +93,7 @@ def _prepared(monkeypatch: pytest.MonkeyPatch, **kwargs: Any) -> Any:
         registry=REG,
         requested_by="human",
         reason="Check whether the stated impact follows from the selected source.",
+        lease_admission=_lease_admission(),
     )
 
 
@@ -141,6 +156,7 @@ def test_context_exact_caps_pass_and_plus_one_rejects(monkeypatch: pytest.Monkey
         registry=REG,
         requested_by="human",
         reason="reason",
+        lease_admission=_lease_admission(),
     )
     assert prepared.token_estimate == SO.MAX_CONTEXT_BYTES
 
@@ -171,6 +187,7 @@ def test_excerpt_count_and_utf8_byte_caps_reject_before_resolution(
         registry=REG,
         requested_by="human",
         reason="reason",
+        lease_admission=_lease_admission(),
     )
     assert called is True
     called = False
@@ -190,6 +207,31 @@ def test_excerpt_count_and_utf8_byte_caps_reject_before_resolution(
             reason="reason",
         )
     assert called is False
+
+
+def test_resolved_route_requires_and_maps_the_pinned_session_admission(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(SO.engine_resolver, "resolve", lambda *_args, **_kwargs: _resolution())
+    with pytest.raises(SO.SecondOpinionError, match="requires the pinned Saga session"):
+        SO.prepare_second_opinion(_finding(), registry=REG, requested_by="human", reason="reason")
+
+    environment = {
+        "INFIQUETRA_FLEET_STATE_DIR": str(tmp_path / "mapped-authority"),
+        "INFIQUETRA_FLEET_POLICY_SHA256": "b" * 64,
+        "INFIQUETRA_FLEET_SESSION_LIMIT": "2",
+        "INFIQUETRA_FLEET_AGGREGATE_LIMIT": "5",
+        "INFIQUETRA_FLEET_MUTATION": "none",
+    }
+    admission = SO.lease_admission_for_session("review-session", environment=environment)
+    prepared = SO.prepare_second_opinion(
+        _finding(),
+        registry=REG,
+        requested_by="human",
+        reason="reason",
+        lease_admission=admission,
+    )
+    assert prepared.lease_admission == D.LeaseAdmission("b" * 64, 2, 5, "none")
 
 
 def test_sensitive_network_only_registry_is_unavailable_without_resolve_or_runner(

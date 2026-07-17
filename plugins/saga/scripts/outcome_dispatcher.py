@@ -274,6 +274,7 @@ def make_dispatcher(
                 )
             except Exception as exc:  # noqa: BLE001 - normalize fleet version/admission failures
                 raise DispatcherError(f"outcome dispatch lease admission refused: {exc}") from exc
+        primary_error: BaseException | None = None
         try:
             result = dispatch(req, available=available)
             if lease is not None:
@@ -285,22 +286,41 @@ def make_dispatcher(
                     raise DispatcherError(
                         f"outcome dispatch lease expired before settlement: {exc}"
                     ) from exc
+        except BaseException as exc:
+            primary_error = exc
+            raise
         finally:
             if lease is not None:
                 if selected is None:
-                    raise DispatcherError("outcome dispatch lost its lease authority")
-                try:
-                    released = selected.release(
-                        lease.lease_id, owner_id=owner_id, token=lease.token
+                    cleanup_error = DispatcherError(
+                        "outcome dispatch lost its lease authority during settlement"
                     )
-                except Exception as exc:  # noqa: BLE001 - wrong token must fail closed
-                    raise DispatcherError(
-                        f"outcome dispatch lease settlement refused: {exc}"
-                    ) from exc
-                if not released:
-                    raise DispatcherError(
-                        "outcome dispatch lease disappeared before authoritative settlement"
-                    )
+                    if primary_error is not None:
+                        primary_error.add_note(str(cleanup_error))
+                    else:
+                        raise cleanup_error
+                else:
+                    try:
+                        released = selected.release(
+                            lease.lease_id, owner_id=owner_id, token=lease.token
+                        )
+                    except Exception as exc:  # noqa: BLE001 - wrong token must fail closed
+                        cleanup_error = DispatcherError(
+                            f"outcome dispatch lease settlement refused: {exc}"
+                        )
+                        if primary_error is not None:
+                            primary_error.add_note(str(cleanup_error))
+                        else:
+                            raise cleanup_error from exc
+                    else:
+                        if not released:
+                            cleanup_error = DispatcherError(
+                                "outcome dispatch lease disappeared before authoritative settlement"
+                            )
+                            if primary_error is not None:
+                                primary_error.add_note(str(cleanup_error))
+                            else:
+                                raise cleanup_error
         if result["status"] == "halt":
             raise BackendHaltError(HaltReceipt(**_receipt_kwargs(result["receipt"])))
         # #348 KTD4: a ``rate_limited`` dispatch result surfaces as a TRANSIENT 429, distinct from a

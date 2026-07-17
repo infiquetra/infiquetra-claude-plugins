@@ -29,6 +29,9 @@ TTL_SECONDS_ENV = "INFIQUETRA_FLEET_TTL_SECONDS"
 CLAIM_TTL_SECONDS_ENV = "INFIQUETRA_FLEET_CLAIM_TTL_SECONDS"
 BATCH_ID_ENV = "INFIQUETRA_FLEET_BATCH_ID"
 REQUIRED_PROTOCOL_VERSION = 1
+_ADMISSION_ENV = frozenset(
+    {SESSION_LIMIT_ENV, AGGREGATE_LIMIT_ENV, POLICY_SHA256_ENV, MUTATION_ENV}
+)
 
 
 class HookInputError(ValueError):
@@ -115,6 +118,67 @@ def admission_snapshot(
     policy_sha256 = env.get(POLICY_SHA256_ENV, defaults.policy_sha256())
     # Fleet-core performs the canonical SHA-256 shape check; keep this adapter thin.
     return policy_sha256, session_limit, aggregate_limit, mutation
+
+
+def configure_session_admission(
+    session_id: str,
+    *,
+    policy_sha256: str,
+    session_limit: int,
+    aggregate_limit: int,
+    mutation: str,
+    selected: Any | None = None,
+) -> Any:
+    """Pin one trusted, already-resolved Saga admission snapshot."""
+
+    ensure_protocol()
+    active = broker() if selected is None else selected
+    return active.configure_session_admission(
+        session_id,
+        policy_sha256=policy_sha256,
+        session_limit=session_limit,
+        aggregate_limit=aggregate_limit,
+        mutation=mutation,
+    )
+
+
+def session_admission_snapshot(
+    session_id: str,
+    environment: Mapping[str, str],
+    *,
+    selected: Any,
+) -> tuple[str, int, int, str]:
+    """Load the pinned snapshot or explicitly arm it from a complete trusted environment."""
+
+    configured = selected.get_session_admission(session_id)
+    explicit = set(environment) >= _ADMISSION_ENV
+    if configured is None:
+        if not explicit:
+            raise HookInputError(
+                "normal Agent/Task admission requires a configured resolved session snapshot; "
+                "run the Saga or team-execution lease preflight before spawning"
+            )
+        values = admission_snapshot(environment)
+        configure_session_admission(
+            session_id,
+            policy_sha256=values[0],
+            session_limit=values[1],
+            aggregate_limit=values[2],
+            mutation=values[3],
+            selected=selected,
+        )
+        return values
+    values = (
+        configured.policy_sha256,
+        configured.session_limit,
+        configured.aggregate_limit,
+        configured.mutation,
+    )
+    if explicit and admission_snapshot(environment) != values:
+        raise HookInputError(
+            f"session {session_id!r} hook environment differs from its configured admission snapshot"
+        )
+    return values
 
 
 def broker(environment: Mapping[str, str] | None = None) -> Any:
@@ -232,18 +296,34 @@ def reserve_hook_agent(
     session_id = _required_text(payload, "session_id")
     tool_use_id = _required_text(payload, "tool_use_id")
     parent_agent = _optional_text(payload, "agent_id")
-    policy_sha256, session_limit, aggregate_limit, mutation = admission_snapshot(env)
     claim_ttl = _positive_env(env, CLAIM_TTL_SECONDS_ENV, authority.DEFAULT_CLAIM_TTL_SECONDS)
+    selected = broker(env)
+    if parent_agent is not None:
+        try:
+            parent = selected.verify_agent(parent_agent)
+        except authority.LeaseBrokerError as exc:
+            raise HookInputError(
+                f"delegated parent {parent_agent!r} has no current spawn authority: {exc}"
+            ) from exc
+        if parent.session_id != session_id:
+            raise HookInputError(
+                f"delegated parent {parent_agent!r} belongs to a different session"
+            )
     batch_id = active_batch_id(payload, env)
     if batch_id:
-        return broker(env).prepare_batch_call(
+        return selected.prepare_batch_call(
             session_id=session_id,
             batch_id=batch_id,
             agent_type=_agent_type(payload),
             tool_use_id=tool_use_id,
             claim_ttl_seconds=claim_ttl,
         )
-    return broker(env).acquire_agent(
+    policy_sha256, session_limit, aggregate_limit, mutation = session_admission_snapshot(
+        session_id,
+        env,
+        selected=selected,
+    )
+    return selected.acquire_agent(
         owner_id=parent_agent or f"session:{session_id}",
         owner_pid=os.getppid(),
         session_id=session_id,
@@ -264,7 +344,8 @@ def claim_hook_agent(
 
     env = os.environ if environment is None else environment
     ttl = _positive_env(env, TTL_SECONDS_ENV, authority.DEFAULT_TTL_SECONDS)
-    return broker(env).claim(
+    selected = broker(env)
+    return selected.claim(
         session_id=_required_text(payload, "session_id"),
         agent_type=_agent_type(payload),
         agent_id=_required_text(payload, "agent_id"),
@@ -277,7 +358,8 @@ def claim_hook_agent(
 def record_hook_terminal(
     payload: Mapping[str, Any], environment: Mapping[str, str] | None = None
 ) -> bool:
-    return bool(broker(environment).record_child_terminal(_required_text(payload, "agent_id")))
+    selected = broker(environment)
+    return bool(selected.record_child_terminal(_required_text(payload, "agent_id")))
 
 
 def record_hook_parent(
@@ -287,7 +369,10 @@ def record_hook_parent(
         raise HookInputError("parent completion requires Agent or Task tool_name")
     env = os.environ if environment is None else environment
     selected = broker(env)
-    released = selected.record_parent_completed(_required_text(payload, "tool_use_id"))
+    released = selected.record_parent_completed(
+        _required_text(payload, "session_id"),
+        _required_text(payload, "tool_use_id"),
+    )
     batch_id = active_batch_id(payload, env)
     if batch_id:
         # PostToolUse is the existing collection seam. Renew the whole batch without a daemon.
@@ -353,6 +438,16 @@ def _build_parser() -> argparse.ArgumentParser:
     release_owner.add_argument("owner_id")
     release_owner.add_argument("--session-id")
 
+    configure = subparsers.add_parser("configure-session")
+    configure.add_argument("--session-id", required=True)
+    configure.add_argument("--policy-sha256", required=True)
+    configure.add_argument("--session-limit", type=int, required=True)
+    configure.add_argument("--aggregate-limit", type=int, required=True)
+    configure.add_argument("--mutation", choices=("read-write", "none"), required=True)
+
+    clear = subparsers.add_parser("clear-session")
+    clear.add_argument("--session-id", required=True)
+
     sweep = subparsers.add_parser("sweep")
     sweep.add_argument("--terminal-lease-id", action="append", default=[])
 
@@ -379,6 +474,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "release-owner":
             released = selected.release_owner(args.owner_id, session_id=args.session_id)
             _json_print({"released_lease_ids": list(released)})
+        elif args.command == "configure-session":
+            configured = configure_session_admission(
+                args.session_id,
+                policy_sha256=args.policy_sha256,
+                session_limit=args.session_limit,
+                aggregate_limit=args.aggregate_limit,
+                mutation=args.mutation,
+                selected=selected,
+            )
+            _json_print(
+                {
+                    "session_id": args.session_id,
+                    "policy_sha256": configured.policy_sha256,
+                    "session_limit": configured.session_limit,
+                    "aggregate_limit": configured.aggregate_limit,
+                    "mutation": configured.mutation,
+                    "root_sha256": selected.root_sha256,
+                }
+            )
+        elif args.command == "clear-session":
+            _json_print({"cleared": selected.clear_session_admission(args.session_id)})
         elif args.command == "sweep":
             result = selected.sweep(terminal_lease_ids=args.terminal_lease_id)
             _json_print(

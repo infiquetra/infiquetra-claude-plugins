@@ -32,6 +32,11 @@ SO = _load("work_second_opinion", SECOND_OPINION)
 REG = SO.Registry.load(REGISTRY)
 
 
+@pytest.fixture(autouse=True)
+def _isolated_fleet_authority(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INFIQUETRA_FLEET_STATE_DIR", str(tmp_path / "fleet-leases"))
+
+
 def _attempt(
     number: int,
     *targets: str,
@@ -69,6 +74,15 @@ def _resolution() -> Any:
     )
 
 
+def _lease_admission() -> Any:
+    return SO.engine_dispatch.LeaseAdmission(
+        policy_sha256="a" * 64,
+        session_limit=1,
+        aggregate_limit=1,
+        mutation="none",
+    )
+
+
 def _prepared(monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.setattr(SO.engine_resolver, "resolve", lambda *_args, **_kwargs: _resolution())
     finding = SO.FindingSnapshot(
@@ -93,6 +107,7 @@ def _prepared(monkeypatch: pytest.MonkeyPatch) -> Any:
         registry=REG,
         requested_by="human",
         reason="Check this finding before selecting another fix.",
+        lease_admission=_lease_admission(),
     )
 
 

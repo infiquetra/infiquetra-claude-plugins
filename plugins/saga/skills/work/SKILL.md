@@ -113,8 +113,10 @@ valid trigger route and cannot change it from `second-opinion`. Do not write a p
 the operator declined one offer. No answer or unattended mode records `unattended`; decline records
 `declined`; both proceed through the existing work gates with zero runner calls.
 
-For explicit acceptance, first call `prepare_second_opinion`, then use `accept_work_offer` and atomically
-save the sidecar before invoking `dispatch_second_opinion`. The U1 claim store takes its own durable
+For explicit acceptance, derive `lease_admission_for_session` from the same configured Saga session
+snapshot used by direct Agent/Task hooks and pass that exact value to `prepare_second_opinion`; missing or
+mismatched admission halts before the wrapper. Then use `accept_work_offer` and atomically save the sidecar
+before invoking `dispatch_second_opinion`. The U1 claim store takes its own durable
 `requested` reservation immediately before the wrapper; only that owner can call the runner. An unavailable,
 halted, timeout, empty, or malformed response calls `record_work_dispatch_outcome` and atomically saves
 `unavailable` before the current work verdict and next fix decision proceed unchanged. Never auto-dispatch.
@@ -506,6 +508,30 @@ Workflow run returns.
 
 Execute **one meaningful phase at a time** per `references/execution-strategy.md` (for `inline` and
 `team-execution` modes, and for post-workflow Phase 2 wrap-up):
+
+Before the first direct `Agent` or `Task` call in an `inline` Saga phase, pin the exact admission
+snapshot already resolved by the approved plan/run. Do not reconstruct defaults at the hook:
+
+```bash
+test -n "$CLAUDE_CODE_SESSION_ID" || { echo "HALT — CLAUDE_CODE_SESSION_ID is absent" >&2; exit 2; }
+python3 plugins/saga/scripts/lease_broker.py configure-session \
+  --session-id "$CLAUDE_CODE_SESSION_ID" \
+  --policy-sha256 "$RESOLVED_POLICY_SHA256" \
+  --session-limit "$RESOLVED_SESSION_LIMIT" \
+  --aggregate-limit "$RESOLVED_AGGREGATE_LIMIT" \
+  --mutation "$RESOLVED_MUTATION"
+```
+
+Those four values must come from the canonical execution-spec resolver or the approved Workflow
+metadata for this run, including lane/run overrides. Missing values HALT before spawning. For
+`team-execution`, its required lease preflight pins that backend's closed default snapshot instead.
+After every direct child is authoritatively terminal, clear the inline pin; the broker refuses while
+any live session lease remains:
+
+```bash
+python3 plugins/saga/scripts/lease_broker.py clear-session \
+  --session-id "$CLAUDE_CODE_SESSION_ID"
+```
 
 - **Execution strategy** — inline / serial subagents / parallel subagents, chosen from task count and
   dependency structure, gated by the **Parallel Safety Check** (file-to-unit overlap → worktree

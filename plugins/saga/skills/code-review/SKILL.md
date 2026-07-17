@@ -263,7 +263,9 @@ who names `#N` is confirming that request; a Claude-originated suggestion asks f
 Build U1's single-finding context from that exact durable finding and surface the selected provider, egress
 policy, and `opus/high` tier before dispatch. Persist `external_opinion.state=requested` plus the stable
 request identity atomically in the review artifact before the U1 wrapper path; the matching claim is the
-only runner owner. A resumed unresolved request is visible `unavailable`, never a retry of the wrapper.
+only runner owner. Derive `lease_admission_for_session` from the configured Saga session snapshot and pass
+that exact admission to `prepare_second_opinion`; missing or mismatched policy authority halts before the
+wrapper. A resumed unresolved request is visible `unavailable`, never a retry of the wrapper.
 
 In `programmatic` / `report-only` mode, never prompt and never dispatch. Place exactly
 `external_opinion.state=recommended`, its requester, and reason on the selected `#N` in the returned typed

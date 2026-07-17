@@ -7,6 +7,8 @@ import json
 import os
 import subprocess
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
@@ -45,6 +47,8 @@ def _environment(authority: Path, **overrides: str) -> dict[str, str]:
             "INFIQUETRA_FLEET_STATE_DIR": str(authority),
             "INFIQUETRA_FLEET_SESSION_LIMIT": "3",
             "INFIQUETRA_FLEET_AGGREGATE_LIMIT": "7",
+            "INFIQUETRA_FLEET_POLICY_SHA256": P.AdmissionLimits().policy_sha256(),
+            "INFIQUETRA_FLEET_MUTATION": "read-write",
             "INFIQUETRA_FLEET_CLAIM_TTL_SECONDS": "30",
             "INFIQUETRA_FLEET_TTL_SECONDS": "300",
         }
@@ -184,6 +188,63 @@ def test_replayed_pretool_and_start_are_idempotent(tmp_path: Path) -> None:
     assert len(_leases(authority)) == 1
 
 
+def test_delegated_parent_must_hold_current_same_session_authority(tmp_path: Path) -> None:
+    authority = tmp_path / "authority"
+    env = _environment(authority)
+    _run_hook(
+        LIFECYCLE_HOOK, _spawn_payload(tmp_path, "parent-tool"), cwd=tmp_path, environment=env
+    )
+    _run_hook(LIFECYCLE_HOOK, _start_payload(tmp_path, "parent"), cwd=tmp_path, environment=env)
+
+    nested = _spawn_payload(tmp_path, "nested-tool")
+    nested["agent_id"] = "parent"
+    assert _run_hook(LIFECYCLE_HOOK, nested, cwd=tmp_path, environment=env).returncode == 0
+
+    wrong_session = _spawn_payload(tmp_path, "wrong-session", session="other")
+    wrong_session["agent_id"] = "parent"
+    refused = _run_hook(LIFECYCLE_HOOK, wrong_session, cwd=tmp_path, environment=env)
+    assert refused.returncode == 2
+    assert "different session" in refused.stderr
+
+    raw = json.loads((authority / B.REGISTRY_NAME).read_text(encoding="utf-8"))
+    parent = next(lease for lease in raw["leases"].values() if lease["agent_id"] == "parent")
+    parent["renewed_monotonic_ns"] = 0
+    (authority / B.REGISTRY_NAME).write_text(json.dumps(raw), encoding="utf-8")
+    os.chmod(authority / B.REGISTRY_NAME, 0o600)
+    expired = _spawn_payload(tmp_path, "expired-parent")
+    expired["agent_id"] = "parent"
+    blocked = _run_hook(LIFECYCLE_HOOK, expired, cwd=tmp_path, environment=env)
+    assert blocked.returncode == 2
+    assert "no current spawn authority" in blocked.stderr
+
+
+def test_parallel_claims_bind_each_reservation_once(tmp_path: Path) -> None:
+    authority = tmp_path / "authority"
+    env = _environment(authority)
+    for tool in ("tool-1", "tool-2"):
+        assert (
+            _run_hook(
+                LIFECYCLE_HOOK, _spawn_payload(tmp_path, tool), cwd=tmp_path, environment=env
+            ).returncode
+            == 0
+        )
+
+    barrier = threading.Barrier(2)
+
+    def start(child: str) -> subprocess.CompletedProcess[str]:
+        barrier.wait()
+        return _run_hook(
+            LIFECYCLE_HOOK, _start_payload(tmp_path, child), cwd=tmp_path, environment=env
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(start, ("child-1", "child-2")))
+    assert all(result.returncode == 0 for result in results)
+    leases = _leases(authority)
+    assert {lease["agent_id"] for lease in leases} == {"child-1", "child-2"}
+    assert {lease["tool_use_id"] for lease in leases} == {"tool-1", "tool-2"}
+
+
 def test_capacity_refusal_blocks_agent_tool_before_spawn(tmp_path: Path) -> None:
     authority = tmp_path / "authority"
     env = _environment(
@@ -204,6 +265,37 @@ def test_capacity_refusal_blocks_agent_tool_before_spawn(tmp_path: Path) -> None
     assert refused.returncode == 2
     assert "reservation refused before spawn" in refused.stderr
     assert len(_leases(authority)) == 1
+
+
+def test_normal_agent_requires_pinned_resolved_session_admission(tmp_path: Path) -> None:
+    authority = tmp_path / "authority"
+    env = dict(os.environ)
+    env["INFIQUETRA_FLEET_STATE_DIR"] = str(authority)
+    missing = _run_hook(
+        LIFECYCLE_HOOK,
+        _spawn_payload(tmp_path, "tool-missing"),
+        cwd=tmp_path,
+        environment=env,
+    )
+    assert missing.returncode == 2
+    assert "configured resolved session snapshot" in missing.stderr
+
+    limits = P.AdmissionLimits()
+    _broker(authority).configure_session_admission(
+        "session",
+        policy_sha256=limits.policy_sha256(),
+        session_limit=1,
+        aggregate_limit=limits.aggregate_max_concurrent,
+        mutation="read-write",
+    )
+    admitted = _run_hook(
+        LIFECYCLE_HOOK,
+        _spawn_payload(tmp_path, "tool-pinned"),
+        cwd=tmp_path,
+        environment=env,
+    )
+    assert admitted.returncode == 0
+    assert _leases(authority)[0]["session_limit"] == 1
 
 
 def test_missing_reservation_at_subagent_start_arms_no_implicit_grant(tmp_path: Path) -> None:
@@ -347,6 +439,28 @@ def test_both_lifecycle_signals_are_required_in_either_order(
     assert len(_leases(authority)) == 1
     assert _run_hook(LIFECYCLE_HOOK, second, cwd=tmp_path, environment=env).returncode == 0
     assert _leases(authority) == []
+
+
+def test_parallel_terminal_and_parent_signals_release_exactly_once(tmp_path: Path) -> None:
+    authority = tmp_path / "authority"
+    env = _environment(authority)
+    _run_hook(LIFECYCLE_HOOK, _spawn_payload(tmp_path, "tool"), cwd=tmp_path, environment=env)
+    _run_hook(LIFECYCLE_HOOK, _start_payload(tmp_path, "child"), cwd=tmp_path, environment=env)
+    barrier = threading.Barrier(2)
+
+    def signal(payload: dict[str, Any]) -> subprocess.CompletedProcess[str]:
+        barrier.wait()
+        return _run_hook(LIFECYCLE_HOOK, payload, cwd=tmp_path, environment=env)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(signal, _parent_payload(tmp_path, "tool")),
+            executor.submit(signal, _stop_payload(tmp_path, "child")),
+        ]
+        results = [future.result() for future in futures]
+    assert all(result.returncode == 0 for result in results)
+    assert _leases(authority) == []
+    json.loads((authority / B.REGISTRY_NAME).read_text(encoding="utf-8"))
 
 
 def test_unclaimed_posttool_failure_releases_provisional_slot(tmp_path: Path) -> None:

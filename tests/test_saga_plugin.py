@@ -70,6 +70,8 @@ def test_work_skill_wires_driver_owned_workflow_settlement() -> None:
         "workflow_emitter.py reserve",
         "workflow_emitter.py attest",
         "workflow_emitter.py release",
+        "lease_broker.py configure-session",
+        "lease_broker.py clear-session",
         "CLAUDE_CODE_SESSION_ID",
         "dispatch_settlement.py --repo-root .",
         "Generated agents still receive no filesystem or ledger-write",
@@ -77,6 +79,11 @@ def test_work_skill_wires_driver_owned_workflow_settlement() -> None:
         "This is at-least-once and preserves the stable idempotency key",
     ):
         assert required in work_skill
+    reserve = work_skill.index("workflow_emitter.py reserve")
+    attest = work_skill.index("workflow_emitter.py attest", reserve)
+    launch = work_skill.index('Workflow({ scriptPath: "docs/plans/<topic>.workflow.js" })', attest)
+    release = work_skill.index("workflow_emitter.py release", launch)
+    assert reserve < attest < launch < release
 
 
 def test_provider_onboarding_contract_is_packaged_and_documented() -> None:

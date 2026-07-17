@@ -183,9 +183,8 @@ def renew(
     metadata: Mapping[str, Any], environment: Mapping[str, str] | None = None
 ) -> tuple[str, ...]:
     contract = validate_metadata(metadata)
-    leases = lease_broker.broker(environment).renew_batch(
-        contract["batch_id"], owner_id=contract["owner_id"]
-    )
+    selected = lease_broker.broker(environment)
+    leases = selected.renew_batch(contract["batch_id"], owner_id=contract["owner_id"])
     return tuple(lease.lease_id for lease in leases)
 
 
@@ -196,10 +195,13 @@ def release(
     environment: Mapping[str, str] | None = None,
 ) -> tuple[str, ...]:
     contract = validate_metadata(metadata)
+    selected = lease_broker.broker(environment)
     return cast(
         tuple[str, ...],
-        lease_broker.broker(environment).release_owner(
-            contract["owner_id"], session_id=_text(session_id, "session_id")
+        selected.settle_batch(
+            contract["batch_id"],
+            owner_id=contract["owner_id"],
+            session_id=_text(session_id, "session_id"),
         ),
     )
 

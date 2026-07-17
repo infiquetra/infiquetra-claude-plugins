@@ -237,8 +237,16 @@ def test_unused_reservations_and_confirmed_children_release_after_return(tmp_pat
     receipt = W.reserve(metadata, session_id="session", environment=env)
     A.reserve_hook_agent(_spawn(tmp_path, "tool"), env)
     A.claim_hook_agent(_start(tmp_path, "child"), env)
-    released = W.release(metadata, session_id="session", environment=env)
-    assert set(released) == set(receipt["lease_ids"])
+    first_release = W.release(metadata, session_id="session", environment=env)
+    assert len(first_release) == metadata["reservation_width"] - 1
+    retained = B.LeaseBroker(authority).inspect()["leases"]
+    assert len(retained) == 1
+    assert retained[0]["agent_id"] == "child"
+
+    A.record_hook_terminal(_start(tmp_path, "child"), env)
+    A.record_hook_parent(_spawn(tmp_path, "tool") | {"hook_event_name": "PostToolUse"}, env)
+    final_release = W.release(metadata, session_id="session", environment=env)
+    assert set(first_release + final_release) == set(receipt["lease_ids"])
     assert B.LeaseBroker(authority).inspect()["leases"] == []
 
 

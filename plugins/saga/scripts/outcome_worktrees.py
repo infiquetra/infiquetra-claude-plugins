@@ -350,11 +350,6 @@ def ensure_worktree(
             ttl_seconds=lease_ttl_seconds,
         )
     )
-    if not ops.add(path, branch):
-        if lease is not None:
-            selected = cast(Any, lease_authority)
-            selected.release(lease.lease_id, owner_id=owner, token=lease.token)
-        raise WorktreeError(f"git worktree add failed for {sid!r} at {path}")
     entry = {
         "path": path,
         "branch": branch,
@@ -367,13 +362,38 @@ def ensure_worktree(
     if lease is not None:
         entry["lease"] = fleet_leases.worktree_lease_receipt(lease, lease_authority)
     try:
+        # Persist recovery authority before creating the physical worktree.  If the process dies
+        # after ``ops.add`` returns, a later reconcile pass can now prove which lease owns the path
+        # and either adopt or reap it.  The reverse order can strand an unregistered worktree.
         register(store, sid, entry)
-    except Exception:
-        ops.remove(path)
+    except Exception as register_exc:
         if lease is not None:
             selected = cast(Any, lease_authority)
-            selected.release(lease.lease_id, owner_id=owner, token=lease.token)
+            try:
+                selected.release(lease.lease_id, owner_id=owner, token=lease.token)
+            except fleet_leases.authority.LeaseBrokerError as release_exc:
+                raise WorktreeError(
+                    "worktree registry write failed and lease rollback also failed; "
+                    f"broker authority retained for operator recovery: {release_exc}"
+                ) from register_exc
         raise
+    try:
+        added = ops.add(path, branch)
+    except Exception as add_exc:
+        cleaned = reap_worktree(store, sid, ops, lease_authority=lease_authority, at=at)
+        if not cleaned:
+            raise WorktreeError(
+                f"git worktree add raised for {sid!r}; registry and lease retained for retry"
+            ) from add_exc
+        raise
+    if not added:
+        cleaned = reap_worktree(store, sid, ops, lease_authority=lease_authority, at=at)
+        if not cleaned:
+            raise WorktreeError(
+                f"git worktree add failed for {sid!r} at {path}; "
+                "registry and lease retained for retry"
+            )
+        raise WorktreeError(f"git worktree add failed for {sid!r} at {path}")
     return WorktreeResult(sid, "created", path, "durable named+owned worktree provisioned (R15)")
 
 
@@ -442,7 +462,7 @@ def reconcile_worktree_leases(
     lease_ttl_seconds: int = fleet_leases.authority.DEFAULT_TTL_SECONDS,
     store_resolver: Callable[[str, Path], Any] | None = None,
 ) -> dict[str, Any]:
-    """Sweep expired ownership, adopt legacy entries, and renew live worktrees for one tick."""
+    """Transfer active ownership, sweep provably stale paths, and renew live worktrees."""
 
     canonical_root = Path(repo_root).resolve()
     resolve_store = (
@@ -450,6 +470,37 @@ def reconcile_worktree_leases(
         if store_resolver is not None
         else lambda outcome_id, root: outcome_store.Store.for_outcome(outcome_id, root).ensure()
     )
+    # Durable work belongs to the outcome, not to the short-lived coordinator process that happened
+    # to provision it.  An active dispatched node transfers its exact persisted token to this tick
+    # before the destructive sweep.  ``transfer_worktree`` and ``sweep`` share the broker lock, so a
+    # concurrent sweep cannot slip between validation and transfer.
+    import outcome as outcome_engine
+
+    states = outcome_engine.derive_states(spec, store)
+    transfer_retained: dict[str, str] = {}
+    transferred: list[str] = []
+    for sid, entry in sorted(read_registry(store).items()):
+        path = str(entry.get("path", ""))
+        if states.get(sid) != "dispatched" or not path or not ops.exists(path):
+            continue
+        if "lease" not in entry:
+            continue
+        lease_id, token = _lease_binding(entry, lease_authority)
+        try:
+            lease_authority.transfer_worktree(
+                lease_id,
+                token=token,
+                owner_id=owner,
+                owner_pid=os.getpid(),
+            )
+        except fleet_leases.authority.LeaseBrokerError as exc:
+            transfer_retained[lease_id] = f"transfer-failed:{exc}"
+        else:
+            transferred.append(sid)
+            if entry.get("owner") != owner:
+                entry["owner"] = owner
+                register(store, sid, entry)
+
     before = lease_authority.inspect()
     lease_resources = {
         lease["lease_id"]: dict(lease["resource_ref"])
@@ -458,7 +509,7 @@ def reconcile_worktree_leases(
     }
 
     def _validated_reaper(resource: dict[str, str]) -> bool:
-        resource_root = Path(resource["repo_root"])
+        resource_root = Path(resource["repo_root"]).resolve()
         resolved = resolve_store(resource["outcome_id"], resource_root)
         if (
             resource_root == canonical_root
@@ -483,6 +534,16 @@ def reconcile_worktree_leases(
             raise WorktreeError("worktree registry path escapes the managed root") from exc
         if actual != expected:
             raise WorktreeError("worktree registry path does not match its structured resource")
+        if resource_root == canonical_root and resource["outcome_id"] == spec.outcome_id:
+            resource_state = states.get(resource["subplot_id"], "")
+        else:
+            resource_spec = outcome_engine.load_spec(resource_root, resource["outcome_id"])
+            resource_states = outcome_engine.derive_states(resource_spec, resolved)
+            resource_state = resource_states.get(resource["subplot_id"], "")
+        if resource_state == "dispatched":
+            # A live child can outlast any one coordinator process.  Expired process ownership is
+            # insufficient proof that its durable worktree is abandoned.
+            return False
         resource_ops = ops if resource_root == canonical_root else git_worktree_ops(resource_root)
         return reap_worktree(
             resolved,
@@ -495,13 +556,11 @@ def reconcile_worktree_leases(
 
     swept = lease_authority.sweep(worktree_reaper=_validated_reaper)
 
-    renewed: list[str] = []
+    renewed: list[str] = list(transferred)
     adopted: list[str] = []
     retained = dict(swept.retained)
+    retained.update(transfer_retained)
     registry = read_registry(store)
-    import outcome as outcome_engine
-
-    states = outcome_engine.derive_states(spec, store)
     for sid, entry in sorted(registry.items()):
         if not ops.exists(str(entry.get("path", ""))):
             continue
@@ -527,6 +586,8 @@ def reconcile_worktree_leases(
         lease_id, token = _lease_binding(entry, lease_authority)
         if lease_id in retained:
             continue
+        if sid in transferred:
+            continue
         if states.get(sid) in outcome_spec.TERMINAL_STATES:
             continue
         try:
@@ -539,6 +600,7 @@ def reconcile_worktree_leases(
         "lease_reaped": list(swept.reaped_worktree_leases),
         "lease_released_agents": list(swept.released_agent_leases),
         "lease_adopted": adopted,
+        "lease_transferred": transferred,
         "lease_renewed": renewed,
         "lease_retained": dict(sorted(retained.items())),
         "lease_root_sha256": lease_authority.root_sha256,

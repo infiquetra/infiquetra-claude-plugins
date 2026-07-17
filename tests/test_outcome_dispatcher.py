@@ -168,6 +168,32 @@ def test_make_dispatcher_refuses_capacity_before_backend_call(
         D.make_dispatcher(lease_authority=selected)(_req("inline"))
 
 
+def test_make_dispatcher_preserves_primary_failure_when_release_also_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class BrokenReleaseAuthority:
+        root_sha256 = "a" * 64
+
+        def acquire_agent(self, **_kwargs: Any) -> Any:
+            return SimpleNamespace(lease_id="lease-1", token=SimpleNamespace())
+
+        def release(self, *_args: Any, **_kwargs: Any) -> bool:
+            raise RuntimeError("cleanup exploded")
+
+    monkeypatch.setattr(
+        D,
+        "dispatch",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("primary exploded")),
+    )
+
+    with pytest.raises(RuntimeError, match="primary exploded") as exc:
+        D.make_dispatcher(lease_authority=BrokenReleaseAuthority())(_req("inline"))
+    assert any(
+        "lease settlement refused: cleanup exploded" in note
+        for note in getattr(exc.value, "__notes__", ())
+    )
+
+
 def test_outcome_dispatch_rejects_lease_protocol_skew() -> None:
     with pytest.raises(D.DispatcherError, match="install/update fleet-core"):
         D._require_lease_protocol(SimpleNamespace(PROTOCOL_VERSION=99))

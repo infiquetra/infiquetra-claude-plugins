@@ -7,6 +7,7 @@ import importlib.util
 import json
 import shutil
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any, cast
@@ -1035,6 +1036,17 @@ def _ok_runner(_invocation: dict[str, Any]) -> dict[str, Any]:
     return {"status": "ok", "output": "external finding", "receipt": _valid_receipt()}
 
 
+def _lease_admission(
+    *, policy_sha256: str = "a" * 64, session_limit: int = 1, aggregate_limit: int = 1
+) -> Any:
+    return D.LeaseAdmission(
+        policy_sha256=policy_sha256,
+        session_limit=session_limit,
+        aggregate_limit=aggregate_limit,
+        mutation="none",
+    )
+
+
 def test_engine_runtime_lease_wraps_runner_and_exact_settlement(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1062,6 +1074,8 @@ def test_engine_runtime_lease_wraps_runner_and_exact_settlement(
         assert len(live) == 1
         assert live[0]["session_id"] == "runtime-session"
         assert live[0]["mutation"] == "none"
+        assert live[0]["session_limit"] == 1
+        assert live[0]["aggregate_limit"] == 1
         lifecycle.append("runner")
         return {"status": "ok", "output": "leased evidence"}
 
@@ -1070,7 +1084,9 @@ def test_engine_runtime_lease_wraps_runner_and_exact_settlement(
         runner=runner,
         session_id="runtime-session",
         execution_id="execution-1",
+        attempt_id="attempt-1",
         lease_authority=selected,
+        lease_admission=_lease_admission(),
     )
 
     assert lifecycle == ["runner", "disarmed"]
@@ -1111,13 +1127,125 @@ def test_engine_runtime_dispatch_refuses_session_capacity(
             _resolution(),
             runner=lambda _invocation: pytest.fail("capacity denial must precede runner"),
             session_id="full-session",
+            execution_id="capacity-execution",
+            attempt_id="capacity-attempt",
             lease_authority=selected,
+            lease_admission=_lease_admission(
+                policy_sha256=limits.policy_sha256(),
+                session_limit=limits.max_concurrent,
+                aggregate_limit=limits.aggregate_max_concurrent,
+            ),
         )
 
 
 def test_engine_runtime_dispatch_rejects_lease_protocol_skew() -> None:
     with pytest.raises(D.DispatchError, match="install/update fleet-core"):
         D._require_lease_protocol(SimpleNamespace(PROTOCOL_VERSION=99))
+
+
+def test_registered_dispatch_requires_explicit_resolved_admission() -> None:
+    with pytest.raises(D.DispatchError, match="explicit Saga-resolved lease admission"):
+        D.dispatch(
+            _resolution(),
+            runner=lambda _invocation: pytest.fail("admission rejection must precede runner"),
+            session_id="runtime-session",
+            execution_id="execution-1",
+            attempt_id="attempt-1",
+        )
+
+
+def test_engine_retry_uses_stable_resource_ref_and_supersedes_prior_authority(
+    tmp_path: Path,
+) -> None:
+    lease_module, _ = D._load_fleet_module("lease_broker")
+    assert lease_module is not None
+    selected = lease_module.LeaseBroker(tmp_path / "authority")
+    acquired: list[Any] = []
+    original_acquire = selected.acquire_agent
+
+    def capture_acquire(**kwargs: Any) -> Any:
+        lease = original_acquire(**kwargs)
+        acquired.append(lease)
+        return lease
+
+    selected.acquire_agent = capture_acquire  # type: ignore[method-assign]
+    for _ in range(2):
+        D.dispatch(
+            _resolution(),
+            runner=lambda _invocation: {"status": "ok", "output": "evidence"},
+            session_id="runtime-session",
+            execution_id="execution-1",
+            attempt_id="attempt-1",
+            lease_authority=selected,
+            lease_admission=_lease_admission(),
+        )
+
+    assert acquired[0].resource_ref == acquired[1].resource_ref
+    assert acquired[0].fencing_sequence < acquired[1].fencing_sequence
+    assert selected.classify_token(acquired[0].resource_ref, acquired[0].token) == "superseded"
+
+
+def test_expired_runner_output_does_not_write_advisory_fact(tmp_path: Path) -> None:
+    lease_module, _ = D._load_fleet_module("lease_broker")
+    assert lease_module is not None
+    monotonic = 0
+
+    def read_monotonic() -> int:
+        return monotonic
+
+    selected = lease_module.LeaseBroker(
+        tmp_path / "authority",
+        providers=lease_module.Providers(
+            wall_now=lambda: datetime(2026, 7, 16, tzinfo=UTC),
+            monotonic_ns=read_monotonic,
+            boot_id=lambda: "test-boot",
+        ),
+    )
+    ledger = D.run_ledger.RunLedger(tmp_path / "run-facts.jsonl")
+
+    def runner(_invocation: dict[str, Any]) -> dict[str, str]:
+        nonlocal monotonic
+        monotonic = lease_module.DEFAULT_TTL_SECONDS * 1_000_000_000
+        return {"status": "ok", "output": "late evidence"}
+
+    with pytest.raises(D.DispatchError, match="expired before settlement"):
+        D.dispatch(
+            _resolution(),
+            runner=runner,
+            ledger=ledger,
+            subplot_id="leaf",
+            at="2026-07-16T00:00:00Z",
+            session_id="runtime-session",
+            execution_id="execution-1",
+            attempt_id="attempt-1",
+            lease_authority=selected,
+            lease_admission=_lease_admission(),
+        )
+
+    assert D.run_ledger.read_facts(ledger) == []
+
+
+def test_release_failure_preserves_primary_dispatch_error(tmp_path: Path) -> None:
+    lease_module, _ = D._load_fleet_module("lease_broker")
+    assert lease_module is not None
+    selected = lease_module.LeaseBroker(tmp_path / "authority")
+
+    def broken_release(*_args: Any, **_kwargs: Any) -> bool:
+        raise lease_module.LeaseBrokerError("release unavailable")
+
+    selected.release = broken_release  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError, match="runner failed") as caught:
+        D.dispatch(
+            _resolution(),
+            runner=lambda _invocation: (_ for _ in ()).throw(RuntimeError("runner failed")),
+            session_id="runtime-session",
+            execution_id="execution-1",
+            attempt_id="attempt-1",
+            lease_authority=selected,
+            lease_admission=_lease_admission(),
+        )
+
+    assert any("secondary lease cleanup failure" in note for note in caught.value.__notes__)
 
 
 def _store(tmp_path: Path) -> Any:

@@ -58,6 +58,19 @@ def _sub(sid: str, **kw: Any) -> dict[str, Any]:
     return {"subplot_id": sid, "title": sid, "kind": "code", "child_spec_ref": f"child-{sid}", **kw}
 
 
+def _dispatched(store: Any, sid: str) -> None:
+    STORE.append_ledger(
+        store,
+        {
+            "phase": "commit",
+            "kind": "dispatch",
+            "key": f"dispatch:{sid}",
+            "subplot_id": sid,
+            "leaf_saga_id": f"leaf-{sid}",
+        },
+    )
+
+
 class FakeWT:
     """A fake WorktreeOps backed by an in-memory set of live paths (git is simulated)."""
 
@@ -226,6 +239,62 @@ def test_stale_worktree_debits_leave_malformed_registry_untouched(tmp_path: Path
     assert list(store.quarantine_dir.iterdir()) == []
 
 
+def test_provisioning_persists_recovery_authority_before_physical_add(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime = FakeLeaseRuntime()
+    broker = _lease_broker(tmp_path, runtime)
+    spec = _spec([_sub("s1")])
+    store = _store(tmp_path)
+    fw = FakeWT()
+
+    def fail_register(*_args: Any, **_kwargs: Any) -> None:
+        raise OSError("registry unavailable")
+
+    monkeypatch.setattr(WT, "register", fail_register)
+    with pytest.raises(OSError, match="registry unavailable"):
+        WT.ensure_worktree(
+            tmp_path,
+            spec,
+            store,
+            spec.nodes[0],
+            fw.ops(),
+            owner="coordinator",
+            lease_authority=broker,
+        )
+    assert fw.paths == set()
+    assert broker.inspect()["leases"] == []
+
+
+def test_uncertain_add_failure_retains_registry_and_lease_for_retry(tmp_path: Path) -> None:
+    runtime = FakeLeaseRuntime()
+    broker = _lease_broker(tmp_path, runtime)
+    spec = _spec([_sub("s1")])
+    store = _store(tmp_path)
+    uncertain = WT.WorktreeOps(
+        add=lambda _path, _branch: False,
+        remove=lambda _path: False,
+        exists=lambda _path: True,
+        list_paths=list,
+    )
+
+    with pytest.raises(WT.WorktreeError, match="registry and lease retained"):
+        WT.ensure_worktree(
+            tmp_path,
+            spec,
+            store,
+            spec.nodes[0],
+            uncertain,
+            owner="coordinator",
+            lease_authority=broker,
+        )
+    assert "s1" in WT.read_registry(store)
+    assert len(broker.inspect()["leases"]) == 1
+    assert WT.reap_worktree(store, "s1", FakeWT().ops(), lease_authority=broker) is True
+    assert WT.read_registry(store) == {}
+    assert broker.inspect()["leases"] == []
+
+
 # --------------------------------------------------------------------------- fleet lease ownership (#356)
 
 
@@ -305,6 +374,43 @@ def test_expired_live_owner_is_reported_not_reaped(tmp_path: Path) -> None:
     result = _reconcile_leases(tmp_path, spec, store, fw.ops(), broker)
     assert result["lease_retained"][lease_id] == "expired-live-owner"
     assert fw.removed == []
+    assert "s1" in WT.read_registry(store)
+
+
+def test_expired_active_child_transfers_to_the_next_one_shot_coordinator(tmp_path: Path) -> None:
+    runtime = FakeLeaseRuntime()
+    broker = _lease_broker(tmp_path, runtime)
+    spec = _spec([_sub("s1")])
+    store = _store(tmp_path)
+    fw = FakeWT()
+    WT.ensure_worktree(
+        tmp_path,
+        spec,
+        store,
+        spec.nodes[0],
+        fw.ops(),
+        owner="coordinator-old",
+        lease_authority=broker,
+        lease_ttl_seconds=1,
+    )
+    _dispatched(store, "s1")
+    lease_id = WT.read_registry(store)["s1"]["lease"]["lease_id"]
+    runtime.advance(1)
+
+    result = WT.reconcile_worktree_leases(
+        tmp_path,
+        spec,
+        store,
+        fw.ops(),
+        broker,
+        owner="coordinator-new",
+        store_resolver=lambda _outcome_id, _repo_root: store,
+    )
+    assert result["lease_transferred"] == ["s1"]
+    assert result["lease_reaped"] == []
+    assert fw.removed == []
+    assert broker.inspect()["leases"][0]["lease_id"] == lease_id
+    assert broker.inspect()["leases"][0]["owner_id"] == "coordinator-new"
     assert "s1" in WT.read_registry(store)
 
 
@@ -807,6 +913,87 @@ def test_real_git_adapter_sees_a_live_worktree_under_a_symlinked_root(tmp_path: 
     spec2 = _spec([_sub("s1"), _sub("s2")])
     capped = WT.ensure_worktree(link, spec2, store, spec2.nodes[1], ops, owner="me", cap=1)
     assert capped.state == "capped"  # not an unbounded (N+1)th worktree
+
+
+def test_real_git_dead_worktree_reclamation_retries_without_losing_authority(
+    tmp_path: Path,
+) -> None:
+    import subprocess
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    env = {
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@t",
+        "PATH": os.environ["PATH"],
+    }
+    subprocess.run(
+        ["git", "commit", "-q", "--allow-empty", "-m", "init"], cwd=repo, check=True, env=env
+    )
+    runtime = FakeLeaseRuntime()
+    broker = _lease_broker(tmp_path, runtime, worktree_limit=2)
+    spec = _spec([_sub("s1"), _sub("s2")])
+    store = _store(tmp_path)
+    real_ops = WT.git_worktree_ops(repo)
+    for node in spec.nodes:
+        WT.ensure_worktree(
+            repo,
+            spec,
+            store,
+            node,
+            real_ops,
+            owner="dead-coordinator",
+            cap=2,
+            lease_authority=broker,
+            lease_ttl_seconds=1,
+        )
+    paths = {sid: WT.read_registry(store)[sid]["path"] for sid in ("s1", "s2")}
+    runtime.advance(1)
+    first_failure = True
+
+    def flaky_remove(path: str) -> bool:
+        nonlocal first_failure
+        if path == paths["s1"] and first_failure:
+            first_failure = False
+            return False
+        return real_ops.remove(path)
+
+    flaky_ops = WT.WorktreeOps(
+        add=real_ops.add,
+        remove=flaky_remove,
+        exists=real_ops.exists,
+        list_paths=real_ops.list_paths,
+    )
+    first = WT.reconcile_worktree_leases(
+        repo,
+        spec,
+        store,
+        flaky_ops,
+        broker,
+        owner="next-coordinator",
+        store_resolver=lambda _outcome_id, _repo_root: store,
+    )
+    assert len(first["lease_reaped"]) == 1
+    assert len(first["lease_retained"]) == 1
+    assert real_ops.exists(paths["s1"]) is True
+    assert real_ops.exists(paths["s2"]) is False
+
+    second = WT.reconcile_worktree_leases(
+        repo,
+        spec,
+        store,
+        real_ops,
+        broker,
+        owner="next-coordinator",
+        store_resolver=lambda _outcome_id, _repo_root: store,
+    )
+    assert len(second["lease_reaped"]) == 1
+    assert WT.read_registry(store) == {}
+    assert broker.inspect()["leases"] == []
+    assert not any(path in real_ops.list_paths() for path in paths.values())
 
 
 def test_cli_describes_policy(capsys: Any) -> None:

@@ -35,7 +35,7 @@ import json
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -68,7 +68,7 @@ def _live_state(spec: Any, store: Any, subplot_id: str) -> str:
 def _commit(spec: Any, *, reason: str, at: str) -> int:
     """Validate the mutated spec, then bump the revision + trail. Caller must have a rollback ready."""
     spec.validate()
-    return spec.bump_revision(reason=reason, at=at)
+    return cast(int, spec.bump_revision(reason=reason, at=at))
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +254,7 @@ def prune(
     *,
     issue_close: Callable[[str], bool] | None = None,
     worktree_ops: Any | None = None,
+    lease_authority: Any | None = None,
     at: str = "",
 ) -> dict[str, Any]:
     """Remove a node + drop every edge to it (atomic), then reconcile its orphans (R33).
@@ -276,6 +277,35 @@ def prune(
     Returns a reconcile summary so ``/outcome`` can show exactly what was cleaned up.
     """
     node = _require_node(spec, subplot_id, "prune")
+    import outcome_worktrees
+
+    try:
+        reap_preflight = outcome_worktrees.prevalidate_reap_authority(
+            store,
+            subplot_id,
+            lease_authority,
+            expected_outcome_id=spec.outcome_id,
+        )
+    except outcome_worktrees.WorktreeAuthorityError as exc:
+        if worktree_ops is None or lease_authority is None:
+            raise DecomposeError(
+                f"prune: {subplot_id!r} has a lease-bound worktree and requires both worktree_ops "
+                "and the exact lease_authority; the node, registry, path, and lease were retained"
+            ) from exc
+        raise DecomposeError(
+            f"prune: {subplot_id!r} lease authority prevalidation failed before graph mutation: "
+            f"{exc}"
+        ) from exc
+    except outcome_worktrees.WorktreeError as exc:
+        raise DecomposeError(
+            f"prune: {subplot_id!r} worktree registry prevalidation failed before graph mutation: "
+            f"{exc}"
+        ) from exc
+    if reap_preflight is not None and reap_preflight.lease_id and worktree_ops is None:
+        raise DecomposeError(
+            f"prune: {subplot_id!r} has a lease-bound worktree and requires both worktree_ops "
+            "and the exact lease_authority; the node, registry, path, and lease were retained"
+        )
     state = _live_state(spec, store, subplot_id)
     if state in _IN_FLIGHT:
         raise DecomposeError(
@@ -310,10 +340,8 @@ def prune(
     if issue_ref and issue_close is not None and issue_close(issue_ref):
         summary["closed_issue"] = issue_ref
     if worktree_ops is not None:
-        import outcome_worktrees
-
         summary["reaped_worktree"] = outcome_worktrees.reap_worktree(
-            store, subplot_id, worktree_ops, at=at
+            store, subplot_id, worktree_ops, at=at, lease_authority=lease_authority
         )
     return summary
 
@@ -331,7 +359,7 @@ def _require_node(spec: Any, subplot_id: str, where: str) -> Any:
 
 
 def _approvals_dir(store: Any) -> Path:
-    return store.root / "approvals"
+    return cast(Path, store.root / "approvals")
 
 
 def approve_frontier(
@@ -364,7 +392,7 @@ def approve_frontier(
     if transport is not None:
         record["transport"] = transport
     outcome_store._write_once(d / f"r{rev}.json", json.dumps(record) + "\n")
-    return rev
+    return cast(int, rev)
 
 
 def frontier_approved(store: Any, spec_revision: int) -> bool:

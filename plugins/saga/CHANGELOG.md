@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.99.1] - 2026-07-17
+
+### Fixed - lease-bound worktree teardown retains broker authority (#356)
+
+- Refused authority-free reaping of registry entries carrying a worktree lease receipt. Generic ship
+  teardown now treats every canonical `.saga-worktrees/<outcome>/<subplot>` path as managed: missing,
+  corrupt, unreadable, or mismatched registry evidence retains the worktree with a retryable operator
+  message instead of falling through to raw Git removal. Positively identified legacy unleased and
+  unmanaged worktrees retain their existing teardown behavior.
+- Made `/outcome prune` strictly prevalidate the exact receipt root, broker lease id, structured
+  resource, fencing token, and managed path before mutating revision, nodes, edges, or generated issue
+  state. Lease-bound pruning requires both the Git adapter and authority; the production CLI threads
+  the canonical broker into that path.
+
 ## [0.99.0] - 2026-07-16
 
 ### Added - fleet-wide TTL lease admission and fencing (#356)

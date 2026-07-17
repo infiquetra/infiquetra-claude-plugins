@@ -1337,9 +1337,12 @@ def test_release_surfaces_tell_the_repost_story() -> None:
     top_version = top_heading.split("[", 1)[1].split("]", 1)[0]
     # The CHANGELOG's newest entry and plugin.json agree on the version...
     assert top_version == plugin["version"]
-    # ...and the newest entry actually documents the new verb (metadata == diff story).
-    newest_entry = changelog.split("## [", 2)[1]
-    assert "repost" in newest_entry and "#433" in newest_entry
+    # The release that introduced the verb retains its historical contract even when newer
+    # legitimate releases are prepended to the changelog.
+    repost_heading = "## [0.99.0]"
+    assert repost_heading in changelog
+    repost_entry = changelog.split(repost_heading, 1)[1].split("\n## [", 1)[0]
+    assert "repost" in repost_entry and "#433" in repost_entry
     # The operator-facing surfaces document the verb too.
     skill = (ROOT / "plugins" / "saga" / "skills" / "outcome" / "SKILL.md").read_text(
         encoding="utf-8"

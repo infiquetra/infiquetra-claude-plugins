@@ -2282,6 +2282,7 @@ def main(argv: list[str] | None = None) -> int:
                 store,
                 args.subplot_id,
                 worktree_ops=outcome_worktrees.git_worktree_ops(root),
+                lease_authority=outcome_dispatcher.default_lease_authority(),
             )
             save_spec(root, spec)
             print(json.dumps(summary))

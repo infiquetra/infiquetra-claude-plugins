@@ -124,7 +124,7 @@ EXPECTED_ROWS: frozenset[InventoryRow] = frozenset(
             "_arm_worktree",
             "worktree_lease_receipt",
             "reconcile_worktree_leases",
-            "reap_worktree",
+            "_reap_prevalidated",
         ),
     }
 )
@@ -184,7 +184,7 @@ EXPECTED_LEASE_CALLS: dict[tuple[str, str], frozenset[str]] = {
             "lease_authority.renew",
         }
     ),
-    ("plugins/saga/scripts/outcome_worktrees.py", "reap_worktree"): frozenset(
+    ("plugins/saga/scripts/outcome_worktrees.py", "_reap_prevalidated"): frozenset(
         {"lease_authority.release"}
     ),
 }

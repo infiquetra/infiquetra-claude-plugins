@@ -66,6 +66,11 @@ def test_work_skill_wires_driver_owned_workflow_settlement() -> None:
     work_skill = _read(PLUGIN_ROOT / "skills" / "work" / "SKILL.md")
     for required in (
         "execution_spec.py settlement",
+        "execution_spec.py lease",
+        "workflow_emitter.py reserve",
+        "workflow_emitter.py attest",
+        "workflow_emitter.py release",
+        "CLAUDE_CODE_SESSION_ID",
         "dispatch_settlement.py --repo-root .",
         "Generated agents still receive no filesystem or ledger-write",
         "A missing structured result is `silent-no-op`",

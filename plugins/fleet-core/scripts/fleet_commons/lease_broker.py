@@ -1081,6 +1081,31 @@ class LeaseBroker:
         with self._locked():
             registry = cast(Registry, self._read_registry(create=True))
             wall, now_text, monotonic, boot_id = self._now()
+            existing = sorted(
+                (
+                    lease
+                    for lease in registry.leases.values()
+                    if lease.pool == "agent"
+                    and lease.batch_id == batch
+                    and not self._expired(lease, monotonic=monotonic, boot_id=boot_id)
+                ),
+                key=lambda lease: lease.fencing_sequence,
+            )
+            if existing:
+                if len(existing) != amount or any(
+                    lease.owner_id != owner
+                    or lease.session_id != session
+                    or lease.agent_type != kind
+                    or lease.policy_sha256 != digest
+                    or lease.session_limit != session_cap
+                    or lease.aggregate_limit != aggregate_cap
+                    or lease.mutation != mutation
+                    for lease in existing
+                ):
+                    raise LeaseOwnershipError(
+                        f"workflow batch {batch!r} already exists under a different contract"
+                    )
+                return tuple(existing)
             self._admit_agent(
                 registry,
                 session_id=session,
@@ -1147,13 +1172,13 @@ class LeaseBroker:
         ttl = _positive(execution_ttl_seconds, "execution_ttl_seconds")
         with self._locked():
             registry = cast(Registry, self._read_registry(create=True))
-            _wall, now_text, monotonic, boot_id = self._now()
+            wall, now_text, monotonic, boot_id = self._now()
             bound = [
                 lease
                 for lease in registry.leases.values()
                 if lease.pool == "agent"
                 and lease.session_id == session
-                and lease.agent_type == kind
+                and lease.agent_type in (kind, "*")
                 and lease.batch_id == batch
                 and lease.agent_id == child
                 and not self._expired(lease, monotonic=monotonic, boot_id=boot_id)
@@ -1172,9 +1197,10 @@ class LeaseBroker:
                 for lease in registry.leases.values()
                 if lease.pool == "agent"
                 and lease.session_id == session
-                and lease.agent_type == kind
+                and lease.agent_type in (kind, "*")
                 and lease.batch_id == batch
                 and lease.agent_id is None
+                and (batch is None or lease.tool_use_id is not None)
                 and not self._expired(lease, monotonic=monotonic, boot_id=boot_id)
             ]
             if not candidates:
@@ -1205,6 +1231,78 @@ class LeaseBroker:
             self._make_resource_current(registry, claimed)
             self._write_registry(registry)
             return claimed
+
+    def prepare_batch_call(
+        self,
+        *,
+        session_id: str,
+        batch_id: str,
+        agent_type: str,
+        tool_use_id: str,
+        claim_ttl_seconds: int = DEFAULT_CLAIM_TTL_SECONDS,
+    ) -> Lease:
+        """Assign one reusable batch slot to a concrete pre-spawn Agent tool call."""
+
+        session = _bounded(session_id, "session_id")
+        batch = _bounded(batch_id, "batch_id")
+        kind = _bounded(agent_type, "agent_type")
+        tool = _bounded(tool_use_id, "tool_use_id")
+        ttl = _positive(claim_ttl_seconds, "claim_ttl_seconds")
+        with self._locked():
+            registry = cast(Registry, self._read_registry(create=True))
+            wall, now_text, monotonic, boot_id = self._now()
+            replay = [
+                lease
+                for lease in registry.leases.values()
+                if lease.pool == "agent"
+                and lease.session_id == session
+                and lease.batch_id == batch
+                and lease.tool_use_id == tool
+                and lease.agent_id is None
+                and not self._expired(lease, monotonic=monotonic, boot_id=boot_id)
+            ]
+            if len(replay) > 1:
+                raise RegistryCorruptError(f"multiple batch slots use tool_use_id {tool!r}")
+            if replay:
+                return replay[0]
+            candidates = [
+                lease
+                for lease in registry.leases.values()
+                if lease.pool == "agent"
+                and lease.session_id == session
+                and lease.batch_id == batch
+                and lease.agent_id is None
+                and lease.tool_use_id is None
+                and lease.agent_type == "*"
+                and not self._expired(lease, monotonic=monotonic, boot_id=boot_id)
+            ]
+            if not candidates:
+                raise CapacityExhaustedError(
+                    f"workflow batch {batch!r} has no available reserved slot",
+                    earliest_expiry=self._earliest_expiry(
+                        [
+                            lease
+                            for lease in registry.leases.values()
+                            if lease.batch_id == batch
+                        ],
+                        wall=wall,
+                        monotonic=monotonic,
+                        boot_id=boot_id,
+                    ),
+                )
+            selected = min(candidates, key=lambda lease: (lease.fencing_sequence, lease.lease_id))
+            prepared = replace(
+                selected,
+                agent_type=kind,
+                tool_use_id=tool,
+                renewed_at=now_text,
+                renewed_monotonic_ns=monotonic,
+                boot_id=boot_id,
+                ttl_seconds=ttl,
+            )
+            registry.leases[selected.lease_id] = prepared
+            self._write_registry(registry)
+            return prepared
 
     def acquire_worktree(
         self,
@@ -1274,6 +1372,11 @@ class LeaseBroker:
             return "superseded", None
         lease = registry.leases.get(head.lease_id)
         if lease is None:
+            return "closed", None
+        if (
+            lease.resource_ref != dict(resource_ref)
+            or lease.fencing_sequence != head.fencing_sequence
+        ):
             return "closed", None
         if self._expired(lease, monotonic=monotonic, boot_id=boot_id):
             return "expired", lease
@@ -1440,6 +1543,41 @@ class LeaseBroker:
                 self._write_registry(registry)
             return tuple(selected)
 
+    def renew_batch(
+        self, batch_id: str, *, owner_id: str | None = None
+    ) -> tuple[Lease, ...]:
+        """Renew every live slot in one named Workflow batch under one lock."""
+
+        batch = _bounded(batch_id, "batch_id")
+        owner = None if owner_id is None else _bounded(owner_id, "owner_id")
+        with self._locked():
+            registry = cast(Registry, self._read_registry(create=True))
+            selected = sorted(
+                (lease for lease in registry.leases.values() if lease.batch_id == batch),
+                key=lambda lease: lease.lease_id,
+            )
+            if not selected:
+                raise LeaseNotFoundError(f"workflow batch {batch!r} has no leases")
+            _wall, now_text, monotonic, boot_id = self._now()
+            renewed: list[Lease] = []
+            for lease in selected:
+                if owner is not None and lease.owner_id != owner:
+                    raise LeaseOwnershipError("workflow batch is not owned by this caller")
+                if self._expired(lease, monotonic=monotonic, boot_id=boot_id):
+                    raise LeaseExpiredError(
+                        f"workflow batch {batch!r} contains expired lease {lease.lease_id!r}"
+                    )
+                updated = replace(
+                    lease,
+                    renewed_at=now_text,
+                    renewed_monotonic_ns=monotonic,
+                    boot_id=boot_id,
+                )
+                registry.leases[lease.lease_id] = updated
+                renewed.append(updated)
+            self._write_registry(registry)
+            return tuple(renewed)
+
     def record_child_terminal(self, agent_id: str) -> bool:
         child = _bounded(agent_id, "agent_id")
         with self._locked():
@@ -1450,10 +1588,12 @@ class LeaseBroker:
             if len(matches) != 1:
                 raise RegistryCorruptError(f"multiple leases are bound to agent {child!r}")
             lease = matches[0]
-            _wall, now_text, _monotonic, _boot_id = self._now()
+            _wall, now_text, monotonic, boot_id = self._now()
             updated = replace(lease, child_terminal_at=lease.child_terminal_at or now_text)
             if updated.parent_completed_at is not None:
-                del registry.leases[lease.lease_id]
+                self._complete_foreground_lease(
+                    registry, updated, now_text=now_text, monotonic=monotonic, boot_id=boot_id
+                )
             else:
                 registry.leases[lease.lease_id] = updated
             self._write_registry(registry)
@@ -1466,17 +1606,52 @@ class LeaseBroker:
             matches = [lease for lease in registry.leases.values() if lease.tool_use_id == tool]
             if not matches:
                 return ()
-            _wall, now_text, _monotonic, _boot_id = self._now()
+            _wall, now_text, monotonic, boot_id = self._now()
             removed: list[str] = []
             for lease in matches:
                 updated = replace(lease, parent_completed_at=lease.parent_completed_at or now_text)
                 if updated.agent_id is None or updated.child_terminal_at is not None:
-                    del registry.leases[lease.lease_id]
+                    self._complete_foreground_lease(
+                        registry,
+                        updated,
+                        now_text=now_text,
+                        monotonic=monotonic,
+                        boot_id=boot_id,
+                    )
                     removed.append(lease.lease_id)
                 else:
                     registry.leases[lease.lease_id] = updated
             self._write_registry(registry)
             return tuple(sorted(removed))
+
+    def _complete_foreground_lease(
+        self,
+        registry: Registry,
+        lease: Lease,
+        *,
+        now_text: str,
+        monotonic: int,
+        boot_id: str,
+    ) -> None:
+        """Remove a normal grant or recycle a driver-owned Workflow batch slot."""
+
+        if lease.batch_id is None:
+            registry.leases.pop(lease.lease_id, None)
+            return
+        registry.leases[lease.lease_id] = replace(
+            lease,
+            agent_id=None,
+            tool_use_id=None,
+            agent_type="*",
+            resource_ref=None,
+            claimed_at=None,
+            child_terminal_at=None,
+            parent_completed_at=None,
+            renewed_at=now_text,
+            renewed_monotonic_ns=monotonic,
+            boot_id=boot_id,
+            ttl_seconds=DEFAULT_CLAIM_TTL_SECONDS,
+        )
 
     def inspect(self) -> dict[str, Any]:
         """Return persisted authority plus derived state without creating any file."""

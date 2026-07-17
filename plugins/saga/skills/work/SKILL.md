@@ -285,13 +285,31 @@ sequential subagents as a substitute (that was the campps issue-38 failure: para
 dropped). It either runs the real Workflow tool or halts visibly.
 
 **Re-emit for freshness (KD3).** Read the saga's `orchestration_ref` to locate the canonical spec JSON
-the plan authored. Re-emit a fresh `.workflow.js` from it — any intermediate re-plan that changed the
-spec is reflected:
+the plan authored. Mint the logical invocation identity first, then re-emit a fresh `.workflow.js`
+and its driver-owned lease contract from the same spec — any intermediate re-plan that changed the
+spec is reflected. `CLAUDE_CODE_SESSION_ID` is host-provided to Bash and hook subprocesses and matches
+the hooks' trusted `session_id`; HALT if it is absent. Never substitute the saga id.
 
 ```bash
+test -n "$CLAUDE_CODE_SESSION_ID" || { echo "HALT — CLAUDE_CODE_SESSION_ID is absent" >&2; exit 2; }
+export WORKFLOW_INVOCATION_ID="${WORKFLOW_INVOCATION_ID:-$(uuidgen | tr '[:upper:]' '[:lower:]')}"
+export WORKFLOW_LEASE_METADATA=".saga/workflow-lease-${WORKFLOW_INVOCATION_ID}.json"
+mkdir -p .saga
 python3 plugins/saga/scripts/execution_spec.py emit <orchestration_ref_spec.json> \
   -o docs/plans/<topic>.workflow.js
+python3 plugins/saga/scripts/execution_spec.py lease <orchestration_ref_spec.json> \
+  --invocation-id "$WORKFLOW_INVOCATION_ID" > "$WORKFLOW_LEASE_METADATA"
+python3 plugins/saga/scripts/workflow_emitter.py reserve "$WORKFLOW_LEASE_METADATA" \
+  --session-id "$CLAUDE_CODE_SESSION_ID" > ".saga/workflow-lease-receipt-${WORKFLOW_INVOCATION_ID}.json"
+python3 plugins/saga/scripts/workflow_emitter.py attest "$WORKFLOW_LEASE_METADATA" \
+  --session-id "$CLAUDE_CODE_SESSION_ID"
 ```
+
+The final `attest` is the launch gate: any refusal means **launch none and HALT**. The complete
+simultaneous width is reserved atomically. Hooks discover the one live batch from the locked broker
+by trusted session id; do not rely on a shell `export` persisting into a later Workflow tool call.
+`PreToolUse Agent|Task` assigns a slot, `SubagentStart` binds it, and each parent collection renews
+the batch. Generated JavaScript and children receive neither a registry path nor filesystem access.
 
 Then launch it:
 
@@ -307,7 +325,6 @@ that the ledger report proves are still absent:
 ```bash
 export SAGA_ID=<saga-id>
 export SPEC=<orchestration_ref_spec.json>
-export WORKFLOW_INVOCATION_ID="${WORKFLOW_INVOCATION_ID:-$(uuidgen | tr '[:upper:]' '[:lower:]')}"
 mkdir -p .saga
 export SETTLEMENT_METADATA=".saga/workflow-settlement-${WORKFLOW_INVOCATION_ID}.json"
 python3 plugins/saga/scripts/execution_spec.py settlement "$SPEC" \
@@ -348,6 +365,21 @@ PY
 
 ```
 Workflow({ scriptPath: "docs/plans/<topic>.workflow.js" })
+```
+
+After the Workflow returns, or after the host authoritatively confirms cancellation, release unused
+reservations and confirmed-terminal slots immediately. Do not release merely because a wait timed out
+or a `SubagentStop` hook was blocked:
+
+```bash
+python3 plugins/saga/scripts/workflow_emitter.py release "$WORKFLOW_LEASE_METADATA" \
+  --session-id "$CLAUDE_CODE_SESSION_ID"
+```
+
+For a long driver-side collection step, renew cooperatively at the boundary (there is no daemon):
+
+```bash
+python3 plugins/saga/scripts/workflow_emitter.py renew "$WORKFLOW_LEASE_METADATA"
 ```
 
 The Workflow tool owns execution from this point. `/work` records the returned workflow id as

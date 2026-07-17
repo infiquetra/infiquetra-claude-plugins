@@ -113,14 +113,38 @@ def broker(environment: Mapping[str, str] | None = None) -> Any:
     return authority.LeaseBroker(environment=os.environ if environment is None else environment)
 
 
+def active_batch_id(
+    payload: Mapping[str, Any], environment: Mapping[str, str] | None = None
+) -> str | None:
+    """Resolve the one live batch for this Claude session when no explicit override persists."""
+
+    env = os.environ if environment is None else environment
+    explicit = env.get(BATCH_ID_ENV)
+    if explicit:
+        return explicit
+    session_id = _required_text(payload, "session_id")
+    snapshot = broker(env).inspect()
+    batches = {
+        lease["batch_id"]
+        for lease in snapshot.get("leases", [])
+        if lease.get("session_id") == session_id
+        and lease.get("derived_state") == "live"
+        and isinstance(lease.get("batch_id"), str)
+        and lease["batch_id"]
+    }
+    if len(batches) > 1:
+        raise HookInputError(
+            f"session {session_id!r} has multiple live Workflow batches; release or cancel one"
+        )
+    return next(iter(batches), None)
+
+
 def reserve_hook_agent(
     payload: Mapping[str, Any], environment: Mapping[str, str] | None = None
 ) -> Any | None:
     """Reserve before an ``Agent|Task`` tool call; a named batch is already reserved."""
 
     env = os.environ if environment is None else environment
-    if env.get(BATCH_ID_ENV):
-        return None
     if payload.get("tool_name") not in ("Agent", "Task"):
         raise HookInputError("lease reservation requires Agent or Task tool_name")
     session_id = _required_text(payload, "session_id")
@@ -130,6 +154,15 @@ def reserve_hook_agent(
     claim_ttl = _positive_env(
         env, CLAIM_TTL_SECONDS_ENV, authority.DEFAULT_CLAIM_TTL_SECONDS
     )
+    batch_id = active_batch_id(payload, env)
+    if batch_id:
+        return broker(env).prepare_batch_call(
+            session_id=session_id,
+            batch_id=batch_id,
+            agent_type=_agent_type(payload),
+            tool_use_id=tool_use_id,
+            claim_ttl_seconds=claim_ttl,
+        )
     return broker(env).acquire_agent(
         owner_id=parent_agent or f"session:{session_id}",
         owner_pid=os.getppid(),
@@ -156,7 +189,7 @@ def claim_hook_agent(
         agent_type=_agent_type(payload),
         agent_id=_required_text(payload, "agent_id"),
         worktree_root=_canonical_cwd(payload),
-        batch_id=env.get(BATCH_ID_ENV),
+        batch_id=active_batch_id(payload, env),
         execution_ttl_seconds=ttl,
     )
 
@@ -172,7 +205,14 @@ def record_hook_parent(
 ) -> tuple[str, ...]:
     if payload.get("tool_name") not in ("Agent", "Task"):
         raise HookInputError("parent completion requires Agent or Task tool_name")
-    return broker(environment).record_parent_completed(_required_text(payload, "tool_use_id"))
+    env = os.environ if environment is None else environment
+    selected = broker(env)
+    released = selected.record_parent_completed(_required_text(payload, "tool_use_id"))
+    batch_id = active_batch_id(payload, env)
+    if batch_id:
+        # PostToolUse is the existing collection seam. Renew the whole batch without a daemon.
+        selected.renew_batch(batch_id)
+    return released
 
 
 def verify_hook_mutation(

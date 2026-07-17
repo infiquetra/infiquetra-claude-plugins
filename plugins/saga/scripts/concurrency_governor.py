@@ -51,6 +51,8 @@ if TYPE_CHECKING:
 
         def to_dict(self) -> dict[str, int]: ...
 
+        def policy_sha256(self) -> str: ...
+
 else:
     ConcurrencyPolicyError = _concurrency_policy.AdmissionPolicyError
     ConcurrencyPolicy = _concurrency_policy.AdmissionLimits

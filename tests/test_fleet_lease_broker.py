@@ -224,7 +224,7 @@ def test_batch_reservation_is_atomic_and_claim_is_single_use(broker: Any) -> Non
         owner_id="driver",
         session_id="workflow",
         batch_id="batch-1",
-        agent_type="reviewer",
+        agent_type="*",
         policy_sha256=limits.policy_sha256(),
         session_limit=3,
         aggregate_limit=3,
@@ -245,6 +245,12 @@ def test_batch_reservation_is_atomic_and_claim_is_single_use(broker: Any) -> Non
         )
     assert len(broker.inspect()["leases"]) == 3
 
+    broker.prepare_batch_call(
+        session_id="workflow",
+        batch_id="batch-1",
+        agent_type="reviewer",
+        tool_use_id="workflow-tool-1",
+    )
     claimed = broker.claim(
         session_id="workflow",
         agent_type="reviewer",

@@ -99,7 +99,66 @@ Two real P1 defects, one P2, seven testing gaps, four advisories:
 Full suite after remediation: 4986 passed / 0 failed / 1 skipped; ruff, format, mypy,
 bandit clean.
 
+## Ceremony round 2 (`wf_fcdc177d-727`) — 9 findings, remediated in `0271ecdf`
+
+Security and event-flow returned **clean**; all 22 round-1 remediation verdicts came back
+fixed-adequately except CONC-1 (a sharp catch: my recovery isolation only caught
+`TeardownError`, so a broker-raised `RegistryCorruptError` for one corrupt owner record
+still wedged the pass — exactly the head-of-line bug the fix claimed to close, via a
+different exception family). Round-2 fixes:
+
+- **CONC-1 (P2)** — recover() isolation widened to every exception family with the
+  `recovery-run-error:<type>` observation; the regression test patches the bound method so
+  the real broker class (and the dual-load token module resolution) stays intact.
+- **TST-FENCE-GAP-1 (P2)** — `acquire_successor` and `prepare_batch_call` closed-owner
+  refusals: all seven fence sites now carry negative tests.
+- **TST-BUDGET-GAP-2 (P2) + DA-R2-1 (P3)** — the recovery budget now bounds real adapter
+  invocations only (`recovered-after-crash` reconciles are unbudgeted bookkeeping);
+  multi-run exhaustion, honest skip observations, and the crash-reconcile exemption are
+  pinned by `TestRecoveryBudget`.
+- **ARCH-R2-1/ARCH-R2-2/CONC-2 (P3)** — `_reclaim_guard` provisions the store directory
+  with a typed failure surface, and the per-run lock sidecar unlinks under the lock once
+  the receipt is final (post-completion passes are read-only short-circuits).
+- **DA-R2-2 (P3)** — the append-time validation boundary is documented (ledger-internal;
+  the broker zero-open gate is the driver's) and the bypass-visibility test proves a
+  driver-bypassing receipt stays visibly inconsistent (`open_count` derives live).
+
+Full suite after remediation: 4997 passed / 0 failed / 1 skipped; ruff, format, mypy,
+bandit clean.
+
+## Ceremony round 3 (`wf_055dc7a5-ef5`) — 4 findings, remediated
+
+**Devils-advocate returned clean (converged).** All round-2 remediation verdicts came
+back fixed-adequately except CONC-1 — the concurrency validator empirically proved the
+round-2 isolation was still not total: the except-handler's own bookkeeping (budget
+recount + observation append) was unguarded, so a second ledger/broker failure while
+recording run A's evidence escaped `recover()` and starved every later run
+(CONC-1-R3-1, P2). Round-3 fixes:
+
+- **CONC-1-R3-1 (P2)** — evidence recording is now best-effort by design:
+  `_observe_recovery` degrades an observation-append failure to the run's in-memory
+  pass entry (`evidence_error`); the recount failure charges zero budget (a liveness
+  ceiling, not a safety bound — the reclaim call was already capped, and every action
+  re-enters `reclaim_all`'s own guards); every skip branch is equally guarded. Pinned
+  by `TestRecoveryEvidenceBestEffort` (secondary count failure, observation refusal).
+  LEARNINGS `{#recovery-isolation-total-358}`.
+- **ARCH-R3-1 / TST-R3-1 (P3, one root)** — the guard's OSError→TeardownError branch
+  had zero real coverage (the test named for it asserted the unrelated unknown-run
+  path). Added `test_guard_provisioning_failure_surfaces_typed_refusal` (regular file
+  blocking the store dir → typed "cannot provision the reclaim guard") and renamed the
+  fresh-repo test to what it actually proves.
+- **DA-R2-1-R3-1 (P3)** — the budget exemption was a bare string an adapter could
+  spoof. `recovered-after-crash` is now a driver-reserved reason code:
+  `ActionOutcome.validated()` refuses it from the adapter surface (same loud-failure
+  precedent as the bogus-disposition refusal), and the write site, budget filter, and
+  refusal all share one constant.
+
+Full suite after remediation: 5001 passed / 0 failed / 1 skipped; ruff, format, mypy,
+bandit clean.
+
 ## Next step
 
-Ceremony round 2 (`wf_fcdc177d-727`) at HEAD `148ecb50` — same approved vehicle plus
-per-finding remediation verdicts; then `/code-review` + `/qa` gates and the ship ceremony.
+Ceremony round 4 at the round-3 remediation HEAD — the three round-3-affected lenses
+(architecture, testing, concurrency) re-run fresh; devils-advocate is converged clean
+and security/event-flow converged in round 2. On convergence: workflow-integrity check,
+then `/code-review` + `/qa` gates and the ship ceremony.

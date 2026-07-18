@@ -27,6 +27,35 @@
 
 ## 2026-07-18
 
+### Per-run isolation is only total when the failure handler guards its own bookkeeping {#recovery-isolation-total-358}
+
+**Context.** #358 `recover()` isolates each run's reclaim pass so one broken run cannot
+head-of-line block every newer run. Getting that guarantee to hold took three ceremony
+rounds, each catching a narrower escape hatch.
+**Evidence.** Round 1: `except TeardownError` only (fixed in `148ecb50`). Round 2
+(CONC-1): the broker's own family — `RegistryCorruptError` — still aborted the batch;
+widened to `except Exception` (fixed in `0271ecdf`). Round 3 (CONC-1-R3-1, reproduced
+empirically by the validator): the except-handler's *own* bookkeeping (budget recount +
+observation append) was unguarded, so a second ledger/broker failure while recording run
+A's evidence escaped `recover()` and starved every later run.
+**Mechanism.** An isolation boundary is only as wide as its narrowest unguarded statement.
+Failure handlers routinely touch the same broken subsystem that raised the primary error
+(re-reading the corrupt ledger to count, appending the observation to it), so the
+compounding-failure path is the *likely* path, not a corner case.
+**Fix.** Evidence recording is best-effort by design: `_observe_recovery` degrades an
+observation-append failure to the run's in-memory pass entry (`evidence_error`), the
+budget recount failure charges zero (the budget is a liveness ceiling, not a safety
+bound — every action re-enters `reclaim_all`'s own guards), and the loop always reaches
+the next run. Pinned by `TestRecoveryEvidenceBestEffort`.
+**Generalizable rule.** When a loop promises per-item isolation, audit the handler and
+every skip branch for calls into the failing subsystem — recording evidence about a
+broken store through the broken store must degrade, never raise, or the isolation
+guarantee silently excludes the exact scenario it exists for.
+
+**Refs.** `plugins/saga/scripts/team_teardown.py` (`recover`, `_observe_recovery`), [[#intent-replay-generation-358]].
+
+---
+
 ### A field excluded from the dedup key must be excluded from replay identity {#intent-replay-generation-358}
 
 **Context.** #358 teardown intents dedup on `intent_id = sha256(team_run_id|terminal_reason)`

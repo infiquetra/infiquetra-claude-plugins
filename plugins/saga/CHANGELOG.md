@@ -17,9 +17,14 @@
   receipt only at zero open resources. `request` records intent without acting; `recover`
   is a budgeted expired-only pass that always appends an observation, isolated per run —
   one run's refused pass (any exception family, the broker's included) records a
-  `recovery-run-error` observation and never blocks recovery of newer runs; the action
-  budget bounds real adapter invocations only (crash-orphan reconciles are unbudgeted
-  bookkeeping over already-gone resources). Concurrent physical B8 passes for one run serialize on an
+  `recovery-run-error` observation and never blocks recovery of newer runs, and the
+  isolation is total: a second ledger/broker failure while counting or recording one
+  run's evidence degrades to that run's in-memory pass entry (`evidence_error`) instead
+  of aborting the batch. The action budget bounds real adapter invocations only
+  (crash-orphan reconciles are unbudgeted bookkeeping over already-gone resources), and
+  the exempt reason code is driver-reserved — `ActionOutcome.validated()` refuses
+  `recovered-after-crash` from the adapter surface so no adapter outcome can impersonate
+  driver bookkeeping and dodge the budget. Concurrent physical B8 passes for one run serialize on an
   exclusive per-run reclaim lock so each logical action invokes its adapter exactly once,
   and a broker-evicted-then-re-closed admission generation replays the run's one recorded
   intent instead of poisoning the run (`close_generation` is not intent identity).

@@ -1956,15 +1956,121 @@ class TestRecoveryIsolationBrokerErrors:
         assert codes["team-run-a"] == "recovery-run-error:RegistryCorruptError"
 
 
+class TestRecoveryEvidenceBestEffort:
+    """Round-3 CONC-1-R3-1: per-run isolation is total — a SECOND ledger/broker failure
+    while counting or recording one run's evidence degrades to that run's pass entry
+    and never aborts the batch."""
+
+    def test_secondary_count_failure_does_not_abort_batch(
+        self, ledger: Any, broker: Any, monkeypatch: Any
+    ) -> None:
+        _open(ledger, broker, run_id="team-run-a")
+        _acquire(broker, owner="team-run-a", session="session-a", resource="u-a")
+        _open(ledger, broker, run_id="team-run-b")
+        _acquire(broker, owner="team-run-b", session="session-b", resource="u-b")
+        real_count = TT._count_budgeted_results
+
+        def _corrupt_for_a(ledger_arg: Any, broker_arg: Any, team_run_id: str) -> int:
+            if team_run_id == "team-run-a":
+                raise RL.RunLedgerError("malformed ledger line")
+            return int(real_count(ledger_arg, broker_arg, team_run_id))
+
+        monkeypatch.setattr(TT, "_count_budgeted_results", _corrupt_for_a)
+        outcome = TT.recover(
+            ledger,
+            broker,
+            TT.production_adapters(broker),
+            subplot_id=SUB,
+            expired_only=False,
+            max_actions=4,
+            at_provider=_ats(),
+        )
+        by_run = {entry["team_run_id"]: entry for entry in outcome["recovered_runs"]}
+        assert by_run["team-run-a"]["error"] == "RunLedgerError"
+        assert by_run["team-run-a"]["evidence_error"] == "RunLedgerError"
+        assert by_run["team-run-a"]["actions_taken"] == 0
+        assert by_run["team-run-b"]["complete"] is True
+        codes = {
+            r["team_run_id"]: r["reason_code"]
+            for r in RL.read_facts(ledger)
+            if r.get("event") == "recovery-observation"
+        }
+        assert codes["team-run-a"] == "recovery-run-error:RunLedgerError"
+        assert codes["team-run-b"] == "recovery-pass"
+
+    def test_observation_append_failure_does_not_abort_batch(
+        self, ledger: Any, broker: Any, monkeypatch: Any
+    ) -> None:
+        _open(ledger, broker, run_id="team-run-a")
+        _acquire(broker, owner="team-run-a", session="session-a", resource="u-a")
+        _open(ledger, broker, run_id="team-run-b")
+        _acquire(broker, owner="team-run-b", session="session-b", resource="u-b")
+        real_append = TT.append_teardown_event
+
+        def _refuse_a_observation(ledger_arg: Any, fact: Any) -> Any:
+            if (
+                fact.get("event") == "recovery-observation"
+                and fact.get("team_run_id") == "team-run-a"
+            ):
+                raise RL.RunLedgerError("observation refused")
+            return real_append(ledger_arg, fact)
+
+        monkeypatch.setattr(TT, "append_teardown_event", _refuse_a_observation)
+        outcome = TT.recover(
+            ledger,
+            broker,
+            TT.production_adapters(broker),
+            subplot_id=SUB,
+            expired_only=False,
+            max_actions=4,
+            at_provider=_ats(),
+        )
+        by_run = {entry["team_run_id"]: entry for entry in outcome["recovered_runs"]}
+        assert by_run["team-run-a"]["complete"] is True
+        assert by_run["team-run-a"]["evidence_error"] == "RunLedgerError"
+        assert by_run["team-run-b"]["complete"] is True
+        codes = {
+            r["team_run_id"]: r["reason_code"]
+            for r in RL.read_facts(ledger)
+            if r.get("event") == "recovery-observation"
+        }
+        assert "team-run-a" not in codes
+        assert codes["team-run-b"] == "recovery-pass"
+
+
 class TestReclaimGuardLifecycle:
     """Round-2 ARCH-R2-1 / ARCH-R2-2 / CONC-2: the per-run lock sidecar is provisioned
     with a typed failure surface and reclaimed once the run's receipt is final."""
 
-    def test_guard_provisions_missing_store_dir_and_fails_typed(
+    def test_fresh_repo_reclaim_provisions_store_and_fails_typed(
         self, tmp_path: Path, broker: Any
     ) -> None:
+        # On a writable fresh repository the guard's mkdir SUCCEEDS (this path does not
+        # enter the OSError wrap — see the next test); the surfaced failure is the
+        # unknown-run refusal from the driver, never a raw filesystem traceback.
         fresh = RL.RunLedger(path=tmp_path / "never" / "provisioned" / "run-facts.jsonl")
         with pytest.raises(TT.TeardownError, match="unknown team run"):
+            TT.reclaim_all(
+                fresh,
+                broker,
+                TT.ReclaimAdapters(),
+                subplot_id=SUB,
+                team_run_id="team-run-x",
+                terminal_reason="success",
+                at_provider=_ats(),
+            )
+        assert fresh.path.parent.is_dir()
+
+    def test_guard_provisioning_failure_surfaces_typed_refusal(
+        self, tmp_path: Path, broker: Any
+    ) -> None:
+        # Round-3 ARCH-R3-1 / TST-R3-1: a regular file where the store directory belongs
+        # makes the guard's mkdir raise — the OSError must surface as the module's typed
+        # refusal, never a raw FileExistsError traceback to an operator reclaim.
+        blocker = tmp_path / "store"
+        blocker.write_text("not a directory\n")
+        fresh = RL.RunLedger(path=blocker / "run-facts.jsonl")
+        with pytest.raises(TT.TeardownError, match="cannot provision the reclaim guard"):
             TT.reclaim_all(
                 fresh,
                 broker,
@@ -2012,6 +2118,35 @@ class TestBoundaryGuards:
     def test_bogus_adapter_disposition_is_refused(self) -> None:
         with pytest.raises(TT.TeardownError, match="adapter disposition must be one of"):
             TT.ActionOutcome(disposition="bogus").validated()
+
+    def test_adapter_cannot_emit_driver_reserved_reason_code(
+        self, ledger: Any, broker: Any
+    ) -> None:
+        # Round-3 DA-R2-1-R3-1: the budget exemption is keyed on driver-only bookkeeping
+        # literals; an adapter outcome carrying one would impersonate the crash-reconcile
+        # seam and dodge the recovery budget, so the contract refuses it loudly at
+        # validation time (same precedent as the bogus disposition above).
+        with pytest.raises(TT.TeardownError, match="driver-reserved"):
+            TT.ActionOutcome(
+                disposition="released", reason_code="recovered-after-crash"
+            ).validated()
+        _open(ledger, broker)
+        _acquire(broker, owner="team-run-1", resource="u-a")
+        spoof = TT.ReclaimAdapters(
+            lease_release=lambda _lease: TT.ActionOutcome(
+                disposition="released", reason_code="recovered-after-crash"
+            )
+        )
+        with pytest.raises(TT.TeardownError, match="driver-reserved"):
+            TT.reclaim_all(
+                ledger,
+                broker,
+                spoof,
+                subplot_id=SUB,
+                team_run_id="team-run-1",
+                terminal_reason="success",
+                at_provider=_ats(),
+            )
 
     def test_default_broker_names_missing_capability(self, monkeypatch: Any) -> None:
         class _NoFenceBroker:

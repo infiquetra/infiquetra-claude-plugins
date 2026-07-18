@@ -701,6 +701,14 @@ def open_run(
 # --------------------------------------------------------------------------- terminal driver
 
 
+# Reason codes only the driver itself may write into a resource-result fact. The
+# crash-reconcile literal is budget-exempt in _count_budgeted_results, so an adapter
+# outcome carrying it would impersonate driver bookkeeping and dodge the recovery
+# budget — validated() refuses the whole set from the adapter surface.
+_RECOVERED_AFTER_CRASH = "recovered-after-crash"
+_DRIVER_RESERVED_REASON_CODES = frozenset({_RECOVERED_AFTER_CRASH})
+
+
 @dataclass(frozen=True)
 class ActionOutcome:
     """One typed action result. Adapters return this — never prose (R4)."""
@@ -718,6 +726,11 @@ class ActionOutcome:
         _evidence_refs(list(self.evidence_refs))
         if self.reason_code:
             _bounded_text(self.reason_code, "reason_code")
+        if self.reason_code in _DRIVER_RESERVED_REASON_CODES:
+            raise TeardownError(
+                f"reason_code {self.reason_code!r} is driver-reserved bookkeeping; "
+                "adapters must not emit it"
+            )
         return self
 
 
@@ -935,7 +948,7 @@ def _reclaim_all_locked(
                 action_key_value=key,
                 disposition="already-absent",
                 evidence_refs=["reconciled:resource-absent-at-recovery"],
-                reason_code="recovered-after-crash",
+                reason_code=_RECOVERED_AFTER_CRASH,
             ),
         )
 
@@ -1388,6 +1401,8 @@ def _count_budgeted_results(ledger: run_ledger.RunLedger, broker: Any, team_run_
     Crash-orphan reconcile results (``recovered-after-crash``) are ledger bookkeeping over
     already-gone resources — unbounded by ``max_actions`` by design — and must not drain
     the cross-run budget, or one crashed run's backlog starves every newer run's recovery.
+    The exemption cannot be spoofed: :meth:`ActionOutcome.validated` refuses every
+    driver-reserved reason code from the adapter surface.
     """
 
     return len(
@@ -1395,9 +1410,44 @@ def _count_budgeted_results(ledger: run_ledger.RunLedger, broker: Any, team_run_
             rec
             for rec in _run_records(read_decision_input(ledger, broker).ledger_records, team_run_id)
             if rec.get("event") == "resource-result"
-            and rec.get("reason_code") != "recovered-after-crash"
+            and rec.get("reason_code") not in _DRIVER_RESERVED_REASON_CODES
         ]
     )
+
+
+def _observe_recovery(
+    ledger: run_ledger.RunLedger,
+    *,
+    subplot_id: str,
+    at: str,
+    team_run_id: str,
+    observed_open: int,
+    actions_taken: int,
+    reason_code: str,
+) -> str | None:
+    """Best-effort recovery-observation append; returns the failure's type name, if any.
+
+    Evidence recording must never abort the batch: when the ledger itself refuses the
+    observation, the loss is reported in the run's in-memory pass entry and the loop
+    continues to the next run — raising here would destroy every later run's recovery
+    along with the evidence.
+    """
+
+    try:
+        append_teardown_event(
+            ledger,
+            build_recovery_observation(
+                subplot_id=subplot_id,
+                at=at,
+                team_run_id=team_run_id,
+                observed_open=observed_open,
+                actions_taken=actions_taken,
+                reason_code=reason_code,
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001 - evidence loss is reported in-memory, never fatal
+        return type(exc).__name__
+    return None
 
 
 def recover(
@@ -1416,7 +1466,10 @@ def recover(
     :func:`reclaim_all` state machine under the same guards. ``expired_only`` skips any
     run that still holds a live-derived lease — a crashed coordinator's leases derive
     ``expired`` after TTL, and only then does recovery act. An observation fact is
-    appended per run even when nothing was safe to reclaim.
+    appended per run even when nothing was safe to reclaim. Per-run isolation is total:
+    the pass body AND its own bookkeeping (budget recount, observation append) degrade
+    to the run's pass entry on failure, so no single run's broken ledger view or broker
+    record can abort the loop and starve every later run.
     """
 
     if max_actions < 0:
@@ -1429,40 +1482,49 @@ def recover(
         owned = _owned_leases(decision.broker_view, run_id)
         live = [item for item in owned if item.get("derived_state") == "live"]
         if expired_only and live:
-            append_teardown_event(
+            entry: dict[str, Any] = {
+                "team_run_id": run_id,
+                "actions_taken": 0,
+                "skipped": "live-owner",
+            }
+            lost = _observe_recovery(
                 ledger,
-                build_recovery_observation(
-                    subplot_id=subplot_id,
-                    at=at_provider(),
-                    team_run_id=run_id,
-                    observed_open=len(owned),
-                    actions_taken=0,
-                    reason_code="expired-only-live-owner",
-                ),
+                subplot_id=subplot_id,
+                at=at_provider(),
+                team_run_id=run_id,
+                observed_open=len(owned),
+                actions_taken=0,
+                reason_code="expired-only-live-owner",
             )
-            passes.append({"team_run_id": run_id, "actions_taken": 0, "skipped": "live-owner"})
+            if lost is not None:
+                entry["evidence_error"] = lost
+            passes.append(entry)
             continue
         if budget <= 0:
-            append_teardown_event(
+            entry = {"team_run_id": run_id, "actions_taken": 0, "skipped": "budget"}
+            lost = _observe_recovery(
                 ledger,
-                build_recovery_observation(
-                    subplot_id=subplot_id,
-                    at=at_provider(),
-                    team_run_id=run_id,
-                    observed_open=len(owned),
-                    actions_taken=0,
-                    reason_code="recovery-action-budget-exhausted",
-                ),
+                subplot_id=subplot_id,
+                at=at_provider(),
+                team_run_id=run_id,
+                observed_open=len(owned),
+                actions_taken=0,
+                reason_code="recovery-action-budget-exhausted",
             )
-            passes.append({"team_run_id": run_id, "actions_taken": 0, "skipped": "budget"})
+            if lost is not None:
+                entry["evidence_error"] = lost
+            passes.append(entry)
             continue
-        before = _count_budgeted_results(ledger, broker, run_id)
         # Per-run isolation: one run's refused pass (a blocked terminal, a conflicted
         # ledger, a corrupt broker record, an adapter refusal) is that run's evidence —
         # it must never head-of-line block recovery of every newer open run. The broker's
         # own error family (LeaseBrokerError et al.) is not TeardownError, so the net is
         # deliberately wide; the observation append records the type as the evidence.
+        before = 0
+        run_error: str | None = None
+        projection: dict[str, Any] | None = None
         try:
+            before = _count_budgeted_results(ledger, broker, run_id)
             projection = reclaim_all(
                 ledger,
                 broker,
@@ -1474,49 +1536,46 @@ def recover(
                 max_actions=budget,
             )
         except Exception as exc:  # noqa: BLE001 - one run's failure is evidence, not a pass abort
-            taken = _count_budgeted_results(ledger, broker, run_id) - before
-            budget -= max(0, taken)
-            append_teardown_event(
-                ledger,
-                build_recovery_observation(
-                    subplot_id=subplot_id,
-                    at=at_provider(),
-                    team_run_id=run_id,
-                    observed_open=len(owned),
-                    actions_taken=max(0, taken),
-                    reason_code=f"recovery-run-error:{type(exc).__name__}",
-                ),
-            )
-            passes.append(
-                {
-                    "team_run_id": run_id,
-                    "actions_taken": max(0, taken),
-                    "error": type(exc).__name__,
-                }
-            )
-            continue
-        after = _count_budgeted_results(ledger, broker, run_id)
-        taken = max(0, after - before)
+            run_error = type(exc).__name__
+        # The bookkeeping is itself best-effort: a SECOND ledger/broker failure while
+        # counting or recording run A's evidence must degrade to the pass entry, never
+        # abort the loop. An uncountable run charges zero — the budget is a liveness
+        # ceiling, not a safety bound (every action re-enters reclaim_all's own guards,
+        # and the reclaim call above was already capped at the remaining budget), so
+        # starving later runs over a broken count would recreate the very head-of-line
+        # defect this isolation exists to prevent; ``evidence_error`` marks the count
+        # as unverified.
+        evidence_error: str | None = None
+        try:
+            taken = min(budget, max(0, _count_budgeted_results(ledger, broker, run_id) - before))
+        except Exception as count_exc:  # noqa: BLE001 - degraded bookkeeping, reported in-memory
+            evidence_error = type(count_exc).__name__
+            taken = 0
         budget -= taken
-        append_teardown_event(
+        entry = {"team_run_id": run_id, "actions_taken": taken}
+        if run_error is None and projection is not None:
+            observed_open = int(projection["open_count"])
+            reason_code = "recovery-pass"
+            entry["open_count"] = projection["open_count"]
+            entry["complete"] = projection["completion_fact_ref"] is not None
+        else:
+            observed_open = len(owned)
+            reason_code = f"recovery-run-error:{run_error}"
+            entry["error"] = run_error
+        lost = _observe_recovery(
             ledger,
-            build_recovery_observation(
-                subplot_id=subplot_id,
-                at=at_provider(),
-                team_run_id=run_id,
-                observed_open=int(projection["open_count"]),
-                actions_taken=taken,
-                reason_code="recovery-pass",
-            ),
+            subplot_id=subplot_id,
+            at=at_provider(),
+            team_run_id=run_id,
+            observed_open=observed_open,
+            actions_taken=taken,
+            reason_code=reason_code,
         )
-        passes.append(
-            {
-                "team_run_id": run_id,
-                "actions_taken": taken,
-                "open_count": projection["open_count"],
-                "complete": projection["completion_fact_ref"] is not None,
-            }
-        )
+        if evidence_error is None:
+            evidence_error = lost
+        if evidence_error is not None:
+            entry["evidence_error"] = evidence_error
+        passes.append(entry)
     return {
         "schema": TEARDOWN_SCHEMA,
         "recovered_runs": passes,

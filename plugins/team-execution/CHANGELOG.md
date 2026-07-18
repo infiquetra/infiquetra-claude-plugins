@@ -4,6 +4,19 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [2.20.0] - 2026-07-17
+
+### Added - resident liveness protocol (#357)
+
+- Added the installed-Saga liveness adapter with preflight, pre-spawn scoped baselines,
+  post-host-return subject opening, cooperative boundary polling, atomic re-ping claims, and
+  hash-only SendMessage staging.
+- Added attribution-safe path observations: changed digests remain unattributed unless an exact
+  lease/fence/custody receipt binds the interval and named generations; unchanged polls create no
+  durable artifact pointer.
+- Documented executable polling at renewal, host-return, dependency-unblock, and B2 boundaries while
+  preserving #351 manifest delivery authority and #358 destructive-action ownership.
+
 ## [2.19.0] - 2026-07-17
 
 ### Added - receipt-chained manifest acceptance (#355)

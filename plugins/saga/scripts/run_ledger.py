@@ -50,6 +50,7 @@ FACT_KINDS = frozenset(
         "reconciliation",
         "benchmark",
         "dispatch-settlement",
+        "liveness",
     }
 )
 
@@ -254,24 +255,52 @@ def append_fact_atomic(
             )
         if validate_snapshot is not None:
             validate_snapshot(snapshot)
-        prev_hash = str(snapshot.records[-1].get("this_hash", "")) if snapshot.records else ""
-        record = {k: v for k, v in fact.items() if k not in _CHAIN_FIELDS}
-        record["prev_hash"] = prev_hash
-        record["this_hash"] = _hash(record)
-        payload = memoryview((_canonical(record) + "\n").encode("utf-8"))
-        ledger_existed = ledger.path.exists()
-        fd = os.open(ledger.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-        os.fchmod(fd, 0o600)
-        try:
-            while payload:
-                written = os.write(fd, payload)
-                payload = payload[written:]
-            os.fsync(fd)
-        finally:
-            os.close(fd)
-        if not ledger_existed:
-            _fsync_directory(ledger.path.parent)
-        return record
+        return _append_snapshot_fact_unlocked(ledger, snapshot, fact)
+
+
+def _append_snapshot_fact_unlocked(
+    ledger: RunLedger,
+    snapshot: LedgerSnapshot,
+    fact: dict[str, Any],
+) -> dict[str, Any]:
+    """Append one fact while the caller holds ``ledger``'s write lock."""
+
+    prev_hash = str(snapshot.records[-1].get("this_hash", "")) if snapshot.records else ""
+    record = {k: v for k, v in fact.items() if k not in _CHAIN_FIELDS}
+    record["prev_hash"] = prev_hash
+    record["this_hash"] = _hash(record)
+    payload = memoryview((_canonical(record) + "\n").encode("utf-8"))
+    ledger_existed = ledger.path.exists()
+    fd = os.open(ledger.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    os.fchmod(fd, 0o600)
+    try:
+        while payload:
+            written = os.write(fd, payload)
+            payload = payload[written:]
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    if not ledger_existed:
+        _fsync_directory(ledger.path.parent)
+    return record
+
+
+def append_fact_built_atomic(
+    ledger: RunLedger,
+    builder: Callable[[LedgerSnapshot], dict[str, Any]],
+) -> dict[str, Any]:
+    """Build from and append to one verified snapshot under the same write lock."""
+
+    with _write_locked(ledger):
+        snapshot = _snapshot_unlocked(ledger, heal=True)
+        if not snapshot.report.ok:
+            raise RunLedgerError(
+                f"refusing append to broken run-fact chain: {snapshot.report.reason}"
+            )
+        fact = builder(snapshot)
+        if not isinstance(fact, dict):
+            raise RunLedgerError("atomic fact builder must return a dict")
+        return _append_snapshot_fact_unlocked(ledger, snapshot, fact)
 
 
 def append_fact(ledger: RunLedger, fact: dict[str, Any]) -> dict[str, Any]:

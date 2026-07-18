@@ -27,6 +27,26 @@
 
 ## 2026-07-17
 
+### Liveness identity and timers must come from authoritative receipts {#liveness-receipt-authority-357}
+
+**Context.** Issue #357 combines worker identity, idle delivery, and re-ping timing across Team
+Execution, Saga, and fleet-core. **Evidence.** The production tests reject caller-supplied
+resource/token/fence values, a `subject-open` without the exact #351 manifest and spawn hashes, and a
+re-ping claim with no accepted SendMessage receipt; installed-layout tests attest the resolved
+fleet-core engine bytes. **Mechanism.** A plausible identifier or claim proves only intent. If it can
+start a timer, consume an attempt, or establish progress before a canonical authority confirms the
+underlying lease, spawn, or send, ambiguous host outcomes become false liveness evidence. **Fix.**
+Derive lease identity from fleet-core, validate manifest/spawn bindings under the run-ledger lock,
+allocate missing idle notice IDs in that same lock, and start response windows only from hook-owned
+accepted-send receipts. **Validation.** Focused subject, concurrency, installed-layout, hook, and
+three-window confirmation tests remain green. **Generalizable rule.** Detection state may be derived,
+but every identity edge and timer edge must begin at the authority that actually observed the event,
+not at a caller's request to make it happen.
+
+**Refs.** Issue #357; DECISIONS `{#fleet-shared-liveness-357}`.
+
+---
+
 ### A release receipt cannot bind the commit that adds itself {#receipt-excluded-candidate-355}
 
 **Context.** Issue #355 initially recorded the live `HEAD` after running the delegation proof, then

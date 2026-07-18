@@ -4,7 +4,7 @@ type: feat
 status: active
 date: 2026-07-15
 origin: docs/plans/plugin-fleet-ideation-2026-07-03/survivors/T6.json
-deepened: 2026-07-15
+deepened: 2026-07-18
 ---
 
 # Lease-safe runtime continuity capstone - independent fleet doctor
@@ -23,7 +23,8 @@ Fleet doctor does not duplicate that tolerant single-store query. It adds the mi
 auditor: a malformed file is not silently equivalent to absence, an observed runtime position is
 cross-checked against independently persisted facts, and incomplete scans can never return clean.
 
-Destination is merge. Execution uses an operator-approved Verified Workflow. Root owns
+Destination is merge. Execution runs under the operator-approved cc-workflow ceremony defined in
+the Workflow Structure and Workflow Operating Contract sections below. Root owns
 implementation, Git, tests, integration, PR, merge, issue closure, and board reconciliation.
 Agent-lens roles authorize no repository or external mutation.
 
@@ -63,10 +64,17 @@ unsettled position, not proof that an agent ran.
   `docs/outcomes/lease-safe-runtime-continuity/outcome-spec.json`.
 - **Source issue:** `infiquetra/infiquetra-claude-plugins#353`; all eight published acceptance rows
   remain covered, with stale paths/fixtures replaced by production-shaped inputs.
-- **Hard upstream:** #351 supplies dispatch manifest/spawn/settle facts; #355 supplies strict
-  orphan-evidence/seal contracts; #356 supplies broker leases/resource heads; #357 supplies liveness
-  classifications; #358 supplies teardown facts and the closed-owner generation. #353 starts only
-  after all exact schemas are merged and refreshed into this plan.
+- **Hard upstream (refreshed 2026-07-18 against merged main `30bde209` — all five merged):** #351
+  supplies dispatch manifest/spawn/settle facts — `plugins/saga/scripts/dispatch_settlement.py`
+  over the hash-chained `plugins/saga/scripts/run_ledger.py` (`run_fact.v1`); #355 supplies strict
+  orphan-evidence/seal contracts — `plugins/fleet-core/scripts/fleet_commons/orphan_evidence.py`;
+  #356 supplies broker leases/resource heads —
+  `plugins/fleet-core/scripts/fleet_commons/lease_broker.py` (`fleet_lease_registry.v1`,
+  protocol 2, `TokenState` current/expired/closed/superseded); #357 supplies liveness
+  classifications — `plugins/fleet-core/scripts/fleet_commons/liveness_engine.py` +
+  `plugins/saga/scripts/liveness_events.py`; #358 supplies teardown facts and the closed-owner
+  generation — `plugins/saga/scripts/team_teardown.py` (broker `close_owner_admission` at its
+  terminal driver). All exact schemas are merged; the cited code is the final shape, not draft.
 - **Downstream:** cross-runtime acceptance consumes a clean doctor report after Claude/Codex parity.
 - **Existing sibling:** `/delegation-audit` remains a focused advisory query. Fleet doctor may point
   to it for detail but does not change its exit code or tolerant behavior.
@@ -153,11 +161,13 @@ accepts `--repo-root`, optional `--lease-store`, optional `--audit-store`, `--fo
 Tests construct temporary real Git/common-dir/lease/audit roots through fixtures and invoke the
 production arguments.
 
-R10. **Release integrity is atomic.** From the expected post-#358 base, bump Saga 0.102.0 to 0.103.0.
-Fleet-core 0.15.0 and team-execution 2.20.0 remain unchanged because the doctor consumes their
-published contracts without modifying them. Update Saga manifest, marketplace row, changelog, skill
-and command inventories, version/drift guards, operator docs, and engineering journal in the same PR.
-Refresh and reapprove exact versions/schemas if the base differs.
+R10. **Release integrity is atomic.** From the actual merged base (refreshed 2026-07-18: saga
+0.102.0, fleet-core 0.15.0, team-execution 2.21.0), bump Saga exactly once to the next available
+minor version — 0.103.0 from today's base, recomputed at release-edit time because sibling #604
+also takes the next available rung and may land first. Fleet-core and team-execution remain
+unchanged because the doctor consumes their published contracts without modifying them. Update Saga
+manifest, marketplace row, changelog, skill and command inventories, version/drift guards, operator
+docs, and engineering journal in the same PR.
 
 ---
 
@@ -440,8 +450,8 @@ git diff --check
 The event-flow validator traces each expected/observed pair through classification and ensures no
 finding or evidence error is swallowed. The scenario validator runs clean, each disease alone, all
 diseases, corrupt/unsafe/incomplete sources, retries/generations, and installed command cases while
-checking the no-write snapshot. Both use gpt-5.6-terra medium; the four judgment reviewers use
-gpt-5.6-sol high.
+checking the no-write snapshot. Both validators run at sonnet + medium; the four judgment reviewers
+run at opus + high. Tiers match the Workflow Structure table below.
 
 Manual acceptance runs `/fleet-doctor --format json` against the live repository in no-write mode,
 retains the source digests and exit, and does not clean any result. Cross-runtime acceptance later
@@ -471,38 +481,63 @@ clean report over the fully settled outcome.
 
 ## Workflow Structure
 
-| step_id | depends_on | barrier | role_id | role_kind | independence | execution_class | runtime_agent_name | vehicle | mutation | required_evidence | role_lens_sha256 | profile_sha256 | expected_model | expected_effort | validator_required | validator_disabled | deterministic_contract_sha256 |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| implement | - | - | root | root | n/a | - | - | root | root-only | authorized-diff,focused-tests | - | - | - | - | n/a | n/a | - |
-| review-devils | implement | review | devils-advocate-reviewer | agent-lens | preferred | review-high | review_high | auto | none | scored-review,findings | 129f6dca0702ffcd4be7f9e5d0939e8e6806788846ba4058044c931883ef0e63 | 42e86e00e054281b0a79e4b3b9b544c04a31eb2fd6b53c0489adc42ea639c9a8 | gpt-5.6-sol | high | n/a | n/a | - |
-| review-security | implement | review | security-reviewer | agent-lens | preferred | review-high | review_high | auto | none | scored-review,findings | bf5bc1b66c0ee3d06071976b659c522c23057c56de5f6cc010556b2653c86980 | 42e86e00e054281b0a79e4b3b9b544c04a31eb2fd6b53c0489adc42ea639c9a8 | gpt-5.6-sol | high | n/a | n/a | - |
-| review-architecture | implement | review | architecture-reviewer | agent-lens | preferred | review-high | review_high | auto | none | scored-review,findings | e48b37cea0b26bf39cae4d6611b4219e907d52d284ba6b9489b523a4b16c835f | 42e86e00e054281b0a79e4b3b9b544c04a31eb2fd6b53c0489adc42ea639c9a8 | gpt-5.6-sol | high | n/a | n/a | - |
-| review-testing | implement | review | testing-reviewer | agent-lens | preferred | review-high | review_high | auto | none | scored-review,test-gaps | a867575e24c86b0573485d1d8bbd81514af3654d544342677b85f4bed0d9af63 | 42e86e00e054281b0a79e4b3b9b544c04a31eb2fd6b53c0489adc42ea639c9a8 | gpt-5.6-sol | high | n/a | n/a | - |
-| validate-event-flow | implement | validate | event-flow-tester | agent-lens | preferred | test-medium | test_medium | auto | none | event-trace,command-results | 2e20ab6935b1e17e363b5e28308a9288107532d0118a6a189f07b0e0eaaff356 | 6d69bb4d5e477574ce186a353a3d2fcc7f8ab6b1f014b93aebb05084aecccc1b | gpt-5.6-terra | medium | true | false | - |
-| validate-scenarios | implement | validate | scenario-tester | agent-lens | preferred | test-medium | test_medium | auto | none | scenario-matrix,command-results | 8167b31e38f328eca0bf4cfc4ad782ee3a85669af7b08be8aa422b8edbc46f68 | 6d69bb4d5e477574ce186a353a3d2fcc7f8ab6b1f014b93aebb05084aecccc1b | gpt-5.6-terra | medium | true | false | - |
-| integrate | review-devils,review-security,review-architecture,review-testing,validate-event-flow,validate-scenarios | - | root | root | n/a | - | - | root | root-only | fixed-findings,full-gate,release-parity,git-receipt | - | - | - | - | n/a | n/a | - |
+| step_id | depends_on | barrier | role_id | role_kind | independence | vehicle | agent_type | model | effort | isolation | mutation | required_evidence |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| implement | - | - | root | root | n/a | session-root | - | - | - | primary-worktree | root-only | authorized-diff,focused-tests |
+| review-devils | implement | review | devils-advocate | agent-lens | separate-context | cc-workflow-agent | saga:readonly-verifier | opus | high | worktree | none | scored-review,findings |
+| review-security | implement | review | security | agent-lens | separate-context | cc-workflow-agent | saga:readonly-verifier | opus | high | worktree | none | scored-review,findings |
+| review-architecture | implement | review | architecture | agent-lens | separate-context | cc-workflow-agent | saga:readonly-verifier | opus | high | worktree | none | scored-review,findings |
+| review-testing | implement | review | testing | agent-lens | separate-context | cc-workflow-agent | saga:readonly-verifier | opus | high | worktree | none | scored-review,test-gaps |
+| validate-event-flow | implement | validate | event-flow | agent-lens | separate-context | cc-workflow-agent | saga:readonly-verifier | sonnet | medium | worktree | none | event-trace,command-results |
+| validate-scenarios | implement | validate | scenarios | agent-lens | separate-context | cc-workflow-agent | saga:readonly-verifier | sonnet | medium | worktree | none | scenario-matrix,command-results |
+| integrate | review-devils,review-security,review-architecture,review-testing,validate-event-flow,validate-scenarios | - | root | root | n/a | session-root | - | - | - | primary-worktree | root-only | fixed-findings,full-gate,release-parity,git-receipt |
 
 ## Workflow Operating Contract
 
-- The authorized subject is this issue's implementation paths plus exact Saga release surfaces. Root
-  records the pre-existing Git baseline before `implement`; unrelated worktree paths are excluded.
-- Agent-lens rows authorize `mutation=none` and no external mutation. Current MultiAgent V2 may
-  reapply the parent's permission profile, so the named profile is not claimed as an OS-enforced
-  read-only sandbox. Root records a baseline, audits the worktree after every attempt, and treats any
-  child-created diff as workflow-integrity failure. Root runs commands; validators assess captured
-  evidence and semantics.
-- `vehicle=auto` requests the named profiles above. The runtime receipt must confirm model, effort,
-  role-lens hash, and profile hash before the attempt counts. Mismatch is stopped and rerun in a fresh
-  bounded context with the approved profile; missing independence/evidence blocks the gate.
-- Root fixes every P0-P3 finding and creates a fresh follow-up attempt for affected roles. Three
-  unsuccessful remediation cycles halt and page the operator. Any model, effort, lens, validator, or
-  execution-class change requires a newly approved workflow candidate.
-- Git mutation, PR creation, merge, issue/board mutation, and completion remain root-only. No doctor
-  owner command, cleanup, deployment, credential, production-data, force-push, or branch deletion is
-  authorized.
-- Workflow intents, receipts, findings, command logs, workspace/no-write audits, source-digest
-  reports, PR URL, merge SHA, issue close, and board reconciliation are retained in the Verified
-  Workflow evidence root and issue/PR.
+- Runtime: root is the operator's Claude Code session on the cc-workflow backend. Root owns
+  implementation, Git, integration, PR creation, merge under explicit operator confirmation, issue
+  closure, and board reconciliation. The authorized subject is this issue's implementation paths
+  plus exact Saga release surfaces; root records the pre-existing Git baseline before `implement`,
+  and unrelated worktree paths are excluded.
+- Lens dispatch: the six agent-lens rows execute as `agent()` calls inside one root-authored Claude
+  Code Workflow script, each with exactly the agent_type, model, effort, and worktree-isolation
+  cells above, routed through a bounded pool so total in-flight subagents never exceed 3. Each call
+  embeds its lens charter below plus the diff and evidence scope. Spawn parameters are
+  harness-recorded and root records per-lens receipts in the review artifacts; no cryptographic
+  attestation is claimed. If the Workflow tool is unavailable, halt and page the operator — never
+  silently downgrade to another dispatch path.
+- `agent_type=saga:readonly-verifier` is the repo's mandated read-only sandbox profile for
+  review/verify spawns (Bash/Read/Grep/Glob in a disposable worktree, per
+  `plugins/saga/references/sandbox-spawn-sites.md`); per-call model/effort opts override the
+  profile's default tier. Root audits the primary tree after every lens attempt and treats any
+  unexplained diff as workflow-integrity failure.
+- Lens charters: **devils-advocate** — hunt false-green paths: corruption or capacity degrading to
+  a clean exit, single-source inference of a real launch, managed-scope boundary leaks, exit-code
+  truthfulness under every incomplete/error interleaving, and whether any scan path can mutate what
+  it audits; **security** — path and identity trust: symlink/ownership/mode refusal, traversal and
+  escaping-path handling, untrusted registry/bundle data, machine-local path redaction, no-write
+  guarantees, and absence of secrets/prompts/transcripts in output; **architecture** — independence
+  of the auditor from the producers it audits (no mutation imports, no tolerant/healing readers),
+  the conformance-vs-runtime validator split, source-matrix coverage of every collector, the
+  single-Saga-release boundary (KTD8), and release-surface coherence; **testing** — adequacy of the
+  corruption/boundary/exit matrices, real-Git fixtures proving both stale and dangling directions,
+  the mixed 30-position correlation matrix, no-write snapshot rigor, and the mutation-import
+  denylist conformance tests; **event-flow** (validator) — trace each expected/observed pair end to
+  end through classification from captured command evidence and prove no finding or evidence error
+  is swallowed; **scenarios** (validator) — independently assess the clean / each-disease /
+  all-diseases / corrupt / unsafe / incomplete / retry-generation / installed-command scenario runs
+  against the no-write snapshot evidence.
+- Root fixes every P0-P3 finding and re-runs the affected lenses fresh. Three unsuccessful
+  remediation cycles halt and page the operator. Any model, effort, lens, validator, or
+  execution-class change requires a newly approved workflow candidate. The approval anchor is the
+  SHA-256 of the exact `## Workflow Structure` and `## Workflow Operating Contract` section bytes,
+  recorded in the delta review artifact.
+- Git mutation, PR creation, merge, issue/board mutation, and completion remain root-only. No
+  doctor owner command, cleanup, deployment, credential, production-data, force-push, or
+  branch-deletion action is authorized by this workflow.
+- Workflow receipts, findings, command logs, workspace/no-write audits, source-digest reports, PR
+  URL, merge SHA, issue close, and board reconciliation are retained in the repo's review and
+  work-session artifacts and on the issue/PR.
 
 ---
 

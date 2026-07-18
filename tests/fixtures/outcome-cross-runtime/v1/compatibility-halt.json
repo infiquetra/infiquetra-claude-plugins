@@ -1,0 +1,1 @@
+{"code":"protocol-version-skew","next_action":"upgrade the older runtime until the protocol ranges intersect","schema":"outcome.compatibility-halt.v1","supported":"local protocol range [1, 1]","unsupported":"peer protocol range [2, 3]"}

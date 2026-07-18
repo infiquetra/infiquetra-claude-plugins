@@ -1,6 +1,6 @@
 ---
 name: outcome
-description: Coordinate a whole outcome as a durable DAG of leaf sagas. A level-triggered reconcile loop that dispatches the ready frontier to executors, harvests completion, and pages the operator only at gates and exceptions. The coordinator routes and never runs leaf work; status is derived on read. Thin coordinator verbs only — start, graph, advance, attend, resume, export, import — leaf work stays the native /resume, /work, /code-review, /qa.
+description: Coordinate a whole outcome as a durable DAG of leaf sagas. A level-triggered reconcile loop that dispatches the ready frontier to executors, harvests completion, and pages the operator only at gates and exceptions. The coordinator routes and never runs leaf work; status is derived on read. Thin coordinator verbs only — start, graph, advance, attend, resume, discover, handoff, attach — leaf work stays the native /resume, /work, /code-review, /qa.
 ---
 
 # Outcome
@@ -56,7 +56,10 @@ Coordinator-only verbs — run via `python3 plugins/saga/scripts/outcome.py <ver
 | `approve <id>` / `prune <id> <subplot>` / `promote <id> <subplot> <child>` | the R20 frontier approval + the R33 graph edits |
 | `repost <id> [--scope <subplot>] --set FIELD=VALUE --reason <why>` | renegotiate a LIVE campaign's posture mid-run (#433) — atomic snapshot→validate→bump→trail; merge/deploy gates are monotonic (auto→gate only, enforced identically on a live `set-intent` attach); a loosening repost re-closes the frontier approval; in-flight leaves finish under dispatch-time posture, dispatch AND completion gates both, and a mid-tick repost survives a concurrent advance (stale-save guard + tick reload) (see `references/outcome-spec.md` §Mid-run posture renegotiation) |
 | `reconcile <id> [--resolve <drift-id> --action ...]` | detect board↔saga drift over the board-sync ledger (#295); silent unless divergent, `--resolve` applies an operator decision (see Reconcile-on-wake) |
-| `export <id>` / `import <bundle>` | a portable spec + completion bundle to move an outcome across machines |
+| `discover <id>` | emit the closed `outcome.discovery.v1` envelope from the **committed** spec blob (#604): canonical repository identity, committed commit/blob/sha256 binding, protocol range, and the authority map — read-only, never touches the cache |
+| `attach <id>` | read-only cross-clone reconstruction: the `outcome.canonical-status.v1` projection from committed spec + GitHub only (`mutation_allowed: false`; unknown evidence reduces, never fabricates). `--advance --handoff-id <H> --subplot <S>` accepts a protected `advance-one` handoff then runs ONE one-subplot tick; `--attend` accepts an `attend` handoff then prints the native resume command. Both mutating forms require the session-admission flags — never defaulted |
+| `handoff <id> <subplot> --operation advance-one\|attend` | offer a protected one-use cross-runtime handoff (#604): closes the issuer's #356 broker authority through the settlement-close protected write and prints the `outcome.handoff-reference.v1` pointer (never a bearer token — acceptance revalidates everything locally) |
+| `export <id>` / `import <bundle>` | **retired as an authority path (#604 R10)**: `export` is a deprecated alias that emits the same `outcome.discovery.v1` bytes as `discover` (stderr warning); `import` refuses every bundle with the exact `discover`/`attach` migration and writes nothing |
 
 **Persist the spec to the branch (R26/R27).** The committed `docs/outcomes/<id>/outcome-spec.json` on the
 outcome's own branch (`outcome/<slug>`, never `main` mid-run) is what lets a **different machine
@@ -64,8 +67,10 @@ reconstruct the whole outcome by pulling the repo** — load the committed spec,
 from GitHub (canonical), with no dependence on the local cache. `start` and the graph edits write the
 working-tree file; **commit + push is explicit**: run `/outcome commit <id> --push` after structural
 changes, or `/outcome advance <id> --persist` to commit the (cost-rollup-updated) spec each tick on an
-unattended `/loop` run. The *cadence* is yours; the *mechanism* is `commit`/`--persist`. (`export`/`import`
-remain the cache-derived bundle for an ad-hoc move; the committed-branch path is the canonical durability.)
+unattended `/loop` run. The *cadence* is yours; the *mechanism* is `commit`/`--persist`. (The old
+`export`/`import` bundle path is retired — #604 R10: cross-clone movement is `discover` + `attach`
+reconstruction from the committed branch + GitHub; a copied cache or bundle is never authority. See
+`references/outcome-cross-runtime.md` for the full cross-runtime contract.)
 
 Leaf work is **always** the native verbs on the leaf's own saga: `/resume <leaf-saga-id>`, `/work`,
 `/code-review`, `/qa`. Never shadow them.

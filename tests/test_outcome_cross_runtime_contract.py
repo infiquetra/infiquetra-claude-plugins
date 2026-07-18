@@ -1087,3 +1087,69 @@ class TestAttachedAdvance:
         commit_path = OC._handoffs_dir(repo, OUTCOME_ID) / f"{offer['handoff_id']}.commit.json"
         committed = json.loads(commit_path.read_text())
         assert committed["successor_lease_id"] == winner.lease_id
+
+
+# ---------------------------------------------------------------------------
+# Golden fixtures + legacy export alias (R9/R10/R11, U5)
+# ---------------------------------------------------------------------------
+
+FIXTURES = ROOT / "tests" / "fixtures" / "outcome-cross-runtime" / "v1"
+
+
+class TestGoldenFixtures:
+    @pytest.mark.parametrize(
+        ("name", "validator"),
+        [
+            ("discovery-envelope.json", "validate_discovery_envelope"),
+            ("canonical-status.json", "validate_canonical_status"),
+            ("handoff-reference.json", "validate_handoff_reference"),
+            ("compatibility-halt.json", "validate_halt_receipt"),
+        ],
+    )
+    def test_fixture_round_trips_byte_identically(self, name: str, validator: str) -> None:
+        raw = (FIXTURES / name).read_text(encoding="utf-8")
+        parsed = OC.parse_strict_json(raw, what=name)
+        validated = getattr(OC, validator)(parsed)
+        assert OC.canonical_json(validated) + "\n" == raw
+
+    def test_unknown_field_fixture_halts(self) -> None:
+        raw = (FIXTURES / "invalid" / "unknown-field-envelope.json").read_text(encoding="utf-8")
+        with pytest.raises(OC.CompatibilityHaltError) as exc:
+            OC.validate_discovery_envelope(OC.parse_strict_json(raw, what="fixture"))
+        assert exc.value.code == "schema-field-unknown"
+
+    def test_future_protocol_fixture_halts(self) -> None:
+        raw = (FIXTURES / "invalid" / "future-protocol-envelope.json").read_text(encoding="utf-8")
+        doc = OC.parse_strict_json(raw, what="fixture")
+        OC.validate_discovery_envelope(doc)  # structurally valid...
+        with pytest.raises(OC.CompatibilityHaltError) as exc:
+            OC.negotiate(doc["protocol"])  # ...but unsupported at negotiation (R9)
+        assert exc.value.code == "protocol-version-skew"
+
+    def test_fixtures_carry_no_local_paths(self) -> None:
+        for path in sorted(FIXTURES.glob("*.json")):
+            text = path.read_text(encoding="utf-8")
+            assert "/Users/" not in text and "/home/" not in text and "/tmp/" not in text
+
+
+class TestLegacyExportAlias:
+    def test_cli_export_is_a_byte_identical_discover_alias(self, outcome_repo: Path) -> None:
+        discover = _cli(outcome_repo, "discover", OUTCOME_ID)
+        export = _cli(outcome_repo, "export", OUTCOME_ID)
+        assert discover.returncode == 0 and export.returncode == 0
+        assert export.stdout == discover.stdout  # same outcome.discovery.v1 bytes (R10)
+        assert "deprecated alias" in export.stderr
+        assert "outcome-bundle/1" not in export.stdout
+
+    def test_cli_import_refuses_bundles_without_writes(
+        self, outcome_repo: Path, tmp_path: Path
+    ) -> None:
+        bundle_path = tmp_path / "bundle.json"
+        bundle_path.write_text(
+            json.dumps({"schema": "outcome-bundle/1", "spec": {"outcome_id": OUTCOME_ID}}),
+            encoding="utf-8",
+        )
+        result = _cli(outcome_repo, "import", str(bundle_path))
+        assert result.returncode == 1
+        assert "retired" in result.stderr and "discover" in result.stderr
+        assert _store_namespace_absent(outcome_repo)

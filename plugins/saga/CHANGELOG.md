@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.103.0] - 2026-07-18
+
+### Added - Claude-side cross-runtime Outcome contract (#604)
+
+- `outcome_compat.py`: the runtime-neutral compatibility seam — exact `github.com/<owner>/<repo>`
+  repository identity from `remote.origin.url` (foreign host / credentialed / missing origin
+  HALT), committed-spec discovery via git blobs with ref-ambiguity HALT, four closed
+  `outcome.*.v1` schemas (duplicate-key / bool-as-int / unknown-field rejection, 256 KiB cap),
+  narrow protocol negotiation with named required capabilities, deterministic serialization,
+  and redacted `outcome.compatibility-halt.v1` receipts raised before any mutation.
+- Canonical cross-clone reconstruction: `build_canonical_status` derives
+  `outcome.canonical-status.v1` from exactly the committed spec blob + per-node GitHub
+  contracts; unknown evidence reduces completion and candidacy, never fabricates; two clones
+  serialize byte-identically; `mutation_allowed` is always false.
+- Protected same-clone handoff: the sealed offer record is written INSIDE the #356 broker's
+  settlement-close protected write (#355 linearization) so offering and relinquishing are one
+  receipt-bearing transition; acceptance binds one receiver via write-once accept-intent, takes
+  the successor through the close-receipt CAS, and appends the accept-commit; expiry, clock
+  skew, tamper, wrong repo/revision/operation/subplot, settled attempts, and supersession all
+  fail closed with distinct halt codes.
+- `/outcome` verbs: `discover` (committed envelope), `handoff` (issuer offer under session
+  admission), `attach` (read-only canonical status; `--advance` enters ONE one-subplot tick
+  behind the validated handoff with revision + frontier re-checks; `--attend` derives the
+  native resume command after validation); halts exit 3 with the closed receipt.
+- Legacy `outcome-bundle/1` retired as an authority path (R10): `export` is a deprecated alias
+  emitting the same `outcome.discovery.v1` bytes; `import` refuses every bundle with the exact
+  `discover`/`attach` migration and writes nothing.
+- Golden fixtures at `tests/fixtures/outcome-cross-runtime/v1/` (plus negative
+  unknown-field/future-protocol fixtures) — the exact producer vocabulary the Codex consumer
+  (infiquetra-codex-plugins#34) ports verbatim.
+- Reference: `plugins/saga/references/outcome-cross-runtime.md`; outcome SKILL.md documents the
+  new verb surface and the retirement.
+
+
 ## [0.102.0] - 2026-07-18
 
 ### Added - non-skippable team teardown and reclamation (#358)

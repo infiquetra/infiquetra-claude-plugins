@@ -1790,54 +1790,41 @@ def attended_handoff(
 def export_bundle(
     repo_root: Path, outcome_id: str, *, runner: Callable[..., Any] | None = None
 ) -> dict[str, Any]:
-    """A self-contained, portable snapshot: canonical spec + completion events + dispatch records.
+    """DEPRECATED alias of ``discover`` (#604 R10 — legacy portable authority is retired).
 
-    This is the R14 cross-machine/worktree story — the structural truth plus the completion/dispatch
-    facts needed to resume elsewhere. The cache itself is never exported (it is rebuildable).
+    The old ``outcome-bundle/1`` snapshot copied cache completion and dispatch records across
+    repositories and wrote the bundled spec on import — exactly the second authority path #579
+    retires. This entrypoint now returns the ``outcome.discovery.v1`` envelope byte-for-byte
+    (the same JSON ``discover`` prints): committed/GitHub references and digests only, never a
+    mutable cache fact. Import-side authority transfer is refused entirely
+    (:func:`import_bundle`).
     """
-    spec = load_spec(repo_root, outcome_id)
-    store = _store(repo_root, outcome_id, runner=runner)
-    events: list[dict[str, Any]] = []
-    for node in spec.nodes:
-        for ev in outcome_store.read_completion_events(store, node.subplot_id):
-            events.append(ev.to_dict())
-    return {
-        "schema": "outcome-bundle/1",
-        "spec": spec.to_dict(),
-        "completion_events": events,
-        "dispatch_ledger": [
-            r for r in outcome_store.read_ledger(store) if r.get("kind") == "dispatch"
-        ],
-    }
+    import outcome_compat
+
+    return outcome_compat.build_discovery_envelope(
+        Path(repo_root), outcome_id, saga_version=_saga_version(), runner=runner
+    )
 
 
 def import_bundle(
     repo_root: Path, bundle: dict[str, Any], *, runner: Callable[..., Any] | None = None
 ) -> outcome_spec.OutcomeSpec:
-    """Reconstruct an outcome from a bundle: write the spec to the branch + replay events/records.
+    """REFUSED (#604 R10): a copied bundle is not authority and cannot write or replay state.
 
-    Fully **idempotent** — re-importing the same bundle does not duplicate state: completion events
-    replay through the write-once, idempotency-keyed store; dispatch ledger records are deduped
-    against the existing ledger by their ``(phase, key)`` so the ledger does not grow on re-import.
+    Raises with the exact migration commands; nothing is read from ``bundle`` beyond its schema
+    label and nothing is written to the spec path, the store, or any ledger. Cross-clone
+    reconstruction is ``attach`` (read-only, from committed spec + GitHub); same-clone mutation
+    requires a protected handoff — there is no escape hatch that copies a cache between hosts.
     """
-    if bundle.get("schema") != "outcome-bundle/1":
-        raise OutcomeError(f"unrecognized bundle schema {bundle.get('schema')!r}")
-    spec = outcome_spec.OutcomeSpec.from_dict(bundle["spec"])
-    spec.validate()
-    save_spec(repo_root, spec)
-    store = _store(repo_root, spec.outcome_id, runner=runner)
-    for ev_dict in bundle.get("completion_events", []):
-        outcome_store.write_completion_event(
-            store, outcome_store.CompletionEvent.from_dict(ev_dict)
-        )
-    existing = {(str(r.get("phase")), str(r.get("key"))) for r in outcome_store.read_ledger(store)}
-    for rec in bundle.get("dispatch_ledger", []):
-        ident = (str(rec.get("phase")), str(rec.get("key")))
-        if ident in existing:
-            continue  # already present -> skip so re-import does not grow the ledger
-        outcome_store.append_ledger(store, rec)
-        existing.add(ident)
-    return spec
+    del repo_root, runner
+    schema = bundle.get("schema") if isinstance(bundle, dict) else None
+    raise OutcomeError(
+        f"legacy bundle import is retired (#604 R10): a copied bundle (schema {schema!r}) "
+        "carries no authority. Migrate: run `outcome discover <outcome-id>` in the source "
+        "clone to emit the outcome.discovery.v1 envelope; run `outcome attach <outcome-id>` "
+        "in this clone for read-only canonical reconstruction; same-clone mutation requires "
+        "a protected handoff (`outcome handoff` then `outcome attach --advance`)."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2605,7 +2592,18 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(json.dumps(outcome_projection.project(spec, store)))
         elif args.command == "export":
-            print(json.dumps(export_bundle(root, args.outcome_id)))
+            import outcome_compat
+
+            print(
+                "WARNING: `outcome export` is a deprecated alias of `outcome discover` "
+                "(#604 R10); the outcome-bundle/1 authority path is retired.",
+                file=sys.stderr,
+            )
+            try:
+                print(outcome_compat.canonical_json(export_bundle(root, args.outcome_id)))
+            except outcome_compat.CompatibilityHaltError as halt:
+                print(json.dumps(halt.receipt()))
+                return 3
         elif args.command == "import":
             bundle = json.loads(Path(args.path).read_text(encoding="utf-8"))
             spec = import_bundle(root, bundle)

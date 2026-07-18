@@ -27,6 +27,27 @@
 
 ## 2026-07-18
 
+### Same-named sibling scripts make `sys.modules` a shared namespace hazard — resolve broker classes from the instance, register test loads under distinct keys {#module-identity-cross-plugin-604}
+
+**Evidence.** #604 U3/U4 (`plugins/saga/scripts/outcome_compat.py` `_broker_module`,
+`tests/test_outcome_cross_runtime_contract.py` `_load_broker_module`): the handoff layer's
+`except lb.LeaseBrokerError` silently missed real broker errors when the test suite loaded
+fleet-core's `lease_broker.py` under `sys.modules["lease_broker"]` — and that registration
+ALSO shadowed `plugins/saga/scripts/lease_broker.py` (the session-admission CLI, same
+basename, different plugin), breaking an unrelated outcome CLI test only in combined runs.
+
+**Mechanism.** `importlib`-loaded module objects are distinct per load: `except`/`isinstance`
+against one load's exception class never matches an instance raised by another load, and
+dataclass `__eq__` returns NotImplemented across class identities (so fencing-token equality
+silently fails too). Two plugins carrying a same-basename script means whichever registers the
+bare name in `sys.modules` first poisons every later `import <name>` in-process.
+
+**Generalizable rule.** A module consuming an injected object resolves that object's OWN
+classes via `sys.modules[type(obj).__module__]` (the sub-358 dual-load precedent,
+`{#recovery-isolation-total-358}` family); a test that importlib-loads a sibling-named script
+registers it under a distinct `sys.modules` key, never the bare basename.
+
+
 ### A guarded instrument inherits every failure mode of what it reads — measure at the source {#count-at-source-358}
 
 **Context.** Four ceremony cycles judged four successive fixes to `recover()`'s per-run

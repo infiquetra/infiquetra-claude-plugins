@@ -63,7 +63,7 @@ def test_team_execution_metadata_is_v2_and_marketplace_matches() -> None:
     marketplace = json.loads(_read(ROOT / ".claude-plugin" / "marketplace.json"))
     entry = next(p for p in marketplace["plugins"] if p["name"] == "team-execution")
 
-    assert plugin_json["version"] == "2.20.0"  # resident liveness protocol (#357)
+    assert plugin_json["version"] == "2.21.0"  # non-skippable teardown contract (#358)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/team-execution"
     assert "validator" in plugin_json["description"].lower()
@@ -286,7 +286,9 @@ def test_lease_protocol_resolves_and_runs_the_real_teardown_cli(tmp_path: Path) 
             cwd=ROOT,
         )
         assert completed.returncode == 0, completed.stderr
-        return json.loads(completed.stdout)
+        parsed = json.loads(completed.stdout)
+        assert isinstance(parsed, dict)
+        return parsed
 
     opened = _run("open-run", "--repo-root", str(repo), "--session-id", "conformance-session")
     run_id = opened["opened"]

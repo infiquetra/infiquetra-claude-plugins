@@ -28,7 +28,7 @@ SAGA_SCRIPT = Path("scripts") / "liveness_events.py"
 PENDING_SCHEMA = "liveness.reping-pending.v1"
 PENDING_SUBDIR = Path("saga-liveness") / "pending"
 REQUIRED_ENGINE_PROTOCOL_VERSION = 1
-REQUIRED_FLEET_CORE_VERSION = (0, 14, 0)
+REQUIRED_FLEET_CORE_VERSION = (0, 15, 0)
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _IDENTITY_REQUEST_KEYS = frozenset(
     {

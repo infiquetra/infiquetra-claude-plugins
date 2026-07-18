@@ -27,6 +27,27 @@
 
 ## 2026-07-18
 
+### A twice-loaded dataclass never equals itself {#dual-load-token-equality-358}
+
+**Context.** The #358 teardown adapters must present a lease's exact `FencingToken` back to
+the broker for release.
+**Evidence.** `Lease.token != FencingToken(...)` comparisons fail whenever the token class
+is constructed from a different load of the authority module: tests load
+`lease_broker.py` via `importlib.util.spec_from_file_location` while
+`fleet_commons_shim.load("lease_broker")` performs its own load — two distinct classes.
+**Mechanism.** Dataclass `__eq__` requires `other.__class__ is self.__class__` before
+comparing fields, so value-identical tokens from twin module loads are unconditionally
+unequal, and the broker's token check reads as an ownership error.
+**Fix.** Build the token from the broker instance's own defining module:
+`sys.modules[type(broker).__module__].FencingToken(...)`
+(`plugins/saga/scripts/team_teardown.py`, `_current_head`).
+**Generalizable rule.** When handing a value object back to an authority that compares it,
+construct it from the authority's own module — never from a parallel import path.
+
+**Refs.** `plugins/saga/scripts/team_teardown.py`, `plugins/fleet-core/scripts/fleet_commons/lease_broker.py`.
+
+---
+
 ### The pre-push gate silently outgrew its own timeout {#pre-push-gate-timeout-358}
 
 **Context.** Pushing a green docs-only commit from the outcome worktree was blocked repeatedly by

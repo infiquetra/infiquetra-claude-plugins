@@ -5,6 +5,21 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-07-18
+
+### Added
+
+- Monotonic `close_owner_admission` / `inspect_owner_admission` on the lease broker (#358 R2):
+  one committed close under the authority lock refuses every subsequent acquire, reserve,
+  claim, and retry for that exact owner (`OwnerAdmissionClosedError`) while existing leases
+  stay inspectable and releasable. Repeating close is idempotent; there is no reopen. The
+  `close_generation` is issued from the registry's one fencing sequence so a teardown driver
+  can re-verify the still-closed generation before emitting a zero-open completion receipt —
+  the fence that prevents a spawn racing `teardown-complete`.
+- Registry schema gains the bounded `closed_owner_admissions` map (pre-#358 authorities
+  migrate to an empty map; overflow evicts the lowest generation, documented as scoped to
+  the teardown race window).
+
 ## [0.14.0] - 2026-07-17
 
 ### Added

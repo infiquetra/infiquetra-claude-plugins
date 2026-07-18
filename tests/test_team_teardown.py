@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -113,8 +113,11 @@ def _acquire(broker: Any, *, owner: str, session: str = "session-1", resource: s
 
 
 def _open(ledger: Any, broker: Any, run_id: str = "team-run-1") -> dict[str, Any]:
-    return TT.open_run(
-        ledger, broker, subplot_id=SUB, session_id="session-1", at=AT, team_run_id=run_id
+    return cast(
+        dict[str, Any],
+        TT.open_run(
+            ledger, broker, subplot_id=SUB, session_id="session-1", at=AT, team_run_id=run_id
+        ),
     )
 
 
@@ -122,7 +125,7 @@ def _intend(ledger: Any, run_id: str = "team-run-1", reason: str = "success") ->
     fact = TT.build_teardown_intent(
         subplot_id=SUB, at=AT, team_run_id=run_id, terminal_reason=reason, close_generation=7
     )
-    return TT.append_teardown_event(ledger, fact)
+    return cast(dict[str, Any], TT.append_teardown_event(ledger, fact))
 
 
 def _attempt(
@@ -145,7 +148,7 @@ def _attempt(
         generation=generation,
         action=action,
     )
-    return TT.append_teardown_event(ledger, fact)
+    return cast(dict[str, Any], TT.append_teardown_event(ledger, fact))
 
 
 def _result(
@@ -165,7 +168,7 @@ def _result(
         disposition=disposition,
         evidence_refs=list(refs),
     )
-    return TT.append_teardown_event(ledger, fact)
+    return cast(dict[str, Any], TT.append_teardown_event(ledger, fact))
 
 
 # --------------------------------------------------------------------- owner-admission fence

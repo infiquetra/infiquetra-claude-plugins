@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.102.0] - 2026-07-18
+
+### Added - non-skippable team teardown and reclamation (#358)
+
+- New `scripts/team_teardown.py`: the closed `run_fact.v1 kind=teardown` event family
+  (`run-opened`, `teardown-intent`, `resource-attempt`, `resource-result`,
+  `recovery-observation`, `teardown-complete`) with transition validation under the
+  ledger's exclusive lock, stable action idempotency keys, and the derived
+  `team_teardown.v1` projection over one chain-verified ledger snapshot plus one
+  lock-consistent broker snapshot. No second registry, mutable status store, TTL clock, or
+  reaper decision engine.
+- The idempotent Step B8 terminal driver (`reclaim_all`): close owner admission, verified
+  snapshot, crash-orphan reconcile (`already-absent` on the existing action key), typed
+  actions, re-reconcile, still-closed generation recheck, and a `teardown-complete`
+  receipt only at zero open resources. `request` records intent without acting; `recover`
+  is a budgeted expired-only pass that always appends an observation.
+- Typed action adapters: terminal-receipt-gated resident release, exact-identity process
+  stop (PID + process-start + boot + run ownership, TERM first, KILL only under the
+  lease-recorded `term-then-kill` escalation, absence proof without signaling), the
+  canonical #356 worktree sweep, and identity-checked provisional lease release. Every
+  ambiguity fails safe as `retained`.
+- `authorize_resident_stop`: only a #357 `confirmed-stalled` decision carrying
+  `team-reping-confirmed` authority or an explicit segment shed, with current ownership,
+  authorizes a resident stop intent.
+- New `hooks/team_teardown_hook.py`: `SessionEnd` (5 s) records teardown requests for the
+  trusted session's open runs; `SessionStart startup|resume` (15 s) runs one
+  `recover --expired-only --max-actions 4` pass. Hook receipts are request evidence, never
+  closure.
+- `references/teardown-consumer-sites.md`: the source-aware run-open / register / driver /
+  recovery inventory, enforced by the hermetic CI leak invariant
+  (`tests/test_teardown_ci_invariant.py`).
+
 ## [0.101.0] - 2026-07-17
 
 ### Added - shared fleet liveness facts and adapters (#357)

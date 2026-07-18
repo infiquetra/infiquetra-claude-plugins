@@ -19,7 +19,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -702,7 +702,7 @@ def _offer(repo: Path, broker: Any, lease: Any, **kw: Any) -> tuple[dict, dict]:
         "dispatch_id": "outcome:demo:frontier:abc",
     }
     defaults.update(kw)
-    return OC.offer_handoff(repo, OUTCOME_ID, SUBPLOT, **defaults)
+    return cast("tuple[dict, dict]", OC.offer_handoff(repo, OUTCOME_ID, SUBPLOT, **defaults))
 
 
 def _accept(repo: Path, broker: Any, handoff_id: str, **kw: Any) -> dict[str, Any]:
@@ -715,7 +715,7 @@ def _accept(repo: Path, broker: Any, handoff_id: str, **kw: Any) -> dict[str, An
         "broker": broker,
     }
     defaults.update(kw)
-    return OC.accept_handoff(repo, OUTCOME_ID, handoff_id, **defaults)
+    return cast("dict[str, Any]", OC.accept_handoff(repo, OUTCOME_ID, handoff_id, **defaults))
 
 
 class TestProtectedHandoff:

@@ -1184,6 +1184,56 @@ def register_subprocess(
     )
 
 
+# --------------------------------------------------------------------------- idle eviction
+
+
+def authorize_resident_stop(
+    broker: Any,
+    decision: Mapping[str, Any] | None,
+    *,
+    team_run_id: str,
+    lease_id: str,
+    explicit_shed: bool = False,
+) -> dict[str, Any]:
+    """The R7/KTD5 eviction gate: only a #357 ``confirmed-stalled`` decision or an explicit
+    segment-boundary shed, paired with current #356 ownership, authorizes a resident stop.
+
+    Phi suspicion, chat activity, a bare idle notice, pending ack/re-ping, pointer age, and
+    agent prose are never authorization. The returned record is the *stop intent* for the
+    host runtime; the release itself still flows through
+    :func:`make_resident_stop_adapter`, which requires the broker-recorded terminal receipt.
+    """
+
+    def _refuse(reason: str) -> dict[str, Any]:
+        return {"authorized": False, "reason_code": reason, "lease_id": lease_id}
+
+    head, _token = _current_head(broker, {"lease_id": lease_id})
+    if head is None:
+        return _refuse("lease-absent")
+    if str(head.get("owner_id")) != team_run_id:
+        return _refuse("not-owned-by-run")
+    warm = {
+        "authorized": True,
+        "lease_id": lease_id,
+        "generation": f"{head.get('fencing_sequence')}",
+        "agent_id": head.get("agent_id"),
+    }
+    if explicit_shed:
+        return {**warm, "reason_code": "segment-boundary-shed"}
+    if not isinstance(decision, Mapping):
+        return _refuse("no-liveness-decision")
+    classification = str(decision.get("classification") or "unknown")
+    if classification != "confirmed-stalled":
+        return _refuse(f"liveness-{classification}-not-actionable")
+    if str(decision.get("terminal_authority") or "none") == "none":
+        return _refuse("confirmed-without-terminal-authority")
+    return {
+        **warm,
+        "reason_code": "confirmed-stalled",
+        "liveness_generation": decision.get("generation"),
+    }
+
+
 # --------------------------------------------------------------------------- production wiring
 
 

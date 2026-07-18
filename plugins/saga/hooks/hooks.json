@@ -27,6 +27,27 @@
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/ship_teardown.py\" reclaim --if-idle 24h --quiet"
           }
         ]
+      },
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/team_teardown_hook.py\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/team_teardown_hook.py\"",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PreCompact": [

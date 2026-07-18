@@ -1188,3 +1188,161 @@ class TestEndToEndReclaim:
         assert projection["released_count"] == 2
         assert kills == [(5150, 15)]
         assert _lease_row_absent(broker, proc_lease.lease_id)
+
+
+# --------------------------------------------------------------------- idle eviction (U4)
+
+
+class TestIdleEvictionGate:
+    def _resident(self, broker: Any, unit: str = "u-resident") -> Any:
+        _acquire(broker, owner="team-run-1", resource=unit)
+        return broker.claim(
+            session_id="session-1",
+            agent_type="worker",
+            agent_id=f"resident-{unit}",
+            resource_ref={"logical_unit_id": unit},
+        )
+
+    def _decision(self, classification: str, authority: str = "none") -> dict[str, Any]:
+        return {
+            "schema": "liveness_decision.v1",
+            "subject_id": "subject-1",
+            "classification": classification,
+            "terminal_authority": authority,
+            "generation": "gen-1",
+        }
+
+    @pytest.mark.parametrize(
+        "classification",
+        [
+            "healthy",
+            "heartbeat-suspect",
+            "chatty-artifactless",
+            "reping-required",
+            "reping-send-unresolved",
+            "reping-delivery-blocked",
+            "evidence-error",
+        ],
+    )
+    def test_unconfirmed_classifications_never_authorize(
+        self, broker: Any, classification: str
+    ) -> None:
+        lease = self._resident(broker)
+        verdict = TT.authorize_resident_stop(
+            broker,
+            self._decision(classification),
+            team_run_id="team-run-1",
+            lease_id=lease.lease_id,
+        )
+        assert verdict["authorized"] is False
+        assert classification in verdict["reason_code"]
+
+    def test_confirmed_stalled_with_authority_authorizes_exact_resident(self, broker: Any) -> None:
+        lease = self._resident(broker)
+        verdict = TT.authorize_resident_stop(
+            broker,
+            self._decision("confirmed-stalled", authority="team-reping-confirmed"),
+            team_run_id="team-run-1",
+            lease_id=lease.lease_id,
+        )
+        assert verdict["authorized"] is True
+        assert verdict["reason_code"] == "confirmed-stalled"
+        assert verdict["lease_id"] == lease.lease_id
+        assert verdict["agent_id"] == "resident-u-resident"
+
+    def test_confirmed_without_terminal_authority_is_refused(self, broker: Any) -> None:
+        lease = self._resident(broker)
+        verdict = TT.authorize_resident_stop(
+            broker,
+            self._decision("confirmed-stalled"),
+            team_run_id="team-run-1",
+            lease_id=lease.lease_id,
+        )
+        assert verdict["authorized"] is False
+        assert verdict["reason_code"] == "confirmed-without-terminal-authority"
+
+    def test_missing_decision_and_foreign_owner_are_refused(self, broker: Any) -> None:
+        lease = self._resident(broker)
+        no_decision = TT.authorize_resident_stop(
+            broker, None, team_run_id="team-run-1", lease_id=lease.lease_id
+        )
+        assert no_decision["authorized"] is False
+        assert no_decision["reason_code"] == "no-liveness-decision"
+        foreign = TT.authorize_resident_stop(
+            broker,
+            self._decision("confirmed-stalled", authority="team-reping-confirmed"),
+            team_run_id="team-run-9",
+            lease_id=lease.lease_id,
+        )
+        assert foreign["authorized"] is False
+        assert foreign["reason_code"] == "not-owned-by-run"
+
+    def test_explicit_segment_shed_authorizes_without_liveness(self, broker: Any) -> None:
+        lease = self._resident(broker)
+        verdict = TT.authorize_resident_stop(
+            broker,
+            None,
+            team_run_id="team-run-1",
+            lease_id=lease.lease_id,
+            explicit_shed=True,
+        )
+        assert verdict["authorized"] is True
+        assert verdict["reason_code"] == "segment-boundary-shed"
+
+    def test_evicting_one_resident_retains_the_warm_peer(self, broker: Any) -> None:
+        stalled = self._resident(broker, "u-stalled")
+        warm = self._resident(broker, "u-warm")
+        verdict = TT.authorize_resident_stop(
+            broker,
+            self._decision("confirmed-stalled", authority="team-reping-confirmed"),
+            team_run_id="team-run-1",
+            lease_id=stalled.lease_id,
+        )
+        assert verdict["authorized"] is True
+        assert broker.record_child_terminal("resident-u-stalled")
+        outcome = TT.make_resident_stop_adapter(broker)(_lease_row(broker, stalled.lease_id))
+        assert outcome.disposition == "released"
+        assert _lease_row_absent(broker, stalled.lease_id)
+        assert not _lease_row_absent(broker, warm.lease_id)
+
+
+class TestCrashRecoveryAcceptance:
+    def test_sigkilled_subprocess_is_recovered_after_ttl(
+        self, ledger: Any, broker: Any, runtime: FakeRuntime
+    ) -> None:
+        """The kill-mid-run acceptance (R5/KTD3): a SIGKILLed owned child cannot run B8;
+        a later bounded recovery pass after TTL expiry proves absence and completes."""
+        import signal as _signal
+        import subprocess
+        import sys as _sys
+
+        child = subprocess.Popen(  # noqa: S603
+            [_sys.executable, "-c", "import time; time.sleep(60)"]
+        )
+        identity = B._default_process_identity(child.pid)
+        assert identity is not None
+        runtime.processes[child.pid] = (True, identity)
+        _open(ledger, broker)
+        _register_proc(broker, runtime, pid=child.pid, alive=True, identity=identity)
+
+        # SIGKILL: no finalizer runs, no teardown fact lands — the honest crash shape.
+        child.send_signal(_signal.SIGKILL)
+        child.wait(timeout=10)
+        runtime.processes[child.pid] = (False, None)
+        runtime.advance(4000)  # injected TTL boundary: ownership derives expired
+
+        outcome = TT.recover(
+            ledger,
+            broker,
+            TT.production_adapters(broker),
+            subplot_id=SUB,
+            expired_only=True,
+            max_actions=4,
+            at_provider=_ats(),
+        )
+        run_pass = outcome["recovered_runs"][0]
+        assert run_pass["complete"] is True
+        projection = TT.project(TT.read_decision_input(ledger, broker), "team-run-1")
+        assert projection["open_count"] == 0
+        assert projection["already_absent_count"] == 1
+        assert projection["completion_fact_ref"] is not None

@@ -47,11 +47,19 @@ before `## Completion Gate`, exclusive — the same extraction that reproduces i
 candidate; any model, effort, lens, validator, or execution-class change afterward requires a newly
 approved candidate.
 
+**Operator approval:** Jeff, 2026-07-18, in-session. The anchor was recomputed byte-exact against
+the committed plan at approval time (`e0dc114f`, section bytes 5842) and matched. The approval
+authorizes dispatch of `claude-cross-runtime` only, sequenced before `sub-353` (approved under its
+own anchor `d10d602e…`); the standing quiesce remains in force for `codex-substrate`.
+
 ## External opinion
 
 `engine_offer.py offer --stage doc-review --attended`: advisory second-opinion suggested
-(`prompt_required: true`, opus/high, intent second-opinion). Decision deferred to the operator
-review package delivered with this artifact; none dispatched. `external_opinion.state=recommended`.
+(`prompt_required: true`, opus/high, intent second-opinion). Operator accepted the offer in the
+review package (Jeff, 2026-07-18, in-session): `external_opinion.state=requested`, requester
+operator, engine codex (guarded wrapper), intent second-opinion, scope this delta review + the
+committed plan refresh diff (`e0dc114f`). Findings are advisory; Claude adjudicates each
+(`keep`/`downgrade`/`dismiss`) and owns the readiness verdict.
 
 ## Findings
 

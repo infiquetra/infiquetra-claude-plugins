@@ -42,6 +42,19 @@ before `## Completion Gate`, exclusive — the same extraction that reproduces i
 any model, effort, lens, validator, or execution-class change afterward requires a newly approved
 candidate.
 
+**Operator approval:** Jeff, 2026-07-18, in-session. The anchor was recomputed byte-exact against
+the committed plan at approval time (`24813d8a`, section bytes 5695) and matched. The approval
+authorizes dispatch of `sub-353`, sequenced after `claude-cross-runtime` completes; the standing
+quiesce remains in force for `codex-substrate`.
+
+## External opinion
+
+Operator accepted the doc-review engine offer in the review package (Jeff, 2026-07-18, in-session):
+`external_opinion.state=requested`, requester operator, engine codex (guarded wrapper), intent
+second-opinion, scope this delta review + the committed plan refresh diff (`24813d8a`). Findings
+are advisory; Claude adjudicates each (`keep`/`downgrade`/`dismiss`) and owns the readiness
+verdict.
+
 ## Findings
 
 None. P0: 0, P1: 0, P2: 0, P3: 0.

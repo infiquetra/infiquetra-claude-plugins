@@ -499,3 +499,142 @@ class TestHaltReceipts:
             text = json.dumps(halt.receipt())
         assert str(outcome_repo) not in text
         assert "/Users/" not in text and "/tmp/" not in text and "/private/" not in text
+
+
+# ---------------------------------------------------------------------------
+# Canonical cross-clone reconstruction (R8, U2)
+# ---------------------------------------------------------------------------
+
+
+def _node(sid: str, kind: str = "code", **overrides: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {"subplot_id": sid, "title": sid, "kind": kind}
+    base.update(overrides)
+    return base
+
+
+def _dag_spec_dict() -> dict[str, Any]:
+    spec = _spec_dict()
+    spec["nodes"] = [
+        _node("sub-a", github={"pr": "infiquetra/demo-repo#1"}),
+        _node("sub-b", github={"pr": "infiquetra/demo-repo#2"}, depends_on=["sub-a"]),
+        _node("sub-c", kind="non-code", github={"issue": "infiquetra/demo-repo#3"}),
+        _node(
+            "sub-d",
+            kind="non-code",
+            github={"issue": "infiquetra/demo-repo#4"},
+            depends_on=["sub-a", "sub-c"],
+        ),
+        _node("sub-e", github={"pr": "infiquetra/demo-repo#5"}, depends_on=["sub-a"]),
+        _node("sub-f", kind="non-code"),
+    ]
+    return spec
+
+
+def _gh_fixture() -> Any:
+    """A deterministic gh stand-in: PR 1 merged, PR 2 open, issue 3 closed, issue 4 open,
+    PR 5 a transient read failure (unknown)."""
+    from types import SimpleNamespace
+
+    canned = {
+        "/pull/1": {"state": "MERGED", "mergedAt": "2026-07-18T00:00:00Z"},
+        "/pull/2": {"state": "OPEN", "mergedAt": None},
+        "/issues/3": {"state": "CLOSED"},
+        "/issues/4": {"state": "OPEN"},
+    }
+
+    def runner(argv: list[str], **_kw: Any) -> Any:
+        ref = argv[3]
+        for key, payload in canned.items():
+            if key in ref:
+                return SimpleNamespace(returncode=0, stdout=json.dumps(payload), stderr="")
+        return SimpleNamespace(returncode=1, stdout="", stderr="HTTP 500 transient")
+
+    return runner
+
+
+@pytest.fixture
+def dag_repo(tmp_path: Path) -> Path:
+    """A real git repo committing the seven-node DAG spec used by the R8 oracles."""
+    repo = tmp_path / "dag"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    _git(repo, "config", "user.email", "test@example.invalid")
+    _git(repo, "config", "user.name", "Test")
+    spec_file = repo / "docs" / "outcomes" / OUTCOME_ID / "outcome-spec.json"
+    spec_file.parent.mkdir(parents=True)
+    spec_file.write_text(json.dumps(_dag_spec_dict(), indent=1), encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "seed dag spec")
+    _git(repo, "remote", "add", "origin", ORIGIN_HTTPS)
+    return repo
+
+
+def _store_namespace_absent(repo: Path) -> bool:
+    common = Path(_git(repo, "rev-parse", "--git-common-dir"))
+    if not common.is_absolute():
+        common = repo / common
+    return not (common / "saga-outcomes").exists()
+
+
+class TestCanonicalReconstruction:
+    def test_partition_completed_frontier_unknown(self, dag_repo: Path) -> None:
+        status = OC.build_canonical_status(dag_repo, OUTCOME_ID, github_runner=_gh_fixture())
+        assert status["completed"] == ["sub-a", "sub-c"]
+        assert status["unknown"] == ["sub-e", "sub-f"]
+        assert status["candidate_frontier"] == ["sub-b", "sub-d"]
+        assert status["mutation_allowed"] is False
+        by_id = {row["subplot_id"]: row for row in status["node_completion"]}
+        assert by_id["sub-a"]["canonical_state"] == "complete"
+        assert by_id["sub-b"]["canonical_state"] == "open"
+        assert by_id["sub-e"]["canonical_state"] == "unknown"
+        assert by_id["sub-f"]["contract"] == "non-code:tick+canonical-marker"
+
+    def test_unknown_reduces_never_fabricates(self, dag_repo: Path) -> None:
+        from types import SimpleNamespace
+
+        def all_unknown(argv: list[str], **_kw: Any) -> Any:
+            return SimpleNamespace(returncode=1, stdout="", stderr="offline")
+
+        status = OC.build_canonical_status(dag_repo, OUTCOME_ID, github_runner=all_unknown)
+        assert status["completed"] == []
+        assert status["candidate_frontier"] == []
+        assert set(status["unknown"]) == {"sub-a", "sub-b", "sub-c", "sub-d", "sub-e", "sub-f"}
+
+    def test_two_clones_serialize_byte_identically(self, dag_repo: Path, tmp_path: Path) -> None:
+        clone = tmp_path / "clone-b"
+        _git(dag_repo.parent, "clone", "-q", str(dag_repo), str(clone))
+        _git(clone, "remote", "set-url", "origin", ORIGIN_HTTPS)
+        first = OC.build_canonical_status(dag_repo, OUTCOME_ID, github_runner=_gh_fixture())
+        second = OC.build_canonical_status(clone, OUTCOME_ID, github_runner=_gh_fixture())
+        assert OC.canonical_json(first) == OC.canonical_json(second)
+        assert _store_namespace_absent(dag_repo) and _store_namespace_absent(clone)
+
+    def test_reconstruction_never_creates_the_cache(self, dag_repo: Path) -> None:
+        OC.build_canonical_status(dag_repo, OUTCOME_ID, github_runner=_gh_fixture())
+        assert _store_namespace_absent(dag_repo)
+
+    def test_fork_with_copied_spec_carries_its_own_identity(
+        self, dag_repo: Path, tmp_path: Path
+    ) -> None:
+        fork = tmp_path / "fork"
+        _git(dag_repo.parent, "clone", "-q", str(dag_repo), str(fork))
+        _git(fork, "remote", "set-url", "origin", "https://github.com/attacker/demo-repo.git")
+        envelope = OC.build_discovery_envelope(dag_repo, OUTCOME_ID, saga_version="0.103.0")
+        status = OC.build_canonical_status(fork, OUTCOME_ID, github_runner=_gh_fixture())
+        assert status["repository_identity"] != envelope["repository"]["identity"]
+
+    def test_projection_never_serializes_local_paths(self, dag_repo: Path) -> None:
+        status = OC.build_canonical_status(dag_repo, OUTCOME_ID, github_runner=_gh_fixture())
+        text = OC.canonical_json(status)
+        assert str(dag_repo) not in text
+        assert "/Users/" not in text and "/tmp/" not in text and "/private/" not in text
+
+    def test_invalid_committed_spec_halts(self, dag_repo: Path) -> None:
+        spec_file = dag_repo / "docs" / "outcomes" / OUTCOME_ID / "outcome-spec.json"
+        bad = _dag_spec_dict()
+        bad["nodes"].append(_node("sub-a"))  # duplicate subplot_id
+        spec_file.write_text(json.dumps(bad, indent=1), encoding="utf-8")
+        _git(dag_repo, "commit", "-aqm", "duplicate node id")
+        with pytest.raises(OC.CompatibilityHaltError) as exc:
+            OC.build_canonical_status(dag_repo, OUTCOME_ID, github_runner=_gh_fixture())
+        assert exc.value.code == "discovery-spec-invalid"

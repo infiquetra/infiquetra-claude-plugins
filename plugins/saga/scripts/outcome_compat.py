@@ -944,3 +944,122 @@ def _halt_schema_kind(what: str) -> NoReturn:
         supported=f"a JSON object holding the {what}",
         next_action="regenerate the document from a conforming producer",
     )
+
+
+# ---------------------------------------------------------------------------
+# R8 — canonical cross-clone reconstruction (read-only, deterministic)
+# ---------------------------------------------------------------------------
+
+
+def build_canonical_status(
+    repo_root: Path,
+    outcome_id: str,
+    *,
+    runner: Callable[..., Any] | None = None,
+    github_runner: Callable[..., Any] | None = None,
+) -> dict[str, Any]:
+    """Build the portable ``outcome.canonical-status.v1`` projection (R8, KTD1).
+
+    Inputs are exactly the two canonical sources: the **committed** spec blob (never the
+    working tree, never the git-common-dir cache) and per-node GitHub completion evidence read
+    through the parent-owned contracts (``outcome_github``). The function materializes nothing:
+    no store, no quarantine, no harvest — two clones given the same commit and the same GitHub
+    fixture serialize byte-identically.
+
+    Conservative evidence rules (R8): a node whose GitHub evidence reads ``unknown`` — or whose
+    canonical marker is cache-resident only (an untracked non-code leaf, a child-outcome node)
+    — lands in ``unknown`` and is EXCLUDED from the candidate frontier: unknown can only reduce
+    apparent completion and candidacy, never fabricate either. The projection never claims
+    ``ready``/``dispatched``/``running``/lease/handoff state and always carries
+    ``mutation_allowed: false`` — treating the candidate frontier as dispatchable is a HALT
+    violation on the consumer side.
+    """
+    import outcome_spec
+
+    identity = repository_identity(repo_root, runner=runner)
+    binding = resolve_committed_spec(repo_root, outcome_id, runner=runner)
+    try:
+        spec = outcome_spec.OutcomeSpec.from_dict(binding["spec"])
+        spec.validate()
+    except Exception:
+        raise CompatibilityHaltError(
+            "discovery-spec-invalid",
+            unsupported="a committed spec the canonical spec layer rejects",
+            supported="a committed spec passing outcome_spec validation",
+            next_action="repair the committed spec on the outcome branch, then re-run discover",
+        ) from None
+
+    completed: list[str] = []
+    unknown: list[str] = []
+    rows: list[dict[str, str]] = []
+    for node in spec.nodes:
+        contract, state, evidence = _canonical_node_completion(node, github_runner=github_runner)
+        rows.append(
+            {
+                "subplot_id": node.subplot_id,
+                "contract": contract,
+                "canonical_state": state,
+                "evidence_digest": hashlib.sha256(
+                    canonical_json(evidence).encode("utf-8")
+                ).hexdigest(),
+            }
+        )
+        if state == "complete":
+            completed.append(node.subplot_id)
+        elif state == "unknown":
+            unknown.append(node.subplot_id)
+
+    frontier = [
+        sid for sid in outcome_spec.ready_frontier(spec, set(completed)) if sid not in set(unknown)
+    ]
+    status = {
+        "schema": SCHEMA_CANONICAL_STATUS,
+        "repository_identity": identity,
+        "outcome_id": outcome_id,
+        "committed": {
+            "commit_oid": binding["commit_oid"],
+            "blob_oid": binding["blob_oid"],
+            "sha256": binding["sha256"],
+        },
+        "completed": sorted(completed),
+        "candidate_frontier": sorted(frontier),
+        "unknown": sorted(unknown),
+        "node_completion": sorted(rows, key=lambda r: r["subplot_id"]),
+        "mutation_allowed": False,
+    }
+    return validate_canonical_status(status)
+
+
+def _canonical_node_completion(
+    node: Any, *, github_runner: Callable[..., Any] | None
+) -> tuple[str, str, dict[str, str]]:
+    """One node's (contract, canonical_state, evidence) from GitHub-canonical sources only."""
+    import outcome_github  # lazy sibling import (house pattern)
+
+    if getattr(node, "is_outcome", False):
+        # A child-outcome node's terminal state lives in the child's own spec/store — not
+        # GitHub-canonical from here. Unknown, never fabricated (R8).
+        return (
+            "child-outcome:terminal-success",
+            "unknown",
+            {"child_spec_ref": str(node.child_spec_ref)},
+        )
+    if node.kind == "code":
+        pr = str(node.github.get("pr", ""))
+        if not pr:
+            return ("code:pr-merged", "open", {"pr": ""})
+        state = outcome_github.pr_state(pr, runner=github_runner)
+        canonical = (
+            "complete" if state == "merged" else ("unknown" if state == "unknown" else "open")
+        )
+        return ("code:pr-merged", canonical, {"pr": pr, "pr_state": state})
+    issue = str(node.github.get("issue", ""))
+    if issue:
+        state = outcome_github.issue_state(issue, runner=github_runner)
+        canonical = (
+            "complete" if state == "closed" else ("unknown" if state == "unknown" else "open")
+        )
+        return ("non-code:issue-closed", canonical, {"issue": issue, "issue_state": state})
+    # Untracked non-code leaf: its only marker is cache-resident (store-local) — invisible to a
+    # cross-clone reader, so it stays unknown rather than claiming open-or-complete (R8).
+    return ("non-code:tick+canonical-marker", "unknown", {"issue": ""})

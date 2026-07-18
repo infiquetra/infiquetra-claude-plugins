@@ -583,3 +583,309 @@ class TestDecisionInputAndProjection:
             ledger.path.name,
             ledger.path.name + ".lock",
         }
+
+
+# --------------------------------------------------------------------- terminal driver
+
+
+def _ats() -> Any:
+    counter = {"n": 0}
+
+    def _next() -> str:
+        counter["n"] += 1
+        return f"2026-07-18T13:{counter['n']:02d}:00Z"
+
+    return _next
+
+
+class TestTerminalDriver:
+    @pytest.mark.parametrize(
+        "reason", ["success", "hard-fail", "operator-abort", "andon", "recovered-crash"]
+    )
+    def test_every_terminal_reason_reaches_b8_and_completes_at_zero_open(
+        self, ledger: Any, broker: Any, reason: str
+    ) -> None:
+        run_id = f"team-run-{reason}"
+        _open(ledger, broker, run_id=run_id)
+        projection = TT.reclaim_all(
+            ledger,
+            broker,
+            TT.production_adapters(broker),
+            subplot_id=SUB,
+            team_run_id=run_id,
+            terminal_reason=reason,
+            at_provider=_ats(),
+        )
+        assert projection["open_count"] == 0
+        assert projection["completion_fact_ref"] is not None
+        assert projection["terminal_reason"] == reason
+
+    def test_provisional_leases_release_and_complete(self, ledger: Any, broker: Any) -> None:
+        _open(ledger, broker)
+        _acquire(broker, owner="team-run-1", resource="u-a")
+        _acquire(broker, owner="team-run-1", resource="u-b")
+        projection = TT.reclaim_all(
+            ledger,
+            broker,
+            TT.production_adapters(broker),
+            subplot_id=SUB,
+            team_run_id="team-run-1",
+            terminal_reason="success",
+            at_provider=_ats(),
+        )
+        assert projection["released_count"] == 2
+        assert projection["open_count"] == 0
+        assert projection["completion_fact_ref"] is not None
+        remaining = [
+            item for item in broker.inspect()["leases"] if item["owner_id"] == "team-run-1"
+        ]
+        assert remaining == []
+
+    def test_repeated_b8_is_idempotent(self, ledger: Any, broker: Any) -> None:
+        _open(ledger, broker)
+        _acquire(broker, owner="team-run-1", resource="u-a")
+        adapters = TT.production_adapters(broker)
+        first = TT.reclaim_all(
+            ledger,
+            broker,
+            adapters,
+            subplot_id=SUB,
+            team_run_id="team-run-1",
+            terminal_reason="success",
+            at_provider=_ats(),
+        )
+        facts_after_first = len(RL.read_facts(ledger))
+        second = TT.reclaim_all(
+            ledger,
+            broker,
+            adapters,
+            subplot_id=SUB,
+            team_run_id="team-run-1",
+            terminal_reason="success",
+            at_provider=_ats(),
+        )
+        assert first["completion_fact_ref"] == second["completion_fact_ref"]
+        assert len(RL.read_facts(ledger)) == facts_after_first
+
+    def test_action_exception_is_failed_and_blocks_completion(
+        self, ledger: Any, broker: Any
+    ) -> None:
+        _open(ledger, broker)
+        _acquire(broker, owner="team-run-1", resource="u-a")
+
+        def _explode(_lease: Any) -> Any:
+            raise RuntimeError("adapter blew up")
+
+        projection = TT.reclaim_all(
+            ledger,
+            broker,
+            TT.ReclaimAdapters(lease_release=_explode),
+            subplot_id=SUB,
+            team_run_id="team-run-1",
+            terminal_reason="hard-fail",
+            at_provider=_ats(),
+        )
+        assert projection["failed_count"] == 1
+        assert projection["completion_fact_ref"] is None
+        results = [r for r in RL.read_facts(ledger) if r.get("event") == "resource-result"]
+        assert results[-1]["reason_code"] == "action-exception:RuntimeError"
+
+    def test_retained_resource_is_a_blocked_terminal_not_a_completion(
+        self, ledger: Any, broker: Any
+    ) -> None:
+        _open(ledger, broker)
+        lease = _acquire(broker, owner="team-run-1", resource="u-a")
+        projection = TT.reclaim_all(
+            ledger,
+            broker,
+            TT.ReclaimAdapters(),  # every slot defaults to conservative retain
+            subplot_id=SUB,
+            team_run_id="team-run-1",
+            terminal_reason="operator-abort",
+            at_provider=_ats(),
+        )
+        assert projection["retained_count"] == 1
+        assert projection["completion_fact_ref"] is None
+        assert projection["open_count"] == 1
+        listed = [item["lease_id"] for item in broker.inspect()["leases"]]
+        assert lease.lease_id in listed
+
+    def test_close_fence_prevents_spawn_racing_completion(self, ledger: Any, broker: Any) -> None:
+        _open(ledger, broker)
+        TT.reclaim_all(
+            ledger,
+            broker,
+            TT.production_adapters(broker),
+            subplot_id=SUB,
+            team_run_id="team-run-1",
+            terminal_reason="success",
+            at_provider=_ats(),
+        )
+        with pytest.raises(B.OwnerAdmissionClosedError):
+            _acquire(broker, owner="team-run-1", resource="u-late")
+
+    def test_request_records_intent_without_acting(self, ledger: Any, broker: Any) -> None:
+        _open(ledger, broker)
+        lease = _acquire(broker, owner="team-run-1", resource="u-a")
+        outcome = TT.request(
+            ledger,
+            broker,
+            subplot_id=SUB,
+            team_run_id="team-run-1",
+            terminal_reason="operator-abort",
+            at="2026-07-18T13:00:00Z",
+        )
+        assert outcome["complete"] is False
+        listed = [item["lease_id"] for item in broker.inspect()["leases"]]
+        assert lease.lease_id in listed
+        events = {r["event"] for r in RL.read_facts(ledger)}
+        assert events == {"run-opened", "teardown-intent"}
+
+    def test_dry_run_census_changes_nothing(self, ledger: Any, broker: Any) -> None:
+        _open(ledger, broker)
+        _acquire(broker, owner="team-run-1", resource="u-a")
+        before = len(RL.read_facts(ledger))
+        projection = TT.reclaim_all(
+            ledger,
+            broker,
+            TT.production_adapters(broker),
+            subplot_id=SUB,
+            team_run_id="team-run-1",
+            terminal_reason="success",
+            at_provider=_ats(),
+            dry_run=True,
+        )
+        assert projection["open_count"] == 1
+        assert len(RL.read_facts(ledger)) == before
+        assert broker.inspect_owner_admission("team-run-1") is None
+
+    def test_crash_orphaned_attempt_reconciles_as_already_absent(
+        self, ledger: Any, broker: Any
+    ) -> None:
+        _open(ledger, broker)
+        lease = _acquire(broker, owner="team-run-1", resource="u-a")
+        close = broker.close_owner_admission(owner_id="team-run-1")
+        TT.append_teardown_event(
+            ledger,
+            TT.build_teardown_intent(
+                subplot_id=SUB,
+                at=AT,
+                team_run_id="team-run-1",
+                terminal_reason="success",
+                close_generation=int(close["close_generation"]),
+            ),
+        )
+        key = TT.action_key(
+            "team-run-1", lease.lease_id, str(lease.fencing_sequence), "lease-release"
+        )
+        TT.append_teardown_event(
+            ledger,
+            TT.build_resource_attempt(
+                subplot_id=SUB,
+                at=AT,
+                team_run_id="team-run-1",
+                intent_id=TT.intent_id_for("team-run-1", "success"),
+                resource_id=lease.lease_id,
+                resource_kind="provisional-lease",
+                generation=str(lease.fencing_sequence),
+                action="lease-release",
+            ),
+        )
+        # The crash happened after the release landed but before its result fact.
+        assert broker.release(lease.lease_id, token=lease.token, owner_id="team-run-1")
+        projection = TT.reclaim_all(
+            ledger,
+            broker,
+            TT.production_adapters(broker),
+            subplot_id=SUB,
+            team_run_id="team-run-1",
+            terminal_reason="success",
+            at_provider=_ats(),
+        )
+        assert projection["already_absent_count"] == 1
+        assert projection["completion_fact_ref"] is not None
+        results = [
+            r
+            for r in RL.read_facts(ledger)
+            if r.get("event") == "resource-result" and r.get("action_key") == key
+        ]
+        assert len(results) == 1
+        assert results[0]["reason_code"] == "recovered-after-crash"
+
+
+class TestRecovery:
+    def test_recover_skips_runs_with_live_owner_when_expired_only(
+        self, ledger: Any, broker: Any
+    ) -> None:
+        _open(ledger, broker)
+        _acquire(broker, owner="team-run-1", resource="u-live")
+        outcome = TT.recover(
+            ledger,
+            broker,
+            TT.production_adapters(broker),
+            subplot_id=SUB,
+            expired_only=True,
+            max_actions=4,
+            at_provider=_ats(),
+        )
+        assert outcome["recovered_runs"] == [
+            {"team_run_id": "team-run-1", "actions_taken": 0, "skipped": "live-owner"}
+        ]
+        observations = [
+            r for r in RL.read_facts(ledger) if r.get("event") == "recovery-observation"
+        ]
+        assert observations and observations[-1]["reason_code"] == "expired-only-live-owner"
+
+    def test_recover_reclaims_expired_run_within_budget(
+        self, ledger: Any, broker: Any, runtime: FakeRuntime
+    ) -> None:
+        _open(ledger, broker)
+        _acquire(broker, owner="team-run-1", resource="u-a")
+        runtime.advance(4000)  # beyond the default lease TTL: ownership derives expired
+        outcome = TT.recover(
+            ledger,
+            broker,
+            TT.production_adapters(broker),
+            subplot_id=SUB,
+            expired_only=True,
+            max_actions=4,
+            at_provider=_ats(),
+        )
+        run_pass = outcome["recovered_runs"][0]
+        assert run_pass["actions_taken"] >= 1
+        assert run_pass["complete"] is True
+
+    def test_recover_respects_action_budget(self, ledger: Any, broker: Any) -> None:
+        _open(ledger, broker)
+        for index in range(3):
+            _acquire(broker, owner="team-run-1", resource=f"u-{index}")
+        outcome = TT.recover(
+            ledger,
+            broker,
+            TT.production_adapters(broker),
+            subplot_id=SUB,
+            expired_only=False,
+            max_actions=2,
+            at_provider=_ats(),
+        )
+        assert outcome["recovered_runs"][0]["actions_taken"] == 2
+        projection = TT.project(TT.read_decision_input(ledger, broker), "team-run-1")
+        assert projection["completion_fact_ref"] is None
+        assert projection["open_count"] == 1
+
+    def test_recover_observes_even_with_nothing_to_do(self, ledger: Any, broker: Any) -> None:
+        _open(ledger, broker)
+        outcome = TT.recover(
+            ledger,
+            broker,
+            TT.production_adapters(broker),
+            subplot_id=SUB,
+            expired_only=True,
+            max_actions=4,
+            at_provider=_ats(),
+        )
+        assert outcome["recovered_runs"][0]["complete"] is True
+        observations = [
+            r for r in RL.read_facts(ledger) if r.get("event") == "recovery-observation"
+        ]
+        assert len(observations) == 1

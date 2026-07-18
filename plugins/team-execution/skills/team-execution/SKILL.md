@@ -285,12 +285,25 @@ Then submit the plan for approval. Do not start implementation during Phase A.
 
 Phase B starts only after plan approval.
 
-## Step B0: Parse the Approved Team Plan
+## Step B0: Parse the Approved Team Plan and Open the Team Run
 
 Read the approved `## Team Structure`, selected validators, reference files, automation
 eligibility, and state location.
 
 If the plan has no `## Team Structure`, stop and tell the user to run `/team-execute`.
+
+Before anything can spawn, open the bounded team run (#358 R2):
+
+```bash
+lease_protocol.py open-run --session-id "$CLAUDE_CODE_SESSION_ID"
+```
+
+The wrapper resolves Saga's canonical `team_teardown.py` (local checkout and installed
+plugin layouts resolve the same script; a pre-#358 Saga fails loud — B8 is never armed
+silently). The returned `team_run_id` is the run's canonical owner identity: every lease
+this run acquires carries it as the broker `owner_id`, and Step B8's owner-admission close
+fences exactly that identity. Record the id in the run state; prompts, prose, or wall time
+never substitute for it.
 
 ---
 
@@ -547,9 +560,13 @@ the signal was required.
 
 ---
 
-## Step B7: Completion
+## Step B7: Gate Results and Report Draft
 
-Report:
+B7 computes gate results and prepares the completion report **draft**. B7 cannot assert
+run completion (#358 KTD2): the word "complete" is gated on Step B8's zero-open teardown
+receipt. A report published before B8 must say the run is terminal-pending-teardown.
+
+Report draft contents:
 
 - Worker changes.
 - Reviewer scores.
@@ -569,14 +586,41 @@ not a trip. See `references/validator-execution-order.md` (Required-Evidence Abs
 
 ---
 
-## Step B8: Stop and release resident leases
+## Step B8: Terminal Teardown and Reclamation
 
-Send an explicit stop to every named resident worker, reviewer, and validator. Wait for every handle
-to report terminal; silence, timeout, and a missing handle are not terminal evidence. Then run
-`lease_protocol.py teardown --session-id "$CLAUDE_CODE_SESSION_ID"`, passing each verified terminal
-agent id with `--terminal-agent-id`. The wrapper refuses unresolved children, releases only this
-session's agent leases, and sweeps expired agent debris. A crashed or ambiguous child retains its
-lease until TTL and a later sweep. Follow the exact protocol in `references/lease-protocol.md`.
+Every terminal path the coordinator observes — success, hard-fail, operator abort, and a
+raised andon — enters B8 exactly once logically, even when invoked repeatedly physically
+(#358 R3). No configuration, best-effort flag, or failure branch bypasses it.
+
+1. **Stop residents.** Send an explicit stop to every named resident worker, reviewer, and
+   validator. Wait for every handle to report terminal; silence, timeout, and a missing
+   handle are not terminal evidence. Then run
+   `lease_protocol.py teardown --session-id "$CLAUDE_CODE_SESSION_ID"`, passing each
+   verified terminal agent id with `--terminal-agent-id`. The wrapper refuses unresolved
+   children, releases only this session's agent leases, and sweeps expired agent debris.
+   Follow the exact protocol in `references/lease-protocol.md`.
+2. **Reclaim the run.** Run the idempotent terminal driver:
+
+   ```bash
+   lease_protocol.py reclaim-all --team-run-id "$TEAM_RUN_ID" --reason <success|hard-fail|operator-abort|andon>
+   ```
+
+   The driver closes owner admission in the broker (after which no acquire, reserve,
+   claim, or retry for this run can race the receipt), appends `teardown-intent`,
+   reconciles the complete owned-resource snapshot, executes typed authorized actions,
+   appends each outcome, re-reconciles, re-verifies the still-closed close generation, and
+   emits `teardown-complete` only at zero open resources.
+3. **Read the verdict.** The returned `team_teardown.v1` projection is the only completion
+   authority: `open_count == 0` plus a `completion_fact_ref` is a completed teardown. A
+   run with `retained`/`failed` resources is **terminal-but-blocked** — report it exactly
+   that way, never as complete; recovery stays armed and repeated `reclaim-all` converges
+   by stable action keys.
+
+A crashed or `SIGKILL`ed coordinator cannot run B8 synchronously: Saga's `SessionEnd` hook
+records a bounded teardown request, and `SessionStart` recovery (or an explicit
+`lease_protocol.py recover --expired-only`) reclaims after lease expiry with dead-owner
+proof. Hook receipts are request evidence only — completion always requires the derived
+zero-open receipt. Full contract: `references/teardown-reclamation.md`.
 
 ---
 

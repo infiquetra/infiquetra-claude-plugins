@@ -72,7 +72,48 @@ testing 8.5, event-flow 9, scenario 9. Seven findings — one P2, six P3, no P0/
 Post-fix gates: focused liveness suites 82 passed; full pytest 4862 passed / 1 skipped; ruff
 check + format clean; mypy clean; bandit clean on both changed plugin files.
 
+## Ceremony round 2 (`wf_b85447c1-c2f` at `63189b48`)
+
+Fresh full re-runs of the three affected lenses. All seven round-1 findings verified
+**fixed-adequately** (devils-advocate empirically proved the dispatch guard load-bearing by
+neutralizing it and watching the regression flip healthy). Scores rose to 8.5 / 9 / 9. Three
+new P3s, no P0/P1/P2 — fixed in `46f6a6f4`:
+
+- **devils-advocate**: plan R4's literal "now < dispatch yields evidence-error" diverged from
+  the tolerance-based guard, and a within-tolerance future dispatch anchored suspicion in the
+  future. Fix: clamp the suspicion anchor to `now` (mirroring the heartbeat clamp) and reword
+  R4 to the tolerance semantics both guards implement. Ceremony anchor re-verified unchanged
+  (`453fa2d1…`); R4 sits outside the anchored bytes.
+- **security**: `pending_name` read back from an inflight record was joined into the cleanup
+  unlink path unguarded (defense-in-depth only — the shared-.git trust boundary already gates
+  it). Fix: reject non-bare filenames before the join, traversal regression test added.
+- **testing**: the sparse band was pinned only at 0 and 4 intervals. Fix: parametrized
+  phi-null pin across 0–4.
+
+Post-fix gates: full pytest 4868 passed / 1 skipped, ruff check + format, mypy clean. Plan R4
+wording synced to the outcome branch (`fa7d2759`).
+
+## Ceremony round 3 (`wf_3c0fddc5-cd0` at `46f6a6f4`) — converged
+
+Verification-scoped panel (no fresh sweep): all three round-2 fixes verified
+**fixed-adequately**, zero regressions, zero new findings. Highlights: devils-advocate proved
+the anchor clamp monotonically safe for every `suspicion_anchor` consumer (the one
+potentially-unsafe direction — easier refutation — is unreachable because a clamped anchor
+implies a future dispatch, which forces `suspicious=False`); security probed traversal shapes
+on darwin (`..`-only and empty names pass the equality check but resolve to directories and
+cannot unlink a file) and confirmed the raise fails safe with both records retained; testing
+mutated `minimum_intervals` to prove the sparse-band pins fail under regression.
+
+Ceremony disposition: round 1 seven findings (1 P2, 6 P3) → fixed; round 2 all verified
+fixed-adequately + three new P3 → fixed; round 3 all verified, nothing new. Remediation loop
+closed within the three-cycle budget.
+
+Process note: workflow `args` did not interpolate into lens prompts (agents saw literal
+`undefined` placeholders — args likely arrived JSON-string-encoded). Every agent
+self-corrected via git and provably reviewed the intended SHA (explicit checkouts of
+`8d3dbbe8` / `63189b48` / `46f6a6f4` in their command logs), so no result is tainted.
+
 ## Next step
 
-Fresh re-runs of the three affected lenses (devils-advocate, security, testing) at the fix
-HEAD, then `/code-review` and `/qa` at the close SHA.
+`/code-review` and `/qa` at close SHA `46f6a6f4`, then the PR (merge under operator
+confirmation).

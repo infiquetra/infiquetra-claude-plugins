@@ -21,7 +21,7 @@
   settlement-close protected write (#355 linearization); write-once accept-intent binds one
   receiver; successor via close-receipt CAS; accept-commit; crash-gap idempotent resume; 17
   oracles against the REAL fleet broker.
-- **U4** (`<u4-commit>`) — `/outcome` CLI verbs `discover` / `handoff` / `attach`
+- **U4** (`51596bf3`) — `/outcome` CLI verbs `discover` / `handoff` / `attach`
   (read-only default; `--advance` = ONE one-subplot tick behind the validated handoff with
   revision+frontier re-checks; `--attend` = native resume after validation); halts exit 3.
   Race + replay oracles: one successor, zero double dispatch.

@@ -1,6 +1,6 @@
 # Outcome: Ship lease-safe cross-runtime Outcome continuity with bounded concurrency, settlement, liveness, and reclamation
 
-**Outcome ID:** `lease-safe-runtime-continuity` · **Revision:** 3 · **Progress:** 2/11 (18%)
+**Outcome ID:** `lease-safe-runtime-continuity` · **Revision:** 3 · **Progress:** 4/11 (36%)
 
 ## Topology
 
@@ -8,13 +8,13 @@
 flowchart TD
     sub-350["sub-350: done"]
     sub-351["sub-351: done"]
-    sub-356["sub-356: dispatched"]
-    sub-355["sub-355: blocked"]
-    sub-357["sub-357: blocked"]
+    sub-356["sub-356: done"]
+    sub-355["sub-355: done"]
+    sub-357["sub-357: dispatched"]
     sub-358["sub-358: blocked"]
-    claude-cross-runtime["claude-cross-runtime: blocked"]
+    claude-cross-runtime["claude-cross-runtime: ready"]
     sub-353["sub-353: blocked"]
-    codex-substrate["codex-substrate: blocked"]
+    codex-substrate["codex-substrate: ready"]
     codex-parity["codex-parity: blocked"]
     cross-runtime-acceptance["cross-runtime-acceptance: blocked"]
     sub-350 --> sub-356
@@ -41,7 +41,7 @@ flowchart TD
 ## Attention (consolidated)
 
 Operator attention (1 item, ranked):
-1. [gate] sub-356 — ready to ship (gated,risky) — operator merges · holds up 8 downstream
+1. [gate] sub-357 — ready to ship (gated) — operator merges · holds up 3 downstream
 
 ## Subplots
 
@@ -49,13 +49,13 @@ Operator attention (1 item, ranked):
 | --- | --- | --- | --- |
 | `sub-350` | done | PR https://github.com/infiquetra/infiquetra-claude-plugins/pull/607, issue infiquetra/infiquetra-claude-plugins#350 | no data yet |
 | `sub-351` | done | PR https://github.com/infiquetra/infiquetra-claude-plugins/pull/611, issue infiquetra/infiquetra-claude-plugins#351 | no data yet |
-| `sub-356` | dispatched | issue infiquetra/infiquetra-claude-plugins#356 | no data yet |
-| `sub-355` | blocked | issue infiquetra/infiquetra-claude-plugins#355 | no data yet |
-| `sub-357` | blocked | issue infiquetra/infiquetra-claude-plugins#357 | no data yet |
+| `sub-356` | done | PR https://github.com/infiquetra/infiquetra-claude-plugins/pull/613, issue infiquetra/infiquetra-claude-plugins#356 | no data yet |
+| `sub-355` | done | PR https://github.com/infiquetra/infiquetra-claude-plugins/pull/614, issue infiquetra/infiquetra-claude-plugins#355 | no data yet |
+| `sub-357` | dispatched | issue infiquetra/infiquetra-claude-plugins#357 | no data yet |
 | `sub-358` | blocked | issue infiquetra/infiquetra-claude-plugins#358 | no data yet |
-| `claude-cross-runtime` | blocked | issue infiquetra/infiquetra-claude-plugins#604 | no data yet |
+| `claude-cross-runtime` | ready | issue infiquetra/infiquetra-claude-plugins#604 | no data yet |
 | `sub-353` | blocked | issue infiquetra/infiquetra-claude-plugins#353 | no data yet |
-| `codex-substrate` | blocked | issue infiquetra/infiquetra-codex-plugins#33 | no data yet |
+| `codex-substrate` | ready | issue infiquetra/infiquetra-codex-plugins#33 | no data yet |
 | `codex-parity` | blocked | issue infiquetra/infiquetra-codex-plugins#34 | no data yet |
 | `cross-runtime-acceptance` | blocked | issue infiquetra/infiquetra-claude-plugins#605 | no data yet |
 

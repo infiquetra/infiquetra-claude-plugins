@@ -9,7 +9,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -119,13 +119,16 @@ def _append(
     event_id: str,
     payload: dict[str, object],
 ) -> dict[str, Any]:
-    return LV.append_event(
-        ledger,
-        identity,
-        event,
-        event_id=event_id,
-        at="2026-07-17T00:00:00Z",
-        payload=payload,
+    return cast(
+        "dict[str, Any]",
+        LV.append_event(
+            ledger,
+            identity,
+            event,
+            event_id=event_id,
+            at="2026-07-17T00:00:00Z",
+            payload=payload,
+        ),
     )
 
 

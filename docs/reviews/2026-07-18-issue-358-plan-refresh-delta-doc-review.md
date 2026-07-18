@@ -32,7 +32,7 @@ reuse identical values). The vehicle revision removes that false precision entir
 identity is now **the SHA-256 of the exact `## Workflow Structure` and `## Workflow Operating
 Contract` section bytes**, the same mechanism the operator approved for issue-357.
 
-## Ceremony candidate anchor (awaiting operator approval)
+## Ceremony candidate anchor (operator-approved)
 
 ```
 04cf1694e1d1cc94c8e414fcfdfaec129a2b080d275485fc4283f51057e77c51
@@ -41,6 +41,11 @@ Contract` section bytes**, the same mechanism the operator approved for issue-35
 Recomputed byte-exact after every edit in this delta. Dispatch of the sub-358 leaf under the
 outcome's quiesce posture requires operator approval of this candidate; any model, effort, lens,
 validator, or execution-class change afterward requires a newly approved candidate.
+
+**Operator approval:** Jeff, 2026-07-18, in-session. The anchor was recomputed byte-exact against
+the committed plan at approval time (`147f5967`, section bytes 5329) and matched. The approval
+authorizes dispatch of `sub-358` only; the standing quiesce remains in force for
+`claude-cross-runtime` and `codex-substrate`, whose plans have not been reviewed.
 
 ## Findings
 

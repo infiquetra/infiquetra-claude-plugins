@@ -1,5 +1,65 @@
 # Changelog
 
+## [0.102.0] - 2026-07-18
+
+### Added - non-skippable team teardown and reclamation (#358)
+
+- New `scripts/team_teardown.py`: the closed `run_fact.v1 kind=teardown` event family
+  (`run-opened`, `teardown-intent`, `resource-attempt`, `resource-result`,
+  `recovery-observation`, `teardown-complete`) with transition validation under the
+  ledger's exclusive lock, stable action idempotency keys, and the derived
+  `team_teardown.v1` projection over one chain-verified ledger snapshot plus one
+  lock-consistent broker snapshot. No second registry, mutable status store, TTL clock, or
+  reaper decision engine.
+- The idempotent Step B8 terminal driver (`reclaim_all`): close owner admission, verified
+  snapshot, crash-orphan reconcile (`already-absent` on the existing action key), typed
+  actions, re-reconcile, still-closed generation recheck, and a `teardown-complete`
+  receipt only at zero open resources. `request` records intent without acting; `recover`
+  is a budgeted expired-only pass that always appends an observation, isolated per run —
+  one run's refused pass (any exception family, the broker's included) records a
+  `recovery-run-error` observation and never blocks recovery of newer runs. Budget and
+  `actions_taken` evidence are counted at the source: `reclaim_all` reports each call's
+  completed budgeted actions through a `ReclaimStats` object incremented inside the
+  per-run reclaim lock and readable even when the call raises mid-flight — never
+  inferred from before/after ledger snapshots, which could fail independently, diff
+  against a fabricated baseline when the first read failed, and attribute a concurrent
+  racer's results to the recovering pass. The only best-effort bookkeeping left is the
+  observation append itself, which degrades to the run's in-memory pass entry
+  (`evidence_error`) instead of aborting the batch. The action budget bounds real
+  adapter invocations only — crash-orphan reconciles never increment the counter by
+  construction — and the reconcile reason code stays driver-reserved:
+  `ActionOutcome.validated()` refuses `recovered-after-crash` from the adapter surface
+  so no adapter outcome can impersonate driver bookkeeping in the durable evidence. Concurrent physical B8 passes for one run serialize on an
+  exclusive per-run reclaim lock so each logical action invokes its adapter exactly once,
+  and a broker-evicted-then-re-closed admission generation replays the run's one recorded
+  intent instead of poisoning the run (`close_generation` is not intent identity).
+- Typed action adapters: terminal-receipt-gated resident release, exact-identity process
+  stop (PID + process-start + boot + run ownership, TERM first, KILL only under the
+  lease-recorded `term-then-kill` escalation, absence proof without signaling), the
+  canonical #356 worktree sweep, and identity-checked provisional lease release. Every
+  ambiguity fails safe as `retained`.
+- `authorize_resident_stop`: only a #357 `confirmed-stalled` decision carrying
+  `team-reping-confirmed` authority or an explicit segment shed, with current ownership,
+  authorizes a resident stop intent.
+- New `hooks/team_teardown_hook.py`: `SessionEnd` (5 s) records teardown requests for the
+  trusted session's open runs; `SessionStart startup|resume` (15 s) runs one
+  `recover --expired-only --max-actions 4` pass. Hook receipts are request evidence, never
+  closure.
+- `references/teardown-consumer-sites.md`: the source-aware run-open / register / driver /
+  recovery inventory, enforced by the hermetic CI leak invariant
+  (`tests/test_teardown_ci_invariant.py`).
+
+## [0.101.0] - 2026-07-17
+
+### Added - shared fleet liveness facts and adapters (#357)
+
+- Added the closed `run_fact.v1 kind=liveness` subject/event family, lock-scoped idempotent
+  transitions, cause-stable generations, atomic re-ping claims, and read-only decision projection.
+- Preserved Outcome's exact heartbeat-first then absolute-timeout R31 authority while exposing phi
+  suspicion only as additive evidence.
+- Added hash-only SendMessage hook receipts that distinguish accepted, definitive-not-sent, and
+  unresolved outcomes. Only accepted sends start response windows; #357 performs no teardown.
+
 ## [0.100.0] - 2026-07-17
 
 ### Added - orphan runner containment and receipt-chained evidence (#355)

@@ -16,6 +16,8 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).parent.parent
 PLUGIN_ROOT = ROOT / "plugins" / "team-execution"
 SCRIPT = (
@@ -1045,3 +1047,172 @@ def test_resume_skill_references_valid_artifact_pointer_script_path() -> None:
     script_rel = "plugins/team-execution/skills/team-execution/scripts/artifact_pointer.py"
     assert script_rel in text, "resume SKILL must reference the artifact_pointer.py deref path"
     assert (repo_root / script_rel).is_file(), f"{script_rel} referenced by resume SKILL is missing"
+
+
+def test_liveness_baseline_and_unchanged_observation_create_no_pointer_ref(tmp_path: Path) -> None:
+    ap = _load()
+    repo = _init_repo(tmp_path / "repo")
+    refs_before = _git(
+        repo,
+        "for-each-ref",
+        "--format=%(refname)",
+        "refs/team-execution/snapshots/",
+    )
+    index_before = _git(repo, "write-tree")
+    baseline = ap.capture_liveness_baseline(
+        ["tracked.txt"], repo_root=repo, observed_monotonic=10.0
+    )
+    result = ap.observe_liveness_paths(baseline, repo_root=repo, observed_monotonic=20.0)
+    refs_after = _git(
+        repo,
+        "for-each-ref",
+        "--format=%(refname)",
+        "refs/team-execution/snapshots/",
+    )
+    assert result["classification"] == "unchanged"
+    assert result["event"] is None and result["payload"] is None
+    assert refs_after == refs_before
+    assert _git(repo, "write-tree") == index_before
+
+
+def test_liveness_scoped_change_is_unattributed_without_provenance(tmp_path: Path) -> None:
+    ap = _load()
+    repo = _init_repo(tmp_path / "repo")
+    baseline = ap.capture_liveness_baseline(
+        ["tracked.txt"], repo_root=repo, observed_monotonic=10.0
+    )
+    (repo / "tracked.txt").write_text("worker change\n", encoding="utf-8")
+    result = ap.observe_liveness_paths(baseline, repo_root=repo, observed_monotonic=20.0)
+    assert result["classification"] == "scoped-activity-unattributed"
+    assert result["event"] == "scoped-activity-unattributed"
+    assert result["payload"]["baseline_digest"] == baseline["baseline_digest"]
+    assert result["payload"]["current_digest"] != baseline["baseline_digest"]
+    assert result["provenance_ref"] is None
+
+
+def test_liveness_digest_ignores_unrelated_paths_and_same_digest_epochs(tmp_path: Path) -> None:
+    ap = _load()
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "other.txt").write_text("other\n", encoding="utf-8")
+    _git(repo, "add", "other.txt")
+    _git(repo, "commit", "-q", "-m", "other")
+    baseline = ap.capture_liveness_baseline(
+        ["tracked.txt"], repo_root=repo, observed_monotonic=10.0
+    )
+    (repo / "other.txt").write_text("unrelated change\n", encoding="utf-8")
+    unrelated = ap.observe_liveness_paths(baseline, repo_root=repo, observed_monotonic=20.0)
+    assert unrelated["classification"] == "unchanged"
+    (repo / "tracked.txt").write_text("temporary\n", encoding="utf-8")
+    (repo / "tracked.txt").write_text("base\n", encoding="utf-8")
+    restored = ap.observe_liveness_paths(baseline, repo_root=repo, observed_monotonic=30.0)
+    assert restored["classification"] == "unchanged"
+
+
+def test_liveness_deletion_and_untracked_own_paths_are_activity(tmp_path: Path) -> None:
+    ap = _load()
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "scope").mkdir()
+    (repo / "scope" / "tracked.txt").write_text("tracked\n", encoding="utf-8")
+    _git(repo, "add", "scope/tracked.txt")
+    _git(repo, "commit", "-q", "-m", "scope")
+    baseline = ap.capture_liveness_baseline(["scope"], repo_root=repo, observed_monotonic=10.0)
+    (repo / "scope" / "tracked.txt").unlink()
+    (repo / "scope" / "untracked.txt").write_text("new\n", encoding="utf-8")
+    result = ap.observe_liveness_paths(baseline, repo_root=repo, observed_monotonic=20.0)
+    assert result["classification"] == "scoped-activity-unattributed"
+
+
+def test_exclusive_provenance_upgrades_only_the_exact_interval_and_scope(tmp_path: Path) -> None:
+    ap = _load()
+    repo = _init_repo(tmp_path / "repo")
+    baseline = ap.capture_liveness_baseline(
+        ["tracked.txt"], repo_root=repo, observed_monotonic=10.0
+    )
+    (repo / "tracked.txt").write_text("worker change\n", encoding="utf-8")
+    activity = ap.observe_liveness_paths(baseline, repo_root=repo, observed_monotonic=20.0)
+    generation = hashlib.sha256(b"generation").hexdigest()
+    provenance = {
+        "schema": ap.EXCLUSIVE_PROVENANCE_SCHEMA,
+        "subject_id": f"subject:sha256:{hashlib.sha256(b'subject').hexdigest()}",
+        "lease_id": "lease-1",
+        "resource_sha256": hashlib.sha256(b"resource").hexdigest(),
+        "token_sha256": hashlib.sha256(b"token").hexdigest(),
+        "broker_epoch": "epoch-1",
+        "fencing_sequence": 4,
+        "paths": baseline["paths"],
+        "path_set_sha256": baseline["path_set_sha256"],
+        "baseline_digest": baseline["baseline_digest"],
+        "current_digest": activity["current_digest"],
+        "interval_start": 10.0,
+        "interval_end": 20.0,
+        "custody_ref": "custody-1",
+        "covered_generation_ids": [generation],
+    }
+    subject_identity = {
+        "subject_id": provenance["subject_id"],
+        "lease_id": provenance["lease_id"],
+        "resource_sha256": provenance["resource_sha256"],
+        "token_sha256": provenance["token_sha256"],
+        "broker_epoch": provenance["broker_epoch"],
+        "fencing_sequence": provenance["fencing_sequence"],
+        "baseline_sha256": baseline["baseline_digest"],
+        "path_set_sha256": baseline["path_set_sha256"],
+    }
+    progress = ap.observe_liveness_paths(
+        baseline,
+        repo_root=repo,
+        observed_monotonic=20.0,
+        exclusive_provenance=provenance,
+        subject_identity=subject_identity,
+    )
+    assert progress["classification"] == "artifact-progress"
+    assert progress["event"] == "artifact-progress"
+    assert progress["payload"]["provenance_receipt"] == "custody-1"
+    assert progress["covered_generation_ids"] == [generation]
+    with pytest.raises(ValueError, match="interval"):
+        ap.observe_liveness_paths(
+            baseline,
+            repo_root=repo,
+            observed_monotonic=21.0,
+            exclusive_provenance=provenance,
+            subject_identity=subject_identity,
+        )
+    with pytest.raises(ValueError, match="does not match the liveness subject"):
+        ap.observe_liveness_paths(
+            baseline,
+            repo_root=repo,
+            observed_monotonic=20.0,
+            exclusive_provenance={**provenance, "fencing_sequence": 5},
+            subject_identity=subject_identity,
+        )
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["../escape", "/absolute", "-option", ".git/config", "nested/../escape"],
+)
+def test_liveness_paths_reject_traversal_absolute_and_git_control(
+    tmp_path: Path, path: str
+) -> None:
+    ap = _load()
+    repo = _init_repo(tmp_path / "repo")
+    with pytest.raises(ValueError):
+        ap.capture_liveness_baseline([path], repo_root=repo, observed_monotonic=1.0)
+
+
+def test_liveness_paths_reject_symlink_escape(tmp_path: Path) -> None:
+    ap = _load()
+    repo = _init_repo(tmp_path / "repo")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (repo / "escape").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(ValueError, match="symlink"):
+        ap.capture_liveness_baseline(["escape/secret.txt"], repo_root=repo, observed_monotonic=1.0)
+
+
+def test_liveness_baseline_rejects_sparse_checkout(tmp_path: Path) -> None:
+    ap = _load()
+    repo = _init_repo(tmp_path / "repo")
+    _git(repo, "config", "core.sparseCheckout", "true")
+    with pytest.raises(ap.GitError, match="sparse"):
+        ap.capture_liveness_baseline(["tracked.txt"], repo_root=repo, observed_monotonic=1.0)

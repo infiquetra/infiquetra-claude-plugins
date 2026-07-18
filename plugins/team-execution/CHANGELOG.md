@@ -4,6 +4,40 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [2.21.0] - 2026-07-18
+
+### Changed - non-skippable terminal teardown (#358)
+
+- Step B0 now opens the bounded team run (`lease_protocol.py open-run`): the returned
+  `team_run_id` is the run's canonical broker `owner_id` for every subsequent lease.
+- Step B7 is gate results and report **draft** only — it cannot assert run completion
+  (KTD2); the word "complete" is gated on Step B8's zero-open teardown receipt.
+- Step B8 is the full terminal state machine: every observed terminal path (success,
+  hard-fail, operator abort, andon) stops residents, then runs
+  `lease_protocol.py reclaim-all` — owner-admission close, typed authorized actions, and a
+  `team_teardown.v1` verdict where retained/failed resources are a truthful
+  terminal-but-blocked state, never "complete". Crash/`SIGKILL` recovery is bounded and
+  eventual (SessionEnd request, SessionStart `recover --expired-only`), documented in the
+  new `references/teardown-reclamation.md`.
+- `lease_protocol.py` gains the closed teardown verb surface (`open-run`, `status`,
+  `request`, `reclaim-all`, `recover`) resolving Saga's canonical `team_teardown.py` the
+  same way in local checkouts and installed layouts; a pre-#358 Saga fails loud before B8
+  is armed. Minimum compatible fleet-core is now 0.15.0 (the owner-admission closing
+  fence).
+
+## [2.20.0] - 2026-07-17
+
+### Added - resident liveness protocol (#357)
+
+- Added the installed-Saga liveness adapter with preflight, pre-spawn scoped baselines,
+  post-host-return subject opening, cooperative boundary polling, atomic re-ping claims, and
+  hash-only SendMessage staging.
+- Added attribution-safe path observations: changed digests remain unattributed unless an exact
+  lease/fence/custody receipt binds the interval and named generations; unchanged polls create no
+  durable artifact pointer.
+- Documented executable polling at renewal, host-return, dependency-unblock, and B2 boundaries while
+  preserving #351 manifest delivery authority and #358 destructive-action ownership.
+
 ## [2.19.0] - 2026-07-17
 
 ### Added - receipt-chained manifest acceptance (#355)

@@ -169,3 +169,73 @@ def test_cli_describes_policy(capsys: Any) -> None:
     assert LV.main([]) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["stalled_state"] == "stalled"
+
+
+def test_adaptive_phi_is_advisory_and_never_terminalizes_outcome(tmp_path: Path) -> None:
+    spec = _spec([{"subplot_id": "a", "title": "a", "kind": "code", "timeout_seconds": 1000}])
+    store = _store(tmp_path)
+    _dispatch(store, "a", at=0.0)
+    for at in (10, 20, 30, 40, 50, 60):
+        LV.record_heartbeat(store, "a", at=at)
+
+    result = LV.harvest_liveness(spec, store, now=160.0)
+
+    assert result["stalled"] == []
+    assert result["adaptive"]["a"]["classification"] == "heartbeat-suspect"
+    assert result["adaptive"]["a"]["terminal_authority"] == "none"
+    assert ENG.derive_states(spec, store)["a"] == "dispatched"
+
+
+def test_legacy_heartbeat_breach_precedes_absolute_timeout_with_exact_reason(
+    tmp_path: Path,
+) -> None:
+    spec = _spec(
+        [
+            {
+                "subplot_id": "a",
+                "title": "a",
+                "kind": "code",
+                "heartbeat_seconds": 10,
+                "timeout_seconds": 20,
+            }
+        ]
+    )
+    store = _store(tmp_path)
+    _dispatch(store, "a", at=100.0)
+
+    LV.harvest_liveness(spec, store, now=200.0)
+
+    event = next(e for e in STORE.read_completion_events(store, "a") if e.state == "stalled")
+    assert event.payload["reason"] == "no heartbeat for 100s (> 10s budget) — leaf reclaimed (R31)"
+
+
+def test_adaptive_engine_failure_is_evidence_error_after_legacy_rules(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    spec = _spec([{"subplot_id": "a", "title": "a", "kind": "code", "timeout_seconds": 1000}])
+    store = _store(tmp_path)
+    _dispatch(store, "a", at=100.0)
+
+    def broken(_module: str) -> Any:
+        raise RuntimeError("corrupt adaptive evidence")
+
+    monkeypatch.setattr(LV.fleet_commons_shim, "load", broken)
+    result = LV.harvest_liveness(spec, store, now=200.0)
+    assert result["stalled"] == []
+    assert result["adaptive"]["a"]["classification"] == "evidence-error"
+
+
+def test_valid_legacy_terminal_survives_adaptive_engine_failure(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    spec = _spec([{"subplot_id": "a", "title": "a", "kind": "code", "timeout_seconds": 10}])
+    store = _store(tmp_path)
+    _dispatch(store, "a", at=100.0)
+
+    def broken(_module: str) -> Any:
+        raise AssertionError("adaptive engine must not run before a valid legacy terminal")
+
+    monkeypatch.setattr(LV.fleet_commons_shim, "load", broken)
+    result = LV.harvest_liveness(spec, store, now=200.0)
+    assert result["stalled"] == ["a"]
+    assert result["adaptive"] == {}

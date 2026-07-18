@@ -41,6 +41,7 @@ VALIDATOR_REFERENCES = {
 WORKER_REFERENCES = {
     "external-engine-workers.md",
     "lease-protocol.md",
+    "teardown-reclamation.md",
 }
 
 
@@ -62,7 +63,7 @@ def test_team_execution_metadata_is_v2_and_marketplace_matches() -> None:
     marketplace = json.loads(_read(ROOT / ".claude-plugin" / "marketplace.json"))
     entry = next(p for p in marketplace["plugins"] if p["name"] == "team-execution")
 
-    assert plugin_json["version"] == "2.19.0"  # receipt-chained manifest acceptance (#355)
+    assert plugin_json["version"] == "2.21.0"  # non-skippable teardown contract (#358)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/team-execution"
     assert "validator" in plugin_json["description"].lower()
@@ -216,6 +217,92 @@ def test_skill_documents_validator_state_and_automation_gates() -> None:
         "lease_protocol.py teardown",
     ):
         assert required in skill_doc
+
+
+def test_skill_documents_non_skippable_terminal_teardown() -> None:
+    """#358 R11: Phase B names the exact executable teardown wiring — B0 run-open, every
+    terminal branch entering B8, the reclaim driver, and the recovery seams."""
+    skill_doc = _read(PLUGIN_ROOT / "skills" / "team-execution" / "SKILL.md")
+    reference = _read(
+        PLUGIN_ROOT / "skills" / "team-execution" / "references" / "teardown-reclamation.md"
+    )
+
+    for required in (
+        "lease_protocol.py open-run",
+        "lease_protocol.py reclaim-all",
+        "team_run_id",
+        "terminal-but-blocked",
+        "success, hard-fail, operator abort",
+        "exactly once logically",
+        "zero-open",
+        "recover --expired-only",
+    ):
+        assert required in skill_doc, f"SKILL.md missing teardown wiring: {required!r}"
+    # B7 prepares the draft; only B8's receipt allows the word complete (KTD2).
+    assert "B7 cannot assert" in skill_doc
+    for required in (
+        "team_teardown.v1",
+        "close-owner-admission",
+        "run-opened",
+        "teardown-intent",
+        "resource-attempt",
+        "resource-result",
+        "recovery-observation",
+        "teardown-complete",
+        "term-then-kill",
+        "confirmed-stalled",
+        "already-absent",
+        "request --cwd",
+        "recover --expired-only --max-actions 4",
+    ):
+        assert required in reference, f"teardown-reclamation.md missing: {required!r}"
+
+
+def test_lease_protocol_resolves_and_runs_the_real_teardown_cli(tmp_path: Path) -> None:
+    """#358 R11/U6: the wrapper resolves Saga's canonical team_teardown.py (same script for
+    local checkout and installed layouts) and drives the real B0/B8 verbs end to end,
+    against a hermetic fleet-state root — never the developer's live authority."""
+    import subprocess
+    import sys as _sys
+
+    script = PLUGIN_ROOT / "skills" / "team-execution" / "scripts" / "lease_protocol.py"
+    env = dict(**__import__("os").environ)
+    # Hermetic stores: a temp fleet-state root and a temp git repo whose common dir
+    # receives the run-fact ledger — the developer's live authority is never touched.
+    env["INFIQUETRA_FLEET_STATE_DIR"] = str(tmp_path / "fleet-state")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(
+        ["git", "init", "--quiet", str(repo)], check=True, capture_output=True, timeout=30
+    )
+
+    def _run(*argv: str) -> dict:
+        completed = subprocess.run(
+            [_sys.executable, str(script), *argv],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=60,
+            cwd=ROOT,
+        )
+        assert completed.returncode == 0, completed.stderr
+        parsed = json.loads(completed.stdout)
+        assert isinstance(parsed, dict)
+        return parsed
+
+    opened = _run("open-run", "--repo-root", str(repo), "--session-id", "conformance-session")
+    run_id = opened["opened"]
+    assert run_id.startswith("team-run-")
+
+    status = _run("status", "--repo-root", str(repo), "--team-run-id", run_id)
+    assert status["schema"] == "team_teardown.v1"
+    assert status["completion_fact_ref"] is None
+
+    reclaimed = _run(
+        "reclaim-all", "--repo-root", str(repo), "--team-run-id", run_id, "--reason", "success"
+    )
+    assert reclaimed["open_count"] == 0
+    assert reclaimed["completion_fact_ref"] is not None
 
 
 def test_skill_documents_required_evidence_absence_gate() -> None:

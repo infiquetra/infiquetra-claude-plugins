@@ -1,88 +1,82 @@
 # Doc review - fleet-shared liveness engine plan (#357)
 
-Verdict: **READY AT OPERATOR GATE** - all issue-rubric, lifecycle, safety, and executable-readiness
-findings were fixed in place; zero P0-P3 findings remain. Implementation is intentionally blocked
-until #351/#356 are merged and the outcome plus exact Verified Workflow candidate are approved.
+Verdict: **READY AT PRE-IMPLEMENTATION GATES**. The merged-#355 baseline refresh has zero
+unresolved P0-P3 findings and does not change the approved implementation workflow.
 
-## Review-Result Contract
+## Review contract
 
-- **Target:** `docs/plans/2026-07-15-issue-357-fleet-shared-liveness-engine-plan.md`
-- **Reviewed revision:** working tree on `outcome/lease-safe-runtime-continuity`, base
-  `a20cc3ce6d74`
-- **Blocked status:** document is not blocked; execution is blocked at explicit operator gates and
-  hard #351/#356 dependencies
-- **Linked issue:** infiquetra/infiquetra-claude-plugins#357, outcome node `sub-357`
-- **Linked outcome:** `docs/outcomes/lease-safe-runtime-continuity/proposal.md` (local review draft)
-- **Review artifact:**
-  `docs/reviews/2026-07-15-issue-357-fleet-shared-liveness-engine-plan-doc-review.md`
-- **Override rationale:** none
-- **External panel:** not invoked; the panel is opt-in and the operator did not request external egress
+- Target: `docs/plans/2026-07-15-issue-357-fleet-shared-liveness-engine-plan.md`
+- Reviewed revision: working tree based on merge commit
+  `df70b4ac7359f2eb5aa0e649cff83949656802d6`
+- Merged baseline: `a1dc0c2a247fd72e2c5fec723ac1334c511fe7a4` (PR #614)
+- Reviewed input digest: `5270503970c4afcf4287bce82af5306d0641e1740fc37bbe764b532362adab89`
+- Linked issue: `infiquetra/infiquetra-claude-plugins#357`; outcome node `sub-357`
+- Blocked: no
+- Override rationale: none
 
-## Applied Fixes
+## Applied fixes
 
-The review moved the shared algorithm to fleet-core, reused #351's run-fact ledger and #356's trusted
-resident/clock identity, converted phi from a statistical kill switch into capability-gated suspicion
-plus bounded confirmation, preserved unsupported Outcome backends' fixed-gap behavior, replaced
-whole-worktree pointer appearance with baseline-relative declared-path digests, separated idle ack
-from output delivery, added locked notice sequencing and re-ping transitions, bounded clock skew and
-sample history, and made every team poll boundary executable and source-inventoried.
+- Corrected the baseline to merged #355 and recorded the true merge-parent relationship.
+- Corrected release sequencing to fleet-core 0.13.0 -> 0.14.0, Saga 0.100.0 -> 0.101.0,
+  and team-execution 2.19.0 -> 2.20.0.
+- Reclassified #355 as a merged release-surface sibling and ownership boundary, not an API
+  prerequisite.
+- Corrected the `{#fleet-shared-liveness-357}` journal anchor so digest activity cannot imply
+  resident progress without trusted exclusive provenance.
+- Removed the stale pre-PR rebase instruction. The gate now verifies merged ancestry and release
+  metadata directly.
 
-## Issue-Rubric Results
+These are baseline and evidence corrections. They do not alter requirements R1-R14, user outcomes
+U1-U6, implementation ownership, acceptance tests, or the approved Verified Workflow graph.
 
-All three core issue rubrics and all applicable extras ran inline. Scores reflect the remediated plan.
+## Readiness summary
 
-| Rubric | Score | Finding | Status |
-|---|---:|---|---|
-| acceptance criteria clarity | 9 | Phi thresholds/confirmation, “artifactless,” and idle acknowledgment lacked exact pass/fail transition and trust semantics | FIXED - committed policy constants, closed decisions/events, scoped progress, ack meaning, selectors, and scenario evidence added |
-| devil's advocate | 8 | Statistical scoring, artifact progress, notifications, two consumers, and release work are broad, and each could become a separate subsystem | ACCEPTED - one pure engine, existing ledgers, thin adapters, no daemon/queue/teardown, and six dependency-ordered units bind one detection contract |
-| spec fidelity | 9 | The issue predates #351/#356 and proposed a Saga-local shared module plus pointer presence as progress | FIXED - fleet-core is canonical; #351 owns facts/delivery, #356 identity/TTL, #355 fencing, and #358 actions |
-| context completeness | 10 | Current team protocol, artifact-pointer timing, lack of generic Outcome re-ping transport, and installed module bus were load-bearing | FIXED - exact files/functions/call boundaries, compatibility paths, tests, and release baselines are named |
-| issue sizing | 7 | Three plugins, a statistical core, event transitions, pointer inspection, and release surfaces exceed a typical small PR | ACCEPTED - splitting would permit duplicate algorithms or dead consumers; action/teardown and delivery/retry remain separate issues |
-| prerequisite mapping | 10 | #351/#356 were implicit in the stale issue and #355 shares the Wave 3 release base | FIXED - hard/transitive dependencies, serialized expected versions, downstream #358/#353/runtime children, and no external prerequisites are explicit |
-| security and destructive operations | 9 | Untrusted clocks/IDs/paths or a raw phi score could falsely grant health or destructive authority | FIXED - trusted host/resource identity, bounded skew, safe path digests, evidence-error state, root-only probes, and no destructive action |
+| Rubric | Score | Result |
+|---|---:|---|
+| Acceptance criteria clarity | 10/10 | R1-R14 and U1-U6 define pass/fail thresholds, negative paths, and named executable evidence. |
+| Devil's advocate | 9/10 | The PR is broad but remains one tightly coupled engine, two adapters, and one atomic release; splitting it would create dead wiring or duplicate authority. |
+| Spec fidelity | 10/10 | The plan traces the parent outcome and `sub-357`, preserves exact R31 authority, and excludes #355/#356/#358 ownership. |
+| Context completeness | 10/10 | Production files, precedents, contracts, polling boundaries, tests, and release surfaces are named. |
+| Issue sizing | 8/10 | Large but independently reviewable as one shared engine and its production consumers; no unrelated capability is included. |
+| Prerequisite mapping | 10/10 | #351/#356/#355 are merged, #358 and #353 remain downstream, and no external credential or deployment prerequisite exists. |
 
-## Readiness Findings
+Overall: **9.5/10, accept**. Remaining findings: P0 0, P1 0, P2 0, P3 0.
 
-Every P0-P3 readiness finding was fixed in the plan.
+## Finding closure
 
-| ID | Priority | Finding | Status |
-|---|---|---|---|
-| D357-1 | P1 | A Saga-local “shared” module would force team-execution to import a sibling plugin implementation or copy it, contradicting the fleet-commons distribution decision | FIXED - pure engine lives in fleet-core; Saga owns its existing ledger adapters and team invokes the one canonical adapter CLI |
-| D357-2 | P1 | Existing artifact pointers appear only after all workers and cover the whole worktree, so pointer presence/epoch could credit a chatty worker for another worker's changes | FIXED - trusted baseline-relative digest over disjoint declared paths; overlap/no contract falls back to heartbeat-only |
-| D357-3 | P1 | Phi threshold alone could terminalize a noisy but live local worker and cascade/delete downstream work | FIXED - phi is suspicion; armed transport requires bounded host-correlated confirmation, and #357 has no teardown authority |
-| D357-4 | P1 | Not every Outcome backend exposes a trusted re-ping/ack transport; replacing fixed heartbeat logic would make rich-history leaves either unsafe or immortal | FIXED - current unarmed Outcome path surfaces phi advisory evidence while retaining the exact fixed-gap/timeout terminal; adaptive confirmation is capability-gated |
-| D357-5 | P2 | Future/nonfinite timestamps were described as discarded while the safety contract said invalid clocks are evidence errors | FIXED - five-second trusted skew clamp is explicit; beyond-tolerance, rollback, nonfinite, and negative time produce non-terminal `evidence-error` |
-| D357-6 | P1 | Idle notice identity was unspecified when the host supplies no event ID, allowing message text or racing writers to invent identities/attempt counts | FIXED - subject-local sequence is allocated under the run-ledger lock from normalized host metadata; message text is excluded |
-| D357-7 | P2 | The published grep searches only Saga/team-execution, so moving the canonical engine to fleet-core could produce zero/one misleading matches and falsely pass | FIXED - plan requires issue amendment and source-aware fleet-core plus both-consumer conformance before work |
-| D357-8 | P1 | Team-execution is skill-driven and has no daemon, so a library plus prose could ship with no production poll | FIXED - exact pre-wave, assignment, lease-renewal, host-event, dependency-unblock, and pre-review CLI boundaries are inventoried and production-tested |
+| ID | Status | Closure |
+|---|---|---|
+| `D357-1` | CLOSED | One fleet-core engine; Saga owns adapters; Team invokes the canonical Saga CLI. |
+| `D357-2` | CLOSED | Scoped Git changes remain unattributed without an exclusive-provenance receipt. |
+| `D357-3` | CLOSED | Phi creates suspicion only; only three proven-send windows can confirm a Team stall; #357 owns no teardown. |
+| `D357-4` | CLOSED | Outcome keeps its heartbeat-first legacy fixed-gap and absolute-timeout authority. |
+| `D357-5` | CLOSED | Clock skew, rollback, nonfinite, and negative values have explicit clamp/error behavior. |
+| `D357-6` | CLOSED | Notice identity uses trusted host identity or a lock-allocated subject-local sequence. |
+| `D357-7` | CLOSED | Source-aware conformance covers fleet-core and both production consumers. |
+| `D357-8` | CLOSED | Every cooperative polling boundary, adapter, hook, and production-path test is named. |
+| `issue-357.r31-terminal-authority` | CLOSED | Adapter-specific authority preserves exact R31 reasons, idempotency, and cascade. |
+| `issue-357.reping-send-proof` | CLOSED | Intent, accepted send, definitive non-send, unresolved send, and acknowledgment are separate facts. |
+| `issue-357.suspicion-generations` | CLOSED | Cause/anchor-stable generations cannot be rotated by unrelated signals. |
+| `issue-357.subject-identity-schema` | CLOSED | Closed canonical identity and append-lock validation reject drift and cross-subject evidence. |
+| `issue-357.progress-attribution` | CLOSED | Digest activity cannot update progress; only trusted exclusive provenance can. |
+| `issue-357.reping-definitive-failure-retry-contract` | CLOSED | Exactly one predecessor-bound definitive-not-sent retry is permitted; unresolved or exhausted delivery never counts or confirms. |
+| `issue-357.progress-reachability-closure` | CLOSED | Only explicitly named generations close, and only when the complete trusted provenance interval is after the generation/send anchor. |
 
-## Evidence Verified
+## Evidence and gates
 
-- `outcome_liveness.py` derives dispatch/heartbeat facts, floors activity at dispatch, uses the
-  timestamp maximum, writes one sticky `stalled` event, and cascades R22 through the production
-  processor in `outcome.py`.
-- Team-execution B1 currently has resident workers and one post-worker review snapshot but no
-  heartbeat/idle/stalled/re-ping implementation or background poller.
-- `artifact_pointer.py snapshot` is a whole-tree temp-index snapshot; its existing pointer is a
-  review transfer artifact, and #351's reviewed contract explicitly forbids treating it as delivery.
-- `run_ledger.py` is the canonical hash-chained repo-level fact stream; #351 adds dispatch settlement,
-  while #356's reviewed contract supplies 300-second leased residents and boot-aware monotonic time.
-- The original phi-accrual report defines a continuous late-arrival suspicion score rather than a
-  direct resource action: https://dspace.jaist.ac.jp/dspace/handle/10119/4784
-- The Workflow Structure has eight steps and digest
-  `4e993a3e3e4a9ce6b953995fdc5d58e74d7be26da2304e95d342d373a7d230b3`.
-  Installed role/profile binding passes, full-review selection passes, and both
-  `validate-event-flow` and `validate-scenarios` are required.
+- Merge commit `df70b4ac7359f2eb5aa0e649cff83949656802d6` has both the prior #357 head and
+  merged PR #614 head `a1dc0c2a247fd72e2c5fec723ac1334c511fe7a4` as parents.
+- Live manifests report fleet-core 0.13.0, Saga 0.100.0, and team-execution 2.19.0.
+- The phi equation, five-interval cold start, exact threshold, event identity, recovery paths,
+  attributed-progress boundary, and Outcome compatibility all have named executable tests.
+- `git diff --check` passes after the baseline and journal corrections.
+- Verified Workflow recompilation produced the approved workflow digest
+  `4e993a3e3e4a9ce6b953995fdc5d58e74d7be26da2304e95d342d373a7d230b3` and selection-policy
+  digest `cf0f2f5016a17d934f0c40f36d2410597ac1ebb8c8cf00df280c09d3b0caa67c`. Both are
+  digest-identical to the operator-approved candidate, so approval carries without a graph change.
 
-## Remaining Findings by Priority
+## Residual risk
 
-None. P0: 0, P1: 0, P2: 0, P3: 0.
-
-## Residual Risk
-
-Phi defaults are policy choices over local agent cadence, not universal truths; the plan makes them
-explicit, bounded, and testable but real-run telemetry may justify later tuning through `/optimize`.
-Team polling remains cooperative at protocol boundaries because the host exposes no always-on plugin
-daemon. A single in-flight tool can outlive both poll and lease periods; #356 blocks its next mutation,
-and #358 later owns teardown. Independent event-flow/scenario validation, the full review panel, and
-later `/code-review` remain mandatory before merge.
+Phi thresholds remain policy choices over local cadence and may need later telemetry-based tuning.
+Polling is cooperative because the host exposes no always-on plugin daemon. #356 prevents a stale
+worker's next mutation, while #358 owns later destructive reclamation.

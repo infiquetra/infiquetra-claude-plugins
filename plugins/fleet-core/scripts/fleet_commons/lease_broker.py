@@ -53,6 +53,7 @@ _TOP_KEYS = frozenset(
         "leases",
         "session_admissions",
         "settlements",
+        "closed_owner_admissions",
     }
 )
 _FENCE_KEYS = frozenset(
@@ -176,6 +177,15 @@ _MAX_PATH = 4096
 _MAX_SESSION_ADMISSIONS = 64
 _MAX_CLOSED_FENCES = 128
 _MAX_SETTLEMENTS = 128
+_CLOSED_OWNER_ADMISSION_KEYS = frozenset({"closed_at", "boot_id", "close_generation"})
+# Closed-owner records exist to fence spawn-versus-completion races during one run's teardown.
+# On overflow the lowest-generation record is evicted, which REOPENS admission for the evicted
+# owner until it is re-closed: the fence guarantee is scoped to record retention, not to
+# unbounded history. Safety survives eviction because the teardown driver re-closes at pass
+# start, snapshots AFTER that close (capturing any lease admitted in the evicted window), and
+# refuses its receipt unless the pass-local generation is still the closed one. The bound is
+# therefore a liveness ceiling: sustained churn past it costs retries, never a false receipt.
+_MAX_CLOSED_OWNER_ADMISSIONS = 128
 _BOOT_ID_LOCK = threading.Lock()
 
 
@@ -217,6 +227,10 @@ class LeaseExpiredError(LeaseBrokerError):
 
 class LeaseClosedError(LeaseBrokerError):
     """The presented resource token has been released."""
+
+
+class OwnerAdmissionClosedError(LeaseBrokerError):
+    """Admission for this owner is monotonically closed; acquire/reserve/claim/retry refuse."""
 
 
 class LeaseSupersededError(LeaseBrokerError):
@@ -1146,6 +1160,39 @@ class SessionAdmission:
         )
 
 
+@dataclass(frozen=True)
+class OwnerAdmissionClose:
+    """One monotonic owner-admission close.
+
+    There is no reopen *operation*; the closed map is bounded, so on overflow the
+    lowest-generation record is evicted and admission for that owner lapses back open.
+    A driver that needs the fence across eviction re-closes at pass start (minting a
+    fresh, higher generation) and re-verifies the generation before its receipt.
+    """
+
+    closed_at: str
+    boot_id: str
+    close_generation: int
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> OwnerAdmissionClose:
+        parsed = _closed_mapping(dict(data), _CLOSED_OWNER_ADMISSION_KEYS, "closed_owner_admission")
+        return cls(
+            closed_at=_parse_utc(parsed["closed_at"], "closed_owner_admission closed_at"),
+            boot_id=_bounded(parsed["boot_id"], "closed_owner_admission boot_id"),
+            close_generation=_positive(
+                parsed["close_generation"], "closed_owner_admission close_generation"
+            ),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "closed_at": self.closed_at,
+            "boot_id": self.boot_id,
+            "close_generation": self.close_generation,
+        }
+
+
 @dataclass
 class Registry:
     broker_epoch: str
@@ -1155,14 +1202,21 @@ class Registry:
     leases: dict[str, Lease]
     session_admissions: dict[str, SessionAdmission]
     settlements: dict[str, SettlementRecord]
+    closed_owner_admissions: dict[str, OwnerAdmissionClose]
 
     @classmethod
     def fresh(cls, providers: Providers) -> Registry:
-        return cls(str(providers.uuid4()), None, 1, {}, {}, {}, {})
+        return cls(str(providers.uuid4()), None, 1, {}, {}, {}, {}, {})
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Registry:
         raw = dict(data)
+        if "closed_owner_admissions" not in raw and set(raw).issubset(
+            _TOP_KEYS - {"closed_owner_admissions"}
+        ):
+            # Pre-#358 authorities have no owner-admission fence records; the only safe
+            # migration is the empty map (no owner was ever closed under the old shape).
+            raw["closed_owner_admissions"] = {}
         if "recovery_capability_sha256" not in raw and set(raw).issubset(
             _TOP_KEYS - {"recovery_capability_sha256"}
         ):
@@ -1194,16 +1248,21 @@ class Registry:
         leases_raw = parsed["leases"]
         admissions_raw = parsed["session_admissions"]
         settlements_raw = parsed["settlements"]
+        closed_owners_raw = parsed["closed_owner_admissions"]
         if not isinstance(fences_raw, dict) or not isinstance(leases_raw, dict):
             raise RegistryCorruptError("resource_fences and leases must be objects")
         if not isinstance(admissions_raw, dict):
             raise RegistryCorruptError("session_admissions must be an object")
         if not isinstance(settlements_raw, dict):
             raise RegistryCorruptError("settlements must be an object")
+        if not isinstance(closed_owners_raw, dict):
+            raise RegistryCorruptError("closed_owner_admissions must be an object")
         if len(admissions_raw) > _MAX_SESSION_ADMISSIONS:
             raise RegistryCorruptError("session_admissions exceeds its bounded capacity")
         if len(settlements_raw) > _MAX_SETTLEMENTS:
             raise RegistryCorruptError("settlements exceeds its bounded capacity")
+        if len(closed_owners_raw) > _MAX_CLOSED_OWNER_ADMISSIONS:
+            raise RegistryCorruptError("closed_owner_admissions exceeds its bounded capacity")
         fences = {
             digest: ResourceFence.from_dict(digest, fence) for digest, fence in fences_raw.items()
         }
@@ -1219,8 +1278,13 @@ class Registry:
             digest: SettlementRecord.from_dict(digest, settlement)
             for digest, settlement in settlements_raw.items()
         }
+        closed_owners = {
+            _bounded(owner_id, "closed_owner_admissions key"): OwnerAdmissionClose.from_dict(close)
+            for owner_id, close in closed_owners_raw.items()
+        }
         sequences = [lease.fencing_sequence for lease in leases.values()]
         sequences.extend(fence.fencing_sequence for fence in fences.values())
+        sequences.extend(close.close_generation for close in closed_owners.values())
         if any(fence.broker_epoch != epoch for fence in fences.values()):
             raise RegistryCorruptError("resource fence broker_epoch must match registry epoch")
         if sequences and next_sequence <= max(sequences):
@@ -1249,6 +1313,7 @@ class Registry:
             leases,
             admissions,
             settlements,
+            closed_owners,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -1266,6 +1331,9 @@ class Registry:
             },
             "settlements": {
                 key: value.to_dict() for key, value in sorted(self.settlements.items())
+            },
+            "closed_owner_admissions": {
+                key: value.to_dict() for key, value in sorted(self.closed_owner_admissions.items())
             },
         }
 
@@ -2084,6 +2152,17 @@ class LeaseBroker:
                 f"{operation} cannot retire retained settlement authority: {', '.join(blocked)}"
             )
 
+    @staticmethod
+    def _require_owner_admission_open(registry: Registry, owner_id: str) -> None:
+        """Refuse admission-shaped operations for a monotonically closed owner (#358 R2)."""
+
+        close = registry.closed_owner_admissions.get(owner_id)
+        if close is not None:
+            raise OwnerAdmissionClosedError(
+                f"owner admission for {owner_id!r} closed at {close.closed_at} "
+                f"(generation {close.close_generation}); acquire/reserve/claim/retry are refused"
+            )
+
     def _require_current_parent(
         self,
         registry: Registry,
@@ -2157,6 +2236,7 @@ class LeaseBroker:
             process_start = self.providers.process_identity(pid)
         with self._locked():
             registry = cast(Registry, self._read_registry(create=True))
+            self._require_owner_admission_open(registry, owner)
             wall, now_text, monotonic, boot_id = self._now()
             self._require_current_parent(
                 registry, parent, session, monotonic=monotonic, boot_id=boot_id
@@ -2270,6 +2350,7 @@ class LeaseBroker:
         parsed_type = _optional_bounded(agent_type, "agent_type")
         with self._locked():
             registry = cast(Registry, self._read_registry(create=True))
+            self._require_owner_admission_open(registry, owner)
             wall, now_text, monotonic, boot_id = self._now()
             digest = resource_sha256(resource)
             if digest in registry.settlements:
@@ -2364,6 +2445,7 @@ class LeaseBroker:
             process_start = self.providers.process_identity(pid)
         with self._locked():
             registry = cast(Registry, self._read_registry(create=True))
+            self._require_owner_admission_open(registry, owner)
             wall, now_text, monotonic, boot_id = self._now()
             existing = sorted(
                 (
@@ -2492,6 +2574,7 @@ class LeaseBroker:
                     f"agent_type={kind!r}, batch_id={batch!r}"
                 )
             selected = min(candidates, key=lambda lease: (lease.fencing_sequence, lease.lease_id))
+            self._require_owner_admission_open(registry, selected.owner_id)
             if resource is None:
                 logical_unit_id = selected.tool_use_id or f"{session}:{kind}:{child}"
                 derived: dict[str, str] = {"logical_unit_id": logical_unit_id}
@@ -2575,6 +2658,7 @@ class LeaseBroker:
                     ),
                 )
             selected = min(candidates, key=lambda lease: (lease.fencing_sequence, lease.lease_id))
+            self._require_owner_admission_open(registry, selected.owner_id)
             prepared = replace(
                 selected,
                 agent_type=kind,
@@ -2608,6 +2692,7 @@ class LeaseBroker:
             process_start = self.providers.process_identity(pid)
         with self._locked():
             registry = cast(Registry, self._read_registry(create=True))
+            self._require_owner_admission_open(registry, owner)
             wall, now_text, monotonic, boot_id = self._now()
             head = registry.resource_fences.get(resource_sha256(resource))
             if head is not None:
@@ -2680,6 +2765,7 @@ class LeaseBroker:
             process_start = self.providers.process_identity(pid)
         with self._locked():
             registry = cast(Registry, self._read_registry(create=True))
+            self._require_owner_admission_open(registry, owner)
             lease = registry.leases.get(selected_id)
             if lease is None or lease.pool != "worktree" or lease.resource_ref is None:
                 raise LeaseNotFoundError(f"worktree lease {selected_id!r} does not exist")
@@ -3302,6 +3388,54 @@ class LeaseBroker:
             "commit_agent_settlement"
         )
         yield  # pragma: no cover - keeps the contextmanager protocol type without enabling writes.
+
+    def close_owner_admission(self, *, owner_id: str) -> dict[str, Any]:
+        """Monotonically close admission for ``owner_id`` under the broker lock (#358 R2).
+
+        After the commit, every acquire, reserve, claim, or retry for this exact owner is
+        refused with :class:`OwnerAdmissionClosedError` while existing leases remain
+        inspectable and releasable. Repeating close is idempotent (the original record is
+        returned) and there is no reopen operation — but the closed map is bounded
+        (``_MAX_CLOSED_OWNER_ADMISSIONS``), and overflow evicts the lowest-generation
+        record, lapsing that owner's admission back open until a re-close mints a fresh
+        generation. The returned ``close_generation`` is issued from the registry's one
+        fencing sequence, so a teardown driver can re-verify the still-closed generation
+        before emitting its completion receipt (and must re-close at pass start to hold
+        the fence across a possible eviction).
+        """
+
+        owner = _bounded(owner_id, "owner_id")
+        with self._locked():
+            registry = cast(Registry, self._read_registry(create=True))
+            existing = registry.closed_owner_admissions.get(owner)
+            if existing is not None:
+                return {"owner_id": owner, **existing.to_dict()}
+            if len(registry.closed_owner_admissions) >= _MAX_CLOSED_OWNER_ADMISSIONS:
+                oldest = min(
+                    registry.closed_owner_admissions,
+                    key=lambda key: registry.closed_owner_admissions[key].close_generation,
+                )
+                del registry.closed_owner_admissions[oldest]
+            _wall, now_text, _monotonic, boot_id = self._now()
+            close = OwnerAdmissionClose(
+                closed_at=now_text,
+                boot_id=_bounded(boot_id, "boot_id"),
+                close_generation=registry.issue_sequence(),
+            )
+            registry.closed_owner_admissions[owner] = close
+            self._write_registry(registry)
+            return {"owner_id": owner, **close.to_dict()}
+
+    def inspect_owner_admission(self, owner_id: str) -> dict[str, Any] | None:
+        """Return the exact close record for ``owner_id``, or None while admission is open."""
+
+        owner = _bounded(owner_id, "owner_id")
+        with self._locked():
+            registry = self._read_registry(create=False)
+            if registry is None:
+                return None
+            close = registry.closed_owner_admissions.get(owner)
+            return None if close is None else {"owner_id": owner, **close.to_dict()}
 
     def release_owner(
         self,

@@ -98,6 +98,13 @@ Before every reviewer or validator Agent call, the coordinator has already appen
 spawn attempt through the packaged `dispatch_settlement_adapter.py` / resolved Saga CLI; the manifest
 cannot retroactively create a spawn or grant authority.
 
+Worker liveness (#357) is a separate evidence family. Capture the approved-path baseline before the
+resident Agent spawn and append `subject-open` only after the host returns the trusted handle, binding
+the exact manifest/spawn tuple and current lease/token/boot. A scoped digest change is activity, not
+output completeness or resident progress; only an exclusive-provenance receipt can upgrade it. An
+`idle-ack` proves notification consumption only. Neither it nor a liveness re-ping response can stand
+in for this manifest's delivery acknowledgment.
+
 **Claim provenance:** optional at v1. For a Claude-agent worker, output is code/diff, not a set of
 prose claims — leave `claim_provenance` absent (lightweight tier, KTD9) unless a future revision
 asks a worker to attest specific claims about its own diff. For a chaperone worker whose engine

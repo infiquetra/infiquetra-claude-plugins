@@ -27,6 +27,27 @@
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/ship_teardown.py\" reclaim --if-idle 24h --quiet"
           }
         ]
+      },
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/team_teardown_hook.py\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/team_teardown_hook.py\"",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PreCompact": [
@@ -69,6 +90,15 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/team_spawn_residency_hook.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "SendMessage",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/liveness_reping_hook.py\""
           }
         ]
       },
@@ -143,6 +173,15 @@
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/lease_lifecycle_hook.py\""
           }
         ]
+      },
+      {
+        "matcher": "SendMessage",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/liveness_reping_hook.py\""
+          }
+        ]
       }
     ],
     "PostToolUseFailure": [
@@ -152,6 +191,15 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/lease_lifecycle_hook.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "SendMessage",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/liveness_reping_hook.py\""
           }
         ]
       }

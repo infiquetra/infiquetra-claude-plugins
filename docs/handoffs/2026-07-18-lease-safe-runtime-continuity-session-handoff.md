@@ -30,7 +30,8 @@ leaf saga ID `leaf-lease-safe-runtime-continuity-sub-357`.
 ## Current outcome truth
 
 - Outcome branch: `outcome/lease-safe-runtime-continuity`.
-- Durable checkpoint commit: `547ed331d9e48995008e3dd2dfd2f6d83a4903e2`.
+- Outcome-report reconciliation commit: `547ed331d9e48995008e3dd2dfd2f6d83a4903e2`; this handoff is
+  committed after it on the same branch.
 - Done: `sub-350`, `sub-351`, `sub-356`, and `sub-355`.
 - Dispatched: `sub-357` only.
 - Ready but not dispatched: `claude-cross-runtime` and `codex-substrate`.
@@ -133,4 +134,3 @@ it as authoritative evidence. Do not delete any of these surfaces during resume 
 6. After approval, create a fresh authoritative workflow run and intent before consuming the preserved
    implementation, then continue `/work` through code review, QA, PR, merge, issue/board reconciliation,
    and outcome harvest.
-

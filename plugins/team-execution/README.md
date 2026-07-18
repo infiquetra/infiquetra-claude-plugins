@@ -24,6 +24,14 @@ every child. Missing or protocol-skewed fleet-core installs halt; timeout and si
 capacity. The complete operator contract is in
 [`lease-protocol.md`](skills/team-execution/references/lease-protocol.md).
 
+Every observed terminal path — success, hard-fail, operator abort, andon — enters the
+non-skippable Step B8 teardown: the run's owner admission closes in the broker, typed
+adapters stop residents and owned subprocesses, release leases, and sweep dead-owner
+worktrees, and only a zero-open receipt lets the run be called complete. A crashed or
+killed coordinator is reclaimed by bounded SessionEnd/SessionStart recovery after lease
+expiry and dead-owner proof. The executable contract is in
+[`teardown-reclamation.md`](skills/team-execution/references/teardown-reclamation.md).
+
 ---
 
 ## Quick Start
@@ -156,6 +164,7 @@ remediation loops, and final gate status.
 - `team-execution/skills/team-execution/references/validator-spawn-quirks.md`
 - `team-execution/skills/team-execution/references/external-engine-workers.md`
 - `team-execution/skills/team-execution/references/lease-protocol.md`
+- `team-execution/skills/team-execution/references/teardown-reclamation.md`
 - `team-execution/skills/team-execution/references/artifact-pointers.md`
 - `team-execution/skills/team-execution/references/andon-cord.md`
 

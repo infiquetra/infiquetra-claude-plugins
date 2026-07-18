@@ -27,6 +27,155 @@
 
 ## 2026-07-18
 
+### A guarded instrument inherits every failure mode of what it reads — measure at the source {#count-at-source-358}
+
+**Context.** Four ceremony cycles judged four successive fixes to `recover()`'s per-run
+accounting inadequate on the same seam, tripping the three-cycle halt. The pre-cycle-4
+deep dive asked the structural question: are we patching guards around a mechanism that
+cannot be guarded into correctness?
+**Evidence.** Lineage `39ab2ca0` (instrument born in U4) → `148ecb50` (r1) → `0271ecdf`
+(r2) → `7dd5789c` (r3), each next round finding a *different-looking* flaw (exception
+family → unguarded handler → fabricated baseline) at the same address. Decisive new
+evidence: a misattribution race reproduced empirically outside the ceremony — the
+before/after diff-count window is wider than the per-run flock (the counts run in
+`recover()`, the lock lives inside `reclaim_all`), so a concurrent operator teardown's
+released lease was charged to `recover()`'s pass: durable observation `actions_taken: 1`
+for a pass that took zero actions, no `evidence_error`, budget debited — with every read
+succeeding. Present in every version since U4; unreachable by the lens-converged point
+fix (the baseline *was* measured). Pinned as
+`test_racer_results_are_not_charged_to_the_recover_pass`.
+**Mechanism.** The instrument inferred "actions this call took" by differencing two
+snapshots of a shared, durable, failable ledger taken outside the lock. It therefore
+inherited the ledger's failure modes (hence r1–r3's guards), required a baseline that may
+not exist (hence r4's fabrication), and counted every writer's facts, not its own (the
+misattribution). Guards address none of that; each remediation guarded one more corner
+and the shape regenerated the next.
+**Fix.** Counted at the source (cycle-4 commit on `work/358-non-skippable-teardown`):
+`ReclaimStats` incremented where `_reclaim_all_locked` already counted internally —
+result-landed site, inside the per-run guard — and read by `recover()` even on the raise
+path. Both ledger count calls and `_count_budgeted_results` deleted; the loop body's
+failure surface drops from four failable operations to two; the accounting branch matrix
+collapses 16 → 4, enumerated exhaustively in `test_recovery_entry_branch_matrix`.
+**Validation.** Full suite 5008/0/1 green with **zero behavioral-test edits** — every
+pre-existing accounting test held under the mechanism swap (the number's definition is
+unchanged: budgeted results this call landed), and 8 new tests pin the reshaped surface.
+**What surprised.** Five defects presenting as three unrelated flaw categories, and the
+decisive one invisible to four adversarial review rounds — every round was asked to judge
+the guards, so no round questioned the instrument they guarded.
+**Generalizable rule.** When successive fixes to one seam keep failing review for
+different-looking reasons, stop patching and name the instrument the guards protect: a
+measurement that reads shared failable state needs guards; a measurement that observes
+its own actions needs none. Prefer making the defect class unrepresentable over guarding
+it — especially when the unrepresentable version is also less code.
+**Refs.** Narrows the fix half of [[#recovery-isolation-total-358]] (its rule stands);
+DECISIONS `{#count-at-source-vs-point-fix-358}`;
+`plugins/saga/scripts/team_teardown.py` (`ReclaimStats`, `recover`).
+
+---
+
+### Per-run isolation is only total when the failure handler guards its own bookkeeping {#recovery-isolation-total-358}
+
+**Context.** #358 `recover()` isolates each run's reclaim pass so one broken run cannot
+head-of-line block every newer run. Getting that guarantee to hold took three ceremony
+rounds, each catching a narrower escape hatch.
+**Evidence.** Round 1: `except TeardownError` only (fixed in `148ecb50`). Round 2
+(CONC-1): the broker's own family — `RegistryCorruptError` — still aborted the batch;
+widened to `except Exception` (fixed in `0271ecdf`). Round 3 (CONC-1-R3-1, reproduced
+empirically by the validator): the except-handler's *own* bookkeeping (budget recount +
+observation append) was unguarded, so a second ledger/broker failure while recording run
+A's evidence escaped `recover()` and starved every later run.
+**Mechanism.** An isolation boundary is only as wide as its narrowest unguarded statement.
+Failure handlers routinely touch the same broken subsystem that raised the primary error
+(re-reading the corrupt ledger to count, appending the observation to it), so the
+compounding-failure path is the *likely* path, not a corner case.
+**Fix.** Evidence recording is best-effort by design: `_observe_recovery` degrades an
+observation-append failure to the run's in-memory pass entry (`evidence_error`), the
+budget recount failure charges zero (the budget is a liveness ceiling, not a safety
+bound — every action re-enters `reclaim_all`'s own guards), and the loop always reaches
+the next run. Pinned by `TestRecoveryEvidenceBestEffort`.
+**Superseded in part (cycle 4, same day).** The recount half of this fix guarded an
+instrument that could not be guarded into correctness; the recount was deleted entirely
+in favor of counting at the source — see [[#count-at-source-358]]. The rule below and
+the observation-append half stand.
+**Generalizable rule.** When a loop promises per-item isolation, audit the handler and
+every skip branch for calls into the failing subsystem — recording evidence about a
+broken store through the broken store must degrade, never raise, or the isolation
+guarantee silently excludes the exact scenario it exists for.
+
+**Refs.** `plugins/saga/scripts/team_teardown.py` (`recover`, `_observe_recovery`), [[#intent-replay-generation-358]].
+
+---
+
+### A field excluded from the dedup key must be excluded from replay identity {#intent-replay-generation-358}
+
+**Context.** #358 teardown intents dedup on `intent_id = sha256(team_run_id|terminal_reason)`
+— deliberately excluding the broker's `close_generation` so repeated B8 entry converges.
+**Evidence.** Ceremony round-1 finding F1 (review-devils, P1): after the broker's bounded
+closed-owner map evicts a run's close record, the next pass re-closes under a fresh
+generation, and the intent re-append raised `TeardownConflictError` — permanently poisoning
+an incomplete run's teardown (reproduced end to end by the lens).
+**Mechanism.** The intent *fact* still carried `close_generation`, and the replay comparison
+matched full fact identity — so two facts with the same dedup key could differ in a field
+the key deliberately ignores, turning an idempotent replay into a conflict.
+**Fix.** The teardown-intent replay comparison now excludes `close_generation`
+(`plugins/saga/scripts/team_teardown.py`, `_validate_transition`); the driver fences on its
+pass-local generation, and a paired mutex + regression suite
+(`TestAdmissionEvictionResilience`, `TestConcurrentReclaim`) pins convergence across
+eviction and concurrent passes.
+**Generalizable rule.** Every field a dedup key deliberately excludes must also be excluded
+from the replay-equality check, or re-issued values of that field convert idempotence into
+permanent conflict. Relatedly: ledger-level dedup does not serialize side effects — replay
+freshness cannot distinguish a live racer from a crashed predecessor, so exactly-once
+adapter invocation needs a mutex (a per-run flock), not a dedup check.
+
+**Refs.** `plugins/saga/scripts/team_teardown.py` (`_validate_transition`, `_reclaim_guard`), `tests/test_team_teardown.py`.
+
+---
+
+### A twice-loaded dataclass never equals itself {#dual-load-token-equality-358}
+
+**Context.** The #358 teardown adapters must present a lease's exact `FencingToken` back to
+the broker for release.
+**Evidence.** `Lease.token != FencingToken(...)` comparisons fail whenever the token class
+is constructed from a different load of the authority module: tests load
+`lease_broker.py` via `importlib.util.spec_from_file_location` while
+`fleet_commons_shim.load("lease_broker")` performs its own load — two distinct classes.
+**Mechanism.** Dataclass `__eq__` requires `other.__class__ is self.__class__` before
+comparing fields, so value-identical tokens from twin module loads are unconditionally
+unequal, and the broker's token check reads as an ownership error.
+**Fix.** Build the token from the broker instance's own defining module:
+`sys.modules[type(broker).__module__].FencingToken(...)`
+(`plugins/saga/scripts/team_teardown.py`, `_current_head`).
+**Generalizable rule.** When handing a value object back to an authority that compares it,
+construct it from the authority's own module — never from a parallel import path.
+
+**Refs.** `plugins/saga/scripts/team_teardown.py`, `plugins/fleet-core/scripts/fleet_commons/lease_broker.py`.
+
+---
+
+### The pre-push gate silently outgrew its own timeout {#pre-push-gate-timeout-358}
+
+**Context.** Pushing a green docs-only commit from the outcome worktree was blocked repeatedly by
+the saga pre-push gate reporting `pytest ... timed out after 300 s`.
+**Evidence.** A direct timed run of the gate's exact step (`uv run python -m pytest`) measured
+303.73 s wall (4774 passed, 1 skipped, exit 0); the hook's `subprocess.run(..., timeout=300)` in
+`plugins/saga/hooks/pre_push_gate_hook.py:98` is a hard per-step ceiling. The same suite with
+`--no-cov` measured 224 s. Earlier same-day pushes passed — the suite sat within seconds of the
+ceiling, so outcomes flipped on machine load.
+**Mechanism.** The suite's runtime grows with every shipped leaf while the hook timeout is a fixed
+constant, and the gate reports a timeout with the same message shape as a real test failure — so a
+green tree reads as "fix failing tests". Coverage instrumentation (`--cov` in `addopts`) was ~35%
+of wall time, and the gate never asserted on coverage.
+**Fix.** The gate manifest's pytest step now runs `-q --no-cov` (same tests, no coverage
+instrumentation); CI keeps the full coverage configuration.
+**Generalizable rule.** A time-bounded gate needs headroom monitoring: when a gate step's normal
+runtime crosses ~80% of its hard timeout, treat it as a defect in the gate, not noise — and make
+timeout failures visually distinct from real failures.
+
+**Refs.** `tools/gate-manifest.json`, `plugins/saga/hooks/pre_push_gate_hook.py:98`.
+
+---
+
 ### A fail-closed test can pass through the wrong guard {#wrong-guard-fail-closed-357}
 
 **Context.** The six-lens review of the #357 liveness engine probed clock-rollback handling.

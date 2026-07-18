@@ -1,6 +1,6 @@
 {
   "name": "saga",
-  "version": "0.101.0",
+  "version": "0.102.0",
   "description": "Infiquetra engineering lifecycle plugin: /outcome DAG orchestration, shared liveness facts and polling, /pulse telemetry, trust-gated engine onboarding, and delegation-audit reconciliation.",
   "author": {
     "name": "Infiquetra",

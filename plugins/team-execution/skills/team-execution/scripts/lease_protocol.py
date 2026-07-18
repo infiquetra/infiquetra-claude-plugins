@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -105,6 +105,73 @@ def teardown(
     }
 
 
+_TEARDOWN_SCRIPT = Path("scripts") / "team_teardown.py"
+# The teardown CLI's closed verb/flag surface (#358 R11): fixed argv, no shell, no extras.
+_TEARDOWN_VERBS = {
+    "open-run": ("--session-id", "--team-run-id"),
+    "status": ("--team-run-id",),
+    "request": ("--session-id", "--reason", "--team-run-id"),
+    "reclaim-all": ("--team-run-id", "--reason", "--max-actions", "--dry-run"),
+    "recover": ("--expired-only", "--max-actions"),
+}
+
+
+def teardown_run(
+    verb: str,
+    arguments: Mapping[str, Any],
+    *,
+    repo_root: Path | None = None,
+) -> dict[str, Any]:
+    """Invoke Saga's canonical team_teardown CLI (#358) through the installed resolution.
+
+    Local checkouts and installed plugin layouts resolve the same script; an absent or
+    pre-#358 Saga is a loud typed failure, never a silent no-op (armed B8 requires it).
+    """
+
+    import subprocess  # noqa: PLC0415  # nosec B404 -- fixed Python/script argv, no shell
+
+    import liveness_protocol
+
+    allowed = _TEARDOWN_VERBS.get(verb)
+    if allowed is None:
+        raise LeaseProtocolError(f"unknown teardown verb {verb!r}")
+    resolution = liveness_protocol.resolve_saga_plugin()
+    script = resolution.root / _TEARDOWN_SCRIPT
+    if not script.is_file():
+        raise LeaseProtocolError(
+            f"resolved Saga plugin at {resolution.root} lacks {_TEARDOWN_SCRIPT}; "
+            "install/update Saga with issue #358 support before arming Step B8"
+        )
+    argv = [sys.executable, str(script)]
+    if repo_root is not None:
+        argv.extend(["--repo-root", str(repo_root)])
+    argv.append(verb)
+    for flag in allowed:
+        key = flag.lstrip("-").replace("-", "_")
+        value = arguments.get(key)
+        if value is None or value is False:
+            continue
+        if value is True:
+            argv.append(flag)
+        else:
+            argv.extend([flag, str(value)])
+    completed = subprocess.run(  # nosec B603 -- fixed interpreter + resolved script path
+        argv, capture_output=True, text=True, timeout=60
+    )
+    if completed.returncode != 0:
+        raise LeaseProtocolError(
+            f"team_teardown {verb} failed (rc={completed.returncode}): "
+            f"{completed.stderr.strip() or completed.stdout.strip()}"
+        )
+    try:
+        parsed = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise LeaseProtocolError(f"team_teardown {verb} returned non-JSON output") from exc
+    if not isinstance(parsed, dict):
+        raise LeaseProtocolError(f"team_teardown {verb} returned a non-object payload")
+    return parsed
+
+
 def _print(value: dict[str, Any]) -> None:
     print(json.dumps(value, indent=2, sort_keys=True))
 
@@ -126,6 +193,15 @@ def _parser() -> argparse.ArgumentParser:
     teardown_parser = commands.add_parser("teardown")
     teardown_parser.add_argument("--session-id", required=True)
     teardown_parser.add_argument("--terminal-agent-id", action="append", default=[])
+
+    for verb in sorted(_TEARDOWN_VERBS):
+        verb_parser = commands.add_parser(verb)
+        verb_parser.add_argument("--repo-root", default=".")
+        for flag in _TEARDOWN_VERBS[verb]:
+            if flag == "--dry-run" or flag == "--expired-only":
+                verb_parser.add_argument(flag, action="store_true")
+            else:
+                verb_parser.add_argument(flag, default=None)
     return parser
 
 
@@ -136,8 +212,18 @@ def main(argv: list[str] | None = None) -> int:
             result = preflight(args.session_id)
         elif args.command == "renew":
             result = renew(args.session_id)
-        else:
+        elif args.command == "teardown":
             result = teardown(args.session_id, terminal_agent_ids=args.terminal_agent_id)
+        else:
+            result = teardown_run(
+                args.command,
+                {
+                    key.replace("-", "_"): value
+                    for key, value in vars(args).items()
+                    if key not in ("command", "repo_root")
+                },
+                repo_root=Path(args.repo_root).resolve(),
+            )
     except (LeaseProtocolError, authority.LeaseBrokerError) as exc:
         _die(str(exc))
     _print(result)

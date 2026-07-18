@@ -123,8 +123,8 @@ def test_outcome_adapter_preserves_legacy_authority_before_adaptive_scoring() ->
     assert reason_index < record_index < adaptive_index
 
 
-def test_atomic_release_versions_match_issue_357_contract() -> None:
-    expected = {"fleet-core": "0.14.0", "saga": "0.101.0", "team-execution": "2.20.0"}
+def test_atomic_release_versions_match_issue_358_contract() -> None:
+    expected = {"fleet-core": "0.15.0", "saga": "0.102.0", "team-execution": "2.21.0"}
     marketplace = json.loads(_read(ROOT / ".claude-plugin" / "marketplace.json"))
     rows = {row["name"]: row for row in marketplace["plugins"]}
     for plugin, version in expected.items():

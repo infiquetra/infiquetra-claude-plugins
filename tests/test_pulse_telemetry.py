@@ -333,7 +333,8 @@ def test_no_pulse_owned_status_field(tmp_path: Path) -> None:
     _save_tick(tmp_path, phase=1, phase_status="in_progress", now=TICK_1)
     candidate_keys = set(saga.scan(tmp_path)[0].keys())
     assert set(pulse.RUN_FIELDS) <= candidate_keys
-    # And the ledger schema is untouched: no pulse-owned fact kind.
+    # And the ledger schema is untouched: no pulse-owned fact kind. ("teardown" is the
+    # #358 reclamation family — owned by team_teardown, not pulse.)
     assert (
         frozenset(
             {
@@ -345,6 +346,7 @@ def test_no_pulse_owned_status_field(tmp_path: Path) -> None:
                 "benchmark",
                 "dispatch-settlement",
                 "liveness",
+                "teardown",
             }
         )
         == run_ledger.FACT_KINDS

@@ -555,3 +555,204 @@ def test_saga_lease_cli_requires_exact_token_and_session_scoped_owner_release() 
     assert renewed.fencing_sequence == 7
     released_owner = parser.parse_args(["release-owner", "owner-id", "--session-id", "session-id"])
     assert released_owner.session_id == "session-id"
+
+
+# --------------------------------------------------------------- team teardown hook (#358)
+
+TEAM_TEARDOWN_HOOK = SAGA / "hooks" / "team_teardown_hook.py"
+
+
+def _teardown_modules() -> tuple[ModuleType, ModuleType]:
+    scripts = SAGA / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    ledger_module = _load(scripts / "run_ledger.py", "run_ledger_for_teardown_hook_tests")
+    teardown_module = _load(scripts / "team_teardown.py", "team_teardown_for_hook_tests")
+    return ledger_module, teardown_module
+
+
+def _git_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(
+        ["git", "init", "--quiet", str(repo)], check=True, capture_output=True, timeout=30
+    )
+    return repo
+
+
+def test_session_end_records_request_only_for_this_sessions_open_runs(tmp_path: Path) -> None:
+    ledger_module, teardown_module = _teardown_modules()
+    authority = tmp_path / "authority"
+    repo = _git_repo(tmp_path)
+    broker = B.LeaseBroker(authority)
+    ledger = ledger_module.RunLedger.resolve(repo)
+    teardown_module.open_run(
+        ledger,
+        broker,
+        subplot_id="hook-test",
+        session_id="session-mine",
+        at="2026-07-18T14:00:00Z",
+        team_run_id="team-run-mine",
+    )
+    teardown_module.open_run(
+        ledger,
+        broker,
+        subplot_id="hook-test",
+        session_id="session-other",
+        at="2026-07-18T14:00:00Z",
+        team_run_id="team-run-other",
+    )
+
+    result = _run_hook(
+        TEAM_TEARDOWN_HOOK,
+        {"hook_event_name": "SessionEnd", "session_id": "session-mine", "cwd": str(repo)},
+        cwd=repo,
+        environment=_environment(authority),
+    )
+    assert result.returncode == 0
+    assert "request evidence only" in result.stderr
+    facts = ledger_module.read_facts(ledger)
+    intents = {f["team_run_id"] for f in facts if f.get("event") == "teardown-intent"}
+    assert intents == {"team-run-mine"}
+    assert broker.inspect_owner_admission("team-run-mine") is not None
+    assert broker.inspect_owner_admission("team-run-other") is None
+
+
+def test_session_start_recovers_expired_dead_owner_run(tmp_path: Path) -> None:
+    import time as _time
+
+    ledger_module, teardown_module = _teardown_modules()
+    authority = tmp_path / "authority"
+    repo = _git_repo(tmp_path)
+    broker = B.LeaseBroker(authority)
+    ledger = ledger_module.RunLedger.resolve(repo)
+    teardown_module.open_run(
+        ledger,
+        broker,
+        subplot_id="hook-test",
+        session_id="session-crashed",
+        at="2026-07-18T14:00:00Z",
+        team_run_id="team-run-crashed",
+    )
+    limits = P.AdmissionLimits()
+    broker.acquire_agent(
+        owner_id="team-run-crashed",
+        session_id="session-crashed",
+        policy_sha256=limits.policy_sha256(),
+        session_limit=limits.max_concurrent,
+        aggregate_limit=limits.aggregate_max_concurrent,
+        mutation="read-write",
+        ttl_seconds=1,
+        resource_ref={"logical_unit_id": "crashed-unit"},
+        agent_type="worker",
+    )
+    _time.sleep(1.2)  # the crashed coordinator's lease derives expired
+
+    result = _run_hook(
+        TEAM_TEARDOWN_HOOK,
+        {
+            "hook_event_name": "SessionStart",
+            "source": "startup",
+            "session_id": "session-new",
+            "cwd": str(repo),
+        },
+        cwd=repo,
+        environment=_environment(authority),
+    )
+    assert result.returncode == 0
+    facts = ledger_module.read_facts(ledger)
+    events = {f["event"] for f in facts if f.get("team_run_id") == "team-run-crashed"}
+    assert "teardown-complete" in events
+    assert "recovery-observation" in events
+    remaining = [
+        item for item in broker.inspect()["leases"] if item["owner_id"] == "team-run-crashed"
+    ]
+    assert remaining == []
+
+
+def test_session_start_retains_live_owner_runs(tmp_path: Path) -> None:
+    ledger_module, teardown_module = _teardown_modules()
+    authority = tmp_path / "authority"
+    repo = _git_repo(tmp_path)
+    broker = B.LeaseBroker(authority)
+    ledger = ledger_module.RunLedger.resolve(repo)
+    teardown_module.open_run(
+        ledger,
+        broker,
+        subplot_id="hook-test",
+        session_id="session-live",
+        at="2026-07-18T14:00:00Z",
+        team_run_id="team-run-live",
+    )
+    limits = P.AdmissionLimits()
+    lease = broker.acquire_agent(
+        owner_id="team-run-live",
+        session_id="session-live",
+        policy_sha256=limits.policy_sha256(),
+        session_limit=limits.max_concurrent,
+        aggregate_limit=limits.aggregate_max_concurrent,
+        mutation="read-write",
+        ttl_seconds=600,
+        resource_ref={"logical_unit_id": "live-unit"},
+        agent_type="worker",
+    )
+
+    result = _run_hook(
+        TEAM_TEARDOWN_HOOK,
+        {
+            "hook_event_name": "SessionStart",
+            "source": "resume",
+            "session_id": "session-new",
+            "cwd": str(repo),
+        },
+        cwd=repo,
+        environment=_environment(authority),
+    )
+    assert result.returncode == 0
+    facts = ledger_module.read_facts(ledger)
+    events = {f["event"] for f in facts if f.get("team_run_id") == "team-run-live"}
+    assert "teardown-complete" not in events
+    assert "recovery-observation" in events  # honesty: observed, nothing safe to reclaim
+    assert any(item["lease_id"] == lease.lease_id for item in broker.inspect()["leases"])
+
+
+def test_teardown_hook_is_visible_and_nonblocking_on_bad_input(tmp_path: Path) -> None:
+    repo = _git_repo(tmp_path)
+    malformed = _run_hook_text(
+        TEAM_TEARDOWN_HOOK,
+        b"not json at all",
+        cwd=repo,
+        environment=_environment(tmp_path / "authority"),
+    )
+    assert malformed.returncode == 0
+    assert "malformed hook payload" in malformed.stderr
+
+    plain_dir = tmp_path / "not-a-repo"
+    plain_dir.mkdir()
+    non_git = _run_hook(
+        TEAM_TEARDOWN_HOOK,
+        {"hook_event_name": "SessionEnd", "session_id": "s", "cwd": str(plain_dir)},
+        cwd=plain_dir,
+        environment=_environment(tmp_path / "authority"),
+    )
+    assert non_git.returncode == 0
+    assert "teardown-complete" not in non_git.stdout
+
+
+def test_hooks_json_arms_bounded_teardown_recovery_seams() -> None:
+    events = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))["hooks"]
+    session_end = [
+        hook
+        for group in events["SessionEnd"]
+        for hook in group["hooks"]
+        if "team_teardown_hook.py" in hook["command"]
+    ]
+    assert session_end and session_end[0]["timeout"] == 5
+    session_start = [
+        hook
+        for group in events["SessionStart"]
+        if group.get("matcher") == "startup|resume"
+        for hook in group["hooks"]
+        if "team_teardown_hook.py" in hook["command"]
+    ]
+    assert session_start and session_start[0]["timeout"] == 15

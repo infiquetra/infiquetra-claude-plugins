@@ -34,8 +34,8 @@
     {
       "id": "pytest",
       "label": "pytest",
-      "command": ["uv", "run", "python", "-m", "pytest"],
-      "failure_hint": "Fix failing tests before pushing."
+      "command": ["uv", "run", "python", "-m", "pytest", "-q", "--no-cov"],
+      "failure_hint": "Fix failing tests before pushing. The gate runs without coverage instrumentation so the suite fits the hook's 300-second step timeout; CI still runs the full coverage configuration."
     }
   ]
 }

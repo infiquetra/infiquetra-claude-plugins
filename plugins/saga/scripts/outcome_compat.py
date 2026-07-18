@@ -1191,6 +1191,15 @@ def offer_handoff(
             supported=f"one of: {', '.join(HANDOFF_OPERATIONS)}",
             next_action="request a supported single-subplot operation",
         )
+    if operation == "advance-one" and not dispatch_id:
+        # Without a dispatch identity the #351 settled-attempt binding is inert, leaving only
+        # the post-acceptance frontier gate between a stale handoff and a duplicate advance.
+        raise CompatibilityHaltError(
+            "schema-field-type",
+            unsupported="an advance-one handoff without a #351 dispatch identity",
+            supported="a non-empty dispatch_id binding the settled-attempt check",
+            next_action="offer the handoff with the live dispatch attempt's dispatch id",
+        )
     if isinstance(ttl_seconds, bool) or not isinstance(ttl_seconds, int) or ttl_seconds < 1:
         raise CompatibilityHaltError(
             "schema-field-type",

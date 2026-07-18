@@ -2242,8 +2242,9 @@ def main(argv: list[str] | None = None) -> int:
         "--advance/--attend require a validated protected handoff (#604)",
     )
     p_attach.add_argument("outcome_id")
-    p_attach.add_argument("--advance", action="store_true")
-    p_attach.add_argument("--attend", dest="attach_attend", action="store_true")
+    attach_mode = p_attach.add_mutually_exclusive_group()
+    attach_mode.add_argument("--advance", action="store_true")
+    attach_mode.add_argument("--attend", dest="attach_attend", action="store_true")
     p_attach.add_argument("--handoff-id", default=None)
     p_attach.add_argument("--subplot", default=None)
     p_attach.add_argument("--receiver", default=None)

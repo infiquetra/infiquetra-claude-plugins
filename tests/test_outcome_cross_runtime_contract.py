@@ -178,6 +178,31 @@ class TestCommittedSpecDiscovery:
         binding = OC.resolve_committed_spec(outcome_repo, OUTCOME_ID)
         assert binding["spec_revision"] == 3
 
+    def test_git_nonzero_exit_halts_git_failed(self, tmp_path: Path) -> None:
+        def failing(*args: Any, **kwargs: Any) -> Any:
+            return subprocess.CompletedProcess(args, 128, b"", b"fatal: boom")
+
+        with pytest.raises(OC.CompatibilityHaltError) as exc:
+            OC._git(["rev-parse", "HEAD"], cwd=tmp_path, runner=failing)
+        assert exc.value.code == "git-failed"
+
+    def test_git_output_beyond_cap_halts(self, tmp_path: Path) -> None:
+        def oversized(*args: Any, **kwargs: Any) -> Any:
+            return subprocess.CompletedProcess(args, 0, b"x" * (OC.GIT_STDOUT_CAP + 1), b"")
+
+        with pytest.raises(OC.CompatibilityHaltError) as exc:
+            OC._git(["cat-file", "blob", "HEAD:x"], cwd=tmp_path, runner=oversized)
+        assert exc.value.code == "git-output-cap"
+
+    def test_spec_beyond_node_cap_halts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        repo = _single_node_repo(tmp_path)
+        monkeypatch.setattr(OC, "MAX_SPEC_NODES", 0)
+        with pytest.raises(OC.CompatibilityHaltError) as exc:
+            OC.resolve_committed_spec(repo, OUTCOME_ID)
+        assert exc.value.code == "discovery-node-cap"
+
     def test_disagreeing_refs_halt_ambiguous(self, outcome_repo: Path) -> None:
         _git(outcome_repo, "checkout", "-q", "-b", f"outcome/{OUTCOME_ID}")
         spec_file = outcome_repo / "docs" / "outcomes" / OUTCOME_ID / "outcome-spec.json"
@@ -327,6 +352,11 @@ class TestReferenceFileReading:
         with pytest.raises(OC.CompatibilityHaltError) as exc:
             OC.read_reference_file(tmp_path, what="envelope")
         assert exc.value.code == "input-not-regular-file"
+
+    def test_malformed_json_bytes_halt(self) -> None:
+        with pytest.raises(OC.CompatibilityHaltError) as exc:
+            OC.parse_strict_json(b"{not json", what="envelope")
+        assert exc.value.code == "schema-malformed-json"
 
     def test_oversize_file_halts(self, tmp_path: Path) -> None:
         big = tmp_path / "big.json"
@@ -817,6 +847,31 @@ class TestProtectedHandoff:
             _accept(outcome_repo, broker, offer["handoff_id"])
         assert exc.value.code == "handoff-seal-invalid"
 
+    def test_advance_one_offer_requires_dispatch_id(self, outcome_repo: Path, broker: Any) -> None:
+        with pytest.raises(OC.CompatibilityHaltError) as exc:
+            _offer(outcome_repo, broker, _issuer_lease(broker), dispatch_id="")
+        assert exc.value.code == "schema-field-type"
+        assert "dispatch" in exc.value.receipt()["unsupported"]
+
+    def test_unclosed_source_lease_halts(self, outcome_repo: Path, broker: Any) -> None:
+        # A validly sealed offer pointing at a live lease that never went through the
+        # settlement close: seal passes, but the head carries no canonical close receipt.
+        offer, _ = _offer(outcome_repo, broker, _issuer_lease(broker))
+        live = _issuer_lease(broker, attempt=2)
+        path = OC._handoffs_dir(outcome_repo, OUTCOME_ID) / f"{offer['handoff_id']}.offer.json"
+        record = json.loads(path.read_text())
+        record["lease_id"] = live.lease_id
+        record["resource_ref"] = dict(live.resource_ref)
+        record["token"] = {
+            "broker_epoch": live.token.broker_epoch,
+            "fencing_sequence": live.token.fencing_sequence,
+        }
+        del record["sha256"]
+        path.write_text(OC.canonical_json(OC._seal(record)) + "\n", encoding="utf-8")
+        with pytest.raises(OC.CompatibilityHaltError) as exc:
+            _accept(outcome_repo, broker, offer["handoff_id"])
+        assert exc.value.code == "handoff-source-not-closed"
+
     def test_wrong_repository_halts(self, outcome_repo: Path, broker: Any) -> None:
         offer, _ = _offer(outcome_repo, broker, _issuer_lease(broker))
         _git(outcome_repo, "remote", "set-url", "origin", "https://github.com/other/repo.git")
@@ -968,6 +1023,8 @@ class TestCliVerbs:
             SUBPLOT,
             "--operation",
             "advance-one",
+            "--dispatch-id",
+            "outcome:cli:frontier:demo",
             "--session-id",
             "sess-cli",
             "--policy-sha256",
@@ -987,6 +1044,11 @@ class TestCliVerbs:
         result = _cli(outcome_repo, "attach", OUTCOME_ID, "--advance")
         assert result.returncode == 1
         assert "requires --handoff-id and --subplot" in result.stderr
+
+    def test_cli_attach_advance_and_attend_are_mutually_exclusive(self, outcome_repo: Path) -> None:
+        result = _cli(outcome_repo, "attach", OUTCOME_ID, "--advance", "--attend")
+        assert result.returncode == 2
+        assert "not allowed with" in result.stderr
 
 
 class TestAttachedAdvance:

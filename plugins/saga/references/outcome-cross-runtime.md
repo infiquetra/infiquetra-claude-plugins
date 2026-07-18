@@ -89,8 +89,10 @@ sealed (sha256 over the canonical record bytes). Three records per handoff:
    so offering and relinquishing are one receipt-bearing transition. Binds: repository
    identity, outcome id, committed commit/blob/digest, spec revision, protocol version, source
    runtime, broker-derived issuer + lease + fencing token, exact operation (`advance-one` or
-   `attend`), one subplot, #351 idempotency identity, issued/expires epochs (TTL ≤ 300 s),
-   nonce. Issuer identity comes from the live broker lease record, never a caller label.
+   `attend`), one subplot, #351 idempotency identity (a non-empty dispatch id is required for
+   `advance-one`, so the settled-attempt check is always live; `attend` derives a resume pointer
+   and may omit it), issued/expires epochs (TTL ≤ 300 s), nonce. Issuer identity comes from the
+   live broker lease record, never a caller label.
 2. **Accept-intent** (`outcome.handoff-accept-intent.v1`) — write-once; binds exactly one
    receiver and the idempotency key. A second receiver HALTs; the same receiver resumes any
    crash gap idempotently.

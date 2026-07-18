@@ -6,6 +6,7 @@ date: 2026-07-15
 origin: docs/outcomes/lease-safe-runtime-continuity/issue-sources/claude-cross-runtime-coordination.md
 issue: infiquetra/infiquetra-claude-plugins#604
 parent: infiquetra/infiquetra-claude-plugins#579
+deepened: 2026-07-18
 ---
 
 # Lease-safe runtime continuity - Claude cross-runtime Outcome contract
@@ -35,7 +36,8 @@ portable mutation with discovery/validation and makes legacy bundle import fail 
 actionable migration receipt; it does not silently preserve a second authority path.
 
 Destination is one Claude-plugin PR and merge. The downstream Codex consumer remains a separately
-linked issue and release. Execution uses an operator-approved Verified Workflow. Root owns all
+linked issue and release. Execution runs under the operator-approved cc-workflow ceremony defined
+in the Workflow Structure and Workflow Operating Contract sections below. Root owns all
 implementation, Git, tests, integration, PR, merge, issue closure, and board reconciliation;
 agent-lens roles authorize no repository or external mutation.
 
@@ -73,13 +75,22 @@ canonical on GitHub. Its report therefore exposes `transient_state: unknown` and
   `docs/sdlc-issue-drafts/2026-07-15-claude-side-cross-runtime-outcome-authority-disc-2.md`.
 - **Outcome node:** `claude-cross-runtime` in
   `docs/outcomes/lease-safe-runtime-continuity/outcome-spec.json`.
-- **Hard upstream:** #351 supplies canonical dispatch manifest/spawn/settlement identities; #355
-  supplies protected evidence rejection and close fencing; #356 supplies broker lease authority and
-  monotonic fencing. #355 is already downstream of #356. The branch must refresh the exact merged
-  schemas before implementation.
-- **Parallel siblings:** #357, #358, and #353 are not semantic prerequisites. Because they can touch
-  Saga release surfaces, implementation rebases on current `origin/main` immediately before release
-  edits and takes the next available Saga minor version rather than reserving a stale number.
+- **Hard upstream (refreshed 2026-07-18 against merged main `30bde209`):** #351 supplies canonical
+  dispatch manifest/spawn/settlement identities — `plugins/saga/scripts/dispatch_settlement.py`
+  (`outcome_unit`/`outcome_frontier_identity`/`prepare_attempt`/`settle_attempt`) over the
+  hash-chained `plugins/saga/scripts/run_ledger.py` (`run_fact.v1`); #355 supplies protected
+  evidence rejection and close fencing —
+  `plugins/fleet-core/scripts/fleet_commons/orphan_evidence.py` (quarantine store, dispositions,
+  resource guard); #356 supplies broker lease authority and monotonic fencing —
+  `plugins/fleet-core/scripts/fleet_commons/lease_broker.py` (`fleet_lease_registry.v1`,
+  protocol 2, host-scoped state root, `TokenState` current/expired/closed/superseded,
+  `broker_epoch` + `fencing_sequence`). #355 is already downstream of #356. All three are merged
+  and closed; the cited code is the final shape, not draft.
+- **Parallel siblings (refreshed 2026-07-18):** #357 (PR #619) and #358 (PR #621) are merged; #353
+  remains open and is not a semantic prerequisite. Merged main carries saga 0.102.0, fleet-core
+  0.15.0, team-execution 2.21.0. Implementation still rebases on current `origin/main` immediately
+  before release edits and takes the next available Saga minor version rather than reserving a
+  stale number.
 - **Downstream:** the explicit Codex parity issue consumes only the published runtime-neutral schema
   and fixtures. Cross-runtime acceptance starts only after both releases merge.
 - **No hidden cross-repo work:** this PR changes no `infiquetra-codex-plugins` file and cannot close
@@ -351,7 +362,8 @@ mutation attempt HALTs before store/broker/board/GitHub mutation.
 **Requirements:** R5-R6, R9, R12.
 
 **Files:** `plugins/saga/scripts/outcome_compat.py`, `plugins/saga/scripts/outcome_store.py`,
-post-#355 protected-evidence module, post-#356 broker module,
+`plugins/fleet-core/scripts/fleet_commons/orphan_evidence.py` (consumed, unmodified),
+`plugins/fleet-core/scripts/fleet_commons/lease_broker.py` (consumed, unmodified),
 `tests/test_outcome_cross_runtime_contract.py`.
 
 **Approach:** Add namespaced immutable offer, accept-intent, and accept-commit records under the
@@ -381,7 +393,8 @@ Outcome seams and prove exactly one effect.
 **Requirements:** R3, R5-R7, R9-R10.
 
 **Files:** `plugins/saga/scripts/outcome.py`, `plugins/saga/scripts/outcome_dispatcher.py`,
-post-#351 settlement adapter, post-#356 broker adapter,
+`plugins/saga/scripts/dispatch_settlement.py` (consumed, unmodified),
+`plugins/fleet-core/scripts/fleet_commons/lease_broker.py` (consumed, unmodified),
 `tests/test_outcome_cross_runtime_contract.py`, focused Outcome/store/dispatcher tests.
 
 **Approach:** Add `discover`, `handoff`, and `attach` CLI routing. `attach --advance` first validates
@@ -390,7 +403,10 @@ after acquisition, queries #351 settlement, and enters an allowlisted one-subplo
 `advance`. It rejects `--loop`, a changed frontier, or any second ready leaf rather than broadening
 the handoff. Thread the dispatch identity/fence to the post-#351 production adapter. Preserve local
 coordinator/dispatch locks as secondary containment. `attend` requires an `attend` handoff for the
-same subplot and derives the native resume command only after the bindings validate.
+same subplot and derives the native resume command only after the bindings validate. Name the new
+verb surface unambiguously: cross-runtime `attach` is distinct from the existing envelope
+live-attach (`outcome_intent.validate_live_attach`, #433) and from the same-runtime `attend()` leaf
+handoff (`outcome.py:1607`); the reference doc defines all three terms side by side.
 
 **Test scenarios:** two processes/threads released at one barrier; one dispatch call/fact cohort;
 stale local lock versus current broker; lease expiry/reclaim and old fence; spec revision changes
@@ -451,8 +467,11 @@ release inventory/version drift guards as required by the merged base
 docs/engineering-journal/DECISIONS.md
 ```
 
-The exact post-#351/#355/#356 module names replace the descriptive dependency rows above after the
-mandatory refresh. No Codex repository file belongs in this PR.
+Refreshed 2026-07-18: the merged dependency modules are
+`plugins/saga/scripts/dispatch_settlement.py`, `plugins/saga/scripts/run_ledger.py`,
+`plugins/fleet-core/scripts/fleet_commons/lease_broker.py`, and
+`plugins/fleet-core/scripts/fleet_commons/orphan_evidence.py` — consumed, never modified, by this
+PR. No Codex repository file belongs in this PR.
 
 ---
 
@@ -477,9 +496,10 @@ mandatory refresh. No Codex repository file belongs in this PR.
 
 The concurrency validator owns the happens-before matrix and exact one-effect proof. The event-flow
 validator traces discovery -> compatibility -> protected offer/accept -> broker/fence -> settlement
--> dispatch and every HALT edge. Both use gpt-5.6-terra medium. Four judgment reviewers use
-gpt-5.6-sol high because authority, replay, migration, and cross-runtime compatibility failures are
-architectural/security risks rather than routine style checks.
+-> dispatch and every HALT edge. Both validators run at sonnet + medium. The four judgment
+reviewers run at opus + high because authority, replay, migration, and cross-runtime compatibility
+failures are architectural/security risks rather than routine style checks. Tiers match the
+Workflow Structure table below.
 
 ---
 
@@ -533,39 +553,65 @@ repositories and injected GitHub fixtures only; no live Outcome is advanced duri
 
 ## Workflow Structure
 
-| step_id | depends_on | barrier | role_id | role_kind | independence | execution_class | runtime_agent_name | vehicle | mutation | required_evidence | role_lens_sha256 | profile_sha256 | expected_model | expected_effort | validator_required | validator_disabled | deterministic_contract_sha256 |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| implement | - | - | root | root | n/a | - | - | root | root-only | authorized-diff,focused-tests | - | - | - | - | n/a | n/a | - |
-| review-devils | implement | review | devils-advocate-reviewer | agent-lens | preferred | review-high | review_high | auto | none | scored-review,findings | 129f6dca0702ffcd4be7f9e5d0939e8e6806788846ba4058044c931883ef0e63 | 42e86e00e054281b0a79e4b3b9b544c04a31eb2fd6b53c0489adc42ea639c9a8 | gpt-5.6-sol | high | n/a | n/a | - |
-| review-security | implement | review | security-reviewer | agent-lens | preferred | review-high | review_high | auto | none | scored-review,findings | bf5bc1b66c0ee3d06071976b659c522c23057c56de5f6cc010556b2653c86980 | 42e86e00e054281b0a79e4b3b9b544c04a31eb2fd6b53c0489adc42ea639c9a8 | gpt-5.6-sol | high | n/a | n/a | - |
-| review-architecture | implement | review | architecture-reviewer | agent-lens | preferred | review-high | review_high | auto | none | scored-review,findings | e48b37cea0b26bf39cae4d6611b4219e907d52d284ba6b9489b523a4b16c835f | 42e86e00e054281b0a79e4b3b9b544c04a31eb2fd6b53c0489adc42ea639c9a8 | gpt-5.6-sol | high | n/a | n/a | - |
-| review-testing | implement | review | testing-reviewer | agent-lens | preferred | review-high | review_high | auto | none | scored-review,test-gaps | a867575e24c86b0573485d1d8bbd81514af3654d544342677b85f4bed0d9af63 | 42e86e00e054281b0a79e4b3b9b544c04a31eb2fd6b53c0489adc42ea639c9a8 | gpt-5.6-sol | high | n/a | n/a | - |
-| validate-concurrency | implement | validate | concurrency-tester | agent-lens | preferred | test-medium | test_medium | auto | none | concurrency-matrix,command-results | d40188645b7876e32ea592dd9799ee2ad7a2e230d82341611708dd492837b3da | 6d69bb4d5e477574ce186a353a3d2fcc7f8ab6b1f014b93aebb05084aecccc1b | gpt-5.6-terra | medium | true | false | - |
-| validate-event-flow | implement | validate | event-flow-tester | agent-lens | preferred | test-medium | test_medium | auto | none | event-trace,command-results | 2e20ab6935b1e17e363b5e28308a9288107532d0118a6a189f07b0e0eaaff356 | 6d69bb4d5e477574ce186a353a3d2fcc7f8ab6b1f014b93aebb05084aecccc1b | gpt-5.6-terra | medium | true | false | - |
-| integrate | review-devils,review-security,review-architecture,review-testing,validate-concurrency,validate-event-flow | - | root | root | n/a | - | - | root | root-only | fixed-findings,full-gate,release-parity,git-receipt | - | - | - | - | n/a | n/a | - |
+| step_id | depends_on | barrier | role_id | role_kind | independence | vehicle | agent_type | model | effort | isolation | mutation | required_evidence |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| implement | - | - | root | root | n/a | session-root | - | - | - | primary-worktree | root-only | authorized-diff,focused-tests |
+| review-devils | implement | review | devils-advocate | agent-lens | separate-context | cc-workflow-agent | saga:readonly-verifier | opus | high | worktree | none | scored-review,findings |
+| review-security | implement | review | security | agent-lens | separate-context | cc-workflow-agent | saga:readonly-verifier | opus | high | worktree | none | scored-review,findings |
+| review-architecture | implement | review | architecture | agent-lens | separate-context | cc-workflow-agent | saga:readonly-verifier | opus | high | worktree | none | scored-review,findings |
+| review-testing | implement | review | testing | agent-lens | separate-context | cc-workflow-agent | saga:readonly-verifier | opus | high | worktree | none | scored-review,test-gaps |
+| validate-concurrency | implement | validate | concurrency | agent-lens | separate-context | cc-workflow-agent | saga:readonly-verifier | sonnet | medium | worktree | none | concurrency-matrix,command-results |
+| validate-event-flow | implement | validate | event-flow | agent-lens | separate-context | cc-workflow-agent | saga:readonly-verifier | sonnet | medium | worktree | none | event-trace,command-results |
+| integrate | review-devils,review-security,review-architecture,review-testing,validate-concurrency,validate-event-flow | - | root | root | n/a | session-root | - | - | - | primary-worktree | root-only | fixed-findings,full-gate,release-parity,git-receipt |
 
 ## Workflow Operating Contract
 
-- The authorized subject is this child issue's Claude repository paths and exact Saga release
-  surfaces. Root records the pre-existing Git baseline before `implement`; unrelated paths are
-  excluded.
-- Agent-lens rows authorize `mutation=none` and no external mutation. Current MultiAgent V2 may
-  reapply the parent's permission profile, so the named profile is not claimed as an OS-enforced
-  read-only sandbox. Root records a baseline, audits the worktree after every attempt, and treats any
-  child-created diff as workflow-integrity failure. Root runs commands; validators assess captured
-  evidence and semantics.
-- `vehicle=auto` requests the named profiles. The runtime receipt must confirm model, effort,
-  role-lens hash, and profile hash before the attempt counts. Mismatch is stopped and rerun in a fresh
-  bounded context; missing independence/evidence blocks the gate.
-- Root fixes every P0-P3 finding and creates a fresh follow-up attempt for affected roles. Three
-  unsuccessful remediation cycles halt and page the operator. Any model, effort, lens, validator, or
-  execution-class change requires a newly approved workflow candidate.
-- Git mutation, PR creation, merge, issue/board mutation, and completion remain root-only. No deploy,
-  credential, production data, cache copy, live Outcome advance, force-push, or branch deletion is
-  authorized by this workflow.
-- Workflow intents, receipts, findings, command logs, workspace/no-write audits, concurrency traces,
-  PR URL, merge SHA, issue close, and board reconciliation are retained in the Verified Workflow
-  evidence root and issue/PR.
+- Runtime: root is the operator's Claude Code session on the cc-workflow backend. Root owns
+  implementation, Git, integration, PR creation, merge under explicit operator confirmation, issue
+  closure, and board reconciliation. The authorized subject is this issue's implementation paths
+  plus exact Saga release surfaces; root records the pre-existing Git baseline before `implement`,
+  and unrelated worktree paths are excluded.
+- Lens dispatch: the six agent-lens rows execute as `agent()` calls inside one root-authored Claude
+  Code Workflow script, each with exactly the agent_type, model, effort, and worktree-isolation
+  cells above, routed through a bounded pool so total in-flight subagents never exceed 3. Each call
+  embeds its lens charter below plus the diff and evidence scope. Spawn parameters are
+  harness-recorded and root records per-lens receipts in the review artifacts; no cryptographic
+  attestation is claimed. If the Workflow tool is unavailable, halt and page the operator — never
+  silently downgrade to another dispatch path.
+- `agent_type=saga:readonly-verifier` is the repo's mandated read-only sandbox profile for
+  review/verify spawns (Bash/Read/Grep/Glob in a disposable worktree, per
+  `plugins/saga/references/sandbox-spawn-sites.md`); per-call model/effort opts override the
+  profile's default tier. Root audits the primary tree after every lens attempt and treats any
+  unexplained diff as workflow-integrity failure.
+- Lens charters: **devils-advocate** — challenge the authority asymmetry end to end: discovery
+  ambiguity handling, offer/accept/commit crash windows, handoff replay and TTL edges, cross-clone
+  mutation escape hatches, legacy-bundle resurrection paths, and whether any HALT edge is reachable
+  only after a side effect; **security** — trust boundaries of the four closed schemas: envelope
+  forgery and bearer-token creep, repository-identity spoofing (fork, copied spec, credentialed or
+  foreign remote), protected-evidence tamper and seal validation, redaction denylist (no paths,
+  credentials, transcripts), and clock-skew/freshness enforcement; **architecture** — consumption
+  of the merged #351/#355/#356 contracts without wrapping or redefining their authority, the
+  `outcome_compat.py` module boundary, closed-schema versioning and fixture vocabulary,
+  attach/attend term disambiguation, and release-surface coherence; **testing** — adequacy of the
+  identity/topology matrices (linked worktree, two clones, fork), no-mutation and privacy oracles,
+  golden-fixture round trips, deterministic concurrency barriers, and negative-path coverage of
+  every HALT receipt; **concurrency** (validator) — independently assess the single-dispatch proof
+  from captured evidence: broker admission versus settlement interleavings, handoff double-accept
+  races, crash-window resumption, and exact effect/fact counts; **event-flow** (validator) — trace
+  discovery → compatibility → protected offer/accept → broker/fence → settlement → dispatch
+  acknowledgement end to end across store, ledger, and GitHub sites, including every HALT edge's
+  proven non-mutation.
+- Root fixes every P0-P3 finding and re-runs the affected lenses fresh. Three unsuccessful
+  remediation cycles halt and page the operator. Any model, effort, lens, validator, or
+  execution-class change requires a newly approved workflow candidate. The approval anchor is the
+  SHA-256 of the exact `## Workflow Structure` and `## Workflow Operating Contract` section bytes,
+  recorded in the delta review artifact.
+- Git mutation, PR creation, merge, issue/board mutation, and completion remain root-only. No
+  deployment, credential, production-data, cache-copy, live-Outcome-advance, force-push, or
+  branch-deletion action is authorized by this workflow.
+- Workflow receipts, findings, command logs, workspace audits, PR URL, merge SHA, issue close, and
+  board reconciliation are retained in the repo's review and work-session artifacts and on the
+  issue/PR.
 
 ---
 

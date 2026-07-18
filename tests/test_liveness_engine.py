@@ -47,6 +47,14 @@ def test_five_intervals_enable_phi_while_sparse_history_returns_null() -> None:
     assert ready.phi is not None and ready.sample_count == 5
 
 
+@pytest.mark.parametrize("count", [0, 1, 2, 3, 4])
+def test_sparse_history_zero_through_four_intervals_returns_null_phi(count: int) -> None:
+    beats = tuple(float(10 * (index + 1)) for index in range(count))
+    score = LV.phi_score(dispatched_at=0, heartbeat_times=beats, now=100)
+    assert score.phi is None
+    assert score.sample_count == count
+
+
 def test_steady_intervals_are_healthy_and_long_silence_crosses_phi_eight() -> None:
     healthy = LV.evaluate(_observation(now=65.0))
     suspect = LV.evaluate(_observation(now=160.0))

@@ -128,9 +128,9 @@ thresholds, acknowledgments, or results.
 
 R4. **Bounded deterministic phi.** Normalize post-dispatch heartbeat timestamps by sorting,
 deduplicating, ignoring pre-dispatch samples, and retaining at most the latest 100 positive
-inter-arrival intervals. Nonfinite/negative time, `now < dispatch`, or a sample more than the policy's
-5-second future-skew tolerance yields `evidence-error`; a sample within tolerance is clamped to `now`
-rather than extending liveness into the future. With at least five intervals, compute population
+inter-arrival intervals. Nonfinite/negative time, or a dispatch or sample more than the policy's
+5-second future-skew tolerance ahead of `now`, yields `evidence-error`; a dispatch or sample within
+tolerance is clamped to `now` rather than extending liveness into the future. With at least five intervals, compute population
 standard deviation with a one-second floor and the exact score:
 
 ```text

@@ -252,6 +252,24 @@ def test_corrupt_pending_file_does_not_deny_unrelated_sendmessage(
     assert sum(record.get("event") == "reping-sent" for record in records) == 1
 
 
+def test_traversal_pending_name_in_inflight_record_is_rejected(tmp_path: Path) -> None:
+    repo = _repo(tmp_path / "repo")
+    message = "report progress"
+    _setup(repo, message=message)
+    _pre(repo, message)
+    state_root = LP.pending_dir(repo).parent
+    [inflight] = list((state_root / "inflight").glob("*.json"))
+    record = json.loads(inflight.read_text(encoding="utf-8"))
+    record["pending_name"] = "../escape.json"
+    inflight.write_text(json.dumps(record), encoding="utf-8")
+    target = state_root / "escape.json"
+    target.write_text("{}", encoding="utf-8")
+    # The doctored cleanup name must never be joined into an unlink outside pending/.
+    with pytest.raises(HOOK_MODULE.RePingHookError, match="bare filename"):
+        _post(repo)
+    assert target.exists()
+
+
 def test_post_replay_after_cleanup_is_silent_and_does_not_duplicate(tmp_path: Path) -> None:
     repo = _repo(tmp_path / "repo")
     message = "report progress"

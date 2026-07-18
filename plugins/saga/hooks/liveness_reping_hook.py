@@ -278,6 +278,8 @@ def _post_tool_use(payload: Mapping[str, Any], repo_root: Path, *, failure: bool
         )
     pending_name = inflight.get("pending_name")
     if isinstance(pending_name, str):
+        if Path(pending_name).name != pending_name:
+            raise RePingHookError("pending record name is not a bare filename")
         (state_root / "pending" / pending_name).unlink(missing_ok=True)
     inflight_path.unlink(missing_ok=True)
 

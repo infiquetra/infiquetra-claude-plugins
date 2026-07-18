@@ -202,6 +202,9 @@ def phi_score(
     intervals = intervals[-policy.maximum_intervals :]
     last_heartbeat = points[-1] if len(points) > 1 else None
     anchor = max(dispatch, last_heartbeat) if last_heartbeat is not None else dispatch
+    # R4: no sample — the dispatch anchor included — may extend liveness into the future; a
+    # within-tolerance future dispatch clamps to ``now`` exactly like a within-tolerance beat.
+    anchor = min(anchor, current)
     if len(intervals) < policy.minimum_intervals:
         return PhiScore(None, len(intervals), last_heartbeat, anchor)
 

@@ -486,6 +486,12 @@ def append_teardown_event(ledger: run_ledger.RunLedger, fact: Mapping[str, Any])
     An identical replay returns the existing record without appending (idempotent); a
     conflicting duplicate or an ordering violation raises. The returned record carries the
     chain fields of whichever record now represents the event.
+
+    Validation here is ledger-internal by design: the broker zero-open recheck and the
+    still-closed generation gate live in :func:`reclaim_all`, the only sanctioned
+    ``teardown-complete`` emitter. A direct append that bypasses the driver cannot
+    fabricate closure — :func:`project` derives ``open_count`` live from the broker, so
+    a completion fact recorded over an open resource stays visibly inconsistent.
     """
 
     if fact.get("kind") != "teardown":
@@ -786,8 +792,13 @@ def request(
     }
 
 
+def _reclaim_lock_path(ledger: run_ledger.RunLedger, team_run_id: str) -> Path:
+    digest = hashlib.sha256(_bounded_text(team_run_id, "team_run_id").encode("utf-8"))
+    return ledger.path.with_suffix(ledger.path.suffix + f".reclaim-{digest.hexdigest()[:16]}")
+
+
 @contextlib.contextmanager
-def _reclaim_guard(ledger: run_ledger.RunLedger, team_run_id: str) -> Iterator[None]:
+def _reclaim_guard(ledger: run_ledger.RunLedger, team_run_id: str) -> Iterator[Path]:
     """One exclusive per-run mutex around the B8 action phase (R3).
 
     The ledger dedups facts, but without this lock two concurrent physical passes could
@@ -797,13 +808,19 @@ def _reclaim_guard(ledger: run_ledger.RunLedger, team_run_id: str) -> Iterator[N
     blocks here; a crashed holder's flock releases with its process.
     """
 
-    digest = hashlib.sha256(_bounded_text(team_run_id, "team_run_id").encode("utf-8"))
-    lock_path = ledger.path.with_suffix(ledger.path.suffix + f".reclaim-{digest.hexdigest()[:16]}")
-    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    lock_path = _reclaim_lock_path(ledger, team_run_id)
+    try:
+        # The guard may run before any append has provisioned the store directory
+        # (an operator reclaim on a fresh repository) — provision it, and surface any
+        # filesystem refusal as the module's typed failure, never a raw traceback.
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    except OSError as exc:
+        raise TeardownError(f"cannot provision the reclaim guard at {lock_path}: {exc}") from exc
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
         try:
-            yield
+            yield lock_path
         finally:
             fcntl.flock(fd, fcntl.LOCK_UN)
     finally:
@@ -838,8 +855,8 @@ def reclaim_all(
     if dry_run:
         return project(read_decision_input(ledger, broker), team_run_id)
 
-    with _reclaim_guard(ledger, team_run_id):
-        return _reclaim_all_locked(
+    with _reclaim_guard(ledger, team_run_id) as lock_path:
+        projection = _reclaim_all_locked(
             ledger,
             broker,
             adapters,
@@ -849,6 +866,13 @@ def reclaim_all(
             at_provider=at_provider,
             max_actions=max_actions,
         )
+        if projection["completion_fact_ref"] is not None:
+            # Completion is final: every later pass short-circuits read-only on the
+            # recorded receipt, so unlinking under the lock reclaims the per-run sidecar
+            # without a lock-split hazard — a holder of a fresh inode can only observe
+            # the receipt, never act.
+            lock_path.unlink(missing_ok=True)
+        return projection
 
 
 def _reclaim_all_locked(
@@ -1358,12 +1382,20 @@ def production_adapters(
     )
 
 
-def _count_results(ledger: run_ledger.RunLedger, broker: Any, team_run_id: str) -> int:
+def _count_budgeted_results(ledger: run_ledger.RunLedger, broker: Any, team_run_id: str) -> int:
+    """Results that consumed the recovery action budget: real adapter invocations only.
+
+    Crash-orphan reconcile results (``recovered-after-crash``) are ledger bookkeeping over
+    already-gone resources — unbounded by ``max_actions`` by design — and must not drain
+    the cross-run budget, or one crashed run's backlog starves every newer run's recovery.
+    """
+
     return len(
         [
             rec
             for rec in _run_records(read_decision_input(ledger, broker).ledger_records, team_run_id)
             if rec.get("event") == "resource-result"
+            and rec.get("reason_code") != "recovered-after-crash"
         ]
     )
 
@@ -1424,10 +1456,12 @@ def recover(
             )
             passes.append({"team_run_id": run_id, "actions_taken": 0, "skipped": "budget"})
             continue
-        before = _count_results(ledger, broker, run_id)
+        before = _count_budgeted_results(ledger, broker, run_id)
         # Per-run isolation: one run's refused pass (a blocked terminal, a conflicted
-        # ledger, an adapter refusal) is that run's evidence — it must never head-of-line
-        # block recovery of every newer open run in the repository.
+        # ledger, a corrupt broker record, an adapter refusal) is that run's evidence —
+        # it must never head-of-line block recovery of every newer open run. The broker's
+        # own error family (LeaseBrokerError et al.) is not TeardownError, so the net is
+        # deliberately wide; the observation append records the type as the evidence.
         try:
             projection = reclaim_all(
                 ledger,
@@ -1439,8 +1473,8 @@ def recover(
                 at_provider=at_provider,
                 max_actions=budget,
             )
-        except TeardownError as exc:
-            taken = _count_results(ledger, broker, run_id) - before
+        except Exception as exc:  # noqa: BLE001 - one run's failure is evidence, not a pass abort
+            taken = _count_budgeted_results(ledger, broker, run_id) - before
             budget -= max(0, taken)
             append_teardown_event(
                 ledger,
@@ -1461,7 +1495,7 @@ def recover(
                 }
             )
             continue
-        after = _count_results(ledger, broker, run_id)
+        after = _count_budgeted_results(ledger, broker, run_id)
         taken = max(0, after - before)
         budget -= taken
         append_teardown_event(

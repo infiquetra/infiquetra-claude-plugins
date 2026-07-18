@@ -67,7 +67,39 @@ files), `mypy plugins/ scripts/ tests/` zero errors, bandit `-ll` clean on chang
 `git diff --check`. One pre-existing drift guard (`test_no_pulse_owned_status_field`)
 updated for the legitimate `teardown` fact kind.
 
+## Ceremony round 1 (`wf_95b82683-d93`) — 14 findings, remediated in `148ecb50`
+
+Two real P1 defects, one P2, seven testing gaps, four advisories:
+
+- **P1 (devils F1)** — broker admission-record eviction + re-close mints a fresh
+  `close_generation`; the teardown-intent re-append conflicted (the generation was replay
+  identity even though `intent_id` deliberately excludes it), permanently poisoning an
+  incomplete run. Fixed by excluding `close_generation` from intent replay identity; the
+  driver fences on its pass-local generation. LEARNINGS `{#intent-replay-generation-358}`.
+- **P1 (validate-concurrency)** — two concurrent `reclaim_all` passes both invoked the
+  adapter for one action key: ledger dedup records once but does not serialize side
+  effects, and attempt-append freshness cannot distinguish a live racer from a crashed
+  predecessor (whose dangling attempt must stay re-actable). Fixed structurally with the
+  per-run exclusive flock `_reclaim_guard` (completion short-circuit re-checked under the
+  lock; a dead holder's flock releases with its process).
+- **P2 (devils F2)** — one run's `TeardownError` aborted the whole `recover()` pass,
+  head-of-line blocking every newer run. Fixed with per-run try/except that appends a
+  `recovery-run-error:<type>` observation and continues.
+- **Testing (TST-1..7)** — negative tests added: generation-loss completion refusal,
+  alive-after-kill, eviction-gate lease-absent, every process-stop retain/absent reason,
+  head-None adapter branches, driver/builder guards, and the conformance checker now
+  audits the real enumerated consumer sources, not only its fixtures.
+- **Advisory (SEC-1/SEC-2/ARCH-1/event-flow)** — the "no reopen" fence claim was
+  overstated: the bounded map's eviction lapses admission open until re-close. Docs now
+  state the retention-scoped guarantee (driver re-closes at pass start, snapshots after
+  the close, rechecks the pass-local generation — eviction costs a retry, never a false
+  receipt), proven by the unfenced-window capture test; the inherent os.kill PID-reuse
+  window is documented.
+
+Full suite after remediation: 4986 passed / 0 failed / 1 skipped; ruff, format, mypy,
+bandit clean.
+
 ## Next step
 
-Run the six-lens cc-workflow ceremony (pool of 3) per the approved Workflow Structure,
-fix findings, then `/code-review` + `/qa` gates and the ship ceremony.
+Ceremony round 2 (`wf_fcdc177d-727`) at HEAD `148ecb50` — same approved vehicle plus
+per-finding remediation verdicts; then `/code-review` + `/qa` gates and the ship ceremony.

@@ -1777,3 +1777,272 @@ class TestDefensiveRefusals:
                 aggregate_limit=limits.aggregate_max_concurrent,
                 escalation="maim",
             )
+
+
+# --------------------------------------------------------- ceremony round-2 regressions
+
+
+class TestFenceSuccessorAndBatchCall:
+    """Round-2 TST-FENCE-GAP-1: the two remaining guarded admission paths refuse a
+    closed owner, so no admission-shaped operation can slip the #358 fence."""
+
+    def test_acquire_successor_refuses_closed_owner(self, broker: Any) -> None:
+        limits = _limits()
+        broker.close_owner_admission(owner_id="team-run-1")
+        with pytest.raises(B.OwnerAdmissionClosedError):
+            broker.acquire_successor(
+                owner_id="team-run-1",
+                session_id="session-1",
+                policy_sha256=limits.policy_sha256(),
+                session_limit=limits.max_concurrent,
+                aggregate_limit=limits.aggregate_max_concurrent,
+                mutation="read-write",
+                resource_ref={"logical_unit_id": "u-succ"},
+                predecessor_token=B.FencingToken(broker_epoch="epoch-x", fencing_sequence=1),
+                predecessor_receipt_sha256="a" * 64,
+            )
+
+    def test_prepare_batch_call_refuses_closed_owner_slot(self, broker: Any) -> None:
+        limits = _limits()
+        broker.reserve_batch(
+            count=1,
+            owner_id="team-run-1",
+            session_id="session-1",
+            batch_id="batch-1",
+            agent_type="*",
+            policy_sha256=limits.policy_sha256(),
+            session_limit=limits.max_concurrent,
+            aggregate_limit=limits.aggregate_max_concurrent,
+            mutation="read-write",
+        )
+        broker.close_owner_admission(owner_id="team-run-1")
+        with pytest.raises(B.OwnerAdmissionClosedError):
+            broker.prepare_batch_call(
+                session_id="session-1",
+                batch_id="batch-1",
+                agent_type="worker",
+                tool_use_id="tool-1",
+            )
+
+
+class TestRecoveryBudget:
+    """Round-2 TST-BUDGET-GAP-2 / DA-R2-1: the cross-run action budget bounds real
+    adapter invocations only, and skipped runs still get an honest observation."""
+
+    def test_budget_exhausted_skips_later_runs_with_observation(
+        self, ledger: Any, broker: Any
+    ) -> None:
+        _open(ledger, broker, run_id="team-run-a")
+        _acquire(broker, owner="team-run-a", session="session-a", resource="u-a")
+        _open(ledger, broker, run_id="team-run-b")
+        _acquire(broker, owner="team-run-b", session="session-b", resource="u-b")
+        outcome = TT.recover(
+            ledger,
+            broker,
+            TT.production_adapters(broker),
+            subplot_id=SUB,
+            expired_only=False,
+            max_actions=1,
+            at_provider=_ats(),
+        )
+        by_run = {entry["team_run_id"]: entry for entry in outcome["recovered_runs"]}
+        assert by_run["team-run-a"]["actions_taken"] == 1
+        assert by_run["team-run-a"]["complete"] is True
+        assert by_run["team-run-b"]["skipped"] == "budget"
+        assert sum(e.get("actions_taken", 0) for e in outcome["recovered_runs"]) == 1
+        codes = {
+            r["team_run_id"]: r["reason_code"]
+            for r in RL.read_facts(ledger)
+            if r.get("event") == "recovery-observation"
+        }
+        assert codes["team-run-b"] == "recovery-action-budget-exhausted"
+
+    def test_crash_reconcile_results_do_not_drain_budget(self, ledger: Any, broker: Any) -> None:
+        # team-run-a holds only a crash-orphaned attempt over a gone resource: its
+        # reconcile is bookkeeping, not an action, and must not starve team-run-b.
+        _open(ledger, broker, run_id="team-run-a")
+        TT.request(
+            ledger,
+            broker,
+            subplot_id=SUB,
+            team_run_id="team-run-a",
+            terminal_reason="success",
+            at=AT,
+        )
+        _attempt(ledger, "team-run-a", resource_id="ghost-lease")
+        _open(ledger, broker, run_id="team-run-b")
+        _acquire(broker, owner="team-run-b", session="session-b", resource="u-b")
+        outcome = TT.recover(
+            ledger,
+            broker,
+            TT.production_adapters(broker),
+            subplot_id=SUB,
+            expired_only=False,
+            max_actions=1,
+            at_provider=_ats(),
+        )
+        by_run = {entry["team_run_id"]: entry for entry in outcome["recovered_runs"]}
+        assert by_run["team-run-a"]["complete"] is True
+        assert by_run["team-run-a"]["actions_taken"] == 0
+        assert by_run["team-run-b"]["complete"] is True
+        assert by_run["team-run-b"]["actions_taken"] == 1
+
+    def test_error_path_does_not_charge_unspent_budget(self, ledger: Any, broker: Any) -> None:
+        _open(ledger, broker, run_id="team-run-a")
+        _acquire(broker, owner="team-run-a", session="session-a", resource="u-a")
+        _open(ledger, broker, run_id="team-run-b")
+        _acquire(broker, owner="team-run-b", session="session-b", resource="u-b")
+        production = TT.production_adapters(broker)
+
+        def _poisoned_release(lease: Any) -> Any:
+            if str(lease.get("owner_id")) == "team-run-a":
+                raise TT.TeardownError("poisoned before any result")
+            return production.lease_release(lease)
+
+        outcome = TT.recover(
+            ledger,
+            broker,
+            TT.ReclaimAdapters(lease_release=_poisoned_release),
+            subplot_id=SUB,
+            expired_only=False,
+            max_actions=1,
+            at_provider=_ats(),
+        )
+        by_run = {entry["team_run_id"]: entry for entry in outcome["recovered_runs"]}
+        assert by_run["team-run-a"]["error"] == "TeardownError"
+        assert by_run["team-run-a"]["actions_taken"] == 0
+        assert by_run["team-run-b"]["complete"] is True
+
+
+class TestRecoveryIsolationBrokerErrors:
+    """Round-2 CONC-1: isolation covers the broker's own error family, not only
+    TeardownError — one corrupt owner record cannot wedge the whole recovery pass."""
+
+    def test_broker_error_for_one_run_does_not_block_newer_runs(
+        self, ledger: Any, broker: Any, monkeypatch: Any
+    ) -> None:
+        _open(ledger, broker, run_id="team-run-a")
+        _acquire(broker, owner="team-run-a", session="session-a", resource="u-a")
+        _open(ledger, broker, run_id="team-run-b")
+        _acquire(broker, owner="team-run-b", session="session-b", resource="u-b")
+
+        # Patch the bound method so type(broker) — and with it the dual-load token
+        # module resolution in _current_head — stays the real broker class.
+        real_close = broker.close_owner_admission
+
+        def _corrupt_for_a(*, owner_id: str) -> Any:
+            if owner_id == "team-run-a":
+                raise B.RegistryCorruptError("malformed owner record")
+            return real_close(owner_id=owner_id)
+
+        monkeypatch.setattr(broker, "close_owner_admission", _corrupt_for_a)
+        outcome = TT.recover(
+            ledger,
+            broker,
+            TT.production_adapters(broker),
+            subplot_id=SUB,
+            expired_only=False,
+            max_actions=8,
+            at_provider=_ats(),
+        )
+        by_run = {entry["team_run_id"]: entry for entry in outcome["recovered_runs"]}
+        assert by_run["team-run-a"]["error"] == "RegistryCorruptError"
+        assert by_run["team-run-b"]["complete"] is True
+        codes = {
+            r["team_run_id"]: r["reason_code"]
+            for r in RL.read_facts(ledger)
+            if r.get("event") == "recovery-observation"
+        }
+        assert codes["team-run-a"] == "recovery-run-error:RegistryCorruptError"
+
+
+class TestReclaimGuardLifecycle:
+    """Round-2 ARCH-R2-1 / ARCH-R2-2 / CONC-2: the per-run lock sidecar is provisioned
+    with a typed failure surface and reclaimed once the run's receipt is final."""
+
+    def test_guard_provisions_missing_store_dir_and_fails_typed(
+        self, tmp_path: Path, broker: Any
+    ) -> None:
+        fresh = RL.RunLedger(path=tmp_path / "never" / "provisioned" / "run-facts.jsonl")
+        with pytest.raises(TT.TeardownError, match="unknown team run"):
+            TT.reclaim_all(
+                fresh,
+                broker,
+                TT.ReclaimAdapters(),
+                subplot_id=SUB,
+                team_run_id="team-run-x",
+                terminal_reason="success",
+                at_provider=_ats(),
+            )
+
+    def test_lock_sidecar_persists_while_blocked_and_clears_on_completion(
+        self, ledger: Any, broker: Any
+    ) -> None:
+        _open(ledger, broker)
+        _acquire(broker, owner="team-run-1", resource="u-a")
+        lock_path = TT._reclaim_lock_path(ledger, "team-run-1")
+        blocked = TT.reclaim_all(
+            ledger,
+            broker,
+            TT.ReclaimAdapters(),  # conservative retain: blocked terminal
+            subplot_id=SUB,
+            team_run_id="team-run-1",
+            terminal_reason="hard-fail",
+            at_provider=_ats(),
+        )
+        assert blocked["completion_fact_ref"] is None
+        assert lock_path.exists()
+        converged = TT.reclaim_all(
+            ledger,
+            broker,
+            TT.production_adapters(broker),
+            subplot_id=SUB,
+            team_run_id="team-run-1",
+            terminal_reason="hard-fail",
+            at_provider=_ats(),
+        )
+        assert converged["completion_fact_ref"] is not None
+        assert not lock_path.exists()
+
+
+class TestBoundaryGuards:
+    """Round-2 TST-BOUNDARY-3 / DA-R2-2: typed boundary refusals stay typed, and a
+    driver-bypassing completion append stays visibly inconsistent."""
+
+    def test_bogus_adapter_disposition_is_refused(self) -> None:
+        with pytest.raises(TT.TeardownError, match="adapter disposition must be one of"):
+            TT.ActionOutcome(disposition="bogus").validated()
+
+    def test_default_broker_names_missing_capability(self, monkeypatch: Any) -> None:
+        class _NoFenceBroker:
+            pass
+
+        class _Authority:
+            LeaseBroker = _NoFenceBroker
+
+        monkeypatch.setattr(TT.fleet_commons_shim, "load", lambda _name: _Authority)
+        with pytest.raises(TT.TeardownError, match="lacks close_owner_admission"):
+            TT.default_broker()
+
+    def test_direct_completion_bypass_stays_visibly_inconsistent(
+        self, ledger: Any, broker: Any
+    ) -> None:
+        # append_teardown_event validates ledger-internal transitions only; the broker
+        # zero-open gate is the driver's. A bypass cannot hide the open resource: the
+        # projection derives open_count live from the broker beside the recorded receipt.
+        _open(ledger, broker)
+        _acquire(broker, owner="team-run-1", resource="u-open")
+        _intend(ledger)
+        bypass = TT.build_teardown_complete(
+            subplot_id=SUB,
+            at=AT,
+            team_run_id="team-run-1",
+            intent_id=TT.intent_id_for("team-run-1", "success"),
+            close_generation=7,
+            released_count=0,
+            already_absent_count=0,
+        )
+        TT.append_teardown_event(ledger, bypass)
+        projection = TT.project(TT.read_decision_input(ledger, broker), "team-run-1")
+        assert projection["completion_fact_ref"] is not None
+        assert projection["open_count"] == 1

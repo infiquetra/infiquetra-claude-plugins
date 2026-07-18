@@ -16,8 +16,10 @@
   actions, re-reconcile, still-closed generation recheck, and a `teardown-complete`
   receipt only at zero open resources. `request` records intent without acting; `recover`
   is a budgeted expired-only pass that always appends an observation, isolated per run —
-  one run's refused pass records a `recovery-run-error` observation and never blocks
-  recovery of newer runs. Concurrent physical B8 passes for one run serialize on an
+  one run's refused pass (any exception family, the broker's included) records a
+  `recovery-run-error` observation and never blocks recovery of newer runs; the action
+  budget bounds real adapter invocations only (crash-orphan reconciles are unbudgeted
+  bookkeeping over already-gone resources). Concurrent physical B8 passes for one run serialize on an
   exclusive per-run reclaim lock so each logical action invokes its adapter exactly once,
   and a broker-evicted-then-re-closed admission generation replays the run's one recorded
   intent instead of poisoning the run (`close_generation` is not intent identity).

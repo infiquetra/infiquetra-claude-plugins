@@ -650,10 +650,14 @@ FLEET_COMMONS = ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons"
 def _load_broker_module() -> ModuleType:
     if str(FLEET_COMMONS) not in sys.path:
         sys.path.insert(0, str(FLEET_COMMONS))
-    spec = importlib.util.spec_from_file_location("lease_broker", FLEET_COMMONS / "lease_broker.py")
+    # A distinct sys.modules key: plugins/saga/scripts/ has its OWN lease_broker.py (the session
+    # admission CLI), and clobbering that name breaks unrelated outcome CLI tests in-session.
+    spec = importlib.util.spec_from_file_location(
+        "_test_fleet_lease_broker", FLEET_COMMONS / "lease_broker.py"
+    )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    sys.modules["lease_broker"] = module
+    sys.modules["_test_fleet_lease_broker"] = module
     spec.loader.exec_module(module)
     return module
 
@@ -878,3 +882,208 @@ class TestProtectedHandoff:
         assert head["close_receipt"] is not None
         state = broker.classify_token(offer["resource_ref"], lease.token)
         assert state == "closed"
+
+
+# ---------------------------------------------------------------------------
+# CLI verbs + attached advance (R5/R7/R11, U4)
+# ---------------------------------------------------------------------------
+
+OUTCOME_CLI = SCRIPTS / "outcome.py"
+
+
+def _load_outcome_module() -> ModuleType:
+    if str(SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(SCRIPTS))
+    spec = importlib.util.spec_from_file_location("outcome", OUTCOME_CLI)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["outcome"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+OCLI = _load_outcome_module()
+
+
+def _cli(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(OUTCOME_CLI), *args],
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+
+def _single_node_repo(tmp_path: Path, *, depends_on: list[str] | None = None) -> Path:
+    repo = tmp_path / "single"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    _git(repo, "config", "user.email", "test@example.invalid")
+    _git(repo, "config", "user.name", "Test")
+    spec = _spec_dict()
+    node = _node(SUBPLOT, backend="inline")
+    if depends_on:
+        node["depends_on"] = list(depends_on)
+        spec["nodes"] = [_node(dep, backend="inline") for dep in depends_on] + [node]
+    else:
+        spec["nodes"] = [node]
+    spec_file = repo / "docs" / "outcomes" / OUTCOME_ID / "outcome-spec.json"
+    spec_file.parent.mkdir(parents=True)
+    spec_file.write_text(json.dumps(spec, indent=1), encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "seed single-node spec")
+    _git(repo, "remote", "add", "origin", ORIGIN_HTTPS)
+    return repo
+
+
+class TestCliVerbs:
+    def test_cli_discover_emits_a_valid_envelope(self, outcome_repo: Path) -> None:
+        result = _cli(outcome_repo, "discover", OUTCOME_ID)
+        assert result.returncode == 0, result.stderr
+        envelope = OC.parse_discovery_envelope(result.stdout)
+        assert envelope["outcome"]["id"] == OUTCOME_ID
+
+    def test_cli_discover_halts_with_receipt_and_exit_3(self, outcome_repo: Path) -> None:
+        _git(outcome_repo, "remote", "remove", "origin")
+        result = _cli(outcome_repo, "discover", OUTCOME_ID)
+        assert result.returncode == 3
+        receipt = OC.validate_halt_receipt(json.loads(result.stdout))
+        assert receipt["code"] == "repo-identity-missing-origin"
+
+    def test_cli_attach_readonly_emits_canonical_status(self, tmp_path: Path) -> None:
+        repo = _single_node_repo(tmp_path)
+        result = _cli(repo, "attach", OUTCOME_ID)
+        assert result.returncode == 0, result.stderr
+        status = OC.validate_canonical_status(json.loads(result.stdout))
+        assert status["mutation_allowed"] is False
+
+    def test_cli_handoff_emits_a_public_reference(self, outcome_repo: Path, tmp_path: Path) -> None:
+        broker_root = tmp_path / "cli-broker"
+        broker_root.mkdir(mode=0o700)
+        result = _cli(
+            outcome_repo,
+            "handoff",
+            OUTCOME_ID,
+            SUBPLOT,
+            "--operation",
+            "advance-one",
+            "--session-id",
+            "sess-cli",
+            "--policy-sha256",
+            "c" * 64,
+            "--session-limit",
+            "2",
+            "--aggregate-limit",
+            "4",
+            "--broker-root",
+            str(broker_root),
+        )
+        assert result.returncode == 0, result.stderr
+        reference = OC.validate_handoff_reference(json.loads(result.stdout))
+        assert reference["operation"] == "advance-one"
+
+    def test_cli_attach_advance_requires_handoff_flags(self, outcome_repo: Path) -> None:
+        result = _cli(outcome_repo, "attach", OUTCOME_ID, "--advance")
+        assert result.returncode == 1
+        assert "requires --handoff-id and --subplot" in result.stderr
+
+
+class TestAttachedAdvance:
+    def test_attached_advance_dispatches_exactly_the_offered_subplot(
+        self, tmp_path: Path, broker: Any
+    ) -> None:
+        repo = _single_node_repo(tmp_path)
+        lease = _issuer_lease(broker)
+        offer, _ = _offer(repo, broker, lease)
+        result = OCLI.attached_advance(
+            repo,
+            OUTCOME_ID,
+            SUBPLOT,
+            handoff_id=offer["handoff_id"],
+            receiver_owner_id="receiver-codex",
+            admission=dict(ADMISSION),
+            broker=broker,
+        )
+        assert result["advance"]["dispatched"] == [SUBPLOT]
+        assert result["subplot_id"] == SUBPLOT
+
+    def test_replayed_attached_advance_never_double_dispatches(
+        self, tmp_path: Path, broker: Any
+    ) -> None:
+        repo = _single_node_repo(tmp_path)
+        offer, _ = _offer(repo, broker, _issuer_lease(broker))
+        first = OCLI.attached_advance(
+            repo,
+            OUTCOME_ID,
+            SUBPLOT,
+            handoff_id=offer["handoff_id"],
+            receiver_owner_id="receiver-codex",
+            admission=dict(ADMISSION),
+            broker=broker,
+        )
+        assert first["advance"]["dispatched"] == [SUBPLOT]
+        replay = OCLI.attached_advance(
+            repo,
+            OUTCOME_ID,
+            SUBPLOT,
+            handoff_id=offer["handoff_id"],
+            receiver_owner_id="receiver-codex",
+            admission=dict(ADMISSION),
+            broker=broker,
+        )
+        assert replay["advance"]["dispatched"] == []  # settled dispatch record dedups (R7)
+
+    def test_frontier_change_halts_rather_than_broadening(
+        self, tmp_path: Path, broker: Any
+    ) -> None:
+        repo = _single_node_repo(tmp_path, depends_on=["sub-dep"])
+        offer, _ = _offer(repo, broker, _issuer_lease(broker))
+        with pytest.raises(OC.CompatibilityHaltError) as exc:
+            OCLI.attached_advance(
+                repo,
+                OUTCOME_ID,
+                SUBPLOT,
+                handoff_id=offer["handoff_id"],
+                receiver_owner_id="receiver-codex",
+                admission=dict(ADMISSION),
+                broker=broker,
+            )
+        assert exc.value.code == "handoff-frontier-changed"
+
+    def test_two_receivers_race_one_successor(self, tmp_path: Path, broker: Any) -> None:
+        import threading
+
+        repo = _single_node_repo(tmp_path)
+        offer, _ = _offer(repo, broker, _issuer_lease(broker))
+        barrier = threading.Barrier(2)
+        outcomes: dict[str, Any] = {}
+
+        def contend(receiver: str) -> None:
+            barrier.wait()
+            try:
+                outcomes[receiver] = _accept(
+                    repo, broker, offer["handoff_id"], receiver_owner_id=receiver
+                )
+            except OC.CompatibilityHaltError as halt:
+                outcomes[receiver] = halt
+
+        threads = [
+            threading.Thread(target=contend, args=(name,))
+            for name in ("receiver-one", "receiver-two")
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        wins = [value for value in outcomes.values() if isinstance(value, dict)]
+        halts = [
+            value for value in outcomes.values() if isinstance(value, OC.CompatibilityHaltError)
+        ]
+        assert len(wins) == 1 and len(halts) == 1
+        assert halts[0].code in ("handoff-receiver-conflict", "handoff-superseded")
+        winner = wins[0]["lease"]
+        commit_path = OC._handoffs_dir(repo, OUTCOME_ID) / f"{offer['handoff_id']}.commit.json"
+        committed = json.loads(commit_path.read_text())
+        assert committed["successor_lease_id"] == winner.lease_id

@@ -51,6 +51,7 @@ FACT_KINDS = frozenset(
         "benchmark",
         "dispatch-settlement",
         "liveness",
+        "teardown",
     }
 )
 

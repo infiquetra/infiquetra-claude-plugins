@@ -83,7 +83,7 @@
     {
       "name": "saga",
       "source": "./plugins/saga",
-      "version": "0.99.1",
+      "version": "0.100.0",
       "description": "Infiquetra engineering lifecycle plugin with /outcome DAG orchestration, /pulse live telemetry, trust-gated external-engine onboarding, provenance, attestation, and delegation-audit reconciliation.",
       "author": {
         "name": "Infiquetra",
@@ -108,7 +108,7 @@
     {
       "name": "team-execution",
       "source": "./plugins/team-execution",
-      "version": "2.18.0",
+      "version": "2.19.0",
       "description": "Two-phase plan execution with reviewer consensus, non-scoring external advisory convergence diffs, validator gates, chaperone manifests with write-once draft snapshots, and guarded nonprod automation.",
       "author": {
         "name": "Infiquetra",
@@ -180,7 +180,7 @@
     {
       "name": "agy",
       "source": "./plugins/agy",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "description": "Antigravity-backed coder reviewer bridge agents with guarded evidence bundles, output-attested receipts, a durable delegation-audit-store mirror, patch import, and fail-loud provenance coercion.",
       "author": {
         "name": "Infiquetra",
@@ -200,7 +200,7 @@
     {
       "name": "fleet-core",
       "source": "./plugins/fleet-core",
-      "version": "0.12.0",
+      "version": "0.13.0",
       "description": "Fleet-commons library plugin: shared primitives, bridge receipts, output attestations, the durable delegation audit store, and the resolution shim. Scripts-only \u2014 no skills, commands, or agents.",
       "author": {
         "name": "Infiquetra",

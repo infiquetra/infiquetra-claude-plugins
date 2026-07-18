@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.100.0] - 2026-07-17
+
+### Added - orphan runner containment and receipt-chained evidence (#355)
+
+- Registered dispatch and advisory-panel facts now use broker prepare/commit close receipts, and
+  retries require the exact predecessor receipt for the stable execution resource.
+- Team Execution manifest claims and adjudications use successor CAS, strict mirrored commit, and
+  canonical receipt checks before a manifest may satisfy a gate.
+- Added the read-only `reap_orphans.py scan` projector and the canonical/noncanonical evidence-write
+  inventory.
+- Raw and completeness manifest commands now write only the noncanonical namespace. Empty-artifact
+  projection requires a matching bound output record and trusted template; malformed bindings are
+  integrity evidence rather than empty-output claims.
+- Advanced every Saga lease consumer to fleet-core protocol 2.
+
 ## [0.99.1] - 2026-07-17
 
 ### Fixed - lease-bound worktree teardown retains broker authority (#356)

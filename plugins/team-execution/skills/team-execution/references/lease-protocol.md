@@ -16,6 +16,8 @@ python3 "$TEAM_LEASE" preflight --session-id "$CLAUDE_CODE_SESSION_ID"
 
 Preflight pins team-execution's complete default admission snapshot in the shared authority. The
 Agent hook consumes that exact session record; it never reconstructs or widens policy from defaults.
+The wrapper requires fleet-core lease protocol 2, which includes broker-owned prepare, commit,
+abort, and exact-receipt successor acquisition; a version mismatch halts before fan-out.
 
 At a wave or result-collection boundary, renew all live agent leases for the trusted Claude session:
 

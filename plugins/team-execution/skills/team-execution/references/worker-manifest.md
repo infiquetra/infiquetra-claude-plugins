@@ -44,8 +44,10 @@ This raw CLI path is for an ordinary Claude-agent worker's manifest (`kind="team
 external-engine identity, no `bridge_receipt.v1` to prove) — there is nothing for the durable
 delegation-audit store (#396) to mirror here. A chaperone worker's manifest instead goes through
 `engine_dispatch.record_dispatch_manifest(...)` (`external-engine-workers.md` §5 step 5), which
-mirrors both the manifest and its raw receipt to that durable store; see that snippet's
-`audit_store_root` argument.
+acquires an exact broker successor from the registered dispatch receipt and commits both the
+manifest and strict mirror; see that snippet's predecessor, authority, admission, and
+`audit_store_root` arguments. The raw CLI output is explicitly noncanonical evidence and cannot
+satisfy a gate or replace the chaperone's claim/adjudication close-receipt chain.
 
 `<manifest.json>` is the `to_dict()` output of a `provenance_manifest.Manifest` built as below.
 
@@ -103,7 +105,10 @@ returned prose claims alongside its evidence (e.g. a second-opinion review verdi
 may populate `claim_provenance` from the engine's claimed layer — but every claim stays
 producer-`claimed`-only until the chaperone adjudicates it (`engine_dispatch.adjudicate_manifest`,
 never the engine itself); a claimed-`verified` status never counts toward a gate on its own (D5, no
-self-attestation — same rule either worker kind).
+self-attestation — same rule either worker kind). Canonical adjudication names the claim close
+receipt, acquires its exact successor for the same execution resource, rereads current bytes inside
+settlement, and commits the adjudicated manifest plus strict mirror. A stale predecessor cannot
+reacquire or overwrite a newer claim.
 
 ## Tier
 

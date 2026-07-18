@@ -5,27 +5,48 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
+import importlib
 import json
 import os
 import selectors
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import fleet_commons_shim  # noqa: E402
 
+
+class _LazyModule:
+    """Resolve optional live-apply dependencies only when that path is selected."""
+
+    def __init__(self, loader: Callable[[], Any]) -> None:
+        self._loader = loader
+        self._module: Any | None = None
+
+    def __getattr__(self, name: str) -> Any:
+        if self._module is None:
+            self._module = self._loader()
+        return getattr(self._module, name)
+
+
+agy_lease_admission = _LazyModule(lambda: importlib.import_module("agy_lease_admission"))
+
 _bridge_receipt = fleet_commons_shim.load("bridge_receipt")
 _output_attestation = fleet_commons_shim.load("output_attestation")
 _audit_store = fleet_commons_shim.load("audit_store")
+_orphan_evidence = _LazyModule(lambda: fleet_commons_shim.load("orphan_evidence"))
 
 SCHEMA = "agy.delegation.v1"
 
@@ -35,11 +56,13 @@ REVIEW_LENSES = frozenset({"adversarial", "quality", "scope-gap", "security-ops"
 EVIDENCE_LEVELS = frozenset({"minimal", "summary", "full"})
 APPLY_POLICIES = frozenset({"preserve-patch", "apply-if-clean"})
 RUN_SCOPES = frozenset({"clone", "live", "none"})
+LEASE_RENEWAL_INTERVAL_SECONDS = 30
 STATUSES = frozenset(
     {
         "success",
         "patch_ready",
         "applied",
+        "acceptance_pending",
         "plan_gap",
         "test_conflict",
         "path_missing",
@@ -237,6 +260,67 @@ _ACTIVE_PROCESS: subprocess.Popen[bytes] | None = None
 _DIE_CLEAN_SIGNAL: int | None = None
 
 
+def _create_private_bundle_dir(path: Path) -> None:
+    """Create the evidence-bundle boundary with owner-only traversal."""
+
+    path.mkdir(mode=0o700, parents=True, exist_ok=False)
+    os.chmod(path, 0o700, follow_symlinks=False)
+
+
+def _write_private_bytes(path: Path, content: bytes) -> None:
+    """Atomically publish one owner-only evidence file without a permissive-mode window."""
+
+    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(tmp_path, flags, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+            payload = memoryview(content)
+            while payload:
+                written = os.write(fd, payload)
+                payload = payload[written:]
+        finally:
+            os.close(fd)
+        os.replace(tmp_path, path)
+        os.chmod(path, 0o600, follow_symlinks=False)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            tmp_path.unlink()
+
+
+def _write_private_text(path: Path, content: str) -> None:
+    _write_private_bytes(path, content.encode("utf-8"))
+
+
+def _read_private_resource_key(path: Path) -> str:
+    """Read a raw resource key only from an owner-private, non-symlink regular file."""
+
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        raise EnvelopeError(f"could not open private lease resource key file: {exc}") from exc
+    try:
+        metadata = os.fstat(fd)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise EnvelopeError("lease resource key file must be a regular file")
+        if metadata.st_uid != os.geteuid() or stat.S_IMODE(metadata.st_mode) & 0o077:
+            raise EnvelopeError(
+                "lease resource key file must be owned by the current user and unreadable "
+                "by group or other users"
+            )
+        payload = os.read(fd, agy_lease_admission.MAX_RESOURCE_KEY_BYTES + 1)
+    finally:
+        os.close(fd)
+    if len(payload) > agy_lease_admission.MAX_RESOURCE_KEY_BYTES:
+        raise EnvelopeError("lease resource key file exceeds the maximum key size")
+    try:
+        return payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise EnvelopeError("lease resource key file must contain UTF-8 text") from exc
+
+
 class DieCleanInterrupt(BaseException):
     """Raised by the bundle-span SIGTERM/SIGINT handler to unwind through ``finally`` blocks.
 
@@ -328,7 +412,11 @@ def build_envelope_from_args(args: argparse.Namespace) -> Envelope:
 
 
 def _mirror_to_audit_store(
-    audit_store_root: Path | None, run_id: str, result_payload: dict[str, Any]
+    audit_store_root: Path | None,
+    run_id: str,
+    result_payload: dict[str, Any],
+    *,
+    strict: bool = False,
 ) -> None:
     """Mirror ``result_payload`` (and its embedded ``receipt``, when present) to the durable store.
 
@@ -345,8 +433,9 @@ def _mirror_to_audit_store(
         receipt = result_payload.get("receipt")
         if isinstance(receipt, dict):
             _audit_store.mirror_receipt(store, run_id, receipt)
-    except OSError:
-        pass
+    except (OSError, _audit_store.AuditStoreError):
+        if strict:
+            raise
 
 
 def create_validation_bundle(
@@ -366,7 +455,7 @@ def create_validation_bundle(
     bundle_path = repo_root / ".claude" / "agy" / "runs" / resolved_run_id
 
     try:
-        bundle_path.mkdir(parents=True, exist_ok=False)
+        _create_private_bundle_dir(bundle_path)
         envelope_payload = envelope.to_jsonable()
         prompt = render_prompt(envelope, repo_root=repo_root)
         command_payload = {
@@ -401,11 +490,11 @@ def create_validation_bundle(
         projection = render_projection(result_payload)
 
         _write_json(bundle_path / "envelope.json", envelope_payload)
-        (bundle_path / "prompt.txt").write_text(prompt, encoding="utf-8")
+        _write_private_text(bundle_path / "prompt.txt", prompt)
         _write_json(bundle_path / "command.json", command_payload)
         _write_json(bundle_path / "run-lease.json", lease_payload)
         _write_json(bundle_path / "result.json", result_payload)
-        (bundle_path / "projection.md").write_text(projection, encoding="utf-8")
+        _write_private_text(bundle_path / "projection.md", projection)
         _mirror_to_audit_store(audit_store_root, resolved_run_id, result_payload)
     except OSError:
         projection = render_bundle_failed_projection(bundle_path)
@@ -448,6 +537,26 @@ def _finalize_failed_bundle(bundle_path: Path, *, run_id: str, status: str, erro
     return render_bundle_failed_projection(bundle_path)
 
 
+def _finalize_cleanup_failed_bundle(bundle_path: Path, *, run_id: str, error: str) -> str:
+    """Replace a provisional result when exact pre-settlement cleanup could not be proven."""
+
+    payload = {
+        "schema": "agy.result.v1",
+        "run_id": run_id,
+        "bundle_path": str(bundle_path),
+        "status": parse_status("bundle_failed"),
+        "terminal": True,
+        "retain_authority": True,
+        "error": error,
+    }
+    projection = render_bundle_failed_projection(bundle_path)
+    with contextlib.suppress(OSError):
+        if bundle_path.exists():
+            _write_json(bundle_path / "result.json", payload)
+            _write_private_text(bundle_path / "projection.md", projection)
+    return projection
+
+
 def create_supervised_bundle(
     envelope: Envelope,
     *,
@@ -458,13 +567,13 @@ def create_supervised_bundle(
     agy_bin: str | None = None,
     now: datetime | None = None,
     audit_store_root: Path | None = None,
+    lease_admission: Any | None = None,
 ) -> BundleResult:
     repo_root = repo_root.resolve()
     timestamp = now or datetime.now(UTC)
     resolved_run_id = run_id or _new_run_id(timestamp)
     _validate_run_id(resolved_run_id)
     bundle_path = repo_root / ".claude" / "agy" / "runs" / resolved_run_id
-
     # Bundle-span die-clean handlers (#517): a caller's SIGTERM can arrive during clone setup,
     # verification-command execution, patch apply, or bundle writes — windows OUTSIDE
     # run_agy_supervised (which installs its own handler for the launch window and restores
@@ -472,6 +581,9 @@ def create_supervised_bundle(
     # terminal result.json is ever written. ValueError = non-main-thread caller; proceed
     # uncovered rather than fail.
     prior_handlers: dict[int, Any] = {}
+    settlement_prepared = False
+    primary_failure: str | None = None
+    cleanup_result: BundleResult | None = None
     try:
         for signum in (signal.SIGTERM, signal.SIGINT):
             prior_handlers[signum] = signal.signal(signum, _bundle_die_clean_handler)
@@ -479,18 +591,47 @@ def create_supervised_bundle(
         prior_handlers = {}
 
     try:
-        bundle_path.mkdir(parents=True, exist_ok=False)
+        if envelope.mode == "auto-if-clean":
+            if lease_admission is None:
+                raise EnvelopeError(
+                    "launched auto-if-clean requires trusted in-process lease admission"
+                )
+            _orphan_evidence.validate_record(lease_admission.to_dict())
+            expected_output = _orphan_evidence.validate_record(lease_admission.expected_output)
+            if (
+                lease_admission.lease.resource_ref != lease_admission.resource_ref
+                or expected_output["run_id"] != resolved_run_id
+                or expected_output["lease_id"] != lease_admission.lease.lease_id
+                or expected_output["token"] != lease_admission.lease.token.to_dict()
+                or expected_output["resource_ref"] != lease_admission.resource_ref
+            ):
+                raise EnvelopeError("trusted agy lease admission binding does not match this run")
+        _create_private_bundle_dir(bundle_path)
+        if lease_admission is not None:
+            # Startup and publication share the same locked recovery algorithm. An unsafe audit
+            # root remains a later strict-mirror failure with a terminal bundle, not a pre-bundle
+            # crash that loses the operator's evidence.
+            with contextlib.suppress(_orphan_evidence.OrphanEvidenceError):
+                _orphan_evidence.recover_quarantine(
+                    _orphan_evidence.QuarantineStore.for_root(
+                        audit_store_root or _audit_store.DEFAULT_AUDIT_STORE_ROOT,
+                        providers=lease_admission.broker.providers,
+                    )
+                )
         clone_path = bundle_path / "worktree"
         envelope_payload = envelope.to_jsonable()
         prompt = render_prompt(envelope, repo_root=clone_path)
         prompt_path = bundle_path / "prompt.txt"
-        prompt_path.write_text(prompt, encoding="utf-8")
+        _write_private_text(prompt_path, prompt)
         _write_json(bundle_path / "envelope.json", envelope_payload)
 
         stdout_path = bundle_path / "stdout.log"
         stderr_path = bundle_path / "stderr.log"
-        stdout_path.touch()
-        stderr_path.touch()
+        _write_private_bytes(stdout_path, b"")
+        _write_private_bytes(stderr_path, b"")
+        # agy receives only this path, never the raw lease resource key. Pre-creating the file
+        # keeps the black-box logger from selecting a group/world-readable mode.
+        _write_private_bytes(bundle_path / "agy.log", b"")
         checks_path = bundle_path / "checks.json"
         git_proof_path = bundle_path / "git-proof.json"
         diff_patch_path = bundle_path / "diff.patch"
@@ -513,6 +654,7 @@ def create_supervised_bundle(
                 stderr_path=stderr_path,
                 error="live repo is dirty before auto-if-clean launch",
             )
+            primary_failure = run_result.error
             _write_json(
                 checks_path,
                 {
@@ -532,7 +674,7 @@ def create_supervised_bundle(
                 checks_path=checks_path,
                 post_apply=None,
             )
-            result_payload = _result_payload(
+            dirty_result_payload = _result_payload(
                 envelope=envelope,
                 run_id=resolved_run_id,
                 bundle_path=bundle_path,
@@ -545,7 +687,7 @@ def create_supervised_bundle(
                 checks_path=checks_path,
                 clone_path=clone_path,
             )
-            projection = render_projection(result_payload)
+            dirty_projection = render_projection(dirty_result_payload)
             _write_json(
                 bundle_path / "run-lease.json",
                 _run_lease_payload(
@@ -555,14 +697,14 @@ def create_supervised_bundle(
                     repo_root=clone_path,
                 ),
             )
-            _write_json(bundle_path / "result.json", result_payload)
-            (bundle_path / "projection.md").write_text(projection, encoding="utf-8")
-            _mirror_to_audit_store(audit_store_root, resolved_run_id, result_payload)
+            _write_json(bundle_path / "result.json", dirty_result_payload)
+            _write_private_text(bundle_path / "projection.md", dirty_projection)
+            _mirror_to_audit_store(audit_store_root, resolved_run_id, dirty_result_payload)
             return BundleResult(
                 status=parse_status("checks_failed"),
                 run_id=resolved_run_id,
                 bundle_path=bundle_path,
-                projection=projection,
+                projection=dirty_projection,
             )
 
         clone_result = setup_disposable_clone(repo_root=repo_root, clone_path=clone_path)
@@ -573,6 +715,7 @@ def create_supervised_bundle(
                 stderr_path=stderr_path,
                 error=clone_result.error or "disposable clone setup failed",
             )
+            primary_failure = run_result.error
             _write_json(
                 checks_path,
                 {
@@ -592,7 +735,7 @@ def create_supervised_bundle(
                 checks_path=checks_path,
                 post_apply=None,
             )
-            result_payload = _result_payload(
+            clone_failure_payload = _result_payload(
                 envelope=envelope,
                 run_id=resolved_run_id,
                 bundle_path=bundle_path,
@@ -605,7 +748,7 @@ def create_supervised_bundle(
                 checks_path=checks_path,
                 clone_path=clone_path,
             )
-            projection = render_projection(result_payload)
+            clone_failure_projection = render_projection(clone_failure_payload)
             _write_json(
                 bundle_path / "run-lease.json",
                 _run_lease_payload(
@@ -615,14 +758,14 @@ def create_supervised_bundle(
                     repo_root=clone_path,
                 ),
             )
-            _write_json(bundle_path / "result.json", result_payload)
-            (bundle_path / "projection.md").write_text(projection, encoding="utf-8")
-            _mirror_to_audit_store(audit_store_root, resolved_run_id, result_payload)
+            _write_json(bundle_path / "result.json", clone_failure_payload)
+            _write_private_text(bundle_path / "projection.md", clone_failure_projection)
+            _mirror_to_audit_store(audit_store_root, resolved_run_id, clone_failure_payload)
             return BundleResult(
                 status=parse_status("error"),
                 run_id=resolved_run_id,
                 bundle_path=bundle_path,
-                projection=projection,
+                projection=clone_failure_projection,
             )
 
         run_result = run_agy_supervised(
@@ -633,6 +776,15 @@ def create_supervised_bundle(
             stdout_path=stdout_path,
             stderr_path=stderr_path,
             agy_bin=agy_bin,
+            renew_callback=(
+                None
+                if lease_admission is None
+                else lambda: lease_admission.broker.renew(
+                    lease_admission.lease.lease_id,
+                    owner_id=lease_admission.owner_id,
+                    token=lease_admission.lease.token,
+                )
+            ),
         )
         blocked_status = _blocked_status_from_logs(stdout_path, stderr_path)
         if run_result.status == "success" and blocked_status is not None:
@@ -649,7 +801,75 @@ def create_supervised_bundle(
             "passed": None,
         }
         post_apply: dict[str, Any] | None = None
+        settlement_close: dict[str, Any] | None = None
+        result_payload: dict[str, Any] | None = None
+        projection: str | None = None
+        write_disposition = "forensic-only"
         final_status = parse_status(run_result.status) if run_result.status != "success" else None
+
+        def persist_terminal(
+            terminal_run: SupervisedRunResult,
+            *,
+            disposition: str,
+            strict_mirror: bool,
+            canonical_settlement_close: dict[str, Any] | None = None,
+        ) -> tuple[dict[str, Any], str]:
+            _write_json(checks_path, checks_payload)
+            _write_git_proof(
+                git_proof_path,
+                repo_root=repo_root,
+                clone_result=clone_result,
+                live_preflight=live_preflight,
+                changed_paths=diff_evidence.changed_paths,
+                diff_patch_path=diff_evidence.diff_patch_path,
+                checks_path=checks_path,
+                post_apply=post_apply,
+            )
+            command_payload.update(
+                {
+                    "agy_argv": _sanitize_argv(
+                        terminal_run.argv, prompt_replacement="<prompt:prompt.txt>"
+                    ),
+                    "resolved_agy": terminal_run.resolved_agy,
+                    "base_sha": clone_result.base_sha,
+                    "clone_path": str(clone_path),
+                }
+            )
+            _write_json(bundle_path / "command.json", command_payload)
+            terminal_result = _result_payload(
+                envelope=envelope,
+                run_id=resolved_run_id,
+                bundle_path=bundle_path,
+                run_result=terminal_run,
+                stdout_path=stdout_path,
+                stderr_path=stderr_path,
+                summary=_supervised_summary(terminal_run),
+                changed_paths=diff_evidence.changed_paths,
+                diff_patch_path=diff_evidence.diff_patch_path,
+                checks_path=checks_path,
+                clone_path=clone_path,
+            )
+            terminal_result["write_disposition"] = disposition
+            if canonical_settlement_close is not None:
+                terminal_result["settlement_close"] = canonical_settlement_close
+            lease_payload = _run_lease_payload(
+                run_id=resolved_run_id,
+                envelope=envelope,
+                run_result=terminal_run,
+                repo_root=clone_path,
+            )
+            lease_payload["status"] = terminal_result["status"]
+            _write_json(bundle_path / "run-lease.json", lease_payload)
+            terminal_projection = render_projection(terminal_result)
+            _write_json(bundle_path / "result.json", terminal_result)
+            _write_private_text(bundle_path / "projection.md", terminal_projection)
+            _mirror_to_audit_store(
+                audit_store_root,
+                resolved_run_id,
+                terminal_result,
+                strict=strict_mirror,
+            )
+            return terminal_result, terminal_projection
 
         if final_status is None:
             rogue_commits = _rogue_commits(
@@ -680,85 +900,139 @@ def create_supervised_bundle(
                 final_status = parse_status("patch_ready")
                 checks_payload["skipped_reason"] = "apply_policy is preserve-patch"
             else:
-                checks_payload = run_verification_commands(envelope, clone_path=clone_path)
+                checks_payload = run_verification_commands(
+                    envelope,
+                    clone_path=clone_path,
+                    renew_callback=(
+                        None
+                        if lease_admission is None
+                        else lambda: lease_admission.broker.renew(
+                            lease_admission.lease.lease_id,
+                            owner_id=lease_admission.owner_id,
+                            token=lease_admission.lease.token,
+                        )
+                    ),
+                )
                 if not checks_payload["passed"]:
                     final_status = parse_status("checks_failed")
                 else:
-                    apply_payload = apply_patch_to_live_repo(
-                        repo_root=repo_root,
-                        patch_path=diff_evidence.diff_patch_path,
-                        expected_write_set=envelope.write_set,
-                    )
-                    post_apply = apply_payload
-                    final_status = (
-                        parse_status("applied")
-                        if apply_payload["applied"] and apply_payload["only_expected_changes"]
-                        else parse_status("checks_failed")
-                    )
+                    if lease_admission is None:
+                        raise EnvelopeError("live apply is missing trusted lease admission")
+                    write_intent = hashlib.sha256(
+                        diff_evidence.diff_patch_path.read_bytes()
+                        + json.dumps(sorted(envelope.write_set), separators=(",", ":")).encode()
+                    ).hexdigest()
+                    try:
+                        settlement = lease_admission.broker.prepare_agent_settlement(
+                            lease_admission.lease.lease_id,
+                            token=lease_admission.lease.token,
+                            owner_id=lease_admission.owner_id,
+                            producer="agy",
+                            run_id=resolved_run_id,
+                            expected_output_sha256=lease_admission.expected_output[
+                                "expected_output_sha256"
+                            ],
+                            protected_write_intent_sha256=write_intent,
+                        )
+                    except Exception:
+                        state = lease_admission.broker.classify_token(
+                            lease_admission.resource_ref,
+                            lease_admission.lease.token,
+                        )
+                        if state not in {"superseded", "expired", "closed"}:
+                            raise
+                        evidence_store = _orphan_evidence.QuarantineStore.for_root(
+                            audit_store_root,
+                            providers=lease_admission.broker.providers,
+                        )
+                        disposition, event, payload_ref = _orphan_evidence.contain_refused_write(
+                            lease_admission.broker,
+                            evidence_store,
+                            lease_admission.lease,
+                            diff_evidence.diff_patch_path.read_bytes(),
+                            producer="agy",
+                            run_id=resolved_run_id,
+                            expected_output_sha256=lease_admission.expected_output[
+                                "expected_output_sha256"
+                            ],
+                            evidence_refs=(
+                                diff_evidence.diff_patch_path.relative_to(bundle_path).as_posix(),
+                            ),
+                        )
+                        write_disposition = disposition
+                        checks_payload["settlement_refusal"] = event
+                        if payload_ref is not None:
+                            checks_payload["quarantine_ref"] = payload_ref.relative_to(
+                                evidence_store.root
+                            ).as_posix()
+                        final_status = parse_status("checks_failed")
+                    else:
+                        settlement_prepared = True
 
-        _write_json(checks_path, checks_payload)
-        _write_git_proof(
-            git_proof_path,
-            repo_root=repo_root,
-            clone_result=clone_result,
-            live_preflight=live_preflight,
-            changed_paths=diff_evidence.changed_paths,
-            diff_patch_path=diff_evidence.diff_patch_path,
-            checks_path=checks_path,
-            post_apply=post_apply,
-        )
+                        def guarded_apply(_lease: Any) -> list[str]:
+                            nonlocal post_apply, result_payload, projection, run_result
+                            post_apply = apply_patch_to_live_repo(
+                                repo_root=repo_root,
+                                patch_path=diff_evidence.diff_patch_path,
+                                expected_write_set=envelope.write_set,
+                            )
+                            if not post_apply["applied"] or not post_apply["only_expected_changes"]:
+                                raise EnvelopeError("broker-guarded live apply failed")
+                            pending_run = _override_run_status(
+                                run_result, status=parse_status("acceptance_pending")
+                            )
+                            result_payload, projection = persist_terminal(
+                                pending_run,
+                                disposition="acceptance-pending",
+                                strict_mirror=True,
+                            )
+                            return [
+                                diff_evidence.diff_patch_path.relative_to(bundle_path).as_posix(),
+                                "live-repository",
+                                _audit_store.Store.for_root(audit_store_root)
+                                .result_path(resolved_run_id)
+                                .as_posix(),
+                            ]
+
+                        settlement_close = lease_admission.broker.commit_agent_settlement(
+                            settlement.settlement_id,
+                            owner_id=lease_admission.owner_id,
+                            token=lease_admission.lease.token,
+                            write=guarded_apply,
+                        )
+                        final_status = parse_status("applied")
+                        write_disposition = "accepted"
+                        result_payload = None
+                        projection = None
 
         if final_status != run_result.status:
             run_result = _override_run_status(run_result, status=final_status)
-
-        command_payload.update(
-            {
-                "agy_argv": _sanitize_argv(
-                    run_result.argv, prompt_replacement="<prompt:prompt.txt>"
-                ),
-                "resolved_agy": run_result.resolved_agy,
-                "base_sha": clone_result.base_sha,
-                "clone_path": str(clone_path),
-            }
-        )
-        _write_json(bundle_path / "command.json", command_payload)
-
-        result_payload = _result_payload(
-            envelope=envelope,
-            run_id=resolved_run_id,
-            bundle_path=bundle_path,
-            run_result=run_result,
-            stdout_path=stdout_path,
-            stderr_path=stderr_path,
-            summary=_supervised_summary(run_result),
-            changed_paths=diff_evidence.changed_paths,
-            diff_patch_path=diff_evidence.diff_patch_path,
-            checks_path=checks_path,
-            clone_path=clone_path,
-        )
-
-        lease_payload = _run_lease_payload(
-            run_id=resolved_run_id,
-            envelope=envelope,
-            run_result=run_result,
-            repo_root=clone_path,
-        )
-        # One status per bundle: the provenance_required coercion (R1/KTD1) lives in
-        # result_payload, and the lease must not report the pre-coercion status beside it.
-        lease_payload["status"] = result_payload["status"]
-        _write_json(bundle_path / "run-lease.json", lease_payload)
-
-        projection = render_projection(result_payload)
-        _write_json(bundle_path / "result.json", result_payload)
-        (bundle_path / "projection.md").write_text(projection, encoding="utf-8")
-        _mirror_to_audit_store(audit_store_root, resolved_run_id, result_payload)
+        if settlement_close is not None:
+            result_payload, projection = persist_terminal(
+                run_result,
+                disposition="accepted",
+                strict_mirror=True,
+                canonical_settlement_close=settlement_close,
+            )
+            evidence_store = _orphan_evidence.QuarantineStore.for_root(
+                audit_store_root,
+                providers=lease_admission.broker.providers if lease_admission is not None else None,
+            )
+            _orphan_evidence.write_close_seal(evidence_store, settlement_close)
+        elif result_payload is None or projection is None:
+            result_payload, projection = persist_terminal(
+                run_result,
+                disposition=write_disposition,
+                strict_mirror=False,
+            )
     except DieCleanInterrupt as exc:
         # Signal arrived outside the supervised launch window: still end terminal (#517).
+        primary_failure = f"terminated by signal {exc.signum} outside the supervised window"
         projection = _finalize_failed_bundle(
             bundle_path,
             run_id=resolved_run_id,
             status=parse_status("error"),
-            error=f"terminated by signal {exc.signum} outside the supervised window",
+            error=primary_failure,
         )
         return BundleResult(
             status=parse_status("error"),
@@ -767,11 +1041,12 @@ def create_supervised_bundle(
             projection=projection,
         )
     except OSError as exc:
+        primary_failure = f"bundle write failed: {exc}"
         projection = _finalize_failed_bundle(
             bundle_path,
             run_id=resolved_run_id,
             status=parse_status("bundle_failed"),
-            error=f"bundle write failed: {exc}",
+            error=primary_failure,
         )
         return BundleResult(
             status=parse_status("bundle_failed"),
@@ -782,11 +1057,12 @@ def create_supervised_bundle(
     except Exception as exc:
         # Terminal-bundle guarantee over exception precision (#517): a post-launch failure
         # (receipt emission, JSON serialization) must not leave a launched run non-terminal.
+        primary_failure = f"{type(exc).__name__}: {exc}"
         projection = _finalize_failed_bundle(
             bundle_path,
             run_id=resolved_run_id,
             status=parse_status("bundle_failed"),
-            error=f"{type(exc).__name__}: {exc}",
+            error=primary_failure,
         )
         return BundleResult(
             status=parse_status("bundle_failed"),
@@ -795,12 +1071,34 @@ def create_supervised_bundle(
             projection=projection,
         )
     finally:
+        if lease_admission is not None and not settlement_prepared:
+            try:
+                agy_lease_admission.cleanup_unsettled_admission(lease_admission)
+            except agy_lease_admission.AgyLeaseAdmissionError as cleanup_exc:
+                combined_error = (
+                    f"{primary_failure}; cleanup also failed: {cleanup_exc}"
+                    if primary_failure is not None
+                    else f"pre-settlement cleanup failed: {cleanup_exc}"
+                )
+                projection = _finalize_cleanup_failed_bundle(
+                    bundle_path,
+                    run_id=resolved_run_id,
+                    error=combined_error,
+                )
+                cleanup_result = BundleResult(
+                    status=parse_status("bundle_failed"),
+                    run_id=resolved_run_id,
+                    bundle_path=bundle_path,
+                    projection=projection,
+                )
         # Restore the caller's signal disposition (#517). agy's disposable clone lives inside
         # the bundle itself (bundle_path / "worktree"), unlike codex's — there is no separate
         # teardown step to run here.
-        for signum, handler in prior_handlers.items():
+        for restore_signum, handler in prior_handlers.items():
             with contextlib.suppress(ValueError):
-                signal.signal(signum, handler)
+                signal.signal(restore_signum, handler)
+        if cleanup_result is not None:
+            return cleanup_result  # noqa: B012 - cleanup failure intentionally overrides provisional success.
 
     return BundleResult(
         # Source status from result_payload, not run_result.status directly: the
@@ -823,6 +1121,7 @@ def run_agy_supervised(
     stdout_path: Path,
     stderr_path: Path,
     agy_bin: str | None = None,
+    renew_callback: Callable[[], Any] | None = None,
 ) -> SupervisedRunResult:
     """Launch and supervise one ``agy`` invocation (#517).
 
@@ -867,6 +1166,7 @@ def run_agy_supervised(
     shutdown = "exited"
     process_id: int | None = None
     return_code: int | None = None
+    renewal_error: str | None = None
 
     # Launch-window die-clean handler (#517): a caller's Bash-tool timeout SIGTERMs the delegate
     # before its own wall-clock timeout can fire. Unlike the bundle-span handler installed in
@@ -926,6 +1226,7 @@ def run_agy_supervised(
 
             start_monotonic = time.monotonic()
             last_output_monotonic = start_monotonic
+            last_renewal_monotonic = start_monotonic
 
             while process.poll() is None:
                 if _DIE_CLEAN_SIGNAL is not None:
@@ -935,7 +1236,7 @@ def run_agy_supervised(
 
                 events = selector.select(timeout=0.05)
                 for key, _mask in events:
-                    data = os.read(key.fileobj.fileno(), 8192)
+                    data = os.read(key.fd, 8192)
                     if not data:
                         selector.unregister(key.fileobj)
                         continue
@@ -953,6 +1254,18 @@ def run_agy_supervised(
                     break
 
                 now_monotonic = time.monotonic()
+                if (
+                    renew_callback is not None
+                    and now_monotonic - last_renewal_monotonic >= LEASE_RENEWAL_INTERVAL_SECONDS
+                ):
+                    try:
+                        renew_callback()
+                    except Exception as exc:  # noqa: BLE001 - any renewal refusal fences apply.
+                        renewal_error = f"{type(exc).__name__}: {exc}"
+                        timeout_class = "lease_renewal"
+                        shutdown = _terminate_process(process)
+                        break
+                    last_renewal_monotonic = now_monotonic
                 if now_monotonic - start_monotonic >= envelope.timeout_seconds:
                     timeout_class = "timeout"
                     shutdown = _terminate_process(process)
@@ -967,7 +1280,7 @@ def run_agy_supervised(
                 if not events:
                     break
                 for key, _mask in events:
-                    data = os.read(key.fileobj.fileno(), 8192)
+                    data = os.read(key.fd, 8192)
                     if not data:
                         selector.unregister(key.fileobj)
                         continue
@@ -987,9 +1300,9 @@ def run_agy_supervised(
                     return_code = None
     finally:
         _ACTIVE_PROCESS = None
-        for signum, handler in previous_handlers.items():
+        for restore_signum, handler in previous_handlers.items():
             with contextlib.suppress(ValueError, OSError):
-                signal.signal(signum, handler)
+                signal.signal(restore_signum, handler)
 
     ended_at = datetime.now(UTC)
     signal_caught = _DIE_CLEAN_SIGNAL
@@ -1010,6 +1323,9 @@ def run_agy_supervised(
         error = (
             f"cumulative output exceeded MAX_OUTPUT_BYTES ({MAX_OUTPUT_BYTES}); agy process killed"
         )
+    elif timeout_class == "lease_renewal":
+        status = parse_status("error")
+        error = f"lease renewal failed; live apply fenced: {renewal_error}"
     elif timeout_class == "timeout":
         status = parse_status("timeout")
     elif timeout_class == "no_output":
@@ -1115,7 +1431,7 @@ def derive_diff_evidence(*, clone_path: Path, base_sha: str, bundle_path: Path) 
 
     diff_patch_path = bundle_path / "diff.patch"
     diff_result = _run_git(["diff", "--binary", base_sha], cwd=clone_path)
-    diff_patch_path.write_text(diff_result.stdout, encoding="utf-8")
+    _write_private_text(diff_patch_path, diff_result.stdout)
 
     changed_paths = sorted(
         set(_git_nul_lines(["diff", "--name-only", "-z", base_sha], cwd=clone_path))
@@ -1153,7 +1469,12 @@ def decide_non_apply_status(
     return None
 
 
-def run_verification_commands(envelope: Envelope, *, clone_path: Path) -> dict[str, Any]:
+def run_verification_commands(
+    envelope: Envelope,
+    *,
+    clone_path: Path,
+    renew_callback: Callable[[], Any] | None = None,
+) -> dict[str, Any]:
     if not envelope.verification.required or not envelope.verification.commands:
         return {
             "required": envelope.verification.required,
@@ -1175,26 +1496,51 @@ def run_verification_commands(envelope: Envelope, *, clone_path: Path) -> dict[s
     for command in envelope.verification.commands:
         started_at = datetime.now(UTC)
         timed_out = False
+        renewal_error: str | None = None
+        process = subprocess.Popen(  # nosec B602 - trusted operator/orchestrator command.
+            command,
+            shell=True,
+            cwd=clone_path,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        deadline = time.monotonic() + envelope.timeout_seconds
+        last_renewal = time.monotonic()
         try:
-            completed = subprocess.run(
-                command,
-                shell=True,
-                cwd=clone_path,
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=envelope.timeout_seconds,
-            )
-            return_code = completed.returncode
-            stdout = completed.stdout
-            stderr = completed.stderr
-        except subprocess.TimeoutExpired as exc:
-            timed_out = True
-            return_code = None
-            stdout = _decode_timeout_output(exc.stdout)
-            stderr = _decode_timeout_output(exc.stderr)
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    timed_out = True
+                    _terminate_process(process)
+                    break
+                try:
+                    stdout, stderr = process.communicate(timeout=min(1.0, remaining))
+                    break
+                except subprocess.TimeoutExpired:
+                    now_monotonic = time.monotonic()
+                    if (
+                        renew_callback is None
+                        or now_monotonic - last_renewal < LEASE_RENEWAL_INTERVAL_SECONDS
+                    ):
+                        continue
+                    try:
+                        renew_callback()
+                    except Exception as exc:  # noqa: BLE001 - any refusal fences live apply.
+                        renewal_error = f"{type(exc).__name__}: {exc}"
+                        _terminate_process(process)
+                        break
+                    last_renewal = now_monotonic
+            if process.poll() is None:
+                _terminate_process(process)
+            stdout, stderr = process.communicate()
+            return_code = process.returncode
+        except BaseException:
+            if process.poll() is None:
+                _terminate_process(process)
+            raise
         ended_at = datetime.now(UTC)
-        command_passed = return_code == 0 and not timed_out
+        command_passed = return_code == 0 and not timed_out and renewal_error is None
         passed = passed and command_passed
         command_results.append(
             {
@@ -1203,6 +1549,7 @@ def run_verification_commands(envelope: Envelope, *, clone_path: Path) -> dict[s
                 "shell": True,
                 "timeout_seconds": envelope.timeout_seconds,
                 "timed_out": timed_out,
+                "lease_renewal_error": renewal_error,
                 "return_code": return_code,
                 "passed": command_passed,
                 "started_at": started_at.isoformat(),
@@ -1364,6 +1711,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--review-lens", choices=sorted(REVIEW_LENSES))
     parser.add_argument("--write-set", action="append", default=[])
     parser.add_argument("--apply-policy", choices=sorted(APPLY_POLICIES))
+    parser.add_argument(
+        "--lease-resource-key-file",
+        type=Path,
+        help=(
+            "Owner-private file containing the trusted outer resource key required for launched "
+            "auto-if-clean. The raw key is read in process and only its digest is retained."
+        ),
+    )
+    parser.add_argument(
+        "--lease-resource-key",
+        help=argparse.SUPPRESS,
+    )
     parser.add_argument("--evidence", choices=sorted(EVIDENCE_LEVELS), default="summary")
     parser.add_argument("--verification-command", action="append", default=[])
     parser.add_argument(
@@ -1405,11 +1764,34 @@ def main(argv: list[str] | None = None) -> int:
 
         wrapper_argv = list(sys.argv[1:] if argv is None else argv)
         validation_only = args.validation_only or args.dry_run or not args.launch_agy
+        resolved_run_id = args.run_id or _new_run_id(datetime.now(UTC))
+        _validate_run_id(resolved_run_id)
+        lease_admission = None
+        if args.lease_resource_key:
+            raise EnvelopeError(
+                "raw --lease-resource-key argv is forbidden; use --lease-resource-key-file"
+            )
+        if not validation_only and envelope.mode == "auto-if-clean":
+            if args.lease_resource_key_file is None:
+                raise EnvelopeError(
+                    "--lease-resource-key-file is required for launched auto-if-clean"
+                )
+            resource_key = _read_private_resource_key(args.lease_resource_key_file)
+            lease_admission = agy_lease_admission.resolve_direct_agy_admission(
+                args.repo_root,
+                resource_key,
+                resolved_run_id,
+            )
+            del resource_key
+        elif args.lease_resource_key_file is not None:
+            raise EnvelopeError(
+                "--lease-resource-key-file is accepted only for launched auto-if-clean"
+            )
         if validation_only:
             result = create_validation_bundle(
                 envelope,
                 repo_root=args.repo_root,
-                run_id=args.run_id,
+                run_id=resolved_run_id,
                 source_envelope=source_envelope,
                 argv=wrapper_argv,
                 audit_store_root=audit_store_root,
@@ -1418,13 +1800,14 @@ def main(argv: list[str] | None = None) -> int:
             result = create_supervised_bundle(
                 envelope,
                 repo_root=args.repo_root,
-                run_id=args.run_id,
+                run_id=resolved_run_id,
                 source_envelope=source_envelope,
                 wrapper_argv=wrapper_argv,
                 agy_bin=args.agy_bin,
                 audit_store_root=audit_store_root,
+                lease_admission=lease_admission,
             )
-    except EnvelopeError as exc:
+    except (EnvelopeError, ValueError, RuntimeError) as exc:
         print(f"agy delegation envelope error: {exc}", file=sys.stderr)
         return 2
 
@@ -1489,9 +1872,7 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     unparseable, ambiguous state to every downstream reader (parity with codex's
     ``_write_json``, #476/#517).
     """
-    tmp_path = path.with_name(path.name + ".tmp")
-    tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    os.replace(tmp_path, path)
+    _write_private_text(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
 def _run_git(args: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -1695,21 +2076,24 @@ def _supervised_receipt(
     if not run_result.agy_launched:
         return None
     wall_time_s = (run_result.ended_at - run_result.started_at).total_seconds()
-    return _bridge_receipt.emit_receipt(
-        engine_id="agy",
-        variant=envelope.model,
-        transport="cli",
-        wall_time_s=wall_time_s,
-        bytes_produced=run_result.stdout_bytes + run_result.stderr_bytes,
-        runner={
-            "pid": run_result.process_id,
-            "argv": run_result.argv,
-            "exit_code": run_result.return_code,
-        },
-        receipt_emitter="agy-delegate",
-        run_id=run_id,
-        external_tokens=external_tokens,
-        output_attestation=output_attestation,
+    return cast(
+        dict[str, Any],
+        _bridge_receipt.emit_receipt(
+            engine_id="agy",
+            variant=envelope.model,
+            transport="cli",
+            wall_time_s=wall_time_s,
+            bytes_produced=run_result.stdout_bytes + run_result.stderr_bytes,
+            runner={
+                "pid": run_result.process_id,
+                "argv": run_result.argv,
+                "exit_code": run_result.return_code,
+            },
+            receipt_emitter="agy-delegate",
+            run_id=run_id,
+            external_tokens=external_tokens,
+            output_attestation=output_attestation,
+        ),
     )
 
 
@@ -1826,7 +2210,7 @@ def _write_git_proof(
 
 
 def _clone_git_state(clone_result: CloneSetupResult | None) -> dict[str, Any]:
-    empty = {
+    empty: dict[str, Any] = {
         "head": None,
         "status": {"return_code": None, "entries": []},
         "remotes_after": [],
@@ -1867,11 +2251,26 @@ def _sanitize_argv(argv: list[str], *, prompt_replacement: str | None = None) ->
             redact_next = False
             continue
         lowered = token.lower()
-        if lowered in {"--token", "--api-key", "--password"}:
+        if lowered in {
+            "--token",
+            "--api-key",
+            "--password",
+            "--lease-resource-key",
+            "--lease-resource-key-file",
+        }:
             sanitized.append(token)
             redact_next = True
             continue
-        if any(secret in lowered for secret in ("token=", "api_key=", "password=")):
+        if any(
+            secret in lowered
+            for secret in (
+                "token=",
+                "api_key=",
+                "password=",
+                "lease-resource-key=",
+                "lease-resource-key-file=",
+            )
+        ):
             sanitized.append("<redacted>")
             continue
         sanitized.append(token)
@@ -1913,7 +2312,7 @@ def _build_agy_argv(
     return [*argv, "--print", prompt]
 
 
-def _terminate_process(process: subprocess.Popen[bytes]) -> str:
+def _terminate_process(process: subprocess.Popen[Any]) -> str:
     process.terminate()
     try:
         process.wait(timeout=1)

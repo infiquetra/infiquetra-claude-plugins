@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 SCHEMA = "fleet_lease_registry.v1"
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 STATE_ENV = "INFIQUETRA_FLEET_STATE_DIR"
 XDG_STATE_ENV = "XDG_STATE_HOME"
 REGISTRY_NAME = "registry.json"
@@ -40,19 +40,95 @@ DEFAULT_CLAIM_TTL_SECONDS = 30
 Pool = Literal["agent", "worktree"]
 MutationMode = Literal["read-write", "none"]
 TokenState = Literal["current", "expired", "closed", "superseded"]
+SettlementPhase = Literal["prepared", "committing", "ambiguous"]
 ResourceRef = dict[str, str]
 
 _TOP_KEYS = frozenset(
     {
         "schema",
         "broker_epoch",
+        "recovery_capability_sha256",
         "next_fencing_sequence",
         "resource_fences",
         "leases",
         "session_admissions",
+        "settlements",
     }
 )
-_FENCE_KEYS = frozenset({"resource_ref", "broker_epoch", "fencing_sequence", "lease_id"})
+_FENCE_KEYS = frozenset(
+    {"resource_ref", "broker_epoch", "fencing_sequence", "lease_id", "close_receipt"}
+)
+_LEGACY_FENCE_KEYS = _FENCE_KEYS - {"close_receipt"}
+_SETTLEMENT_KEYS = frozenset(
+    {
+        "settlement_id",
+        "phase",
+        "lease_id",
+        "owner_id",
+        "owner_pid",
+        "owner_process_start",
+        "session_id",
+        "policy_sha256",
+        "resource_ref",
+        "token",
+        "producer",
+        "run_id",
+        "expected_output_sha256",
+        "protected_write_intent_sha256",
+        "recovery_capability_sha256",
+        "prepared_at",
+        "updated_at",
+    }
+)
+_SETTLEMENT_CLOSE_KEYS = frozenset(
+    {
+        "schema",
+        "resource_ref",
+        "token",
+        "lease_id",
+        "settlement_id",
+        "session_id",
+        "policy_sha256",
+        "generation",
+        "phase",
+        "producer",
+        "run_id",
+        "terminal",
+        "evidence_refs",
+        "expected_output_sha256",
+        "protected_write_intent_sha256",
+        "settlement_sha256",
+        "receipt_sha256",
+        "sha256",
+    }
+)
+_LEGACY_SETTLEMENT_CLOSE_KEYS = _SETTLEMENT_CLOSE_KEYS - {
+    "settlement_id",
+    "session_id",
+    "policy_sha256",
+    "protected_write_intent_sha256",
+    "settlement_sha256",
+}
+_SETTLEMENT_RECOVERY_KEYS = frozenset(
+    {
+        "schema",
+        "resource_ref",
+        "token",
+        "lease_id",
+        "generation",
+        "settlement_id",
+        "session_id",
+        "policy_sha256",
+        "expected_phase",
+        "protected_write_intent_sha256",
+        "recovery_owner_id",
+        "recovery_owner_pid",
+        "recovery_owner_process_start",
+        "recovery_owner_boot_id",
+        "recovery_owner_effective_uid",
+        "sha256",
+    }
+)
 _SESSION_ADMISSION_KEYS = frozenset(
     {
         "policy_sha256",
@@ -94,10 +170,12 @@ _LEASE_KEYS = frozenset(
 _AGENT_RESOURCE_KEYS = frozenset({"logical_unit_id", "worktree_root"})
 _WORKTREE_RESOURCE_KEYS = frozenset({"repo_root", "outcome_id", "subplot_id"})
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
 _MAX_ID = 256
 _MAX_PATH = 4096
 _MAX_SESSION_ADMISSIONS = 64
 _MAX_CLOSED_FENCES = 128
+_MAX_SETTLEMENTS = 128
 _BOOT_ID_LOCK = threading.Lock()
 
 
@@ -395,9 +473,59 @@ def _default_process_identity(pid: int) -> str | None:
             timeout=2,
         )
     except (OSError, subprocess.SubprocessError):
+        result = None
+    value = "" if result is None else result.stdout.strip()
+    if value:
+        return value
+    return _darwin_process_identity(pid) if sys.platform == "darwin" else None
+
+
+def _darwin_process_identity(pid: int) -> str | None:
+    """Read a PID's kernel start time without shelling out to sandbox-blocked ``ps``."""
+
+    class ProcBsdInfo(ctypes.Structure):
+        _fields_ = [
+            ("flags", ctypes.c_uint32),
+            ("status", ctypes.c_uint32),
+            ("xstatus", ctypes.c_uint32),
+            ("pid", ctypes.c_uint32),
+            ("ppid", ctypes.c_uint32),
+            ("uid", ctypes.c_uint32),
+            ("gid", ctypes.c_uint32),
+            ("ruid", ctypes.c_uint32),
+            ("rgid", ctypes.c_uint32),
+            ("svuid", ctypes.c_uint32),
+            ("svgid", ctypes.c_uint32),
+            ("comm", ctypes.c_char * 16),
+            ("name", ctypes.c_char * 32),
+            ("nfiles", ctypes.c_uint32),
+            ("pgid", ctypes.c_uint32),
+            ("pjobc", ctypes.c_uint32),
+            ("e_tdev", ctypes.c_uint32),
+            ("e_tpgid", ctypes.c_uint32),
+            ("nice", ctypes.c_int32),
+            ("start_tvsec", ctypes.c_uint64),
+            ("start_tvusec", ctypes.c_uint64),
+        ]
+
+    try:
+        library = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        function = library.proc_pidinfo
+        function.argtypes = [
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_uint64,
+            ctypes.c_void_p,
+            ctypes.c_int,
+        ]
+        function.restype = ctypes.c_int
+        info = ProcBsdInfo()
+        written = function(pid, 3, 0, ctypes.byref(info), ctypes.sizeof(info))
+    except (AttributeError, OSError, TypeError, ValueError):
         return None
-    value = result.stdout.strip()
-    return value or None
+    if written != ctypes.sizeof(info) or info.start_tvsec < 1:
+        return None
+    return f"darwin-start:{info.start_tvsec}:{info.start_tvusec}"
 
 
 @dataclass(frozen=True)
@@ -439,6 +567,213 @@ class FencingToken:
             "broker_epoch": self.broker_epoch,
             "fencing_sequence": self.fencing_sequence,
         }
+
+
+def token_generation(token: FencingToken) -> str:
+    """Return the canonical generation name shared by broker and forensic records."""
+
+    return f"{token.broker_epoch}:{token.fencing_sequence}"
+
+
+def _record_sha256(value: Mapping[str, Any], *excluded: str) -> str:
+    payload = {key: item for key, item in value.items() if key not in excluded}
+    return hashlib.sha256(_canonical_json(payload).encode("ascii")).hexdigest()
+
+
+def validate_settlement_close(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate the exact broker-owned ``settlement_close.v1`` record."""
+
+    parsed = _closed_mapping(dict(value), _SETTLEMENT_CLOSE_KEYS, "settlement close")
+    if parsed["schema"] != "settlement_close.v1":
+        raise RegistryCorruptError("settlement close schema must be settlement_close.v1")
+    resource = canonical_resource_ref("agent", parsed["resource_ref"])
+    token_raw = parsed["token"]
+    if not isinstance(token_raw, Mapping) or set(token_raw) != {
+        "broker_epoch",
+        "fencing_sequence",
+    }:
+        raise RegistryCorruptError("settlement close token must use the closed token shape")
+    token = FencingToken.from_dict(token_raw)
+    lease_id = _uuid_text(parsed["lease_id"], "settlement close lease_id")
+    settlement_id = _uuid_text(parsed["settlement_id"], "settlement close settlement_id")
+    session_id = _bounded(parsed["session_id"], "settlement close session_id", maximum=128)
+    policy_sha256 = _sha256_text(parsed["policy_sha256"], "settlement close policy_sha256")
+    generation = _bounded(parsed["generation"], "settlement close generation")
+    if generation != token_generation(token):
+        raise RegistryCorruptError("settlement close generation does not match its token")
+    if parsed["phase"] != "closed" or parsed["terminal"] is not True:
+        raise RegistryCorruptError("settlement close must be terminal and closed")
+    producer = parsed["producer"]
+    if producer not in {"agy", "saga", "team-execution"}:
+        raise RegistryCorruptError("settlement close producer is invalid")
+    run_id = _bounded(parsed["run_id"], "settlement close run_id", maximum=128)
+    refs = parsed["evidence_refs"]
+    if (
+        not isinstance(refs, list)
+        or len(refs) > 256
+        or refs != sorted(refs)
+        or len(refs) != len(set(refs))
+    ):
+        raise RegistryCorruptError("settlement close evidence_refs must be sorted and unique")
+    for ref in refs:
+        _bounded(ref, "settlement close evidence_ref")
+    expected_output = _sha256_text(
+        parsed["expected_output_sha256"], "settlement close expected_output_sha256"
+    )
+    protected_write_intent = _sha256_text(
+        parsed["protected_write_intent_sha256"],
+        "settlement close protected_write_intent_sha256",
+    )
+    settlement_sha256 = _sha256_text(
+        parsed["settlement_sha256"], "settlement close settlement_sha256"
+    )
+    receipt_sha256 = _sha256_text(parsed["receipt_sha256"], "settlement close receipt_sha256")
+    record_sha256 = _sha256_text(parsed["sha256"], "settlement close sha256")
+    normalized = {
+        "schema": "settlement_close.v1",
+        "resource_ref": resource,
+        "token": token.to_dict(),
+        "lease_id": lease_id,
+        "settlement_id": settlement_id,
+        "session_id": session_id,
+        "policy_sha256": policy_sha256,
+        "generation": generation,
+        "phase": "closed",
+        "producer": producer,
+        "run_id": run_id,
+        "terminal": True,
+        "evidence_refs": refs,
+        "expected_output_sha256": expected_output,
+        "protected_write_intent_sha256": protected_write_intent,
+        "settlement_sha256": settlement_sha256,
+        "receipt_sha256": receipt_sha256,
+        "sha256": record_sha256,
+    }
+    if receipt_sha256 != _record_sha256(normalized, "receipt_sha256", "sha256"):
+        raise RegistryCorruptError("settlement close receipt_sha256 does not match its content")
+    if record_sha256 != _record_sha256(normalized, "sha256"):
+        raise RegistryCorruptError("settlement close sha256 does not match its content")
+    return normalized
+
+
+def _validate_legacy_settlement_close(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Read an exact pre-binding close receipt without promoting it to current proof.
+
+    These records remain useful for classifying an already-closed resource head. They deliberately
+    retain their old shape so recovery and manifest gates, which call ``validate_settlement_close``
+    and require the new binding fields, cannot mistake them for current settlement authority.
+    """
+
+    parsed = _closed_mapping(dict(value), _LEGACY_SETTLEMENT_CLOSE_KEYS, "legacy settlement close")
+    if parsed["schema"] != "settlement_close.v1":
+        raise RegistryCorruptError("legacy settlement close schema must be settlement_close.v1")
+    resource = canonical_resource_ref("agent", parsed["resource_ref"])
+    token_raw = parsed["token"]
+    if not isinstance(token_raw, Mapping) or set(token_raw) != {
+        "broker_epoch",
+        "fencing_sequence",
+    }:
+        raise RegistryCorruptError("legacy settlement close token must use the closed token shape")
+    token = FencingToken.from_dict(token_raw)
+    lease_id = _uuid_text(parsed["lease_id"], "legacy settlement close lease_id")
+    generation = _bounded(parsed["generation"], "legacy settlement close generation")
+    if generation != token_generation(token):
+        raise RegistryCorruptError("legacy settlement close generation does not match its token")
+    if parsed["phase"] != "closed" or parsed["terminal"] is not True:
+        raise RegistryCorruptError("legacy settlement close must be terminal and closed")
+    producer = parsed["producer"]
+    if producer not in {"agy", "saga", "team-execution"}:
+        raise RegistryCorruptError("legacy settlement close producer is invalid")
+    run_id = _bounded(parsed["run_id"], "legacy settlement close run_id", maximum=128)
+    refs = parsed["evidence_refs"]
+    if (
+        not isinstance(refs, list)
+        or len(refs) > 256
+        or refs != sorted(refs)
+        or len(refs) != len(set(refs))
+    ):
+        raise RegistryCorruptError(
+            "legacy settlement close evidence_refs must be sorted and unique"
+        )
+    for ref in refs:
+        _bounded(ref, "legacy settlement close evidence_ref")
+    expected_output = _sha256_text(
+        parsed["expected_output_sha256"],
+        "legacy settlement close expected_output_sha256",
+    )
+    receipt_sha256 = _sha256_text(
+        parsed["receipt_sha256"], "legacy settlement close receipt_sha256"
+    )
+    record_sha256 = _sha256_text(parsed["sha256"], "legacy settlement close sha256")
+    normalized = {
+        "schema": "settlement_close.v1",
+        "resource_ref": resource,
+        "token": token.to_dict(),
+        "lease_id": lease_id,
+        "generation": generation,
+        "phase": "closed",
+        "producer": producer,
+        "run_id": run_id,
+        "terminal": True,
+        "evidence_refs": refs,
+        "expected_output_sha256": expected_output,
+        "receipt_sha256": receipt_sha256,
+        "sha256": record_sha256,
+    }
+    if receipt_sha256 != _record_sha256(normalized, "receipt_sha256", "sha256"):
+        raise RegistryCorruptError(
+            "legacy settlement close receipt_sha256 does not match its content"
+        )
+    if record_sha256 != _record_sha256(normalized, "sha256"):
+        raise RegistryCorruptError("legacy settlement close sha256 does not match its content")
+    return normalized
+
+
+def build_settlement_close(
+    *,
+    resource_ref: Mapping[str, Any],
+    token: FencingToken,
+    lease_id: str,
+    producer: str,
+    run_id: str,
+    evidence_refs: Sequence[str],
+    expected_output_sha256: str,
+    settlement_id: str,
+    session_id: str,
+    policy_sha256: str,
+    protected_write_intent_sha256: str,
+    settlement_sha256: str,
+) -> dict[str, Any]:
+    """Build the canonical close record; callers cannot supply either digest."""
+
+    payload: dict[str, Any] = {
+        "schema": "settlement_close.v1",
+        "resource_ref": canonical_resource_ref("agent", resource_ref),
+        "token": token.to_dict(),
+        "lease_id": _uuid_text(lease_id, "settlement close lease_id"),
+        "settlement_id": _uuid_text(settlement_id, "settlement close settlement_id"),
+        "session_id": _bounded(session_id, "settlement close session_id", maximum=128),
+        "policy_sha256": _sha256_text(policy_sha256, "settlement close policy_sha256"),
+        "generation": token_generation(token),
+        "phase": "closed",
+        "producer": producer,
+        "run_id": _bounded(run_id, "settlement close run_id", maximum=128),
+        "terminal": True,
+        "evidence_refs": sorted(
+            {_bounded(item, "settlement close evidence_ref") for item in evidence_refs}
+        ),
+        "expected_output_sha256": _sha256_text(
+            expected_output_sha256, "settlement close expected_output_sha256"
+        ),
+        "protected_write_intent_sha256": _sha256_text(
+            protected_write_intent_sha256,
+            "settlement close protected_write_intent_sha256",
+        ),
+        "settlement_sha256": _sha256_text(settlement_sha256, "settlement close settlement_sha256"),
+    }
+    payload["receipt_sha256"] = _record_sha256(payload)
+    payload["sha256"] = _record_sha256(payload)
+    return validate_settlement_close(payload)
 
 
 @dataclass(frozen=True)
@@ -575,16 +910,130 @@ class Lease:
 
 
 @dataclass(frozen=True)
+class SettlementRecord:
+    settlement_id: str
+    phase: SettlementPhase
+    lease_id: str
+    owner_id: str
+    owner_pid: int | None
+    owner_process_start: str | None
+    session_id: str
+    policy_sha256: str
+    resource_ref: ResourceRef
+    token: FencingToken
+    producer: str
+    run_id: str
+    expected_output_sha256: str
+    protected_write_intent_sha256: str
+    recovery_capability_sha256: str | None
+    prepared_at: str
+    updated_at: str
+
+    @classmethod
+    def from_dict(cls, digest: str, data: Mapping[str, Any]) -> SettlementRecord:
+        _sha256_text(digest, "settlements key")
+        raw = dict(data)
+        if set(raw) == _SETTLEMENT_KEYS - {"recovery_capability_sha256"}:
+            raw["recovery_capability_sha256"] = None
+        parsed = _closed_mapping(raw, _SETTLEMENT_KEYS, f"settlements.{digest}")
+        resource = canonical_resource_ref("agent", parsed["resource_ref"])
+        if resource_sha256(resource) != digest:
+            raise RegistryCorruptError("settlement digest does not match resource_ref")
+        token_raw = parsed["token"]
+        if not isinstance(token_raw, Mapping) or set(token_raw) != {
+            "broker_epoch",
+            "fencing_sequence",
+        }:
+            raise RegistryCorruptError("settlement token must use the closed token shape")
+        token = FencingToken.from_dict(token_raw)
+        phase = parsed["phase"]
+        if phase not in {"prepared", "committing", "ambiguous"}:
+            raise RegistryCorruptError("settlement phase is invalid")
+        owner_pid_raw = parsed["owner_pid"]
+        owner_pid = None if owner_pid_raw is None else _positive(owner_pid_raw, "owner_pid")
+        producer = parsed["producer"]
+        if producer not in {"agy", "saga", "team-execution"}:
+            raise RegistryCorruptError("settlement producer is invalid")
+        return cls(
+            settlement_id=_uuid_text(parsed["settlement_id"], "settlement_id"),
+            phase=cast(SettlementPhase, phase),
+            lease_id=_uuid_text(parsed["lease_id"], "settlement lease_id"),
+            owner_id=_bounded(parsed["owner_id"], "settlement owner_id", maximum=128),
+            owner_pid=owner_pid,
+            owner_process_start=_optional_bounded(
+                parsed["owner_process_start"], "settlement owner_process_start"
+            ),
+            session_id=_bounded(parsed["session_id"], "settlement session_id", maximum=128),
+            policy_sha256=_sha256_text(parsed["policy_sha256"], "settlement policy_sha256"),
+            resource_ref=resource,
+            token=token,
+            producer=cast(str, producer),
+            run_id=_bounded(parsed["run_id"], "settlement run_id", maximum=128),
+            expected_output_sha256=_sha256_text(
+                parsed["expected_output_sha256"], "settlement expected_output_sha256"
+            ),
+            protected_write_intent_sha256=_sha256_text(
+                parsed["protected_write_intent_sha256"],
+                "settlement protected_write_intent_sha256",
+            ),
+            recovery_capability_sha256=(
+                None
+                if parsed["recovery_capability_sha256"] is None
+                else _sha256_text(
+                    parsed["recovery_capability_sha256"],
+                    "settlement recovery_capability_sha256",
+                )
+            ),
+            prepared_at=_parse_utc(parsed["prepared_at"], "settlement prepared_at"),
+            updated_at=_parse_utc(parsed["updated_at"], "settlement updated_at"),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "settlement_id": self.settlement_id,
+            "phase": self.phase,
+            "lease_id": self.lease_id,
+            "owner_id": self.owner_id,
+            "owner_pid": self.owner_pid,
+            "owner_process_start": self.owner_process_start,
+            "session_id": self.session_id,
+            "policy_sha256": self.policy_sha256,
+            "resource_ref": self.resource_ref,
+            "token": self.token.to_dict(),
+            "producer": self.producer,
+            "run_id": self.run_id,
+            "expected_output_sha256": self.expected_output_sha256,
+            "protected_write_intent_sha256": self.protected_write_intent_sha256,
+            "recovery_capability_sha256": self.recovery_capability_sha256,
+            "prepared_at": self.prepared_at,
+            "updated_at": self.updated_at,
+        }
+
+    @property
+    def settlement_sha256(self) -> str:
+        """Bind the complete original prepared settlement, excluding later phase transitions."""
+
+        original = self.to_dict()
+        original["phase"] = "prepared"
+        original["updated_at"] = self.prepared_at
+        return _record_sha256(original)
+
+
+@dataclass(frozen=True)
 class ResourceFence:
     resource_ref: ResourceRef
     broker_epoch: str
     fencing_sequence: int
     lease_id: str
+    close_receipt: dict[str, Any] | None = None
 
     @classmethod
     def from_dict(cls, digest: str, data: Mapping[str, Any]) -> ResourceFence:
         _sha256_text(digest, "resource_fences key")
-        parsed = _closed_mapping(dict(data), _FENCE_KEYS, f"resource_fences.{digest}")
+        raw = dict(data)
+        if set(raw) == _LEGACY_FENCE_KEYS:
+            raw["close_receipt"] = None
+        parsed = _closed_mapping(raw, _FENCE_KEYS, f"resource_fences.{digest}")
         resource_raw = parsed["resource_ref"]
         if not isinstance(resource_raw, dict):
             raise RegistryCorruptError("resource fence resource_ref must be an object")
@@ -593,11 +1042,29 @@ class ResourceFence:
         resource = canonical_resource_ref(pool, resource_raw)
         if resource_sha256(resource) != digest:
             raise RegistryCorruptError("resource fence digest does not match resource_ref")
+        close_raw = parsed["close_receipt"]
+        close = None
+        if close_raw is not None:
+            if not isinstance(close_raw, Mapping):
+                raise RegistryCorruptError("resource fence close_receipt must be an object or null")
+            close = (
+                _validate_legacy_settlement_close(close_raw)
+                if set(close_raw) == _LEGACY_SETTLEMENT_CLOSE_KEYS
+                else validate_settlement_close(close_raw)
+            )
+            if (
+                close["resource_ref"] != resource
+                or close["token"]["broker_epoch"] != parsed["broker_epoch"]
+                or close["token"]["fencing_sequence"] != parsed["fencing_sequence"]
+                or close["lease_id"] != parsed["lease_id"]
+            ):
+                raise RegistryCorruptError("resource fence close_receipt binding does not match")
         return cls(
             resource_ref=resource,
             broker_epoch=_uuid_text(parsed["broker_epoch"], "fence.broker_epoch"),
             fencing_sequence=_positive(parsed["fencing_sequence"], "fence.fencing_sequence"),
             lease_id=_bounded(parsed["lease_id"], "fence.lease_id"),
+            close_receipt=close,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -606,6 +1073,7 @@ class ResourceFence:
             "broker_epoch": self.broker_epoch,
             "fencing_sequence": self.fencing_sequence,
             "lease_id": self.lease_id,
+            "close_receipt": self.close_receipt,
         }
 
 
@@ -681,23 +1149,34 @@ class SessionAdmission:
 @dataclass
 class Registry:
     broker_epoch: str
+    recovery_capability_sha256: str | None
     next_fencing_sequence: int
     resource_fences: dict[str, ResourceFence]
     leases: dict[str, Lease]
     session_admissions: dict[str, SessionAdmission]
+    settlements: dict[str, SettlementRecord]
 
     @classmethod
     def fresh(cls, providers: Providers) -> Registry:
-        return cls(str(providers.uuid4()), 1, {}, {}, {})
+        return cls(str(providers.uuid4()), None, 1, {}, {}, {}, {})
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Registry:
         raw = dict(data)
-        legacy_keys = _TOP_KEYS - {"session_admissions"}
+        if "recovery_capability_sha256" not in raw and set(raw).issubset(
+            _TOP_KEYS - {"recovery_capability_sha256"}
+        ):
+            raw["recovery_capability_sha256"] = None
+        legacy_keys = _TOP_KEYS - {"session_admissions", "settlements"}
         if set(raw) == legacy_keys and raw.get("schema") == SCHEMA:
             # ``session_admissions`` was added to the v1 registry as bounded coordination metadata.
             # Older v1 authorities have no such pins, so the only safe migration is the exact old
             # closed shape to an empty map.  Unknown or any other missing fields still fail closed.
+            raw["session_admissions"] = {}
+            raw["settlements"] = {}
+        elif set(raw) == _TOP_KEYS - {"settlements"} and raw.get("schema") == SCHEMA:
+            raw["settlements"] = {}
+        elif set(raw) == _TOP_KEYS - {"session_admissions"} and raw.get("schema") == SCHEMA:
             raw["session_admissions"] = {}
         parsed = _closed_mapping(raw, _TOP_KEYS, "registry")
         if parsed["schema"] != SCHEMA:
@@ -705,16 +1184,26 @@ class Registry:
                 f"registry.schema must be {SCHEMA!r}; found {parsed['schema']!r}"
             )
         epoch = _uuid_text(parsed["broker_epoch"], "broker_epoch")
+        recovery_capability = (
+            None
+            if parsed["recovery_capability_sha256"] is None
+            else _sha256_text(parsed["recovery_capability_sha256"], "recovery_capability_sha256")
+        )
         next_sequence = _positive(parsed["next_fencing_sequence"], "next_fencing_sequence")
         fences_raw = parsed["resource_fences"]
         leases_raw = parsed["leases"]
         admissions_raw = parsed["session_admissions"]
+        settlements_raw = parsed["settlements"]
         if not isinstance(fences_raw, dict) or not isinstance(leases_raw, dict):
             raise RegistryCorruptError("resource_fences and leases must be objects")
         if not isinstance(admissions_raw, dict):
             raise RegistryCorruptError("session_admissions must be an object")
+        if not isinstance(settlements_raw, dict):
+            raise RegistryCorruptError("settlements must be an object")
         if len(admissions_raw) > _MAX_SESSION_ADMISSIONS:
             raise RegistryCorruptError("session_admissions exceeds its bounded capacity")
+        if len(settlements_raw) > _MAX_SETTLEMENTS:
+            raise RegistryCorruptError("settlements exceeds its bounded capacity")
         fences = {
             digest: ResourceFence.from_dict(digest, fence) for digest, fence in fences_raw.items()
         }
@@ -726,18 +1215,47 @@ class Registry:
             _bounded(session_id, "session_admissions key"): SessionAdmission.from_dict(admission)
             for session_id, admission in admissions_raw.items()
         }
+        settlements = {
+            digest: SettlementRecord.from_dict(digest, settlement)
+            for digest, settlement in settlements_raw.items()
+        }
         sequences = [lease.fencing_sequence for lease in leases.values()]
         sequences.extend(fence.fencing_sequence for fence in fences.values())
         if any(fence.broker_epoch != epoch for fence in fences.values()):
             raise RegistryCorruptError("resource fence broker_epoch must match registry epoch")
         if sequences and next_sequence <= max(sequences):
             raise RegistryCorruptError("next_fencing_sequence must exceed every issued sequence")
-        return cls(epoch, next_sequence, fences, leases, admissions)
+        for digest, settlement in settlements.items():
+            fence = fences.get(digest)
+            lease = leases.get(settlement.lease_id)
+            if (
+                fence is None
+                or lease is None
+                or fence.close_receipt is not None
+                or fence.lease_id != settlement.lease_id
+                or lease.resource_ref != settlement.resource_ref
+                or lease.token != settlement.token
+                or fence.broker_epoch != settlement.token.broker_epoch
+                or fence.fencing_sequence != settlement.token.fencing_sequence
+            ):
+                raise RegistryCorruptError(
+                    "settlement does not bind the current live resource head"
+                )
+        return cls(
+            epoch,
+            recovery_capability,
+            next_sequence,
+            fences,
+            leases,
+            admissions,
+            settlements,
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "schema": SCHEMA,
             "broker_epoch": self.broker_epoch,
+            "recovery_capability_sha256": self.recovery_capability_sha256,
             "next_fencing_sequence": self.next_fencing_sequence,
             "resource_fences": {
                 key: value.to_dict() for key, value in sorted(self.resource_fences.items())
@@ -745,6 +1263,9 @@ class Registry:
             "leases": {key: value.to_dict() for key, value in sorted(self.leases.items())},
             "session_admissions": {
                 key: value.to_dict() for key, value in sorted(self.session_admissions.items())
+            },
+            "settlements": {
+                key: value.to_dict() for key, value in sorted(self.settlements.items())
             },
         }
 
@@ -768,6 +1289,23 @@ class SweepResult:
         }
 
 
+@dataclass(frozen=True)
+class SettlementRecoveryHandler:
+    """One exact retained settlement and its root-adapter replay operation."""
+
+    settlement: SettlementRecord
+    write: Callable[[Lease, SettlementRecord], SettlementReplayResult]
+
+
+@dataclass(frozen=True)
+class SettlementReplayResult:
+    """Evidence that a replay honored the retained write and output contract."""
+
+    evidence_refs: Sequence[str]
+    protected_write_intent_sha256: str
+    output_sha256: str
+
+
 class LeaseBroker:
     """One file-backed broker handle. Construction and inspection are side-effect free."""
 
@@ -788,6 +1326,9 @@ class LeaseBroker:
         self.lock_path = self.root / LOCK_NAME
         self.closed_fences_dir = self.root / CLOSED_FENCES_DIR
         self.providers = Providers() if providers is None else providers
+        self._authority_fd: int | None = None
+        self._authority_fd_pid: int | None = None
+        self._authority_fd_lock = threading.Lock()
         if isinstance(worktree_limit, bool) or worktree_limit < 1:
             raise ValueError("worktree_limit must be a positive integer")
         self.worktree_limit = worktree_limit
@@ -815,6 +1356,26 @@ class LeaseBroker:
             )
         return result
 
+    @staticmethod
+    def _validate_opened_node(
+        result: os.stat_result, *, mode: int, kind: str, directory: bool = False
+    ) -> None:
+        expected = stat.S_ISDIR if directory else stat.S_ISREG
+        if not expected(result.st_mode):
+            raise UnsafeAuthorityError(f"fleet lease {kind} has the wrong file type")
+        if result.st_uid != os.geteuid():
+            raise UnsafeAuthorityError(f"fleet lease {kind} is not owned by the effective user")
+        actual_mode = stat.S_IMODE(result.st_mode)
+        if actual_mode != mode:
+            raise UnsafeAuthorityError(
+                f"fleet lease {kind} mode must be {mode:04o}; found {actual_mode:04o}"
+            )
+
+    @staticmethod
+    def _same_node(before: os.stat_result, opened: os.stat_result, *, kind: str) -> None:
+        if (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino):
+            raise UnsafeAuthorityError(f"fleet lease {kind} changed identity while opening")
+
     def _ensure_root(self) -> None:
         if self.root.exists() or self.root.is_symlink():
             self._validate_node(self.root, mode=0o700, kind="root")
@@ -828,6 +1389,77 @@ class LeaseBroker:
         self._validate_node(self.root, mode=0o700, kind="root")
         self._fsync_directory(self.root.parent)
 
+    def _open_authority(self, *, create: bool) -> int | None:
+        """Retain the opened authority directory so path swaps cannot redirect later I/O."""
+
+        pid = os.getpid()
+        with self._authority_fd_lock:
+            if self._authority_fd is not None and self._authority_fd_pid == pid:
+                opened = os.fstat(self._authority_fd)
+                self._validate_opened_node(opened, mode=0o700, kind="root", directory=True)
+                try:
+                    current = self._validate_node(self.root, mode=0o700, kind="root")
+                except FileNotFoundError as exc:
+                    raise UnsafeAuthorityError(
+                        "fleet lease root path no longer identifies the opened authority"
+                    ) from exc
+                self._same_node(current, opened, kind="root")
+                return self._authority_fd
+            if self._authority_fd is not None:
+                os.close(self._authority_fd)
+                self._authority_fd = None
+                self._authority_fd_pid = None
+            if create:
+                self._ensure_root()
+            elif not self.root.exists() and not self.root.is_symlink():
+                return None
+            try:
+                before = self._validate_node(self.root, mode=0o700, kind="root")
+                fd = os.open(self.root, os.O_RDONLY | _DIRECTORY | _NOFOLLOW)
+            except FileNotFoundError as exc:
+                if not create:
+                    return None
+                raise UnsafeAuthorityError("fleet lease root disappeared while opening") from exc
+            except OSError as exc:
+                raise UnsafeAuthorityError(f"cannot open fleet lease root safely: {exc}") from exc
+            try:
+                opened = os.fstat(fd)
+                self._validate_opened_node(opened, mode=0o700, kind="root", directory=True)
+                self._same_node(before, opened, kind="root")
+            except BaseException:
+                os.close(fd)
+                raise
+            self._authority_fd = fd
+            self._authority_fd_pid = pid
+            return fd
+
+    @staticmethod
+    def _stat_at(directory_fd: int, name: str, *, mode: int, kind: str) -> os.stat_result:
+        try:
+            result = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            raise
+        if stat.S_ISLNK(result.st_mode):
+            raise UnsafeAuthorityError(f"fleet lease {kind} must not be a symlink")
+        LeaseBroker._validate_opened_node(result, mode=mode, kind=kind)
+        return result
+
+    @staticmethod
+    def _open_existing_at(directory_fd: int, name: str, flags: int, *, mode: int, kind: str) -> int:
+        before = LeaseBroker._stat_at(directory_fd, name, mode=mode, kind=kind)
+        try:
+            fd = os.open(name, flags | _NOFOLLOW, dir_fd=directory_fd)
+        except OSError as exc:
+            raise UnsafeAuthorityError(f"cannot open fleet lease {kind} safely: {exc}") from exc
+        try:
+            opened = os.fstat(fd)
+            LeaseBroker._validate_opened_node(opened, mode=mode, kind=kind)
+            LeaseBroker._same_node(before, opened, kind=kind)
+        except BaseException:
+            os.close(fd)
+            raise
+        return fd
+
     @staticmethod
     def _fsync_directory(path: Path) -> None:
         fd = os.open(path, os.O_RDONLY)
@@ -838,43 +1470,46 @@ class LeaseBroker:
 
     @contextlib.contextmanager
     def _locked(self) -> Iterator[None]:
-        self._ensure_root()
-        existed = self.lock_path.exists() or self.lock_path.is_symlink()
-        if existed:
-            self._validate_node(self.lock_path, mode=0o600, kind="lock")
-        flags = os.O_CREAT | os.O_RDWR | _NOFOLLOW
+        authority_fd = cast(int, self._open_authority(create=True))
+        created = False
         try:
-            fd = os.open(self.lock_path, flags, 0o600)
+            fd = os.open(
+                LOCK_NAME,
+                os.O_CREAT | os.O_EXCL | os.O_RDWR | _NOFOLLOW,
+                0o600,
+                dir_fd=authority_fd,
+            )
+            created = True
+        except FileExistsError:
+            fd = self._open_existing_at(authority_fd, LOCK_NAME, os.O_RDWR, mode=0o600, kind="lock")
         except OSError as exc:
             raise UnsafeAuthorityError(f"cannot open fleet lease lock safely: {exc}") from exc
         try:
-            os.fchmod(fd, 0o600)
             opened = os.fstat(fd)
-            if not stat.S_ISREG(opened.st_mode) or opened.st_uid != os.geteuid():
-                raise UnsafeAuthorityError("fleet lease lock changed identity while opening")
-            if not existed:
-                self._fsync_directory(self.root)
+            self._validate_opened_node(opened, mode=0o600, kind="lock")
+            if created:
+                os.fsync(authority_fd)
             fcntl.flock(fd, fcntl.LOCK_EX)
             try:
+                self._open_authority(create=False)
                 yield
             finally:
+                self._open_authority(create=False)
                 fcntl.flock(fd, fcntl.LOCK_UN)
         finally:
             os.close(fd)
 
     def _read_registry(self, *, create: bool) -> Registry | None:
+        authority_fd = self._open_authority(create=create)
+        if authority_fd is None:
+            return Registry.fresh(self.providers) if create else None
         try:
-            self._validate_node(self.registry_path, mode=0o600, kind="registry")
+            fd = self._open_existing_at(
+                authority_fd, REGISTRY_NAME, os.O_RDONLY, mode=0o600, kind="registry"
+            )
         except FileNotFoundError:
             return Registry.fresh(self.providers) if create else None
         try:
-            fd = os.open(self.registry_path, os.O_RDONLY | _NOFOLLOW)
-        except OSError as exc:
-            raise UnsafeAuthorityError(f"cannot open fleet lease registry safely: {exc}") from exc
-        try:
-            opened = os.fstat(fd)
-            if not stat.S_ISREG(opened.st_mode) or opened.st_uid != os.geteuid():
-                raise UnsafeAuthorityError("fleet lease registry changed identity while opening")
             chunks: list[bytes] = []
             while chunk := os.read(fd, 65536):
                 chunks.append(chunk)
@@ -891,22 +1526,23 @@ class LeaseBroker:
         return Registry.from_dict(payload)
 
     def _write_registry(self, registry: Registry) -> None:
+        authority_fd = cast(int, self._open_authority(create=True))
         # Validate the complete authority before archive sidecars are changed.
         Registry.from_dict(registry.to_dict())
         self._compact_closed_fences(registry)
         # Round-trip validation before authority replacement catches programmer errors fail-closed.
         payload = registry.to_dict()
         Registry.from_dict(payload)
-        if self.registry_path.exists() or self.registry_path.is_symlink():
-            self._validate_node(self.registry_path, mode=0o600, kind="registry")
-        temp = self.root / (
+        with contextlib.suppress(FileNotFoundError):
+            self._stat_at(authority_fd, REGISTRY_NAME, mode=0o600, kind="registry")
+        temp = (
             f".{REGISTRY_NAME}.{os.getpid()}.{threading.get_ident()}."
             f"{self.providers.monotonic_ns()}.tmp"
         )
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW
         encoded = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
         try:
-            fd = os.open(temp, flags, 0o600)
+            fd = os.open(temp, flags, 0o600, dir_fd=authority_fd)
             try:
                 os.fchmod(fd, 0o600)
                 remaining = memoryview(encoded)
@@ -916,24 +1552,51 @@ class LeaseBroker:
                 os.fsync(fd)
             finally:
                 os.close(fd)
-            os.replace(temp, self.registry_path)
-            self._fsync_directory(self.root)
+            os.replace(temp, REGISTRY_NAME, src_dir_fd=authority_fd, dst_dir_fd=authority_fd)
+            os.fsync(authority_fd)
         finally:
             with contextlib.suppress(FileNotFoundError):
-                temp.unlink()
+                os.unlink(temp, dir_fd=authority_fd)
 
-    def _ensure_closed_fences_dir(self) -> None:
-        path = self.closed_fences_dir
-        if path.exists() or path.is_symlink():
-            self._validate_node(path, mode=0o700, kind="root")
-            return
+    def _open_closed_fences_dir(self, *, create: bool) -> int | None:
+        authority_fd = self._open_authority(create=create)
+        if authority_fd is None:
+            return None
+        if create:
+            try:
+                os.mkdir(CLOSED_FENCES_DIR, mode=0o700, dir_fd=authority_fd)
+                os.fsync(authority_fd)
+            except FileExistsError:
+                pass
         try:
-            path.mkdir(mode=0o700, exist_ok=False)
-            os.chmod(path, 0o700, follow_symlinks=False)
-        except FileExistsError:
-            pass
-        self._validate_node(path, mode=0o700, kind="root")
-        self._fsync_directory(self.root)
+            before = os.stat(CLOSED_FENCES_DIR, dir_fd=authority_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return None
+        if stat.S_ISLNK(before.st_mode):
+            raise UnsafeAuthorityError("fleet lease closed fences directory must not be a symlink")
+        self._validate_opened_node(
+            before, mode=0o700, kind="closed fences directory", directory=True
+        )
+        try:
+            fd = os.open(
+                CLOSED_FENCES_DIR,
+                os.O_RDONLY | _DIRECTORY | _NOFOLLOW,
+                dir_fd=authority_fd,
+            )
+        except OSError as exc:
+            raise UnsafeAuthorityError(
+                f"cannot open closed fences directory safely: {exc}"
+            ) from exc
+        try:
+            opened = os.fstat(fd)
+            self._validate_opened_node(
+                opened, mode=0o700, kind="closed fences directory", directory=True
+            )
+            self._same_node(before, opened, kind="closed fences directory")
+        except BaseException:
+            os.close(fd)
+            raise
+        return fd
 
     def _archived_fence_path(self, digest: str) -> Path:
         _sha256_text(digest, "closed fence digest")
@@ -944,16 +1607,21 @@ class LeaseBroker:
 
         if resource_sha256(fence.resource_ref) != digest:
             raise RegistryCorruptError("closed fence digest does not match its resource")
-        self._ensure_closed_fences_dir()
-        destination = self._archived_fence_path(digest)
-        if destination.exists() or destination.is_symlink():
-            self._validate_node(destination, mode=0o600, kind="closed fence")
-        temp = self.closed_fences_dir / (
+        archive_fd = cast(int, self._open_closed_fences_dir(create=True))
+        destination = f"{digest}.json"
+        with contextlib.suppress(FileNotFoundError):
+            self._stat_at(archive_fd, destination, mode=0o600, kind="closed fence")
+        temp = (
             f".{digest}.{os.getpid()}.{threading.get_ident()}.{self.providers.monotonic_ns()}.tmp"
         )
         encoded = (json.dumps(fence.to_dict(), indent=2, sort_keys=True) + "\n").encode()
         try:
-            fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW, 0o600)
+            fd = os.open(
+                temp,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW,
+                0o600,
+                dir_fd=archive_fd,
+            )
             try:
                 os.fchmod(fd, 0o600)
                 remaining = memoryview(encoded)
@@ -962,39 +1630,83 @@ class LeaseBroker:
                 os.fsync(fd)
             finally:
                 os.close(fd)
-            os.replace(temp, destination)
-            self._fsync_directory(self.closed_fences_dir)
+            os.replace(temp, destination, src_dir_fd=archive_fd, dst_dir_fd=archive_fd)
+            os.fsync(archive_fd)
         finally:
             with contextlib.suppress(FileNotFoundError):
-                temp.unlink()
+                os.unlink(temp, dir_fd=archive_fd)
+            os.close(archive_fd)
 
     def _read_archived_fence(self, digest: str) -> ResourceFence | None:
-        path = self._archived_fence_path(digest)
-        try:
-            self._validate_node(self.closed_fences_dir, mode=0o700, kind="root")
-            self._validate_node(path, mode=0o600, kind="closed fence")
-        except FileNotFoundError:
+        _sha256_text(digest, "closed fence digest")
+        archive_fd = self._open_closed_fences_dir(create=False)
+        if archive_fd is None:
             return None
         try:
-            fd = os.open(path, os.O_RDONLY | _NOFOLLOW)
-        except OSError as exc:
-            raise UnsafeAuthorityError(f"cannot open closed fence safely: {exc}") from exc
+            fd = self._open_existing_at(
+                archive_fd,
+                f"{digest}.json",
+                os.O_RDONLY,
+                mode=0o600,
+                kind="closed fence",
+            )
+        except FileNotFoundError:
+            os.close(archive_fd)
+            return None
         try:
-            opened = os.fstat(fd)
-            if (
-                not stat.S_ISREG(opened.st_mode)
-                or opened.st_uid != os.geteuid()
-                or stat.S_IMODE(opened.st_mode) != 0o600
-            ):
-                raise UnsafeAuthorityError("closed fence changed identity while opening")
             payload = json.loads(os.read(fd, 65536).decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise RegistryCorruptError(f"closed fence is not valid UTF-8 JSON: {exc}") from exc
         finally:
             os.close(fd)
+            os.close(archive_fd)
         if not isinstance(payload, dict):
             raise RegistryCorruptError("closed fence must contain an object")
         return ResourceFence.from_dict(digest, payload)
+
+    def _inspect_archived_fences(self, *, exclude: set[str]) -> dict[str, dict[str, Any]]:
+        """Return at most the newest bounded set of validated archived authority heads."""
+
+        archive_fd = self._open_closed_fences_dir(create=False)
+        if archive_fd is None:
+            return {}
+        newest: list[tuple[int, str, ResourceFence]] = []
+        try:
+            names = os.listdir(archive_fd)
+            for name in names:
+                if name.startswith("."):
+                    continue
+                if len(name) != 69 or not name.endswith(".json"):
+                    raise RegistryCorruptError("closed fences directory contains an unknown entry")
+                digest = name[:-5]
+                _sha256_text(digest, "closed fence digest")
+                if digest in exclude:
+                    continue
+                fd = self._open_existing_at(
+                    archive_fd, name, os.O_RDONLY, mode=0o600, kind="closed fence"
+                )
+                try:
+                    chunks: list[bytes] = []
+                    while chunk := os.read(fd, 65536):
+                        chunks.append(chunk)
+                    payload = json.loads(b"".join(chunks).decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    raise RegistryCorruptError(
+                        f"closed fence is not valid UTF-8 JSON: {exc}"
+                    ) from exc
+                finally:
+                    os.close(fd)
+                if not isinstance(payload, dict):
+                    raise RegistryCorruptError("closed fence must contain an object")
+                fence = ResourceFence.from_dict(digest, payload)
+                newest.append((fence.fencing_sequence, digest, fence))
+            newest.sort(reverse=True)
+            return {
+                digest: fence.to_dict()
+                for _sequence, digest, fence in sorted(newest[:_MAX_CLOSED_FENCES])
+            }
+        finally:
+            os.close(archive_fd)
 
     def _compact_closed_fences(self, registry: Registry) -> None:
         """Bound hot closed heads while preserving exact closed/superseded classification."""
@@ -1027,10 +1739,12 @@ class LeaseBroker:
         return monotonic >= lease.renewed_monotonic_ns + lease.ttl_seconds * 1_000_000_000
 
     def _live(self, registry: Registry, *, monotonic: int, boot_id: str) -> list[Lease]:
+        retained_ids = {item.lease_id for item in registry.settlements.values()}
         return [
             lease
             for lease in registry.leases.values()
-            if not self._expired(lease, monotonic=monotonic, boot_id=boot_id)
+            if lease.lease_id in retained_ids
+            or not self._expired(lease, monotonic=monotonic, boot_id=boot_id)
         ]
 
     def _earliest_expiry(
@@ -1127,10 +1841,14 @@ class LeaseBroker:
     def _session_has_live_agents(
         registry: Registry, session_id: str, *, monotonic: int, boot_id: str
     ) -> bool:
+        retained_ids = {item.lease_id for item in registry.settlements.values()}
         return any(
             lease.pool == "agent"
             and lease.session_id == session_id
-            and not LeaseBroker._expired_static(lease, monotonic=monotonic, boot_id=boot_id)
+            and (
+                lease.lease_id in retained_ids
+                or not LeaseBroker._expired_static(lease, monotonic=monotonic, boot_id=boot_id)
+            )
             for lease in registry.leases.values()
         )
 
@@ -1313,6 +2031,10 @@ class LeaseBroker:
         if lease.resource_ref is None:
             raise LeaseBrokerError("cannot fence a lease without a resource_ref")
         digest = resource_sha256(lease.resource_ref)
+        if digest in registry.settlements:
+            raise LeaseOwnershipError(
+                "resource has retained settlement authority and cannot be superseded"
+            )
         prior = registry.resource_fences.get(digest)
         if prior is not None and prior.lease_id != lease.lease_id:
             registry.leases.pop(prior.lease_id, None)
@@ -1323,15 +2045,44 @@ class LeaseBroker:
             lease_id=lease.lease_id,
         )
 
-    @staticmethod
     def _drop_superseded_resource_lease(
-        registry: Registry, resource_ref: Mapping[str, Any]
+        self, registry: Registry, resource_ref: Mapping[str, Any]
     ) -> None:
         """Remove prior authority before applying capacity to an atomic retry grant."""
 
-        prior = registry.resource_fences.get(resource_sha256(resource_ref))
+        digest = resource_sha256(resource_ref)
+        if digest in registry.settlements:
+            raise LeaseOwnershipError(
+                "resource has retained settlement authority and cannot be superseded"
+            )
+        prior = registry.resource_fences.get(digest) or self._read_archived_fence(digest)
+        if (
+            prior is not None
+            and prior.close_receipt is not None
+            and prior.lease_id not in registry.leases
+        ):
+            raise LeaseOwnershipError(
+                "canonically closed resource requires acquire_successor with predecessor receipt"
+            )
         if prior is not None:
             registry.leases.pop(prior.lease_id, None)
+
+    @staticmethod
+    def _require_no_retained_settlements(
+        registry: Registry, leases: Sequence[Lease], *, operation: str
+    ) -> None:
+        retained = {
+            settlement.lease_id: settlement.phase for settlement in registry.settlements.values()
+        }
+        blocked = [
+            f"{lease.lease_id}:{retained[lease.lease_id]}"
+            for lease in leases
+            if lease.lease_id in retained
+        ]
+        if blocked:
+            raise LeaseOwnershipError(
+                f"{operation} cannot retire retained settlement authority: {', '.join(blocked)}"
+            )
 
     def _require_current_parent(
         self,
@@ -1469,6 +2220,105 @@ class LeaseBroker:
                 session_limit=session_cap,
                 aggregate_limit=aggregate_cap,
                 mutation=mutation,
+                ttl_seconds=ttl,
+                now_text=now_text,
+                monotonic=monotonic,
+                boot_id=boot_id,
+            )
+            self._write_registry(registry)
+            return lease
+
+    def acquire_successor(
+        self,
+        *,
+        owner_id: str,
+        session_id: str,
+        policy_sha256: str,
+        session_limit: int,
+        aggregate_limit: int,
+        mutation: MutationMode,
+        resource_ref: Mapping[str, Any],
+        predecessor_token: FencingToken,
+        predecessor_receipt_sha256: str,
+        ttl_seconds: int = DEFAULT_TTL_SECONDS,
+        owner_pid: int | None = None,
+        owner_process_start: str | None = None,
+        agent_id: str | None = None,
+        tool_use_id: str | None = None,
+        agent_type: str | None = None,
+    ) -> Lease:
+        """Acquire only from the exact canonically closed predecessor resource head."""
+
+        owner = _bounded(owner_id, "owner_id")
+        session = _bounded(session_id, "session_id")
+        policy = _sha256_text(policy_sha256, "policy_sha256")
+        session_cap = _positive(session_limit, "session_limit")
+        aggregate_cap = _positive(aggregate_limit, "aggregate_limit")
+        if session_cap > aggregate_cap:
+            raise LeaseBrokerError("session_limit must not exceed aggregate_limit")
+        if mutation not in {"read-write", "none"}:
+            raise LeaseBrokerError("mutation must be read-write or none")
+        resource = canonical_resource_ref("agent", resource_ref)
+        receipt_digest = _sha256_text(predecessor_receipt_sha256, "predecessor_receipt_sha256")
+        ttl = _positive(ttl_seconds, "ttl_seconds")
+        pid = None if owner_pid is None else _positive(owner_pid, "owner_pid")
+        process_start = _optional_bounded(owner_process_start, "owner_process_start")
+        if pid is not None and process_start is None:
+            process_start = self.providers.process_identity(pid)
+        parsed_agent = _optional_bounded(agent_id, "agent_id")
+        parsed_tool = _optional_bounded(tool_use_id, "tool_use_id")
+        parsed_type = _optional_bounded(agent_type, "agent_type")
+        with self._locked():
+            registry = cast(Registry, self._read_registry(create=True))
+            wall, now_text, monotonic, boot_id = self._now()
+            digest = resource_sha256(resource)
+            if digest in registry.settlements:
+                raise LeaseOwnershipError(
+                    "resource has retained settlement authority and cannot admit a successor"
+                )
+            head = registry.resource_fences.get(digest) or self._read_archived_fence(digest)
+            if head is None or head.resource_ref != resource:
+                raise LeaseNotFoundError("successor predecessor resource head does not exist")
+            if registry.leases.get(head.lease_id) is not None:
+                raise LeaseOwnershipError("successor requires a canonically closed predecessor")
+            close = head.close_receipt
+            if (
+                close is None
+                or predecessor_token.broker_epoch != head.broker_epoch
+                or predecessor_token.fencing_sequence != head.fencing_sequence
+                or close["receipt_sha256"] != receipt_digest
+            ):
+                raise LeaseOwnershipError(
+                    "successor predecessor token or receipt CAS does not match"
+                )
+            self._admit_agent(
+                registry,
+                session_id=session,
+                policy_sha256=policy,
+                session_limit=session_cap,
+                aggregate_limit=aggregate_cap,
+                mutation=mutation,
+                count=1,
+                wall=wall,
+                monotonic=monotonic,
+                boot_id=boot_id,
+            )
+            lease = self._new_lease(
+                registry,
+                pool="agent",
+                owner_id=owner,
+                owner_pid=pid,
+                owner_process_start=process_start,
+                session_id=session,
+                agent_id=parsed_agent,
+                tool_use_id=parsed_tool,
+                agent_type=parsed_type,
+                batch_id=None,
+                resource_ref=resource,
+                policy_sha256=policy,
+                session_limit=session_cap,
+                aggregate_limit=aggregate_cap,
+                mutation=cast(MutationMode, mutation),
                 ttl_seconds=ttl,
                 now_text=now_text,
                 monotonic=monotonic,
@@ -1876,7 +2726,7 @@ class LeaseBroker:
                 and token.broker_epoch == archived.broker_epoch
                 and token.fencing_sequence == archived.fencing_sequence
             ):
-                return "closed", None
+                return ("closed" if archived.close_receipt is not None else "expired"), None
             return "superseded", None
         if (
             token.broker_epoch != registry.broker_epoch
@@ -1886,12 +2736,17 @@ class LeaseBroker:
             return "superseded", None
         lease = registry.leases.get(head.lease_id)
         if lease is None:
-            return "closed", None
+            return ("closed" if head.close_receipt is not None else "expired"), None
         if (
             lease.resource_ref != dict(resource_ref)
             or lease.fencing_sequence != head.fencing_sequence
         ):
-            return "closed", None
+            raise RegistryCorruptError("resource head does not bind its referenced live lease")
+        retained = registry.settlements.get(digest)
+        if retained is not None:
+            if retained.lease_id != lease.lease_id or retained.token != token:
+                raise RegistryCorruptError("retained settlement does not match its resource head")
+            return "current", lease
         if self._expired(lease, monotonic=monotonic, boot_id=boot_id):
             return "expired", lease
         return "current", lease
@@ -1907,6 +2762,40 @@ class LeaseBroker:
         return self._current_state(registry, resource, token, monotonic=monotonic, boot_id=boot_id)[
             0
         ]
+
+    def publish_if_token_state(
+        self,
+        resource_ref: Mapping[str, Any],
+        token: FencingToken,
+        *,
+        expected_state: Literal["expired", "closed"],
+        publish: Callable[[], None],
+        pool: Pool = "agent",
+    ) -> bool:
+        """Run one bounded forensic publication only while the token state still matches.
+
+        Payload preparation happens before this call. The callback may perform only the final
+        staging rename and commit-marker write, keeping large byte copies outside the broker lock.
+        A successor cannot interleave between the state check and that publication.
+        """
+
+        resource = canonical_resource_ref(pool, resource_ref)
+        if expected_state not in {"expired", "closed"}:
+            raise LeaseBrokerError("forensic publication requires expired or closed authority")
+        with self._locked():
+            registry = cast(Registry, self._read_registry(create=True))
+            _wall, _now_text, monotonic, boot_id = self._now()
+            state, _lease = self._current_state(
+                registry,
+                resource,
+                token,
+                monotonic=monotonic,
+                boot_id=boot_id,
+            )
+            if state != expected_state:
+                return False
+            publish()
+            return True
 
     def verify(
         self,
@@ -2054,6 +2943,13 @@ class LeaseBroker:
                 raise LeaseOwnershipError("lease is not owned by this caller")
             if token != lease.token:
                 raise LeaseOwnershipError("release token does not match lease")
+            if (
+                lease.resource_ref is not None
+                and resource_sha256(lease.resource_ref) in registry.settlements
+            ):
+                raise LeaseOwnershipError(
+                    "lease has retained settlement authority; use abort or recovery"
+                )
             del registry.leases[selected_id]
             if lease.pool == "agent":
                 _wall, _now_text, monotonic, boot_id = self._now()
@@ -2064,24 +2960,34 @@ class LeaseBroker:
             self._write_registry(registry)
             return True
 
-    @contextlib.contextmanager
-    def agent_settlement(
+    @staticmethod
+    def _settlement_by_id(registry: Registry, settlement_id: str) -> SettlementRecord:
+        selected = _uuid_text(settlement_id, "settlement_id")
+        matches = [item for item in registry.settlements.values() if item.settlement_id == selected]
+        if len(matches) != 1:
+            raise LeaseNotFoundError(f"settlement {selected!r} does not exist")
+        return matches[0]
+
+    def prepare_agent_settlement(
         self,
         lease_id: str,
         *,
         token: FencingToken,
         owner_id: str,
-    ) -> Iterator[Lease]:
-        """Fence post-run durable writes and exact lease release under one broker lock.
+        producer: str,
+        run_id: str,
+        expected_output_sha256: str,
+        protected_write_intent_sha256: str,
+    ) -> SettlementRecord:
+        """Persist retained authority before any protected writer may run."""
 
-        The guarded code must not mutate this broker or another handle at the same authority root.
-        It may write the external result ledger: competing retries cannot supersede the token until
-        those writes finish and this context atomically removes the lease.
-        """
-
-        selected_id = _bounded(lease_id, "lease_id")
-        owner = _bounded(owner_id, "owner_id")
-        primary_error: BaseException | None = None
+        selected_id = _uuid_text(lease_id, "lease_id")
+        owner = _bounded(owner_id, "owner_id", maximum=128)
+        if producer not in {"agy", "saga", "team-execution"}:
+            raise LeaseBrokerError("settlement producer is invalid")
+        run = _bounded(run_id, "run_id", maximum=128)
+        expected = _sha256_text(expected_output_sha256, "expected_output_sha256")
+        write_intent = _sha256_text(protected_write_intent_sha256, "protected_write_intent_sha256")
         with self._locked():
             registry = cast(Registry, self._read_registry(create=True))
             lease = registry.leases.get(selected_id)
@@ -2089,6 +2995,26 @@ class LeaseBroker:
                 raise LeaseNotFoundError(f"agent lease {selected_id!r} does not exist")
             if lease.owner_id != owner or lease.token != token:
                 raise LeaseOwnershipError("agent settlement owner or token does not match")
+            if lease.policy_sha256 is None:
+                raise RegistryCorruptError("agent settlement lease lacks policy_sha256")
+            digest = resource_sha256(lease.resource_ref)
+            existing = registry.settlements.get(digest)
+            if existing is not None:
+                if (
+                    existing.lease_id == selected_id
+                    and existing.owner_id == owner
+                    and existing.token == token
+                    and existing.producer == producer
+                    and existing.run_id == run
+                    and existing.expected_output_sha256 == expected
+                    and existing.protected_write_intent_sha256 == write_intent
+                ):
+                    return existing
+                raise LeaseOwnershipError("resource already has a different retained settlement")
+            if len(registry.settlements) >= _MAX_SETTLEMENTS:
+                raise CapacityExhaustedError(
+                    "retained settlement registry is full", earliest_expiry=None
+                )
             _wall, now_text, monotonic, boot_id = self._now()
             state, current = self._current_state(
                 registry,
@@ -2103,40 +3029,279 @@ class LeaseBroker:
                 raise LeaseSupersededError(
                     f"agent lease {selected_id!r} is not current at settlement"
                 )
-            settled = replace(
+            renewed = replace(
                 lease,
                 renewed_at=now_text,
                 renewed_monotonic_ns=monotonic,
                 boot_id=boot_id,
             )
-            registry.leases[selected_id] = settled
-            # Persist the renewed settlement window before an external result write. A process
-            # crash in the guarded body must not expose the stale pre-run deadline to a retry.
+            registry.leases[selected_id] = renewed
+            settlement = SettlementRecord(
+                settlement_id=str(self.providers.uuid4()),
+                phase="prepared",
+                lease_id=selected_id,
+                owner_id=owner,
+                owner_pid=lease.owner_pid,
+                owner_process_start=lease.owner_process_start,
+                session_id=lease.session_id,
+                policy_sha256=lease.policy_sha256,
+                resource_ref=lease.resource_ref,
+                token=token,
+                producer=producer,
+                run_id=run,
+                expected_output_sha256=expected,
+                protected_write_intent_sha256=write_intent,
+                recovery_capability_sha256=registry.recovery_capability_sha256,
+                prepared_at=now_text,
+                updated_at=now_text,
+            )
+            registry.settlements[digest] = settlement
             self._write_registry(registry)
+            return settlement
+
+    def _commit_settlement_locked(
+        self,
+        registry: Registry,
+        settlement: SettlementRecord,
+        *,
+        write: Callable[[Lease], Sequence[str]] | None,
+        replay_handler: SettlementRecoveryHandler | None = None,
+        allow_retained_replay: bool,
+    ) -> dict[str, Any]:
+        digest = resource_sha256(settlement.resource_ref)
+        lease = registry.leases.get(settlement.lease_id)
+        if (
+            lease is None
+            or lease.token != settlement.token
+            or lease.resource_ref != settlement.resource_ref
+        ):
+            raise LeaseOwnershipError("settlement lease is no longer the exact resource authority")
+        allowed: set[str] = {"prepared"}
+        if allow_retained_replay:
+            allowed.update({"committing", "ambiguous"})
+        if settlement.phase not in allowed:
+            raise LeaseOwnershipError(
+                f"settlement phase {settlement.phase!r} is not eligible for this commit"
+            )
+        _wall, now_text, monotonic, boot_id = self._now()
+        committing = replace(settlement, phase="committing", updated_at=now_text)
+        registry.settlements[digest] = committing
+        registry.leases[lease.lease_id] = replace(
+            lease,
+            renewed_at=now_text,
+            renewed_monotonic_ns=monotonic,
+            boot_id=boot_id,
+        )
+        try:
+            self._write_registry(registry)
+        except BaseException as exc:
+            # A failed replacement occurs before the protected callback is reachable. Reload the
+            # durable authority rather than mutating this failed in-memory transaction, then
+            # retire only its exact lease and settlement so retry admission is not wedged.
             try:
-                yield settled
-            except BaseException as exc:
-                primary_error = exc
-                raise
-            finally:
-                registry.leases.pop(selected_id, None)
-                _wall, _now_text, final_monotonic, final_boot_id = self._now()
-                if not self._session_has_live_agents(
-                    registry,
-                    lease.session_id,
-                    monotonic=final_monotonic,
-                    boot_id=final_boot_id,
+                self._abort_unstarted_settlement_after_commit_persistence_failure(settlement)
+            except BaseException as cleanup_exc:
+                exc.add_note(
+                    "could not abort unstarted settlement after commit persistence failure: "
+                    f"{cleanup_exc}"
+                )
+            raise
+        try:
+            renewed = registry.leases[lease.lease_id]
+            if replay_handler is None:
+                if write is None:
+                    raise LeaseBrokerError("settlement commit lacks a protected writer")
+                evidence_refs = write(renewed)
+            else:
+                result = replay_handler.write(renewed, settlement)
+                if not isinstance(result, SettlementReplayResult):
+                    raise LeaseBrokerError("recovery replay must return SettlementReplayResult")
+                if (
+                    _sha256_text(
+                        result.protected_write_intent_sha256,
+                        "recovery replay protected_write_intent_sha256",
+                    )
+                    != settlement.protected_write_intent_sha256
+                    or _sha256_text(result.output_sha256, "recovery replay output_sha256")
+                    != settlement.expected_output_sha256
                 ):
-                    registry.session_admissions.pop(lease.session_id, None)
-                try:
-                    self._write_registry(registry)
-                except Exception as cleanup_exc:
-                    if primary_error is not None:
-                        primary_error.add_note(
-                            f"secondary agent settlement cleanup failure: {cleanup_exc}"
-                        )
-                    else:
-                        raise
+                    raise LeaseOwnershipError(
+                        "recovery replay result does not match retained write/output semantics"
+                    )
+                evidence_refs = result.evidence_refs
+            if isinstance(evidence_refs, (str, bytes)) or not isinstance(evidence_refs, Sequence):
+                raise LeaseBrokerError("protected writer must return a sequence of evidence refs")
+            close = build_settlement_close(
+                resource_ref=settlement.resource_ref,
+                token=settlement.token,
+                lease_id=settlement.lease_id,
+                producer=settlement.producer,
+                run_id=settlement.run_id,
+                evidence_refs=list(evidence_refs),
+                expected_output_sha256=settlement.expected_output_sha256,
+                settlement_id=settlement.settlement_id,
+                session_id=settlement.session_id,
+                policy_sha256=settlement.policy_sha256,
+                protected_write_intent_sha256=settlement.protected_write_intent_sha256,
+                settlement_sha256=settlement.settlement_sha256,
+            )
+        except BaseException as exc:
+            _failure_wall, failed_at, _failure_monotonic, _failure_boot = self._now()
+            registry.settlements[digest] = replace(
+                committing, phase="ambiguous", updated_at=failed_at
+            )
+            try:
+                self._write_registry(registry)
+            except Exception as audit_exc:
+                exc.add_note(f"could not persist ambiguous settlement state: {audit_exc}")
+            raise
+        head = registry.resource_fences.get(digest)
+        if (
+            head is None
+            or head.lease_id != settlement.lease_id
+            or head.broker_epoch != settlement.token.broker_epoch
+            or head.fencing_sequence != settlement.token.fencing_sequence
+            or head.close_receipt is not None
+        ):
+            raise LeaseSupersededError("settlement close lost its exact resource-head CAS")
+        registry.resource_fences[digest] = ResourceFence(
+            resource_ref=settlement.resource_ref,
+            broker_epoch=settlement.token.broker_epoch,
+            fencing_sequence=settlement.token.fencing_sequence,
+            lease_id=settlement.lease_id,
+            close_receipt=close,
+        )
+        registry.leases.pop(settlement.lease_id, None)
+        registry.settlements.pop(digest, None)
+        _final_wall, _final_text, final_monotonic, final_boot_id = self._now()
+        if not self._session_has_live_agents(
+            registry,
+            settlement.session_id,
+            monotonic=final_monotonic,
+            boot_id=final_boot_id,
+        ):
+            registry.session_admissions.pop(settlement.session_id, None)
+        # This replacement is the only accepted-write linearization point. If it fails, the
+        # durable registry remains in its previously persisted committing phase.
+        self._write_registry(registry)
+        return close
+
+    def _abort_unstarted_settlement_after_commit_persistence_failure(
+        self, settlement: SettlementRecord
+    ) -> None:
+        """Retire the durable prepared authority when committing-state persistence never began.
+
+        This method is called only while the broker lock is held and before a protected callback.
+        Exact matching prevents a stale failed caller from retiring any later authority. A write
+        implementation can report failure after replacement, so this accepts the same original
+        settlement in either prepared or committing phase while the caller still proves that no
+        protected callback was reached.
+        """
+
+        registry = cast(Registry, self._read_registry(create=True))
+        digest = resource_sha256(settlement.resource_ref)
+        persisted = registry.settlements.get(digest)
+        lease = registry.leases.get(settlement.lease_id)
+        if (
+            settlement.phase != "prepared"
+            or persisted is None
+            or persisted.settlement_sha256 != settlement.settlement_sha256
+            or persisted.phase not in {"prepared", "committing"}
+            or lease is None
+            or lease.token != settlement.token
+            or lease.resource_ref != settlement.resource_ref
+        ):
+            raise LeaseOwnershipError(
+                "unstarted settlement no longer has exact prepared authority for rollback"
+            )
+        registry.settlements.pop(digest, None)
+        registry.leases.pop(settlement.lease_id, None)
+        _wall, _now_text, monotonic, boot_id = self._now()
+        if not self._session_has_live_agents(
+            registry,
+            settlement.session_id,
+            monotonic=monotonic,
+            boot_id=boot_id,
+        ):
+            registry.session_admissions.pop(settlement.session_id, None)
+        self._write_registry(registry)
+
+    def commit_agent_settlement(
+        self,
+        settlement_id: str,
+        *,
+        owner_id: str,
+        token: FencingToken,
+        write: Callable[[Lease], Sequence[str]],
+    ) -> dict[str, Any]:
+        """Run protected writers and atomically publish the canonical closed receipt."""
+
+        owner = _bounded(owner_id, "owner_id", maximum=128)
+        with self._locked():
+            registry = cast(Registry, self._read_registry(create=True))
+            settlement = self._settlement_by_id(registry, settlement_id)
+            if settlement.owner_id != owner or settlement.token != token:
+                raise LeaseOwnershipError("settlement commit owner or token does not match")
+            return self._commit_settlement_locked(
+                registry,
+                settlement,
+                write=write,
+                replay_handler=None,
+                allow_retained_replay=False,
+            )
+
+    def abort_agent_settlement(
+        self,
+        settlement_id: str,
+        *,
+        owner_id: str,
+        token: FencingToken,
+    ) -> bool:
+        """Release an exact settlement only while no protected writer may have run."""
+
+        owner = _bounded(owner_id, "owner_id", maximum=128)
+        with self._locked():
+            registry = cast(Registry, self._read_registry(create=True))
+            settlement = self._settlement_by_id(registry, settlement_id)
+            if settlement.owner_id != owner or settlement.token != token:
+                raise LeaseOwnershipError("settlement abort owner or token does not match")
+            if settlement.phase != "prepared":
+                raise LeaseOwnershipError("only a prepared settlement can be aborted")
+            digest = resource_sha256(settlement.resource_ref)
+            registry.settlements.pop(digest, None)
+            registry.leases.pop(settlement.lease_id, None)
+            _wall, _now_text, monotonic, boot_id = self._now()
+            if not self._session_has_live_agents(
+                registry,
+                settlement.session_id,
+                monotonic=monotonic,
+                boot_id=boot_id,
+            ):
+                registry.session_admissions.pop(settlement.session_id, None)
+            self._write_registry(registry)
+            return True
+
+    @contextlib.contextmanager
+    def agent_settlement(
+        self,
+        lease_id: str,
+        *,
+        token: FencingToken,
+        owner_id: str,
+    ) -> Iterator[Lease]:
+        """Reject the legacy mutation-capable context manager.
+
+        It cannot express the protected intent, expected output, or close receipt required by the
+        failure-atomic protocol. Callers must use prepare_agent_settlement followed by
+        commit_agent_settlement (or abort before any protected write).
+        """
+
+        del lease_id, token, owner_id
+        raise LeaseBrokerError(
+            "legacy agent_settlement is disabled; use prepare_agent_settlement and "
+            "commit_agent_settlement"
+        )
+        yield  # pragma: no cover - keeps the contextmanager protocol type without enabling writes.
 
     def release_owner(
         self,
@@ -2169,6 +3334,7 @@ class LeaseBroker:
                 raise LeaseOwnershipError(
                     f"owner {owner!r} has non-terminal leases: {', '.join(unsafe)}"
                 )
+            self._require_no_retained_settlements(registry, selected, operation="owner release")
             selected_ids = tuple(lease.lease_id for lease in selected)
             for lease_id in selected_ids:
                 del registry.leases[lease_id]
@@ -2236,12 +3402,16 @@ class LeaseBroker:
         with self._locked():
             registry = cast(Registry, self._read_registry(create=True))
             selected = sorted(
-                lease_id
-                for lease_id, lease in registry.leases.items()
-                if lease.pool == "agent" and lease.session_id == session
+                (
+                    lease
+                    for lease in registry.leases.values()
+                    if lease.pool == "agent" and lease.session_id == session
+                ),
+                key=lambda lease: lease.lease_id,
             )
-            for lease_id in selected:
-                del registry.leases[lease_id]
+            self._require_no_retained_settlements(registry, selected, operation="session release")
+            for lease in selected:
+                del registry.leases[lease.lease_id]
             if selected:
                 _wall, _now_text, monotonic, boot_id = self._now()
                 if not self._session_has_live_agents(
@@ -2249,7 +3419,7 @@ class LeaseBroker:
                 ):
                     registry.session_admissions.pop(session, None)
                 self._write_registry(registry)
-            return tuple(selected)
+            return tuple(lease.lease_id for lease in selected)
 
     def release_session_if_terminal(
         self, session_id: str, *, terminal_agent_ids: Sequence[str]
@@ -2282,6 +3452,9 @@ class LeaseBroker:
                 raise LeaseOwnershipError(
                     f"session {session!r} has non-terminal agent leases: {', '.join(unsafe)}"
                 )
+            self._require_no_retained_settlements(
+                registry, selected, operation="terminal session release"
+            )
             for lease in selected:
                 del registry.leases[lease.lease_id]
             if selected or session in registry.session_admissions:
@@ -2306,6 +3479,7 @@ class LeaseBroker:
                 return ()
             if any(lease.owner_id != owner or lease.session_id != session for lease in selected):
                 raise LeaseOwnershipError("workflow batch is not owned by this session")
+            self._require_no_retained_settlements(registry, selected, operation="batch settlement")
             released = sorted(
                 lease.lease_id
                 for lease in selected
@@ -2432,6 +3606,8 @@ class LeaseBroker:
     ) -> None:
         """Remove a normal grant or recycle a driver-owned Workflow batch slot."""
 
+        self._require_no_retained_settlements(registry, [lease], operation="foreground completion")
+
         if lease.batch_id is None:
             registry.leases.pop(lease.lease_id, None)
             return
@@ -2453,12 +3629,21 @@ class LeaseBroker:
     def inspect(self) -> dict[str, Any]:
         """Return persisted authority plus derived state without creating any file."""
 
-        if not self.root.exists() and not self.root.is_symlink():
-            return {"exists": False, "root_sha256": self.root_sha256, "leases": []}
-        self._validate_node(self.root, mode=0o700, kind="root")
+        if self._open_authority(create=False) is None:
+            return {
+                "exists": False,
+                "root_sha256": self.root_sha256,
+                "leases": [],
+                "archived_resource_fences": {},
+            }
         registry = self._read_registry(create=False)
         if registry is None:
-            return {"exists": False, "root_sha256": self.root_sha256, "leases": []}
+            return {
+                "exists": False,
+                "root_sha256": self.root_sha256,
+                "leases": [],
+                "archived_resource_fences": {},
+            }
         _wall, _now_text, monotonic, boot_id = self._now()
         leases = []
         for lease in sorted(registry.leases.values(), key=lambda item: item.lease_id):
@@ -2494,7 +3679,31 @@ class LeaseBroker:
             "resource_fences": {
                 key: value.to_dict() for key, value in sorted(registry.resource_fences.items())
             },
+            "archived_resource_fences": self._inspect_archived_fences(
+                exclude=set(registry.resource_fences)
+            ),
+            "settlements": {
+                key: value.to_dict() for key, value in sorted(registry.settlements.items())
+            },
         }
+
+    def inspect_resource_head(
+        self, resource_ref: Mapping[str, Any], *, pool: Pool = "agent"
+    ) -> dict[str, Any] | None:
+        """Return one exact hot or archived resource head without the bounded projection."""
+
+        resource = canonical_resource_ref(pool, resource_ref)
+        digest = resource_sha256(resource)
+        with self._locked():
+            registry = self._read_registry(create=False)
+            if registry is None:
+                return None
+            head = registry.resource_fences.get(digest) or self._read_archived_fence(digest)
+            if head is None:
+                return None
+            if head.resource_ref != resource:
+                raise RegistryCorruptError("resource head digest does not match its resource")
+            return head.to_dict()
 
     def _owner_state(self, lease: Lease) -> Literal["dead", "live", "unknown"]:
         if lease.boot_id != _bounded(self.providers.boot_id(), "boot_id"):
@@ -2534,6 +3743,17 @@ class LeaseBroker:
             )
             released_sessions: set[str] = set()
             for lease in list(registry.leases.values()):
+                retained_settlement = next(
+                    (
+                        item
+                        for item in registry.settlements.values()
+                        if item.lease_id == lease.lease_id
+                    ),
+                    None,
+                )
+                if retained_settlement is not None:
+                    retained[lease.lease_id] = f"settlement-{retained_settlement.phase}"
+                    continue
                 if not self._expired(lease, monotonic=monotonic, boot_id=boot_id):
                     continue
                 if lease.pool == "agent":
@@ -2573,3 +3793,257 @@ class LeaseBroker:
             reaped_worktree_leases=tuple(sorted(reaped)),
             retained=dict(sorted(retained.items())),
         )
+
+
+_RECOVERY_COORDINATOR_CAPABILITY = object()
+
+
+class SettlementRecoveryCoordinator:
+    """Low-level, process-bound seam for retained settlement recovery experiments.
+
+    Ordinary ``LeaseBroker`` handles intentionally have no recovery configuration or method. The
+    owner-local plugin does not wire this seam into normal producer startup. Ambiguous authority is
+    retained for inspection until #358 supplies lifecycle recovery. Tests may create a coordinator
+    through the bounded module factory and register one exact handler per settlement.
+    """
+
+    def __init__(
+        self,
+        capability: object,
+        broker: LeaseBroker,
+        *,
+        recovery_owner_id: str,
+        recovery_handlers: Mapping[str, SettlementRecoveryHandler],
+        recovery_capability: bytes,
+    ) -> None:
+        if capability is not _RECOVERY_COORDINATOR_CAPABILITY:
+            raise LeaseOwnershipError("settlement recovery coordinator is root-adapter-owned")
+        self._broker = broker
+        self._owner_id = _bounded(recovery_owner_id, "recovery_owner_id", maximum=128)
+        self._pid = os.getpid()
+        self._process_start = broker.providers.process_identity(self._pid)
+        if self._process_start is None:
+            raise UnsafeAuthorityError("root recovery adapter requires a stable process identity")
+        self._boot_id = _bounded(broker.providers.boot_id(), "recovery_owner_boot_id")
+        self._effective_uid = os.geteuid()
+        if len(recovery_capability) != 32:
+            raise ValueError("recovery capability must contain 256 random bits")
+        self._recovery_capability = recovery_capability
+        self._recovery_capability_sha256 = hashlib.sha256(recovery_capability).hexdigest()
+        handlers = dict(recovery_handlers)
+        if len(handlers) > _MAX_SETTLEMENTS:
+            raise ValueError("recovery handlers exceed the retained settlement bound")
+        for settlement_id, handler in handlers.items():
+            selected = _uuid_text(settlement_id, "recovery handler settlement_id")
+            if selected != handler.settlement.settlement_id:
+                raise ValueError("recovery handler key does not match its exact settlement")
+        self._handlers = handlers
+        # Establish and retain the exact authority directory identity before any child can run.
+        broker._open_authority(create=True)
+        with broker._locked():
+            registry = cast(Registry, broker._read_registry(create=True))
+            if registry.recovery_capability_sha256 is None:
+                registry.recovery_capability_sha256 = self._recovery_capability_sha256
+                broker._write_registry(registry)
+            elif registry.recovery_capability_sha256 != self._recovery_capability_sha256:
+                raise LeaseOwnershipError(
+                    "authority is already bound to a different root recovery capability"
+                )
+
+    def register_recovery_handler(self, handler: SettlementRecoveryHandler) -> None:
+        """Register one exact settlement after the root adapter observes its preparation."""
+
+        if os.getpid() != self._pid:
+            raise LeaseOwnershipError("recovery coordinator cannot be inherited by a child")
+        settlement_id = handler.settlement.settlement_id
+        if len(self._handlers) >= _MAX_SETTLEMENTS and settlement_id not in self._handlers:
+            raise CapacityExhaustedError("recovery handler registry is full", earliest_expiry=None)
+        if handler.settlement.recovery_capability_sha256 != self._recovery_capability_sha256:
+            raise LeaseOwnershipError(
+                "recovery handler settlement lacks this root capability binding"
+            )
+        existing = self._handlers.get(settlement_id)
+        if existing is not None and existing != handler:
+            raise LeaseOwnershipError("settlement already has a different recovery handler")
+        self._handlers[settlement_id] = handler
+
+    def _parse_intent(
+        self, recovery_intent: Mapping[str, Any]
+    ) -> tuple[dict[str, Any], ResourceRef, FencingToken]:
+        parsed = _closed_mapping(
+            dict(recovery_intent), _SETTLEMENT_RECOVERY_KEYS, "settlement recovery intent"
+        )
+        if parsed["schema"] != "settlement_recovery_intent.v1":
+            raise LeaseBrokerError("recovery intent schema is invalid")
+        supplied_sha = _sha256_text(parsed["sha256"], "recovery intent sha256")
+        if supplied_sha != _record_sha256(parsed, "sha256"):
+            raise LeaseBrokerError("recovery intent sha256 does not match its content")
+        resource = canonical_resource_ref("agent", parsed["resource_ref"])
+        token_raw = parsed["token"]
+        if not isinstance(token_raw, Mapping) or set(token_raw) != {
+            "broker_epoch",
+            "fencing_sequence",
+        }:
+            raise LeaseBrokerError("recovery intent token shape is invalid")
+        token = FencingToken.from_dict(token_raw)
+        if parsed["generation"] != token_generation(token):
+            raise LeaseBrokerError("recovery intent generation does not match token")
+        return parsed, resource, token
+
+    def _authorize_caller(self, parsed: Mapping[str, Any]) -> None:
+        if os.getpid() != self._pid:
+            raise LeaseOwnershipError("recovery coordinator cannot be inherited by a child")
+        if (
+            parsed["recovery_owner_id"] != self._owner_id
+            or _positive(parsed["recovery_owner_pid"], "recovery_owner_pid") != self._pid
+            or _bounded(parsed["recovery_owner_process_start"], "recovery_owner_process_start")
+            != self._process_start
+            or _bounded(parsed["recovery_owner_boot_id"], "recovery_owner_boot_id") != self._boot_id
+            or _nonnegative(parsed["recovery_owner_effective_uid"], "recovery_owner_effective_uid")
+            != self._effective_uid
+            or self._broker.providers.process_identity(self._pid) != self._process_start
+            or self._broker.providers.boot_id() != self._boot_id
+        ):
+            raise LeaseOwnershipError(
+                "recovery caller identity does not match the retained root adapter"
+            )
+
+    @staticmethod
+    def _intent_matches_settlement(
+        parsed: Mapping[str, Any],
+        resource: ResourceRef,
+        token: FencingToken,
+        settlement: SettlementRecord,
+    ) -> bool:
+        return (
+            settlement.phase == parsed["expected_phase"]
+            and settlement.resource_ref == resource
+            and settlement.token == token
+            and settlement.lease_id == parsed["lease_id"]
+            and settlement.settlement_id == parsed["settlement_id"]
+            and settlement.session_id == parsed["session_id"]
+            and settlement.policy_sha256 == parsed["policy_sha256"]
+            and settlement.protected_write_intent_sha256 == parsed["protected_write_intent_sha256"]
+        )
+
+    @staticmethod
+    def _close_matches_intent(
+        close: Mapping[str, Any],
+        parsed: Mapping[str, Any],
+        handler: SettlementRecoveryHandler | None,
+    ) -> bool:
+        if (
+            close["resource_ref"] != parsed["resource_ref"]
+            or close["token"] != parsed["token"]
+            or close["lease_id"] != parsed["lease_id"]
+            or close["settlement_id"] != parsed["settlement_id"]
+            or close["session_id"] != parsed["session_id"]
+            or close["policy_sha256"] != parsed["policy_sha256"]
+            or close["protected_write_intent_sha256"] != parsed["protected_write_intent_sha256"]
+        ):
+            return False
+        if handler is None:
+            return False
+        settlement = handler.settlement
+        return bool(
+            close["settlement_sha256"] == settlement.settlement_sha256
+            and close["producer"] == settlement.producer
+            and close["run_id"] == settlement.run_id
+            and close["expected_output_sha256"] == settlement.expected_output_sha256
+        )
+
+    def recover_agent_settlement(
+        self,
+        recovery_intent: Mapping[str, Any],
+        *,
+        action: Literal["abort", "commit"],
+    ) -> dict[str, Any] | None:
+        """Recover or idempotently converge one exact retained settlement."""
+
+        parsed, resource, token = self._parse_intent(recovery_intent)
+        self._authorize_caller(parsed)
+        expected_phase = parsed["expected_phase"]
+        if expected_phase not in {"prepared", "committing", "ambiguous"}:
+            raise LeaseBrokerError("recovery expected_phase is invalid")
+        with self._broker._locked():
+            registry = cast(Registry, self._broker._read_registry(create=True))
+            proven_capability_sha256 = hashlib.sha256(self._recovery_capability).hexdigest()
+            if (
+                proven_capability_sha256 != self._recovery_capability_sha256
+                or registry.recovery_capability_sha256 != proven_capability_sha256
+            ):
+                raise LeaseOwnershipError("recovery capability no longer matches authority")
+            digest = resource_sha256(resource)
+            settlement = registry.settlements.get(digest)
+            handler = self._handlers.get(parsed["settlement_id"])
+            if settlement is None:
+                head = registry.resource_fences.get(digest) or self._broker._read_archived_fence(
+                    digest
+                )
+                if (
+                    head is None
+                    or head.resource_ref != resource
+                    or head.broker_epoch != token.broker_epoch
+                    or head.fencing_sequence != token.fencing_sequence
+                    or head.lease_id != parsed["lease_id"]
+                ):
+                    raise LeaseNotFoundError(
+                        f"settlement {parsed['settlement_id']!r} does not exist"
+                    )
+                if action == "abort" and head.close_receipt is None:
+                    return None
+                if action == "commit" and head.close_receipt is not None:
+                    close = validate_settlement_close(head.close_receipt)
+                    if self._close_matches_intent(close, parsed, handler):
+                        return close
+                raise LeaseOwnershipError(
+                    "recovery retry does not match the canonical settlement disposition"
+                )
+            if not self._intent_matches_settlement(parsed, resource, token, settlement):
+                raise LeaseOwnershipError("recovery intent does not match retained authority")
+            if settlement.recovery_capability_sha256 != self._recovery_capability_sha256:
+                raise LeaseOwnershipError(
+                    "settlement is not bound to this root recovery capability"
+                )
+            lease = registry.leases.get(settlement.lease_id)
+            if lease is None or self._broker._owner_state(lease) != "dead":
+                raise LeaseOwnershipError("recovery requires a provably dead original owner")
+            if action == "abort":
+                if settlement.phase != "prepared":
+                    raise LeaseOwnershipError("committing or ambiguous authority cannot be aborted")
+                registry.settlements.pop(digest, None)
+                registry.leases.pop(settlement.lease_id, None)
+                self._broker._write_registry(registry)
+                return None
+            if action != "commit":
+                raise LeaseBrokerError("recovery action is invalid")
+            if handler is None or (
+                handler.settlement.settlement_sha256 != settlement.settlement_sha256
+            ):
+                raise LeaseOwnershipError(
+                    "recovery handler does not match the full retained settlement"
+                )
+            return self._broker._commit_settlement_locked(
+                registry,
+                settlement,
+                write=None,
+                replay_handler=handler,
+                allow_retained_replay=True,
+            )
+
+
+def _open_settlement_recovery_coordinator(
+    broker: LeaseBroker,
+    *,
+    recovery_owner_id: str,
+    recovery_handlers: Mapping[str, SettlementRecoveryHandler] | None = None,
+) -> SettlementRecoveryCoordinator:
+    """Bounded production seam reserved for the non-child root adapter."""
+
+    return SettlementRecoveryCoordinator(
+        _RECOVERY_COORDINATOR_CAPABILITY,
+        broker,
+        recovery_owner_id=recovery_owner_id,
+        recovery_handlers={} if recovery_handlers is None else recovery_handlers,
+        recovery_capability=os.urandom(32),
+    )

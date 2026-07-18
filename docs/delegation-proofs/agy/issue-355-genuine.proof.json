@@ -1,0 +1,14 @@
+{
+  "schema": "delegation-proof.v1",
+  "plugin": "agy",
+  "version": "0.5.0",
+  "run_id": "issue-355-genuine-20260717",
+  "bridge_command": "agy --model 'Gemini 3.1 Pro (High)' --print-timeout 120s --sandbox --print '<bounded read-only review>'",
+  "external_tool_calls": [
+    "agy --model 'Gemini 3.1 Pro (High)' --print-timeout 120s --sandbox --print '<bounded read-only review>'"
+  ],
+  "actor": "agy:Gemini 3.1 Pro (High):issue-355-genuine-20260717",
+  "transcript": "agy/issue-355-genuine.transcript.jsonl",
+  "transcript_sha256": "ab82f0615a383c539d433bfe732a9ef67333a5acebb96eee12f2a8c83cda8701",
+  "note": "Genuine read-only Agy delegation used to validate the agy 0.5.0 release path for issue #355."
+}

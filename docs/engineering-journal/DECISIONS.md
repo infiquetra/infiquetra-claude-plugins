@@ -2711,34 +2711,62 @@ file-backed coordination, or team-execution gains a generic teardown contract un
 **Date:** 2026-07-15 · **Plan:**
 `docs/plans/2026-07-15-issue-355-orphan-runner-containment-plan.md` · **Issue:** #355
 
-**Decision.** Agy and Saga bridge evidence writers consume #356's trusted lease and persistent
-resource head. A resource-scoped lock spans the final Python-owned commit: current writes follow the
-existing path, superseded writes are rejected, expired or closed writes are quarantined, and immutable
-events/seals feed a read-only orphan projection. `run-lease.json` remains forensic, never authority.
+**Decision.** Agy, Saga, and Team Execution evidence writers use #356's `LeaseBroker` as the sole
+mutation authority. Broker-owned prepare/commit/abort makes the atomic closed-registry replacement
+the only acceptance linearization point. A callback failure best-effort records `ambiguous`; an
+unwritable registry, signal, or process death leaves the last durable `prepared` or `committing`
+state, which retains authority and blocks ordinary retry. Output without the matching closed broker
+receipt is quarantine-only evidence and cannot satisfy a gate. `run-lease.json` remains forensic.
 
-- **KTD1 - one authority, four derived dispositions.** Resource head plus live lease classifies
-  current, expired, closed, or superseded; corrupt/unknown authority fails closed.
-- **KTD2 - the guard spans commit.** Same-resource grant/supersession and evidence commits share a
-  digest-named lock, ordered before the registry lock, so check-to-write cannot race.
-- **KTD3 - superseded rejects; latest-but-expired quarantines.** A newer head wins even when the old
-  TTL elapsed. Quarantine preserves only a still-latest expired/closed proposal and never makes it live.
-- **KTD4 - terminal bundles remain forensic truth.** Agy finishes its bundle and exposes a nonpassing
-  disposition even when live patch/mirror acceptance is denied.
-- **KTD5 - quarantine is write-once, bounded, and machine-local.** Digest paths, 0600 files, a
-  commit-last marker, and rejection at agy's existing 128 MiB output boundary reuse the delegation
-  audit store without becoming a retry queue.
-- **KTD6 - close seals cover supported artifact roots.** They detect post-close mutation at inventoried
-  terminal seams but make no claim to be a general filesystem monitor. Intermediate claimed manifests
-  remain unsealed until adjudication or another explicit terminal outcome, and a later authorized
-  resource generation makes an older seal historical instead of a false late-write alarm.
-- **KTD7 - orphan candidates are derived and owner-routed.** #355 flags evidence-backed candidates;
-  #356 owns worktree sweep, #357 owns advanced liveness, and #358 owns generic teardown.
-- **KTD8 - stable agy resource identity stays outside the untrusted envelope.** The outer coordinator
-  validates the retry key before dispatch; prompts, engine output, environment, and bundle contents
-  cannot replace it.
+- **KTD1 - the broker owns prepare, close, and retained ambiguity.** Protected writers run only from
+  the broker's committing phase. Sweep never reclaims prepared, committing, or ambiguous authority,
+  and #355 does not claim automatic or restart-safe producer replay. The low-level recovery
+  coordinator remains a test/experimental seam; #358 owns lifecycle recovery and teardown. A
+  lost-response retry returns the canonical close without replaying the write. This is cooperative
+  correctness for an owner-local plugin: same-effective-user processes and the operator are trusted,
+  while stale children, crashes, accidental corruption, and external-engine output are not.
+- **KTD2 - closed-head CAS is the only successor path.** Registered dispatch, documented Team
+  Execution claim, and adjudication share one execution-stable resource. Each successor names the
+  exact predecessor token and canonical receipt hash; a stale attempt cannot reacquire after a retry.
+  Exact lookup includes cold archive sidecars even when a head has left the bounded inspection
+  projection, so archive compaction cannot reopen ordinary acquisition or erase late-write proof.
+- **KTD3 - agy admission is resolver-owned and lease-bound.** Direct auto-apply accepts only a bounded
+  resource key read from an owner-private `0600` regular file. The raw key is rejected on argv and
+  immediately reduced to a repository-scoped digest; only that digest reaches durable resource,
+  bundle, receipt, quarantine, or audit records. An in-process resolver derives policy, capacity,
+  process, canonical Git identity, and a lease-independent output template, then binds the acquired
+  lease to the final output record.
+- **KTD4 - closed schemas make disposition evidence executable.** Broker-native UUID epochs,
+  provider process identities, tokens, resources, receipts, expected outputs, quarantine manifests,
+  events, candidates, reservations, and recovery intents use strict canonical schemas and digests.
+- **KTD5 - superseded rejects; expired or closed output quarantines.** A newer head always wins.
+  Rejected output never becomes live, and corrupt or contradictory authority yields an explicit
+  evidence-integrity error rather than a guessed disposition.
+- **KTD6 - quarantine is immutable, reserved, and aggregate-bounded.** Items are below 128 MiB;
+  committed plus staging storage is capped at 512 MiB and 256 entries under one owner-only lock.
+  Every capacity check and event publication first recovers staging under that lock. Dead-owner
+  staging is schema-, identity-, path-, byte-, and digest-verified before finalization or safely
+  discarded; referenced evidence is revalidated before its event is written. Committed evidence
+  receives at least 30 days retention and is never evicted by the acceptance path.
+- **KTD7 - proof and projection remain verifiable but non-destructive.** Mode-bound command receipts
+  prove the genuine agy version gate and fleet sweep, bind an immutable merge-base plus every
+  receipt-excluded candidate path, mode, and byte digest, require shipped proof/transcript roots, and
+  rerun the fixed checker. Orphan candidates are derived only from canonical hot or archived broker
+  heads, close seals, leases, and orphan events; event callers cannot assert disposition or
+  terminality. #356 owns worktree sweep, #357 owns advanced liveness, and #358 owns generic teardown.
+- **KTD8 - incompatible settlement is lease protocol 2.** Fleet-core, Saga, Team Execution, and Agy
+  live apply require version 2 before acquiring or dispatching. Agy validation, no-write, and
+  patch-only paths lazy-load the new containment modules so independent plugin installation order
+  does not break modes that do not use settlement. Ordinary manifest CLI and completeness output is
+  noncanonical-only; empty-artifact projection requires a matching bound output record and exact
+  trusted template, while optional/no-output contracts emit no candidate.
 
-**Revisit when** bridge evidence moves to a transactional database, a distributed fence replaces the
-host-local file lock, or quarantine retention/encryption becomes an explicit operator requirement.
+**Explicit boundary.** This decision does not retrofit agy with an OS sandbox, environment secret
+broker, or hostile same-user filesystem defense. Those are separate runner-hardening capabilities;
+they are not required to fence stale evidence writes in an owner-local Claude Code plugin.
+
+**Revisit when** a transactional durable store can atomically cover broker and artifact bytes, a
+distributed fence replaces host-local coordination, or quarantine encryption becomes mandatory.
 
 ---
 

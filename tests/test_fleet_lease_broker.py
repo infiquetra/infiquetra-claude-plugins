@@ -253,6 +253,7 @@ def test_inspect_is_read_only_and_root_identity_is_stable(tmp_path: Path) -> Non
         "exists": False,
         "root_sha256": first.root_sha256,
         "leases": [],
+        "archived_resource_fences": {},
     }
     assert not root.exists()
 
@@ -280,6 +281,57 @@ def test_exact_legacy_v1_registry_shape_migrates_to_empty_session_admissions(
     assert broker.inspect()["leases"][0]["lease_id"] == lease.lease_id
     assert broker.release(lease.lease_id, token=lease.token) is True
     assert _raw_registry(broker)["session_admissions"] == {}
+
+
+def test_exact_legacy_settlement_close_remains_readable_but_not_current_proof(
+    broker: Any,
+) -> None:
+    lease = _agent(broker, resource="legacy-close")
+    settlement = broker.prepare_agent_settlement(
+        lease.lease_id,
+        owner_id=lease.owner_id,
+        token=lease.token,
+        producer="saga",
+        run_id="legacy-run",
+        expected_output_sha256="b" * 64,
+        protected_write_intent_sha256="c" * 64,
+    )
+    current_close = broker.commit_agent_settlement(
+        settlement.settlement_id,
+        owner_id=lease.owner_id,
+        token=lease.token,
+        write=lambda _lease: ["legacy-evidence"],
+    )
+    legacy_close = {
+        key: value
+        for key, value in current_close.items()
+        if key
+        not in {
+            "settlement_id",
+            "session_id",
+            "policy_sha256",
+            "protected_write_intent_sha256",
+            "settlement_sha256",
+            "receipt_sha256",
+            "sha256",
+        }
+    }
+    legacy_close["receipt_sha256"] = B._record_sha256(legacy_close)
+    legacy_close["sha256"] = B._record_sha256(legacy_close)
+
+    with pytest.raises(B.RegistryCorruptError, match="missing field"):
+        B.validate_settlement_close(legacy_close)
+
+    raw = _raw_registry(broker)
+    digest = B.resource_sha256(lease.resource_ref)
+    raw["resource_fences"][digest]["close_receipt"] = legacy_close
+    broker.registry_path.write_text(json.dumps(raw), encoding="utf-8")
+    os.chmod(broker.registry_path, 0o600)
+
+    assert broker.classify_token(lease.resource_ref, lease.token) == "closed"
+    assert broker.inspect()["resource_fences"][digest]["close_receipt"] == legacy_close
+    with pytest.raises(B.LeaseClosedError, match="released"):
+        broker.verify(lease.resource_ref, lease.token)
 
 
 def test_session_and_minimum_live_aggregate_limits(broker: Any) -> None:
@@ -463,7 +515,7 @@ def test_normal_reservation_requires_two_release_signals(broker: Any) -> None:
     assert broker.record_parent_completed("session", "tool-1") == ()
     assert broker.verify_agent("child-1").lease_id == claimed.lease_id
     assert broker.record_child_terminal("child-1") is True
-    assert broker.classify_token(claimed.resource_ref, claimed.token) == "closed"
+    assert broker.classify_token(claimed.resource_ref, claimed.token) == "expired"
     assert broker.record_child_terminal("child-1") is False
 
 
@@ -630,7 +682,7 @@ def test_resource_head_persists_and_token_states_are_distinct(
     assert broker.classify_token(first.resource_ref, first.token) == "superseded"
     assert broker.classify_token(retry.resource_ref, retry.token) == "current"
     assert broker.release(retry.lease_id, token=retry.token)
-    assert broker.classify_token(retry.resource_ref, retry.token) == "closed"
+    assert broker.classify_token(retry.resource_ref, retry.token) == "expired"
     raw = _raw_registry(broker)
     assert next(iter(raw["resource_fences"].values()))["lease_id"] == retry.lease_id
 
@@ -647,8 +699,11 @@ def test_closed_resource_heads_are_archived_without_losing_exact_state(
     raw = _raw_registry(broker)
     assert len(raw["resource_fences"]) == B._MAX_CLOSED_FENCES
     assert len(list(broker.closed_fences_dir.glob("*.json"))) == 2
-    assert broker.classify_token(issued[0].resource_ref, issued[0].token) == "closed"
-    assert broker.classify_token(issued[-1].resource_ref, issued[-1].token) == "closed"
+    assert broker.classify_token(issued[0].resource_ref, issued[0].token) == "expired"
+    assert broker.classify_token(issued[-1].resource_ref, issued[-1].token) == "expired"
+    archived_projection = broker.inspect()["archived_resource_fences"]
+    assert len(archived_projection) == 2
+    assert archived_projection[B.resource_sha256(issued[0].resource_ref)]["close_receipt"] is None
 
     worktrees = []
     for index in range(B._MAX_CLOSED_FENCES + 2):
@@ -663,11 +718,11 @@ def test_closed_resource_heads_are_archived_without_losing_exact_state(
     assert len(raw["resource_fences"]) == B._MAX_CLOSED_FENCES
     assert (
         broker.classify_token(worktrees[0].resource_ref, worktrees[0].token, pool="worktree")
-        == "closed"
+        == "expired"
     )
     assert (
         broker.classify_token(worktrees[-1].resource_ref, worktrees[-1].token, pool="worktree")
-        == "closed"
+        == "expired"
     )
     archived = broker.closed_fences_dir / f"{B.resource_sha256(issued[0].resource_ref)}.json"
     assert archived.is_file()
@@ -960,44 +1015,164 @@ def test_parent_validation_and_child_grant_share_one_authority_transaction(broke
     assert broker.release(child.lease_id, token=child.token)
 
 
-def test_agent_settlement_fences_post_run_writes_from_competing_retry(
-    broker: Any, runtime: FakeRuntime
-) -> None:
+def test_legacy_agent_settlement_cannot_bypass_receipt_protocol(broker: Any) -> None:
     lease = _agent(broker, resource="settlement")
-    runtime.advance(1)
-    settlement_entered = threading.Event()
-    allow_settlement = threading.Event()
-    retry_finished = threading.Event()
-    retried: list[Any] = []
-    persisted_renewals: list[int] = []
+    with (
+        pytest.raises(B.LeaseBrokerError, match="legacy agent_settlement is disabled"),
+        broker.agent_settlement(lease.lease_id, owner_id=lease.owner_id, token=lease.token),
+    ):
+        raise AssertionError("legacy context body must never execute")
+    assert broker.classify_token(lease.resource_ref, lease.token) == "current"
 
-    def settle() -> None:
-        with broker.agent_settlement(lease.lease_id, owner_id=lease.owner_id, token=lease.token):
-            persisted_renewals.append(
-                _raw_registry(broker)["leases"][lease.lease_id]["renewed_monotonic_ns"]
-            )
-            settlement_entered.set()
-            assert allow_settlement.wait(timeout=5)
 
-    def retry() -> None:
-        retried.append(_agent(broker, owner="retry", resource="settlement"))
-        retry_finished.set()
+def _recovery_intent(
+    settlement: Any,
+    *,
+    runtime: FakeRuntime,
+    expected_phase: str,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "schema": "settlement_recovery_intent.v1",
+        "resource_ref": settlement.resource_ref,
+        "token": settlement.token.to_dict(),
+        "lease_id": settlement.lease_id,
+        "generation": B.token_generation(settlement.token),
+        "settlement_id": settlement.settlement_id,
+        "session_id": settlement.session_id,
+        "policy_sha256": settlement.policy_sha256,
+        "expected_phase": expected_phase,
+        "protected_write_intent_sha256": settlement.protected_write_intent_sha256,
+        "recovery_owner_id": "root-adapter",
+        "recovery_owner_pid": os.getpid(),
+        "recovery_owner_process_start": "root-process",
+        "recovery_owner_boot_id": runtime.boot,
+        "recovery_owner_effective_uid": os.geteuid(),
+    }
+    payload["sha256"] = B._record_sha256(payload)
+    return payload
 
-    settlement_thread = threading.Thread(target=settle)
-    settlement_thread.start()
-    assert settlement_entered.wait(timeout=5)
-    retry_thread = threading.Thread(target=retry)
-    retry_thread.start()
-    assert not retry_finished.wait(timeout=0.1)
-    allow_settlement.set()
-    settlement_thread.join(timeout=5)
-    retry_thread.join(timeout=5)
-    assert not settlement_thread.is_alive()
-    assert not retry_thread.is_alive()
-    assert retry_finished.is_set()
-    assert persisted_renewals == [runtime.monotonic]
-    assert broker.classify_token(lease.resource_ref, lease.token) == "superseded"
-    assert broker.release(retried[0].lease_id, token=retried[0].token)
+
+def test_recovery_is_unavailable_from_ordinary_broker_instances(
+    tmp_path: Path, runtime: FakeRuntime
+) -> None:
+    ordinary = B.LeaseBroker(tmp_path / "authority", providers=runtime.providers())
+
+    assert not hasattr(ordinary, "recover_agent_settlement")
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
+        B.LeaseBroker(
+            tmp_path / "other-authority",
+            providers=runtime.providers(),
+            recovery_owner_id="child-selected-owner",
+        )
+    with pytest.raises(B.LeaseOwnershipError, match="root-adapter-owned"):
+        B.SettlementRecoveryCoordinator(
+            object(),
+            ordinary,
+            recovery_owner_id="child-selected-owner",
+            recovery_handlers={},
+            recovery_capability=b"x" * 32,
+        )
+
+
+def test_root_recovery_replay_binds_full_settlement_and_lost_response_converges(
+    tmp_path: Path, runtime: FakeRuntime
+) -> None:
+    runtime.processes[os.getpid()] = (True, "root-process")
+    runtime.processes[42] = (False, None)
+    broker = B.LeaseBroker(tmp_path / "authority", providers=runtime.providers())
+    coordinator = B._open_settlement_recovery_coordinator(
+        broker,
+        recovery_owner_id="root-adapter",
+    )
+    with pytest.raises(B.LeaseOwnershipError, match="different root recovery capability"):
+        B._open_settlement_recovery_coordinator(
+            B.LeaseBroker(tmp_path / "authority", providers=runtime.providers()),
+            recovery_owner_id="forged-child-adapter",
+        )
+    lease = _agent(broker, resource="recovery", owner="child", ttl=30)
+    raw = _raw_registry(broker)
+    raw["leases"][lease.lease_id]["owner_pid"] = 42
+    raw["leases"][lease.lease_id]["owner_process_start"] = "dead-child"
+    broker.registry_path.write_text(json.dumps(raw), encoding="utf-8")
+    os.chmod(broker.registry_path, 0o600)
+    settlement = broker.prepare_agent_settlement(
+        lease.lease_id,
+        token=lease.token,
+        owner_id=lease.owner_id,
+        producer="agy",
+        run_id="run-recovery",
+        expected_output_sha256="b" * 64,
+        protected_write_intent_sha256="c" * 64,
+    )
+
+    def fail_after_write(_lease: Any) -> list[str]:
+        raise RuntimeError("lost protected-write response")
+
+    with pytest.raises(RuntimeError, match="lost protected-write response"):
+        broker.commit_agent_settlement(
+            settlement.settlement_id,
+            owner_id=lease.owner_id,
+            token=lease.token,
+            write=fail_after_write,
+        )
+
+    replay_count = 0
+
+    def replay(_lease: Any, retained: Any) -> Any:
+        nonlocal replay_count
+        replay_count += 1
+        assert retained.settlement_sha256 == settlement.settlement_sha256
+        return B.SettlementReplayResult(["recovered-output"], "c" * 64, "b" * 64)
+
+    coordinator.register_recovery_handler(B.SettlementRecoveryHandler(settlement, replay))
+    intent = _recovery_intent(settlement, runtime=runtime, expected_phase="ambiguous")
+    first = coordinator.recover_agent_settlement(intent, action="commit")
+    retry = coordinator.recover_agent_settlement(intent, action="commit")
+
+    assert first == retry
+    assert replay_count == 1
+    assert first is not None
+    assert first["settlement_sha256"] == settlement.settlement_sha256
+    assert first["protected_write_intent_sha256"] == "c" * 64
+    assert first["expected_output_sha256"] == "b" * 64
+
+
+def test_recovery_rejects_replay_result_with_wrong_output_semantics(
+    tmp_path: Path, runtime: FakeRuntime
+) -> None:
+    runtime.processes[os.getpid()] = (True, "root-process")
+    runtime.processes[42] = (False, None)
+    broker = B.LeaseBroker(tmp_path / "authority", providers=runtime.providers())
+    coordinator = B._open_settlement_recovery_coordinator(
+        broker,
+        recovery_owner_id="root-adapter",
+    )
+    lease = _agent(broker, resource="wrong-replay", owner="child")
+    raw = _raw_registry(broker)
+    raw["leases"][lease.lease_id]["owner_pid"] = 42
+    raw["leases"][lease.lease_id]["owner_process_start"] = "dead-child"
+    broker.registry_path.write_text(json.dumps(raw), encoding="utf-8")
+    os.chmod(broker.registry_path, 0o600)
+    settlement = broker.prepare_agent_settlement(
+        lease.lease_id,
+        token=lease.token,
+        owner_id=lease.owner_id,
+        producer="agy",
+        run_id="wrong-replay",
+        expected_output_sha256="b" * 64,
+        protected_write_intent_sha256="c" * 64,
+    )
+    coordinator.register_recovery_handler(
+        B.SettlementRecoveryHandler(
+            settlement,
+            lambda _lease, _settlement: B.SettlementReplayResult(["wrong"], "c" * 64, "d" * 64),
+        )
+    )
+    intent = _recovery_intent(settlement, runtime=runtime, expected_phase="prepared")
+
+    with pytest.raises(B.LeaseOwnershipError, match="write/output semantics"):
+        coordinator.recover_agent_settlement(intent, action="commit")
+    assert next(iter(broker.inspect()["settlements"].values()))["phase"] == "ambiguous"
 
 
 def test_write_fence_rejects_existing_and_nonexistent_symlink_escape(
@@ -1035,6 +1210,50 @@ def test_expired_agents_release_capacity_on_sweep(broker: Any, runtime: FakeRunt
     assert swept.released_agent_leases == (lease.lease_id,)
     assert broker.inspect()["leases"] == []
     assert broker.get_session_admission("session") is None
+
+
+def test_swept_receiptless_head_remains_expired_not_closed(
+    broker: Any, runtime: FakeRuntime
+) -> None:
+    lease = _agent(broker, resource="swept-head", ttl=1)
+    runtime.advance(1)
+
+    assert broker.sweep().released_agent_leases == (lease.lease_id,)
+    assert broker.classify_token(lease.resource_ref, lease.token) == "expired"
+    with pytest.raises(B.LeaseExpiredError, match="expired"):
+        broker.verify(lease.resource_ref, lease.token)
+
+
+def test_mismatched_live_head_is_corrupt_not_closed(broker: Any) -> None:
+    first = _agent(broker, resource="first-head")
+    second = _agent(broker, resource="second-head")
+    registry_path = broker.root / B.REGISTRY_NAME
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    digest = B.resource_sha256(first.resource_ref)
+    registry["resource_fences"][digest]["lease_id"] = second.lease_id
+    registry_path.write_text(json.dumps(registry), encoding="utf-8")
+    registry_path.chmod(0o600)
+
+    with pytest.raises(B.RegistryCorruptError, match="does not bind"):
+        broker.classify_token(first.resource_ref, first.token)
+
+
+def test_cached_authority_rejects_root_identity_change(
+    tmp_path: Path, runtime: FakeRuntime
+) -> None:
+    root = tmp_path / "authority"
+    broker = B.LeaseBroker(root, providers=runtime.providers())
+    first = _agent(broker, resource="before-swap")
+    retained_root = tmp_path / "retained-authority"
+    root.rename(retained_root)
+    root.mkdir(mode=0o700)
+
+    with pytest.raises(B.UnsafeAuthorityError, match="root changed identity"):
+        _agent(broker, resource="after-swap")
+
+    retained = B.LeaseBroker(retained_root, providers=runtime.providers()).inspect()
+    assert {item["lease_id"] for item in retained["leases"]} == {first.lease_id}
+    assert not (root / B.REGISTRY_NAME).exists()
 
 
 @pytest.mark.parametrize("target", ["root", "lock", "registry"])

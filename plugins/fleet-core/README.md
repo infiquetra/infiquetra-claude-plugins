@@ -17,7 +17,8 @@ fleet-core/
 └── scripts/
     ├── fleet_commons_shim.py     # canonical shim — consumers vendor a byte-identical copy
     └── fleet_commons/            # the primitives, one stdlib-only module each
-        ├── lease_broker.py       # TTL admission, fencing, renewal, release, and safe sweep
+        ├── lease_broker.py       # TTL admission, settlement, close CAS, release, and safe sweep
+        ├── orphan_evidence.py    # closed evidence, bounded quarantine, read-only projection
         └── tier_palette.py       # MODELS / EFFORTS / CHEAP_MODELS / ENGINE_INTENTS + ranks
 ```
 
@@ -42,7 +43,7 @@ cache-sibling scan — and fails loud with an actionable message when none does.
 
 ## Lease authority
 
-`lease_broker.py` is protocol version 1 and owns one runtime-neutral registry for separate `agent`
+`lease_broker.py` is protocol version 2 and owns one runtime-neutral registry for separate `agent`
 and `worktree` pools. Consumers reserve before spawn, bind provider identity after start, renew only
 at cooperative boundaries, and release with their stored owner/token evidence. The default root is
 `$INFIQUETRA_FLEET_STATE_DIR`, then an absolute safe XDG state root, then
@@ -55,6 +56,14 @@ tokens. Live owners, ambiguous children, and failed worktree reaps remain retain
 coordinator. See Saga's
 [`concurrency-spawn-sites.md`](../saga/references/concurrency-spawn-sites.md) for the complete
 acquire, bind, renew, and release inventory.
+
+Protected runtime output uses broker-owned `prepare_agent_settlement` then
+`commit_agent_settlement`. `prepared`, `committing`, and `ambiguous` states retain authority across
+TTL, sweep, and generic teardown. Only the final registry replacement embeds a canonical
+`settlement_close.v1` and closes the generation. A retry must use `acquire_successor` with the exact
+predecessor token and receipt digest; ordinary acquire cannot cross that close. `orphan_evidence.py`
+preserves refused expired or late output in owner-only bounded quarantine and projects immutable
+facts into read-only candidates. It never accepts output or executes reclamation.
 
 ## What belongs in commons — and what does not
 

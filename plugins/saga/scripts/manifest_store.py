@@ -59,6 +59,7 @@ import provenance_manifest  # noqa: E402
 # separately from ``outcome_store.STORE_NAMESPACE`` — manifests exist independent of the
 # OutcomeOrchestrator (R19 breadth: plain /work delegations never touch outcome-spec).
 MANIFEST_NAMESPACE = "saga-manifests"
+NONCANONICAL_NAMESPACE = "noncanonical"
 
 # The documented payload key a CompletionEvent uses to point at a manifest (closes the issue's
 # "not yet a consumer surface" note on outcome_store.py's open payload dict).
@@ -113,6 +114,10 @@ class Store:
         safe = _safe_name(execution_id, what="execution_id")
         return self.root / f"{safe}.json"
 
+    def noncanonical_manifest_path(self, execution_id: str) -> Path:
+        safe = _safe_name(execution_id, what="execution_id")
+        return self.root / NONCANONICAL_NAMESPACE / f"{safe}.json"
+
 
 # ---------------------------------------------------------------------------
 # Write / read / list
@@ -126,6 +131,15 @@ def write_manifest(store: Store, execution_id: str, manifest: dict[str, Any]) ->
     e.g. an adjudication written after the claimed-layer manifest, D5/U3) — never write-once.
     """
     path = store.manifest_path(execution_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_write_manifest(path, json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    return path
+
+
+def write_noncanonical_manifest(store: Store, execution_id: str, manifest: dict[str, Any]) -> Path:
+    """Persist compatibility evidence without granting or overwriting canonical authority."""
+
+    path = store.noncanonical_manifest_path(execution_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     _atomic_write_manifest(path, json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     return path
@@ -168,11 +182,35 @@ def read_manifest(store: Store, execution_id: str) -> dict[str, Any] | None:
     return data
 
 
+def read_noncanonical_manifest(store: Store, execution_id: str) -> dict[str, Any] | None:
+    """Read compatibility evidence from its explicitly noncanonical namespace."""
+
+    path = store.noncanonical_manifest_path(execution_id)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def list_manifests(store: Store) -> list[str]:
     """List execution ids with a manifest under ``store.root`` (empty list if the dir is absent)."""
     if not store.root.is_dir():
         return []
     return sorted(p.stem for p in store.root.glob("*.json"))
+
+
+def list_noncanonical_manifests(store: Store) -> list[str]:
+    """List compatibility-evidence ids without exposing canonical accepted manifests."""
+
+    root = store.root / NONCANONICAL_NAMESPACE
+    if not root.is_dir():
+        return []
+    return sorted(p.stem for p in root.glob("*.json"))
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +341,7 @@ def record_completeness(
             output_completeness=output_completeness,
         )
         manifest_dict = manifest.to_dict()
-        path = write_manifest(store, unit.unit_id, manifest_dict)
+        path = write_noncanonical_manifest(store, unit.unit_id, manifest_dict)
         records.append(
             CompletenessRecord(
                 unit_id=unit.unit_id, path=path, manifest=manifest_dict, failure=failure
@@ -350,12 +388,12 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(data, dict):
             print("manifest file must contain a JSON object", file=sys.stderr)
             return 1
-        path = write_manifest(store, args.execution_id, data)
+        path = write_noncanonical_manifest(store, args.execution_id, data)
         print(str(path))
         return 0
 
     if args.command == "read":
-        manifest = read_manifest(store, args.execution_id)
+        manifest = read_noncanonical_manifest(store, args.execution_id)
         if manifest is None:
             print(f"no manifest for execution_id={args.execution_id!r}", file=sys.stderr)
             return 1
@@ -363,7 +401,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "list":
-        for execution_id in list_manifests(store):
+        for execution_id in list_noncanonical_manifests(store):
             print(execution_id)
         return 0
 

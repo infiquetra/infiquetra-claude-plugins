@@ -258,7 +258,10 @@ def test_completeness_contract_bearing_leaf_missing_manifest_trips(tmp_path: Pat
     assert len(records) == 1
     assert records[0].failure is not None
     assert records[0].failure.failure_class.value == "missing-output"
-    assert M.read_manifest(store, "U1")["output_completeness"]["missing_keys"] == ["a", "b"]
+    assert M.read_noncanonical_manifest(store, "U1")["output_completeness"]["missing_keys"] == [
+        "a",
+        "b",
+    ]
 
 
 def test_completeness_contract_bearing_exempts_contract_less_leaf(tmp_path: Path) -> None:
@@ -284,7 +287,7 @@ def test_record_completeness_persists_declared_vs_produced_diff(tmp_path: Path) 
         ]
     )
     records = M.record_completeness(spec, {"U1": {"a": 1}}, saga_id="saga-1", store=store)
-    manifest = M.read_manifest(store, "U1")
+    manifest = M.read_noncanonical_manifest(store, "U1")
     oc = manifest["output_completeness"]
     assert oc["declared_keys"] == ["a", "b"]
     assert oc["produced_keys"] == ["a"]
@@ -331,4 +334,49 @@ def test_record_completeness_cli_exits_nonzero_on_trip(tmp_path: Path) -> None:
         ]
     )
     assert rc == 1
-    assert (repo_root / ".git" / "saga-manifests" / "saga-1" / "U1.json").exists()
+    assert (repo_root / ".git" / "saga-manifests" / "saga-1" / "noncanonical" / "U1.json").exists()
+
+
+def test_raw_cli_and_completeness_cannot_overwrite_canonical_manifest(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo_root)], check=True)
+    store = M.Store.for_saga("saga-1", repo_root).ensure()
+    canonical = _manifest("U1")
+    M.write_manifest(store, "U1", canonical)
+    canonical_bytes = store.manifest_path("U1").read_bytes()
+
+    replacement_path = repo_root / "replacement.json"
+    replacement_path.write_text(json.dumps({**canonical, "disposition_note": "raw"}))
+    assert (
+        M.main(
+            [
+                "--repo-root",
+                str(repo_root),
+                "--saga-id",
+                "saga-1",
+                "write",
+                "--execution-id",
+                "U1",
+                "--file",
+                str(replacement_path),
+            ]
+        )
+        == 0
+    )
+    spec = _spec(
+        [
+            {
+                "unit_id": "U1",
+                "tier": {"model": "sonnet", "effort": "medium"},
+                "prompt": "p",
+                "returns": ["artifact"],
+            }
+        ]
+    )
+    M.record_completeness(spec, {}, saga_id="saga-1", store=store)
+
+    assert store.manifest_path("U1").read_bytes() == canonical_bytes
+    assert M.read_noncanonical_manifest(store, "U1")["output_completeness"]["missing_keys"] == [
+        "artifact"
+    ]

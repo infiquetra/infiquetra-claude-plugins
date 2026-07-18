@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-17
+
+### Added - lease-fenced direct apply and orphan containment (#355)
+
+- Direct `auto-if-clean` now resolves immutable admission in process, acquires before subprocess,
+  renews during supervision, and applies verified output only inside broker commit.
+- Superseded output is metadata-only; expired or post-close output is quarantined. Terminal bundles
+  expose the write disposition and canonical settlement close without becoming authority.
+- Launched auto apply requires a trusted key in an owner-private `0600` regular file passed as
+  `--lease-resource-key-file`; the wrapper persists only its repository-scoped digest, and the raw
+  key cannot arrive on argv or through the environment, envelope, prompt, bundle, or external
+  engine.
+- Live apply requires lease protocol 2, while validation, no-write, and patch-only modes lazy-load
+  the new containment modules so an independently updated Agy remains usable during version skew.
+
 ## [0.4.0] - 2026-07-13
 
 ### Fixed - executor-construction failure no longer reports false success (#523)

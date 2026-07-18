@@ -16,7 +16,7 @@ python3 plugins/agy/scripts/agy_delegate.py
 
 ## Current Status
 
-- Version `0.1.0` is registered in `.claude-plugin/marketplace.json`.
+- Version `0.5.0` is registered in `.claude-plugin/marketplace.json`.
 - The command, skill, reference, two bridge-agent prompts, wrapper, and harness audit are packaged.
 - Every launched run writes a local evidence bundle under `.claude/agy/runs/<run-id>/`.
 - Live Claude Code harness proof is recorded in `docs/harness-proof.md`.
@@ -27,7 +27,12 @@ python3 plugins/agy/scripts/agy_delegate.py
 - `patch-only`: derives and preserves `diff.patch`; it never applies to the live tree.
 - `auto-if-clean`: applies only when the live repo is clean, the write-set is explicit, real `agy`
   provenance is proven, changed paths are in scope, required verification passes, and `git apply`
-  produces only expected changes.
+  produces only expected changes. A launched run also requires the trusted outer key in an
+  owner-private `0600` regular file passed as `--lease-resource-key-file`. The wrapper reads it
+  before launch, immediately retains only a repository-scoped digest, and never accepts the raw key
+  on argv or from the envelope, environment, task text, or bundle. Live apply and armed mirrors run
+  only inside broker commit. Superseded,
+  expired, or post-close output never reaches the live tree.
 
 ## Packaged Surfaces
 
@@ -48,6 +53,7 @@ agy/
 │           └── delegation-contract.md
 ├── scripts/
 │   ├── agy_delegate.py
+│   ├── agy_lease_admission.py
 │   └── audit_harness_transcript.py
 ├── README.md
 └── CHANGELOG.md

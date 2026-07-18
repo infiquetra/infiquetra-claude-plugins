@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sys
+import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -922,25 +924,283 @@ def reclaim_all(
     return project(read_decision_input(ledger, broker), team_run_id)
 
 
+# --------------------------------------------------------------------------- action adapters
+
+
+def _current_head(broker: Any, lease: Mapping[str, Any]) -> tuple[dict[str, Any] | None, Any]:
+    """Re-read one lease's current broker head immediately before action (R4).
+
+    Returns ``(head, token)`` — ``head`` is None when the lease no longer exists, and the
+    token is built from the broker's own defining module (a second module load yields a
+    different dataclass whose equality never matches).
+    """
+
+    lease_id = str(lease.get("lease_id"))
+    view = broker.inspect()
+    head = next(
+        (item for item in view.get("leases", []) if item.get("lease_id") == lease_id),
+        None,
+    )
+    if head is None:
+        return None, None
+    authority_module = sys.modules[type(broker).__module__]
+    token = authority_module.FencingToken(str(view["broker_epoch"]), int(head["fencing_sequence"]))
+    return head, token
+
+
+def make_resident_stop_adapter(broker: Any) -> Callable[[Mapping[str, Any]], ActionOutcome]:
+    """Resident teammates release only against broker-recorded terminal evidence (R7/R8).
+
+    The stop request itself is a host-runtime act (Step B8 step 1); this adapter's
+    authority is the ``child_terminal_at`` receipt the host hook recorded. Silence,
+    timeout, and a missing receipt retain the lease — they are never terminal evidence.
+    """
+
+    def _resident_stop(lease: Mapping[str, Any]) -> ActionOutcome:
+        head, token = _current_head(broker, lease)
+        lease_id = str(lease.get("lease_id"))
+        if head is None:
+            return ActionOutcome(
+                disposition="already-absent",
+                evidence_refs=(f"broker:lease-absent:{lease_id}",),
+                reason_code="lease-already-released",
+            )
+        if head.get("fencing_sequence") != lease.get("fencing_sequence"):
+            return ActionOutcome(disposition="retained", reason_code="lease-generation-superseded")
+        if not head.get("child_terminal_at"):
+            return ActionOutcome(disposition="retained", reason_code="no-terminal-receipt")
+        released = broker.release(lease_id, token=token, owner_id=str(lease.get("owner_id")))
+        if released:
+            return ActionOutcome(
+                disposition="released",
+                evidence_refs=(
+                    f"broker:terminal-at:{head['child_terminal_at']}",
+                    f"broker:released:{lease_id}",
+                ),
+            )
+        return ActionOutcome(
+            disposition="already-absent",
+            evidence_refs=(f"broker:release-noop:{lease_id}",),
+            reason_code="lease-already-released",
+        )
+
+    return _resident_stop
+
+
+def make_process_stop_adapter(
+    broker: Any,
+    *,
+    kill: Callable[[int, int], None] | None = None,
+    sleep: Callable[[float], None] | None = None,
+    term_wait_seconds: float = 5.0,
+    poll_interval_seconds: float = 0.1,
+) -> Callable[[Mapping[str, Any]], ActionOutcome]:
+    """Signal only a process whose PID, start identity, boot, and run ownership all match
+    the registration-time lease (R8). ``SIGTERM`` first; ``SIGKILL`` only when the lease
+    was registered with the explicit ``term-then-kill`` escalation class. Every ambiguity
+    fails safe as ``retained`` — a wrong signal is worse than a leaked process.
+    """
+
+    import signal as _signal
+
+    providers = broker.providers
+    send = kill if kill is not None else os.kill
+    wait = sleep if sleep is not None else time.sleep
+
+    def _gone(pid: int, start: str) -> bool:
+        if not providers.process_exists(pid):
+            return True
+        return bool(providers.process_identity(pid) != start)
+
+    def _await_exit(pid: int, start: str) -> bool:
+        waited = 0.0
+        while waited < term_wait_seconds:
+            if _gone(pid, start):
+                return True
+            wait(poll_interval_seconds)
+            waited += poll_interval_seconds
+        return _gone(pid, start)
+
+    def _process_stop(lease: Mapping[str, Any]) -> ActionOutcome:
+        head, token = _current_head(broker, lease)
+        lease_id = str(lease.get("lease_id"))
+        if head is None:
+            return ActionOutcome(
+                disposition="already-absent",
+                evidence_refs=(f"broker:lease-absent:{lease_id}",),
+                reason_code="lease-already-released",
+            )
+        if head.get("fencing_sequence") != lease.get("fencing_sequence"):
+            return ActionOutcome(disposition="retained", reason_code="lease-generation-superseded")
+        pid_raw = head.get("owner_pid")
+        start = head.get("owner_process_start")
+        recorded_boot = head.get("boot_id")
+        if pid_raw is None or not start:
+            return ActionOutcome(disposition="retained", reason_code="process-identity-unrecorded")
+        pid = int(pid_raw)
+        current_boot = providers.boot_id()
+        if recorded_boot != current_boot:
+            # A different boot: the registered process is provably gone. If the PID exists
+            # now it belongs to an unrelated post-reboot process — never signal it.
+            return _release_absent(head, token, lease, "boot-identity-changed")
+        if not providers.process_exists(pid):
+            return _release_absent(head, token, lease, "process-not-running")
+        current = providers.process_identity(pid)
+        if current is None:
+            return ActionOutcome(disposition="retained", reason_code="process-identity-unavailable")
+        if current != start:
+            return _release_absent(head, token, lease, "pid-identity-mismatch")
+        try:
+            send(pid, _signal.SIGTERM)
+        except PermissionError:
+            return ActionOutcome(disposition="retained", reason_code="signal-permission-denied")
+        except ProcessLookupError:
+            return _release_absent(head, token, lease, "exited-during-signal")
+        if _await_exit(pid, start):
+            return _release_stopped(head, token, lease, "sigterm")
+        if head.get("agent_type") != SUBPROCESS_TERM_THEN_KILL:
+            return ActionOutcome(
+                disposition="retained", reason_code="alive-after-term-no-escalation"
+            )
+        try:
+            send(pid, _signal.SIGKILL)
+        except ProcessLookupError:
+            return _release_stopped(head, token, lease, "exited-before-kill")
+        if _await_exit(pid, start):
+            return _release_stopped(head, token, lease, "term-then-kill")
+        return ActionOutcome(disposition="failed", reason_code="alive-after-kill")
+
+    def _release_absent(
+        head: Mapping[str, Any], token: Any, lease: Mapping[str, Any], reason: str
+    ) -> ActionOutcome:
+        broker.release(
+            str(head.get("lease_id") or lease.get("lease_id")),
+            token=token,
+            owner_id=str(lease.get("owner_id")),
+        )
+        return ActionOutcome(
+            disposition="already-absent",
+            evidence_refs=(f"process:absence-proof:{reason}",),
+            reason_code=reason,
+        )
+
+    def _release_stopped(
+        head: Mapping[str, Any], token: Any, lease: Mapping[str, Any], receipt: str
+    ) -> ActionOutcome:
+        broker.release(
+            str(head.get("lease_id") or lease.get("lease_id")),
+            token=token,
+            owner_id=str(lease.get("owner_id")),
+        )
+        return ActionOutcome(
+            disposition="released",
+            evidence_refs=(f"process:signal-receipt:{receipt}",),
+        )
+
+    return _process_stop
+
+
+def make_worktree_sweep_adapter(
+    broker: Any,
+    *,
+    worktree_reaper: Callable[[Any], bool] | None = None,
+) -> Callable[[Mapping[str, Any]], ActionOutcome]:
+    """Worktrees go through the canonical #356 ``sweep`` only (R6) — never a direct
+    ``git worktree remove``. Without an injected validated reaper the sweep can still
+    release expired agent debris, but every worktree stays visibly retained.
+    """
+
+    def _worktree_sweep(lease: Mapping[str, Any]) -> ActionOutcome:
+        lease_id = str(lease.get("lease_id"))
+        head, _token = _current_head(broker, lease)
+        if head is None:
+            return ActionOutcome(
+                disposition="already-absent",
+                evidence_refs=(f"broker:lease-absent:{lease_id}",),
+                reason_code="lease-already-released",
+            )
+        swept = broker.sweep(worktree_reaper=worktree_reaper)
+        result = swept.to_dict() if hasattr(swept, "to_dict") else dict(swept)
+        if lease_id in result.get("reaped_worktree_leases", []):
+            return ActionOutcome(
+                disposition="released",
+                evidence_refs=(f"sweep:reaped:{lease_id}",),
+            )
+        retained_reason = result.get("retained", {}).get(lease_id)
+        if retained_reason is not None:
+            return ActionOutcome(disposition="retained", reason_code=f"sweep:{retained_reason}")
+        follow_up, _ = _current_head(broker, lease)
+        if follow_up is None:
+            return ActionOutcome(
+                disposition="already-absent",
+                evidence_refs=(f"sweep:lease-gone:{lease_id}",),
+                reason_code="released-by-sweep",
+            )
+        return ActionOutcome(disposition="retained", reason_code="not-a-sweep-candidate")
+
+    return _worktree_sweep
+
+
+def register_subprocess(
+    broker: Any,
+    *,
+    team_run_id: str,
+    session_id: str,
+    pid: int,
+    argv_digest: str,
+    policy_sha256: str,
+    session_limit: int,
+    aggregate_limit: int,
+    escalation: str = "term-only",
+    ttl_seconds: int = 3600,
+    mutation: str = "read-write",
+) -> Any:
+    """B1: register one coordinator-created subprocess in the broker before it matters (R2/R8).
+
+    The stop policy rides the lease's ``agent_type`` — recorded at spawn time in the
+    trusted store, never taken from caller prose at action time. The lease's
+    ``owner_pid``/``owner_process_start``/``boot_id`` capture the child's exact identity.
+    ``mutation`` must match the session's pinned admission snapshot (the broker refuses a
+    mixed snapshot while the session holds live leases).
+    """
+
+    if escalation not in ("term-only", "term-then-kill"):
+        raise TeardownError("escalation must be term-only or term-then-kill")
+    agent_type = (
+        SUBPROCESS_TERM_THEN_KILL if escalation == "term-then-kill" else SUBPROCESS_TERM_ONLY
+    )
+    digest = _bounded_text(argv_digest, "argv_digest")
+    return broker.acquire_agent(
+        owner_id=_bounded_text(team_run_id, "team_run_id"),
+        session_id=_bounded_text(session_id, "session_id"),
+        policy_sha256=policy_sha256,
+        session_limit=session_limit,
+        aggregate_limit=aggregate_limit,
+        mutation=mutation,
+        ttl_seconds=ttl_seconds,
+        resource_ref={"logical_unit_id": f"subprocess:{digest[:32]}:{pid}"},
+        owner_pid=pid,
+        agent_type=agent_type,
+    )
+
+
 # --------------------------------------------------------------------------- production wiring
 
 
-def production_adapters(broker: Any) -> ReclaimAdapters:
-    """The trusted production adapter set (KTD4).
-
-    ``lease-release`` releases through the broker with the lease's exact current token —
-    an identity-checked, idempotent authority call. The resident, process, and worktree
-    slots are wired by their dedicated adapters (U3); until a slot is wired its default
-    conservative retain keeps every ambiguous resource visible (KTD6).
-    """
+def production_adapters(
+    broker: Any,
+    *,
+    worktree_reaper: Callable[[Any], bool] | None = None,
+    kill: Callable[[int, int], None] | None = None,
+    sleep: Callable[[float], None] | None = None,
+) -> ReclaimAdapters:
+    """The trusted production adapter set (KTD4): identity-checked broker release for
+    provisional leases, terminal-receipt-gated resident release, exact-identity process
+    stop with policy-bound escalation, and the canonical #356 worktree sweep."""
 
     def _lease_release(lease: Mapping[str, Any]) -> ActionOutcome:
         lease_id = str(lease.get("lease_id"))
-        view = broker.inspect()
-        head = next(
-            (item for item in view.get("leases", []) if item.get("lease_id") == lease_id),
-            None,
-        )
+        head, token = _current_head(broker, lease)
         if head is None:
             return ActionOutcome(
                 disposition="already-absent",
@@ -952,12 +1212,6 @@ def production_adapters(broker: Any) -> ReclaimAdapters:
                 disposition="retained",
                 reason_code="lease-generation-superseded",
             )
-        # The token class must come from the broker's own defining module: a second load
-        # of the authority yields a different dataclass whose equality never matches.
-        authority_module = sys.modules[type(broker).__module__]
-        token = authority_module.FencingToken(
-            str(view["broker_epoch"]), int(head["fencing_sequence"])
-        )
         released = broker.release(lease_id, token=token, owner_id=str(lease.get("owner_id")))
         if released:
             return ActionOutcome(
@@ -970,7 +1224,12 @@ def production_adapters(broker: Any) -> ReclaimAdapters:
             reason_code="lease-already-released",
         )
 
-    return ReclaimAdapters(lease_release=_lease_release)
+    return ReclaimAdapters(
+        lease_release=_lease_release,
+        resident_stop=make_resident_stop_adapter(broker),
+        process_stop=make_process_stop_adapter(broker, kill=kill, sleep=sleep),
+        worktree_sweep=make_worktree_sweep_adapter(broker, worktree_reaper=worktree_reaper),
+    )
 
 
 def recover(

@@ -889,3 +889,302 @@ class TestRecovery:
             r for r in RL.read_facts(ledger) if r.get("event") == "recovery-observation"
         ]
         assert len(observations) == 1
+
+
+# --------------------------------------------------------------------- action adapters (U3)
+
+
+def _register_proc(
+    broker: Any,
+    runtime: FakeRuntime,
+    *,
+    pid: int,
+    alive: bool = True,
+    identity: str | None = "proc-start-1",
+    escalation: str = "term-only",
+    run_id: str = "team-run-1",
+) -> Any:
+    runtime.processes[pid] = (alive, identity)
+    limits = _limits()
+    return TT.register_subprocess(
+        broker,
+        team_run_id=run_id,
+        session_id="session-1",
+        pid=pid,
+        argv_digest="d" * 64,
+        policy_sha256=limits.policy_sha256(),
+        session_limit=limits.max_concurrent,
+        aggregate_limit=limits.aggregate_max_concurrent,
+        escalation=escalation,
+    )
+
+
+def _lease_row(broker: Any, lease_id: str) -> dict[str, Any]:
+    return next(item for item in broker.inspect()["leases"] if item["lease_id"] == lease_id)
+
+
+class TestProcessStopAdapter:
+    def _adapter(self, broker: Any, kills: list[tuple[int, int]], runtime: FakeRuntime) -> Any:
+        def _kill(pid: int, sig: int) -> None:
+            kills.append((pid, sig))
+            # SIGTERM/SIGKILL on the fake runtime: the process disappears immediately.
+            runtime.processes[pid] = (False, None)
+
+        return TT.make_process_stop_adapter(broker, kill=_kill, sleep=lambda _s: None)
+
+    def test_term_success_releases_with_signal_receipt(
+        self, broker: Any, runtime: FakeRuntime
+    ) -> None:
+        lease = _register_proc(broker, runtime, pid=4242)
+        kills: list[tuple[int, int]] = []
+        outcome = self._adapter(broker, kills, runtime)(_lease_row(broker, lease.lease_id))
+        assert outcome.disposition == "released"
+        assert kills == [(4242, 15)]
+        assert "process:signal-receipt:sigterm" in outcome.evidence_refs
+        assert _lease_row_absent(broker, lease.lease_id)
+
+    def test_pid_reuse_is_absence_proof_and_never_signals(
+        self, broker: Any, runtime: FakeRuntime
+    ) -> None:
+        lease = _register_proc(broker, runtime, pid=4242)
+        runtime.processes[4242] = (True, "different-process-start")
+        kills: list[tuple[int, int]] = []
+        outcome = self._adapter(broker, kills, runtime)(_lease_row(broker, lease.lease_id))
+        assert outcome.disposition == "already-absent"
+        assert outcome.reason_code == "pid-identity-mismatch"
+        assert kills == []
+
+    def test_boot_change_is_absence_proof_and_never_signals(
+        self, broker: Any, runtime: FakeRuntime
+    ) -> None:
+        lease = _register_proc(broker, runtime, pid=4242)
+        runtime.boot = "boot-b"
+        kills: list[tuple[int, int]] = []
+        outcome = self._adapter(broker, kills, runtime)(_lease_row(broker, lease.lease_id))
+        assert outcome.disposition == "already-absent"
+        assert outcome.reason_code == "boot-identity-changed"
+        assert kills == []
+
+    def test_exited_process_is_already_absent(self, broker: Any, runtime: FakeRuntime) -> None:
+        lease = _register_proc(broker, runtime, pid=4242)
+        runtime.processes[4242] = (False, None)
+        kills: list[tuple[int, int]] = []
+        outcome = self._adapter(broker, kills, runtime)(_lease_row(broker, lease.lease_id))
+        assert outcome.disposition == "already-absent"
+        assert outcome.reason_code == "process-not-running"
+        assert kills == []
+
+    def test_survivor_without_escalation_is_retained(
+        self, broker: Any, runtime: FakeRuntime
+    ) -> None:
+        lease = _register_proc(broker, runtime, pid=4242)
+        kills: list[tuple[int, int]] = []
+
+        def _kill_noop(pid: int, sig: int) -> None:
+            kills.append((pid, sig))  # the process ignores the signal
+
+        adapter = TT.make_process_stop_adapter(
+            broker, kill=_kill_noop, sleep=lambda _s: None, term_wait_seconds=0.3
+        )
+        outcome = adapter(_lease_row(broker, lease.lease_id))
+        assert outcome.disposition == "retained"
+        assert outcome.reason_code == "alive-after-term-no-escalation"
+        assert kills == [(4242, 15)]
+        assert not _lease_row_absent(broker, lease.lease_id)
+
+    def test_explicit_term_then_kill_escalates_and_releases(
+        self, broker: Any, runtime: FakeRuntime
+    ) -> None:
+        lease = _register_proc(broker, runtime, pid=4242, escalation="term-then-kill")
+        kills: list[tuple[int, int]] = []
+
+        def _kill(pid: int, sig: int) -> None:
+            kills.append((pid, sig))
+            if sig == 9:
+                runtime.processes[pid] = (False, None)
+
+        adapter = TT.make_process_stop_adapter(
+            broker, kill=_kill, sleep=lambda _s: None, term_wait_seconds=0.3
+        )
+        outcome = adapter(_lease_row(broker, lease.lease_id))
+        assert outcome.disposition == "released"
+        assert kills == [(4242, 15), (4242, 9)]
+        assert "process:signal-receipt:term-then-kill" in outcome.evidence_refs
+
+    def test_permission_error_fails_safe(self, broker: Any, runtime: FakeRuntime) -> None:
+        lease = _register_proc(broker, runtime, pid=4242)
+
+        def _kill(_pid: int, _sig: int) -> None:
+            raise PermissionError("not ours")
+
+        adapter = TT.make_process_stop_adapter(broker, kill=_kill, sleep=lambda _s: None)
+        outcome = adapter(_lease_row(broker, lease.lease_id))
+        assert outcome.disposition == "retained"
+        assert outcome.reason_code == "signal-permission-denied"
+
+    def test_real_owned_subprocess_is_terminated(self, broker: Any, runtime: FakeRuntime) -> None:
+        """R8 end to end against a real owned child: TERM lands, identity releases."""
+        import subprocess
+        import sys as _sys
+        import time as _time
+
+        child = subprocess.Popen(  # noqa: S603
+            [_sys.executable, "-c", "import time; time.sleep(60)"]
+        )
+        try:
+            identity = B._default_process_identity(child.pid)
+            assert identity is not None
+            runtime.processes[child.pid] = (True, identity)
+            lease = _register_proc(broker, runtime, pid=child.pid, alive=True, identity=identity)
+
+            def _real_kill(pid: int, sig: int) -> None:
+                __import__("os").kill(pid, sig)
+                child.wait(timeout=10)
+                runtime.processes[pid] = (False, None)
+
+            adapter = TT.make_process_stop_adapter(
+                broker, kill=_real_kill, sleep=_time.sleep, term_wait_seconds=5.0
+            )
+            outcome = adapter(_lease_row(broker, lease.lease_id))
+            assert outcome.disposition == "released"
+            assert child.poll() is not None
+        finally:
+            if child.poll() is None:
+                child.kill()
+                child.wait(timeout=10)
+
+
+def _lease_row_absent(broker: Any, lease_id: str) -> bool:
+    return all(item["lease_id"] != lease_id for item in broker.inspect()["leases"])
+
+
+class TestResidentStopAdapter:
+    def _bound_resident(self, broker: Any) -> Any:
+        _acquire(broker, owner="team-run-1", resource="u-resident")
+        return broker.claim(
+            session_id="session-1",
+            agent_type="worker",
+            agent_id="resident-1",
+            resource_ref={"logical_unit_id": "u-resident"},
+        )
+
+    def test_resident_without_terminal_receipt_is_retained(self, broker: Any) -> None:
+        lease = self._bound_resident(broker)
+        adapter = TT.make_resident_stop_adapter(broker)
+        outcome = adapter(_lease_row(broker, lease.lease_id))
+        assert outcome.disposition == "retained"
+        assert outcome.reason_code == "no-terminal-receipt"
+        assert not _lease_row_absent(broker, lease.lease_id)
+
+    def test_resident_with_terminal_receipt_releases(self, broker: Any) -> None:
+        lease = self._bound_resident(broker)
+        assert broker.record_child_terminal("resident-1")
+        adapter = TT.make_resident_stop_adapter(broker)
+        outcome = adapter(_lease_row(broker, lease.lease_id))
+        assert outcome.disposition == "released"
+        assert any("terminal-at" in ref for ref in outcome.evidence_refs)
+        assert _lease_row_absent(broker, lease.lease_id)
+
+    def test_superseded_token_is_retained(self, broker: Any) -> None:
+        lease = self._bound_resident(broker)
+        row = dict(_lease_row(broker, lease.lease_id))
+        row["fencing_sequence"] = row["fencing_sequence"] - 1
+        adapter = TT.make_resident_stop_adapter(broker)
+        outcome = adapter(row)
+        assert outcome.disposition == "retained"
+        assert outcome.reason_code == "lease-generation-superseded"
+
+
+class TestWorktreeSweepAdapter:
+    def _worktree(self, broker: Any, tmp_path: Path, *, owner: str = "team-run-1") -> Any:
+        return broker.acquire_worktree(
+            owner_id=owner,
+            session_id="session-1",
+            resource_ref={
+                "repo_root": str(tmp_path),
+                "outcome_id": "outcome-1",
+                "subplot_id": "sub-1",
+            },
+            owner_pid=987654,
+        )
+
+    def test_live_owner_worktree_is_retained(
+        self, broker: Any, tmp_path: Path, runtime: FakeRuntime
+    ) -> None:
+        runtime.processes[987654] = (True, None)
+        lease = self._worktree(broker, tmp_path)
+        adapter = TT.make_worktree_sweep_adapter(broker)
+        outcome = adapter(_lease_row(broker, lease.lease_id))
+        assert outcome.disposition == "retained"
+        assert not _lease_row_absent(broker, lease.lease_id)
+
+    def test_dead_owner_worktree_is_swept_through_the_reaper(
+        self, broker: Any, tmp_path: Path, runtime: FakeRuntime
+    ) -> None:
+        runtime.processes[987654] = (False, None)
+        lease = self._worktree(broker, tmp_path)
+        runtime.advance(4000)  # expire the lease so the sweep may consider it
+        reaped: list[Any] = []
+
+        def _reaper(resource: Any) -> bool:
+            reaped.append(resource)
+            return True
+
+        adapter = TT.make_worktree_sweep_adapter(broker, worktree_reaper=_reaper)
+        outcome = adapter(_lease_row(broker, lease.lease_id))
+        assert outcome.disposition == "released"
+        assert reaped and reaped[0]["subplot_id"] == "sub-1"
+        assert _lease_row_absent(broker, lease.lease_id)
+
+    def test_reap_failure_is_retained_for_retry(
+        self, broker: Any, tmp_path: Path, runtime: FakeRuntime
+    ) -> None:
+        runtime.processes[987654] = (False, None)
+        lease = self._worktree(broker, tmp_path)
+        runtime.advance(4000)
+        adapter = TT.make_worktree_sweep_adapter(broker, worktree_reaper=lambda _r: False)
+        outcome = adapter(_lease_row(broker, lease.lease_id))
+        assert outcome.disposition == "retained"
+        assert outcome.reason_code == "sweep:reap-failed"
+        assert not _lease_row_absent(broker, lease.lease_id)
+
+    def test_without_reaper_the_worktree_stays_visible(
+        self, broker: Any, tmp_path: Path, runtime: FakeRuntime
+    ) -> None:
+        runtime.processes[987654] = (False, None)
+        lease = self._worktree(broker, tmp_path)
+        runtime.advance(4000)
+        adapter = TT.make_worktree_sweep_adapter(broker)
+        outcome = adapter(_lease_row(broker, lease.lease_id))
+        assert outcome.disposition == "retained"
+        assert outcome.reason_code == "sweep:expired-no-reaper"
+
+
+class TestEndToEndReclaim:
+    def test_mixed_resources_reclaim_to_zero_open(
+        self, ledger: Any, broker: Any, runtime: FakeRuntime, tmp_path: Path
+    ) -> None:
+        _open(ledger, broker)
+        _acquire(broker, owner="team-run-1", resource="u-provisional")
+        proc_lease = _register_proc(broker, runtime, pid=5150)
+        kills: list[tuple[int, int]] = []
+
+        def _kill(pid: int, sig: int) -> None:
+            kills.append((pid, sig))
+            runtime.processes[pid] = (False, None)
+
+        adapters = TT.production_adapters(broker, kill=_kill, sleep=lambda _s: None)
+        projection = TT.reclaim_all(
+            ledger,
+            broker,
+            adapters,
+            subplot_id=SUB,
+            team_run_id="team-run-1",
+            terminal_reason="success",
+            at_provider=_ats(),
+        )
+        assert projection["open_count"] == 0
+        assert projection["completion_fact_ref"] is not None
+        assert projection["released_count"] == 2
+        assert kills == [(5150, 15)]
+        assert _lease_row_absent(broker, proc_lease.lease_id)

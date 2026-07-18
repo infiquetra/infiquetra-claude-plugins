@@ -49,11 +49,23 @@ quiesce remains in force for `codex-substrate`.
 
 ## External opinion
 
-Operator accepted the doc-review engine offer in the review package (Jeff, 2026-07-18, in-session):
-`external_opinion.state=requested`, requester operator, engine codex (guarded wrapper), intent
-second-opinion, scope this delta review + the committed plan refresh diff (`24813d8a`). Findings
-are advisory; Claude adjudicates each (`keep`/`downgrade`/`dismiss`) and owns the readiness
-verdict.
+Operator accepted the doc-review engine offer in the review package (Jeff, 2026-07-18, in-session);
+dispatched through the guarded codex wrapper (run `20260718T224036Z-8a851690ef1e`, read-only,
+`mutation_detected: false`, exit 0).
+
+**Result — `external_opinion.state=applied`:** codex confirmed every delta claim (line-exact APIs,
+versions, table coherence) and independently reproduced the anchor (`d10d602e…`, 5695 bytes), and
+returned **two P2 findings** against the plan's *unchanged body* — internal-consistency drift the
+refresh's own revised sections created:
+
+| # | External finding | `claude_adjudication` | Resolution |
+|---|---|---|---|
+| E1 | Summary dependency list omitted #356, which the refreshed hard-upstream row and U1/U2 dependencies require | **keep** (verified against the refreshed rows) | Safe fix applied: Summary now reads "#351, #355, #356, #357, and #358" |
+| E2 | U5 hard-coded "Bump Saga to 0.103.0", contradicting refreshed R10's next-available-with-recompute policy | **keep** (verified against R10) | Safe fix applied: U5 restated as next-available minor recomputed at release-edit time per R10 |
+
+Both fixes touch only body prose outside the anchored ceremony sections; the approval anchor
+recomputed byte-identical after the fixes (`d10d602e…`, 5695 bytes), so the operator approval above
+remains valid. Findings count after adjudication: 0 remaining.
 
 ## Findings
 

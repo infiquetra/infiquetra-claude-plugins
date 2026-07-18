@@ -11,7 +11,7 @@ deepened: 2026-07-18
 
 ## Summary
 
-Implement issue #353 only after #351, #355, #357, and #358 merge. Add one Saga `/fleet-doctor`
+Implement issue #353 only after #351, #355, #356, #357, and #358 merge. Add one Saga `/fleet-doctor`
 skill and `fleet_doctor.py` CLI that observes the broker, outcome worktree registries, Git's actual
 worktree list, run-fact dispatch/teardown history, and durable bridge audit store through strict,
 bounded, non-mutating readers. It independently correlates those sources into leaked-resource,
@@ -366,7 +366,9 @@ store, or automatic owner command exists.
 `plugins/saga/CHANGELOG.md`, Saga metadata/version tests, `docs/engineering-journal/DECISIONS.md`,
 `docs/engineering-journal/LEARNINGS.md`, and relevant Saga README/operator index.
 
-**Approach:** Bump Saga to 0.103.0 from the expected post-#358 base. Record that the historical
+**Approach:** Bump Saga exactly once to the next available minor version from the actual merged
+base, recomputed at release-edit time per R10 (0.103.0 from today's base; sibling #604 takes the
+same next-available rung and may land first). Record that the historical
 fifteen-worktree snapshot motivated the capability while the pre-build live census was nine and did
 not prove abandonment. Validate installed command/skill/script resolution and minimum compatible
 fleet-core contract.

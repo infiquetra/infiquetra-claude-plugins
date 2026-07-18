@@ -56,10 +56,15 @@ own anchor `d10d602e…`); the standing quiesce remains in force for `codex-subs
 
 `engine_offer.py offer --stage doc-review --attended`: advisory second-opinion suggested
 (`prompt_required: true`, opus/high, intent second-opinion). Operator accepted the offer in the
-review package (Jeff, 2026-07-18, in-session): `external_opinion.state=requested`, requester
-operator, engine codex (guarded wrapper), intent second-opinion, scope this delta review + the
-committed plan refresh diff (`e0dc114f`). Findings are advisory; Claude adjudicates each
-(`keep`/`downgrade`/`dismiss`) and owns the readiness verdict.
+review package (Jeff, 2026-07-18, in-session); dispatched through the guarded codex wrapper
+(run `20260718T224036Z-8a851690ef1e`, read-only, `mutation_detected: false`, exit 0).
+
+**Result — `external_opinion.state=applied`:** codex verdict **clean** for this plan and this
+artifact. Every part-(a) API/path/version claim confirmed with line-exact repository evidence, the
+Workflow table shape/pool/remediation/tier coherence confirmed, every evidence-table row judged
+supported, and the anchor independently reproduced (`214431cf…`, 5842 bytes) by codex's own
+extraction. Zero findings against #604; `claude_adjudication: n/a` (nothing to adjudicate). The
+readiness verdict above stands unchanged.
 
 ## Findings
 

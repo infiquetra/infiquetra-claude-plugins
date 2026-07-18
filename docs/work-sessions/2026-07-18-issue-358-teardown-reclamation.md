@@ -245,10 +245,46 @@ check + format clean; mypy clean; bandit — no new findings (1 pre-existing Hig
 `{#recovery-isolation-total-358}`); DECISIONS `{#count-at-source-vs-point-fix-358}`;
 CHANGELOG 0.102.0 recover bullet rewritten for counted-at-source.
 
+## Round 5 (`wf_b766d012-845`, at `933c012c`) — CONVERGED
+
+All three affected lenses returned **clean, zero findings**, and every round-4
+remediation was judged **fixed-adequately**:
+
+- **architecture** — ARCH-R4-1 fixed-adequately, verified from code shape: no `before`
+  variable, `_count_budgeted_results` deleted with zero references, charge from an
+  in-memory counter incremented at the result-landed site under the per-run flock —
+  "not a guard on the old instrument — the instrument is gone." Fresh pass: ReclaimStats
+  is a clean counter seam (budget/clamp policy stays in `recover()`); the optional-stats
+  default is coherent at every call site and never shared across calls; the
+  uncharged-invocation edge (adapter invoked, result append raises) is bounded ≤1 per
+  pass, an undercount not a phantom charge, and matches the reviewed budget semantics;
+  release surfaces (CHANGELOG / LEARNINGS / DECISIONS) tell the same story as the diff.
+- **testing** — TST-FRESH-1 fixed-adequately on substance (the deleted after-count
+  corner is moot; `test_mid_flight_raise_still_reports_actions_taken_before_the_abort`
+  pins the protected property, and the increment placement makes misplacement fail the
+  assertion); TST-FRESH-2 fixed-adequately (both skip branches provably entered).
+  Fresh pass: the racer regression test is non-vacuous — the r3 diff-count would charge
+  1 where stats charges 0 — and the 2×2 matrix claim is honest (the reshaped loop's
+  only failable surface is the reclaim call and the observation append). 133 passed in
+  a throwaway worktree at `933c012c`.
+- **concurrency** — CONC-R4-1 fixed-adequately, verified three independent ways:
+  the new test class; a real two-`threading.Thread` race over one lease ×30 iterations
+  (total charge never exceeds 1); and injected `read_decision_input` failures
+  (`actions_taken` always equals landed resource-results — the round-4 failure mode
+  can no longer occur "because there is no differential read left to fail or desync
+  from a baseline").
+
+**Ceremony state: 6/6 lenses converged clean** — devils-advocate (r3), security +
+event-flow (r2), architecture + testing + concurrency (r5). Every finding across five
+rounds is fixed-adequately.
+
+**Workflow-integrity check.** This worktree clean at `933c012c`; primary checkout shows
+only its pre-existing loose ends (external-engine-offload report edit, two
+sdlc-issue-draft files — untouched since before this work); verifier worktrees are
+read-only residue (issue-357 set retained per operator instruction).
+
 ## Next step
 
-Fresh re-run of the affected lenses (architecture + testing at opus/high,
-concurrency at sonnet/medium — devils-advocate, security, event-flow remain converged
-clean) against the cycle-4 commit, judging the round-4 findings' remediation and the
-reshaped accounting. Then, on convergence: workflow-integrity check, /code-review gate,
-/qa gate, ship ceremony under the standing merge approval.
+/code-review gate at `933c012c` (capture REVIEWED_SHA, append `review_paths` to the
+issue-358 saga thread) → /qa gate → ship ceremony (PR, CI green, merge under the
+standing approval, harvest to `leaf-lease-safe-runtime-continuity-sub-358`).

@@ -100,6 +100,44 @@ def test_clock_rollback_fails_closed_and_zero_variance_is_finite() -> None:
     assert steady.phi is not None and 0 <= steady.phi <= 16
 
 
+def test_future_dispatch_without_heartbeats_is_evidence_error_not_healthy() -> None:
+    # R4/R12 regression: a far-future dispatch with no post-now beats must read evidence-error,
+    # never healthy — the sparse fallback cannot launder a corrupt or rolled-back clock.
+    decision = LV.evaluate(_observation(now=100.0, dispatched_at=200.0, heartbeat_times=()))
+    assert decision.classification == LV.Classification.EVIDENCE_ERROR
+    assert decision.reason_code == "invalid-observation"
+    with pytest.raises(LV.LivenessInputError, match="future-skew"):
+        LV.phi_score(dispatched_at=200.0, heartbeat_times=(), now=100.0)
+    # dispatch skew at the tolerance boundary is still valid sparse evidence
+    within = LV.evaluate(_observation(now=100.0, dispatched_at=105.0, heartbeat_times=()))
+    assert within.classification == LV.Classification.HEALTHY
+
+
+def test_phi_threshold_boundary_is_inclusive_at_eight() -> None:
+    # With _beats() the anchor is 60 and deviation floors at 1.0s: now=75.6 computes phi just
+    # under 8 (healthy) and now=75.7 just over (suspect) — the crossing itself, not the cap.
+    below = LV.evaluate(_observation(now=75.6))
+    above = LV.evaluate(_observation(now=75.7))
+    assert below.phi is not None and below.phi < 8.0
+    assert below.classification == LV.Classification.HEALTHY
+    assert above.phi is not None and 8.0 <= above.phi < 16.0
+    assert above.classification == LV.Classification.HEARTBEAT_SUSPECT
+    assert above.reason_code == "phi-threshold"
+    # phi == threshold exactly flags suspicion: the comparison is inclusive (>=)
+    pinned = LV.LivenessPolicy(phi_threshold=below.phi)
+    at_threshold = LV.evaluate(_observation(now=75.6), pinned)
+    assert at_threshold.classification == LV.Classification.HEARTBEAT_SUSPECT
+
+
+def test_phi_matches_the_hand_computed_normal_tail_golden_value() -> None:
+    # Five exact 10s intervals -> Normal(10, 1) after the deviation floor; delay 14 gives
+    # tail = 0.5*erfc(4/sqrt(2)) = 3.167124183311996e-05, phi = -log10(tail) = 4.499334907556478.
+    score = LV.phi_score(
+        dispatched_at=0.0, heartbeat_times=(10.0, 20.0, 30.0, 40.0, 50.0), now=64.0
+    )
+    assert score.phi == pytest.approx(4.499334907556478, rel=1e-12)
+
+
 def test_phi_is_monotonic_for_a_fixed_sample() -> None:
     values = [
         LV.phi_score(dispatched_at=0, heartbeat_times=_beats(), now=now).phi
@@ -121,6 +159,16 @@ def test_ttl_cold_start_is_suspicion_only() -> None:
     assert decision.phi is None
     assert decision.classification == LV.Classification.REPING_REQUIRED
     assert decision.terminal_authority == LV.TerminalAuthority.NONE
+
+
+def test_lease_ttl_cold_start_boundary_is_strict() -> None:
+    # elapsed == ttl stays healthy (strict >); the first instant past the ttl is suspicion.
+    at_ttl = LV.evaluate(_observation(now=300.0, heartbeat_times=(), lease_ttl_seconds=300))
+    over = LV.evaluate(_observation(now=300.5, heartbeat_times=(), lease_ttl_seconds=300))
+    assert at_ttl.classification == LV.Classification.HEALTHY
+    assert over.phi is None
+    assert over.classification == LV.Classification.HEARTBEAT_SUSPECT
+    assert over.reason_code == "lease-ttl-cold-start"
 
 
 def test_renewal_or_expiry_alone_is_not_an_engine_input() -> None:

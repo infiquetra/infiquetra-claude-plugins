@@ -137,7 +137,13 @@ def _pending_match(
         return None
     matches: list[tuple[Path, dict[str, Any]]] = []
     for path in directory.glob("*.json"):
-        record = _read_record(path, PENDING_SCHEMA)
+        try:
+            record = _read_record(path, PENDING_SCHEMA)
+        except RePingHookError as exc:
+            # One corrupt or foreign staged file must not deny the whole SendMessage channel;
+            # its own claim degrades to reping-send-unresolved when its receipt never binds.
+            print(f"{_PREFIX} ignoring unreadable pending claim: {exc}", file=sys.stderr)
+            continue
         if record.get("recipient") == recipient and record.get("request_digest") == request_digest:
             matches.append((path, record))
     if len(matches) > 1:

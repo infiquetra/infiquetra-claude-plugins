@@ -10,6 +10,8 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
+import pytest
+
 ROOT = Path(__file__).parent.parent
 TEAM_SCRIPTS = ROOT / "plugins" / "team-execution" / "skills" / "team-execution" / "scripts"
 SAGA_SCRIPTS = ROOT / "plugins" / "saga" / "scripts"
@@ -231,6 +233,23 @@ def test_unstaged_or_wrong_recipient_sendmessage_is_ignored(tmp_path: Path) -> N
     state_root = LP.pending_dir(repo).parent
     assert not (state_root / "inflight").exists()
     assert len(list((state_root / "pending").glob("*.json"))) == 1
+
+
+def test_corrupt_pending_file_does_not_deny_unrelated_sendmessage(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo = _repo(tmp_path / "repo")
+    message = "report progress"
+    _setup(repo, message=message)
+    (LP.pending_dir(repo) / "poisoned.json").write_text("{not json", encoding="utf-8")
+    # Unrelated traffic passes: the corrupt file is skipped with a warning, not a channel halt.
+    _pre(repo, "unrelated chatter", recipient="another-agent")
+    assert "ignoring unreadable pending claim" in capsys.readouterr().err
+    # And the staged claim still binds through the same glob with the poison present.
+    _pre(repo, message)
+    _post(repo)
+    records = RL.read_facts(RL.RunLedger.resolve(repo))
+    assert sum(record.get("event") == "reping-sent" for record in records) == 1
 
 
 def test_post_replay_after_cleanup_is_silent_and_does_not_duplicate(tmp_path: Path) -> None:

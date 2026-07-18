@@ -177,12 +177,15 @@ def phi_score(
 
     The dispatch timestamp is the first sample anchor.  Zero through four complete intervals retain
     the compatibility fallback and return ``phi=None``.  Future beats inside the configured skew
-    tolerance clamp to ``now``; larger future skew is invalid evidence.
+    tolerance clamp to ``now``; larger future skew is invalid evidence, and a dispatch beyond that
+    tolerance ahead of ``now`` (a rolled-back or corrupt clock, R4/R12) can never read healthy.
     """
 
     _validate_policy(policy)
     dispatch = _finite_nonnegative(dispatched_at, "dispatched_at")
     current = _finite_nonnegative(now, "now")
+    if dispatch > current + policy.future_skew_tolerance_seconds:
+        raise LivenessInputError("dispatch exceeds the future-skew tolerance")
     normalized: set[float] = set()
     for index, raw in enumerate(heartbeat_times):
         beat = _finite_nonnegative(raw, f"heartbeat_times[{index}]")

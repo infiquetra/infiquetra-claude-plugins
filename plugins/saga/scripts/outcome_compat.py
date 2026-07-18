@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -1063,3 +1064,525 @@ def _canonical_node_completion(
     # Untracked non-code leaf: its only marker is cache-resident (store-local) — invisible to a
     # cross-clone reader, so it stays unknown rather than claiming open-or-complete (R8).
     return ("non-code:tick+canonical-marker", "unknown", {"issue": ""})
+
+
+# ---------------------------------------------------------------------------
+# R5/R6 — protected same-clone handoff (offer / accept-intent / accept-commit)
+# ---------------------------------------------------------------------------
+
+# Internal protected-record schemas (local, sealed, write-once — NOT part of the four public
+# schemas; the printable public form is ``outcome.handoff-reference.v1``).
+SCHEMA_HANDOFF_OFFER = "outcome.handoff-offer.v1"
+SCHEMA_HANDOFF_INTENT = "outcome.handoff-accept-intent.v1"
+SCHEMA_HANDOFF_COMMIT = "outcome.handoff-accept-commit.v1"
+
+HANDOFF_MAX_TTL_SECONDS = 300
+HANDOFF_MAX_CLOCK_SKEW_SECONDS = 30
+
+_HANDOFF_PRODUCER = "saga"  # the broker's closed settlement-producer vocabulary
+_HANDOFFS_DIR = "handoffs"
+
+# The broker logical-unit key is bounded; mirror dispatch_settlement's digest fallback so an
+# oversized identity never truncates silently.
+_MAX_LOGICAL_UNIT_ID = 200
+
+
+def outcome_dispatch_resource(
+    identity: str, outcome_id: str, subplot_id: str, attempt: int
+) -> dict[str, str]:
+    """The #356 agent-pool resource ref for one Outcome dispatch (R5).
+
+    Keyed by canonical repository identity, Outcome ID, subplot, and dispatch attempt — never a
+    filesystem path — so two clones of different repositories can share one host-scoped broker
+    root without colliding.
+    """
+    if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 1:
+        raise CompatibilityHaltError(
+            "schema-field-type",
+            unsupported="a dispatch attempt outside positive-int form",
+            supported="attempt as a positive integer",
+            next_action="pass the dispatch attempt number from the settlement layer",
+        )
+    long_form = f"outcome-dispatch:{identity}:{outcome_id}:{subplot_id}:{attempt}"
+    if len(long_form) <= _MAX_LOGICAL_UNIT_ID:
+        return {"logical_unit_id": long_form}
+    digest = hashlib.sha256(f"{identity}:{outcome_id}:{subplot_id}".encode()).hexdigest()[:32]
+    return {"logical_unit_id": f"outcome-dispatch:{digest}:{attempt}"}
+
+
+def _seal(record: dict[str, Any]) -> dict[str, Any]:
+    payload = {key: value for key, value in record.items() if key != "sha256"}
+    record["sha256"] = hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
+    return record
+
+
+def _seal_valid(record: dict[str, Any]) -> bool:
+    payload = {key: value for key, value in record.items() if key != "sha256"}
+    expected = hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
+    return bool(record.get("sha256") == expected)
+
+
+def _handoffs_dir(repo_root: Path, outcome_id: str) -> Path:
+    import outcome_store  # lazy sibling import (house pattern)
+
+    safe_id = outcome_store._safe_name(outcome_id, what="outcome_id")
+    common = outcome_store.resolve_common_dir(Path(repo_root))
+    return common / outcome_store.STORE_NAMESPACE / safe_id / _HANDOFFS_DIR
+
+
+def _write_once(path: Path, record: dict[str, Any]) -> bool:
+    """Write-once protected record write; False when the exact path already exists."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return False
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(canonical_json(record) + "\n")
+    return True
+
+
+def _load_sealed(path: Path, *, schema: str, what: str) -> dict[str, Any]:
+    if not path.is_file() or path.is_symlink():
+        raise CompatibilityHaltError(
+            "handoff-missing",
+            unsupported=f"a {what} with no protected local record",
+            supported="a handoff record present in this clone's git-common-dir store",
+            next_action="request a fresh handoff from the issuing runtime in this clone",
+        )
+    record = parse_strict_json(read_reference_file(path, what=what), what=what)
+    if not isinstance(record, dict) or record.get("schema") != schema or not _seal_valid(record):
+        raise CompatibilityHaltError(
+            "handoff-seal-invalid",
+            unsupported=f"a {what} failing its protected seal or schema check",
+            supported=f"an untampered {schema} record",
+            next_action="request a fresh handoff; tampered or truncated records never authorize",
+        )
+    return record
+
+
+def offer_handoff(
+    repo_root: Path,
+    outcome_id: str,
+    subplot_id: str,
+    *,
+    operation: str,
+    attempt: int,
+    broker: Any,
+    lease: Any,
+    dispatch_id: str = "",
+    ttl_seconds: int = HANDOFF_MAX_TTL_SECONDS,
+    now: Callable[[], float] | None = None,
+    nonce: Callable[[], str] | None = None,
+    runner: Callable[..., Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Offer a one-use, single-subplot handoff by closing the issuer's broker authority (R6).
+
+    The offer record is written INSIDE the broker's settlement-close protected write
+    (#355/#356: prepare -> protected writer -> canonical close receipt), so offering and
+    relinquishing are one linearized transition: the resource head ends closed with a receipt,
+    which is exactly the CAS a receiver's ``acquire_successor`` verifies. Issuer identity comes
+    from the live broker lease record, never a caller label.
+    """
+    if operation not in HANDOFF_OPERATIONS:
+        raise CompatibilityHaltError(
+            "schema-field-type",
+            unsupported=f"handoff operation {operation!r}",
+            supported=f"one of: {', '.join(HANDOFF_OPERATIONS)}",
+            next_action="request a supported single-subplot operation",
+        )
+    if isinstance(ttl_seconds, bool) or not isinstance(ttl_seconds, int) or ttl_seconds < 1:
+        raise CompatibilityHaltError(
+            "schema-field-type",
+            unsupported="a handoff TTL outside positive-int form",
+            supported=f"1..{HANDOFF_MAX_TTL_SECONDS} seconds",
+            next_action="request a bounded handoff TTL",
+        )
+    if ttl_seconds > HANDOFF_MAX_TTL_SECONDS:
+        raise CompatibilityHaltError(
+            "handoff-ttl-too-long",
+            unsupported=f"a handoff TTL of {ttl_seconds} seconds",
+            supported=f"at most {HANDOFF_MAX_TTL_SECONDS} seconds",
+            next_action="request a shorter handoff and accept it promptly",
+        )
+
+    identity = repository_identity(repo_root, runner=runner)
+    binding = resolve_committed_spec(repo_root, outcome_id, runner=runner)
+    if not working_tree_matches(repo_root, binding):
+        _halt_working_tree_divergent()
+
+    lb = _broker_module(broker)
+    try:
+        verified = broker.verify(lease.resource_ref, lease.token, owner_id=lease.owner_id)
+    except lb.LeaseBrokerError as exc:
+        raise CompatibilityHaltError(
+            "handoff-issuer-not-current",
+            unsupported=f"an offer from non-current broker authority ({type(exc).__name__})",
+            supported="an offer from the current lease on the outcome-dispatch resource",
+            next_action="re-acquire the dispatch resource, then offer again",
+        ) from None
+
+    import dispatch_settlement  # lazy sibling import (house pattern)
+
+    unit = dispatch_settlement.outcome_unit(outcome_id, subplot_id)
+
+    import time as _time
+    import uuid as _uuid
+
+    now_fn = now if now is not None else _time.time
+    nonce_fn = nonce if nonce is not None else (lambda: _uuid.uuid4().hex)
+    issued = int(now_fn())
+    handoff_id = str(nonce_fn())
+    if not re.fullmatch(r"[0-9a-f]{32}", handoff_id):
+        raise CompatibilityHaltError(
+            "schema-field-type",
+            unsupported="a handoff nonce outside 32-hex form",
+            supported="a 32-hex nonce",
+            next_action="use the default uuid4-hex nonce provider",
+        )
+
+    offer = _seal(
+        {
+            "schema": SCHEMA_HANDOFF_OFFER,
+            "handoff_id": handoff_id,
+            "repository_identity": identity,
+            "outcome_id": outcome_id,
+            "spec_path": binding["spec_path"],
+            "committed": {
+                "commit_oid": binding["commit_oid"],
+                "blob_oid": binding["blob_oid"],
+                "sha256": binding["sha256"],
+            },
+            "spec_revision": binding["spec_revision"],
+            "compat_protocol_version": PROTOCOL_VERSION,
+            "source_runtime": RUNTIME_LABEL,
+            "issuer_owner_id": verified.owner_id,
+            "lease_id": verified.lease_id,
+            "resource_ref": dict(verified.resource_ref),
+            "token": {
+                "broker_epoch": verified.token.broker_epoch,
+                "fencing_sequence": verified.token.fencing_sequence,
+            },
+            "operation": operation,
+            "subplot_id": subplot_id,
+            "dispatch_id": dispatch_id,
+            "idempotency_key": unit.idempotency_key,
+            "attempt": attempt,
+            "issued_at_epoch": issued,
+            "expires_at_epoch": issued + ttl_seconds,
+            "nonce": handoff_id,
+        }
+    )
+
+    offer_path = _handoffs_dir(repo_root, outcome_id) / f"{handoff_id}.offer.json"
+    intent_digest = hashlib.sha256(
+        canonical_json({"kind": "handoff-offer", "handoff_id": handoff_id}).encode("utf-8")
+    ).hexdigest()
+    settlement = broker.prepare_agent_settlement(
+        verified.lease_id,
+        token=verified.token,
+        owner_id=verified.owner_id,
+        producer=_HANDOFF_PRODUCER,
+        run_id=handoff_id,
+        expected_output_sha256=offer["sha256"],
+        protected_write_intent_sha256=intent_digest,
+    )
+
+    def _protected_write(_renewed: Any) -> list[str]:
+        if not _write_once(offer_path, offer):
+            raise CompatibilityHaltError(
+                "handoff-receiver-conflict",
+                unsupported="a duplicate handoff id at the protected offer path",
+                supported="one write-once offer record per handoff id",
+                next_action="mint a fresh handoff with a new nonce",
+            )
+        return [f"handoff-offer:{handoff_id}"]
+
+    broker.commit_agent_settlement(
+        settlement.settlement_id,
+        owner_id=verified.owner_id,
+        token=verified.token,
+        write=_protected_write,
+    )
+
+    reference = validate_handoff_reference(
+        {
+            "schema": SCHEMA_HANDOFF_REFERENCE,
+            "handoff_id": handoff_id,
+            "digest": offer["sha256"],
+            "protocol": {
+                "version": PROTOCOL_VERSION,
+                "min_supported": PROTOCOL_MIN_SUPPORTED,
+                "max_supported": PROTOCOL_MAX_SUPPORTED,
+                "required_capabilities": list(REQUIRED_CAPABILITIES),
+            },
+            "operation": operation,
+            "subplot_id": subplot_id,
+        }
+    )
+    return offer, reference
+
+
+def accept_handoff(
+    repo_root: Path,
+    outcome_id: str,
+    handoff_id: str,
+    *,
+    operation: str,
+    subplot_id: str,
+    receiver_owner_id: str,
+    receiver_runtime: str,
+    admission: dict[str, Any],
+    broker: Any,
+    settled_lookup: Callable[[str, str, int], bool] | None = None,
+    now: Callable[[], float] | None = None,
+    runner: Callable[..., Any] | None = None,
+) -> dict[str, Any]:
+    """Accept a handoff: verify the protected record, bind one receiver, take the successor (R6).
+
+    Acceptance NEVER trusts the printable reference — it reopens the authoritative local offer
+    record, verifies its seal and every binding against locally derived facts (repository
+    identity, committed spec, operation, subplot, freshness, #351 settled state, the live
+    broker resource head), takes a write-once accept-intent that binds exactly one receiver,
+    acquires the #356 successor token via the close-receipt CAS, and appends the accept-commit.
+    Same-receiver retries resume any crash gap idempotently; a different receiver HALTs.
+    """
+    import time as _time
+
+    now_fn = now if now is not None else _time.time
+    if not re.fullmatch(r"[0-9a-f]{32}", str(handoff_id)):
+        raise CompatibilityHaltError(
+            "handoff-missing",
+            unsupported="a handoff id outside 32-hex form",
+            supported="the 32-hex handoff id from the printable reference",
+            next_action="pass the handoff id exactly as issued",
+        )
+    directory = _handoffs_dir(repo_root, outcome_id)
+    offer = _load_sealed(
+        directory / f"{handoff_id}.offer.json", schema=SCHEMA_HANDOFF_OFFER, what="handoff offer"
+    )
+
+    moment = int(now_fn())
+    if moment > int(offer["expires_at_epoch"]):
+        raise CompatibilityHaltError(
+            "handoff-expired",
+            unsupported=f"a handoff accepted {moment - int(offer['expires_at_epoch'])}s past expiry",
+            supported=f"acceptance within {HANDOFF_MAX_TTL_SECONDS}s of issuance",
+            next_action="request a fresh handoff from the issuing runtime",
+        )
+    if int(offer["issued_at_epoch"]) > moment + HANDOFF_MAX_CLOCK_SKEW_SECONDS:
+        raise CompatibilityHaltError(
+            "handoff-clock-skew",
+            unsupported="a handoff issued in the future beyond the skew bound",
+            supported=f"issuance within {HANDOFF_MAX_CLOCK_SKEW_SECONDS}s of this clock",
+            next_action="check host clocks, then request a fresh handoff",
+        )
+
+    identity = repository_identity(repo_root, runner=runner)
+    if offer["repository_identity"] != identity:
+        raise CompatibilityHaltError(
+            "handoff-wrong-repository",
+            unsupported=f"a handoff issued for {offer['repository_identity']!r}",
+            supported=f"this clone's identity {identity!r}",
+            next_action="accept the handoff in a clone of the issuing repository",
+        )
+    binding = resolve_committed_spec(repo_root, outcome_id, runner=runner)
+    if offer["committed"]["sha256"] != binding["sha256"] or int(offer["spec_revision"]) != int(
+        binding["spec_revision"]
+    ):
+        raise CompatibilityHaltError(
+            "handoff-wrong-revision",
+            unsupported=(
+                f"a handoff bound to spec revision {offer['spec_revision']} "
+                f"(digest {str(offer['committed']['sha256'])[:12]})"
+            ),
+            supported=(
+                f"the committed spec revision {binding['spec_revision']} "
+                f"(digest {str(binding['sha256'])[:12]})"
+            ),
+            next_action="re-discover the outcome and request a fresh handoff at this revision",
+        )
+    if not working_tree_matches(repo_root, binding):
+        _halt_working_tree_divergent()
+    if offer["operation"] != operation:
+        raise CompatibilityHaltError(
+            "handoff-wrong-operation",
+            unsupported=f"an acceptance requesting {operation!r}",
+            supported=f"the offered operation {offer['operation']!r}",
+            next_action="accept the handoff for exactly the offered operation",
+        )
+    if offer["subplot_id"] != subplot_id:
+        raise CompatibilityHaltError(
+            "handoff-wrong-subplot",
+            unsupported=f"an acceptance requesting subplot {subplot_id!r}",
+            supported=f"the offered subplot {offer['subplot_id']!r}",
+            next_action="accept the handoff for exactly the offered subplot",
+        )
+    if settled_lookup is not None and settled_lookup(
+        str(offer["dispatch_id"]), str(offer["subplot_id"]), int(offer["attempt"])
+    ):
+        raise CompatibilityHaltError(
+            "handoff-already-settled",
+            unsupported="a handoff whose dispatch attempt is already settled",
+            supported="a handoff for an unsettled dispatch attempt",
+            next_action="re-discover the outcome; this leaf's dispatch already concluded",
+        )
+
+    lb = _broker_module(broker)
+    offer_token = lb.FencingToken.from_dict(offer["token"])
+    head = broker.inspect_resource_head(offer["resource_ref"])
+    if head is None:
+        raise CompatibilityHaltError(
+            "handoff-superseded",
+            unsupported="a handoff whose broker resource head no longer exists",
+            supported="a handoff whose source resource head is intact",
+            next_action="request a fresh handoff from the issuing runtime",
+        )
+
+    intent_path = directory / f"{handoff_id}.intent.json"
+    intent = _seal(
+        {
+            "schema": SCHEMA_HANDOFF_INTENT,
+            "handoff_id": handoff_id,
+            "receiver_owner_id": receiver_owner_id,
+            "receiver_runtime": receiver_runtime,
+            "idempotency_key": offer["idempotency_key"],
+            "accepted_at_epoch": moment,
+        }
+    )
+    if not _write_once(intent_path, intent):
+        existing = _load_sealed(
+            intent_path, schema=SCHEMA_HANDOFF_INTENT, what="handoff accept-intent"
+        )
+        if existing["receiver_owner_id"] != receiver_owner_id:
+            raise CompatibilityHaltError(
+                "handoff-receiver-conflict",
+                unsupported=f"a second receiver behind {existing['receiver_owner_id']!r}",
+                supported="exactly one bound receiver per handoff",
+                next_action="request a fresh handoff; this one is bound to another receiver",
+            )
+        intent = existing
+
+    successor = _acquire_successor_or_resume(
+        broker,
+        lb,
+        offer=offer,
+        offer_token=offer_token,
+        head=head,
+        receiver_owner_id=receiver_owner_id,
+        admission=admission,
+    )
+
+    commit_path = directory / f"{handoff_id}.commit.json"
+    commit = _seal(
+        {
+            "schema": SCHEMA_HANDOFF_COMMIT,
+            "handoff_id": handoff_id,
+            "receiver_owner_id": receiver_owner_id,
+            "successor_lease_id": successor.lease_id,
+            "successor_token": {
+                "broker_epoch": successor.token.broker_epoch,
+                "fencing_sequence": successor.token.fencing_sequence,
+            },
+            "committed_at_epoch": int(now_fn()),
+        }
+    )
+    if not _write_once(commit_path, commit):
+        existing = _load_sealed(
+            commit_path, schema=SCHEMA_HANDOFF_COMMIT, what="handoff accept-commit"
+        )
+        if existing["receiver_owner_id"] != receiver_owner_id:
+            raise CompatibilityHaltError(
+                "handoff-receiver-conflict",
+                unsupported=f"a commit bound to {existing['receiver_owner_id']!r}",
+                supported="exactly one bound receiver per handoff",
+                next_action="request a fresh handoff; this one is bound to another receiver",
+            )
+        commit = existing
+
+    return {"offer": offer, "intent": intent, "commit": commit, "lease": successor}
+
+
+def _acquire_successor_or_resume(
+    broker: Any,
+    lb: Any,
+    *,
+    offer: dict[str, Any],
+    offer_token: Any,
+    head: dict[str, Any],
+    receiver_owner_id: str,
+    admission: dict[str, Any],
+) -> Any:
+    """Take the successor lease, or resume the receiver's already-granted lease after a crash."""
+    head_token = lb.FencingToken.from_dict(head)
+    if (
+        head_token.broker_epoch == offer_token.broker_epoch
+        and head_token.fencing_sequence == offer_token.fencing_sequence
+    ):
+        close = head.get("close_receipt")
+        if not isinstance(close, dict) or "receipt_sha256" not in close:
+            raise CompatibilityHaltError(
+                "handoff-source-not-closed",
+                unsupported="a handoff whose source lease has no canonical close receipt",
+                supported="a handoff whose issuer relinquished through the settlement close",
+                next_action="wait for the issuer's close to land, or request a fresh handoff",
+            )
+        try:
+            return broker.acquire_successor(
+                owner_id=receiver_owner_id,
+                session_id=str(admission["session_id"]),
+                policy_sha256=str(admission["policy_sha256"]),
+                session_limit=int(admission["session_limit"]),
+                aggregate_limit=int(admission["aggregate_limit"]),
+                mutation="read-write",
+                resource_ref=dict(offer["resource_ref"]),
+                predecessor_token=offer_token,
+                predecessor_receipt_sha256=str(close["receipt_sha256"]),
+            )
+        except lb.LeaseBrokerError as exc:
+            raise CompatibilityHaltError(
+                "handoff-superseded",
+                unsupported=f"a successor grant the broker refused ({type(exc).__name__})",
+                supported="a grant from the exact canonically closed predecessor head",
+                next_action="request a fresh handoff from the current authority holder",
+            ) from None
+    # The head moved past the offered token: either this receiver already succeeded (crash
+    # between grant and commit -> resume) or a different successor genuinely superseded it.
+    try:
+        return broker.verify(dict(offer["resource_ref"]), head_token, owner_id=receiver_owner_id)
+    except lb.LeaseBrokerError:
+        raise CompatibilityHaltError(
+            "handoff-superseded",
+            unsupported="a handoff whose resource head was superseded by another authority",
+            supported="a handoff accepted before any supersession",
+            next_action="request a fresh handoff from the current authority holder",
+        ) from None
+
+
+def _lease_broker_mod() -> Any:
+    import fleet_commons_shim  # lazy sibling import (house pattern)
+
+    return fleet_commons_shim.load("lease_broker")
+
+
+def _broker_module(broker: Any) -> Any:
+    """The module object the broker INSTANCE was defined in (sub-358 dual-load precedent).
+
+    A caller may hand in a broker loaded under a different module identity than the shim's
+    cache key (tests do). Exception classes and ``FencingToken`` must come from the broker's
+    own module or ``except``/equality checks silently miss; fall back to the shim load only
+    when the instance's module is unresolvable.
+    """
+    mod = sys.modules.get(type(broker).__module__)
+    if mod is not None and hasattr(mod, "LeaseBrokerError") and hasattr(mod, "FencingToken"):
+        return mod
+    return _lease_broker_mod()
+
+
+def _halt_working_tree_divergent() -> NoReturn:
+    raise CompatibilityHaltError(
+        "working-tree-divergent",
+        unsupported="a mutating operation while the working-tree spec diverges from the blob",
+        supported="a working-tree spec byte-identical to the committed blob (KTD3)",
+        next_action="commit or restore the outcome spec, then retry",
+    )

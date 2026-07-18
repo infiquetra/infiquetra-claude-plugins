@@ -156,9 +156,44 @@ recording run A's evidence escaped `recover()` and starved every later run
 Full suite after remediation: 5001 passed / 0 failed / 1 skipped; ruff, format, mypy,
 bandit clean.
 
+## Ceremony round 4 (`wf_bc90e4d4-b00`) — HALTED at the three-cycle tripwire
+
+Round 4 (architecture, testing, concurrency at HEAD `7dd5789c`) judged the guard-test
+and reserved-reason-code remediations **fixed-adequately**, but the concurrency
+validator judged CONC-1-R3-1's remediation **inadequate** — the third consecutive
+inadequate verdict on the recovery-isolation seam:
+
+- **ARCH-R4-1 / CONC-R4-1 (P2, one root, both lenses reproduced it empirically)** —
+  the round-3 restructure moved the baseline count inside the try. When the
+  before-count fails transiently but the after-count succeeds, `taken` diffs the run's
+  full historical result count against a placeholder `before = 0`: phantom actions are
+  charged against the cross-run budget (re-creating head-of-line starvation), and the
+  durable observation fact records `actions_taken` for a pass where `reclaim_all`
+  never ran, with no `evidence_error` marker. Pre-restructure (`0271ecdf`) the
+  before-count was outside the try and could not degrade to a false baseline.
+  Converged suggested fix from both lenses: an unmeasured baseline is *uncountable* —
+  charge zero and set `evidence_error`, exactly like the after-count-failure branch;
+  never diff against a fabricated baseline.
+- **TST-FRESH-1 (P3)** — the reclaim-succeeds + after-count-fails corner (zero charge,
+  `evidence_error`, later run keeps the uncharged budget) has no direct test.
+- **TST-FRESH-2 (P3)** — the skip-branch `evidence_error` glue (live-owner /
+  budget-exhausted with a refused observation append) is unexercised.
+
+**Tripwire.** The approved operating contract: "Three unsuccessful remediation cycles
+halt and page the operator." Lineage on this seam: r1 fix `148ecb50` → judged
+inadequate by r2 (exception family); r2 fix `0271ecdf` → judged inadequate by r3
+(handler bookkeeping); r3 fix `7dd5789c` → judged inadequate by r4 (phantom-charge
+regression). Autonomous remediation is halted; the operator is paged.
+
+**Converged and stable:** devils-advocate (r3), security + event-flow (r2) clean; all
+seven broker fence sites tested; intent replay, reclaim mutex, guard lifecycle,
+reserved reason codes, and the fence-site tests all judged adequate. The only open
+thread is `recover()`'s budget/evidence bookkeeping.
+
 ## Next step
 
-Ceremony round 4 at the round-3 remediation HEAD — the three round-3-affected lenses
-(architecture, testing, concurrency) re-run fresh; devils-advocate is converged clean
-and security/event-flow converged in round 2. On convergence: workflow-integrity check,
-then `/code-review` + `/qa` gates and the ship ceremony.
+Operator decision: authorize remediation cycle 4 with the lens-converged patch
+(baseline-measured flag → uncountable charges zero + `evidence_error`; plus the two
+regression tests) and a fresh affected-lens re-run, or redirect (manual take-over or a
+structural redesign of `recover()`'s bookkeeping). Branch is unmerged; nothing ships
+while halted.

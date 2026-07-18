@@ -27,6 +27,32 @@
 
 ## 2026-07-18
 
+### A field excluded from the dedup key must be excluded from replay identity {#intent-replay-generation-358}
+
+**Context.** #358 teardown intents dedup on `intent_id = sha256(team_run_id|terminal_reason)`
+— deliberately excluding the broker's `close_generation` so repeated B8 entry converges.
+**Evidence.** Ceremony round-1 finding F1 (review-devils, P1): after the broker's bounded
+closed-owner map evicts a run's close record, the next pass re-closes under a fresh
+generation, and the intent re-append raised `TeardownConflictError` — permanently poisoning
+an incomplete run's teardown (reproduced end to end by the lens).
+**Mechanism.** The intent *fact* still carried `close_generation`, and the replay comparison
+matched full fact identity — so two facts with the same dedup key could differ in a field
+the key deliberately ignores, turning an idempotent replay into a conflict.
+**Fix.** The teardown-intent replay comparison now excludes `close_generation`
+(`plugins/saga/scripts/team_teardown.py`, `_validate_transition`); the driver fences on its
+pass-local generation, and a paired mutex + regression suite
+(`TestAdmissionEvictionResilience`, `TestConcurrentReclaim`) pins convergence across
+eviction and concurrent passes.
+**Generalizable rule.** Every field a dedup key deliberately excludes must also be excluded
+from the replay-equality check, or re-issued values of that field convert idempotence into
+permanent conflict. Relatedly: ledger-level dedup does not serialize side effects — replay
+freshness cannot distinguish a live racer from a crashed predecessor, so exactly-once
+adapter invocation needs a mutex (a per-run flock), not a dedup check.
+
+**Refs.** `plugins/saga/scripts/team_teardown.py` (`_validate_transition`, `_reclaim_guard`), `tests/test_team_teardown.py`.
+
+---
+
 ### A twice-loaded dataclass never equals itself {#dual-load-token-equality-358}
 
 **Context.** The #358 teardown adapters must present a lease's exact `FencingToken` back to

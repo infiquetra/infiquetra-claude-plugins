@@ -435,3 +435,21 @@ class TestSourceConformance:
         assert "open_count" in teardown_source
         for forbidden in ("status.json", "open_runs.json", "reclamation.db"):
             assert forbidden not in teardown_source
+
+    def test_every_enumerated_consumer_source_passes_conformance(self) -> None:
+        """The checker audits the REAL production sources the inventory enumerates —
+        not only its own fixtures — so an unwired spawn or a B8-bypassing completion
+        claim added to a consumer site goes red in CI (round-1 TST-4)."""
+
+        team_scripts = TEAM_SKILL.parent / "scripts"
+        enumerated = [
+            SCRIPTS / "team_teardown.py",
+            ROOT / "plugins" / "saga" / "hooks" / "team_teardown_hook.py",
+            team_scripts / "lease_protocol.py",
+            team_scripts / "liveness_protocol.py",
+            TEAM_SKILL,
+        ]
+        for path in enumerated:
+            assert path.exists(), f"inventory names a missing consumer source: {path}"
+            violations = _spawn_conformance_violations(path.read_text(encoding="utf-8"))
+            assert violations == [], f"{path.relative_to(ROOT)}: {violations}"

@@ -15,7 +15,12 @@
   snapshot, crash-orphan reconcile (`already-absent` on the existing action key), typed
   actions, re-reconcile, still-closed generation recheck, and a `teardown-complete`
   receipt only at zero open resources. `request` records intent without acting; `recover`
-  is a budgeted expired-only pass that always appends an observation.
+  is a budgeted expired-only pass that always appends an observation, isolated per run —
+  one run's refused pass records a `recovery-run-error` observation and never blocks
+  recovery of newer runs. Concurrent physical B8 passes for one run serialize on an
+  exclusive per-run reclaim lock so each logical action invokes its adapter exactly once,
+  and a broker-evicted-then-re-closed admission generation replays the run's one recorded
+  intent instead of poisoning the run (`close_generation` is not intent identity).
 - Typed action adapters: terminal-receipt-gated resident release, exact-identity process
   stop (PID + process-start + boot + run ownership, TERM first, KILL only under the
   lease-recorded `term-then-kill` escalation, absence proof without signaling), the

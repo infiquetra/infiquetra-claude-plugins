@@ -179,8 +179,12 @@ _MAX_CLOSED_FENCES = 128
 _MAX_SETTLEMENTS = 128
 _CLOSED_OWNER_ADMISSION_KEYS = frozenset({"closed_at", "boot_id", "close_generation"})
 # Closed-owner records exist to fence spawn-versus-completion races during one run's teardown.
-# On overflow the lowest-generation record is evicted: the fence guarantee is scoped to the
-# window in which an actor could still admit for that run, not to unbounded history.
+# On overflow the lowest-generation record is evicted, which REOPENS admission for the evicted
+# owner until it is re-closed: the fence guarantee is scoped to record retention, not to
+# unbounded history. Safety survives eviction because the teardown driver re-closes at pass
+# start, snapshots AFTER that close (capturing any lease admitted in the evicted window), and
+# refuses its receipt unless the pass-local generation is still the closed one. The bound is
+# therefore a liveness ceiling: sustained churn past it costs retries, never a false receipt.
 _MAX_CLOSED_OWNER_ADMISSIONS = 128
 _BOOT_ID_LOCK = threading.Lock()
 
@@ -1158,7 +1162,13 @@ class SessionAdmission:
 
 @dataclass(frozen=True)
 class OwnerAdmissionClose:
-    """One monotonic owner-admission close. There is no reopen for the same owner."""
+    """One monotonic owner-admission close.
+
+    There is no reopen *operation*; the closed map is bounded, so on overflow the
+    lowest-generation record is evicted and admission for that owner lapses back open.
+    A driver that needs the fence across eviction re-closes at pass start (minting a
+    fresh, higher generation) and re-verifies the generation before its receipt.
+    """
 
     closed_at: str
     boot_id: str
@@ -3385,9 +3395,13 @@ class LeaseBroker:
         After the commit, every acquire, reserve, claim, or retry for this exact owner is
         refused with :class:`OwnerAdmissionClosedError` while existing leases remain
         inspectable and releasable. Repeating close is idempotent (the original record is
-        returned) and there is no reopen operation. The returned ``close_generation`` is
-        issued from the registry's one fencing sequence, so a teardown driver can re-verify
-        the still-closed generation before emitting its completion receipt.
+        returned) and there is no reopen operation — but the closed map is bounded
+        (``_MAX_CLOSED_OWNER_ADMISSIONS``), and overflow evicts the lowest-generation
+        record, lapsing that owner's admission back open until a re-close mints a fresh
+        generation. The returned ``close_generation`` is issued from the registry's one
+        fencing sequence, so a teardown driver can re-verify the still-closed generation
+        before emitting its completion receipt (and must re-close at pass start to hold
+        the fence across a possible eviction).
         """
 
         owner = _bounded(owner_id, "owner_id")

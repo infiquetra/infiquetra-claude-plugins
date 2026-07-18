@@ -19,7 +19,12 @@ heartbeat store, or reaper decision engine.
 - The broker's `close-owner-admission` operation is monotonic and commits under the broker
   lock: after it, every acquire, reserve, claim, or retry for that exact run is refused
   while existing leases remain inspectable. Repeating close is idempotent; there is no
-  reopen.
+  reopen operation. The closed map is bounded, so under sustained churn an old record can
+  be evicted and admission lapses open until re-closed under a fresh generation — the
+  driver re-closes at pass start, snapshots after the close, and refuses its receipt
+  unless the pass-local generation is still the closed one, so eviction can cost a retry
+  but never a false completion. A re-issued generation replays the run's one recorded
+  intent (generation is not intent identity).
 
 ## Event family (`kind=teardown`, closed)
 

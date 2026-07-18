@@ -345,15 +345,34 @@ class TestTeardownEventFamily:
         assert first["this_hash"] == second["this_hash"]
         assert len([r for r in RL.read_facts(ledger) if r["event"] == "teardown-intent"]) == 1
 
-    def test_conflicting_duplicate_is_refused(self, ledger: Any, broker: Any) -> None:
+    def test_reissued_close_generation_replays_the_one_intent(
+        self, ledger: Any, broker: Any
+    ) -> None:
+        # close_generation is not intent identity: an evicted-then-re-closed owner mints a
+        # fresh generation, and that re-append must converge to the recorded intent, never
+        # poison the run with a permanent conflict.
         _open(ledger, broker)
-        _intend(ledger)
-        conflicting = TT.build_teardown_intent(
+        first = _intend(ledger)
+        reissued = TT.build_teardown_intent(
             subplot_id=SUB,
             at=AT,
             team_run_id="team-run-1",
             terminal_reason="success",
             close_generation=9,
+        )
+        replay = TT.append_teardown_event(ledger, reissued)
+        assert replay["this_hash"] == first["this_hash"]
+        assert len([r for r in RL.read_facts(ledger) if r["event"] == "teardown-intent"]) == 1
+
+    def test_conflicting_duplicate_is_refused(self, ledger: Any, broker: Any) -> None:
+        _open(ledger, broker)
+        _intend(ledger)
+        conflicting = TT.build_teardown_intent(
+            subplot_id="another-subplot",
+            at=AT,
+            team_run_id="team-run-1",
+            terminal_reason="success",
+            close_generation=1,
         )
         with pytest.raises(TT.TeardownConflictError):
             TT.append_teardown_event(ledger, conflicting)
@@ -1349,3 +1368,412 @@ class TestCrashRecoveryAcceptance:
         assert projection["open_count"] == 0
         assert projection["already_absent_count"] == 1
         assert projection["completion_fact_ref"] is not None
+
+
+# --------------------------------------------------------- ceremony round-1 regressions
+
+
+class TestAdmissionEvictionResilience:
+    """The bounded closed-owner map may evict and re-close an owner under a fresh
+    generation; teardown must converge across that seam, never poison (round-1 F1)."""
+
+    def _evict(self, broker: Any, count: int = 128) -> None:
+        for index in range(count):
+            broker.close_owner_admission(owner_id=f"churn-owner-{index}")
+
+    def test_evicted_close_record_re_close_converges_instead_of_poisoning(
+        self, ledger: Any, broker: Any
+    ) -> None:
+        _open(ledger, broker)
+        _acquire(broker, owner="team-run-1", resource="u-a")
+        blocked = TT.reclaim_all(
+            ledger,
+            broker,
+            TT.ReclaimAdapters(),  # conservative retain: the run stays incomplete
+            subplot_id=SUB,
+            team_run_id="team-run-1",
+            terminal_reason="hard-fail",
+            at_provider=_ats(),
+        )
+        assert blocked["completion_fact_ref"] is None
+        self._evict(broker)
+        assert broker.inspect_owner_admission("team-run-1") is None
+        converged = TT.reclaim_all(
+            ledger,
+            broker,
+            TT.production_adapters(broker),
+            subplot_id=SUB,
+            team_run_id="team-run-1",
+            terminal_reason="hard-fail",
+            at_provider=_ats(),
+        )
+        assert converged["completion_fact_ref"] is not None
+        intents = [r for r in RL.read_facts(ledger) if r.get("event") == "teardown-intent"]
+        assert len(intents) == 1
+
+    def test_session_end_request_survives_generation_reissue(
+        self, ledger: Any, broker: Any
+    ) -> None:
+        _open(ledger, broker)
+        TT.request(
+            ledger,
+            broker,
+            subplot_id=SUB,
+            team_run_id="team-run-1",
+            terminal_reason="success",
+            at=AT,
+        )
+        self._evict(broker)
+        repeated = TT.request(
+            ledger,
+            broker,
+            subplot_id=SUB,
+            team_run_id="team-run-1",
+            terminal_reason="success",
+            at=AT,
+        )
+        assert repeated["recorded"] == "teardown-intent"
+        intents = [r for r in RL.read_facts(ledger) if r.get("event") == "teardown-intent"]
+        assert len(intents) == 1
+
+    def test_unfenced_window_lease_is_captured_by_next_pass(self, ledger: Any, broker: Any) -> None:
+        _open(ledger, broker)
+        TT.request(
+            ledger,
+            broker,
+            subplot_id=SUB,
+            team_run_id="team-run-1",
+            terminal_reason="success",
+            at=AT,
+        )
+        self._evict(broker)
+        # The evicted window is real: admission for the torn-down owner lapses open.
+        late = _acquire(broker, owner="team-run-1", resource="u-late")
+        assert late is not None
+        # The driver re-closes at pass start and snapshots AFTER the close, so the
+        # window lease is captured and reclaimed — eviction never leaks past a pass.
+        projection = TT.reclaim_all(
+            ledger,
+            broker,
+            TT.production_adapters(broker),
+            subplot_id=SUB,
+            team_run_id="team-run-1",
+            terminal_reason="success",
+            at_provider=_ats(),
+        )
+        assert projection["open_count"] == 0
+        assert projection["completion_fact_ref"] is not None
+
+    @pytest.mark.parametrize("mode", ["evicted", "superseded"])
+    def test_completion_refused_when_close_generation_is_lost(
+        self, ledger: Any, broker: Any, mode: str
+    ) -> None:
+        class _LossyBroker:
+            def __init__(self, inner: Any) -> None:
+                self._inner = inner
+
+            def __getattr__(self, name: str) -> Any:
+                return getattr(self._inner, name)
+
+            def inspect_owner_admission(self, owner_id: str) -> Any:
+                real = self._inner.inspect_owner_admission(owner_id)
+                if mode == "evicted" or real is None:
+                    return None
+                return {**real, "close_generation": int(real["close_generation"]) + 999}
+
+        _open(ledger, broker)
+        lossy = _LossyBroker(broker)
+        with pytest.raises(TT.TeardownError, match="no longer the closed generation"):
+            TT.reclaim_all(
+                ledger,
+                lossy,
+                TT.production_adapters(lossy),
+                subplot_id=SUB,
+                team_run_id="team-run-1",
+                terminal_reason="success",
+                at_provider=_ats(),
+            )
+        completes = [r for r in RL.read_facts(ledger) if r.get("event") == "teardown-complete"]
+        assert completes == []
+
+
+class TestConcurrentReclaim:
+    def test_concurrent_reclaim_invokes_adapter_once_per_action(
+        self, ledger: Any, broker: Any
+    ) -> None:
+        _open(ledger, broker)
+        _acquire(broker, owner="team-run-1", resource="u-a")
+        production = TT.production_adapters(broker)
+        invocations: list[str] = []
+        count_lock = threading.Lock()
+
+        def _counting_release(lease: Any) -> Any:
+            with count_lock:
+                invocations.append(str(lease.get("lease_id")))
+            return production.lease_release(lease)
+
+        adapters = TT.ReclaimAdapters(lease_release=_counting_release)
+        barrier = threading.Barrier(2)
+        projections: list[dict[str, Any]] = []
+        errors: list[BaseException] = []
+
+        def _pass() -> None:
+            barrier.wait()
+            try:
+                projections.append(
+                    TT.reclaim_all(
+                        ledger,
+                        broker,
+                        adapters,
+                        subplot_id=SUB,
+                        team_run_id="team-run-1",
+                        terminal_reason="success",
+                        at_provider=_ats(),
+                    )
+                )
+            except BaseException as exc:  # noqa: BLE001 - collected for assertion
+                errors.append(exc)
+
+        threads = [threading.Thread(target=_pass) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+        assert errors == []
+        assert len(invocations) == 1
+        assert all(p["completion_fact_ref"] is not None for p in projections)
+        attempts = [r for r in RL.read_facts(ledger) if r.get("event") == "resource-attempt"]
+        results = [r for r in RL.read_facts(ledger) if r.get("event") == "resource-result"]
+        assert len(attempts) == 1
+        assert len(results) == 1
+
+
+class TestRecoveryIsolation:
+    def test_poisoned_run_does_not_block_newer_runs_recovery(
+        self, ledger: Any, broker: Any
+    ) -> None:
+        _open(ledger, broker, run_id="team-run-poisoned")
+        _acquire(broker, owner="team-run-poisoned", session="session-p", resource="u-p")
+        _open(ledger, broker, run_id="team-run-healthy")
+        _acquire(broker, owner="team-run-healthy", session="session-h", resource="u-h")
+        production = TT.production_adapters(broker)
+
+        def _selective_release(lease: Any) -> Any:
+            if str(lease.get("owner_id")) == "team-run-poisoned":
+                raise TT.TeardownError("poisoned-run adapter refusal")
+            return production.lease_release(lease)
+
+        outcome = TT.recover(
+            ledger,
+            broker,
+            TT.ReclaimAdapters(lease_release=_selective_release),
+            subplot_id=SUB,
+            expired_only=False,
+            max_actions=8,
+            at_provider=_ats(),
+        )
+        by_run = {entry["team_run_id"]: entry for entry in outcome["recovered_runs"]}
+        assert by_run["team-run-poisoned"]["error"] == "TeardownError"
+        assert by_run["team-run-healthy"]["complete"] is True
+        observations = [
+            r for r in RL.read_facts(ledger) if r.get("event") == "recovery-observation"
+        ]
+        codes = {r["team_run_id"]: r["reason_code"] for r in observations}
+        assert codes["team-run-poisoned"] == "recovery-run-error:TeardownError"
+        assert codes["team-run-healthy"] == "recovery-pass"
+
+
+class TestProcessStopBranches:
+    """Round-1 TST-2/TST-5: every reachable retain/absent/failed branch pins its
+    disposition and reason so a fail-safe can never silently become a release."""
+
+    def test_survivor_of_kill_is_failed_and_blocks_completion(
+        self, ledger: Any, broker: Any, runtime: FakeRuntime
+    ) -> None:
+        _open(ledger, broker)
+        lease = _register_proc(broker, runtime, pid=4242, escalation="term-then-kill")
+        kills: list[tuple[int, int]] = []
+
+        def _immortal_kill(pid: int, sig: int) -> None:
+            kills.append((pid, sig))  # the process never exits
+
+        adapter = TT.make_process_stop_adapter(broker, kill=_immortal_kill, sleep=lambda _s: None)
+        outcome = adapter(_lease_row(broker, lease.lease_id))
+        assert outcome.disposition == "failed"
+        assert outcome.reason_code == "alive-after-kill"
+        assert [sig for _pid, sig in kills] == [15, 9]
+        assert _lease_row(broker, lease.lease_id) is not None
+        projection = TT.reclaim_all(
+            ledger,
+            broker,
+            TT.ReclaimAdapters(
+                process_stop=TT.make_process_stop_adapter(
+                    broker, kill=_immortal_kill, sleep=lambda _s: None
+                )
+            ),
+            subplot_id=SUB,
+            team_run_id="team-run-1",
+            terminal_reason="hard-fail",
+            at_provider=_ats(),
+        )
+        assert projection["completion_fact_ref"] is None
+
+    def test_unrecorded_process_identity_is_retained(self, ledger: Any, broker: Any) -> None:
+        _open(ledger, broker)
+        plain = _acquire(broker, owner="team-run-1", resource="u-plain")
+        kills: list[tuple[int, int]] = []
+        adapter = TT.make_process_stop_adapter(
+            broker, kill=lambda p, s: kills.append((p, s)), sleep=lambda _s: None
+        )
+        outcome = adapter(_lease_row(broker, plain.lease_id))
+        assert outcome.disposition == "retained"
+        assert outcome.reason_code == "process-identity-unrecorded"
+        assert kills == []
+
+    def test_unreadable_process_identity_is_retained(
+        self, broker: Any, runtime: FakeRuntime, ledger: Any
+    ) -> None:
+        _open(ledger, broker)
+        lease = _register_proc(broker, runtime, pid=4242, alive=True, identity="proc-start-1")
+        runtime.processes[4242] = (True, None)
+        kills: list[tuple[int, int]] = []
+        adapter = TT.make_process_stop_adapter(
+            broker, kill=lambda p, s: kills.append((p, s)), sleep=lambda _s: None
+        )
+        outcome = adapter(_lease_row(broker, lease.lease_id))
+        assert outcome.disposition == "retained"
+        assert outcome.reason_code == "process-identity-unavailable"
+        assert kills == []
+
+    def test_exit_during_term_send_is_absence_proof(
+        self, broker: Any, runtime: FakeRuntime, ledger: Any
+    ) -> None:
+        _open(ledger, broker)
+        lease = _register_proc(broker, runtime, pid=4242)
+
+        def _gone_on_term(_pid: int, _sig: int) -> None:
+            raise ProcessLookupError
+
+        adapter = TT.make_process_stop_adapter(broker, kill=_gone_on_term, sleep=lambda _s: None)
+        outcome = adapter(_lease_row(broker, lease.lease_id))
+        assert outcome.disposition == "already-absent"
+        assert outcome.reason_code == "exited-during-signal"
+        assert _lease_row_absent(broker, lease.lease_id)
+
+    def test_exit_before_kill_escalation_is_released(
+        self, broker: Any, runtime: FakeRuntime, ledger: Any
+    ) -> None:
+        _open(ledger, broker)
+        lease = _register_proc(broker, runtime, pid=4242, escalation="term-then-kill")
+        sent: list[int] = []
+
+        def _exits_between_signals(_pid: int, sig: int) -> None:
+            sent.append(sig)
+            if sig == 9:
+                raise ProcessLookupError
+
+        adapter = TT.make_process_stop_adapter(
+            broker, kill=_exits_between_signals, sleep=lambda _s: None
+        )
+        outcome = adapter(_lease_row(broker, lease.lease_id))
+        assert outcome.disposition == "released"
+        assert "process:signal-receipt:exited-before-kill" in outcome.evidence_refs
+        assert sent == [15, 9]
+        assert _lease_row_absent(broker, lease.lease_id)
+
+
+class TestDefensiveRefusals:
+    """Round-1 TST-3/TST-6/TST-7: reachable typed refusals stay typed."""
+
+    def test_eviction_gate_refuses_absent_lease(self, broker: Any) -> None:
+        verdict = TT.authorize_resident_stop(
+            broker,
+            {"classification": "confirmed-stalled", "terminal_authority": "team"},
+            team_run_id="team-run-1",
+            lease_id="lease-that-never-existed",
+        )
+        assert verdict["authorized"] is False
+        assert verdict["reason_code"] == "lease-absent"
+
+    def test_non_object_broker_snapshot_is_refused(self, ledger: Any) -> None:
+        class _BadBroker:
+            def inspect(self) -> Any:
+                return ["not", "a", "mapping"]
+
+        with pytest.raises(TT.TeardownError, match="non-object snapshot"):
+            TT.read_decision_input(ledger, _BadBroker())
+
+    def test_snapshot_without_lease_list_is_refused(self, ledger: Any, broker: Any) -> None:
+        _open(ledger, broker)
+
+        class _NoLeasesBroker:
+            def inspect(self) -> Any:
+                return {"leases": None}
+
+        decision = TT.read_decision_input(ledger, _NoLeasesBroker())
+        with pytest.raises(TT.TeardownError, match="no lease list"):
+            TT.project(decision, "team-run-1")
+
+    @pytest.mark.parametrize(
+        "factory",
+        [
+            lambda broker: TT.make_resident_stop_adapter(broker),
+            lambda broker: TT.production_adapters(broker).lease_release,
+            lambda broker: TT.make_worktree_sweep_adapter(broker),
+        ],
+        ids=["resident-stop", "lease-release", "worktree-sweep"],
+    )
+    def test_adapter_head_none_is_already_absent(self, broker: Any, factory: Any) -> None:
+        adapter = factory(broker)
+        outcome = adapter({"lease_id": "vanished-lease", "owner_id": "team-run-1"})
+        assert outcome.disposition == "already-absent"
+        assert "broker:lease-absent:vanished-lease" in outcome.evidence_refs
+
+    def test_recover_refuses_negative_budget(self, ledger: Any, broker: Any) -> None:
+        with pytest.raises(TT.TeardownError, match="must be non-negative"):
+            TT.recover(
+                ledger,
+                broker,
+                TT.ReclaimAdapters(),
+                subplot_id=SUB,
+                expired_only=True,
+                max_actions=-1,
+                at_provider=_ats(),
+            )
+
+    def test_complete_without_matching_intent_is_refused(self, ledger: Any, broker: Any) -> None:
+        _open(ledger, broker)
+        _intend(ledger, reason="success")
+        orphan = TT.build_teardown_complete(
+            subplot_id=SUB,
+            at=AT,
+            team_run_id="team-run-1",
+            intent_id=TT.intent_id_for("team-run-1", "hard-fail"),
+            close_generation=7,
+            released_count=0,
+            already_absent_count=0,
+        )
+        with pytest.raises(TT.TeardownError, match="requires its teardown-intent"):
+            TT.append_teardown_event(ledger, orphan)
+
+    def test_project_refuses_unknown_run(self, ledger: Any, broker: Any) -> None:
+        with pytest.raises(TT.TeardownError, match="unknown team run"):
+            TT.project(TT.read_decision_input(ledger, broker), "team-run-never-opened")
+
+    def test_register_subprocess_refuses_unknown_escalation(
+        self, broker: Any, runtime: FakeRuntime
+    ) -> None:
+        runtime.processes[4242] = (True, "proc-start-1")
+        limits = _limits()
+        with pytest.raises(TT.TeardownError, match="escalation must be"):
+            TT.register_subprocess(
+                broker,
+                team_run_id="team-run-1",
+                session_id="session-1",
+                pid=4242,
+                argv_digest="d" * 64,
+                policy_sha256=limits.policy_sha256(),
+                session_limit=limits.max_concurrent,
+                aggregate_limit=limits.aggregate_max_concurrent,
+                escalation="maim",
+            )

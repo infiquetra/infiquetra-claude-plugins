@@ -18,13 +18,15 @@ never prompts, message text, or stdout/stderr — and never a mutable open/close
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import hashlib
 import json
 import os
 import sys
 import time
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -390,7 +392,25 @@ def _validate_transition(existing: Sequence[Mapping[str, Any]], fact: Mapping[st
             if rec.get("event") == "teardown-intent"
             and rec.get("intent_id") == fact.get("intent_id")
         ]
-        _replay_or_conflict(same_intent)
+        # close_generation is deliberately NOT intent identity (it is excluded from
+        # intent_id): the broker's bounded closed-owner map may evict and re-close an
+        # owner under a fresh generation, and that re-close must replay the one logical
+        # intent, never poison the run with a permanent conflict. The driver fences on
+        # its own pass-local generation, not the recorded intent's.
+        for rec in same_intent:
+            existing_identity = {
+                k: v for k, v in _without_volatile(rec).items() if k != "close_generation"
+            }
+            fact_identity = {
+                k: v for k, v in _without_volatile(fact).items() if k != "close_generation"
+            }
+            if existing_identity == fact_identity:
+                raise _DuplicateEvent(dict(rec))
+        if same_intent:
+            raise TeardownConflictError(
+                f"{event} for run {run_id!r} conflicts with an already-recorded event "
+                "of the same identity"
+            )
         return
 
     intents = {str(rec.get("intent_id")) for rec in run if rec.get("event") == "teardown-intent"}
@@ -766,6 +786,30 @@ def request(
     }
 
 
+@contextlib.contextmanager
+def _reclaim_guard(ledger: run_ledger.RunLedger, team_run_id: str) -> Iterator[None]:
+    """One exclusive per-run mutex around the B8 action phase (R3).
+
+    The ledger dedups facts, but without this lock two concurrent physical passes could
+    both invoke an adapter for the same action key (both snapshot before either result
+    lands). Freshness of the attempt append cannot arbitrate — a dead predecessor's
+    dangling attempt must stay re-actable — so serialization is structural: a live racer
+    blocks here; a crashed holder's flock releases with its process.
+    """
+
+    digest = hashlib.sha256(_bounded_text(team_run_id, "team_run_id").encode("utf-8"))
+    lock_path = ledger.path.with_suffix(ledger.path.suffix + f".reclaim-{digest.hexdigest()[:16]}")
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
 def reclaim_all(
     ledger: run_ledger.RunLedger,
     broker: Any,
@@ -785,15 +829,42 @@ def reclaim_all(
     action keys as ``already-absent``; (4) typed actions per owned resource, each rechecked
     by its adapter at action time; (5) fresh re-reconcile; (6) re-verify the still-closed
     close generation; (7) append ``teardown-complete`` only at zero open with no
-    retained/failed keys. Repeated calls converge by stable action keys. ``dry_run``
-    projects without closing, acting, or appending — census evidence, never completion.
+    retained/failed keys. Repeated calls converge by stable action keys; concurrent
+    physical passes for one run serialize on :func:`_reclaim_guard` so each logical action
+    invokes its adapter once. ``dry_run`` projects without closing, acting, or appending —
+    census evidence, never completion.
     """
 
     if dry_run:
         return project(read_decision_input(ledger, broker), team_run_id)
 
+    with _reclaim_guard(ledger, team_run_id):
+        return _reclaim_all_locked(
+            ledger,
+            broker,
+            adapters,
+            subplot_id=subplot_id,
+            team_run_id=team_run_id,
+            terminal_reason=terminal_reason,
+            at_provider=at_provider,
+            max_actions=max_actions,
+        )
+
+
+def _reclaim_all_locked(
+    ledger: run_ledger.RunLedger,
+    broker: Any,
+    adapters: ReclaimAdapters,
+    *,
+    subplot_id: str,
+    team_run_id: str,
+    terminal_reason: str,
+    at_provider: Callable[[], str],
+    max_actions: int | None,
+) -> dict[str, Any]:
     # A completed teardown is final: a repeated physical entry converges to the recorded
-    # receipt without re-opening the state machine (R3 — once logically).
+    # receipt without re-opening the state machine (R3 — once logically). Checked under
+    # the guard so a racer that waited out the winner sees the winner's receipt.
     prior = project(read_decision_input(ledger, broker), team_run_id)
     if prior["completion_fact_ref"] is not None:
         return prior
@@ -999,6 +1070,11 @@ def make_process_stop_adapter(
     the registration-time lease (R8). ``SIGTERM`` first; ``SIGKILL`` only when the lease
     was registered with the explicit ``term-then-kill`` escalation class. Every ambiguity
     fails safe as ``retained`` — a wrong signal is worse than a leaked process.
+
+    Residual window: between the last identity check and the ``kill()`` syscall the target
+    can exit and its PID be reused — inherent to any ``os.kill``-based manager on POSIX
+    (only a pidfd removes it, Linux-only). The start-identity recheck immediately before
+    each send narrows the window to sub-millisecond; it cannot close it.
     """
 
     import signal as _signal
@@ -1282,6 +1358,16 @@ def production_adapters(
     )
 
 
+def _count_results(ledger: run_ledger.RunLedger, broker: Any, team_run_id: str) -> int:
+    return len(
+        [
+            rec
+            for rec in _run_records(read_decision_input(ledger, broker).ledger_records, team_run_id)
+            if rec.get("event") == "resource-result"
+        ]
+    )
+
+
 def recover(
     ledger: run_ledger.RunLedger,
     broker: Any,
@@ -1338,30 +1424,44 @@ def recover(
             )
             passes.append({"team_run_id": run_id, "actions_taken": 0, "skipped": "budget"})
             continue
-        before = len(
-            [
-                rec
-                for rec in _run_records(read_decision_input(ledger, broker).ledger_records, run_id)
-                if rec.get("event") == "resource-result"
-            ]
-        )
-        projection = reclaim_all(
-            ledger,
-            broker,
-            adapters,
-            subplot_id=subplot_id,
-            team_run_id=run_id,
-            terminal_reason="recovered-crash",
-            at_provider=at_provider,
-            max_actions=budget,
-        )
-        after = len(
-            [
-                rec
-                for rec in _run_records(read_decision_input(ledger, broker).ledger_records, run_id)
-                if rec.get("event") == "resource-result"
-            ]
-        )
+        before = _count_results(ledger, broker, run_id)
+        # Per-run isolation: one run's refused pass (a blocked terminal, a conflicted
+        # ledger, an adapter refusal) is that run's evidence — it must never head-of-line
+        # block recovery of every newer open run in the repository.
+        try:
+            projection = reclaim_all(
+                ledger,
+                broker,
+                adapters,
+                subplot_id=subplot_id,
+                team_run_id=run_id,
+                terminal_reason="recovered-crash",
+                at_provider=at_provider,
+                max_actions=budget,
+            )
+        except TeardownError as exc:
+            taken = _count_results(ledger, broker, run_id) - before
+            budget -= max(0, taken)
+            append_teardown_event(
+                ledger,
+                build_recovery_observation(
+                    subplot_id=subplot_id,
+                    at=at_provider(),
+                    team_run_id=run_id,
+                    observed_open=len(owned),
+                    actions_taken=max(0, taken),
+                    reason_code=f"recovery-run-error:{type(exc).__name__}",
+                ),
+            )
+            passes.append(
+                {
+                    "team_run_id": run_id,
+                    "actions_taken": max(0, taken),
+                    "error": type(exc).__name__,
+                }
+            )
+            continue
+        after = _count_results(ledger, broker, run_id)
         taken = max(0, after - before)
         budget -= taken
         append_teardown_event(

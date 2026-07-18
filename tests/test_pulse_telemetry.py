@@ -344,6 +344,7 @@ def test_no_pulse_owned_status_field(tmp_path: Path) -> None:
                 "reconciliation",
                 "benchmark",
                 "dispatch-settlement",
+                "liveness",
             }
         )
         == run_ledger.FACT_KINDS

@@ -324,6 +324,47 @@ Workers execute approved tasks. Coordinate dependencies, keep work scoped to the
   `lease_protocol.py renew --session-id "$CLAUDE_CODE_SESSION_ID"`. A renewal refusal halts the
   wave; it never creates replacement authority. See `references/lease-protocol.md`.
 
+- **Canonical worker liveness (#357):** preflight the packaged `liveness_protocol.py` adapter before
+  the first background Agent call. Immediately before each resident spawn, capture the approved path
+  baseline; immediately after the host returns the trusted agent handle, append `subject-open` with
+  the exact #351 manifest/spawn and current #356 lease/token/boot digests. Poll at every lease renewal,
+  Agent/SendMessage host return, dependency-unblock boundary, and before B2. If poll returns a
+  `reping` candidate, claim it atomically before staging the exact recipient/request digest and
+  calling SendMessage. Saga's SendMessage hook records accepted or definitive-not-sent host receipts;
+  an absent/ambiguous outcome remains unresolved and is never retried or counted. The executable
+  sequence and closed identity are in `references/liveness-protocol.md`; do not write a parallel
+  liveness store or score in this skill.
+
+  ```bash
+  TEAM_LIVENESS="${CLAUDE_PLUGIN_ROOT:-plugins/team-execution}/skills/team-execution/scripts/liveness_protocol.py"
+  python3 "$TEAM_LIVENESS" preflight --repo-root "$REPO_ROOT"
+  python3 "$TEAM_LIVENESS" baseline --repo-root "$REPO_ROOT" \
+    --path "$APPROVED_PATH" --observed-monotonic "$MONOTONIC_NOW"
+  python3 "$TEAM_LIVENESS" open --repo-root "$REPO_ROOT" \
+    --identity-request-json "$IDENTITY_REQUEST_JSON" --baseline-json "$BASELINE_JSON" \
+    --event-id "$OPEN_EVENT_ID" --at "$NOW" --observed-monotonic "$MONOTONIC_NOW" \
+    --source-ref "$MANIFEST_SPAWN_LEASE_REF"
+  python3 "$TEAM_LIVENESS" record-event --repo-root "$REPO_ROOT" \
+    --identity-json "$IDENTITY_JSON" --event heartbeat --event-id "$HEARTBEAT_EVENT_ID" \
+    --at "$NOW" --payload-json "$TRUSTED_HEARTBEAT_JSON"
+  python3 "$TEAM_LIVENESS" record-idle-notice --repo-root "$REPO_ROOT" \
+    --identity-json "$IDENTITY_JSON" --event-id "$IDLE_EVENT_ID" --at "$NOW" \
+    --signal-ref "$HOST_SIGNAL_REF" --signal-digest "$HOST_SIGNAL_SHA256" \
+    --observed-monotonic "$MONOTONIC_NOW"  # add --host-notice-id only when the host supplies one
+  python3 "$TEAM_LIVENESS" record-artifact-observation --repo-root "$REPO_ROOT" \
+    --identity-json "$IDENTITY_JSON" --baseline-json "$BASELINE_JSON" \
+    --event-id "$ARTIFACT_EVENT_ID" --at "$NOW" --observed-monotonic "$MONOTONIC_NOW"
+  python3 "$TEAM_LIVENESS" poll --repo-root "$REPO_ROOT" \
+    --subject-id "$SUBJECT_ID" --now "$MONOTONIC_NOW"
+  python3 "$TEAM_LIVENESS" claim-reping --repo-root "$REPO_ROOT" \
+    --identity-json "$IDENTITY_JSON" --event-id "$CLAIM_EVENT_ID" --at "$NOW" \
+    --now "$MONOTONIC_NOW"
+  python3 "$TEAM_LIVENESS" stage-send --repo-root "$REPO_ROOT" \
+    --identity-json "$IDENTITY_JSON" --claim-json "$CLAIM_JSON" --recipient "$RESIDENT_ID" \
+    --request-digest "$REQUEST_SHA256" --staged-monotonic "$MONOTONIC_NOW" \
+    --response-window-seconds "$RESPONSE_WINDOW_SECONDS"
+  ```
+
 - **Run-posture check (#380):** when the run carries a committed intent envelope (the plan's
   `ExecutionSpec.intent`, or an envelope file handed down by `/outcome`), resolve every spend
   decision — wave spawn at an escalated tier, a worker/reviewer-proposed tier or verify-depth
@@ -397,8 +438,9 @@ invariance, and the KTD7 capability-keyed fallback to inlined content).
 Run reviewers according to `consensus-protocol.md`.
 
 Renew the team session at this collection/fan-out boundary using `lease_protocol.py renew` before
-the reviewer manifest and Agent calls. The per-reviewer Saga lifecycle hook reservation remains the
-only admission authority.
+the reviewer manifest and Agent calls. Poll every resident liveness subject before unblocking B2;
+`confirmed-stalled` is detection evidence only and #358 remains the destructive-action owner. The
+per-reviewer Saga lifecycle hook reservation remains the only admission authority.
 
 Before the first reviewer Agent call, create one `site=team-execution` dispatch manifest with every
 configured reviewer and its expected scored-review deliverable, then append that reviewer's `spawn`

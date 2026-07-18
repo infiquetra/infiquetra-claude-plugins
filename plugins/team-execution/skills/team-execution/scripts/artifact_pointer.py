@@ -42,6 +42,7 @@ import argparse
 import contextlib
 import hashlib
 import json
+import math
 import os
 import re
 import subprocess  # nosec B404 — git only, fixed argv, no shell
@@ -68,6 +69,7 @@ ERR_STALE = "POINTER_STALE"
 # A CAS address is a lowercase sha256 hex digest. A pointer's ``hash`` is untrusted input (it travels
 # inside spawn prompts), so it is validated against this before it is ever used to build a path.
 _SHA256_HEX = re.compile(r"\A[0-9a-f]{64}\Z")
+_SUBJECT_ID = re.compile(r"\Asubject:sha256:[0-9a-f]{64}\Z")
 
 # A git object id is 40 hex chars (sha1) or 64 (sha256). A diff pointer's base/snapshot tree OIDs are
 # untrusted input, so they are validated against this before being placed on a git argv — a tampered
@@ -78,6 +80,38 @@ _GIT_OID = re.compile(r"\A[0-9a-f]{40}(?:[0-9a-f]{24})?\Z")
 # ``git update-ref``. Constrain it up front so a hostile segment cannot inject ref-path structure;
 # git's own ref-name rules are only the backstop.
 _REF_SEGMENT = re.compile(r"\A[A-Za-z0-9._-]+\Z")
+
+LIVENESS_BASELINE_SCHEMA = "liveness.artifact-baseline.v1"
+LIVENESS_OBSERVATION_SCHEMA = "liveness.artifact-observation.v1"
+EXCLUSIVE_PROVENANCE_SCHEMA = "liveness.exclusive-provenance.v1"
+_LIVENESS_BASELINE_KEYS = frozenset(
+    {
+        "schema",
+        "paths",
+        "path_set_sha256",
+        "baseline_digest",
+        "observed_monotonic",
+    }
+)
+_PROVENANCE_KEYS = frozenset(
+    {
+        "schema",
+        "subject_id",
+        "lease_id",
+        "resource_sha256",
+        "token_sha256",
+        "broker_epoch",
+        "fencing_sequence",
+        "paths",
+        "path_set_sha256",
+        "baseline_digest",
+        "current_digest",
+        "interval_start",
+        "interval_end",
+        "custody_ref",
+        "covered_generation_ids",
+    }
+)
 
 
 def _is_sha256_hex(value: str) -> bool:
@@ -216,6 +250,255 @@ def _require_dense_worktree(repo_root: Path) -> None:
             "sparse-checkout is not supported by Layer-1 snapshots (git add -A can drop "
             "skip-worktree paths); inline the artifact instead (KTD7 fallback)"
         )
+
+
+def _finite_nonnegative(value: object, field: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field} must be a finite nonnegative number")
+    result = float(value)
+    if not math.isfinite(result) or result < 0:
+        raise ValueError(f"{field} must be a finite nonnegative number")
+    return result
+
+
+def _liveness_paths(paths: object, *, repo_root: Path) -> tuple[str, ...]:
+    if not isinstance(paths, (list, tuple)) or not paths:
+        raise ValueError("liveness paths must be a non-empty list")
+    root = repo_root.resolve(strict=True)
+    normalized: list[str] = []
+    for raw in paths:
+        if not isinstance(raw, str) or not raw or "\\" in raw or "\x00" in raw:
+            raise ValueError("liveness paths must be non-empty repo-relative POSIX paths")
+        candidate = Path(raw)
+        if (
+            candidate.is_absolute()
+            or raw.startswith("-")
+            or any(part in {"", ".", ".."} for part in candidate.parts)
+        ):
+            raise ValueError(f"liveness path escapes or is not canonical: {raw!r}")
+        if candidate.parts[0] == ".git":
+            raise ValueError("liveness paths cannot address Git control state")
+        resolved = (root / candidate).resolve(strict=False)
+        try:
+            resolved.relative_to(root)
+        except ValueError as exc:
+            raise ValueError(f"liveness path escapes through a symlink: {raw!r}") from exc
+        normalized.append(candidate.as_posix())
+    ordered = tuple(sorted(normalized))
+    if len(ordered) != len(set(ordered)):
+        raise ValueError("liveness paths must be unique")
+    return ordered
+
+
+def _path_set_digest(paths: tuple[str, ...]) -> str:
+    return hashlib.sha256(
+        json.dumps(list(paths), sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _scoped_worktree_digest(paths: tuple[str, ...], *, repo_root: Path) -> str:
+    """Hash only declared working-tree paths through a temporary Git index."""
+    _require_dense_worktree(repo_root)
+    fd, index_path = tempfile.mkstemp(prefix="te-liveness-index-")
+    os.close(fd)
+    os.unlink(index_path)
+    try:
+        env = {"GIT_INDEX_FILE": index_path}
+        _git(["read-tree", "HEAD"], repo_root=repo_root, env=env)
+        _git(["add", "-A", "--", *paths], repo_root=repo_root, env=env)
+        listing = _git(
+            ["ls-files", "--stage", "-z", "--", *paths],
+            repo_root=repo_root,
+            env=env,
+        ).stdout
+    finally:
+        if os.path.exists(index_path):
+            os.unlink(index_path)
+    payload = {
+        "paths": list(paths),
+        "entries_sha256": hashlib.sha256(listing.encode()).hexdigest(),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def capture_liveness_baseline(
+    paths: object,
+    *,
+    repo_root: Path,
+    observed_monotonic: float,
+) -> dict[str, Any]:
+    """Capture a scoped digest immediately before a resident spawn without creating a ref."""
+    normalized = _liveness_paths(paths, repo_root=repo_root)
+    observed = _finite_nonnegative(observed_monotonic, "observed_monotonic")
+    return {
+        "schema": LIVENESS_BASELINE_SCHEMA,
+        "paths": list(normalized),
+        "path_set_sha256": _path_set_digest(normalized),
+        "baseline_digest": _scoped_worktree_digest(normalized, repo_root=repo_root),
+        "observed_monotonic": observed,
+    }
+
+
+def _validated_baseline(value: object, *, repo_root: Path) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != _LIVENESS_BASELINE_KEYS:
+        raise ValueError("liveness baseline fields are not closed")
+    if value["schema"] != LIVENESS_BASELINE_SCHEMA:
+        raise ValueError("liveness baseline schema is unsupported")
+    paths = _liveness_paths(value["paths"], repo_root=repo_root)
+    if value["path_set_sha256"] != _path_set_digest(paths):
+        raise ValueError("liveness baseline path-set digest does not match")
+    if not _is_sha256_hex(value["baseline_digest"]):
+        raise ValueError("liveness baseline digest is invalid")
+    return {
+        **value,
+        "paths": list(paths),
+        "observed_monotonic": _finite_nonnegative(
+            value["observed_monotonic"], "baseline.observed_monotonic"
+        ),
+    }
+
+
+def _validate_exclusive_provenance(
+    value: object,
+    *,
+    repo_root: Path,
+    baseline: dict[str, Any],
+    current_digest: str,
+    interval_end: float,
+    subject_identity: object,
+) -> tuple[str, tuple[str, ...]]:
+    if not isinstance(value, dict) or set(value) != _PROVENANCE_KEYS:
+        raise ValueError("exclusive provenance fields are not closed")
+    if value["schema"] != EXCLUSIVE_PROVENANCE_SCHEMA:
+        raise ValueError("exclusive provenance schema is unsupported")
+    if not isinstance(value["subject_id"], str) or not _SUBJECT_ID.fullmatch(value["subject_id"]):
+        raise ValueError("exclusive provenance subject_id is invalid")
+    for field in ("resource_sha256", "token_sha256"):
+        if not _is_sha256_hex(value[field]):
+            raise ValueError(f"exclusive provenance {field} is invalid")
+    if not isinstance(value["lease_id"], str) or not value["lease_id"]:
+        raise ValueError("exclusive provenance lease_id is required")
+    if not isinstance(value["broker_epoch"], str) or not value["broker_epoch"]:
+        raise ValueError("exclusive provenance broker_epoch is required")
+    if not isinstance(value["fencing_sequence"], int) or value["fencing_sequence"] < 1:
+        raise ValueError("exclusive provenance fencing_sequence must be positive")
+    if not isinstance(value["custody_ref"], str) or not value["custody_ref"]:
+        raise ValueError("exclusive provenance custody_ref is required")
+    paths = _liveness_paths(value["paths"], repo_root=repo_root)
+    if list(paths) != baseline["paths"]:
+        raise ValueError("exclusive provenance paths do not match the baseline")
+    if value["path_set_sha256"] != baseline["path_set_sha256"]:
+        raise ValueError("exclusive provenance path-set digest does not match")
+    if value["baseline_digest"] != baseline["baseline_digest"]:
+        raise ValueError("exclusive provenance baseline digest does not match")
+    if value["current_digest"] != current_digest:
+        raise ValueError("exclusive provenance current digest does not match")
+    interval_start = _finite_nonnegative(value["interval_start"], "interval_start")
+    proven_end = _finite_nonnegative(value["interval_end"], "interval_end")
+    if interval_start != baseline["observed_monotonic"] or proven_end != interval_end:
+        raise ValueError("exclusive provenance interval does not bind this observation")
+    covered = value["covered_generation_ids"]
+    if not isinstance(covered, list) or not covered or len(covered) != len(set(covered)):
+        raise ValueError("exclusive provenance requires unique covered generation IDs")
+    for generation in covered:
+        if not isinstance(generation, str) or not _is_sha256_hex(generation):
+            raise ValueError("exclusive provenance generation ID is invalid")
+    if not isinstance(subject_identity, dict):
+        raise ValueError("exclusive provenance requires the canonical liveness identity")
+    for provenance_field, identity_field in (
+        ("subject_id", "subject_id"),
+        ("lease_id", "lease_id"),
+        ("resource_sha256", "resource_sha256"),
+        ("token_sha256", "token_sha256"),
+        ("broker_epoch", "broker_epoch"),
+        ("fencing_sequence", "fencing_sequence"),
+    ):
+        if value[provenance_field] != subject_identity.get(identity_field):
+            raise ValueError(
+                f"exclusive provenance {provenance_field} does not match the liveness subject"
+            )
+    if (
+        subject_identity.get("baseline_sha256") != baseline["baseline_digest"]
+        or subject_identity.get("path_set_sha256") != baseline["path_set_sha256"]
+    ):
+        raise ValueError("exclusive provenance baseline does not match the liveness subject")
+    return value["custody_ref"], tuple(covered)
+
+
+def observe_liveness_paths(
+    baseline_value: object,
+    *,
+    repo_root: Path,
+    observed_monotonic: float,
+    exclusive_provenance: object | None = None,
+    subject_identity: object | None = None,
+) -> dict[str, Any]:
+    """Compare the declared scope and distinguish activity from attributed progress."""
+    baseline = _validated_baseline(baseline_value, repo_root=repo_root)
+    interval_end = _finite_nonnegative(observed_monotonic, "observed_monotonic")
+    if interval_end <= baseline["observed_monotonic"]:
+        raise ValueError("liveness observation interval must increase")
+    paths = tuple(baseline["paths"])
+    current_digest = _scoped_worktree_digest(paths, repo_root=repo_root)
+    common = {
+        "schema": LIVENESS_OBSERVATION_SCHEMA,
+        "paths": list(paths),
+        "path_set_sha256": baseline["path_set_sha256"],
+        "baseline_digest": baseline["baseline_digest"],
+        "current_digest": current_digest,
+        "interval_start": baseline["observed_monotonic"],
+        "interval_end": interval_end,
+    }
+    if current_digest == baseline["baseline_digest"]:
+        if exclusive_provenance is not None:
+            raise ValueError("exclusive provenance cannot upgrade an unchanged scope")
+        return {
+            **common,
+            "classification": "unchanged",
+            "event": None,
+            "payload": None,
+            "provenance_ref": None,
+            "covered_generation_ids": [],
+        }
+    if exclusive_provenance is None:
+        return {
+            **common,
+            "classification": "scoped-activity-unattributed",
+            "event": "scoped-activity-unattributed",
+            "payload": {
+                "baseline_digest": baseline["baseline_digest"],
+                "current_digest": current_digest,
+                "interval_start": baseline["observed_monotonic"],
+                "interval_end": interval_end,
+            },
+            "provenance_ref": None,
+            "covered_generation_ids": [],
+        }
+    custody_ref, covered = _validate_exclusive_provenance(
+        exclusive_provenance,
+        repo_root=repo_root,
+        baseline=baseline,
+        current_digest=current_digest,
+        interval_end=interval_end,
+        subject_identity=subject_identity,
+    )
+    return {
+        **common,
+        "classification": "artifact-progress",
+        "event": "artifact-progress",
+        "payload": {
+            "baseline_digest": baseline["baseline_digest"],
+            "current_digest": current_digest,
+            "interval_start": baseline["observed_monotonic"],
+            "interval_end": interval_end,
+            "provenance_receipt": custody_ref,
+            "covered_generation_ids": list(covered),
+        },
+        "provenance_ref": custody_ref,
+        "covered_generation_ids": list(covered),
+    }
 
 
 def snapshot(run_id: str, epoch: str, *, repo_root: Path) -> ArtifactPointer:
@@ -660,6 +943,49 @@ def _cmd_gc(args: argparse.Namespace) -> int:
     return 0
 
 
+def _json_object(raw: str, field: str) -> dict[str, Any]:
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{field} is not valid JSON") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"{field} must be a JSON object")
+    return value
+
+
+def _cmd_liveness_baseline(args: argparse.Namespace) -> int:
+    root = resolve_repo_root(args.repo_root)
+    baseline = capture_liveness_baseline(
+        args.path,
+        repo_root=root,
+        observed_monotonic=args.observed_monotonic,
+    )
+    print(json.dumps(baseline, sort_keys=True, separators=(",", ":")))
+    return 0
+
+
+def _cmd_liveness_observe(args: argparse.Namespace) -> int:
+    root = resolve_repo_root(args.repo_root)
+    provenance = (
+        None
+        if args.exclusive_provenance_json is None
+        else _json_object(args.exclusive_provenance_json, "exclusive-provenance-json")
+    )
+    result = observe_liveness_paths(
+        _json_object(args.baseline_json, "baseline-json"),
+        repo_root=root,
+        observed_monotonic=args.observed_monotonic,
+        exclusive_provenance=provenance,
+        subject_identity=(
+            None
+            if args.subject_identity_json is None
+            else _json_object(args.subject_identity_json, "subject-identity-json")
+        ),
+    )
+    print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Typed artifact pointers for team-execution (L1).")
     parser.add_argument(
@@ -690,6 +1016,24 @@ def main(argv: list[str] | None = None) -> int:
         help=f"reclaim entries older than this (default {DEFAULT_GC_MAX_AGE_DAYS})",
     )
     gcp.set_defaults(func=_cmd_gc)
+
+    baseline = sub.add_parser(
+        "liveness-baseline",
+        help="capture a declared-path digest immediately before a resident spawn",
+    )
+    baseline.add_argument("--path", action="append", required=True, help="repo-relative path")
+    baseline.add_argument("--observed-monotonic", type=float, required=True)
+    baseline.set_defaults(func=_cmd_liveness_baseline)
+
+    observe = sub.add_parser(
+        "liveness-observe",
+        help="compare a liveness baseline without creating a durable pointer",
+    )
+    observe.add_argument("--baseline-json", required=True)
+    observe.add_argument("--observed-monotonic", type=float, required=True)
+    observe.add_argument("--exclusive-provenance-json")
+    observe.add_argument("--subject-identity-json")
+    observe.set_defaults(func=_cmd_liveness_observe)
 
     args = parser.parse_args(argv)
     try:

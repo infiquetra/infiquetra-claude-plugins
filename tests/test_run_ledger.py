@@ -48,7 +48,7 @@ def _spend(sub: str, *, tokens: int, cached: int, fresh: int, wall: float = 1.0)
 # --------------------------------------------------------------------------- U1: schema
 
 
-def test_schema_covers_all_seven_kinds(tmp_path: Path) -> None:
+def test_schema_covers_all_eight_kinds(tmp_path: Path) -> None:
     ledger = _ledger(tmp_path)
     RL.append_fact(ledger, _spend("s1", tokens=100, cached=60, fresh=40))
     RL.append_fact(ledger, RL.build_fact("cache", subplot_id="s1", at="t", cached=3, fresh=1))
@@ -62,6 +62,16 @@ def test_schema_covers_all_seven_kinds(tmp_path: Path) -> None:
             cost=0.02,
             latency_seconds=1.5,
             tokens=200,
+        ),
+    )
+    RL.append_fact(
+        ledger,
+        RL.build_fact(
+            "liveness",
+            subplot_id="s1",
+            at="t",
+            event="heartbeat",
+            subject_id="subject-1",
         ),
     )
     RL.append_fact(
@@ -106,13 +116,14 @@ def test_schema_covers_all_seven_kinds(tmp_path: Path) -> None:
         "spend",
         "cache",
         "engine",
+        "liveness",
         "delegation",
         "reconciliation",
         "benchmark",
         "dispatch-settlement",
     ]
     assert all(f["schema"] == "run_fact.v1" for f in facts)
-    assert facts[2]["engine"] == "gemini" and facts[3]["evidence"] == "ptr://run/abc"
+    assert facts[2]["engine"] == "gemini" and facts[4]["evidence"] == "ptr://run/abc"
 
 
 def test_build_fact_rejects_unknown_kind_and_reserved_fields() -> None:

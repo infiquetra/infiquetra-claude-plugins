@@ -25,7 +25,50 @@
 
 ---
 
+## 2026-07-18
+
+### A fail-closed test can pass through the wrong guard {#wrong-guard-fail-closed-357}
+
+**Context.** The six-lens review of the #357 liveness engine probed clock-rollback handling.
+**Evidence.** `test_clock_rollback_fails_closed_and_zero_variance_is_finite` (dispatch 100, beats
+110–150, now 90) asserted `evidence-error` and passed — but only because the post-`now` beats
+tripped the heartbeat future-skew raise. The engine never compared `now` to `dispatched_at`; the
+same rollback with no heartbeats read `healthy`, violating the plan's R4/R12 fail-closed clause.
+**Mechanism.** Two independent guards can produce the same terminal classification, so a test that
+asserts only the classification cannot tell which guard fired. The scenario's intended guard did
+not exist, and the incidental one masked its absence. **Fix.** A dispatch-side future-skew guard in
+`phi_score` plus a sparse-history regression (`dispatched_at > now`, empty beats →
+`evidence-error`), asserting the `invalid-observation` reason code, in the #357 review-fix commit.
+**Generalizable rule.** When a test pins fail-closed behavior, assert the reason/route, not just
+the terminal state — and add one variant per distinct evidence shape so no sibling guard can
+absorb the scenario.
+
+**Refs.** `plugins/fleet-core/scripts/fleet_commons/liveness_engine.py`,
+`tests/test_liveness_engine.py`; DECISIONS `{#fleet-shared-liveness-357}`.
+
+---
+
 ## 2026-07-17
+
+### Liveness identity and timers must come from authoritative receipts {#liveness-receipt-authority-357}
+
+**Context.** Issue #357 combines worker identity, idle delivery, and re-ping timing across Team
+Execution, Saga, and fleet-core. **Evidence.** The production tests reject caller-supplied
+resource/token/fence values, a `subject-open` without the exact #351 manifest and spawn hashes, and a
+re-ping claim with no accepted SendMessage receipt; installed-layout tests attest the resolved
+fleet-core engine bytes. **Mechanism.** A plausible identifier or claim proves only intent. If it can
+start a timer, consume an attempt, or establish progress before a canonical authority confirms the
+underlying lease, spawn, or send, ambiguous host outcomes become false liveness evidence. **Fix.**
+Derive lease identity from fleet-core, validate manifest/spawn bindings under the run-ledger lock,
+allocate missing idle notice IDs in that same lock, and start response windows only from hook-owned
+accepted-send receipts. **Validation.** Focused subject, concurrency, installed-layout, hook, and
+three-window confirmation tests remain green. **Generalizable rule.** Detection state may be derived,
+but every identity edge and timer edge must begin at the authority that actually observed the event,
+not at a caller's request to make it happen.
+
+**Refs.** Issue #357; DECISIONS `{#fleet-shared-liveness-357}`.
+
+---
 
 ### A release receipt cannot bind the commit that adds itself {#receipt-excluded-candidate-355}
 

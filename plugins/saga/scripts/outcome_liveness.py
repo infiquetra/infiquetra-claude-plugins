@@ -26,6 +26,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import fleet_commons_shim  # noqa: E402
 import outcome_orchestrator  # noqa: E402  (after the sys.path shim, by design)
 import outcome_store  # noqa: E402
 
@@ -67,6 +68,61 @@ def _last_heartbeat(store: Any) -> dict[str, float]:
             if sid and isinstance(at, (int, float)) and not isinstance(at, bool):
                 out[sid] = max(out.get(sid, float("-inf")), float(at))
     return out
+
+
+def _heartbeat_history(store: Any) -> dict[str, tuple[float, ...]]:
+    """Return sorted, deduplicated heartbeat timestamps for additive adaptive scoring."""
+    values: dict[str, set[float]] = {}
+    for rec in outcome_store.read_ledger(store):
+        if rec.get("kind") != "liveness" or rec.get("phase") != "heartbeat":
+            continue
+        sid = rec.get("subplot_id")
+        at = rec.get("at")
+        if (
+            isinstance(sid, str)
+            and sid
+            and isinstance(at, (int, float))
+            and not isinstance(at, bool)
+        ):
+            values.setdefault(sid, set()).add(float(at))
+    return {sid: tuple(sorted(times)) for sid, times in values.items()}
+
+
+def _adaptive_decision(
+    subplot_id: str,
+    *,
+    dispatched_at: float,
+    heartbeat_times: tuple[float, ...],
+    now: float,
+) -> dict[str, Any]:
+    """Evaluate advisory phi without granting Outcome terminal authority."""
+    try:
+        engine = fleet_commons_shim.load("liveness_engine")
+        observation = engine.LivenessObservation(
+            subject_id=f"outcome:{subplot_id}",
+            now=now,
+            dispatched_at=dispatched_at,
+            heartbeat_times=heartbeat_times,
+        )
+        decision = engine.evaluate(observation).to_dict()
+        # This adapter never carries Team's receipt-proven re-ping transport.
+        decision["terminal_authority"] = "none"
+        return decision
+    except Exception as exc:  # noqa: BLE001 - adaptive evidence must never suppress legacy R31.
+        return {
+            "schema": "liveness_decision.v1",
+            "subject_id": f"outcome:{subplot_id}",
+            "classification": "evidence-error",
+            "phi": None,
+            "sample_count": 0,
+            "last_heartbeat": None,
+            "last_progress": None,
+            "pending_notice_ids": [],
+            "reping": None,
+            "terminal_authority": "none",
+            "reason_code": f"adaptive-engine-error:{type(exc).__name__}",
+            "evidence_refs": [],
+        }
 
 
 def _is_stalled(node: Any, *, dispatched_at: float, last_beat: float | None, now: float) -> str:
@@ -122,7 +178,9 @@ def harvest_liveness(spec: Any, store: Any, *, now: float) -> dict[str, Any]:
     states = outcome_engine.derive_states(spec, store)
     dispatched_at = _dispatch_at(store)
     last_beat = _last_heartbeat(store)
+    heartbeat_history = _heartbeat_history(store)
     stalled: list[str] = []
+    adaptive: dict[str, dict[str, Any]] = {}
     for node in spec.nodes:
         sid = node.subplot_id
         if states.get(sid) != "dispatched":
@@ -134,8 +192,15 @@ def harvest_liveness(spec: Any, store: Any, *, now: float) -> dict[str, Any]:
         if reason:
             _record_terminal(store, sid, reason)
             stalled.append(sid)
+            continue
+        adaptive[sid] = _adaptive_decision(
+            sid,
+            dispatched_at=at,
+            heartbeat_times=heartbeat_history.get(sid, ()),
+            now=now,
+        )
     cascade = sorted(outcome_orchestrator.blocked_subtree(spec, set(stalled)))
-    return {"stalled": stalled, "cascade_paused": cascade}
+    return {"stalled": stalled, "cascade_paused": cascade, "adaptive": adaptive}
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.101.0] - 2026-07-17
+
+### Added - shared fleet liveness facts and adapters (#357)
+
+- Added the closed `run_fact.v1 kind=liveness` subject/event family, lock-scoped idempotent
+  transitions, cause-stable generations, atomic re-ping claims, and read-only decision projection.
+- Preserved Outcome's exact heartbeat-first then absolute-timeout R31 authority while exposing phi
+  suspicion only as additive evidence.
+- Added hash-only SendMessage hook receipts that distinguish accepted, definitive-not-sent, and
+  unresolved outcomes. Only accepted sends start response windows; #357 performs no teardown.
+
 ## [0.100.0] - 2026-07-17
 
 ### Added - orphan runner containment and receipt-chained evidence (#355)

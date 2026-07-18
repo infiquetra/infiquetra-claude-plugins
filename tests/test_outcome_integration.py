@@ -47,7 +47,7 @@ DEC = _load("outcome_decompose")
 ENG = _load("outcome")
 REP = _load("outcome_report")
 PROJ = _load("outcome_projection")
-_load("outcome_liveness")
+OL = _load("outcome_liveness")
 C = _load("outcome_costs")
 ET = _load("envelope_token")
 
@@ -242,6 +242,51 @@ def test_full_outcome_composes_end_to_end(tmp_path: Path) -> None:
     proj = PROJ.project(spec_final, store)
     assert proj["complete"] is True and proj["parent_close"] == "operator-keystroke-only"
     assert proj["progress"] == {"done": 2, "total": 2, "percent": 100}
+
+
+def test_adaptive_phi_survives_advance_into_the_tick_liveness_record(tmp_path: Path) -> None:
+    """#357: the engine-scored adaptive projection must ride the REAL production liveness
+    processor through ``advance`` into the tick's ``liveness`` record for a dispatched,
+    non-stalled leaf — advisory phi only, never terminal authority. The composed end-to-end
+    test cannot pin this: its fake GitHub completes every leaf before the next tick's
+    liveness pass, so the harvester is withheld here to hold the leaf in ``dispatched``."""
+    repo = _repo(tmp_path)
+    ENG.start(
+        repo,
+        "adaptive-live",
+        "Adaptive liveness slice",
+        nodes=[
+            {"subplot_id": "leaf", "title": "Leaf", "kind": "non-code", "github": {"issue": "9"}}
+        ],
+        intent=_INTENT_AUTO_MERGE,
+    )
+    store = ENG._store(repo, "adaptive-live")
+    DEC.approve_frontier(store, ENG.load_spec(repo, "adaptive-live"))
+    first = ENG.advance(
+        repo,
+        "adaptive-live",
+        dispatcher=D.make_dispatcher(available=SPEC.NODE_BACKENDS),
+        gate_factory=lambda s, st: DEC.make_dispatch_gate(st, s),
+        available=D.resolve_available(),
+        attending=True,
+    )
+    assert first.dispatched == ["leaf"]
+    dispatched_at = OL._dispatch_at(store)["leaf"]
+    for offset in (10.0, 20.0, 30.0, 40.0, 50.0, 60.0):
+        OL.record_heartbeat(store, "leaf", at=dispatched_at + offset)
+    second = ENG.advance(
+        repo,
+        "adaptive-live",
+        liveness_processor=ENG.production_liveness_processor(now=lambda: dispatched_at + 65.0),
+    )
+    ticks = [t for t in second.liveness if t.get("adaptive")]
+    assert ticks, "adaptive projection missing from the advance liveness record"
+    assert ticks[-1]["stalled"] == []
+    adaptive = ticks[-1]["adaptive"]["leaf"]
+    assert adaptive["classification"] == "healthy"
+    assert adaptive["terminal_authority"] == "none"
+    assert adaptive["sample_count"] == 6
+    assert adaptive["phi"] is not None and 0.0 <= adaptive["phi"] <= 16.0
 
 
 def test_a_pure_parallel_fan_out_beats_one_thread(tmp_path: Path) -> None:

@@ -73,6 +73,15 @@
         ]
       },
       {
+        "matcher": "SendMessage",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/liveness_reping_hook.py\""
+          }
+        ]
+      },
+      {
         "matcher": "Write|Edit|MultiEdit|NotebookEdit",
         "hooks": [
           {
@@ -143,6 +152,15 @@
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/lease_lifecycle_hook.py\""
           }
         ]
+      },
+      {
+        "matcher": "SendMessage",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/liveness_reping_hook.py\""
+          }
+        ]
       }
     ],
     "PostToolUseFailure": [
@@ -152,6 +170,15 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/lease_lifecycle_hook.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "SendMessage",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/liveness_reping_hook.py\""
           }
         ]
       }

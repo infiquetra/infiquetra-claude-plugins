@@ -5097,11 +5097,13 @@ release, retry, or delete.
 - **KTD1 - five intervals select adaptive scoring; sparse history keeps fixed behavior.** Outcome
   absolute timeout and no-budget opt-out remain unchanged.
 - **KTD2 - phi 8 is a configurable suspicion threshold, not a magic terminal.** An armed trusted
-  transport may use recent scoped artifact progress or a host-correlated acknowledgment to refute it
-  and three unacknowledged probes to confirm it. An Outcome backend without that transport keeps its
-  exact fixed-gap terminal and treats phi as advisory.
-- **KTD3 - artifact progress is a changed digest of disjoint declared paths.** Whole-tree change,
-  pointer epoch, mtime, and chat activity do not count; overlap falls back to heartbeat-only.
+  transport may use exclusively attributed artifact progress or a host-correlated acknowledgment to
+  refute it and three receipt-proven, unacknowledged re-pings to confirm it. An Outcome backend
+  without that transport keeps its exact fixed-gap terminal and treats phi as advisory.
+- **KTD3 - a changed scoped digest proves activity, not resident progress.** Whole-tree change,
+  pointer epoch, mtime, and chat activity do not count. Even disjoint declared paths remain
+  `scoped-activity-unattributed` unless a trusted exclusive-provenance receipt binds the exact
+  subject, lease/fence, paths, digest interval, custody, and covered generations.
 - **KTD4 - an idle acknowledgment proves consumption, never output delivery.** The #351 complete
   worker manifest remains the delivery ACK.
 - **KTD5 - notice/re-ping state is projected from append-only facts.** No mutable queue, status file,

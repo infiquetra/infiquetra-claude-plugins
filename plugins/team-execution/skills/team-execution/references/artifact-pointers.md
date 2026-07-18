@@ -88,6 +88,16 @@ stages untracked files (`git add -A` under a temp index), so newly-added files a
 would omit ARE visible here. Pointerization therefore never shows a receiver *less* than inlining
 would — the invariant is "never less than inline," not byte-for-byte identical.
 
+## Liveness observations are not artifact pointers
+
+`artifact_pointer.py liveness-baseline` and `liveness-observe` reuse the temporary-index custody
+pattern but intentionally create no holding ref or CAS entry. They hash only the resident's declared
+paths and return `unchanged`, `scoped-activity-unattributed`, or `artifact-progress`. A changed digest
+never proves authorship, even when worker scopes are disjoint. `artifact-progress` requires an exact
+`liveness.exclusive-provenance.v1` receipt binding the subject, live lease/fence, paths, both digests,
+observation interval, custody, and covered generation IDs. Pointer epoch, mtime, chat activity, and
+the ordinary snapshot command are not liveness progress evidence.
+
 ## KTD7 fallback — capability-keyed degradation
 
 Git-object pointers only resolve for a receiver that shares the parent repo's `.git/objects` —

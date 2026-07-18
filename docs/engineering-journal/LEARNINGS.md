@@ -27,6 +27,29 @@
 
 ## 2026-07-18
 
+### The pre-push gate silently outgrew its own timeout {#pre-push-gate-timeout-358}
+
+**Context.** Pushing a green docs-only commit from the outcome worktree was blocked repeatedly by
+the saga pre-push gate reporting `pytest ... timed out after 300 s`.
+**Evidence.** A direct timed run of the gate's exact step (`uv run python -m pytest`) measured
+303.73 s wall (4774 passed, 1 skipped, exit 0); the hook's `subprocess.run(..., timeout=300)` in
+`plugins/saga/hooks/pre_push_gate_hook.py:98` is a hard per-step ceiling. The same suite with
+`--no-cov` measured 224 s. Earlier same-day pushes passed — the suite sat within seconds of the
+ceiling, so outcomes flipped on machine load.
+**Mechanism.** The suite's runtime grows with every shipped leaf while the hook timeout is a fixed
+constant, and the gate reports a timeout with the same message shape as a real test failure — so a
+green tree reads as "fix failing tests". Coverage instrumentation (`--cov` in `addopts`) was ~35%
+of wall time, and the gate never asserted on coverage.
+**Fix.** The gate manifest's pytest step now runs `-q --no-cov` (same tests, no coverage
+instrumentation); CI keeps the full coverage configuration.
+**Generalizable rule.** A time-bounded gate needs headroom monitoring: when a gate step's normal
+runtime crosses ~80% of its hard timeout, treat it as a defect in the gate, not noise — and make
+timeout failures visually distinct from real failures.
+
+**Refs.** `tools/gate-manifest.json`, `plugins/saga/hooks/pre_push_gate_hook.py:98`.
+
+---
+
 ### A fail-closed test can pass through the wrong guard {#wrong-guard-fail-closed-357}
 
 **Context.** The six-lens review of the #357 liveness engine probed clock-rollback handling.

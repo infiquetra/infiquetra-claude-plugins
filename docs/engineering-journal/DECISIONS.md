@@ -1,5 +1,42 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-07-18
+
+### Recovery accounting is counted at the source, not inferred from ledger diffs {#count-at-source-vs-point-fix-358}
+
+**Decision.** `recover()`'s per-run budget charge and durable `actions_taken` evidence come from a
+`ReclaimStats` object that `reclaim_all` increments at the result-landed site inside the per-run
+reclaim lock, readable by the caller even when the call raises mid-flight. The before/after ledger
+differential (`_count_budgeted_results`) is deleted, not repaired. The counted number keeps its
+established definition — budgeted results this call landed — so the mechanism swap is
+behavior-preserving for every previously reviewed accounting semantic.
+
+**Rationale.** Four remediation cycles guarded the differential instrument and each next review
+found a new corner, because the instrument inherits the failure modes of the shared, durable,
+failable store it reads: it can fail independently (r3), diff against a baseline nobody measured
+(r4), and attribute a concurrent racer's writes to the measuring pass (reproduced 2026-07-18,
+present since birth, unreachable by any guard). An in-memory increment at the action site has none
+of these modes — the defect classes become unrepresentable rather than guarded, and the loop body's
+accounting branch matrix collapses from 16 corners to 4, which is small enough to enumerate
+exhaustively in tests.
+
+**Rejected.** (a) The lens-converged point fix (baseline-measured flag): correct for the r4
+fabrication but leaves the misattribution race open and keeps two failable reads plus their guard
+machinery — round 5 would be entitled to a finding of the same class round 4 produced. (b) Widening
+the reclaim lock to cover `recover()`'s measurement bracket: fixes attribution but keeps the other
+failure modes and complicates the lock's lifecycle. (c) Charging on adapter *invocation* rather
+than result-landed: more conservative under a raise, but silently changes reviewed budget semantics
+(`test_error_path_does_not_charge_unspent_budget`) for no defect-closing gain.
+
+**Revisit when.** A second caller needs cross-process or cross-crash action accounting (stats is
+per-call, in-memory by design — a durable counter would reopen the shared-store questions), or
+`reclaim_all` grows action kinds whose budget semantics differ from result-landed.
+
+**Refs.** Issue #358; LEARNINGS `{#count-at-source-358}`; `plugins/saga/scripts/team_teardown.py`
+(`ReclaimStats`, `_reclaim_all_locked`, `recover`); `TestRecoveryAccountingAtSource`.
+
+---
+
 ## 2026-07-17
 
 ### Lease-bound outcome worktrees have one teardown authority {#lease-bound-worktree-teardown-356}

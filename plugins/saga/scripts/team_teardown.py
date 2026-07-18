@@ -702,9 +702,11 @@ def open_run(
 
 
 # Reason codes only the driver itself may write into a resource-result fact. The
-# crash-reconcile literal is budget-exempt in _count_budgeted_results, so an adapter
-# outcome carrying it would impersonate driver bookkeeping and dodge the recovery
-# budget — validated() refuses the whole set from the adapter surface.
+# recovery budget is counted at the source (ReclaimStats increments only in the
+# adapter action loop, never in the crash-reconcile loop), so the exemption cannot
+# be spoofed through the budget — but an adapter outcome carrying a reserved code
+# would still impersonate driver bookkeeping in the durable evidence, so
+# validated() refuses the whole set from the adapter surface.
 _RECOVERED_AFTER_CRASH = "recovered-after-crash"
 _DRIVER_RESERVED_REASON_CODES = frozenset({_RECOVERED_AFTER_CRASH})
 
@@ -772,6 +774,21 @@ class ReclaimAdapters:
         if selected is None:
             return _retain(f"unknown-action:{action}")
         return selected
+
+
+@dataclass
+class ReclaimStats:
+    """Per-call accounting a caller reads even when :func:`reclaim_all` raises mid-flight.
+
+    ``actions_taken`` counts the budgeted actions THIS call completed (adapter invoked
+    and its result fact landed), incremented at the source inside the per-run guard.
+    Callers that need the count on the raise path pass an instance in; inferring it
+    afterwards from ledger snapshots is exactly the differential instrument that
+    fabricated baselines, inherited ledger failures, and charged concurrent racers'
+    work to the wrong pass.
+    """
+
+    actions_taken: int = 0
 
 
 def request(
@@ -851,6 +868,7 @@ def reclaim_all(
     at_provider: Callable[[], str],
     max_actions: int | None = None,
     dry_run: bool = False,
+    stats: ReclaimStats | None = None,
 ) -> dict[str, Any]:
     """The idempotent Step B8 driver (R3/R4): close, snapshot, act, re-reconcile, receipt.
 
@@ -862,7 +880,9 @@ def reclaim_all(
     retained/failed keys. Repeated calls converge by stable action keys; concurrent
     physical passes for one run serialize on :func:`_reclaim_guard` so each logical action
     invokes its adapter once. ``dry_run`` projects without closing, acting, or appending —
-    census evidence, never completion.
+    census evidence, never completion. ``stats`` receives this call's budgeted action
+    count as it accrues — crash-orphan reconciles never increment it, and it stays
+    readable when the call raises mid-flight.
     """
 
     if dry_run:
@@ -878,6 +898,7 @@ def reclaim_all(
             terminal_reason=terminal_reason,
             at_provider=at_provider,
             max_actions=max_actions,
+            stats=stats if stats is not None else ReclaimStats(),
         )
         if projection["completion_fact_ref"] is not None:
             # Completion is final: every later pass short-circuits read-only on the
@@ -898,6 +919,7 @@ def _reclaim_all_locked(
     terminal_reason: str,
     at_provider: Callable[[], str],
     max_actions: int | None,
+    stats: ReclaimStats,
 ) -> dict[str, Any]:
     # A completed teardown is final: a repeated physical entry converges to the recorded
     # receipt without re-opening the state machine (R3 — once logically). Checked under
@@ -952,9 +974,12 @@ def _reclaim_all_locked(
             ),
         )
 
-    actions_taken = 0
+    # The budgeted-action count lives on `stats`, not a local: the caller's accounting
+    # must survive a mid-flight raise, and counting at the source — inside the guard,
+    # only in THIS loop — is what keeps the crash-reconcile loop above budget-exempt
+    # by construction.
     for key in sorted(present_keys):
-        if max_actions is not None and actions_taken >= max_actions:
+        if max_actions is not None and stats.actions_taken >= max_actions:
             break
         last = results.get(key)
         if last is not None and str(last.get("disposition")) in FINAL_DISPOSITIONS:
@@ -995,7 +1020,7 @@ def _reclaim_all_locked(
                 reason_code=outcome.reason_code,
             ),
         )
-        actions_taken += 1
+        stats.actions_taken += 1
 
     final = read_decision_input(ledger, broker)
     final_run = _run_records(final.ledger_records, team_run_id)
@@ -1395,26 +1420,6 @@ def production_adapters(
     )
 
 
-def _count_budgeted_results(ledger: run_ledger.RunLedger, broker: Any, team_run_id: str) -> int:
-    """Results that consumed the recovery action budget: real adapter invocations only.
-
-    Crash-orphan reconcile results (``recovered-after-crash``) are ledger bookkeeping over
-    already-gone resources — unbounded by ``max_actions`` by design — and must not drain
-    the cross-run budget, or one crashed run's backlog starves every newer run's recovery.
-    The exemption cannot be spoofed: :meth:`ActionOutcome.validated` refuses every
-    driver-reserved reason code from the adapter surface.
-    """
-
-    return len(
-        [
-            rec
-            for rec in _run_records(read_decision_input(ledger, broker).ledger_records, team_run_id)
-            if rec.get("event") == "resource-result"
-            and rec.get("reason_code") not in _DRIVER_RESERVED_REASON_CODES
-        ]
-    )
-
-
 def _observe_recovery(
     ledger: run_ledger.RunLedger,
     *,
@@ -1467,9 +1472,10 @@ def recover(
     run that still holds a live-derived lease — a crashed coordinator's leases derive
     ``expired`` after TTL, and only then does recovery act. An observation fact is
     appended per run even when nothing was safe to reclaim. Per-run isolation is total:
-    the pass body AND its own bookkeeping (budget recount, observation append) degrade
-    to the run's pass entry on failure, so no single run's broken ledger view or broker
-    record can abort the loop and starve every later run.
+    the pass body degrades to the run's pass entry on failure, and the budget charge is
+    counted at the source (:class:`ReclaimStats`, inside the per-run guard) rather than
+    inferred from ledger snapshots — accounting has no failable read of its own, so the
+    only degradable bookkeeping left is the observation append (``evidence_error``).
     """
 
     if max_actions < 0:
@@ -1520,11 +1526,10 @@ def recover(
         # it must never head-of-line block recovery of every newer open run. The broker's
         # own error family (LeaseBrokerError et al.) is not TeardownError, so the net is
         # deliberately wide; the observation append records the type as the evidence.
-        before = 0
+        stats = ReclaimStats()
         run_error: str | None = None
         projection: dict[str, Any] | None = None
         try:
-            before = _count_budgeted_results(ledger, broker, run_id)
             projection = reclaim_all(
                 ledger,
                 broker,
@@ -1534,23 +1539,17 @@ def recover(
                 terminal_reason="recovered-crash",
                 at_provider=at_provider,
                 max_actions=budget,
+                stats=stats,
             )
         except Exception as exc:  # noqa: BLE001 - one run's failure is evidence, not a pass abort
             run_error = type(exc).__name__
-        # The bookkeeping is itself best-effort: a SECOND ledger/broker failure while
-        # counting or recording run A's evidence must degrade to the pass entry, never
-        # abort the loop. An uncountable run charges zero — the budget is a liveness
-        # ceiling, not a safety bound (every action re-enters reclaim_all's own guards,
-        # and the reclaim call above was already capped at the remaining budget), so
-        # starving later runs over a broken count would recreate the very head-of-line
-        # defect this isolation exists to prevent; ``evidence_error`` marks the count
-        # as unverified.
-        evidence_error: str | None = None
-        try:
-            taken = min(budget, max(0, _count_budgeted_results(ledger, broker, run_id) - before))
-        except Exception as count_exc:  # noqa: BLE001 - degraded bookkeeping, reported in-memory
-            evidence_error = type(count_exc).__name__
-            taken = 0
+        # Counted at the source: reclaim_all increments `stats` at each budgeted action,
+        # under the per-run guard, so the charge is exact for THIS call even when the
+        # pass raised mid-flight. It is never inferred from before/after ledger
+        # snapshots — a differential read can fail independently, lacks a baseline when
+        # its first read fails, and attributes a concurrent racer's results to this
+        # pass; an in-memory increment can do none of those.
+        taken = min(budget, stats.actions_taken)
         budget -= taken
         entry = {"team_run_id": run_id, "actions_taken": taken}
         if run_error is None and projection is not None:
@@ -1571,10 +1570,8 @@ def recover(
             actions_taken=taken,
             reason_code=reason_code,
         )
-        if evidence_error is None:
-            evidence_error = lost
-        if evidence_error is not None:
-            entry["evidence_error"] = evidence_error
+        if lost is not None:
+            entry["evidence_error"] = lost
         passes.append(entry)
     return {
         "schema": TEARDOWN_SCHEMA,

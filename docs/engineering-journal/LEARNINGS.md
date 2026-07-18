@@ -27,6 +27,52 @@
 
 ## 2026-07-18
 
+### A guarded instrument inherits every failure mode of what it reads — measure at the source {#count-at-source-358}
+
+**Context.** Four ceremony cycles judged four successive fixes to `recover()`'s per-run
+accounting inadequate on the same seam, tripping the three-cycle halt. The pre-cycle-4
+deep dive asked the structural question: are we patching guards around a mechanism that
+cannot be guarded into correctness?
+**Evidence.** Lineage `39ab2ca0` (instrument born in U4) → `148ecb50` (r1) → `0271ecdf`
+(r2) → `7dd5789c` (r3), each next round finding a *different-looking* flaw (exception
+family → unguarded handler → fabricated baseline) at the same address. Decisive new
+evidence: a misattribution race reproduced empirically outside the ceremony — the
+before/after diff-count window is wider than the per-run flock (the counts run in
+`recover()`, the lock lives inside `reclaim_all`), so a concurrent operator teardown's
+released lease was charged to `recover()`'s pass: durable observation `actions_taken: 1`
+for a pass that took zero actions, no `evidence_error`, budget debited — with every read
+succeeding. Present in every version since U4; unreachable by the lens-converged point
+fix (the baseline *was* measured). Pinned as
+`test_racer_results_are_not_charged_to_the_recover_pass`.
+**Mechanism.** The instrument inferred "actions this call took" by differencing two
+snapshots of a shared, durable, failable ledger taken outside the lock. It therefore
+inherited the ledger's failure modes (hence r1–r3's guards), required a baseline that may
+not exist (hence r4's fabrication), and counted every writer's facts, not its own (the
+misattribution). Guards address none of that; each remediation guarded one more corner
+and the shape regenerated the next.
+**Fix.** Counted at the source (cycle-4 commit on `work/358-non-skippable-teardown`):
+`ReclaimStats` incremented where `_reclaim_all_locked` already counted internally —
+result-landed site, inside the per-run guard — and read by `recover()` even on the raise
+path. Both ledger count calls and `_count_budgeted_results` deleted; the loop body's
+failure surface drops from four failable operations to two; the accounting branch matrix
+collapses 16 → 4, enumerated exhaustively in `test_recovery_entry_branch_matrix`.
+**Validation.** Full suite 5008/0/1 green with **zero behavioral-test edits** — every
+pre-existing accounting test held under the mechanism swap (the number's definition is
+unchanged: budgeted results this call landed), and 8 new tests pin the reshaped surface.
+**What surprised.** Five defects presenting as three unrelated flaw categories, and the
+decisive one invisible to four adversarial review rounds — every round was asked to judge
+the guards, so no round questioned the instrument they guarded.
+**Generalizable rule.** When successive fixes to one seam keep failing review for
+different-looking reasons, stop patching and name the instrument the guards protect: a
+measurement that reads shared failable state needs guards; a measurement that observes
+its own actions needs none. Prefer making the defect class unrepresentable over guarding
+it — especially when the unrepresentable version is also less code.
+**Refs.** Narrows the fix half of [[#recovery-isolation-total-358]] (its rule stands);
+DECISIONS `{#count-at-source-vs-point-fix-358}`;
+`plugins/saga/scripts/team_teardown.py` (`ReclaimStats`, `recover`).
+
+---
+
 ### Per-run isolation is only total when the failure handler guards its own bookkeeping {#recovery-isolation-total-358}
 
 **Context.** #358 `recover()` isolates each run's reclaim pass so one broken run cannot
@@ -47,6 +93,10 @@ observation-append failure to the run's in-memory pass entry (`evidence_error`),
 budget recount failure charges zero (the budget is a liveness ceiling, not a safety
 bound — every action re-enters `reclaim_all`'s own guards), and the loop always reaches
 the next run. Pinned by `TestRecoveryEvidenceBestEffort`.
+**Superseded in part (cycle 4, same day).** The recount half of this fix guarded an
+instrument that could not be guarded into correctness; the recount was deleted entirely
+in favor of counting at the source — see [[#count-at-source-358]]. The rule below and
+the observation-append half stand.
 **Generalizable rule.** When a loop promises per-item isolation, audit the handler and
 every skip branch for calls into the failing subsystem — recording evidence about a
 broken store through the broken store must degrade, never raise, or the isolation

@@ -1957,46 +1957,11 @@ class TestRecoveryIsolationBrokerErrors:
 
 
 class TestRecoveryEvidenceBestEffort:
-    """Round-3 CONC-1-R3-1: per-run isolation is total — a SECOND ledger/broker failure
-    while counting or recording one run's evidence degrades to that run's pass entry
-    and never aborts the batch."""
-
-    def test_secondary_count_failure_does_not_abort_batch(
-        self, ledger: Any, broker: Any, monkeypatch: Any
-    ) -> None:
-        _open(ledger, broker, run_id="team-run-a")
-        _acquire(broker, owner="team-run-a", session="session-a", resource="u-a")
-        _open(ledger, broker, run_id="team-run-b")
-        _acquire(broker, owner="team-run-b", session="session-b", resource="u-b")
-        real_count = TT._count_budgeted_results
-
-        def _corrupt_for_a(ledger_arg: Any, broker_arg: Any, team_run_id: str) -> int:
-            if team_run_id == "team-run-a":
-                raise RL.RunLedgerError("malformed ledger line")
-            return int(real_count(ledger_arg, broker_arg, team_run_id))
-
-        monkeypatch.setattr(TT, "_count_budgeted_results", _corrupt_for_a)
-        outcome = TT.recover(
-            ledger,
-            broker,
-            TT.production_adapters(broker),
-            subplot_id=SUB,
-            expired_only=False,
-            max_actions=4,
-            at_provider=_ats(),
-        )
-        by_run = {entry["team_run_id"]: entry for entry in outcome["recovered_runs"]}
-        assert by_run["team-run-a"]["error"] == "RunLedgerError"
-        assert by_run["team-run-a"]["evidence_error"] == "RunLedgerError"
-        assert by_run["team-run-a"]["actions_taken"] == 0
-        assert by_run["team-run-b"]["complete"] is True
-        codes = {
-            r["team_run_id"]: r["reason_code"]
-            for r in RL.read_facts(ledger)
-            if r.get("event") == "recovery-observation"
-        }
-        assert codes["team-run-a"] == "recovery-run-error:RunLedgerError"
-        assert codes["team-run-b"] == "recovery-pass"
+    """Round-3 CONC-1-R3-1: evidence recording is best-effort — a ledger that refuses
+    one run's recovery observation degrades to that run's pass entry and never aborts
+    the batch. (The round-3 counting half of this class is gone with the differential
+    instrument itself: budget accounting no longer reads the ledger at all — see
+    TestRecoveryAccountingAtSource.)"""
 
     def test_observation_append_failure_does_not_abort_batch(
         self, ledger: Any, broker: Any, monkeypatch: Any
@@ -2036,6 +2001,198 @@ class TestRecoveryEvidenceBestEffort:
         }
         assert "team-run-a" not in codes
         assert codes["team-run-b"] == "recovery-pass"
+
+
+class TestRecoveryAccountingAtSource:
+    """Cycle-4 structural fix (ARCH-R4-1 / CONC-R4-1): the recovery budget and the
+    durable ``actions_taken`` evidence are counted at the source — ``ReclaimStats``
+    incremented inside the per-run guard — never inferred from before/after ledger
+    snapshots. A differential read can fail independently, lacks a baseline when its
+    first read fails, and attributes a concurrent racer's results to this pass; an
+    in-memory increment can do none of those."""
+
+    def test_racer_results_are_not_charged_to_the_recover_pass(
+        self, ledger: Any, broker: Any, monkeypatch: Any
+    ) -> None:
+        # The regression that halted the ceremony's diff-count design: a concurrent
+        # operator teardown wins the per-run lock and completes while recover()'s own
+        # pass waits, then recover() short-circuits on the receipt with ZERO actions.
+        # The wrapper renders that interleaving in-process; both reclaim calls are real.
+        _open(ledger, broker, run_id="team-run-a")
+        _acquire(broker, owner="team-run-a", session="session-a", resource="u-a")
+        real_reclaim = TT.reclaim_all
+        racer_ran = {"flag": False}
+
+        def _racer_wins_the_lock_first(
+            ledger_arg: Any, broker_arg: Any, adapters_arg: Any, **kwargs: Any
+        ) -> Any:
+            if not racer_ran["flag"]:
+                racer_ran["flag"] = True
+                real_reclaim(
+                    ledger_arg,
+                    broker_arg,
+                    adapters_arg,
+                    subplot_id=SUB,
+                    team_run_id=kwargs["team_run_id"],
+                    terminal_reason="operator-abort",
+                    at_provider=_ats(),
+                )
+            return real_reclaim(ledger_arg, broker_arg, adapters_arg, **kwargs)
+
+        monkeypatch.setattr(TT, "reclaim_all", _racer_wins_the_lock_first)
+        outcome = TT.recover(
+            ledger,
+            broker,
+            TT.production_adapters(broker),
+            subplot_id=SUB,
+            expired_only=False,
+            max_actions=4,
+            at_provider=_ats(),
+        )
+        entry = outcome["recovered_runs"][0]
+        assert entry["complete"] is True
+        assert entry["actions_taken"] == 0
+        assert "evidence_error" not in entry
+        observation = [
+            r for r in RL.read_facts(ledger) if r.get("event") == "recovery-observation"
+        ][-1]
+        assert observation["actions_taken"] == 0
+        assert observation["reason_code"] == "recovery-pass"
+
+    def test_mid_flight_raise_still_reports_actions_taken_before_the_abort(
+        self, ledger: Any, broker: Any
+    ) -> None:
+        # The one genuine strength of the old differential design, preserved: when the
+        # pass aborts mid-flight, actions already completed by THIS call are still
+        # charged and recorded — stats survives the raise.
+        _open(ledger, broker, run_id="team-run-a")
+        for index in range(2):
+            _acquire(broker, owner="team-run-a", session="session-a", resource=f"u-a{index}")
+        production = TT.production_adapters(broker)
+        calls = {"count": 0}
+
+        def _second_release_raises(lease: Any) -> Any:
+            calls["count"] += 1
+            if calls["count"] == 2:
+                raise TT.TeardownError("terminal refused mid-flight")
+            return production.lease_release(lease)
+
+        outcome = TT.recover(
+            ledger,
+            broker,
+            TT.ReclaimAdapters(lease_release=_second_release_raises),
+            subplot_id=SUB,
+            expired_only=False,
+            max_actions=4,
+            at_provider=_ats(),
+        )
+        entry = outcome["recovered_runs"][0]
+        assert entry["error"] == "TeardownError"
+        assert entry["actions_taken"] == 1
+        observation = [
+            r for r in RL.read_facts(ledger) if r.get("event") == "recovery-observation"
+        ][-1]
+        assert observation["actions_taken"] == 1
+        assert observation["reason_code"] == "recovery-run-error:TeardownError"
+
+    @pytest.mark.parametrize(
+        ("expired_only", "max_actions", "skipped"),
+        [(True, 4, "live-owner"), (False, 0, "budget")],
+    )
+    def test_skip_branch_observation_refusal_degrades_to_evidence_error(
+        self,
+        ledger: Any,
+        broker: Any,
+        monkeypatch: Any,
+        expired_only: bool,
+        max_actions: int,
+        skipped: str,
+    ) -> None:
+        _open(ledger, broker, run_id="team-run-a")
+        _acquire(broker, owner="team-run-a", session="session-a", resource="u-a")
+        real_append = TT.append_teardown_event
+
+        def _refuse_observations(ledger_arg: Any, fact: Any) -> Any:
+            if fact.get("event") == "recovery-observation":
+                raise RL.RunLedgerError("observation refused")
+            return real_append(ledger_arg, fact)
+
+        monkeypatch.setattr(TT, "append_teardown_event", _refuse_observations)
+        outcome = TT.recover(
+            ledger,
+            broker,
+            TT.production_adapters(broker),
+            subplot_id=SUB,
+            expired_only=expired_only,
+            max_actions=max_actions,
+            at_provider=_ats(),
+        )
+        entry = outcome["recovered_runs"][0]
+        assert entry["skipped"] == skipped
+        assert entry["actions_taken"] == 0
+        assert entry["evidence_error"] == "RunLedgerError"
+
+    @pytest.mark.parametrize("observation_refused", [False, True])
+    @pytest.mark.parametrize("run_raises", [False, True])
+    def test_recovery_entry_branch_matrix(
+        self,
+        ledger: Any,
+        broker: Any,
+        monkeypatch: Any,
+        run_raises: bool,
+        observation_refused: bool,
+    ) -> None:
+        # The loop body's whole failure surface after the reshape: the reclaim call and
+        # the observation append. Two axes, four corners — exhaustively enumerated here,
+        # which is the point of deleting the differential instrument's other twelve.
+        _open(ledger, broker, run_id="team-run-a")
+        _acquire(broker, owner="team-run-a", session="session-a", resource="u-a")
+        production = TT.production_adapters(broker)
+
+        def _release(lease: Any) -> Any:
+            if run_raises:
+                raise TT.TeardownError("refused at action time")
+            return production.lease_release(lease)
+
+        if observation_refused:
+            real_append = TT.append_teardown_event
+
+            def _refuse(ledger_arg: Any, fact: Any) -> Any:
+                if fact.get("event") == "recovery-observation":
+                    raise RL.RunLedgerError("observation refused")
+                return real_append(ledger_arg, fact)
+
+            monkeypatch.setattr(TT, "append_teardown_event", _refuse)
+
+        outcome = TT.recover(
+            ledger,
+            broker,
+            TT.ReclaimAdapters(lease_release=_release),
+            subplot_id=SUB,
+            expired_only=False,
+            max_actions=4,
+            at_provider=_ats(),
+        )
+        entry = outcome["recovered_runs"][0]
+        observations = [
+            r for r in RL.read_facts(ledger) if r.get("event") == "recovery-observation"
+        ]
+        assert entry["actions_taken"] == (0 if run_raises else 1)
+        if run_raises:
+            assert entry["error"] == "TeardownError"
+            assert "complete" not in entry
+        else:
+            assert entry["complete"] is True
+            assert "error" not in entry
+        if observation_refused:
+            assert entry["evidence_error"] == "RunLedgerError"
+            assert observations == []
+        else:
+            assert "evidence_error" not in entry
+            assert observations[-1]["actions_taken"] == entry["actions_taken"]
+            assert observations[-1]["reason_code"] == (
+                "recovery-run-error:TeardownError" if run_raises else "recovery-pass"
+            )
 
 
 class TestReclaimGuardLifecycle:

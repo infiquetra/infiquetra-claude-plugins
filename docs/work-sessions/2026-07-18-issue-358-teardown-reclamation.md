@@ -190,10 +190,65 @@ seven broker fence sites tested; intent replay, reclaim mutex, guard lifecycle,
 reserved reason codes, and the fence-site tests all judged adequate. The only open
 thread is `recover()`'s budget/evidence bookkeeping.
 
+## Cycle 4 — structural fix, operator-authorized (commit follows this section)
+
+**Halt resolution.** Before authorizing, the operator asked for a from-zero deep dive and
+a re-evaluation of whether the lens-converged point fix was itself another bounce.
+Deep-dive artifact published (illustrated report: system, lineage, defect traces,
+diagnosis). The re-evaluation found decisive new evidence: a **misattribution race**
+present since the instrument's birth in U4 (`39ab2ca0`) and unreachable by the point fix
+— `recover()`'s before/after counts run outside the per-run flock (the lock lives inside
+`reclaim_all`), so a concurrent operator teardown that wins the lock has its released
+lease charged to the recovery pass: durable observation `actions_taken: 1`,
+`reason_code: recovery-pass`, no `evidence_error`, budget debited — for a pass that took
+zero actions, with every read succeeding. Reproduced empirically (scratchpad probe, 1
+passed) before any code changed. That made five defects across four rounds sharing one
+mechanism: the differential measurement itself. **Jeff authorized cycle 4 as the
+structural fix ("Authorized", 2026-07-18) in place of the point fix.**
+
+**The fix — counted at the source.** `reclaim_all` already counted its own actions
+internally and discarded the number; now it reports it. New `ReclaimStats` dataclass;
+`reclaim_all(..., stats=)` optional keyword (no other call site changes);
+`_reclaim_all_locked` writes its existing counter through `stats` (increment stays at
+the result-landed site, so the charged number keeps its reviewed definition — budgeted
+results this call landed — and every pre-existing accounting test holds unmodified).
+`recover()` charges `min(budget, stats.actions_taken)`; both ledger count calls, the
+baseline machinery, and `_count_budgeted_results` are deleted. `evidence_error` now
+means exactly one thing: the observation append was refused. Docstrings and the
+driver-reserved comment updated — the budget exemption is now by construction (the
+crash-reconcile loop never increments), with `validated()`'s refusal retained as
+evidence-integrity defense.
+
+**Round-4 finding disposition.**
+- ARCH-R4-1 / CONC-R4-1 (fabricated baseline): unrepresentable — no baseline exists.
+- Misattribution race (found in the pre-cycle-4 deep dive): unrepresentable — each call
+  counts only its own loop, under its own lock. Pinned as
+  `test_racer_results_are_not_charged_to_the_recover_pass`.
+- TST-FRESH-1 (after-count-only failure corner): the corner no longer exists; its
+  structural replacement `test_mid_flight_raise_still_reports_actions_taken_before_the_abort`
+  pins the raise-path charge accuracy the old design bought with the diff.
+- TST-FRESH-2 (skip-branch `evidence_error` glue):
+  `test_skip_branch_observation_refusal_degrades_to_evidence_error` (both branches).
+- New `test_recovery_entry_branch_matrix` enumerates the collapsed 2×2 failure surface
+  (reclaim raise × observation refusal) exhaustively.
+
+**Tests reworked.** `test_secondary_count_failure_does_not_abort_batch` deleted with its
+instrument (it monkeypatched `_count_budgeted_results`); `TestRecoveryEvidenceBestEffort`
+docstring narrowed to the observation half; new `TestRecoveryAccountingAtSource` class
+(8 test cases). File 119 passing (was 112).
+
+**Gate.** Full suite 5008/0/1 green (zero pre-existing behavioral tests edited); ruff
+check + format clean; mypy clean; bandit — no new findings (1 pre-existing High:
+`board_progression.py:56` SHA1, outside this diff; CI runs bandit non-blocking).
+
+**Journal.** LEARNINGS `{#count-at-source-358}` (+ superseded-in-part note on
+`{#recovery-isolation-total-358}`); DECISIONS `{#count-at-source-vs-point-fix-358}`;
+CHANGELOG 0.102.0 recover bullet rewritten for counted-at-source.
+
 ## Next step
 
-Operator decision: authorize remediation cycle 4 with the lens-converged patch
-(baseline-measured flag → uncountable charges zero + `evidence_error`; plus the two
-regression tests) and a fresh affected-lens re-run, or redirect (manual take-over or a
-structural redesign of `recover()`'s bookkeeping). Branch is unmerged; nothing ships
-while halted.
+Fresh re-run of the affected lenses (architecture + testing at opus/high,
+concurrency at sonnet/medium — devils-advocate, security, event-flow remain converged
+clean) against the cycle-4 commit, judging the round-4 findings' remediation and the
+reshaped accounting. Then, on convergence: workflow-integrity check, /code-review gate,
+/qa gate, ship ceremony under the standing merge approval.

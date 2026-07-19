@@ -1,5 +1,34 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-07-19
+
+### Fleet doctor is an independent cross-source auditor, never a shared projection {#fleet-doctor-independent-audit-353}
+
+**Decision.** `/fleet-doctor` (#353) reads the documented raw on-disk contracts of the #351/#355/
+#356/#357/#358 producers through its own strict, bounded, non-mutating readers and owns every join.
+It never imports the tolerant or mutating readers whose failure modes it audits
+(`outcome_worktrees`, `outcome_store`, `dispatch_settlement`, `team_teardown`, `reap_orphans`,
+`audit_store`, broker mutation APIs), and a mutation-import denylist test makes that executable.
+
+**Key sub-decisions (KTD1–KTD8 of the plan).** Absence, corruption, and incompleteness are three
+different verdicts — a corrupt file or capped scan exits 2 and can never degrade to an empty source
+and return clean (KTD2). An actual launch is never inferred from one spawn fact; `unledgered-spawn`
+requires an independently observed position (KTD3). Only canonical
+`.saga-worktrees/<outcome>/<subplot>` worktrees participate in the leak invariant — arbitrary
+developer worktrees are neither owned nor condemned (KTD4). `/delegation-audit` stays tolerant and
+advisory; the doctor is the strict tripwire beside it (KTD5). Exit 2 protects CI truth: findings and
+inability-to-prove-clean both block a green tripwire but stay distinct (KTD6). Real temporary
+Git/audit roots replace any test-only `--fixture` production surface (KTD7). One Saga release only —
+fleet-core and team-execution contracts are consumed, not modified (KTD8).
+
+**Rejected alternatives.** Reusing producer readers (inherits the exact failure modes under audit);
+a shared projection library (couples auditor and audited, single bug blinds both); a `--fixture`
+input contract (a second artificial schema to maintain); folding into `/delegation-audit` (breaks
+its tolerant advisory contract and its exit-code stability).
+
+**Revisit when.** A producer schema version advances (the source-matrix conformance test fails on
+drift and names the row), or a networked multi-host fleet view is needed (out of scope here).
+
 ## 2026-07-18
 
 ### Recovery accounting is counted at the source, not inferred from ledger diffs {#count-at-source-vs-point-fix-358}

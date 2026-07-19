@@ -47,9 +47,9 @@
 
 ## Checks run
 
-`uv run pytest tests/test_outcome_cross_runtime_contract.py` (94 passed at U5, 142 after the
-ceremony remediations), plus focused regression on `test_outcome_command` (40, incl. the
-rewritten R10 rejection oracle), `test_outcome_store`, `test_outcome_dispatcher`,
+`uv run pytest tests/test_outcome_cross_runtime_contract.py` (94 passed at U5, 102 after the
+ceremony remediations; 142 across the focused pair with `test_outcome_command`), plus focused
+regression on `test_outcome_command` (40, incl. the rewritten R10 rejection oracle), `test_outcome_store`, `test_outcome_dispatcher`,
 `test_saga_plugin` (45, version guards at 0.103.0). `ruff check` + `ruff format --check`,
 `mypy` clean on the changed modules; bandit carries only the house-baseline B404
 subprocess-import Low.
@@ -77,14 +77,14 @@ three).
 - **Remediation 1** `33d93550` — advance-one offers now require a non-empty dispatch id at the
   `offer_handoff` module boundary (reusing the closed `schema-field-type` code); attach modes
   argparse-mutually-exclusive; five new halt oracles → 39/39 halt-code coverage; contract doc
-  updated. Focused suites 141 passed; full gate green at `33d93550` (pytest 5109/0/1, all
-  steps).
+  updated. Focused pair (contract + `test_outcome_command`) 141 passed; full gate green at
+  `33d93550` (pytest 5109/0/1, all steps).
 - **Round 2** `wf_3ca79e79-90f` at `33d93550` — affected lenses (devils-advocate 95,
   architecture 95, testing 88) fresh. All seven r1 fixes adjudicated **fixed-adequately** at
   the byte level; testing recounted halt coverage 39/39 by AST-parsing every raise site. One
   new **P3**: the dispatch-id guard's negative scope (attend may omit) had no oracle.
 - **Remediation 2** `4ace6d80` — `test_attend_offer_permits_empty_dispatch_id` drives the full
-  attend offer success path with an empty dispatch id (142 passed).
+  attend offer success path with an empty dispatch id (focused pair 142 passed).
 - **Round 3** `wf_82f87b45-b16` at `4ace6d80` — testing lens fresh: **clean** (92), fix
   fixed-adequately with a mutation argument (an over-broadened guard would halt before
   identity resolution and turn the oracle red); no new raise sites, 39/39 preserved.

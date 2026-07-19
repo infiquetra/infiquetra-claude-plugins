@@ -23,7 +23,9 @@
 - `/outcome` verbs: `discover` (committed envelope), `handoff` (issuer offer under session
   admission), `attach` (read-only canonical status; `--advance` enters ONE one-subplot tick
   behind the validated handoff with revision + frontier re-checks; `--attend` derives the
-  native resume command after validation); halts exit 3 with the closed receipt.
+  native resume command after validation); halts exit 3 with the closed receipt; a fleet-broker
+  rejection (capacity, policy, registry) exits 1 with the standard structured error, never a
+  bare traceback.
 - Legacy `outcome-bundle/1` retired as an authority path (R10): `export` is a deprecated alias
   emitting the same `outcome.discovery.v1` bytes; `import` refuses every bundle with the exact
   `discover`/`attach` migration and writes nothing.

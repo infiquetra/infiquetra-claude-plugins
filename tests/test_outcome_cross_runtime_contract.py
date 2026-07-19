@@ -1050,6 +1050,51 @@ class TestCliVerbs:
         reference = OC.validate_handoff_reference(json.loads(result.stdout))
         assert reference["operation"] == "advance-one"
 
+    def test_cli_handoff_broker_rejection_is_structured(
+        self, outcome_repo: Path, tmp_path: Path
+    ) -> None:
+        # An ordinary broker rejection (capacity, policy, registry) is an operational error,
+        # not a compatibility halt: exit 1 with the standard structured stderr line, never a
+        # bare traceback.
+        broker_root = tmp_path / "cli-broker-full"
+        broker_root.mkdir(mode=0o700)
+        seed = LB.LeaseBroker(broker_root)
+        seed.acquire_agent(
+            owner_id="seed-occupant",
+            session_id="sess-cli",
+            policy_sha256="c" * 64,
+            session_limit=1,
+            aggregate_limit=4,
+            mutation="read-write",
+            resource_ref=OC.outcome_dispatch_resource(IDENTITY, OUTCOME_ID, SUBPLOT, 7),
+        )
+        result = _cli(
+            outcome_repo,
+            "handoff",
+            OUTCOME_ID,
+            SUBPLOT,
+            "--operation",
+            "advance-one",
+            "--dispatch-id",
+            "outcome:cli:frontier:demo",
+            "--session-id",
+            "sess-cli",
+            "--policy-sha256",
+            "c" * 64,
+            "--session-limit",
+            "1",
+            "--aggregate-limit",
+            "4",
+            "--broker-root",
+            str(broker_root),
+        )
+        assert result.returncode == 1
+        assert result.stdout == ""
+        assert "Traceback" not in result.stderr
+        err = json.loads(result.stderr)
+        assert err["ok"] is False
+        assert "CapacityExhaustedError" in err["error"]
+
     def test_cli_attach_advance_requires_handoff_flags(self, outcome_repo: Path) -> None:
         result = _cli(outcome_repo, "attach", OUTCOME_ID, "--advance")
         assert result.returncode == 1

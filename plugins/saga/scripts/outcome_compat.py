@@ -139,9 +139,9 @@ def _git(
     """Run one fixed-argv git command with the R12 timeout and output caps.
 
     Returns stdout (text by default, raw bytes when ``binary``). Any failure — git missing,
-    timeout, nonzero exit, output over cap — is a :class:`CompatibilityHaltError`; stderr is
-    truncated to its cap and never echoed into the receipt (only into the exception message
-    is avoided entirely — receipts stay redacted).
+    timeout, nonzero exit, output over cap — is a :class:`CompatibilityHaltError`. Output over
+    a cap is a ``git-output-cap`` HALT, never a truncation-to-clean, and stderr bytes are never
+    echoed into the receipt or the exception message — receipts stay redacted.
     """
     run = runner if runner is not None else subprocess.run
     try:

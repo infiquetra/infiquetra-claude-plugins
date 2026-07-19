@@ -39,7 +39,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 # Make sibling scripts importable when loaded by path (tests, CLI).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -1644,6 +1644,13 @@ def _cli_broker(broker_root: str | None) -> Any:
     )
 
 
+def _cli_broker_error() -> type[Exception]:
+    """The #356 broker's error root, resolved lazily so broker-free verbs never load fleet-core."""
+    import fleet_commons_shim
+
+    return cast("type[Exception]", fleet_commons_shim.load("lease_broker").LeaseBrokerError)
+
+
 def _cli_admission(args: Any) -> dict[str, Any]:
     """The session-admission snapshot (resolved by the caller, never invented here)."""
     values = {
@@ -2568,6 +2575,15 @@ def main(argv: list[str] | None = None) -> int:
             except outcome_compat.CompatibilityHaltError as halt:
                 print(json.dumps(halt.receipt()))
                 return 3
+            except _cli_broker_error() as exc:
+                # A broker rejection (capacity, policy, registry) is an operational failure of
+                # this clone's coordination authority, not a cross-runtime compatibility halt —
+                # exit 1 with the standard structured error, never a bare traceback.
+                print(
+                    json.dumps({"ok": False, "error": f"{type(exc).__name__}: {exc}"}),
+                    file=sys.stderr,
+                )
+                return 1
         elif args.command == "attend":
             if args.subplot_id:
                 print(attend(root, args.outcome_id, args.subplot_id))

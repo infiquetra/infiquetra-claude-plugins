@@ -420,7 +420,10 @@ def test_standalone_transcript_matching_no_bridge_reports_once(tmp_path: Path) -
 def test_real_proofs_directory_excludes_examples_and_sweeps_clean() -> None:
     """Examples stay documentation-only while shipped release proofs remain enforced."""
     proofs = cdp.load_proofs(REAL_PROOFS_DIR)
-    assert [proof.data["run_id"] for proof in proofs] == ["issue-355-genuine-20260717"]
+    assert [proof.data["run_id"] for proof in proofs] == [
+        "cmux-bypass-0.5.1-20260719",
+        "issue-355-genuine-20260717",
+    ]
     assert all("examples" not in proof.path.parts for proof in proofs)
     findings = cdp.sweep(_manifest(), proofs, base_dir=REAL_PROOFS_DIR)
     assert findings == [], [f.render() for f in findings]

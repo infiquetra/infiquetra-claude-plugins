@@ -1119,3 +1119,149 @@ def test_thirty_position_matrix_stable_and_exhaustive(repo: Path, stores: dict[s
         assert len(_find(first, classification)) == expected, classification
     assert first["counts"]["findings"] == 20
     assert FD.derive_exit(first) == 1
+
+
+# ------------------------------------------------------------------ U4: conformance
+
+
+import ast  # noqa: E402
+
+SAGA_PLUGIN = ROOT / "plugins" / "saga"
+
+_MUTATION_IMPORT_DENYLIST = {
+    "outcome_worktrees",
+    "outcome_store",
+    "outcome",
+    "outcome_compat",
+    "dispatch_settlement",
+    "team_teardown",
+    "reap_orphans",
+    "audit_store",
+    "run_ledger",
+    "lease_broker",
+    "fleet_commons_shim",
+    "orphan_evidence",
+    "delegation_audit",
+}
+_MUTATION_CALL_DENYLIST = {
+    "unlink",
+    "remove",
+    "removedirs",
+    "rename",
+    "replace",
+    "rmdir",
+    "mkdir",
+    "makedirs",
+    "rmtree",
+    "write_text",
+    "write_bytes",
+    "symlink_to",
+    "hardlink_to",
+    "link",
+    "symlink",
+    "touch",
+    "chmod",
+    "chown",
+    "quarantine",
+}
+
+
+def test_doctor_imports_no_producer_and_calls_no_mutation() -> None:
+    tree = ast.parse(FLEET_DOCTOR.read_text(encoding="utf-8"))
+    imported: set[str] = set()
+    called: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module.split(".")[0])
+        elif isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Attribute):
+                called.add(func.attr)
+            elif isinstance(func, ast.Name):
+                called.add(func.id)
+    assert imported & _MUTATION_IMPORT_DENYLIST == set()
+    assert called & _MUTATION_CALL_DENYLIST == set()
+    # The only file-open in the module is os.open with O_RDONLY; no write-mode open exists.
+    text = FLEET_DOCTOR.read_text(encoding="utf-8")
+    assert "O_RDONLY" in text
+    for write_mode in (
+        '"w"',
+        "'w'",
+        '"wb"',
+        "'wb'",
+        '"a"',
+        "'a'",
+        '"ab"',
+        "'ab'",
+        "O_WRONLY",
+        "O_RDWR",
+        "O_CREAT",
+        "O_APPEND",
+    ):
+        assert write_mode not in text, write_mode
+
+
+def test_source_matrix_doc_matches_module_and_scan(repo: Path, stores: dict[str, Path]) -> None:
+    doc = (SAGA_PLUGIN / "references" / "fleet-doctor-sources.md").read_text(encoding="utf-8")
+    doc_kinds = set()
+    for line in doc.splitlines():
+        if line.startswith("| ") and not line.startswith("| source kind") and "---" not in line:
+            cell = line.split("|")[1].strip()
+            if cell:
+                doc_kinds.add(cell)
+    assert doc_kinds == set(FD.SOURCE_KINDS)
+    report = _scan(repo, stores)
+    emitted = {source["kind"] for source in report["sources"]}
+    assert emitted == set(FD.SOURCE_KINDS)
+
+
+def test_cli_has_no_repair_or_fixture_surface(repo: Path) -> None:
+    for forbidden in ("--fix", "--reap", "--retry", "--watch", "--fixture"):
+        result = subprocess.run(
+            [sys.executable, str(FLEET_DOCTOR), forbidden],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode == 2, forbidden
+        assert "unrecognized arguments" in result.stderr, forbidden
+
+
+def test_command_doc_loads_exact_skill_and_script() -> None:
+    command = (SAGA_PLUGIN / "commands" / "fleet-doctor.md").read_text(encoding="utf-8")
+    assert "saga/skills/fleet-doctor/SKILL.md" in command
+    assert "plugins/saga/scripts/fleet_doctor.py" in command
+    skill = (SAGA_PLUGIN / "skills" / "fleet-doctor" / "SKILL.md").read_text(encoding="utf-8")
+    assert "references/fleet-doctor-sources.md" in skill
+    assert (SAGA_PLUGIN / "skills" / "fleet-doctor" / "SKILL.md").exists()
+    assert FLEET_DOCTOR.exists()
+
+
+def test_cli_full_fixture_no_write_with_findings(repo: Path, stores: dict[str, Path]) -> None:
+    # A findings-bearing scan (exit 1) writes nothing either — not just the clean path.
+    _managed_worktree(repo, "out-z", "sub-z")
+    _audit_run(stores, "run-z", manifest={"disposition": "ran-as-requested"})
+    before = _tree_snapshot(repo, stores["lease"], stores["audit"])
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(FLEET_DOCTOR),
+            "--repo-root",
+            str(repo),
+            "--lease-store",
+            str(stores["lease"]),
+            "--audit-store",
+            str(stores["audit"]),
+            "--format",
+            "json",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 1, result.stderr
+    parsed = json.loads(result.stdout)
+    assert parsed["counts"]["findings"] == 2
+    assert _tree_snapshot(repo, stores["lease"], stores["audit"]) == before

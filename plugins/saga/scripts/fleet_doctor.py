@@ -40,6 +40,18 @@ SCHEMA = "fleet_doctor_report.v1"
 
 DISEASES = ("leaked-resource", "unledgered-spawn", "receiptless-delegation", "evidence-error")
 
+# The closed source vocabulary. references/fleet-doctor-sources.md carries one matrix row per
+# kind and the conformance suite fails on drift in either direction (R9/U4).
+SOURCE_KINDS = (
+    "git-repo",
+    "run-facts",
+    "lease-registry",
+    "audit-store",
+    "git-worktrees",
+    "worktree-registries",
+    "outcome-dispatch-events",
+)
+
 # Bounded-input caps (R8). Hitting a cap is scan-incomplete and exit 2, never truncation-to-clean.
 MAX_STATE_BYTES = 8 * 1024 * 1024  # registry / single-state JSON
 MAX_ARTIFACT_BYTES = 1 * 1024 * 1024  # each audit or bundle artifact

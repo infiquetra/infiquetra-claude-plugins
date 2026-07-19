@@ -33,6 +33,11 @@
   every declared cap carries a tripping oracle; and the run-facts source verdict is named
   `verified-prefix` (trailing whole-record truncation is undetectable by design and is now
   documented as such).
+- Code-review remediations: the receiptless claim predicate covers the producer's full
+  disposition partition (`substituted-engine`/`unproven`/etc. now demand receipts;
+  conformance-pinned against `provenance_manifest.Disposition`; unknown dispositions warn),
+  the lease registry gains the source entry cap and a linear spawn-correlation index, and
+  dangling-registry existence checks no longer follow symlinks.
 
 ## [0.103.0] - 2026-07-18
 

@@ -1031,10 +1031,49 @@ def test_malformed_manifest_is_evidence_error(repo: Path, stores: dict[str, Path
 
 
 def test_fallback_without_receipt_is_not_receiptless(repo: Path, stores: dict[str, Path]) -> None:
-    _audit_run(stores, "run-5", manifest={"disposition": "fell-back-to-inline"})
+    _audit_run(stores, "run-5", manifest={"disposition": "fell-back-to-claude"})
     report = _scan(repo, stores)
     assert report["findings"] == []
+    assert report["warnings"] == []
     assert FD.derive_exit(report) == 0
+
+
+def test_substituted_engine_without_receipt_is_receiptless(
+    repo: Path, stores: dict[str, Path]
+) -> None:
+    # An engine genuinely ran (just not the requested one): a receipt is still owed.
+    _audit_run(stores, "run-sub", manifest={"disposition": "substituted-engine"})
+    report = _scan(repo, stores)
+    assert _find(report, "claimed-without-receipt")
+    assert FD.derive_exit(report) == 1
+
+
+def test_unproven_without_receipt_is_receiptless(repo: Path, stores: dict[str, Path]) -> None:
+    # The producer's own "reported ok, no proof" disposition is the disease by definition —
+    # the doctor must not let the producer's self-classification clear it (KTD5).
+    _audit_run(stores, "run-unproven", manifest={"disposition": "unproven"})
+    report = _scan(repo, stores)
+    assert _find(report, "claimed-without-receipt")
+    assert FD.derive_exit(report) == 1
+
+
+def test_unknown_disposition_is_warning_not_silence(repo: Path, stores: dict[str, Path]) -> None:
+    _audit_run(stores, "run-odd", manifest={"disposition": "mystery-disposition"})
+    report = _scan(repo, stores)
+    assert report["findings"] == []
+    assert any("disposition(s) outside the supported" in w for w in report["warnings"])
+    assert FD.derive_exit(report) == 0
+
+
+def test_claim_disposition_partition_matches_producer_enum() -> None:
+    # Drift guard: the doctor's claimed/fallback partition must cover the producer's
+    # Disposition enum exactly — a new producer disposition fails this test loudly.
+    pm = _load("provenance_manifest")
+    producer = {str(member) for member in pm.Disposition}
+    claimed = set(FD._CLAIMED_DISPOSITIONS)
+    fallback = set(FD._FALLBACK_DISPOSITIONS)
+    assert claimed | fallback == producer
+    assert claimed & fallback == set()
 
 
 def test_agy_result_claim_counts_as_claim(repo: Path, stores: dict[str, Path]) -> None:
@@ -1688,6 +1727,47 @@ def test_null_transport_receipt_is_evidence_error(repo: Path, stores: dict[str, 
     report = _scan(repo, stores)
     assert _find(report, "delegation-evidence-error")
     assert FD.derive_exit(report) == 2
+
+
+def test_entry_cap_lease_registry(repo: Path, stores: dict[str, Path], monkeypatch: Any) -> None:
+    monkeypatch.setattr(FD, "MAX_SOURCE_ENTRIES", 2)
+    _broker(
+        stores,
+        leases={f"L{i}": {"pool": "agent", "owner_id": "o", "resource_ref": {}} for i in range(3)},
+    )
+    report = _scan(repo, stores)
+    assert _source(report, "lease-registry")["verdict"] == "cap-exceeded"
+    assert FD.derive_exit(report) == 2
+
+
+def test_retry_generation_attempts_are_independent(repo: Path, stores: dict[str, Path]) -> None:
+    # Plan U3 "retry generations": attempt 1 fully accounted stays clean while an
+    # independently observed attempt 2 with no spawn fact is flagged on its own key.
+    ledger = _fact_ledger(repo)
+    _manifest_fact(ledger, "d9", ["u9"])
+    _spawn_fact(ledger, "d9", "u9", attempt=1)
+    _settle_fact(ledger, "d9", "u9", attempt=1)
+    _outcome_commit(repo, "out-a", "d9", "u9", attempt=1)
+    _outcome_commit(repo, "out-a", "d9", "u9", attempt=2)
+    report = _scan(repo, stores)
+    found = _find(report, "observed-without-spawn-fact")
+    assert [f["subject_id"] for f in found] == ["d9:u9:2"]
+    assert FD.derive_exit(report) == 1
+
+
+def test_dangling_registry_symlinked_path_still_dangling(
+    repo: Path, stores: dict[str, Path], tmp_path: Path
+) -> None:
+    # A planted symlink at the registry-declared path must not satisfy the existence
+    # check and suppress the dangling-registry finding.
+    decoy = tmp_path / "decoy-dir"
+    decoy.mkdir()
+    canonical = repo / ".saga-worktrees" / "out-a" / "sub-1"
+    canonical.parent.mkdir(parents=True)
+    canonical.symlink_to(decoy)
+    _write_worktree_registry(repo, "out-a", {"sub-1": _registry_row(repo, "out-a", "sub-1")})
+    report = _scan(repo, stores)
+    assert [f["subject_id"] for f in _find(report, "dangling-registry")] == ["out-a/sub-1"]
 
 
 def test_late_delivery_settlement_is_not_unsettled(repo: Path, stores: dict[str, Path]) -> None:

@@ -472,6 +472,14 @@ def _is_symlink(path: Path) -> bool:
         return False
 
 
+def _is_real_dir(path: Path) -> bool:
+    """Non-following directory test: a planted symlink never satisfies an existence check."""
+    try:
+        return stat_mod.S_ISDIR(_lstat(path).st_mode)
+    except OSError:
+        return False
+
+
 def _require_depth(path: Path, root: Path, subject: str) -> None:
     """R8: enumeration below a scan root is depth-capped; deeper structure fails closed."""
     depth = len(path.relative_to(root).parts)
@@ -548,6 +556,21 @@ def collect_lease_registry(
         return None
     leases = registry.get("leases")
     count = len(leases) if isinstance(leases, dict) else 0
+    if count > MAX_SOURCE_ENTRIES:
+        overflow = StrictReadError(
+            "cap-exceeded", presented, [f"{presented}: more than {MAX_SOURCE_ENTRIES} leases"]
+        )
+        scan.add_problem(overflow)
+        scan.add_source(
+            Source(
+                kind="lease-registry",
+                identity=presented,
+                digest="",
+                record_count=0,
+                verdict=overflow.classification,
+            )
+        )
+        return None
     scan.add_source(
         Source(
             kind="lease-registry",
@@ -954,7 +977,7 @@ def reconcile_worktrees(
     for key, row in sorted(registry_rows.items()):
         subject = f"{key[0]}/{key[1]}"
         canonical_path = context.repo_root / MANAGED_WORKTREES_DIRNAME / key[0] / key[1]
-        if key not in observed and not Path(str(row.get("path"))).is_dir():
+        if key not in observed and not _is_real_dir(Path(str(row.get("path")))):
             scan.add_finding(
                 Finding(
                     disease="leaked-resource",
@@ -1097,6 +1120,22 @@ _RECEIPT_RUNNER_FIELDS = {
     "cli": frozenset({"pid", "argv", "exit_code"}),
     "http": frozenset({"url", "status_code", "model"}),
 }
+# Producer manifest dispositions that assert a real external engine execution occurred
+# (``provenance_manifest.Disposition`` semantics; the conformance suite pins this partition
+# against the producer enum so a new disposition fails loudly). Only an admitted fallback
+# asserts that nothing external ran; anything outside the partition is a counted warning,
+# never a silent not-claimed.
+_CLAIMED_DISPOSITIONS = frozenset(
+    {
+        "ran-as-requested",
+        "substituted-engine",
+        "unproven",
+        "delegation-integrity",
+        "proof-integrity",
+        "rejected-offload",
+    }
+)
+_FALLBACK_DISPOSITIONS = frozenset({"fell-back-to-claude"})
 
 
 def _read_jsonl_tolerant_tail(
@@ -1314,6 +1353,9 @@ def reconcile_dispatch(
     observed: dict[tuple[str, str, int], list[str]] = {
         key: list(refs) for key, refs in observed_commits.items()
     }
+    spawns_by_unit: dict[str, list[tuple[str, str, int]]] = {}
+    for spawn_key in view.spawns:
+        spawns_by_unit.setdefault(spawn_key[1], []).append(spawn_key)
     unsupported_leases = 0
     if isinstance(broker_registry, dict):
         raw_leases = broker_registry.get("leases")
@@ -1332,10 +1374,8 @@ def reconcile_dispatch(
                     continue
                 unit_id, dispatch_identity = parsed
                 matched = False
-                for key in view.spawns:
-                    if key[1] == unit_id and (
-                        key[0] == dispatch_identity or dispatch_identity.endswith(str(key[2]))
-                    ):
+                for key in spawns_by_unit.get(unit_id, []):
+                    if key[0] == dispatch_identity or dispatch_identity.endswith(str(key[2])):
                         matched = True
                         observed.setdefault(key, []).append(
                             f"lease-registry: agent lease {lease_id}"
@@ -1513,7 +1553,11 @@ def reconcile_delegation(
     run_ids: list[str],
 ) -> None:
     """R6: a claimed real execution needs a durable, schema-valid receipt; corruption is never
-    absence. Admitted fallback is not receiptless; a valid receipt with no claim is a warning."""
+    absence. Admitted fallback is not receiptless; a valid receipt with no claim is a warning.
+    The claim predicate is the producer's full disposition partition — every disposition that
+    asserts an engine ran (including ``substituted-engine`` and ``unproven``) demands a receipt;
+    a disposition outside the partition is a counted warning, never a silent not-claimed."""
+    unknown_dispositions = 0
     for run_id in run_ids:
         subject = f"audit-store:runs/{run_id}"
         try:
@@ -1524,10 +1568,13 @@ def reconcile_delegation(
             scan.add_finding(evidence_error("delegation-evidence-error", subject, problem.evidence))
             scan.complete = False
             continue
-        disposition = str(manifest.get("disposition")) if manifest else ""
-        claimed = disposition == "ran-as-requested" or bool(
+        raw_disposition = manifest.get("disposition") if manifest else None
+        disposition = raw_disposition if isinstance(raw_disposition, str) else ""
+        claimed = disposition in _CLAIMED_DISPOSITIONS or bool(
             result and result.get("agy_launched") is True
         )
+        if not claimed and disposition and disposition not in _FALLBACK_DISPOSITIONS:
+            unknown_dispositions += 1
         receipt_valid = receipt is not None and _receipt_subset_valid(receipt)
         if receipt is not None and not receipt_valid:
             scan.add_finding(
@@ -1555,6 +1602,11 @@ def reconcile_delegation(
             )
         elif receipt_valid and not claimed:
             scan.warnings.append(f"{subject}: durable receipt present without a claim")
+    if unknown_dispositions:
+        scan.warnings.append(
+            f"audit-store: {unknown_dispositions} manifest disposition(s) outside the supported"
+            " vocabulary (not correlated)"
+        )
 
 
 def run_scan(

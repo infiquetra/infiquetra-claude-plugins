@@ -23,6 +23,22 @@ identities are parsed from the two supported outcome vocabularies
 (`outcome:<outcome>:<subplot>:<dispatch-identity>` and `outcome-dispatch:…:<attempt>`);
 outcome-labeled leases outside them are counted in a warning, never silently dropped.
 
+Deliberate narrowing (built-vs-planned, adjudicated in code review): delegation-audit run
+directories and fleet-core orphan-evidence bundles carry no exact
+`(dispatch_id, unit_id, attempt)` identity (an opaque `execution_id` / `run_id` +
+`logical_unit_id` only), so they serve as receiptless-delegation inputs, never as
+unledgered-spawn observation positions — a loose join would violate KTD3's exactness. Close
+seals are consumed where their identity actually joins (resource-fence close receipts →
+`terminal-resource-open`). A well-formed settle fact for zero-output work ("settled silent
+no-op") is undetectable by construction: the doctor scans no transcripts or diffs.
+
+The receiptless claim predicate is the producer's full disposition partition: every
+`provenance_manifest.Disposition` value that asserts an engine ran (`ran-as-requested`,
+`substituted-engine`, `unproven`, `delegation-integrity`, `proof-integrity`,
+`rejected-offload`) demands a durable receipt; `fell-back-to-claude` is the sole non-claim;
+anything else is a counted warning. `test_claim_disposition_partition_matches_producer_enum`
+pins the partition against the producer enum so a new disposition fails loudly.
+
 The doctor validates its own minimal `bridge_receipt.v1` subset at runtime;
 `test_receipt_subset_conforms_to_canonical_validator` compares that subset against
 fleet-core's canonical `validate_receipt` on a corruption fixture matrix and fails on drift

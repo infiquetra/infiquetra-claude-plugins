@@ -1,6 +1,6 @@
 # Saga Command Selection
 
-Saga has 23 command files and 22 routable commands. `/ceo-review` is an alias for `/founder-review`, so it is documented separately but does not add a lifecycle node.
+Saga has 25 command files and 24 routable commands. `/ceo-review` is an alias for `/founder-review`, so it is documented separately but does not add a lifecycle node.
 
 ![Command Matrix](assets/command-matrix.svg)
 

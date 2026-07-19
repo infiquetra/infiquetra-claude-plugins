@@ -1021,6 +1021,434 @@ def reconcile_worktrees(
             )
 
 
+# --------------------------------------------------------------- U3: dispatch + delegation
+
+OUTCOME_LEDGER_NAME = "ledger.jsonl"
+SETTLEMENT_SITES = frozenset({"outcome", "team-execution", "workflow"})
+_RECEIPT_RUNNER_FIELDS = {
+    "cli": frozenset({"pid", "argv", "exit_code"}),
+    "http": frozenset({"url", "status_code", "model"}),
+}
+
+
+def _read_jsonl_tolerant_tail(
+    path: Path, *, cap: int, presented: str, scan: Scan
+) -> list[dict[str, Any]]:
+    """Strict JSONL read with the producers' torn-trailing-line crash-artifact tolerance."""
+    data = read_bounded_file(path, cap=cap, presented=presented)
+    lines = data.split(b"\n")
+    torn = b""
+    if lines and lines[-1] != b"":
+        torn = lines[-1]
+        lines = lines[:-1]
+    else:
+        lines = lines[:-1] if lines else lines
+    records: list[dict[str, Any]] = []
+    for index, line in enumerate(lines):
+        record = parse_strict_json(line, what=f"{presented}#{index + 1}")
+        if not isinstance(record, dict):
+            raise StrictReadError(
+                "malformed-json",
+                f"{presented}#{index + 1}",
+                [f"{presented}: record is not an object"],
+            )
+        records.append(record)
+        if len(records) > MAX_SOURCE_ENTRIES:
+            raise StrictReadError(
+                "cap-exceeded", presented, [f"{presented}: record count beyond entry cap"]
+            )
+    if torn:
+        try:
+            parse_strict_json(torn, what=f"{presented}#torn-tail")
+        except StrictReadError:
+            scan.warnings.append(f"{presented}: torn trailing line ignored")
+        else:
+            raise StrictReadError(
+                "malformed-json",
+                f"{presented}#torn-tail",
+                [f"{presented}: complete trailing record missing newline is a torn append"],
+            )
+    return records
+
+
+def collect_outcome_dispatch_events(
+    scan: Scan, context: RepoContext, redactor: Redactor
+) -> dict[tuple[str, str, int], list[str]]:
+    """Observed dispatch positions from the Outcome coordinators' replay ledgers (R5).
+
+    A ``phase=commit, kind=dispatch`` record carrying a ``settlement`` handle is an independent
+    coordinator observation keyed by exact (dispatch_id, unit_id, attempt).
+    """
+    outcomes_dir = context.common_dir / OUTCOMES_DIRNAME
+    identity = f"{OUTCOMES_DIRNAME}/*/{OUTCOME_LEDGER_NAME}"
+    observed: dict[tuple[str, str, int], list[str]] = {}
+    if not outcomes_dir.is_dir() or _is_symlink(outcomes_dir):
+        scan.add_source(
+            Source(
+                kind="outcome-dispatch-events",
+                identity=identity,
+                digest="",
+                record_count=0,
+                verdict="absent",
+            )
+        )
+        return observed
+    count = 0
+    digest_parts: list[str] = []
+    try:
+        with os.scandir(outcomes_dir) as entries:
+            outcome_ids = sorted(
+                entry.name
+                for entry in entries
+                if entry.is_dir(follow_symlinks=False) and safe_component(entry.name)
+            )
+        for outcome_id in outcome_ids:
+            ledger_path = outcomes_dir / outcome_id / OUTCOME_LEDGER_NAME
+            if not ledger_path.exists() and not _is_symlink(ledger_path):
+                continue
+            presented = redactor.present(ledger_path)
+            records = _read_jsonl_tolerant_tail(
+                ledger_path, cap=MAX_LEDGER_BYTES, presented=presented, scan=scan
+            )
+            digest_parts.append(sha256_hex(canonical_json(records).encode("utf-8")))
+            for record in records:
+                if record.get("kind") != "dispatch" or record.get("phase") != "commit":
+                    continue
+                settlement = record.get("settlement")
+                if not isinstance(settlement, dict):
+                    continue
+                dispatch_id = settlement.get("dispatch_id")
+                unit_id = settlement.get("unit_id")
+                attempt = settlement.get("attempt")
+                if (
+                    not isinstance(dispatch_id, str)
+                    or not isinstance(unit_id, str)
+                    or isinstance(attempt, bool)
+                    or not isinstance(attempt, int)
+                ):
+                    raise StrictReadError(
+                        "contradictory-identity",
+                        f"{presented}:{record.get('key')}",
+                        [f"{presented}: dispatch commit settlement handle is malformed"],
+                    )
+                observed.setdefault((dispatch_id, unit_id, attempt), []).append(
+                    f"outcome-ledger: {outcome_id} commit {record.get('key')}"
+                )
+                count += 1
+    except StrictReadError as problem:
+        scan.add_problem(problem)
+        scan.add_source(
+            Source(
+                kind="outcome-dispatch-events",
+                identity=identity,
+                digest="",
+                record_count=0,
+                verdict=problem.classification,
+            )
+        )
+        return {}
+    scan.add_source(
+        Source(
+            kind="outcome-dispatch-events",
+            identity=identity,
+            digest=sha256_hex(canonical_json(sorted(digest_parts)).encode("utf-8")),
+            record_count=count,
+            verdict="present",
+        )
+    )
+    return observed
+
+
+def _parse_outcome_lease_identity(logical_unit_id: str) -> tuple[str, str] | None:
+    """(unit_id, dispatch_identity) for the two supported outcome agent-lease vocabularies."""
+    if logical_unit_id.startswith("outcome:"):
+        parts = logical_unit_id.split(":", 3)
+        if len(parts) == 4 and safe_component(parts[1]) and safe_component(parts[2]):
+            return parts[2], parts[3]
+        return None
+    if logical_unit_id.startswith("outcome-dispatch:"):
+        parts = logical_unit_id.split(":")
+        if len(parts) >= 3 and parts[-1].isdigit():
+            return parts[-2], logical_unit_id
+        return None
+    return None
+
+
+@dataclass(frozen=True)
+class SettlementView:
+    manifests: dict[str, dict[str, Any]]
+    spawns: dict[tuple[str, str, int], dict[str, Any]]
+    settles: dict[tuple[str, str, int], dict[str, Any]]
+
+
+def settlement_view(scan: Scan, records: list[dict[str, Any]]) -> SettlementView:
+    """Index the #351 dispatch-settlement facts from the chain-verified snapshot."""
+    manifests: dict[str, dict[str, Any]] = {}
+    spawns: dict[tuple[str, str, int], dict[str, Any]] = {}
+    settles: dict[tuple[str, str, int], dict[str, Any]] = {}
+    for record in records:
+        if record.get("kind") != "dispatch-settlement":
+            continue
+        event = record.get("event")
+        dispatch_id = str(record.get("dispatch_id"))
+        if event == "manifest":
+            site = record.get("site")
+            if site not in SETTLEMENT_SITES:
+                scan.add_problem(
+                    StrictReadError(
+                        "unsupported-site",
+                        dispatch_id,
+                        [f"run-facts: manifest site {site!r} outside the closed vocabulary"],
+                    )
+                )
+                continue
+            manifests[dispatch_id] = record
+        elif event == "spawn":
+            key = (dispatch_id, str(record.get("unit_id")), int(record.get("attempt", 0)))
+            if key in spawns:
+                scan.add_problem(
+                    StrictReadError(
+                        "contradictory-identity",
+                        f"{key[0]}:{key[1]}:{key[2]}",
+                        ["run-facts: duplicate spawn fact for one dispatch identity"],
+                    )
+                )
+                continue
+            spawns[key] = record
+        elif event in ("settle", "late-delivery"):
+            key = (dispatch_id, str(record.get("unit_id")), int(record.get("attempt", 0)))
+            if event == "settle" and key not in spawns:
+                scan.add_problem(
+                    StrictReadError(
+                        "contradictory-identity",
+                        f"{key[0]}:{key[1]}:{key[2]}",
+                        ["run-facts: settlement without a spawn fact"],
+                    )
+                )
+                continue
+            settles[key] = record
+    return SettlementView(manifests=manifests, spawns=spawns, settles=settles)
+
+
+def reconcile_dispatch(
+    scan: Scan,
+    context: RepoContext,
+    *,
+    run_fact_records: list[dict[str, Any]],
+    observed_commits: dict[tuple[str, str, int], list[str]],
+    broker_registry: dict[str, Any] | None,
+) -> None:
+    """R5: unledgered needs an independent observation; one fact never proves a launch (KTD3)."""
+    view = settlement_view(scan, run_fact_records)
+
+    observed: dict[tuple[str, str, int], list[str]] = {
+        key: list(refs) for key, refs in observed_commits.items()
+    }
+    unsupported_leases = 0
+    if isinstance(broker_registry, dict):
+        raw_leases = broker_registry.get("leases")
+        if isinstance(raw_leases, dict):
+            for lease_id, lease in sorted(raw_leases.items()):
+                if not isinstance(lease, dict) or lease.get("pool") != "agent":
+                    continue
+                ref = lease.get("resource_ref")
+                logical = ref.get("logical_unit_id") if isinstance(ref, dict) else None
+                if not isinstance(logical, str):
+                    continue
+                parsed = _parse_outcome_lease_identity(logical)
+                if parsed is None:
+                    if logical.startswith("outcome"):
+                        unsupported_leases += 1
+                    continue
+                unit_id, dispatch_identity = parsed
+                matched = False
+                for key in view.spawns:
+                    if key[1] == unit_id and (
+                        key[0] == dispatch_identity or dispatch_identity.endswith(str(key[2]))
+                    ):
+                        matched = True
+                        observed.setdefault(key, []).append(
+                            f"lease-registry: agent lease {lease_id}"
+                        )
+                        break
+                if not matched:
+                    scan.add_finding(
+                        Finding(
+                            disease="unledgered-spawn",
+                            classification="lease-without-spawn-fact",
+                            subject_id=logical,
+                            evidence_refs=(
+                                f"lease-registry: live agent lease {lease_id}",
+                                "run-facts: verified chain has no matching spawn fact",
+                            ),
+                            owner_command="/delegation-audit",
+                        )
+                    )
+    if unsupported_leases:
+        scan.warnings.append(
+            f"lease-registry: {unsupported_leases} outcome-labeled agent lease(s) outside the"
+            " supported identity vocabulary (not correlated)"
+        )
+
+    for key, refs in sorted(observed.items()):
+        if key not in view.spawns:
+            scan.add_finding(
+                Finding(
+                    disease="unledgered-spawn",
+                    classification="observed-without-spawn-fact",
+                    subject_id=f"{key[0]}:{key[1]}:{key[2]}",
+                    evidence_refs=tuple(sorted(set(refs)) + ["run-facts: no manifest/spawn fact"]),
+                    owner_command="/delegation-audit",
+                )
+            )
+
+    for key, spawn in sorted(view.spawns.items()):
+        subject = f"{key[0]}:{key[1]}:{key[2]}"
+        manifest = view.manifests.get(key[0])
+        if manifest is None:
+            scan.add_problem(
+                StrictReadError(
+                    "contradictory-identity",
+                    subject,
+                    ["run-facts: spawn fact without a dispatch manifest"],
+                )
+            )
+            continue
+        declared = {
+            str(unit.get("unit_id")): str(unit.get("idempotency_key"))
+            for unit in manifest.get("units", [])
+            if isinstance(unit, dict)
+        }
+        if key[1] not in declared or declared[key[1]] != str(spawn.get("idempotency_key")):
+            scan.add_problem(
+                StrictReadError(
+                    "contradictory-identity",
+                    subject,
+                    ["run-facts: spawn identity disagrees with its manifest"],
+                )
+            )
+            continue
+        settled = key in view.settles
+        was_observed = key in observed
+        if not was_observed and not settled:
+            scan.add_finding(
+                Finding(
+                    disease="unledgered-spawn",
+                    classification="phantom-spawn-fact",
+                    subject_id=subject,
+                    evidence_refs=(
+                        "run-facts: spawn fact recorded",
+                        "no independent observation (no commit event, lease, or audit run)",
+                    ),
+                    owner_command="/delegation-audit",
+                )
+            )
+        elif was_observed and not settled:
+            scan.add_finding(
+                Finding(
+                    disease="unledgered-spawn",
+                    classification="unsettled-spawn",
+                    subject_id=subject,
+                    evidence_refs=(
+                        "run-facts: spawn fact without a terminal settlement",
+                        *sorted(set(observed.get(key, []))),
+                    ),
+                    owner_command="/delegation-audit",
+                )
+            )
+
+
+def _read_audit_artifact(
+    audit_root: Path, run_id: str, name: str, redactor: Redactor
+) -> dict[str, Any] | None:
+    """Strict bounded read of one audit artifact; absent is None, malformed raises (KTD5)."""
+    path = audit_root / AUDIT_RUNS_DIRNAME / run_id / name
+    if not path.exists() and not _is_symlink(path):
+        return None
+    presented = redactor.present(path)
+    data = read_bounded_file(path, cap=MAX_ARTIFACT_BYTES, presented=presented)
+    document = parse_strict_json(data, what=presented)
+    if not isinstance(document, dict):
+        raise StrictReadError(
+            "malformed-json", presented, [f"{presented}: artifact is not an object"]
+        )
+    return document
+
+
+def _receipt_subset_valid(receipt: dict[str, Any]) -> bool:
+    """The doctor's independent minimal ``bridge_receipt.v1`` subset (conformance-tested)."""
+    if receipt.get("schema") != "bridge_receipt.v1":
+        return False
+    if not isinstance(receipt.get("engine_id"), str) or not isinstance(receipt.get("variant"), str):
+        return False
+    transport = receipt.get("transport")
+    if transport not in _RECEIPT_RUNNER_FIELDS:
+        return False
+    if not isinstance(receipt.get("wall_time_s"), (int, float)) or isinstance(
+        receipt.get("wall_time_s"), bool
+    ):
+        return False
+    if isinstance(receipt.get("bytes_produced"), bool) or not isinstance(
+        receipt.get("bytes_produced"), int
+    ):
+        return False
+    runner = receipt.get("runner")
+    if not isinstance(runner, dict):
+        return False
+    return _RECEIPT_RUNNER_FIELDS[transport] <= set(runner)
+
+
+def reconcile_delegation(
+    scan: Scan,
+    redactor: Redactor,
+    audit_root: Path,
+    run_ids: list[str],
+) -> None:
+    """R6: a claimed real execution needs a durable, schema-valid receipt; corruption is never
+    absence. Admitted fallback is not receiptless; a valid receipt with no claim is a warning."""
+    for run_id in run_ids:
+        subject = f"audit-store:runs/{run_id}"
+        try:
+            manifest = _read_audit_artifact(audit_root, run_id, "manifest.json", redactor)
+            result = _read_audit_artifact(audit_root, run_id, "result.json", redactor)
+            receipt = _read_audit_artifact(audit_root, run_id, "receipt.json", redactor)
+        except StrictReadError as problem:
+            scan.add_finding(evidence_error("delegation-evidence-error", subject, problem.evidence))
+            scan.complete = False
+            continue
+        disposition = str(manifest.get("disposition")) if manifest else ""
+        claimed = disposition == "ran-as-requested" or bool(
+            result and result.get("agy_launched") is True
+        )
+        receipt_valid = receipt is not None and _receipt_subset_valid(receipt)
+        if receipt is not None and not receipt_valid:
+            scan.add_finding(
+                evidence_error(
+                    "delegation-evidence-error",
+                    subject,
+                    [f"{subject}: receipt fails the bridge_receipt.v1 subset"],
+                )
+            )
+            scan.complete = False
+            continue
+        if claimed and receipt is None:
+            scan.add_finding(
+                Finding(
+                    disease="receiptless-delegation",
+                    classification="claimed-without-receipt",
+                    subject_id=subject,
+                    evidence_refs=(
+                        f"{subject}: manifest/result claims real execution"
+                        f" (disposition={disposition or 'n/a'})",
+                        f"{subject}: no durable receipt.json",
+                    ),
+                    owner_command="/delegation-audit",
+                )
+            )
+        elif receipt_valid and not claimed:
+            scan.warnings.append(f"{subject}: durable receipt present without a claim")
+
+
 def run_scan(
     repo_root: Path,
     *,
@@ -1059,9 +1487,12 @@ def run_scan(
     broker_registry = collect_lease_registry(
         scan, redactor, lease_root, explicit=lease_store is not None
     )
-    collect_audit_store(scan, redactor, audit_root, explicit=audit_store is not None)
+    audit_run_ids = collect_audit_store(
+        scan, redactor, audit_root, explicit=audit_store is not None
+    )
     porcelain_paths = collect_git_worktrees(scan, context, redactor)
     registry_rows = collect_outcome_registries(scan, context, redactor)
+    observed_commits = collect_outcome_dispatch_events(scan, context, redactor)
     reconcile_worktrees(
         scan,
         context,
@@ -1070,6 +1501,14 @@ def run_scan(
         broker_registry=broker_registry,
         run_fact_records=run_fact_records,
     )
+    reconcile_dispatch(
+        scan,
+        context,
+        run_fact_records=run_fact_records,
+        observed_commits=observed_commits,
+        broker_registry=broker_registry,
+    )
+    reconcile_delegation(scan, redactor, audit_root, audit_run_ids)
     return build_report(scan)
 
 

@@ -761,3 +761,361 @@ def test_malformed_worktree_registry_is_incomplete(repo: Path, stores: dict[str,
     assert report["complete"] is False
     assert _source(report, "worktree-registries")["verdict"] == "schema-skew"
     assert FD.derive_exit(report) == 2
+
+
+# ------------------------------------------------------------------ U3: dispatch + delegation
+
+
+def _fact_ledger(repo: Path) -> Any:
+    return RL.RunLedger(path=_ledger_path(repo))
+
+
+def _manifest_fact(
+    ledger: Any, dispatch_id: str, units: list[str], *, site: str = "outcome"
+) -> None:
+    RL.append_fact(
+        ledger,
+        RL.build_fact(
+            "dispatch-settlement",
+            subplot_id="coord",
+            at="t",
+            event="manifest",
+            dispatch_id=dispatch_id,
+            site=site,
+            units=[
+                {"unit_id": u, "idempotency_key": f"key-{u}", "deliverables": []} for u in units
+            ],
+            casualty_threshold_percent=50,
+            max_attempts=2,
+        ),
+    )
+
+
+def _spawn_fact(
+    ledger: Any, dispatch_id: str, unit: str, attempt: int = 1, *, key: str | None = None
+) -> None:
+    RL.append_fact(
+        ledger,
+        RL.build_fact(
+            "dispatch-settlement",
+            subplot_id="coord",
+            at="t",
+            event="spawn",
+            dispatch_id=dispatch_id,
+            unit_id=unit,
+            attempt=attempt,
+            idempotency_key=key if key is not None else f"key-{unit}",
+        ),
+    )
+
+
+def _settle_fact(ledger: Any, dispatch_id: str, unit: str, attempt: int = 1) -> None:
+    RL.append_fact(
+        ledger,
+        RL.build_fact(
+            "dispatch-settlement",
+            subplot_id="coord",
+            at="t",
+            event="settle",
+            dispatch_id=dispatch_id,
+            unit_id=unit,
+            attempt=attempt,
+            classification="delivered",
+            reason="done",
+            evidence_ref="e",
+            evidence_sha256="f" * 64,
+        ),
+    )
+
+
+def _outcome_commit(repo: Path, oid: str, dispatch_id: str, unit: str, attempt: int = 1) -> None:
+    ledger_dir = repo / ".git" / "saga-outcomes" / oid
+    ledger_dir.mkdir(parents=True, exist_ok=True)
+    record = {
+        "phase": "commit",
+        "kind": "dispatch",
+        "key": f"dispatch:{unit}:{attempt}",
+        "subplot_id": unit,
+        "settlement": {"dispatch_id": dispatch_id, "unit_id": unit, "attempt": attempt},
+    }
+    with (ledger_dir / "ledger.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record) + "\n")
+
+
+def _valid_receipt() -> dict[str, Any]:
+    return {
+        "schema": "bridge_receipt.v1",
+        "engine_id": "codex",
+        "variant": "default",
+        "transport": "cli",
+        "wall_time_s": 1.5,
+        "bytes_produced": 42,
+        "runner": {"pid": 123, "argv": ["codex", "run"], "exit_code": 0},
+    }
+
+
+def _audit_run(
+    stores: dict[str, Path],
+    run_id: str,
+    *,
+    manifest: dict[str, Any] | None = None,
+    result: dict[str, Any] | None = None,
+    receipt: dict[str, Any] | None = None,
+    raw_receipt: str | None = None,
+) -> None:
+    run_dir = stores["audit"] / "runs" / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    if manifest is not None:
+        (run_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    if result is not None:
+        (run_dir / "result.json").write_text(json.dumps(result), encoding="utf-8")
+    if receipt is not None:
+        (run_dir / "receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
+    if raw_receipt is not None:
+        (run_dir / "receipt.json").write_text(raw_receipt, encoding="utf-8")
+
+
+def test_exact_accounted_spawn_is_clean(repo: Path, stores: dict[str, Path]) -> None:
+    ledger = _fact_ledger(repo)
+    _manifest_fact(ledger, "d1", ["u1"])
+    _spawn_fact(ledger, "d1", "u1")
+    _settle_fact(ledger, "d1", "u1")
+    _outcome_commit(repo, "out-a", "d1", "u1")
+    report = _scan(repo, stores)
+    assert report["findings"] == []
+    assert FD.derive_exit(report) == 0
+
+
+def test_observed_commit_without_spawn_fact(repo: Path, stores: dict[str, Path]) -> None:
+    _outcome_commit(repo, "out-a", "d-ghost", "u9")
+    report = _scan(repo, stores)
+    found = _find(report, "observed-without-spawn-fact")
+    assert len(found) == 1
+    assert found[0]["disease"] == "unledgered-spawn"
+    assert found[0]["subject_id"] == "d-ghost:u9:1"
+    assert len(found[0]["evidence_refs"]) >= 2
+    assert FD.derive_exit(report) == 1
+
+
+def test_phantom_spawn_fact_without_observation(repo: Path, stores: dict[str, Path]) -> None:
+    ledger = _fact_ledger(repo)
+    _manifest_fact(ledger, "d2", ["u2"])
+    _spawn_fact(ledger, "d2", "u2")
+    report = _scan(repo, stores)
+    assert [f["subject_id"] for f in _find(report, "phantom-spawn-fact")] == ["d2:u2:1"]
+    assert FD.derive_exit(report) == 1
+
+
+def test_unsettled_spawn_with_observation(repo: Path, stores: dict[str, Path]) -> None:
+    ledger = _fact_ledger(repo)
+    _manifest_fact(ledger, "d3", ["u3"])
+    _spawn_fact(ledger, "d3", "u3")
+    _outcome_commit(repo, "out-a", "d3", "u3")
+    report = _scan(repo, stores)
+    assert [f["subject_id"] for f in _find(report, "unsettled-spawn")] == ["d3:u3:1"]
+
+
+def test_settle_without_spawn_is_contradictory(repo: Path, stores: dict[str, Path]) -> None:
+    ledger = _fact_ledger(repo)
+    _manifest_fact(ledger, "d4", ["u4"])
+    _settle_fact(ledger, "d4", "u4")
+    report = _scan(repo, stores)
+    assert report["complete"] is False
+    assert _find(report, "contradictory-identity")
+    assert FD.derive_exit(report) == 2
+
+
+def test_duplicate_spawn_fact_is_contradictory(repo: Path, stores: dict[str, Path]) -> None:
+    ledger = _fact_ledger(repo)
+    _manifest_fact(ledger, "d5", ["u5"])
+    _spawn_fact(ledger, "d5", "u5")
+    _spawn_fact(ledger, "d5", "u5")
+    report = _scan(repo, stores)
+    assert _find(report, "contradictory-identity")
+    assert FD.derive_exit(report) == 2
+
+
+def test_spawn_key_mismatch_is_contradictory(repo: Path, stores: dict[str, Path]) -> None:
+    ledger = _fact_ledger(repo)
+    _manifest_fact(ledger, "d6", ["u6"])
+    _spawn_fact(ledger, "d6", "u6", key="wrong-key")
+    report = _scan(repo, stores)
+    assert _find(report, "contradictory-identity")
+
+
+def test_unsupported_manifest_site(repo: Path, stores: dict[str, Path]) -> None:
+    ledger = _fact_ledger(repo)
+    _manifest_fact(ledger, "d7", ["u7"], site="rogue-site")
+    report = _scan(repo, stores)
+    assert _find(report, "unsupported-site")
+    assert FD.derive_exit(report) == 2
+
+
+def test_outcome_lease_without_spawn_fact(repo: Path, stores: dict[str, Path]) -> None:
+    _broker(
+        stores,
+        leases={
+            "LA": {
+                "pool": "agent",
+                "owner_id": "o",
+                "resource_ref": {"logical_unit_id": "outcome:out-a:sub-1:disp-x"},
+            }
+        },
+    )
+    report = _scan(repo, stores)
+    found = _find(report, "lease-without-spawn-fact")
+    assert len(found) == 1
+    assert found[0]["disease"] == "unledgered-spawn"
+    assert FD.derive_exit(report) == 1
+
+
+def test_unsupported_outcome_lease_identity_is_warning(repo: Path, stores: dict[str, Path]) -> None:
+    _broker(
+        stores,
+        leases={
+            "LB": {
+                "pool": "agent",
+                "owner_id": "o",
+                "resource_ref": {"logical_unit_id": "outcome:bad id:x:y"},
+            },
+            "LC": {
+                "pool": "agent",
+                "owner_id": "o",
+                "resource_ref": {"logical_unit_id": "team-exec:whatever"},
+            },
+        },
+    )
+    report = _scan(repo, stores)
+    assert report["findings"] == []
+    assert any("outside the supported identity vocabulary" in w for w in report["warnings"])
+    assert FD.derive_exit(report) == 0
+
+
+def test_claimed_without_receipt_is_receiptless(repo: Path, stores: dict[str, Path]) -> None:
+    _audit_run(stores, "run-1", manifest={"disposition": "ran-as-requested"})
+    report = _scan(repo, stores)
+    found = _find(report, "claimed-without-receipt")
+    assert len(found) == 1
+    assert found[0]["disease"] == "receiptless-delegation"
+    assert FD.derive_exit(report) == 1
+
+
+def test_claimed_with_valid_receipt_is_clean(repo: Path, stores: dict[str, Path]) -> None:
+    _audit_run(
+        stores, "run-2", manifest={"disposition": "ran-as-requested"}, receipt=_valid_receipt()
+    )
+    report = _scan(repo, stores)
+    assert report["findings"] == []
+    assert FD.derive_exit(report) == 0
+
+
+def test_invalid_receipt_is_evidence_error(repo: Path, stores: dict[str, Path]) -> None:
+    bad = _valid_receipt()
+    bad["transport"] = "carrier-pigeon"
+    _audit_run(stores, "run-3", manifest={"disposition": "ran-as-requested"}, receipt=bad)
+    report = _scan(repo, stores)
+    assert _find(report, "delegation-evidence-error")
+    assert FD.derive_exit(report) == 2
+
+
+def test_malformed_manifest_is_evidence_error(repo: Path, stores: dict[str, Path]) -> None:
+    _audit_run(stores, "run-4", raw_receipt=None)
+    run_dir = stores["audit"] / "runs" / "run-4"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "manifest.json").write_text("{broken", encoding="utf-8")
+    report = _scan(repo, stores)
+    assert _find(report, "delegation-evidence-error")
+    assert FD.derive_exit(report) == 2
+
+
+def test_fallback_without_receipt_is_not_receiptless(repo: Path, stores: dict[str, Path]) -> None:
+    _audit_run(stores, "run-5", manifest={"disposition": "fell-back-to-inline"})
+    report = _scan(repo, stores)
+    assert report["findings"] == []
+    assert FD.derive_exit(report) == 0
+
+
+def test_agy_result_claim_counts_as_claim(repo: Path, stores: dict[str, Path]) -> None:
+    _audit_run(stores, "run-6", result={"agy_launched": True})
+    report = _scan(repo, stores)
+    assert _find(report, "claimed-without-receipt")
+
+
+def test_receipt_without_claim_is_warning(repo: Path, stores: dict[str, Path]) -> None:
+    _audit_run(stores, "run-7", receipt=_valid_receipt())
+    report = _scan(repo, stores)
+    assert report["findings"] == []
+    assert any("receipt present without a claim" in w for w in report["warnings"])
+
+
+def test_receipt_subset_conforms_to_canonical_validator() -> None:
+    spec = importlib.util.spec_from_file_location(
+        "_fd_bridge_receipt",
+        ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "bridge_receipt.py",
+    )
+    assert spec is not None and spec.loader is not None
+    canonical = importlib.util.module_from_spec(spec)
+    sys.modules["_fd_bridge_receipt"] = canonical
+    spec.loader.exec_module(canonical)
+    fixtures: list[dict[str, Any]] = [_valid_receipt()]
+    http = _valid_receipt()
+    http["transport"] = "http"
+    http["runner"] = {"url": "http://localhost", "status_code": 200, "model": "m"}
+    fixtures.append(http)
+    broken_transport = _valid_receipt()
+    broken_transport["transport"] = "smoke-signal"
+    broken_schema = _valid_receipt()
+    broken_schema["schema"] = "bridge_receipt.v2"
+    broken_runner = _valid_receipt()
+    broken_runner["runner"] = {}
+    fixtures += [broken_transport, broken_schema, broken_runner]
+    for fixture in fixtures:
+        canonical_ok = canonical.validate_receipt(fixture) == []
+        subset_ok = FD._receipt_subset_valid(fixture)
+        # Conformance: the doctor's subset never rejects a canonically valid receipt, and
+        # rejects every fixture broken in a subset-covered field exactly as the canon does.
+        assert subset_ok == canonical_ok, (fixture, canonical.validate_receipt(fixture))
+
+
+def test_thirty_position_matrix_stable_and_exhaustive(repo: Path, stores: dict[str, Path]) -> None:
+    ledger = _fact_ledger(repo)
+    for index in range(30):
+        cls = index % 6
+        did, unit = f"d{index}", f"u{index}"
+        if cls == 0:
+            _manifest_fact(ledger, did, [unit])
+            _spawn_fact(ledger, did, unit)
+            _settle_fact(ledger, did, unit)
+            _outcome_commit(repo, "out-m", did, unit)
+        elif cls == 1:
+            _outcome_commit(repo, "out-m", did, unit)
+        elif cls == 2:
+            _manifest_fact(ledger, did, [unit])
+            _spawn_fact(ledger, did, unit)
+        elif cls == 3:
+            _manifest_fact(ledger, did, [unit])
+            _spawn_fact(ledger, did, unit)
+            _outcome_commit(repo, "out-m", did, unit)
+        elif cls == 4:
+            _audit_run(stores, f"claim-{index}", manifest={"disposition": "ran-as-requested"})
+        else:
+            _audit_run(
+                stores,
+                f"proof-{index}",
+                manifest={"disposition": "ran-as-requested"},
+                receipt=_valid_receipt(),
+            )
+    first = _scan(repo, stores)
+    second = _scan(repo, stores)
+    assert FD.canonical_json(first) == FD.canonical_json(second)
+    assert first["complete"] is True
+    by_class = {
+        "observed-without-spawn-fact": 5,
+        "phantom-spawn-fact": 5,
+        "unsettled-spawn": 5,
+        "claimed-without-receipt": 5,
+    }
+    for classification, expected in by_class.items():
+        assert len(_find(first, classification)) == expected, classification
+    assert first["counts"]["findings"] == 20
+    assert FD.derive_exit(first) == 1

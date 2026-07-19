@@ -75,6 +75,21 @@ _SAFE_COMPONENT = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXY
 # Injectable seams for deterministic tests (monkeypatched; never mutated in production).
 _lstat = os.lstat
 _geteuid = os.geteuid
+_open = os.open
+
+
+def _safe_oserror(exc: OSError) -> str:
+    """Redaction-safe OSError text (R7): errno and strerror only — never the filename.
+
+    ``str(OSError)`` embeds the absolute filename, so interpolating a raw exception into
+    evidence would defeat the Redactor in default mode.
+    """
+    detail = exc.strerror or type(exc).__name__
+    return f"[Errno {exc.errno}] {detail}" if exc.errno is not None else detail
+
+
+def _unsafe(presented: str, exc: OSError) -> StrictReadError:
+    return StrictReadError("unsafe-path", presented, [f"{presented}: {_safe_oserror(exc)}"])
 
 
 class StrictReadError(Exception):
@@ -248,7 +263,7 @@ def _require_regular(path: Path, presented: str) -> os.stat_result:
     except FileNotFoundError:
         raise StrictReadError("config-error", presented, [f"{presented}: does not exist"]) from None
     except OSError as exc:
-        raise StrictReadError("unsafe-path", presented, [f"{presented}: {exc}"]) from None
+        raise _unsafe(presented, exc) from None
     if stat_mod.S_ISLNK(st.st_mode):
         raise StrictReadError("unsafe-path", presented, [f"{presented}: is a symlink"])
     if not stat_mod.S_ISREG(st.st_mode):
@@ -263,7 +278,7 @@ def require_owned_dir(path: Path, presented: str) -> None:
     except FileNotFoundError:
         raise StrictReadError("config-error", presented, [f"{presented}: does not exist"]) from None
     except OSError as exc:
-        raise StrictReadError("unsafe-path", presented, [f"{presented}: {exc}"]) from None
+        raise _unsafe(presented, exc) from None
     if stat_mod.S_ISLNK(st.st_mode):
         raise StrictReadError("unsafe-path", presented, [f"{presented}: is a symlink"])
     if not stat_mod.S_ISDIR(st.st_mode):
@@ -281,11 +296,16 @@ def read_bounded_file(path: Path, *, cap: int, presented: str) -> bytes:
         raise StrictReadError(
             "cap-exceeded", presented, [f"{presented}: {before.st_size} bytes exceeds cap {cap}"]
         )
-    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     try:
-        data = os.read(fd, cap + 1)
-    finally:
-        os.close(fd)
+        fd = _open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            data = os.read(fd, cap + 1)
+        finally:
+            os.close(fd)
+    except OSError as exc:
+        # A symlink swapped in after the pre-stat (O_NOFOLLOW raises ELOOP) or fd exhaustion
+        # fails closed like any other unsafe read — never an uncaught traceback.
+        raise _unsafe(presented, exc) from None
     if len(data) > cap:
         raise StrictReadError("cap-exceeded", presented, [f"{presented}: grew beyond cap {cap}"])
     after = _require_regular(path, presented)
@@ -358,6 +378,11 @@ def verify_run_fact_chain(data: bytes, *, presented: str, scan: Scan) -> list[di
     ``this_hash``; ``prev_hash`` links to the prior record ("" at genesis). A torn trailing
     line is the producers' documented crash artifact: the valid prefix stands, with a warning.
     Any earlier malformed line, hash mismatch, or link break is a broken chain (KTD2).
+
+    Bound: the chain proves PREFIX integrity only. Dropping whole trailing records at a newline
+    boundary leaves an independently valid shorter chain, which is undetectable without an
+    external head/length anchor — hence the source verdict is ``verified-prefix``, never a
+    claim of tamper-complete verification.
     """
     records: list[dict[str, Any]] = []
     lines = data.split(b"\n")
@@ -405,7 +430,8 @@ def verify_run_fact_chain(data: bytes, *, presented: str, scan: Scan) -> list[di
 def collect_run_facts(scan: Scan, context: RepoContext, redactor: Redactor) -> list[dict[str, Any]]:
     path = context.common_dir / RUN_FACTS_RELPATH
     presented = redactor.present(path)
-    if not path.exists() or _is_symlink(path):
+    # A symlinked ledger is unsafe-path via the strict reader (KTD2), never a clean "absent".
+    if not path.exists() and not _is_symlink(path):
         scan.add_source(
             Source(
                 kind="run-facts", identity=presented, digest="", record_count=0, verdict="absent"
@@ -433,7 +459,7 @@ def collect_run_facts(scan: Scan, context: RepoContext, redactor: Redactor) -> l
             identity=presented,
             digest=sha256_hex(data),
             record_count=len(records),
-            verdict="verified-chain",
+            verdict="verified-prefix",
         )
     )
     return records
@@ -444,6 +470,17 @@ def _is_symlink(path: Path) -> bool:
         return stat_mod.S_ISLNK(_lstat(path).st_mode)
     except OSError:
         return False
+
+
+def _require_depth(path: Path, root: Path, subject: str) -> None:
+    """R8: enumeration below a scan root is depth-capped; deeper structure fails closed."""
+    depth = len(path.relative_to(root).parts)
+    if depth > MAX_DEPTH:
+        raise StrictReadError(
+            "cap-exceeded",
+            subject,
+            [f"{subject}: traversal depth {depth} beyond cap {MAX_DEPTH}"],
+        )
 
 
 def collect_lease_registry(
@@ -562,12 +599,6 @@ def collect_audit_store(
         require_owned_dir(runs_dir, presented)
         with os.scandir(runs_dir) as entries:
             for entry in entries:
-                if len(run_ids) >= MAX_SOURCE_ENTRIES:
-                    raise StrictReadError(
-                        "cap-exceeded",
-                        presented,
-                        [f"{presented}: more than {MAX_SOURCE_ENTRIES} runs"],
-                    )
                 if not safe_component(entry.name):
                     raise StrictReadError(
                         "traversal-identity",
@@ -580,7 +611,27 @@ def collect_audit_store(
                         f"{presented}:{entry.name}",
                         [f"{presented}: run entry is not a directory"],
                     )
+                _require_depth(Path(entry.path), audit_root, presented)
                 run_ids.append(entry.name)
+                if len(run_ids) > MAX_SOURCE_ENTRIES:
+                    raise StrictReadError(
+                        "cap-exceeded",
+                        presented,
+                        [f"{presented}: more than {MAX_SOURCE_ENTRIES} runs"],
+                    )
+    except OSError as exc:
+        unsafe = _unsafe(presented, exc)
+        scan.add_problem(unsafe)
+        scan.add_source(
+            Source(
+                kind="audit-store",
+                identity=presented,
+                digest="",
+                record_count=0,
+                verdict=unsafe.classification,
+            )
+        )
+        return []
     except StrictReadError as problem:
         scan.add_problem(problem)
         scan.add_source(
@@ -700,6 +751,9 @@ def _scan_managed_dirs(scan: Scan, context: RepoContext) -> set[tuple[str, str]]
                         if subplot.name == SHARED_INSTALL_DIRNAME:
                             continue
                         if subplot.is_dir(follow_symlinks=False) and safe_component(subplot.name):
+                            _require_depth(
+                                Path(subplot.path), managed_root, MANAGED_WORKTREES_DIRNAME
+                            )
                             found.add((outcome.name, subplot.name))
                         if len(found) > MAX_SOURCE_ENTRIES:
                             raise StrictReadError(
@@ -711,7 +765,7 @@ def _scan_managed_dirs(scan: Scan, context: RepoContext) -> set[tuple[str, str]]
         scan.add_problem(problem)
         return set()
     except OSError as exc:
-        scan.add_problem(StrictReadError("unsafe-path", MANAGED_WORKTREES_DIRNAME, [str(exc)]))
+        scan.add_problem(_unsafe(MANAGED_WORKTREES_DIRNAME, exc))
         return set()
     return found
 
@@ -750,6 +804,7 @@ def collect_outcome_registries(
             if not registry_path.exists() and not _is_symlink(registry_path):
                 continue
             presented = redactor.present(registry_path)
+            _require_depth(registry_path, outcomes_dir, identity)
             data = read_bounded_file(registry_path, cap=MAX_STATE_BYTES, presented=presented)
             document = parse_strict_json(data, what=presented)
             if not isinstance(document, dict) or set(document) != {"worktrees"}:
@@ -786,7 +841,8 @@ def collect_outcome_registries(
                     raise StrictReadError(
                         "cap-exceeded", identity, [f"{identity}: row count beyond entry cap"]
                     )
-    except StrictReadError as problem:
+    except (OSError, StrictReadError) as caught:
+        problem = caught if isinstance(caught, StrictReadError) else _unsafe(identity, caught)
         scan.add_problem(problem)
         scan.add_source(
             Source(
@@ -1119,6 +1175,7 @@ def collect_outcome_dispatch_events(
             if not ledger_path.exists() and not _is_symlink(ledger_path):
                 continue
             presented = redactor.present(ledger_path)
+            _require_depth(ledger_path, outcomes_dir, identity)
             records = _read_jsonl_tolerant_tail(
                 ledger_path, cap=MAX_LEDGER_BYTES, presented=presented, scan=scan
             )
@@ -1147,7 +1204,8 @@ def collect_outcome_dispatch_events(
                     f"outcome-ledger: {outcome_id} commit {record.get('key')}"
                 )
                 count += 1
-    except StrictReadError as problem:
+    except (OSError, StrictReadError) as caught:
+        problem = caught if isinstance(caught, StrictReadError) else _unsafe(identity, caught)
         scan.add_problem(problem)
         scan.add_source(
             Source(
@@ -1291,7 +1349,7 @@ def reconcile_dispatch(
                             subject_id=logical,
                             evidence_refs=(
                                 f"lease-registry: live agent lease {lease_id}",
-                                "run-facts: verified chain has no matching spawn fact",
+                                "run-facts: verified prefix has no matching spawn fact",
                             ),
                             owner_command="/delegation-audit",
                         )
@@ -1387,27 +1445,61 @@ def _read_audit_artifact(
     return document
 
 
+_ATTESTATION_SCHEMA = "output_attestation.v1"
+
+
+def _attestation_subset_valid(attestation: Any) -> bool:
+    """Mirror of fleet-core's structural ``validate_attestation`` checks (no content proof)."""
+    if not isinstance(attestation, dict):
+        return False
+    if attestation.get("schema") != _ATTESTATION_SCHEMA:
+        return False
+    artifact = attestation.get("artifact")
+    if not isinstance(artifact, str) or not artifact.strip():
+        return False
+    byte_count = attestation.get("bytes")
+    if isinstance(byte_count, bool) or not isinstance(byte_count, int) or byte_count < 0:
+        return False
+    digest = attestation.get("sha256")
+    if not isinstance(digest, str) or len(digest) != 64:
+        return False
+    try:
+        int(digest, 16)
+    except ValueError:
+        return False
+    empty = attestation.get("empty")
+    return isinstance(empty, bool) and empty == (byte_count == 0)
+
+
 def _receipt_subset_valid(receipt: dict[str, Any]) -> bool:
-    """The doctor's independent minimal ``bridge_receipt.v1`` subset (conformance-tested)."""
+    """Independent re-derivation of fleet-core's canonical ``validate_receipt`` verdict (KTD1).
+
+    The conformance suite proves the two agree fixture-for-fixture — including optional-field
+    corruption and type-divergent core fields — so this gate is neither looser nor stricter
+    than the canonical schema authority.
+    """
     if receipt.get("schema") != "bridge_receipt.v1":
         return False
-    if not isinstance(receipt.get("engine_id"), str) or not isinstance(receipt.get("variant"), str):
-        return False
+    for field_name in ("engine_id", "variant", "transport", "wall_time_s", "bytes_produced"):
+        if field_name not in receipt:
+            return False
     transport = receipt.get("transport")
     if transport not in _RECEIPT_RUNNER_FIELDS:
         return False
-    if not isinstance(receipt.get("wall_time_s"), (int, float)) or isinstance(
-        receipt.get("wall_time_s"), bool
-    ):
-        return False
-    if isinstance(receipt.get("bytes_produced"), bool) or not isinstance(
-        receipt.get("bytes_produced"), int
-    ):
-        return False
     runner = receipt.get("runner")
-    if not isinstance(runner, dict):
+    if not isinstance(runner, dict) or not _RECEIPT_RUNNER_FIELDS[transport] <= set(runner):
         return False
-    return _RECEIPT_RUNNER_FIELDS[transport] <= set(runner)
+    emitter = receipt.get("receipt_emitter")
+    if emitter is not None and (not isinstance(emitter, str) or not emitter.strip()):
+        return False
+    run_id = receipt.get("run_id")
+    if run_id is not None and (not isinstance(run_id, str) or not run_id.strip()):
+        return False
+    tokens = receipt.get("external_tokens")
+    if tokens is not None and (isinstance(tokens, bool) or not isinstance(tokens, (int, float))):
+        return False
+    attestation = receipt.get("output_attestation")
+    return attestation is None or _attestation_subset_valid(attestation)
 
 
 def reconcile_delegation(
@@ -1554,10 +1646,16 @@ def derive_exit(report: dict[str, Any]) -> int:
     return 1 if report["counts"]["findings"] > 0 else 0
 
 
+def _sanitize_text(value: str) -> str:
+    """Control characters from untrusted identities never reshape the text report (R7)."""
+    return "".join(ch if ch.isprintable() else "�" for ch in value)
+
+
 def render_text(report: dict[str, Any]) -> str:
+    s = _sanitize_text
     lines = [
         f"fleet doctor — {report['schema']}",
-        f"repo: {report['repo']}",
+        f"repo: {s(str(report['repo']))}",
         f"complete: {str(report['complete']).lower()}",
         "",
         "sources:",
@@ -1565,7 +1663,7 @@ def render_text(report: dict[str, Any]) -> str:
     for source in report["sources"]:
         lines.append(
             f"  {source['kind']:16} {source['verdict']:16} records={source['record_count']}"
-            f" {source['identity']}"
+            f" {s(str(source['identity']))}"
         )
     lines.append("")
     lines.append("findings:")
@@ -1573,17 +1671,17 @@ def render_text(report: dict[str, Any]) -> str:
         lines.append("  none")
     for finding in report["findings"]:
         lines.append(
-            f"  [{finding['disease']}] {finding['classification']} {finding['subject_id']}"
+            f"  [{finding['disease']}] {finding['classification']} {s(finding['subject_id'])}"
         )
         for ref in finding["evidence_refs"]:
-            lines.append(f"    evidence: {ref}")
-        lines.append(f"    owner: {finding['owner_command']}")
+            lines.append(f"    evidence: {s(str(ref))}")
+        lines.append(f"    owner: {s(str(finding['owner_command']))}")
     lines.append("")
     lines.append("warnings:")
     if not report["warnings"]:
         lines.append("  none")
     for warning in report["warnings"]:
-        lines.append(f"  {warning}")
+        lines.append(f"  {s(str(warning))}")
     lines.append("")
     counts = report["counts"]
     lines.append(

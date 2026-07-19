@@ -34,7 +34,10 @@ blocks a clean exit (KTD5).
 - **Read-only by construction (R1/R2).** No producer module is imported (the mutation-import
   denylist is an executable conformance test); bytecode writing is disabled; strict readers
   never follow symlinks, never heal, never quarantine, and cap every byte/record/depth/output
-  dimension. A repeated scan over unchanged sources is byte-identical.
+  dimension. A repeated scan over unchanged sources is byte-identical. The run-fact chain
+  verdict is `verified-prefix`, deliberately: hash-chain verification proves the surviving
+  prefix, and whole-record trailing truncation at a newline boundary is undetectable without
+  an external head anchor.
 - **Exit semantics fail closed (R8/KTD6).** 0 = complete + clean; 1 = complete + disease
   findings; 2 = incomplete proof. Hitting a cap emits `scan-incomplete`, never a truncated
   clean.
@@ -43,6 +46,9 @@ blocks a clean exit (KTD5).
   `_shared-install`, and unmanaged developer worktrees are excluded by construction.
 - **Privacy (R7).** Machine-local store paths are redacted to `label:component` unless
   `--show-local-paths` is passed; no prompt, transcript, diff, or secret enters output.
+  Redaction covers error text too — OS-level failures are reported by errno and message
+  alone, never by absolute path — and control characters in untrusted identities are
+  neutralized in the text rendering.
 - **Owner routing.** Every finding carries a bounded, static `owner_command` naming the owning
   recovery surface. The doctor never executes it.
 

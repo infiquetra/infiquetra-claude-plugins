@@ -27,6 +27,28 @@
 
 ## 2026-07-19
 
+### Exception text defeats a presentation-layer redactor {#error-text-defeats-redaction-353}
+
+**Context.** The fleet doctor redacts machine-local paths to `label:component` via a
+`Redactor.present()` presentation layer, and the redaction unit test passed — on the clean
+path. The six-lens ceremony's security lens (round 1, P1) reproduced absolute-path and
+`$HOME` disclosure in default mode anyway.
+**Evidence.** `plugins/saga/scripts/fleet_doctor.py` — pre-fix sites interpolated raw
+`OSError` objects into evidence (`f"{presented}: {exc}"` and `[str(exc)]`); a chmod-0 store
+directory produced finding evidence `[Errno 13] Permission denied: '/abs/path/...'`, the
+raw-exception suffix defeating the already-redacted prefix.
+**Mechanism.** `str(OSError)` embeds the syscall's absolute filename. A redactor that only
+rewrites the paths the author *presents* leaves every path the runtime *reports* untouched —
+and error paths are exactly where scans of foreign state end up.
+**Fix (or queued).** `_safe_oserror()` renders errno + strerror only (never the filename);
+all OSError interpolation routed through it; error-path redaction oracles added
+(`test_oserror_evidence_never_leaks_paths`, `test_scandir_oserror_evidence_is_redacted`).
+Same commit as this entry.
+**Generalizable rule.** Redaction is a property of the whole output, not of the happy path:
+audit every exception interpolation site, and test redaction under induced failures, not
+just on a clean run.
+**Refs.** DECISIONS `{#fleet-doctor-independent-audit-353}`.
+
 ### A worktree census motivates a capability; it does not prove abandonment {#fleet-doctor-census-353}
 
 **Context.** Issue #353 was filed against a historical snapshot of fifteen lingering worktrees.

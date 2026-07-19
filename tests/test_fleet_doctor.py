@@ -7,6 +7,7 @@ producer; these tests do — that asymmetry is the point (KTD1).
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import importlib.util
 import json
@@ -205,7 +206,7 @@ def test_valid_ledger_verifies_chain(repo: Path, stores: dict[str, Path]) -> Non
     _write_facts(repo, count=3)
     report = _scan(repo, stores)
     source = _source(report, "run-facts")
-    assert source["verdict"] == "verified-chain"
+    assert source["verdict"] == "verified-prefix"
     assert source["record_count"] == 3
     assert FD.derive_exit(report) == 0
 
@@ -239,7 +240,7 @@ def test_torn_trailing_line_is_tolerated_with_warning(repo: Path, stores: dict[s
     report = _scan(repo, stores)
     assert report["complete"] is True
     source = _source(report, "run-facts")
-    assert source["verdict"] == "verified-chain"
+    assert source["verdict"] == "verified-prefix"
     assert source["record_count"] == 2
     assert any("torn trailing line" in w for w in report["warnings"])
     assert FD.derive_exit(report) == 0
@@ -289,9 +290,10 @@ def test_source_changed_between_reads_is_incomplete(
         st = real_lstat(target)
         if Path(str(target)) == path:
             seen["count"] += 1
-            # Call order for the ledger: symlink probe, pre-stat, post-stat — fake only the
-            # post-stat so pre and post genuinely disagree.
-            if seen["count"] >= 3:
+            # Call order for the ledger: pre-stat then post-stat (the absent/symlink guard
+            # short-circuits for an existing regular file) — fake only the post-stat so pre
+            # and post genuinely disagree.
+            if seen["count"] >= 2:
                 fake = list(st)
                 fake[8] = st.st_mtime + 5
                 return os.stat_result(fake, {"st_mtime_ns": st.st_mtime_ns + 5_000_000})
@@ -1069,11 +1071,69 @@ def test_receipt_subset_conforms_to_canonical_validator() -> None:
     broken_runner = _valid_receipt()
     broken_runner["runner"] = {}
     fixtures += [broken_transport, broken_schema, broken_runner]
+    # Optional-field corruption: the canon rejects each of these, so the subset must too
+    # (no false-clean through fields the gate does not look at).
+    for mutation in (
+        {"external_tokens": "THIS-IS-CORRUPT"},
+        {"external_tokens": True},
+        {"run_id": ""},
+        {"receipt_emitter": 7},
+        {"output_attestation": "not-a-dict"},
+        {"output_attestation": {"schema": "output_attestation.v1"}},
+        {
+            "output_attestation": {
+                "schema": "output_attestation.v1",
+                "artifact": "out.txt",
+                "bytes": 3,
+                "sha256": "z" * 64,
+                "empty": False,
+            }
+        },
+        {
+            "output_attestation": {
+                "schema": "output_attestation.v1",
+                "artifact": "out.txt",
+                "bytes": 3,
+                "sha256": "a1" * 32,
+                "empty": True,
+            }
+        },
+    ):
+        broken = _valid_receipt()
+        broken.update(cast("dict[str, Any]", mutation))
+        fixtures.append(broken)
+    # Optional fields present and valid: both validators must accept.
+    rich = _valid_receipt()
+    rich.update(
+        {
+            "receipt_emitter": "bridge",
+            "run_id": "run-9",
+            "external_tokens": 12,
+            "output_attestation": {
+                "schema": "output_attestation.v1",
+                "artifact": "out.txt",
+                "bytes": 3,
+                "sha256": "a1" * 32,
+                "empty": False,
+            },
+        }
+    )
+    fixtures.append(rich)
+    # Type-divergent core fields: the canon checks PRESENCE only — the subset must agree
+    # rather than be stricter (a canonically valid receipt is never an evidence error).
+    stringy = _valid_receipt()
+    stringy["wall_time_s"] = "1.5"
+    inty = _valid_receipt()
+    inty["engine_id"] = 42
+    missing_core = _valid_receipt()
+    del missing_core["bytes_produced"]
+    fixtures += [stringy, inty, missing_core]
     for fixture in fixtures:
         canonical_ok = canonical.validate_receipt(fixture) == []
         subset_ok = FD._receipt_subset_valid(fixture)
-        # Conformance: the doctor's subset never rejects a canonically valid receipt, and
-        # rejects every fixture broken in a subset-covered field exactly as the canon does.
+        # Conformance: the subset re-derives the canonical verdict exactly — equal
+        # accept/reject on every fixture, including optional-field and type-divergent
+        # corruption (neither looser nor stricter than the canon).
         assert subset_ok == canonical_ok, (fixture, canonical.validate_receipt(fixture))
 
 
@@ -1265,3 +1325,353 @@ def test_cli_full_fixture_no_write_with_findings(repo: Path, stores: dict[str, P
     parsed = json.loads(result.stdout)
     assert parsed["counts"]["findings"] == 2
     assert _tree_snapshot(repo, stores["lease"], stores["audit"]) == before
+
+
+# ------------------------------------------------------------------ ceremony r1: strict-read
+# hardening oracles (symlinked ledger, truncation bound, OSError fail-closed + redaction)
+
+
+def test_symlinked_run_facts_ledger_is_unsafe(
+    repo: Path, stores: dict[str, Path], tmp_path: Path
+) -> None:
+    real = tmp_path / "elsewhere.jsonl"
+    real.write_bytes(_write_facts(repo, count=2).read_bytes())
+    path = _ledger_path(repo)
+    path.unlink()
+    path.symlink_to(real)
+    report = _scan(repo, stores)
+    assert report["complete"] is False
+    assert _source(report, "run-facts")["verdict"] == "unsafe-path"
+    assert FD.derive_exit(report) == 2
+
+
+def test_trailing_record_truncation_is_verified_prefix(repo: Path, stores: dict[str, Path]) -> None:
+    path = _write_facts(repo, count=4)
+    lines = path.read_bytes().split(b"\n")
+    path.write_bytes(b"\n".join(lines[:2]) + b"\n")
+    report = _scan(repo, stores)
+    source = _source(report, "run-facts")
+    # Whole-record trailing truncation is undetectable by design (each prefix is an
+    # independently valid chain): the verdict claims a verified PREFIX, nothing more.
+    assert source["verdict"] == "verified-prefix"
+    assert source["record_count"] == 2
+    assert report["complete"] is True
+    assert FD.derive_exit(report) == 0
+
+
+def test_open_oserror_fails_closed_not_traceback(
+    repo: Path, stores: dict[str, Path], monkeypatch: Any
+) -> None:
+    path = _write_facts(repo, count=2)
+
+    def eloop_open(target: Any, flags: int) -> int:
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links", str(target))
+
+    monkeypatch.setattr(FD, "_open", eloop_open)
+    report = _scan(repo, stores)
+    assert report["complete"] is False
+    assert _source(report, "run-facts")["verdict"] == "unsafe-path"
+    assert str(path) not in FD.canonical_json(report)
+    assert FD.derive_exit(report) == 2
+
+
+def test_oserror_evidence_never_leaks_paths(
+    repo: Path, stores: dict[str, Path], monkeypatch: Any
+) -> None:
+    real_lstat = os.lstat
+
+    def denying_lstat(target: Any) -> os.stat_result:
+        if Path(str(target)) == stores["lease"]:
+            raise PermissionError(13, "Permission denied", str(target))
+        return real_lstat(target)
+
+    monkeypatch.setattr(FD, "_lstat", denying_lstat)
+    report = _scan(repo, stores)
+    rendered = FD.canonical_json(report) + FD.render_text(report)
+    assert report["complete"] is False
+    assert _find(report, "unsafe-path")
+    assert str(stores["lease"]) not in rendered
+    assert str(Path.home()) not in rendered
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="permission denial is not observable as root")
+def test_scandir_oserror_evidence_is_redacted(repo: Path, stores: dict[str, Path]) -> None:
+    secret = repo / ".saga-worktrees" / "secret-outcome" / "sub-1"
+    secret.mkdir(parents=True)
+    outcome_dir = secret.parent
+    outcome_dir.chmod(0)
+    try:
+        report = _scan(repo, stores)
+    finally:
+        outcome_dir.chmod(0o755)
+    assert report["complete"] is False
+    assert _find(report, "unsafe-path")
+    assert str(repo) not in FD.canonical_json(report)
+
+
+def test_render_text_neutralizes_control_characters() -> None:
+    scan = FD.Scan(repo_identity="r\x1b[31m")
+    scan.add_finding(
+        FD.Finding(
+            disease="leaked-resource",
+            classification="stale-worktree",
+            subject_id="out\x1b[31m/injected\nsub",
+            evidence_refs=("ref\x07one",),
+            owner_command="/outcome status",
+        )
+    )
+    scan.warnings.append("warn\x1btext")
+    rendered = FD.render_text(FD.build_report(scan))
+    assert "\x1b" not in rendered
+    assert "\x07" not in rendered
+    assert all(ch == "\n" or ch.isprintable() for ch in rendered)
+
+
+# ------------------------------------------------------------------ ceremony r1: cap matrix
+# (every declared cap has a tripping oracle; boundaries are exact)
+
+
+def test_git_stdout_beyond_cap_fails_closed(
+    repo: Path, stores: dict[str, Path], monkeypatch: Any
+) -> None:
+    monkeypatch.setattr(FD, "GIT_STDOUT_CAP", 1)
+    report = _scan(repo, stores)
+    assert report["complete"] is False
+    assert _find(report, "cap-exceeded")
+    assert FD.derive_exit(report) == 2
+
+
+def test_git_stderr_beyond_cap_is_cap_exceeded(repo: Path, monkeypatch: Any) -> None:
+    monkeypatch.setattr(FD, "GIT_STDERR_CAP", 0)
+    with pytest.raises(FD.StrictReadError) as info:
+        FD.run_git(repo, "rev-parse", "--verify", "no-such-ref-xyz")
+    assert info.value.classification == "cap-exceeded"
+
+
+def test_git_timeout_is_cap_exceeded(repo: Path, monkeypatch: Any) -> None:
+    def timing_out_run(*args: Any, **kwargs: Any) -> Any:
+        raise subprocess.TimeoutExpired(cmd="git", timeout=0.01)
+
+    monkeypatch.setattr(FD.subprocess, "run", timing_out_run)
+    with pytest.raises(FD.StrictReadError) as info:
+        FD.run_git(repo, "rev-parse", "--show-toplevel")
+    assert info.value.classification == "cap-exceeded"
+
+
+def test_audit_artifact_beyond_cap_is_evidence_error(
+    repo: Path, stores: dict[str, Path], monkeypatch: Any
+) -> None:
+    _audit_run(stores, "run-big", manifest={"disposition": "fell-back-to-inline"})
+    monkeypatch.setattr(FD, "MAX_ARTIFACT_BYTES", 16)
+    report = _scan(repo, stores)
+    assert _find(report, "delegation-evidence-error")
+    assert report["complete"] is False
+    assert FD.derive_exit(report) == 2
+
+
+def test_output_beyond_cap_withholds_report(
+    repo: Path, stores: dict[str, Path], monkeypatch: Any, capsys: Any
+) -> None:
+    monkeypatch.setattr(FD, "MAX_OUTPUT_BYTES", 10)
+    rc = FD.main(
+        [
+            "--repo-root",
+            str(repo),
+            "--lease-store",
+            str(stores["lease"]),
+            "--audit-store",
+            str(stores["audit"]),
+            "--format",
+            "json",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert captured.out == ""
+    assert "report withheld" in captured.err
+
+
+def test_depth_cap_managed_scan_fails_closed(
+    repo: Path, stores: dict[str, Path], monkeypatch: Any
+) -> None:
+    monkeypatch.setattr(FD, "MAX_DEPTH", 1)
+    (repo / ".saga-worktrees" / "out-a" / "sub-1").mkdir(parents=True)
+    report = _scan(repo, stores)
+    assert _find(report, "cap-exceeded")
+    assert report["complete"] is False
+    assert FD.derive_exit(report) == 2
+
+
+def test_depth_cap_audit_runs_fails_closed(
+    repo: Path, stores: dict[str, Path], monkeypatch: Any
+) -> None:
+    monkeypatch.setattr(FD, "MAX_DEPTH", 1)
+    (stores["audit"] / "runs" / "r1").mkdir(parents=True)
+    report = _scan(repo, stores)
+    assert _source(report, "audit-store")["verdict"] == "cap-exceeded"
+    assert FD.derive_exit(report) == 2
+
+
+def test_entry_cap_audit_runs(repo: Path, stores: dict[str, Path], monkeypatch: Any) -> None:
+    monkeypatch.setattr(FD, "MAX_SOURCE_ENTRIES", 2)
+    for name in ("r1", "r2", "r3"):
+        (stores["audit"] / "runs" / name).mkdir(parents=True)
+    report = _scan(repo, stores)
+    assert _source(report, "audit-store")["verdict"] == "cap-exceeded"
+    assert FD.derive_exit(report) == 2
+
+
+def test_entry_cap_git_worktrees(
+    repo: Path, stores: dict[str, Path], tmp_path: Path, monkeypatch: Any
+) -> None:
+    monkeypatch.setattr(FD, "MAX_SOURCE_ENTRIES", 2)
+    _git(repo, "commit", "--allow-empty", "-q", "-m", "seed")
+    for name in ("wt1", "wt2"):
+        _git(repo, "worktree", "add", "-q", str(tmp_path / name), "HEAD")
+    report = _scan(repo, stores)
+    assert _source(report, "git-worktrees")["verdict"] == "cap-exceeded"
+    assert FD.derive_exit(report) == 2
+
+
+def test_entry_cap_managed_dirs(repo: Path, stores: dict[str, Path], monkeypatch: Any) -> None:
+    monkeypatch.setattr(FD, "MAX_SOURCE_ENTRIES", 2)
+    for name in ("s1", "s2", "s3"):
+        (repo / ".saga-worktrees" / "out-a" / name).mkdir(parents=True)
+    report = _scan(repo, stores)
+    assert any(
+        f["classification"] == "cap-exceeded" and "managed worktree" in " ".join(f["evidence_refs"])
+        for f in report["findings"]
+    )
+    assert FD.derive_exit(report) == 2
+
+
+def test_entry_cap_outcome_dirs(repo: Path, stores: dict[str, Path], monkeypatch: Any) -> None:
+    monkeypatch.setattr(FD, "MAX_SOURCE_ENTRIES", 2)
+    for name in ("o1", "o2", "o3"):
+        (repo / ".git" / "saga-outcomes" / name).mkdir(parents=True)
+    report = _scan(repo, stores)
+    assert _source(report, "worktree-registries")["verdict"] == "cap-exceeded"
+    assert FD.derive_exit(report) == 2
+
+
+def test_entry_cap_registry_rows(repo: Path, stores: dict[str, Path], monkeypatch: Any) -> None:
+    monkeypatch.setattr(FD, "MAX_SOURCE_ENTRIES", 2)
+    rows = {f"sub-{i}": _registry_row(repo, "out-a", f"sub-{i}") for i in (1, 2, 3)}
+    _write_worktree_registry(repo, "out-a", rows)
+    report = _scan(repo, stores)
+    assert _source(report, "worktree-registries")["verdict"] == "cap-exceeded"
+    assert FD.derive_exit(report) == 2
+
+
+def test_entry_cap_dispatch_records(repo: Path, stores: dict[str, Path], monkeypatch: Any) -> None:
+    monkeypatch.setattr(FD, "MAX_SOURCE_ENTRIES", 2)
+    for index in range(3):
+        _outcome_commit(repo, "out-a", f"d{index}", f"u{index}")
+    report = _scan(repo, stores)
+    assert _source(report, "outcome-dispatch-events")["verdict"] == "cap-exceeded"
+    assert FD.derive_exit(report) == 2
+
+
+def test_entry_cap_boundary_exact_is_clean(
+    repo: Path, stores: dict[str, Path], monkeypatch: Any
+) -> None:
+    # Exactly cap-many entries stay clean at both normalized guard sites: the cap is a
+    # maximum, not an off-by-one.
+    monkeypatch.setattr(FD, "MAX_SOURCE_ENTRIES", 2)
+    for name in ("r1", "r2"):
+        (stores["audit"] / "runs" / name).mkdir(parents=True)
+    _write_worktree_registry(
+        repo,
+        "out-a",
+        {f"sub-{i}": _registry_row(repo, "out-a", f"sub-{i}") for i in (1, 2)},
+    )
+    report = _scan(repo, stores)
+    assert _source(report, "audit-store")["verdict"] == "present"
+    assert _source(report, "audit-store")["record_count"] == 2
+    assert _source(report, "worktree-registries")["record_count"] == 2
+    assert report["complete"] is True
+
+
+# ------------------------------------------------------------------ ceremony r1: uncovered
+# reconciliation branches (broker-absent lease, already-absent teardown, late delivery)
+
+
+def test_registry_lease_absent_from_broker_is_drift(repo: Path, stores: dict[str, Path]) -> None:
+    _managed_worktree(repo, "out-a", "sub-1")
+    row = _registry_row(repo, "out-a", "sub-1")
+    row["lease"] = {
+        "lease_id": "L-gone",
+        "token": {"broker_epoch": "e", "fencing_sequence": 3},
+        "root_sha256": "r",
+    }
+    _write_worktree_registry(repo, "out-a", {"sub-1": row})
+    _broker(stores, leases={"L-other": {"pool": "agent", "owner_id": "o", "resource_ref": {}}})
+    report = _scan(repo, stores)
+    drift = _find(report, "ownership-drift")
+    assert any("absent from the broker" in ref for f in drift for ref in f["evidence_refs"])
+    assert FD.derive_exit(report) == 1
+
+
+def test_teardown_already_absent_but_lease_live_is_terminal_open(
+    repo: Path, stores: dict[str, Path]
+) -> None:
+    ledger = _fact_ledger(repo)
+    RL.append_fact(
+        ledger,
+        RL.build_fact(
+            "teardown",
+            subplot_id="team",
+            at="t",
+            event="resource-attempt",
+            action_key="k3",
+            resource_id="L7",
+            resource_kind="provisional-lease",
+            generation="e:9",
+            action="lease-release",
+            team_run_id="run-3",
+        ),
+    )
+    RL.append_fact(
+        ledger,
+        RL.build_fact(
+            "teardown",
+            subplot_id="team",
+            at="t",
+            event="resource-result",
+            action_key="k3",
+            disposition="already-absent",
+            evidence_refs=[],
+            team_run_id="run-3",
+        ),
+    )
+    _broker(stores, leases={"L7": {"pool": "agent", "owner_id": "o", "resource_ref": {}}})
+    report = _scan(repo, stores)
+    open_findings = _find(report, "terminal-resource-open")
+    assert [f["subject_id"] for f in open_findings] == ["L7"]
+    assert FD.derive_exit(report) == 1
+
+
+def test_late_delivery_settlement_is_not_unsettled(repo: Path, stores: dict[str, Path]) -> None:
+    ledger = _fact_ledger(repo)
+    _manifest_fact(ledger, "d8", ["u8"])
+    _spawn_fact(ledger, "d8", "u8")
+    RL.append_fact(
+        ledger,
+        RL.build_fact(
+            "dispatch-settlement",
+            subplot_id="coord",
+            at="t",
+            event="late-delivery",
+            dispatch_id="d8",
+            unit_id="u8",
+            attempt=1,
+            classification="delivered-late",
+            reason="delivered after the settlement deadline",
+            evidence_ref="e",
+            evidence_sha256="f" * 64,
+        ),
+    )
+    _outcome_commit(repo, "out-a", "d8", "u8")
+    report = _scan(repo, stores)
+    assert report["findings"] == []
+    assert FD.derive_exit(report) == 0

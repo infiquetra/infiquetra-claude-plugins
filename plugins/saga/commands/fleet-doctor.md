@@ -15,7 +15,9 @@ errors.
 
 Exit 0 is a complete scan with zero findings and zero evidence errors; exit 1 is a complete
 scan with disease findings; exit 2 is incomplete proof (config error, corrupt/unsafe evidence,
-broken chain, capacity overflow, or a source changing mid-scan). Findings name the owning
+broken chain, capacity overflow, or a source changing mid-scan). The run-facts verdict
+`verified-prefix` is deliberately named: the hash chain proves the surviving prefix, and
+whole-record trailing truncation is undetectable by design. Findings name the owning
 recovery surface (`/outcome status`, lease-broker `inspect`, B8 `status/recover`,
 `/delegation-audit`) — the doctor never repairs, settles, retries, releases, reaps, or removes
 anything, and there is no `--fix`, `--watch`, or fixture mode.

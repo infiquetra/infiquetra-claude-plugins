@@ -1135,6 +1135,22 @@ def test_receipt_subset_conforms_to_canonical_validator() -> None:
         # accept/reject on every fixture, including optional-field and type-divergent
         # corruption (neither looser nor stricter than the canon).
         assert subset_ok == canonical_ok, (fixture, canonical.validate_receipt(fixture))
+    # The ONE enumerated divergence class (fuzz-derived, ceremony r2): the canon's
+    # presence-only transport guard accepts `transport: null` — skipping runner-section
+    # validation — and its dict-membership check raises on unhashable transports. The doctor
+    # stays STRICT and fail-closed on non-string transports: it may over-flag a degenerate
+    # receipt, it can never crash or pass one as clean.
+    null_transport = _valid_receipt()
+    null_transport["transport"] = None
+    assert canonical.validate_receipt(null_transport) == []  # the canon's gap
+    assert FD._receipt_subset_valid(null_transport) is False  # strict, never false-clean
+    unhashables: tuple[Any, ...] = ([], {})
+    for unhashable in unhashables:
+        crashy = _valid_receipt()
+        crashy["transport"] = unhashable
+        with pytest.raises(TypeError):
+            canonical.validate_receipt(crashy)  # the canon crashes on this input
+        assert FD._receipt_subset_valid(crashy) is False  # the doctor must not
 
 
 def test_thirty_position_matrix_stable_and_exhaustive(repo: Path, stores: dict[str, Path]) -> None:
@@ -1649,6 +1665,29 @@ def test_teardown_already_absent_but_lease_live_is_terminal_open(
     open_findings = _find(report, "terminal-resource-open")
     assert [f["subject_id"] for f in open_findings] == ["L7"]
     assert FD.derive_exit(report) == 1
+
+
+def test_unhashable_transport_receipt_fails_closed(repo: Path, stores: dict[str, Path]) -> None:
+    # Ceremony r2 P2: a crafted receipt with a JSON-array transport must be a fail-closed
+    # evidence error, never an uncaught TypeError out of run_scan.
+    bad = _valid_receipt()
+    bad["transport"] = []
+    _audit_run(stores, "run-crash", manifest={"disposition": "ran-as-requested"}, receipt=bad)
+    report = _scan(repo, stores)
+    assert _find(report, "delegation-evidence-error")
+    assert report["complete"] is False
+    assert FD.derive_exit(report) == 2
+
+
+def test_null_transport_receipt_is_evidence_error(repo: Path, stores: dict[str, Path]) -> None:
+    # The enumerated strict-only divergence end to end: canon accepts transport=null, the
+    # doctor flags it — over-flagging a degenerate receipt beats passing it as proof.
+    bad = _valid_receipt()
+    bad["transport"] = None
+    _audit_run(stores, "run-null", manifest={"disposition": "ran-as-requested"}, receipt=bad)
+    report = _scan(repo, stores)
+    assert _find(report, "delegation-evidence-error")
+    assert FD.derive_exit(report) == 2
 
 
 def test_late_delivery_settlement_is_not_unsettled(repo: Path, stores: dict[str, Path]) -> None:

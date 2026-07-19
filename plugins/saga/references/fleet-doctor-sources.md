@@ -25,5 +25,10 @@ outcome-labeled leases outside them are counted in a warning, never silently dro
 
 The doctor validates its own minimal `bridge_receipt.v1` subset at runtime;
 `test_receipt_subset_conforms_to_canonical_validator` compares that subset against
-fleet-core's canonical `validate_receipt` on shared fixtures and fails on drift (the
-conformance-vs-runtime split, U3).
+fleet-core's canonical `validate_receipt` on a corruption fixture matrix and fails on drift
+(the conformance-vs-runtime split, U3). Verdicts are equal wherever the canon is
+well-defined; the one enumerated divergence is deliberate and pinned by the same test — the
+canon's presence-only transport guard accepts `transport: null` (skipping runner-section
+validation) and raises on unhashable transports, while the doctor rejects every non-string
+transport fail-closed (it may over-flag a degenerate receipt, it can never crash or pass one
+as clean).

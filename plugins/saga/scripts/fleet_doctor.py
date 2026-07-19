@@ -1474,9 +1474,13 @@ def _attestation_subset_valid(attestation: Any) -> bool:
 def _receipt_subset_valid(receipt: dict[str, Any]) -> bool:
     """Independent re-derivation of fleet-core's canonical ``validate_receipt`` verdict (KTD1).
 
-    The conformance suite proves the two agree fixture-for-fixture — including optional-field
-    corruption and type-divergent core fields — so this gate is neither looser nor stricter
-    than the canonical schema authority.
+    The conformance suite proves verdict equality fixture-for-fixture wherever the canon is
+    well-defined — including optional-field corruption and type-divergent core fields. One
+    enumerated divergence is deliberate: the canon's presence-only transport guard accepts
+    ``transport: null`` (skipping runner-section validation) and raises ``TypeError`` on
+    unhashable transport values; the doctor stays strict and fail-closed there — it may
+    over-flag a degenerate receipt as an evidence error, it can never crash or pass one as
+    clean.
     """
     if receipt.get("schema") != "bridge_receipt.v1":
         return False
@@ -1484,7 +1488,7 @@ def _receipt_subset_valid(receipt: dict[str, Any]) -> bool:
         if field_name not in receipt:
             return False
     transport = receipt.get("transport")
-    if transport not in _RECEIPT_RUNNER_FIELDS:
+    if not isinstance(transport, str) or transport not in _RECEIPT_RUNNER_FIELDS:
         return False
     runner = receipt.get("runner")
     if not isinstance(runner, dict) or not _RECEIPT_RUNNER_FIELDS[transport] <= set(runner):

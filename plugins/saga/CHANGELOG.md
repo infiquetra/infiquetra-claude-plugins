@@ -26,8 +26,10 @@
   and message only — never an absolute path) and neutralizes control characters in the text
   rendering; `os.open`/`os.scandir` failures fail closed to exit 2 instead of raising; a
   symlinked run-fact ledger is `unsafe-path`, never a clean "absent"; the receipt gate
-  re-derives fleet-core's canonical `validate_receipt` verdict exactly (conformance matrix
-  covers optional-field and type-divergent corruption); the traversal depth cap is enforced;
+  re-derives fleet-core's canonical `validate_receipt` verdict (conformance matrix covers
+  optional-field and type-divergent corruption; one enumerated deliberate divergence — every
+  non-string transport is rejected fail-closed where the canon accepts `null` and crashes on
+  unhashables); the traversal depth cap is enforced;
   every declared cap carries a tripping oracle; and the run-facts source verdict is named
   `verified-prefix` (trailing whole-record truncation is undetectable by design and is now
   documented as such).

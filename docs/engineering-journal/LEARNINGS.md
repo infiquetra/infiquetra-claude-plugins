@@ -3637,3 +3637,17 @@ asserting that the fallback returns a nonempty string.
 
 **Refs.** `plugins/fleet-core/scripts/fleet_commons/lease_broker.py` and
 `tests/test_fleet_lease_broker.py`; decision `{#fleet-ttl-lease-broker-356}`.
+
+## 2026-07-19: Evidence-ledger paths record as given — run it from the repo root you pass {#evidence-ledger-cwd-353}
+
+- **Evidence**: leaf codex-substrate harvest wedged with `chain-tamper` / "artifact missing on disk"
+  (closure gate resolved `.claude/worktrees/<outcome>/docs/evidence/...` against the worktree root,
+  doubling the prefix). Ledger writes had run from the primary checkout with
+  `--repo-root .claude/worktrees/<outcome>`.
+- **Mechanism**: `evidence_ledger.py` records `artifact_path` as the path it constructs relative to
+  its invocation context, and `closure_gate.evaluate` resolves that recorded path against the
+  `repo_root` the advance runs with. When the write's cwd and `--repo-root` disagree, the recorded
+  path carries the worktree prefix and can never resolve from inside the worktree.
+- **Generalizable rule**: invoke `evidence_ledger.py` with cwd == `--repo-root` (cd into the outcome
+  worktree and pass `--repo-root .`); if a mis-rooted write is caught while still untracked, delete
+  the whole evidence dir and redo — never hand-edit the custody log.

@@ -281,12 +281,13 @@
         "sub-357",
         "sub-358"
       ],
-      "leaf_saga_id": "",
+      "leaf_saga_id": "leaf-lease-safe-runtime-continuity-sub-353",
       "child_spec_ref": "",
       "github": {
         "repo": "infiquetra/infiquetra-claude-plugins",
         "issue": "infiquetra/infiquetra-claude-plugins#353",
-        "sub_issue": 353
+        "sub_issue": 353,
+        "pr": "https://github.com/infiquetra/infiquetra-claude-plugins/pull/623"
       },
       "worktree": {},
       "evidence": {

@@ -3,6 +3,7 @@ title: Lease-safe runtime continuity - Codex shared runtime substrate
 type: feat
 status: ready-to-freeze
 date: 2026-07-15
+updated: 2026-07-19
 origin: docs/outcomes/lease-safe-runtime-continuity/issue-sources/codex-shared-runtime-substrate.md
 issue: infiquetra/infiquetra-codex-plugins#33
 parent: infiquetra/infiquetra-claude-plugins#579
@@ -233,26 +234,73 @@ external mutation.
 
 ## Workflow Structure
 
-| step_id | depends_on | barrier | role_id | role_kind | independence | execution_class | runtime_agent_name | vehicle | mutation | required_evidence | role_lens_sha256 | profile_sha256 | expected_model | expected_effort | validator_required | validator_disabled | deterministic_contract_sha256 |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| implement | - | - | root | root | n/a | - | - | root | root-only | port-contract,authorized-diff,focused-tests | - | - | - | - | n/a | n/a | - |
-| review-devils | implement | review | devils-advocate-reviewer | agent-lens | preferred | review-high | review_high | auto | none | scored-review,findings | 129f6dca0702ffcd4be7f9e5d0939e8e6806788846ba4058044c931883ef0e63 | 42e86e00e054281b0a79e4b3b9b544c04a31eb2fd6b53c0489adc42ea639c9a8 | gpt-5.6-sol | high | n/a | n/a | - |
-| review-security | implement | review | security-reviewer | agent-lens | preferred | review-high | review_high | auto | none | scored-review,findings | bf5bc1b66c0ee3d06071976b659c522c23057c56de5f6cc010556b2653c86980 | 42e86e00e054281b0a79e4b3b9b544c04a31eb2fd6b53c0489adc42ea639c9a8 | gpt-5.6-sol | high | n/a | n/a | - |
-| review-architecture | implement | review | architecture-reviewer | agent-lens | preferred | review-high | review_high | auto | none | scored-review,findings | e48b37cea0b26bf39cae4d6611b4219e907d52d284ba6b9489b523a4b16c835f | 42e86e00e054281b0a79e4b3b9b544c04a31eb2fd6b53c0489adc42ea639c9a8 | gpt-5.6-sol | high | n/a | n/a | - |
-| review-testing | implement | review | testing-reviewer | agent-lens | preferred | review-high | review_high | auto | none | scored-review,test-gaps | a867575e24c86b0573485d1d8bbd81514af3654d544342677b85f4bed0d9af63 | 42e86e00e054281b0a79e4b3b9b544c04a31eb2fd6b53c0489adc42ea639c9a8 | gpt-5.6-sol | high | n/a | n/a | - |
-| validate-concurrency | implement | validate | concurrency-tester | agent-lens | preferred | test-medium | test_medium | auto | none | concurrency-matrix,command-results | d40188645b7876e32ea592dd9799ee2ad7a2e230d82341611708dd492837b3da | 6d69bb4d5e477574ce186a353a3d2fcc7f8ab6b1f014b93aebb05084aecccc1b | gpt-5.6-terra | medium | true | false | - |
-| validate-event-flow | implement | validate | event-flow-tester | agent-lens | preferred | test-medium | test_medium | auto | none | event-trace,command-results | 2e20ab6935b1e17e363b5e28308a9288107532d0118a6a189f07b0e0eaaff356 | 6d69bb4d5e477574ce186a353a3d2fcc7f8ab6b1f014b93aebb05084aecccc1b | gpt-5.6-terra | medium | true | false | - |
-| integrate | review-devils,review-security,review-architecture,review-testing,validate-concurrency,validate-event-flow | - | root | root | n/a | - | - | root | root-only | fixed-findings,classification-unit-cutover,full-gate,install-fresh-session-rollback,git-receipt | - | - | - | - | n/a | n/a | - |
+| step_id | depends_on | barrier | role_id | role_kind | independence | vehicle | agent_type | model | effort | isolation | mutation | required_evidence |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| implement | - | - | root | root | n/a | session-root | - | - | - | isolated-worktree | root-only | port-contract,authorized-diff,focused-tests |
+| review-devils | implement | review | devils-advocate | agent-lens | separate-context | cc-workflow-agent | saga:readonly-verifier | opus | high | worktree | none | scored-review,findings |
+| review-security | implement | review | security | agent-lens | separate-context | cc-workflow-agent | saga:readonly-verifier | opus | high | worktree | none | scored-review,findings |
+| review-architecture | implement | review | architecture | agent-lens | separate-context | cc-workflow-agent | saga:readonly-verifier | opus | high | worktree | none | scored-review,findings |
+| review-testing | implement | review | testing | agent-lens | separate-context | cc-workflow-agent | saga:readonly-verifier | opus | high | worktree | none | scored-review,test-gaps |
+| validate-concurrency | implement | validate | concurrency | agent-lens | separate-context | cc-workflow-agent | saga:readonly-verifier | sonnet | medium | worktree | none | concurrency-matrix,command-results |
+| validate-event-flow | implement | validate | event-flow | agent-lens | separate-context | cc-workflow-agent | saga:readonly-verifier | sonnet | medium | worktree | none | event-trace,command-results |
+| integrate | review-devils,review-security,review-architecture,review-testing,validate-concurrency,validate-event-flow | - | root | root | n/a | session-root | - | - | - | isolated-worktree | root-only | fixed-findings,classification-unit-cutover,full-gate,install-fresh-session-rollback,git-receipt |
 
-## Workflow operating contract
+## Workflow Operating Contract
 
-Root alone writes, runs commands, integrates, commits, pushes, opens/merges the PR, and reconciles
-issues/board. All agent-lens rows are read-only and authorize no repository or external mutation.
-Requested model/effort/profile/lens identity must match the first runtime receipt; mismatch or absent
-gate evidence triggers a fresh bounded attempt. Root audits the worktree after every child attempt.
-Every P0-P3 finding is fixed and the affected role rerun; three failed remediation cycles halt.
-No deploy, credentials, production data, live Outcome advance, real-profile mutation, cache copy,
-force-push, or branch deletion is authorized.
+- Runtime: root is the operator's Claude Code session on the cc-workflow backend. Root owns
+  implementation, Git, integration, PR creation, merge under the operator's standing outcome
+  approval, issue closure, and board reconciliation. The authorized subject is this issue's
+  infiquetra-codex-plugins paths (plugins/fleet-core, plugins/saga, docs/portability, tests) plus
+  exact Codex release surfaces, executed in a fresh isolated worktree cut from freshly fetched
+  origin/main — never the primary checkout. Root records the pre-existing Git baseline before
+  `implement`; unrelated worktree paths are excluded.
+- Lens dispatch: the six agent-lens rows execute as `agent()` calls inside one root-authored Claude
+  Code Workflow script, each with exactly the agent_type, model, effort, and worktree-isolation
+  cells above, routed through a bounded pool so total in-flight subagents never exceed 3. Each call
+  embeds its lens charter below plus the diff and evidence scope. Spawn parameters are
+  harness-recorded and root records per-lens receipts in the review artifacts; no cryptographic
+  attestation is claimed. If the Workflow tool is unavailable, halt and page the operator — never
+  silently downgrade to another dispatch path.
+- `agent_type=saga:readonly-verifier` is the mandated read-only sandbox profile for review/verify
+  spawns (Bash/Read/Grep/Glob in a disposable worktree, per
+  `plugins/saga/references/sandbox-spawn-sites.md` in infiquetra-claude-plugins); per-call
+  model/effort opts override the profile's default tier. Root audits the isolated worktree after
+  every lens attempt and treats any unexplained diff as workflow-integrity failure.
+- Lens charters: **devils-advocate** — challenge the port end to end: classification completeness
+  (any Claude host primitive surviving as direct-port), runtime-neutral root-resolution divergence
+  between the two runtimes, whether any fail-before-effect HALT edge is reachable only after a
+  side effect, legacy-record resurrection (`handed-off` relabeled as launch proof), broker
+  epoch/fence bypass under crash, retry, and supersession windows, and migration-contract
+  false-proof paths; **security** — trust boundaries of the shared state root: path trust
+  (symlink/traversal escapes into `~/.claude`, `~/.codex`, or installed caches), protected launch
+  receipts staying inside the Codex protected boundary (correlated by identity, never copied),
+  forged settlement records and fence spoofing, state-root permission hygiene, and redaction (no
+  absolute paths, credentials, or transcripts in reports); **architecture** — consumption of the
+  merged #351/#355/#356 contracts without wrapping or redefining their authority, the fleet-core
+  (broker/resource primitives) versus saga (settlement adapter, dispatch effect seam) boundary,
+  port manifest v3 and runbook version 3 conformance, fleet_commons module and shim coherence, and
+  Codex release-surface coherence; **testing** — adequacy of the conformance, migration, and
+  authority-negative matrices, deterministic two-process races over the write-once fake backend, a
+  zero-mutation oracle for every HALT edge, canonical-root digest comparison coverage, and
+  classification/unit/cutover gate evidence; **concurrency** (validator) — independently assess
+  the single-effect proof from captured evidence: broker admission versus settlement
+  interleavings, epoch supersession races, crash-window resumption, and exact effect/fact counts;
+  **event-flow** (validator) — trace dispatch → manifest → spawn attempt → broker token/fence
+  check → effect → settlement → acknowledgement end to end across the shared state root and the
+  Codex protected boundary, including every HALT edge's proven non-mutation.
+- Root fixes every P0-P3 finding and re-runs the affected lenses fresh. Three unsuccessful
+  remediation cycles halt and page the operator. Any model, effort, lens, validator, or
+  execution-class change requires a newly approved workflow candidate. The approval anchor is the
+  SHA-256 of the exact `## Workflow Structure` and `## Workflow Operating Contract` section bytes,
+  recorded in the work-session artifact.
+- Git mutation, PR creation, merge, issue/board mutation, and completion remain root-only. No
+  deployment, credential, production-data, cache-copy, live-Outcome-advance, real-profile-mutation,
+  force-push, or branch-deletion action is authorized by this workflow.
+- Workflow receipts, findings, command logs, workspace audits, PR URL, merge SHA, issue close, and
+  board reconciliation are retained in the repo's review and work-session artifacts and on the
+  issue/PR.
+
+---
 
 ## Completion gate
 

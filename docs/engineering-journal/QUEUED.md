@@ -206,6 +206,17 @@ primitive. Ids named in issue #463 itself are marked ★.
 
 ## P2 — important
 
+### fleet-core `validate_receipt` under-validates `transport: null` and crashes on unhashable transports  {#bridge-receipt-transport-hardening}
+
+**Priority.** P2.
+
+**Effort.** Hours. Two guards in `plugins/fleet-core/scripts/fleet_commons/bridge_receipt.py` + fixtures; a fleet-core release surface bump.
+
+**Worth it when.** The next fleet-core release train opens — kept out of #353 by KTD8 (single-Saga-release boundary).
+
+**Context.** Surfaced by the #353 ceremony round-2 architecture lens (300k-sample fuzz of `validate_receipt` vs the doctor's re-derived subset). Two canon gaps: (1) the presence-only common-field check accepts `transport: null`, which then skips BOTH the unknown-transport error (`transport is not None and ...`) and the runner-section field validation — a receipt with `transport: null, runner: {}` validates clean; (2) `transport in RUNNER_FIELDS` (a dict) raises `TypeError` on unhashable transport values (`[]`, `{}`), so a crafted receipt crashes the validator instead of returning errors. The saga fleet doctor already defends itself (rejects every non-string transport fail-closed; divergence pinned in `test_receipt_subset_conforms_to_canonical_validator`), but every other consumer of the canon inherits both gaps. Fix: `isinstance(transport, str)` guard before membership + validate the runner section only for known string transports; add null/unhashable-transport fixtures to the fleet-core receipt tests, then drop the doctor-side divergence pin if the canon converges.
+
+
 ### `execution_spec` emitter: verifiers must see unit output, and UNDER-STRENGTH panels must fail the run  {#execution-spec-verifier-visibility}
 
 **Priority.** P2 (P1 the moment another ultracode run relies on refute-N for its assurance story).

@@ -1,5 +1,44 @@
 # Changelog
 
+## [0.104.0] - 2026-07-19
+
+### Added - Fleet doctor cross-source audit (#353)
+
+- `/fleet-doctor` command + skill + `fleet_doctor.py`: one strict, bounded, read-only
+  point-in-time audit (`fleet_doctor_report.v1`) independently correlating Git worktree
+  porcelain, the outcome worktree registries, the #356 broker registry (leases, fences,
+  closed-owner admissions), the chain-verified #351 run-fact ledger (including #358 teardown
+  facts), outcome dispatch commit events, and the durable delegation audit store.
+- Three disease classes plus explicit evidence errors: `leaked-resource` (stale-worktree,
+  dangling-registry, ownership-drift, terminal-resource-open), `unledgered-spawn`
+  (observed/lease positions without spawn facts, phantom-spawn-fact, unsettled-spawn), and
+  `receiptless-delegation` (claimed real execution without a schema-valid durable
+  `bridge_receipt.v1`; corrupt evidence is an error, never absence).
+- Exit contract fails closed: 0 complete+clean, 1 complete+findings, 2 incomplete proof
+  (config error, corruption, unsafe path, broken chain, cap overflow, mid-scan source
+  change). Caps never truncate to a false clean.
+- Read-only by construction: no producer imports (AST-conformance-tested denylist), bytecode
+  writing disabled, `os.open(O_RDONLY)` the only file-open, machine-local paths redacted
+  behind `--show-local-paths`, and the machine-checked source matrix at
+  `references/fleet-doctor-sources.md` fails the build when collectors and documentation
+  drift. No `--fix`, `--reap`, `--retry`, `--watch`, or fixture surface exists.
+- Hardened under the six-lens review ceremony: redaction now covers OS error text (errno
+  and message only — never an absolute path) and neutralizes control characters in the text
+  rendering; `os.open`/`os.scandir` failures fail closed to exit 2 instead of raising; a
+  symlinked run-fact ledger is `unsafe-path`, never a clean "absent"; the receipt gate
+  re-derives fleet-core's canonical `validate_receipt` verdict (conformance matrix covers
+  optional-field and type-divergent corruption; one enumerated deliberate divergence — every
+  non-string transport is rejected fail-closed where the canon accepts `null` and crashes on
+  unhashables); the traversal depth cap is enforced;
+  every declared cap carries a tripping oracle; and the run-facts source verdict is named
+  `verified-prefix` (trailing whole-record truncation is undetectable by design and is now
+  documented as such).
+- Code-review remediations: the receiptless claim predicate covers the producer's full
+  disposition partition (`substituted-engine`/`unproven`/etc. now demand receipts;
+  conformance-pinned against `provenance_manifest.Disposition`; unknown dispositions warn),
+  the lease registry gains the source entry cap and a linear spawn-correlation index, and
+  dangling-registry existence checks no longer follow symlinks.
+
 ## [0.103.0] - 2026-07-18
 
 ### Added - Claude-side cross-runtime Outcome contract (#604)

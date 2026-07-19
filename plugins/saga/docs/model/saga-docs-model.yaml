@@ -2,8 +2,8 @@ schema_version: 1
 model_name: saga-comprehensive-documentation
 source_of_truth: Claude Saga in this repository
 command_surface:
-  command_files: 24
-  routable_commands: 23
+  command_files: 25
+  routable_commands: 24
   alias_count: 1
   alias_note: /ceo-review is an alias for /founder-review, not a separate lifecycle node.
 
@@ -665,6 +665,34 @@ commands:
       - Expecting an /outcome work verb (leaf work stays the native verbs).
       - Treating status as stored rather than derived on read.
     example_invocation: /outcome advance ship-feature-x
+  fleet-doctor:
+    command: /fleet-doctor
+    phase: utility
+    lifecycle_role: strict cross-source fleet audit (read-only tripwire)
+    source_refs:
+      - plugins/saga/commands/fleet-doctor.md
+      - plugins/saga/skills/fleet-doctor/SKILL.md
+      - plugins/saga/scripts/fleet_doctor.py
+      - plugins/saga/references/fleet-doctor-sources.md
+    purpose: Derive one point-in-time fleet_doctor_report.v1 correlating Git worktrees, outcome registries, broker leases, chain-verified run facts, dispatch events, and the delegation audit store into leaked-resource / unledgered-spawn / receiptless-delegation findings plus explicit evidence errors.
+    use_when:
+      - The operator suspects leaked worktrees, unledgered spawns, or receiptless delegations.
+      - A CI or acceptance gate needs a strict clean-fleet tripwire with fail-closed exits.
+    do_not_use_when:
+      - The goal is repairing, reaping, settling, retrying, or releasing anything (findings name the owner; the doctor never acts).
+      - A tolerant advisory delegation query is enough (use /delegation-audit).
+    inputs: Optional --repo-root, --lease-store, --audit-store, --format text|json, --show-local-paths.
+    outputs: Deterministic text or JSON report; exit 0 complete-clean, 1 complete-with-findings, 2 incomplete proof.
+    durable_artifacts: []
+    saga_state_behavior: Strictly read-only and derive-on-read; imports no producer, writes no file, cache, tick, or fact; bytecode writing disabled.
+    routes_in: [operator fleet-health ask, cross-runtime acceptance gate]
+    routes_out: [/outcome, /delegation-audit]
+    gates: Absence, corruption, and incompleteness are distinct verdicts; any cap, corruption, unsafe path, or mid-scan change forces exit 2 and can never truncate to a clean report.
+    ownership_boundary: Owns observation and classification only; /outcome, the lease broker, B8 teardown, and /delegation-audit own every recovery action.
+    common_mistakes:
+      - Treating exit 2 (incomplete proof) as a disease finding instead of an evidence problem.
+      - Expecting the doctor to clean up what it finds (it names owners, never executes them).
+    example_invocation: /fleet-doctor --format json
   pulse:
     command: /pulse
     phase: utility

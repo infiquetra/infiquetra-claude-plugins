@@ -25,6 +25,74 @@
 
 ---
 
+## 2026-07-19
+
+### A green local gate does not cover fixture-environment assumptions {#hermetic-git-fixtures-353}
+
+**Context.** The #353 branch passed the full local gate three times (pytest 5212/0/1) and the
+first PR CI run failed 10 fleet-doctor tests — all CI-only, none reproducible by a plain local
+re-run.
+**Evidence.** PR #623 first CI run (job 88150873195): 7 fixtures failed
+`git commit --allow-empty` with `fatal: empty ident name (for <runner@…>)`; 3 no-write tests
+failed `assert not (SCRIPTS / "__pycache__").exists()`. Fix commit on `work/353-fleet-doctor`
+(tests/test_fleet_doctor.py only).
+**Mechanism.** Two distinct hermeticity gaps. (1) This repo's other suites never shell out to
+unmocked git, so the doctor's deliberately-real git fixtures (plan R9) were the first to run a
+real `git commit` in CI — where the runner auto-detects an email but has an empty name; the
+developer machine's git config masks the gap, so local green proves nothing about it.
+(2) Asserting a *global* filesystem property (the live `scripts/__pycache__` must not exist)
+lets any co-tenant of the CI job — an earlier workflow step, another test importing the
+module — fail the test; the doctor's actual contract is only that *its* run adds nothing.
+**Fix.** Repo-local `user.email`/`user.name` in the fixture right after `git init`; the
+pycache oracle converted to a before/after delta (`_pycache_snapshot()` set comparison).
+Verified by local adversarial reproduction: planted `__pycache__` + `GIT_CONFIG_GLOBAL=/dev/null`
+fail pre-fix, pass post-fix.
+**Generalizable rule.** A fixture that shells out to a real tool must pin every identity/config
+input the tool reads from the environment, and a no-write oracle must assert a delta scoped to
+the action under test — never the absolute absence of a shared artifact.
+
+### Exception text defeats a presentation-layer redactor {#error-text-defeats-redaction-353}
+
+**Context.** The fleet doctor redacts machine-local paths to `label:component` via a
+`Redactor.present()` presentation layer, and the redaction unit test passed — on the clean
+path. The six-lens ceremony's security lens (round 1, P1) reproduced absolute-path and
+`$HOME` disclosure in default mode anyway.
+**Evidence.** `plugins/saga/scripts/fleet_doctor.py` — pre-fix sites interpolated raw
+`OSError` objects into evidence (`f"{presented}: {exc}"` and `[str(exc)]`); a chmod-0 store
+directory produced finding evidence `[Errno 13] Permission denied: '/abs/path/...'`, the
+raw-exception suffix defeating the already-redacted prefix.
+**Mechanism.** `str(OSError)` embeds the syscall's absolute filename. A redactor that only
+rewrites the paths the author *presents* leaves every path the runtime *reports* untouched —
+and error paths are exactly where scans of foreign state end up.
+**Fix (or queued).** `_safe_oserror()` renders errno + strerror only (never the filename);
+all OSError interpolation routed through it; error-path redaction oracles added
+(`test_oserror_evidence_never_leaks_paths`, `test_scandir_oserror_evidence_is_redacted`).
+Same commit as this entry.
+**Generalizable rule.** Redaction is a property of the whole output, not of the happy path:
+audit every exception interpolation site, and test redaction under induced failures, not
+just on a clean run.
+**Refs.** DECISIONS `{#fleet-doctor-independent-audit-353}`.
+
+### A worktree census motivates a capability; it does not prove abandonment {#fleet-doctor-census-353}
+
+**Context.** Issue #353 was filed against a historical snapshot of fifteen lingering worktrees.
+The pre-build live census at implementation time was nine — and none of those nine could be
+called abandoned from the count alone, because a worktree is only *stale* relative to the
+registries, leases, and teardown facts that claim it.
+
+**Mechanism.** A raw count conflates managed and unmanaged trees, retained-by-design trees
+(dirty/unmerged teardown retention), and genuinely leaked ones. The doctor therefore derives
+staleness only from cross-source disagreement inside the canonical managed root
+(`.saga-worktrees/<outcome>/<subplot>`), and a teardown `retained` disposition is an
+explained-open warning, never a finding.
+
+**Generalizable rule.** File capability issues from symptoms, but scope detectors to the
+invariant that makes a symptom a defect — a number that motivated the work is not the oracle
+that judges it.
+
+**Refs.** `plugins/saga/scripts/fleet_doctor.py`, decision
+`{#fleet-doctor-independent-audit-353}`.
+
 ## 2026-07-18
 
 ### A guard about a release EVENT must pin changelog history plus a semver floor, never current-version equality {#release-event-guard-floor-604}

@@ -52,6 +52,11 @@ def repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init", "-q", "-b", "main")
+    # Hermetic identity: CI runners have no git user config and fail fixture
+    # commits with "empty ident name"; repo-local config keeps the fixture
+    # independent of the host environment.
+    _git(repo, "config", "user.email", "fleet-doctor-tests@invalid")
+    _git(repo, "config", "user.name", "fleet doctor tests")
     return repo
 
 
@@ -99,6 +104,16 @@ def _source(report: dict[str, Any], kind: str) -> dict[str, Any]:
     return cast("dict[str, Any]", matches[0])
 
 
+def _pycache_snapshot() -> set[str]:
+    # Other tools in a shared test session may legitimately create
+    # plugins/saga/scripts/__pycache__; the doctor's no-write contract is that
+    # ITS run adds nothing, so the oracle is a before/after delta, not absence.
+    pycache = SCRIPTS / "__pycache__"
+    if not pycache.exists():
+        return set()
+    return {entry.name for entry in pycache.iterdir()}
+
+
 def _tree_snapshot(*roots: Path) -> list[tuple[str, str]]:
     rows: list[tuple[str, str]] = []
     for root in roots:
@@ -115,14 +130,16 @@ def _tree_snapshot(*roots: Path) -> list[tuple[str, str]]:
 
 
 def test_import_and_empty_scan_write_nothing(repo: Path, stores: dict[str, Path]) -> None:
+    pycache_before = _pycache_snapshot()
     before = _tree_snapshot(repo, stores["lease"], stores["audit"])
     report = _scan(repo, stores)
     assert report["complete"] is True
     assert _tree_snapshot(repo, stores["lease"], stores["audit"]) == before
-    assert not (SCRIPTS / "__pycache__").exists()
+    assert _pycache_snapshot() == pycache_before
 
 
 def test_cli_scan_writes_nothing_and_exits_zero(repo: Path, stores: dict[str, Path]) -> None:
+    pycache_before = _pycache_snapshot()
     before = _tree_snapshot(repo, stores["lease"], stores["audit"])
     result = subprocess.run(
         [
@@ -145,7 +162,7 @@ def test_cli_scan_writes_nothing_and_exits_zero(repo: Path, stores: dict[str, Pa
     parsed = json.loads(result.stdout)
     assert parsed["schema"] == "fleet_doctor_report.v1"
     assert _tree_snapshot(repo, stores["lease"], stores["audit"]) == before
-    assert not (SCRIPTS / "__pycache__").exists()
+    assert _pycache_snapshot() == pycache_before
 
 
 def test_clean_empty_scan_exit_zero(repo: Path, stores: dict[str, Path]) -> None:

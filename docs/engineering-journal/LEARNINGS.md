@@ -27,6 +27,30 @@
 
 ## 2026-07-19
 
+### A green local gate does not cover fixture-environment assumptions {#hermetic-git-fixtures-353}
+
+**Context.** The #353 branch passed the full local gate three times (pytest 5212/0/1) and the
+first PR CI run failed 10 fleet-doctor tests — all CI-only, none reproducible by a plain local
+re-run.
+**Evidence.** PR #623 first CI run (job 88150873195): 7 fixtures failed
+`git commit --allow-empty` with `fatal: empty ident name (for <runner@…>)`; 3 no-write tests
+failed `assert not (SCRIPTS / "__pycache__").exists()`. Fix commit on `work/353-fleet-doctor`
+(tests/test_fleet_doctor.py only).
+**Mechanism.** Two distinct hermeticity gaps. (1) This repo's other suites never shell out to
+unmocked git, so the doctor's deliberately-real git fixtures (plan R9) were the first to run a
+real `git commit` in CI — where the runner auto-detects an email but has an empty name; the
+developer machine's git config masks the gap, so local green proves nothing about it.
+(2) Asserting a *global* filesystem property (the live `scripts/__pycache__` must not exist)
+lets any co-tenant of the CI job — an earlier workflow step, another test importing the
+module — fail the test; the doctor's actual contract is only that *its* run adds nothing.
+**Fix.** Repo-local `user.email`/`user.name` in the fixture right after `git init`; the
+pycache oracle converted to a before/after delta (`_pycache_snapshot()` set comparison).
+Verified by local adversarial reproduction: planted `__pycache__` + `GIT_CONFIG_GLOBAL=/dev/null`
+fail pre-fix, pass post-fix.
+**Generalizable rule.** A fixture that shells out to a real tool must pin every identity/config
+input the tool reads from the environment, and a no-write oracle must assert a delta scoped to
+the action under test — never the absolute absence of a shared artifact.
+
 ### Exception text defeats a presentation-layer redactor {#error-text-defeats-redaction-353}
 
 **Context.** The fleet doctor redacts machine-local paths to `label:component` via a

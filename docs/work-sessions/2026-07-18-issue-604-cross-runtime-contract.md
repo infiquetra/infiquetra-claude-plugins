@@ -47,14 +47,50 @@
 
 ## Checks run
 
-`uv run pytest tests/test_outcome_cross_runtime_contract.py` (94 passed), plus focused
-regression on `test_outcome_command` (40, incl. the rewritten R10 rejection oracle),
-`test_outcome_store`, `test_outcome_dispatcher`, `test_saga_plugin` (45, version guards at
-0.103.0). `ruff check` + `ruff format --check`, `mypy` clean on the changed modules; bandit
-carries only the house-baseline B404 subprocess-import Low. Full-suite gate: run at the U5
-boundary (see next step).
+`uv run pytest tests/test_outcome_cross_runtime_contract.py` (94 passed at U5, 142 after the
+ceremony remediations), plus focused regression on `test_outcome_command` (40, incl. the
+rewritten R10 rejection oracle), `test_outcome_store`, `test_outcome_dispatcher`,
+`test_saga_plugin` (45, version guards at 0.103.0). `ruff check` + `ruff format --check`,
+`mypy` clean on the changed modules; bandit carries only the house-baseline B404
+subprocess-import Low.
+
+Gate-fix commit `05370bf5` before the full gate: the sub-358 release guard in
+`test_liveness_consumer_conformance.py` pinned current versions (broke on 0.103.0) — rewritten
+as changelog-history assertions plus a semver floor with live plugin/marketplace coherence;
+two `cast()`s for mypy on importlib-loaded module returns. Full repository gate green at
+`05370bf5` (pytest 5102/0/1, ruff check+format, mypy, bandit at the 4-finding pre-existing
+baseline, release parity, marketplace sync, diff guard, whitespace).
+
+## Six-lens cc-workflow ceremony (anchor `214431cf…`, approved 2026-07-18)
+
+Reviewers devils-advocate / security / architecture / testing at opus+high; validators
+concurrency / event-flow at sonnet+medium; every lens `saga:readonly-verifier` + worktree
+isolation; bounded pool 3. Converged in three rounds, two remediation cycles (tripwire is
+three).
+
+- **Round 1** `wf_93a4736f-ba0` at `05370bf5` — 6/6 lenses. P0=0 P1=0 **P2=2 P3=5**; security
+  (90), concurrency (88), event-flow (88) clean; devils-advocate 90, architecture 91,
+  testing 82. Findings: settled-attempt binding inert under empty `--dispatch-id`
+  (devils-advocate), attach `--advance`/`--attend` non-exclusive (architecture), five halt
+  codes without negative oracles (testing: schema-malformed-json, handoff-source-not-closed,
+  git-failed, git-output-cap, discovery-node-cap).
+- **Remediation 1** `33d93550` — advance-one offers now require a non-empty dispatch id at the
+  `offer_handoff` module boundary (reusing the closed `schema-field-type` code); attach modes
+  argparse-mutually-exclusive; five new halt oracles → 39/39 halt-code coverage; contract doc
+  updated. Focused suites 141 passed; full gate green at `33d93550` (pytest 5109/0/1, all
+  steps).
+- **Round 2** `wf_3ca79e79-90f` at `33d93550` — affected lenses (devils-advocate 95,
+  architecture 95, testing 88) fresh. All seven r1 fixes adjudicated **fixed-adequately** at
+  the byte level; testing recounted halt coverage 39/39 by AST-parsing every raise site. One
+  new **P3**: the dispatch-id guard's negative scope (attend may omit) had no oracle.
+- **Remediation 2** `4ace6d80` — `test_attend_offer_permits_empty_dispatch_id` drives the full
+  attend offer success path with an empty dispatch id (142 passed).
+- **Round 3** `wf_82f87b45-b16` at `4ace6d80` — testing lens fresh: **clean** (92), fix
+  fixed-adequately with a mutation argument (an over-broadened guard would halt before
+  identity resolution and turn the oracle red); no new raise sites, 39/39 preserved.
 
 ## Next step
 
-Full repository gate (pytest / ruff / mypy / bandit / release parity / marketplace sync / diff
-guard), then the six-lens cc-workflow ceremony under approved anchor `214431cf…`.
+Full repository gate re-verified at `4ace6d80`, then programmatic `/code-review` (capture
+`REVIEWED_SHA`), `/qa`, PR, merge under Jeff's standing outcome approval, leaf harvest with
+`leaf_saga_id` backfill, board reconcile.

@@ -27,6 +27,35 @@
 
 ## 2026-07-18
 
+### A guard about a release EVENT must pin changelog history plus a semver floor, never current-version equality {#release-event-guard-floor-604}
+
+**Context.** The sub-358 conformance suite asserted the atomic-release contract by pinning the
+then-current manifest versions (`saga == 0.102.0` etc.). The very next release on the branch
+(#604's `0.103.0`) turned the guard red with no real regression — the third recurrence of
+version-guard rot in this outcome family (evidence-integrity hit sibling-version collisions
+twice before).
+
+**Evidence.** Full-gate failure `'0.103.0' == '0.102.0'` in
+`tests/test_liveness_consumer_conformance.py::test_atomic_release_versions_match_issue_358_contract`;
+fix commit `05370bf5` on `work/604-cross-runtime-outcome-contract`.
+
+**Mechanism.** The #358 release is a *historical fact*: each plugin's changelog must record that
+version forever, and the live manifest may be newer but never behind it. Current-version
+equality encodes "no release has happened since", which is false the moment any legitimate
+release lands — the guard tests time, not the contract.
+
+**Fix.** Rewritten as (a) `## [<released>]` present in each plugin's CHANGELOG, (b)
+`_semver(manifest) >= _semver(released)` floor, (c) manifest/marketplace version+description
+coherence. Current-version equality remains only in the guard shipped WITH each release
+(`test_saga_plugin.py`), which the release itself edits.
+
+**Generalizable rule.** When a test asserts a release event, assert the immutable record
+(changelog history) plus a monotonic floor; reserve equality pins for the guard the release
+commit itself updates.
+
+**Refs.** `{#module-identity-cross-plugin-604}` (same branch); evidence-integrity outcome
+memory (sibling-version collisions).
+
 ### Same-named sibling scripts make `sys.modules` a shared namespace hazard — resolve broker classes from the instance, register test loads under distinct keys {#module-identity-cross-plugin-604}
 
 **Evidence.** #604 U3/U4 (`plugins/saga/scripts/outcome_compat.py` `_broker_module`,

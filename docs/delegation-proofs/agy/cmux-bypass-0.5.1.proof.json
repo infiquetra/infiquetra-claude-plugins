@@ -1,0 +1,14 @@
+{
+  "schema": "delegation-proof.v1",
+  "plugin": "agy",
+  "version": "0.5.1",
+  "run_id": "cmux-bypass-0.5.1-20260719",
+  "bridge_command": "CMUX_AGENT_BYPASS=1 agy --model 'Gemini 3.1 Pro (High)' --print-timeout 120s --sandbox --print '<bounded no-write verification>'",
+  "external_tool_calls": [
+    "CMUX_AGENT_BYPASS=1 agy --model 'Gemini 3.1 Pro (High)' --print-timeout 120s --sandbox --print '<bounded no-write verification>'"
+  ],
+  "actor": "agy:Gemini 3.1 Pro (High):cmux-bypass-0.5.1-20260719",
+  "transcript": "agy/cmux-bypass-0.5.1.transcript.jsonl",
+  "transcript_sha256": "ef21276a64a8b6a96ba287bb6c6871c7859b7a2559038d019c8963efffba506a",
+  "note": "Genuine no-write Agy delegation proving the 0.5.1 external CLI bypass release path."
+}

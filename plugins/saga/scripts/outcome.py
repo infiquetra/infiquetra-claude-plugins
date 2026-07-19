@@ -39,7 +39,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 # Make sibling scripts importable when loaded by path (tests, CLI).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -1624,6 +1624,171 @@ def attend(repo_root: Path, outcome_id: str, subplot_id: str) -> str:
     return f"/resume {_leaf_handoff_id(node, leaf)}"
 
 
+def _saga_version() -> str:
+    """The installed saga plugin version, for the discovery envelope's producer block."""
+    manifest = Path(__file__).resolve().parent.parent / ".claude-plugin" / "plugin.json"
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "0"
+    return str(data.get("version", "0")) if isinstance(data, dict) else "0"
+
+
+def _cli_broker(broker_root: str | None) -> Any:
+    """The production #356 broker (host state root), or an explicit root for tests."""
+    import fleet_commons_shim
+
+    lease_broker = fleet_commons_shim.load("lease_broker")
+    return (
+        lease_broker.LeaseBroker(Path(broker_root)) if broker_root else lease_broker.LeaseBroker()
+    )
+
+
+def _cli_broker_error() -> type[Exception]:
+    """The #356 broker's error root, resolved lazily so broker-free verbs never load fleet-core."""
+    import fleet_commons_shim
+
+    return cast("type[Exception]", fleet_commons_shim.load("lease_broker").LeaseBrokerError)
+
+
+def _cli_admission(args: Any) -> dict[str, Any]:
+    """The session-admission snapshot (resolved by the caller, never invented here)."""
+    values = {
+        "session_id": args.session_id,
+        "policy_sha256": args.policy_sha256,
+        "session_limit": args.session_limit,
+        "aggregate_limit": args.aggregate_limit,
+    }
+    missing = sorted(key for key, value in values.items() if value in (None, ""))
+    if missing:
+        raise OutcomeError(
+            f"missing session-admission flags: {', '.join('--' + k.replace('_', '-') for k in missing)}"
+            " (pass the canonical resolved snapshot; admission values are never defaulted)"
+        )
+    return values
+
+
+def _settled_lookup(repo_root: Path):
+    """A #351-backed settled-attempt query for handoff acceptance (R5) — never a new ledger."""
+    import dispatch_settlement
+
+    ledger = run_ledger.RunLedger.resolve(repo_root)
+
+    def lookup(dispatch_id: str, unit_id: str, attempt: int) -> bool:
+        del attempt  # terminal_attempt_status resolves the latest attempt itself
+        if not dispatch_id:
+            return False
+        try:
+            return (
+                dispatch_settlement.terminal_attempt_status(
+                    ledger, dispatch_id=dispatch_id, unit_id=unit_id
+                )
+                is not None
+            )
+        except dispatch_settlement.DispatchSettlementError:
+            return False  # cannot prove settled -> the advance layer still dedups (R7)
+
+    return lookup
+
+
+def attached_advance(
+    repo_root: Path,
+    outcome_id: str,
+    subplot_id: str,
+    *,
+    handoff_id: str,
+    receiver_owner_id: str,
+    admission: dict[str, Any],
+    broker: Any,
+    settled_lookup: Callable[[str, str, int], bool] | None = None,
+) -> dict[str, Any]:
+    """Accept an ``advance-one`` handoff, then run ONE allowlisted one-subplot tick (R5/R7).
+
+    The handoff authorizes exactly one subplot: after acceptance this re-checks the committed
+    revision and the ready frontier (KTD7 — a moved spec or a frontier that no longer offers
+    this leaf HALTs loudly rather than silently broadening or shrinking the authorization),
+    then enters the existing ``advance`` behind a one-subplot gate. There is no ``--loop`` and
+    no frontier-wide form; the coordinator's per-subplot locks and #351 settlement dedup stay
+    in force as secondary containment.
+    """
+    import outcome_compat
+
+    accepted = outcome_compat.accept_handoff(
+        repo_root,
+        outcome_id,
+        handoff_id,
+        operation="advance-one",
+        subplot_id=subplot_id,
+        receiver_owner_id=receiver_owner_id,
+        receiver_runtime=outcome_compat.RUNTIME_LABEL,
+        admission=admission,
+        broker=broker,
+        settled_lookup=settled_lookup,
+    )
+    binding = outcome_compat.resolve_committed_spec(repo_root, outcome_id)
+    if int(binding["spec_revision"]) != int(accepted["offer"]["spec_revision"]):
+        raise outcome_compat.CompatibilityHaltError(
+            "handoff-wrong-revision",
+            unsupported=(
+                f"an advance under a handoff bound to revision {accepted['offer']['spec_revision']}"
+            ),
+            supported=f"the committed spec revision {binding['spec_revision']}",
+            next_action="re-discover the outcome and request a fresh handoff at this revision",
+        )
+    spec = load_spec(repo_root, outcome_id)
+    store = _store(repo_root, outcome_id)
+    frontier = outcome_spec.ready_frontier(spec, outcome_store.completed_subplots(store))
+    if subplot_id not in frontier:
+        raise outcome_compat.CompatibilityHaltError(
+            "handoff-frontier-changed",
+            unsupported=f"an advance for {subplot_id!r} which is no longer on the ready frontier",
+            supported="an advance for a leaf still on the dependency-derived ready frontier",
+            next_action="re-discover the outcome; the frontier moved since the handoff was issued",
+        )
+    result = advance(
+        repo_root,
+        outcome_id,
+        gate_factory=lambda _spec, _store: lambda sid: sid == subplot_id,
+    )
+    return {
+        "handoff_id": handoff_id,
+        "subplot_id": subplot_id,
+        "successor_lease_id": accepted["lease"].lease_id,
+        "advance": result.to_dict(),
+    }
+
+
+def attended_handoff(
+    repo_root: Path,
+    outcome_id: str,
+    subplot_id: str,
+    *,
+    handoff_id: str,
+    receiver_owner_id: str,
+    admission: dict[str, Any],
+    broker: Any,
+) -> str:
+    """Accept an ``attend`` handoff, then derive the native resume command (R11).
+
+    The printable command is derived only AFTER every binding validates — a copied or replayed
+    reference never turns into operator guidance.
+    """
+    import outcome_compat
+
+    outcome_compat.accept_handoff(
+        repo_root,
+        outcome_id,
+        handoff_id,
+        operation="attend",
+        subplot_id=subplot_id,
+        receiver_owner_id=receiver_owner_id,
+        receiver_runtime=outcome_compat.RUNTIME_LABEL,
+        admission=admission,
+        broker=broker,
+    )
+    return attend(repo_root, outcome_id, subplot_id)
+
+
 # ---------------------------------------------------------------------------
 # export / import — portable bundle across machines/worktrees (R14)
 # ---------------------------------------------------------------------------
@@ -1632,54 +1797,41 @@ def attend(repo_root: Path, outcome_id: str, subplot_id: str) -> str:
 def export_bundle(
     repo_root: Path, outcome_id: str, *, runner: Callable[..., Any] | None = None
 ) -> dict[str, Any]:
-    """A self-contained, portable snapshot: canonical spec + completion events + dispatch records.
+    """DEPRECATED alias of ``discover`` (#604 R10 — legacy portable authority is retired).
 
-    This is the R14 cross-machine/worktree story — the structural truth plus the completion/dispatch
-    facts needed to resume elsewhere. The cache itself is never exported (it is rebuildable).
+    The old ``outcome-bundle/1`` snapshot copied cache completion and dispatch records across
+    repositories and wrote the bundled spec on import — exactly the second authority path #579
+    retires. This entrypoint now returns the ``outcome.discovery.v1`` envelope byte-for-byte
+    (the same JSON ``discover`` prints): committed/GitHub references and digests only, never a
+    mutable cache fact. Import-side authority transfer is refused entirely
+    (:func:`import_bundle`).
     """
-    spec = load_spec(repo_root, outcome_id)
-    store = _store(repo_root, outcome_id, runner=runner)
-    events: list[dict[str, Any]] = []
-    for node in spec.nodes:
-        for ev in outcome_store.read_completion_events(store, node.subplot_id):
-            events.append(ev.to_dict())
-    return {
-        "schema": "outcome-bundle/1",
-        "spec": spec.to_dict(),
-        "completion_events": events,
-        "dispatch_ledger": [
-            r for r in outcome_store.read_ledger(store) if r.get("kind") == "dispatch"
-        ],
-    }
+    import outcome_compat
+
+    return outcome_compat.build_discovery_envelope(
+        Path(repo_root), outcome_id, saga_version=_saga_version(), runner=runner
+    )
 
 
 def import_bundle(
     repo_root: Path, bundle: dict[str, Any], *, runner: Callable[..., Any] | None = None
 ) -> outcome_spec.OutcomeSpec:
-    """Reconstruct an outcome from a bundle: write the spec to the branch + replay events/records.
+    """REFUSED (#604 R10): a copied bundle is not authority and cannot write or replay state.
 
-    Fully **idempotent** — re-importing the same bundle does not duplicate state: completion events
-    replay through the write-once, idempotency-keyed store; dispatch ledger records are deduped
-    against the existing ledger by their ``(phase, key)`` so the ledger does not grow on re-import.
+    Raises with the exact migration commands; nothing is read from ``bundle`` beyond its schema
+    label and nothing is written to the spec path, the store, or any ledger. Cross-clone
+    reconstruction is ``attach`` (read-only, from committed spec + GitHub); same-clone mutation
+    requires a protected handoff — there is no escape hatch that copies a cache between hosts.
     """
-    if bundle.get("schema") != "outcome-bundle/1":
-        raise OutcomeError(f"unrecognized bundle schema {bundle.get('schema')!r}")
-    spec = outcome_spec.OutcomeSpec.from_dict(bundle["spec"])
-    spec.validate()
-    save_spec(repo_root, spec)
-    store = _store(repo_root, spec.outcome_id, runner=runner)
-    for ev_dict in bundle.get("completion_events", []):
-        outcome_store.write_completion_event(
-            store, outcome_store.CompletionEvent.from_dict(ev_dict)
-        )
-    existing = {(str(r.get("phase")), str(r.get("key"))) for r in outcome_store.read_ledger(store)}
-    for rec in bundle.get("dispatch_ledger", []):
-        ident = (str(rec.get("phase")), str(rec.get("key")))
-        if ident in existing:
-            continue  # already present -> skip so re-import does not grow the ledger
-        outcome_store.append_ledger(store, rec)
-        existing.add(ident)
-    return spec
+    del repo_root, runner
+    schema = bundle.get("schema") if isinstance(bundle, dict) else None
+    raise OutcomeError(
+        f"legacy bundle import is retired (#604 R10): a copied bundle (schema {schema!r}) "
+        "carries no authority. Migrate: run `outcome discover <outcome-id>` in the source "
+        "clone to emit the outcome.discovery.v1 envelope; run `outcome attach <outcome-id>` "
+        "in this clone for read-only canonical reconstruction; same-clone mutation requires "
+        "a protected handoff (`outcome handoff` then `outcome attach --advance`)."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2068,6 +2220,47 @@ def main(argv: list[str] | None = None) -> int:
     p_attend.add_argument("outcome_id")
     p_attend.add_argument("subplot_id", nargs="?", default=None)
 
+    p_discover = sub.add_parser(
+        "discover",
+        help="emit the outcome.discovery.v1 envelope from the COMMITTED spec (#604, read-only)",
+    )
+    p_discover.add_argument("outcome_id")
+
+    p_handoff = sub.add_parser(
+        "handoff",
+        help="offer a protected one-subplot cross-runtime handoff (#604; closes issuer authority)",
+    )
+    p_handoff.add_argument("outcome_id")
+    p_handoff.add_argument("subplot_id")
+    p_handoff.add_argument("--operation", choices=("advance-one", "attend"), required=True)
+    p_handoff.add_argument("--attempt", type=int, default=1)
+    p_handoff.add_argument("--dispatch-id", default="")
+    p_handoff.add_argument("--ttl-seconds", type=int, default=300)
+    for flag_parser in (p_handoff,):
+        flag_parser.add_argument("--session-id", required=True)
+        flag_parser.add_argument("--policy-sha256", required=True)
+        flag_parser.add_argument("--session-limit", type=int, required=True)
+        flag_parser.add_argument("--aggregate-limit", type=int, required=True)
+        flag_parser.add_argument("--broker-root", default=None)
+
+    p_attach = sub.add_parser(
+        "attach",
+        help="attach to a discovered outcome: read-only canonical status by default; "
+        "--advance/--attend require a validated protected handoff (#604)",
+    )
+    p_attach.add_argument("outcome_id")
+    attach_mode = p_attach.add_mutually_exclusive_group()
+    attach_mode.add_argument("--advance", action="store_true")
+    attach_mode.add_argument("--attend", dest="attach_attend", action="store_true")
+    p_attach.add_argument("--handoff-id", default=None)
+    p_attach.add_argument("--subplot", default=None)
+    p_attach.add_argument("--receiver", default=None)
+    p_attach.add_argument("--session-id", default=None)
+    p_attach.add_argument("--policy-sha256", default=None)
+    p_attach.add_argument("--session-limit", type=int, default=None)
+    p_attach.add_argument("--aggregate-limit", type=int, default=None)
+    p_attach.add_argument("--broker-root", default=None)
+
     p_report = sub.add_parser(
         "report", help="regenerate docs/outcomes/<id>/report.md from state (R19)"
     )
@@ -2305,6 +2498,92 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(status(root, args.outcome_id)))
         elif args.command == "graph":
             print(graph_mermaid(root, args.outcome_id))
+        elif args.command in ("discover", "handoff", "attach"):
+            import outcome_compat
+
+            try:
+                if args.command == "discover":
+                    envelope = outcome_compat.build_discovery_envelope(
+                        root, args.outcome_id, saga_version=_saga_version()
+                    )
+                    print(outcome_compat.canonical_json(envelope))
+                elif args.command == "handoff":
+                    broker = _cli_broker(args.broker_root)
+                    admission = _cli_admission(args)
+                    identity = outcome_compat.repository_identity(root)
+                    lease = broker.acquire_agent(
+                        owner_id=f"outcome-handoff-{os.getpid()}-{time.monotonic_ns()}",
+                        session_id=admission["session_id"],
+                        policy_sha256=admission["policy_sha256"],
+                        session_limit=admission["session_limit"],
+                        aggregate_limit=admission["aggregate_limit"],
+                        mutation="read-write",
+                        resource_ref=outcome_compat.outcome_dispatch_resource(
+                            identity, args.outcome_id, args.subplot_id, args.attempt
+                        ),
+                    )
+                    _offer, reference = outcome_compat.offer_handoff(
+                        root,
+                        args.outcome_id,
+                        args.subplot_id,
+                        operation=args.operation,
+                        attempt=args.attempt,
+                        broker=broker,
+                        lease=lease,
+                        dispatch_id=args.dispatch_id,
+                        ttl_seconds=args.ttl_seconds,
+                    )
+                    print(outcome_compat.canonical_json(reference))
+                else:  # attach
+                    if args.advance or args.attach_attend:
+                        if not args.handoff_id or not args.subplot:
+                            raise OutcomeError(
+                                "attach --advance/--attend requires --handoff-id and --subplot"
+                            )
+                        broker = _cli_broker(args.broker_root)
+                        admission = _cli_admission(args)
+                        receiver = args.receiver or (
+                            f"outcome-attach-{os.getpid()}-{time.monotonic_ns()}"
+                        )
+                        if args.advance:
+                            outcome_result = attached_advance(
+                                root,
+                                args.outcome_id,
+                                args.subplot,
+                                handoff_id=args.handoff_id,
+                                receiver_owner_id=receiver,
+                                admission=admission,
+                                broker=broker,
+                                settled_lookup=_settled_lookup(root),
+                            )
+                            print(json.dumps(outcome_result))
+                        else:
+                            print(
+                                attended_handoff(
+                                    root,
+                                    args.outcome_id,
+                                    args.subplot,
+                                    handoff_id=args.handoff_id,
+                                    receiver_owner_id=receiver,
+                                    admission=admission,
+                                    broker=broker,
+                                )
+                            )
+                    else:
+                        canonical = outcome_compat.build_canonical_status(root, args.outcome_id)
+                        print(outcome_compat.canonical_json(canonical))
+            except outcome_compat.CompatibilityHaltError as halt:
+                print(json.dumps(halt.receipt()))
+                return 3
+            except _cli_broker_error() as exc:
+                # A broker rejection (capacity, policy, registry) is an operational failure of
+                # this clone's coordination authority, not a cross-runtime compatibility halt —
+                # exit 1 with the standard structured error, never a bare traceback.
+                print(
+                    json.dumps({"ok": False, "error": f"{type(exc).__name__}: {exc}"}),
+                    file=sys.stderr,
+                )
+                return 1
         elif args.command == "attend":
             if args.subplot_id:
                 print(attend(root, args.outcome_id, args.subplot_id))
@@ -2330,7 +2609,18 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(json.dumps(outcome_projection.project(spec, store)))
         elif args.command == "export":
-            print(json.dumps(export_bundle(root, args.outcome_id)))
+            import outcome_compat
+
+            print(
+                "WARNING: `outcome export` is a deprecated alias of `outcome discover` "
+                "(#604 R10); the outcome-bundle/1 authority path is retired.",
+                file=sys.stderr,
+            )
+            try:
+                print(outcome_compat.canonical_json(export_bundle(root, args.outcome_id)))
+            except outcome_compat.CompatibilityHaltError as halt:
+                print(json.dumps(halt.receipt()))
+                return 3
         elif args.command == "import":
             bundle = json.loads(Path(args.path).read_text(encoding="utf-8"))
             spec = import_bundle(root, bundle)

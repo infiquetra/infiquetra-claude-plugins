@@ -36,6 +36,10 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _semver(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in version.split("."))
+
+
 def test_fleet_core_has_the_only_liveness_engine_implementation() -> None:
     implementations = [
         path for path in (ROOT / "plugins").rglob("liveness_engine.py") if "tests" not in path.parts
@@ -124,12 +128,15 @@ def test_outcome_adapter_preserves_legacy_authority_before_adaptive_scoring() ->
 
 
 def test_atomic_release_versions_match_issue_358_contract() -> None:
-    expected = {"fleet-core": "0.15.0", "saga": "0.102.0", "team-execution": "2.21.0"}
+    # The #358 atomic release is a historical fact: each changelog must record it, and the live
+    # manifest may be newer but never behind it. Pinning the current version here would break on
+    # the first legitimate release after #358.
+    released = {"fleet-core": "0.15.0", "saga": "0.102.0", "team-execution": "2.21.0"}
     marketplace = json.loads(_read(ROOT / ".claude-plugin" / "marketplace.json"))
     rows = {row["name"]: row for row in marketplace["plugins"]}
-    for plugin, version in expected.items():
+    for plugin, version in released.items():
         manifest = json.loads(_read(ROOT / "plugins" / plugin / ".claude-plugin" / "plugin.json"))
-        assert manifest["version"] == version
-        assert rows[plugin]["version"] == version
-        assert rows[plugin]["description"] == manifest["description"]
         assert f"## [{version}]" in _read(ROOT / "plugins" / plugin / "CHANGELOG.md")
+        assert _semver(manifest["version"]) >= _semver(version)
+        assert rows[plugin]["version"] == manifest["version"]
+        assert rows[plugin]["description"] == manifest["description"]

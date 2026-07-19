@@ -252,22 +252,21 @@ def test_resume_reconstructs_with_cache_deleted(repo: Path) -> None:
 # --------------------------------------------------------------------------- export / import (R14)
 
 
-def test_export_import_roundtrips_across_repos(
+def test_legacy_bundle_import_is_refused_with_zero_writes(
     repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    M.start(repo, "ship-x", "Ship feature X")
-    M.advance(repo, "ship-x")  # dispatch design (creates dispatch ledger records)
-    store = STORE.Store.for_outcome("ship-x", repo)
-    STORE.write_completion_event(
-        store, STORE.CompletionEvent(subplot_id="design", state="done", idempotency_key="kd")
-    )
-    M.advance(repo, "ship-x")  # design done -> dispatch build
-    bundle = M.export_bundle(repo, "ship-x")
-    assert bundle["schema"] == "outcome-bundle/1"
-    assert any(e["subplot_id"] == "design" for e in bundle["completion_events"])
-    assert any(r.get("subplot_id") == "build" for r in bundle["dispatch_ledger"])
+    """R10 (#604): outcome-bundle/1 is retired as an authority-transfer path.
 
-    # import into a DIFFERENT repo (fresh common dir)
+    A copied bundle must not write a spec, replay completion events, or replay dispatch
+    records into another repository — the refusal names the discover/attach migration.
+    """
+    M.start(repo, "ship-x", "Ship feature X")
+    bundle = {
+        "schema": "outcome-bundle/1",
+        "spec": {"outcome_id": "ship-x"},
+        "completion_events": [{"subplot_id": "design", "state": "done"}],
+        "dispatch_ledger": [{"phase": "commit", "key": "dispatch:build"}],
+    }
     dest = tmp_path / "dest"
     dest.mkdir()
     common2 = dest / ".git"
@@ -277,17 +276,12 @@ def test_export_import_roundtrips_across_repos(
         "run",
         lambda args, **kw: SimpleNamespace(returncode=0, stdout=str(common2) + "\n", stderr=""),
     )
-    spec = M.import_bundle(dest, bundle)
-    assert spec.outcome_id == "ship-x"
-    # completion + dispatch replayed -> design done, build dispatched (same derived status)
-    st = M.status(dest, "ship-x")
-    assert st["states"]["design"] == "done" and st["states"]["build"] == "dispatched"
-
-    # re-import is idempotent: the dispatch ledger does not grow on a second import
-    dest_store = STORE.Store.for_outcome("ship-x", dest)
-    ledger_before = len(STORE.read_ledger(dest_store))
-    M.import_bundle(dest, bundle)
-    assert len(STORE.read_ledger(dest_store)) == ledger_before
+    with pytest.raises(M.OutcomeError) as exc:
+        M.import_bundle(dest, bundle)
+    message = str(exc.value)
+    assert "retired" in message and "discover" in message and "attach" in message
+    assert not (dest / "docs").exists()  # no spec write
+    assert not (common2 / "saga-outcomes").exists()  # no store/ledger write
 
 
 # --------------------------------------------------------------------------- graph + CLI

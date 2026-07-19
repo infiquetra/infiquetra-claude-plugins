@@ -500,3 +500,264 @@ def test_default_lease_root_resolution(monkeypatch: Any, tmp_path: Path) -> None
     monkeypatch.delenv("INFIQUETRA_FLEET_STATE_DIR")
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg"))
     assert FD.default_lease_store_root() == tmp_path / "xdg" / "infiquetra" / "fleet-leases"
+
+
+# ------------------------------------------------------------------ U2: worktree reconciliation
+
+
+def _managed_worktree(repo: Path, oid: str, sid: str) -> Path:
+    path = repo / ".saga-worktrees" / oid / sid
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _git(repo, "commit", "--allow-empty", "-q", "-m", "seed")
+    _git(repo, "worktree", "add", "-q", str(path), "HEAD")
+    return path
+
+
+def _registry_row(repo: Path, oid: str, sid: str, **over: Any) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        "path": str(repo / ".saga-worktrees" / oid / sid),
+        "branch": f"work/{sid}",
+        "owner": "owner-a",
+        "shared_install_ref": "",
+        "at": "2026-07-19T00:00:00Z",
+        "repo_root": str(repo),
+        "outcome_id": oid,
+    }
+    row.update(over)
+    return row
+
+
+def _write_worktree_registry(repo: Path, oid: str, rows: dict[str, dict[str, Any]]) -> None:
+    reg_dir = repo / ".git" / "saga-outcomes" / oid
+    reg_dir.mkdir(parents=True, exist_ok=True)
+    (reg_dir / "worktrees.json").write_text(json.dumps({"worktrees": rows}), encoding="utf-8")
+
+
+def _broker(stores: dict[str, Path], **over: Any) -> None:
+    payload: dict[str, Any] = {
+        "schema": "fleet_lease_registry.v1",
+        "leases": {},
+        "closed_owner_admissions": {},
+        "resource_fences": {},
+    }
+    payload.update(over)
+    (stores["lease"] / "registry.json").write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _worktree_lease(repo: Path, oid: str, sid: str, *, seq: int = 7) -> dict[str, Any]:
+    return {
+        "pool": "worktree",
+        "owner_id": "owner-a",
+        "fencing_sequence": seq,
+        "resource_ref": {"repo_root": str(repo), "outcome_id": oid, "subplot_id": sid},
+    }
+
+
+def _find(report: dict[str, Any], classification: str) -> list[dict[str, Any]]:
+    return [f for f in report["findings"] if f["classification"] == classification]
+
+
+def test_clean_registered_managed_worktree(repo: Path, stores: dict[str, Path]) -> None:
+    _managed_worktree(repo, "out-a", "sub-1")
+    _write_worktree_registry(repo, "out-a", {"sub-1": _registry_row(repo, "out-a", "sub-1")})
+    report = _scan(repo, stores)
+    assert report["findings"] == []
+    assert FD.derive_exit(report) == 0
+    assert _source(report, "worktree-registries")["record_count"] == 1
+
+
+def test_stale_worktree_both_git_and_filesystem(repo: Path, stores: dict[str, Path]) -> None:
+    _managed_worktree(repo, "out-a", "sub-1")
+    report = _scan(repo, stores)
+    stale = _find(report, "stale-worktree")
+    assert len(stale) == 1
+    assert stale[0]["subject_id"] == "out-a/sub-1"
+    assert stale[0]["disease"] == "leaked-resource"
+    assert len(stale[0]["evidence_refs"]) >= 2
+    assert FD.derive_exit(report) == 1
+
+
+def test_stale_filesystem_only_directory(repo: Path, stores: dict[str, Path]) -> None:
+    leftover = repo / ".saga-worktrees" / "out-a" / "sub-9"
+    leftover.mkdir(parents=True)
+    report = _scan(repo, stores)
+    assert [f["subject_id"] for f in _find(report, "stale-worktree")] == ["out-a/sub-9"]
+
+
+def test_dangling_registry_row(repo: Path, stores: dict[str, Path]) -> None:
+    _write_worktree_registry(repo, "out-a", {"sub-1": _registry_row(repo, "out-a", "sub-1")})
+    report = _scan(repo, stores)
+    dangling = _find(report, "dangling-registry")
+    assert len(dangling) == 1
+    assert dangling[0]["subject_id"] == "out-a/sub-1"
+    assert FD.derive_exit(report) == 1
+
+
+def test_registry_path_mismatch_is_ownership_drift(repo: Path, stores: dict[str, Path]) -> None:
+    _managed_worktree(repo, "out-a", "sub-1")
+    row = _registry_row(repo, "out-a", "sub-1", path=str(repo / "elsewhere"))
+    _write_worktree_registry(repo, "out-a", {"sub-1": row})
+    report = _scan(repo, stores)
+    assert any(
+        "canonical managed path" in ref
+        for f in _find(report, "ownership-drift")
+        for ref in f["evidence_refs"]
+    )
+
+
+def test_generation_drift_against_broker(repo: Path, stores: dict[str, Path]) -> None:
+    _managed_worktree(repo, "out-a", "sub-1")
+    row = _registry_row(repo, "out-a", "sub-1")
+    row["lease"] = {
+        "lease_id": "L1",
+        "token": {"broker_epoch": "e", "fencing_sequence": 3},
+        "root_sha256": "r",
+    }
+    _write_worktree_registry(repo, "out-a", {"sub-1": row})
+    _broker(stores, leases={"L1": _worktree_lease(repo, "out-a", "sub-1", seq=9)})
+    report = _scan(repo, stores)
+    drift = _find(report, "ownership-drift")
+    assert any("fencing sequence diverges" in ref for f in drift for ref in f["evidence_refs"])
+
+
+def test_broker_only_worktree_lease_is_drift(repo: Path, stores: dict[str, Path]) -> None:
+    _broker(stores, leases={"L2": _worktree_lease(repo, "out-b", "sub-2")})
+    report = _scan(repo, stores)
+    drift = _find(report, "ownership-drift")
+    assert len(drift) == 1
+    assert drift[0]["subject_id"] == "out-b/sub-2"
+    assert len(drift[0]["evidence_refs"]) >= 2
+
+
+def test_teardown_released_but_lease_live_is_terminal_open(
+    repo: Path, stores: dict[str, Path]
+) -> None:
+    path = _ledger_path(repo)
+    ledger = RL.RunLedger(path=path)
+    RL.append_fact(
+        ledger,
+        RL.build_fact(
+            "teardown",
+            subplot_id="team",
+            at="t",
+            event="resource-attempt",
+            action_key="k1",
+            resource_id="L3",
+            resource_kind="provisional-lease",
+            generation="e:5",
+            action="lease-release",
+            team_run_id="run-1",
+        ),
+    )
+    RL.append_fact(
+        ledger,
+        RL.build_fact(
+            "teardown",
+            subplot_id="team",
+            at="t",
+            event="resource-result",
+            action_key="k1",
+            disposition="released",
+            evidence_refs=[],
+            team_run_id="run-1",
+        ),
+    )
+    _broker(stores, leases={"L3": {"pool": "agent", "owner_id": "o", "resource_ref": {}}})
+    report = _scan(repo, stores)
+    open_findings = _find(report, "terminal-resource-open")
+    assert len(open_findings) == 1
+    assert open_findings[0]["subject_id"] == "L3"
+    assert FD.derive_exit(report) == 1
+
+
+def test_teardown_retained_is_warning_not_finding(repo: Path, stores: dict[str, Path]) -> None:
+    path = _ledger_path(repo)
+    ledger = RL.RunLedger(path=path)
+    RL.append_fact(
+        ledger,
+        RL.build_fact(
+            "teardown",
+            subplot_id="team",
+            at="t",
+            event="resource-attempt",
+            action_key="k2",
+            resource_id="L4",
+            resource_kind="outcome-worktree",
+            generation="e:6",
+            action="worktree-sweep",
+            team_run_id="run-2",
+        ),
+    )
+    RL.append_fact(
+        ledger,
+        RL.build_fact(
+            "teardown",
+            subplot_id="team",
+            at="t",
+            event="resource-result",
+            action_key="k2",
+            disposition="retained",
+            evidence_refs=[],
+            team_run_id="run-2",
+        ),
+    )
+    _broker(stores, leases={"L4": {"pool": "agent", "owner_id": "o", "resource_ref": {}}})
+    report = _scan(repo, stores)
+    assert _find(report, "terminal-resource-open") == []
+    assert any("retained resource L4" in w for w in report["warnings"])
+    assert FD.derive_exit(report) == 0
+
+
+def test_closed_owner_with_live_lease_is_terminal_open(repo: Path, stores: dict[str, Path]) -> None:
+    _broker(
+        stores,
+        leases={"L5": {"pool": "agent", "owner_id": "owner-x", "resource_ref": {}}},
+        closed_owner_admissions={
+            "owner-x": {"closed_at": "t", "boot_id": "b", "close_generation": 4}
+        },
+    )
+    report = _scan(repo, stores)
+    open_findings = _find(report, "terminal-resource-open")
+    assert len(open_findings) == 1
+    assert open_findings[0]["subject_id"] == "owner-x"
+
+
+def test_closed_head_with_live_lease_is_terminal_open(repo: Path, stores: dict[str, Path]) -> None:
+    _broker(
+        stores,
+        leases={"L6": {"pool": "agent", "owner_id": "o", "resource_ref": {}}},
+        resource_fences={
+            "d" * 64: {
+                "resource_ref": {},
+                "broker_epoch": "e",
+                "fencing_sequence": 8,
+                "lease_id": "L6",
+                "close_receipt": {"schema": "settlement_close.v1"},
+            }
+        },
+    )
+    report = _scan(repo, stores)
+    assert [f["subject_id"] for f in _find(report, "terminal-resource-open")] == ["L6"]
+
+
+def test_primary_and_unmanaged_worktrees_are_excluded(
+    repo: Path, stores: dict[str, Path], tmp_path: Path
+) -> None:
+    _git(repo, "commit", "--allow-empty", "-q", "-m", "seed")
+    unmanaged = tmp_path / "unmanaged-wt"
+    _git(repo, "worktree", "add", "-q", str(unmanaged), "HEAD")
+    shared = repo / ".saga-worktrees" / "out-a" / "_shared-install"
+    shared.mkdir(parents=True)
+    report = _scan(repo, stores)
+    assert report["findings"] == []
+    assert FD.derive_exit(report) == 0
+
+
+def test_malformed_worktree_registry_is_incomplete(repo: Path, stores: dict[str, Path]) -> None:
+    reg_dir = repo / ".git" / "saga-outcomes" / "out-a"
+    reg_dir.mkdir(parents=True)
+    (reg_dir / "worktrees.json").write_text('{"worktrees": {"sub-1": {"path": "x"}}}')
+    report = _scan(repo, stores)
+    assert report["complete"] is False
+    assert _source(report, "worktree-registries")["verdict"] == "schema-skew"
+    assert FD.derive_exit(report) == 2

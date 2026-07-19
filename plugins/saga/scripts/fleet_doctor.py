@@ -595,6 +595,432 @@ def collect_audit_store(
     return run_ids
 
 
+# --------------------------------------------------------------- U2: worktree reconciliation
+
+MANAGED_WORKTREES_DIRNAME = ".saga-worktrees"
+SHARED_INSTALL_DIRNAME = "_shared-install"
+OUTCOMES_DIRNAME = "saga-outcomes"
+WORKTREE_REGISTRY_NAME = "worktrees.json"
+_REGISTRY_ENTRY_REQUIRED = frozenset(
+    {"path", "branch", "owner", "shared_install_ref", "at", "repo_root", "outcome_id"}
+)
+_REGISTRY_ENTRY_OPTIONAL = frozenset({"lease"})
+
+
+def collect_git_worktrees(scan: Scan, context: RepoContext, redactor: Redactor) -> list[Path]:
+    """One capped ``git worktree list --porcelain`` snapshot (R4). Returns worktree paths."""
+    try:
+        output = run_git(context.repo_root, "worktree", "list", "--porcelain")
+    except StrictReadError as problem:
+        scan.add_problem(problem)
+        scan.add_source(
+            Source(
+                kind="git-worktrees",
+                identity="git worktree list",
+                digest="",
+                record_count=0,
+                verdict=problem.classification,
+            )
+        )
+        return []
+    paths: list[Path] = []
+    for line in output.splitlines():
+        if line.startswith("worktree "):
+            paths.append(Path(line[len("worktree ") :]))
+            if len(paths) > MAX_SOURCE_ENTRIES:
+                scan.add_problem(
+                    StrictReadError(
+                        "cap-exceeded",
+                        "git worktree list",
+                        [f"git worktree list: more than {MAX_SOURCE_ENTRIES} worktrees"],
+                    )
+                )
+                scan.add_source(
+                    Source(
+                        kind="git-worktrees",
+                        identity="git worktree list",
+                        digest="",
+                        record_count=0,
+                        verdict="cap-exceeded",
+                    )
+                )
+                return []
+    digest = sha256_hex(canonical_json(sorted(redactor.present(p) for p in paths)).encode())
+    scan.add_source(
+        Source(
+            kind="git-worktrees",
+            identity="git worktree list",
+            digest=digest,
+            record_count=len(paths),
+            verdict="present",
+        )
+    )
+    return paths
+
+
+def _managed_key(context: RepoContext, path: Path) -> tuple[str, str] | None:
+    """(outcome_id, subplot_id) when ``path`` is a canonical managed worktree path (KTD4)."""
+    managed_root = context.repo_root / MANAGED_WORKTREES_DIRNAME
+    try:
+        relative = path.relative_to(managed_root)
+    except ValueError:
+        return None
+    parts = relative.parts
+    if len(parts) != 2 or parts[1] == SHARED_INSTALL_DIRNAME:
+        return None
+    if not (safe_component(parts[0]) and safe_component(parts[1])):
+        return None
+    return parts[0], parts[1]
+
+
+def _scan_managed_dirs(scan: Scan, context: RepoContext) -> set[tuple[str, str]]:
+    managed_root = context.repo_root / MANAGED_WORKTREES_DIRNAME
+    found: set[tuple[str, str]] = set()
+    if not managed_root.is_dir() or _is_symlink(managed_root):
+        return found
+    try:
+        with os.scandir(managed_root) as outcomes:
+            for outcome in outcomes:
+                if not outcome.is_dir(follow_symlinks=False) or not safe_component(outcome.name):
+                    continue
+                with os.scandir(outcome.path) as subplots:
+                    for subplot in subplots:
+                        if subplot.name == SHARED_INSTALL_DIRNAME:
+                            continue
+                        if subplot.is_dir(follow_symlinks=False) and safe_component(subplot.name):
+                            found.add((outcome.name, subplot.name))
+                        if len(found) > MAX_SOURCE_ENTRIES:
+                            raise StrictReadError(
+                                "cap-exceeded",
+                                MANAGED_WORKTREES_DIRNAME,
+                                ["managed worktree enumeration beyond entry cap"],
+                            )
+    except StrictReadError as problem:
+        scan.add_problem(problem)
+        return set()
+    except OSError as exc:
+        scan.add_problem(StrictReadError("unsafe-path", MANAGED_WORKTREES_DIRNAME, [str(exc)]))
+        return set()
+    return found
+
+
+def collect_outcome_registries(
+    scan: Scan, context: RepoContext, redactor: Redactor
+) -> dict[tuple[str, str], dict[str, Any]]:
+    """Strictly read every outcome ``worktrees.json`` (R4): closed shape, no healing, no writes."""
+    outcomes_dir = context.common_dir / OUTCOMES_DIRNAME
+    identity = f"{OUTCOMES_DIRNAME}/*/{WORKTREE_REGISTRY_NAME}"
+    rows: dict[tuple[str, str], dict[str, Any]] = {}
+    if not outcomes_dir.is_dir() or _is_symlink(outcomes_dir):
+        scan.add_source(
+            Source(
+                kind="worktree-registries",
+                identity=identity,
+                digest="",
+                record_count=0,
+                verdict="absent",
+            )
+        )
+        return rows
+    try:
+        with os.scandir(outcomes_dir) as entries:
+            outcome_ids = sorted(
+                entry.name
+                for entry in entries
+                if entry.is_dir(follow_symlinks=False) and safe_component(entry.name)
+            )
+        if len(outcome_ids) > MAX_SOURCE_ENTRIES:
+            raise StrictReadError(
+                "cap-exceeded", identity, [f"{identity}: more than {MAX_SOURCE_ENTRIES} outcomes"]
+            )
+        for outcome_id in outcome_ids:
+            registry_path = outcomes_dir / outcome_id / WORKTREE_REGISTRY_NAME
+            if not registry_path.exists() and not _is_symlink(registry_path):
+                continue
+            presented = redactor.present(registry_path)
+            data = read_bounded_file(registry_path, cap=MAX_STATE_BYTES, presented=presented)
+            document = parse_strict_json(data, what=presented)
+            if not isinstance(document, dict) or set(document) != {"worktrees"}:
+                raise StrictReadError(
+                    "schema-skew", presented, [f"{presented}: not closed to one 'worktrees' key"]
+                )
+            worktrees = document["worktrees"]
+            if not isinstance(worktrees, dict):
+                raise StrictReadError(
+                    "schema-skew", presented, [f"{presented}: 'worktrees' is not an object"]
+                )
+            for subplot_id, entry in worktrees.items():
+                if not safe_component(subplot_id):
+                    raise StrictReadError(
+                        "traversal-identity",
+                        presented,
+                        [f"{presented}: subplot id fails the safe-component charset"],
+                    )
+                if not isinstance(entry, dict):
+                    raise StrictReadError(
+                        "schema-skew", presented, [f"{presented}: entry is not an object"]
+                    )
+                keys = set(entry)
+                if not keys >= _REGISTRY_ENTRY_REQUIRED or not (
+                    keys <= _REGISTRY_ENTRY_REQUIRED | _REGISTRY_ENTRY_OPTIONAL
+                ):
+                    raise StrictReadError(
+                        "schema-skew",
+                        f"{presented}:{subplot_id}",
+                        [f"{presented}: entry fields diverge from the registry contract"],
+                    )
+                rows[(outcome_id, subplot_id)] = entry
+                if len(rows) > MAX_SOURCE_ENTRIES:
+                    raise StrictReadError(
+                        "cap-exceeded", identity, [f"{identity}: row count beyond entry cap"]
+                    )
+    except StrictReadError as problem:
+        scan.add_problem(problem)
+        scan.add_source(
+            Source(
+                kind="worktree-registries",
+                identity=identity,
+                digest="",
+                record_count=0,
+                verdict=problem.classification,
+            )
+        )
+        return {}
+    digest_rows = {f"{oid}/{sid}": row for (oid, sid), row in rows.items()}
+    scan.add_source(
+        Source(
+            kind="worktree-registries",
+            identity=identity,
+            digest=sha256_hex(canonical_json(digest_rows).encode("utf-8")),
+            record_count=len(rows),
+            verdict="present",
+        )
+    )
+    return rows
+
+
+def _teardown_view(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Correlate #358 teardown facts: action_key -> {resource_id, disposition, team_run_id}."""
+    attempts: dict[str, dict[str, Any]] = {}
+    for record in records:
+        if record.get("kind") != "teardown":
+            continue
+        event = record.get("event")
+        if event == "resource-attempt":
+            key = str(record.get("action_key"))
+            attempts.setdefault(key, {}).update(
+                {
+                    "resource_id": str(record.get("resource_id")),
+                    "action": str(record.get("action")),
+                    "team_run_id": str(record.get("team_run_id")),
+                }
+            )
+        elif event == "resource-result":
+            key = str(record.get("action_key"))
+            attempts.setdefault(key, {})["disposition"] = str(record.get("disposition"))
+    return attempts
+
+
+def reconcile_worktrees(
+    scan: Scan,
+    context: RepoContext,
+    *,
+    porcelain_paths: list[Path],
+    registry_rows: dict[tuple[str, str], dict[str, Any]],
+    broker_registry: dict[str, Any] | None,
+    run_fact_records: list[dict[str, Any]],
+) -> None:
+    """R4: both drift directions plus terminal-resource-open, from independent observations."""
+    exclusions = {context.repo_root, Path.cwd()}
+    observed: dict[tuple[str, str], list[str]] = {}
+    for path in porcelain_paths:
+        if path in exclusions:
+            continue
+        key = _managed_key(context, path)
+        if key is not None:
+            observed.setdefault(key, []).append("git-worktree-porcelain")
+    for key in _scan_managed_dirs(scan, context):
+        managed_path = context.repo_root / MANAGED_WORKTREES_DIRNAME / key[0] / key[1]
+        if managed_path in exclusions or managed_path == Path.cwd():
+            continue
+        observed.setdefault(key, []).append("managed-filesystem")
+
+    leases: dict[str, dict[str, Any]] = {}
+    closed_owners: dict[str, Any] = {}
+    fences: dict[str, dict[str, Any]] = {}
+    if isinstance(broker_registry, dict):
+        raw_leases = broker_registry.get("leases")
+        if isinstance(raw_leases, dict):
+            leases = {k: v for k, v in raw_leases.items() if isinstance(v, dict)}
+        raw_closed = broker_registry.get("closed_owner_admissions")
+        if isinstance(raw_closed, dict):
+            closed_owners = raw_closed
+        raw_fences = broker_registry.get("resource_fences")
+        if isinstance(raw_fences, dict):
+            fences = {k: v for k, v in raw_fences.items() if isinstance(v, dict)}
+
+    worktree_leases: dict[tuple[str, str], str] = {}
+    for lease_id, lease in leases.items():
+        ref = lease.get("resource_ref")
+        if (
+            lease.get("pool") == "worktree"
+            and isinstance(ref, dict)
+            and str(ref.get("repo_root")) == str(context.repo_root)
+        ):
+            worktree_leases[(str(ref.get("outcome_id")), str(ref.get("subplot_id")))] = lease_id
+
+    for key in sorted(observed):
+        if key not in registry_rows:
+            scan.add_finding(
+                Finding(
+                    disease="leaked-resource",
+                    classification="stale-worktree",
+                    subject_id=f"{key[0]}/{key[1]}",
+                    evidence_refs=tuple(
+                        sorted(set(observed[key])) + ["worktree-registries: no row"]
+                    ),
+                    owner_command="/outcome status",
+                )
+            )
+
+    for key, row in sorted(registry_rows.items()):
+        subject = f"{key[0]}/{key[1]}"
+        canonical_path = context.repo_root / MANAGED_WORKTREES_DIRNAME / key[0] / key[1]
+        if key not in observed and not Path(str(row.get("path"))).is_dir():
+            scan.add_finding(
+                Finding(
+                    disease="leaked-resource",
+                    classification="dangling-registry",
+                    subject_id=subject,
+                    evidence_refs=(
+                        "git-worktree-porcelain: absent",
+                        "managed-filesystem: absent",
+                        "worktree-registries: row present",
+                    ),
+                    owner_command="/outcome status",
+                )
+            )
+            continue
+        if str(row.get("path")) != str(canonical_path):
+            scan.add_finding(
+                Finding(
+                    disease="leaked-resource",
+                    classification="ownership-drift",
+                    subject_id=subject,
+                    evidence_refs=(
+                        "worktree-registries: path diverges from the canonical managed path",
+                        f"expected: {MANAGED_WORKTREES_DIRNAME}/{key[0]}/{key[1]}",
+                    ),
+                    owner_command="/outcome status",
+                )
+            )
+        row_lease = row.get("lease")
+        if isinstance(row_lease, dict) and leases:
+            lease_id = str(row_lease.get("lease_id"))
+            broker_lease = leases.get(lease_id)
+            row_token = row_lease.get("token")
+            row_seq = row_token.get("fencing_sequence") if isinstance(row_token, dict) else None
+            if broker_lease is None:
+                scan.add_finding(
+                    Finding(
+                        disease="leaked-resource",
+                        classification="ownership-drift",
+                        subject_id=subject,
+                        evidence_refs=(
+                            "lease-registry: lease id absent from the broker",
+                            f"worktree-registries: lease {lease_id} recorded",
+                        ),
+                        owner_command="lease-broker inspect",
+                    )
+                )
+            elif broker_lease.get("fencing_sequence") != row_seq:
+                scan.add_finding(
+                    Finding(
+                        disease="leaked-resource",
+                        classification="ownership-drift",
+                        subject_id=subject,
+                        evidence_refs=(
+                            "lease-registry: fencing sequence diverges",
+                            "worktree-registries: stale lease generation recorded",
+                        ),
+                        owner_command="lease-broker inspect",
+                    )
+                )
+
+    for key, lease_id in sorted(worktree_leases.items()):
+        if key not in registry_rows and key not in observed:
+            scan.add_finding(
+                Finding(
+                    disease="leaked-resource",
+                    classification="ownership-drift",
+                    subject_id=f"{key[0]}/{key[1]}",
+                    evidence_refs=(
+                        f"lease-registry: live worktree lease {lease_id}",
+                        "worktree-registries: no row",
+                        "managed-filesystem: absent",
+                    ),
+                    owner_command="lease-broker inspect",
+                )
+            )
+
+    for action_key, view in sorted(_teardown_view(run_fact_records).items()):
+        disposition = view.get("disposition")
+        resource_id = str(view.get("resource_id"))
+        team_run = str(view.get("team_run_id"))
+        if disposition == "retained":
+            scan.warnings.append(
+                f"teardown retained resource {resource_id} (team run {team_run})"
+                " remains open by design"
+            )
+            continue
+        if disposition in ("released", "already-absent") and resource_id in leases:
+            scan.add_finding(
+                Finding(
+                    disease="leaked-resource",
+                    classification="terminal-resource-open",
+                    subject_id=resource_id,
+                    evidence_refs=(
+                        f"run-facts: teardown {disposition} at action {action_key[:16]}",
+                        "lease-registry: lease still present",
+                    ),
+                    owner_command="B8 status/recover",
+                )
+            )
+
+    for owner_id in sorted(closed_owners):
+        live = sorted(
+            lease_id for lease_id, lease in leases.items() if str(lease.get("owner_id")) == owner_id
+        )
+        if live:
+            scan.add_finding(
+                Finding(
+                    disease="leaked-resource",
+                    classification="terminal-resource-open",
+                    subject_id=owner_id,
+                    evidence_refs=(
+                        "lease-registry: closed owner admission recorded",
+                        f"lease-registry: live leases remain ({', '.join(live)})",
+                    ),
+                    owner_command="B8 status/recover",
+                )
+            )
+
+    for digest, fence in sorted(fences.items()):
+        if fence.get("close_receipt") is not None and str(fence.get("lease_id")) in leases:
+            scan.add_finding(
+                Finding(
+                    disease="leaked-resource",
+                    classification="terminal-resource-open",
+                    subject_id=str(fence.get("lease_id")),
+                    evidence_refs=(
+                        f"lease-registry: resource head {digest[:16]} carries a close receipt",
+                        "lease-registry: lease still present",
+                    ),
+                    owner_command="lease-broker inspect",
+                )
+            )
+
+
 def run_scan(
     repo_root: Path,
     *,
@@ -629,9 +1055,21 @@ def run_scan(
         )
     )
 
-    collect_run_facts(scan, context, redactor)
-    collect_lease_registry(scan, redactor, lease_root, explicit=lease_store is not None)
+    run_fact_records = collect_run_facts(scan, context, redactor)
+    broker_registry = collect_lease_registry(
+        scan, redactor, lease_root, explicit=lease_store is not None
+    )
     collect_audit_store(scan, redactor, audit_root, explicit=audit_store is not None)
+    porcelain_paths = collect_git_worktrees(scan, context, redactor)
+    registry_rows = collect_outcome_registries(scan, context, redactor)
+    reconcile_worktrees(
+        scan,
+        context,
+        porcelain_paths=porcelain_paths,
+        registry_rows=registry_rows,
+        broker_registry=broker_registry,
+        run_fact_records=run_fact_records,
+    )
     return build_report(scan)
 
 

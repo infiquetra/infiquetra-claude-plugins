@@ -110,10 +110,18 @@ isolation; bounded pool 3.
   the conformance test itself; end-to-end oracles for both degenerate classes
   (`delegation-evidence-error`, exit 2, no traceback); the canon's two gaps queued upstream as
   QUEUED `{#bridge-receipt-transport-hardening}` (KTD8 keeps fleet-core untouched this
-  release). Focused pair 139 passed.
+  release). Focused pair 139 passed. Commit `482cca6c`.
+- **Round 3** `wf_5e9aa247-eda` at `482cca6c` — architecture lens fresh: **clean** (93), zero
+  new findings, both r2 items adjudicated **fixed-adequately** with independent reproduction
+  (the lens re-derived both canon gaps from `bridge_receipt.py` source, confirmed the doctor
+  returns `False` where the canon returns clean or raises, and judged the claim revision
+  "factually correct … the auditor being fail-closed stricter than the canon is the correct
+  architectural direction; not papered over").
+
+**Converged: three rounds, two remediation cycles (tripwire is three).**
 
 ## Next step
 
-On round-3 convergence (architecture lens fresh): programmatic `/code-review` (capture
+Full repository gate re-verified at `482cca6c`, then programmatic `/code-review` (capture
 `REVIEWED_SHA`), `/qa`, PR, merge under Jeff's standing outcome approval, leaf harvest with
 `leaf_saga_id` backfill, board reconcile.

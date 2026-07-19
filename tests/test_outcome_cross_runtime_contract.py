@@ -853,6 +853,16 @@ class TestProtectedHandoff:
         assert exc.value.code == "schema-field-type"
         assert "dispatch" in exc.value.receipt()["unsupported"]
 
+    def test_attend_offer_permits_empty_dispatch_id(self, outcome_repo: Path, broker: Any) -> None:
+        # Pins the guard's operation scope: attend derives a resume pointer and may omit the
+        # #351 dispatch identity, so the advance-one requirement must not leak onto it.
+        offer, reference = _offer(
+            outcome_repo, broker, _issuer_lease(broker), operation="attend", dispatch_id=""
+        )
+        assert offer["operation"] == "attend"
+        assert offer["dispatch_id"] == ""
+        assert reference["operation"] == "attend"
+
     def test_unclosed_source_lease_halts(self, outcome_repo: Path, broker: Any) -> None:
         # A validly sealed offer pointing at a live lease that never went through the
         # settlement close: seal passes, but the head carries no canonical close receipt.

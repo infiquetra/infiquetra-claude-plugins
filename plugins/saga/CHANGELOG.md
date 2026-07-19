@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.104.0] - 2026-07-19
+
+### Added - Fleet doctor cross-source audit (#353)
+
+- `/fleet-doctor` command + skill + `fleet_doctor.py`: one strict, bounded, read-only
+  point-in-time audit (`fleet_doctor_report.v1`) independently correlating Git worktree
+  porcelain, the outcome worktree registries, the #356 broker registry (leases, fences,
+  closed-owner admissions), the chain-verified #351 run-fact ledger (including #358 teardown
+  facts), outcome dispatch commit events, and the durable delegation audit store.
+- Three disease classes plus explicit evidence errors: `leaked-resource` (stale-worktree,
+  dangling-registry, ownership-drift, terminal-resource-open), `unledgered-spawn`
+  (observed/lease positions without spawn facts, phantom-spawn-fact, unsettled-spawn), and
+  `receiptless-delegation` (claimed real execution without a schema-valid durable
+  `bridge_receipt.v1`; corrupt evidence is an error, never absence).
+- Exit contract fails closed: 0 complete+clean, 1 complete+findings, 2 incomplete proof
+  (config error, corruption, unsafe path, broken chain, cap overflow, mid-scan source
+  change). Caps never truncate to a false clean.
+- Read-only by construction: no producer imports (AST-conformance-tested denylist), bytecode
+  writing disabled, `os.open(O_RDONLY)` the only file-open, machine-local paths redacted
+  behind `--show-local-paths`, and the machine-checked source matrix at
+  `references/fleet-doctor-sources.md` fails the build when collectors and documentation
+  drift. No `--fix`, `--reap`, `--retry`, `--watch`, or fixture surface exists.
+
 ## [0.103.0] - 2026-07-18
 
 ### Added - Claude-side cross-runtime Outcome contract (#604)

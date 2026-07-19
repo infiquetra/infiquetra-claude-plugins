@@ -24,9 +24,10 @@ Use the situation, not the command list, as the entry point.
 | Work should move to an SDLC issue | `/handoff` | mission-control issue preparation |
 | The thread is cold or confusing | `/resume` | re-entry route |
 | You want the fleet's live state (boards, runs, ledger, spend) | `/pulse` | terminal telemetry snapshot |
+| You suspect leaked worktrees, unledgered spawns, or receiptless delegations | `/fleet-doctor` | strict read-only audit report, exits 0/1/2 |
 | Finished work should teach the lifecycle | `/retro` | journal or retro artifact |
 
-The repository contains 23 command files and 22 routable commands. `/ceo-review` is an alias for `/founder-review`, not a separate lifecycle node.
+The repository contains 24 command files and 23 routable commands. `/ceo-review` is an alias for `/founder-review`, not a separate lifecycle node.
 
 **Above a single work-thread:** `/outcome` is the **OutcomeOrchestrator** — a coordinator that drives a whole *outcome* as a durable DAG of leaf sagas. It runs a level-triggered reconcile loop that dispatches the ready frontier across the full backend menu (inline / fork / subagent / team-execution / cc-workflows-ultracode / `/goal` / manual), auto-merges clean leaves, and pages the operator only at gates, ambiguities, and failures — status is derived on read, completion is canonical on GitHub, and the realized cost rollup proves whether the DAG beat one long thread. Each fan-out is also balanced on the append-only run-fact ledger: the parent records expected units, pre-call spawns, and evidence-derived settlement, while dead-letter and leak reconciliation remain derived, read-only views. The native leaf verbs (`/work`, `/code-review`, `/qa`, `/resume`) are reused on a leaf, never shadowed.
 

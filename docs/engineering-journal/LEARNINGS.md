@@ -25,6 +25,28 @@
 
 ---
 
+## 2026-07-19
+
+### A worktree census motivates a capability; it does not prove abandonment {#fleet-doctor-census-353}
+
+**Context.** Issue #353 was filed against a historical snapshot of fifteen lingering worktrees.
+The pre-build live census at implementation time was nine — and none of those nine could be
+called abandoned from the count alone, because a worktree is only *stale* relative to the
+registries, leases, and teardown facts that claim it.
+
+**Mechanism.** A raw count conflates managed and unmanaged trees, retained-by-design trees
+(dirty/unmerged teardown retention), and genuinely leaked ones. The doctor therefore derives
+staleness only from cross-source disagreement inside the canonical managed root
+(`.saga-worktrees/<outcome>/<subplot>`), and a teardown `retained` disposition is an
+explained-open warning, never a finding.
+
+**Generalizable rule.** File capability issues from symptoms, but scope detectors to the
+invariant that makes a symptom a defect — a number that motivated the work is not the oracle
+that judges it.
+
+**Refs.** `plugins/saga/scripts/fleet_doctor.py`, decision
+`{#fleet-doctor-independent-audit-353}`.
+
 ## 2026-07-18
 
 ### A guard about a release EVENT must pin changelog history plus a semver floor, never current-version equality {#release-event-guard-floor-604}

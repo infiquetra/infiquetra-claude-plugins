@@ -318,12 +318,13 @@
       "depends_on": [
         "sub-355"
       ],
-      "leaf_saga_id": "",
+      "leaf_saga_id": "leaf-lease-safe-runtime-continuity-codex-substrate",
       "child_spec_ref": "",
       "github": {
         "repo": "infiquetra/infiquetra-codex-plugins",
         "issue": "infiquetra/infiquetra-codex-plugins#33",
-        "sub_issue": 33
+        "sub_issue": 33,
+        "pr": "https://github.com/infiquetra/infiquetra-codex-plugins/pull/41"
       },
       "worktree": {},
       "evidence": {

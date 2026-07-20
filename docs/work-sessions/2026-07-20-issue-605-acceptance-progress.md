@@ -61,14 +61,22 @@ uv run python tools/run_cross_runtime_outcome_acceptance.py \
 
 ## Next: U3 — protected handoff + negative matrix (R4)
 
-- Issuer CLI: `handoff <id> <sid> --operation advance-one|attend --session-id S
-  --policy-sha256 <64hex> --session-limit N --aggregate-limit N [--broker-root B]` → prints
-  `outcome.handoff-reference.v1` (the only printable form; protected records live in the
-  git-common-dir handoff store, KTD5).
-- Receiver CLI: `attach <id> --advance --handoff-id H --subplot S <admission flags>
-  [--broker-root B]` (also `--attend`). Positive both directions inside clone A over the shared
-  broker root; TTL cap 300 s, skew cap 30 s (`HANDOFF_MAX_TTL_SECONDS`,
-  `HANDOFF_MAX_CLOCK_SKEW_SECONDS` in outcome_compat).
+**Positive path PROBED WORKING end to end (2026-07-20, scratch xr-probe)**: Claude issued on a
+consumer clone (no prior store state needed — handoff works from the committed spec), codex
+accepted the same reference over the shared broker root and ran the attached advance
+(`successor_lease_id` minted, tick result `states: {a: intent-created}`).
+
+- Issuer CLI: `handoff <id> <sid> --operation advance-one --dispatch-id
+  outcome:<id>:frontier:<sid> --session-id S --policy-sha256 <64hex> --session-limit N
+  --aggregate-limit N --broker-root B` → prints `outcome.handoff-reference.v1`
+  (fields: digest, handoff_id, operation, protocol{...capabilities}, schema, subplot_id).
+  `advance-one` REQUIRES `--dispatch-id` (halt `schema-field-type` without it).
+- Receiver CLI: `attach <id> --advance --handoff-id <handoff_id> --subplot <sid>
+  <same admission flags> --broker-root B` → JSON `{handoff_id, subplot_id,
+  successor_lease_id, advance: {...advance tick result...}}`, rc 0. The target leaf must be in
+  the candidate frontier (gh fixture must serve its PR as OPEN — a missing fixture reads
+  unknown and the leaf is excluded). TTL cap 300 s, skew cap 30 s
+  (`HANDOFF_MAX_TTL_SECONDS`, `HANDOFF_MAX_CLOCK_SKEW_SECONDS` in outcome_compat).
 - Negatives (each must reject BEFORE any mutable effect — capture pre/post store hashes):
   copied reference on clone B; wrong repository/revision/operation/subplot/receiver/issuer/
   fence; broad scope; replay (second accept); byte tamper; missing protected record; expiry

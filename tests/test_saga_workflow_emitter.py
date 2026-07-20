@@ -123,7 +123,7 @@ def test_emitted_script_exports_template_but_gets_no_filesystem_authority() -> N
     script = ES.emit_workflow_script(spec, environment={})
     template = ES.workflow_lease_metadata(spec, environment={})
     assert (
-        "export const lease = " + json.dumps(template, sort_keys=True, separators=(",", ":"))
+        "const lease = " + json.dumps(template, sort_keys=True, separators=(",", ":"))
         in script
     )
     assert template["batch_id"] is None

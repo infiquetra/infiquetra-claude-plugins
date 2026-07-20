@@ -3442,7 +3442,9 @@ def emit_workflow_script(
     lines.append(f"  description: {_js_string(spec.description)},")
     lines.append("}")
     lines.append(
-        "export const settlement = "
+        # NOT `export const`: the Workflow runtime accepts only the leading
+        # `export const meta` statement; any later `export` is a parse error.
+        "const settlement = "
         + json.dumps(
             settlement_metadata,
             sort_keys=True,
@@ -3450,7 +3452,7 @@ def emit_workflow_script(
         )
     )
     lines.append(
-        "export const lease = "
+        "const lease = "
         + json.dumps(
             lease_metadata,
             sort_keys=True,

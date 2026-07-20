@@ -741,6 +741,67 @@ def test_write_once_refuses_symlinked_handoffs_dir(tmp_path: Path) -> None:
     assert list(real.iterdir()) == []
 
 
+def test_handoff_store_receipt_carries_no_absolute_path(tmp_path: Path) -> None:
+    """PA-1 (#624): the refusal receipt honours R12 — callers print it verbatim, so no field
+    may leak the store path (and with it the home directory and repo layout)."""
+    handoffs = tmp_path / "handoffs"
+    handoffs.mkdir()
+    os.chmod(handoffs, 0o755)
+    with pytest.raises(OC.CompatibilityHaltError) as exc:
+        OC._write_once(handoffs / "h1.offer.json", {"schema": "x"})
+    receipt = exc.value.receipt()
+    for field, value in receipt.items():
+        assert str(tmp_path) not in value, f"receipt[{field!r}] leaks the store path"
+        assert str(Path.home()) not in value, f"receipt[{field!r}] leaks the home directory"
+
+
+def test_ensure_private_dir_refuses_symlinked_ancestor_below_home(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """PA-1 (#624): the ancestor walk ported from fleet-core refuses a symlinked component
+    below home before any mkdir traverses it — the parity the docstring claims."""
+    home = tmp_path / "fake-home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    real = home / "real-target"
+    real.mkdir(mode=0o700)
+    link = home / "link"
+    link.symlink_to(real)
+    with pytest.raises(OC.CompatibilityHaltError) as exc:
+        OC._ensure_private_dir(link / "handoffs")
+    assert exc.value.receipt()["code"] == "handoff-store-unsafe"
+    assert list(real.iterdir()) == []  # nothing was created through the link
+
+
+def test_ensure_private_dir_refuses_world_writable_ancestor_below_home(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """PA-1 (#624): a world-writable component below home is refused, no fallback."""
+    home = tmp_path / "fake-home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    loose = home / "loose"
+    loose.mkdir()
+    os.chmod(loose, 0o777)
+    with pytest.raises(OC.CompatibilityHaltError) as exc:
+        OC._ensure_private_dir(loose / "handoffs")
+    assert exc.value.receipt()["code"] == "handoff-store-unsafe"
+    assert not (loose / "handoffs").exists()
+
+
+def test_ensure_private_dir_creates_fresh_below_home_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """PA-1 (#624): the ancestor walk falls through for not-yet-existing components below home
+    — the production store path, where the whole subtree is created 0o700."""
+    home = tmp_path / "fake-home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    target = home / "fresh" / "handoffs"
+    OC._ensure_private_dir(target)
+    assert stat.S_IMODE(target.lstat().st_mode) == 0o700
+
+
 @pytest.fixture
 def broker(tmp_path: Path) -> Any:
     root = tmp_path / "fleet-leases"

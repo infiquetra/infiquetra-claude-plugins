@@ -27,6 +27,46 @@
 
 ## 2026-07-20
 
+### A `resolve()` upstream disarms the symlink half of a downstream ancestor guard {#resolve-disarms-symlink-guards-624}
+
+**Context.** PA-1 (#624) added `_refuse_unsafe_ancestors` to `fleet_commons/audit_store.py`: an
+`lstat` walk over each path component below `$HOME` that refuses symlinked or world-writable
+ancestors before `mkdir` can traverse them. Its docstring promised "a symlinked ancestor is
+refused before any `mkdir` could traverse it." The programmatic code-review gate found the
+promise false for every production caller.
+
+**Evidence.** `audit_store.Store.for_root` canonicalizes with `resolved.expanduser().resolve()`
+(`plugins/fleet-core/scripts/fleet_commons/audit_store.py`, `for_root`), and every write path
+derives from that root. Reviewer probe: with `~/.claude` a symlink, `Store.for_root(link /
+"delegation-audit").ensure()` created the directory under the link's target without raising,
+while `_ensure_private_dir(link / "delegation-audit")` on the *unresolved* path did raise. The
+tests hid it — all three new guard tests call `_ensure_private_dir` directly, never through
+`Store.for_root(...).ensure()`.
+
+**Mechanism.** `Path.resolve()` collapses symlinks, so by the time the walk runs there are no
+symlinked components left to find; the branch is unreachable from the resolved entry point. Mode
+bits, by contrast, are properties of the resolved inode, so the world-writable branch keeps
+working. One guard, two branches, different reach — determined by whether the property survives
+canonicalization.
+
+**Fix.** Docstring and CHANGELOG now state the split (world-writable covers all callers; symlink
+covers direct callers and the post-resolve window) rather than promising blanket protection.
+`.resolve()` was deliberately kept: `test_default_root_resolves_under_home_dot_claude_delegation_audit`
+pins canonical-root semantics, and refusing a symlinked `~/.claude` outright would break the
+common dotfile-manager layout. The same walk was ported into `outcome_compat` so the two sides
+share a real predicate.
+
+**What surprised.** A guard can pass its own tests, be genuinely correct in isolation, and still
+be inert in production — because the caller sanitized the input the guard exists to inspect.
+
+**Generalizable rule.** When a check inspects a *path*, confirm nothing upstream resolved it
+first, and test the guard through the real entry point, not just the private helper. Ask of every
+property a guard tests: does it survive canonicalization? If not, the guard only defends callers
+that skip canonicalization.
+
+**Refs.** `docs/code-reviews/2026-07-20-issue-624-pa1-upstream-hardening-code-review.md`
+(findings C1, S2); [[help-strings-are-release-surfaces-624]].
+
 ### `uv run <tool>` silently falls through to PATH when the dev extra is unsynced {#uv-run-path-fallthrough-624}
 
 **Context.** In a fresh PA-1 worktree, `uv run pytest` reported "2 errors during collection —

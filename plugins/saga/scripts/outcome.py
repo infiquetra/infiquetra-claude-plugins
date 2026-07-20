@@ -1826,8 +1826,9 @@ def import_bundle(
     """
     del repo_root, runner
     schema = bundle.get("schema") if isinstance(bundle, dict) else None
+    label = f" (schema {schema!r})" if schema else ""
     raise OutcomeError(
-        f"legacy bundle import is retired (#604 R10): a copied bundle (schema {schema!r}) "
+        f"legacy bundle import is retired (#604 R10): a copied bundle{label} "
         "carries no authority. Migrate: run `outcome discover <outcome-id>` in the source "
         "clone to emit the outcome.discovery.v1 envelope; run `outcome attach <outcome-id>` "
         "in this clone for read-only canonical reconstruction; same-clone mutation requires "
@@ -2629,10 +2630,11 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps(halt.receipt()))
                 return 3
         elif args.command == "import":
-            bundle = json.loads(Path(args.path).read_text(encoding="utf-8"))
-            # Unconditionally refuses (#604 R10); the top-level handler prints the refusal
-            # receipt. No success path exists.
-            import_bundle(root, bundle)
+            # Refuses without reading args.path (#604 R10): the retirement receipt must not
+            # depend on the file existing or parsing, or a missing/malformed bundle would
+            # surface an I/O error instead of the migration guidance. The top-level handler
+            # prints the receipt. No success path exists.
+            import_bundle(root, {})
         elif args.command == "reconcile":
             # #295 U5: explicit board<->saga drift detection (read-only on the world; no lease).
             import outcome_github

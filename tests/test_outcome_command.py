@@ -335,7 +335,12 @@ def test_cli_help_pins_retired_bundle_semantics(capsys: pytest.CaptureFixture[st
 def test_cli_import_refuses_with_receipt_and_no_success_print(
     repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """PA-1 (#624): the import arm has no success path — the refusal receipt is the only output."""
+    """The import arm has no success path — the refusal receipt is the only output.
+
+    A forward contract guard, not a change detector: the refusal has held since #604 R10
+    retired ``import_bundle``, so this passes before and after PA-1 (#624), which only deleted
+    the already-unreachable success print. It pins the CLI shape the deletion assumed.
+    """
     bundle_path = tmp_path / "bundle.json"
     bundle_path.write_text(
         json.dumps({"schema": "outcome-bundle/1", "spec": {"outcome_id": "ship-x"}}),
@@ -344,7 +349,31 @@ def test_cli_import_refuses_with_receipt_and_no_success_print(
     rc = M.main(["--repo-root", str(repo), "import", str(bundle_path)])
     assert rc == 1
     captured = capsys.readouterr()
-    assert captured.out == ""  # the pre-#624 dead success print never fires
+    assert captured.out == ""
+    err = json.loads(captured.err)
+    assert err["ok"] is False
+    for token in ("retired", "discover", "attach"):
+        assert token in err["error"]
+
+
+@pytest.mark.parametrize("body", [None, "{not valid json"])
+def test_cli_import_refuses_before_reading_the_bundle(
+    repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], body: str | None
+) -> None:
+    """PA-1 (#624): a missing or malformed bundle still yields the migration receipt.
+
+    The arm refuses without touching the path, so an unreadable file cannot pre-empt the
+    guidance with a traceback (missing) or a JSON parse error (malformed).
+    """
+    bundle_path = tmp_path / "bundle.json"
+    if body is not None:
+        bundle_path.write_text(body, encoding="utf-8")
+
+    rc = M.main(["--repo-root", str(repo), "import", str(bundle_path)])
+
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
     err = json.loads(captured.err)
     assert err["ok"] is False
     for token in ("retired", "discover", "attach"):

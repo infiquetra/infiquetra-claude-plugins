@@ -211,3 +211,50 @@ def test_ensure_private_dir_exempts_paths_outside_home(
     target = outside / "audit"
     audit_store._ensure_private_dir(target)
     assert stat.S_IMODE(target.lstat().st_mode) == 0o700
+
+
+def test_ensure_private_dir_creates_fresh_below_home_path(
+    audit_store: ModuleType, tmp_path: Path
+) -> None:
+    """PA-1 (#624): the ancestor walk falls through at the first not-yet-existing component and
+    creates the subtree 0o700 — the DEFAULT_AUDIT_STORE_ROOT path on a machine that has never
+    mirrored a delegation before."""
+    home = Path.home()
+    home.mkdir(parents=True, exist_ok=True)
+    target = home / "fresh" / "audit"
+    audit_store._ensure_private_dir(target)
+    for directory in (target, target.parent):
+        assert stat.S_IMODE(directory.lstat().st_mode) == 0o700
+
+
+def test_ensure_private_dir_accepts_group_writable_ancestor_below_home(
+    audit_store: ModuleType, tmp_path: Path
+) -> None:
+    """PA-1 (#624): the guard's scope is world-writable, not group-writable — a shared-group
+    ancestor stays usable. Pins the boundary so it cannot drift either way unnoticed."""
+    home = Path.home()
+    shared = home / "shared"
+    shared.mkdir(parents=True)
+    os.chmod(shared, 0o770)
+    target = shared / "audit"
+    audit_store._ensure_private_dir(target)
+    assert stat.S_IMODE(target.lstat().st_mode) == 0o700
+
+
+def test_ensure_private_dir_refuses_uninspectable_ancestor_below_home(
+    audit_store: ModuleType, tmp_path: Path
+) -> None:
+    """PA-1 (#624): an ancestor this user cannot stat fails typed, not as a raw PermissionError,
+    so callers see the store's own error class."""
+    if os.geteuid() == 0:  # root bypasses the permission check the test depends on
+        pytest.skip("root can traverse any directory")
+    home = Path.home()
+    blocked = home / "blocked"
+    blocked.mkdir(parents=True)
+    (blocked / "child").mkdir()
+    os.chmod(blocked, 0o000)
+    try:
+        with pytest.raises(audit_store.AuditStoreError, match="not inspectable"):
+            audit_store._ensure_private_dir(blocked / "child" / "audit")
+    finally:
+        os.chmod(blocked, 0o700)  # restore so tmp_path teardown can clean up

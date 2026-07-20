@@ -149,8 +149,14 @@ def _refuse_unsafe_ancestors(path: Path) -> None:
 
     The scope test is lexical on the expanded absolute path: the home directory itself and any
     path outside home entirely (e.g. system temp roots, whose sticky world-writable mode is
-    expected) are exempt. Components are inspected with ``lstat`` — never resolved — so a
-    symlinked ancestor is refused before any ``mkdir`` could traverse it.
+    expected) are exempt. Components are inspected with ``lstat``, never resolved, so a
+    symlinked ancestor is refused before any ``mkdir`` traverses it.
+
+    Reach differs per branch because ``Store.for_root`` canonicalizes the root with
+    ``resolve()`` before any write path gets here. Mode bits survive that resolution, so the
+    world-writable refusal covers every caller; symlink identity does not, so the symlink
+    refusal covers direct callers of this function and the window after resolution — not a
+    symlinked ancestor of a root that ``for_root`` already collapsed.
     """
     home = Path.home()
     candidate = path if path.is_absolute() else Path(os.path.abspath(path))
@@ -163,6 +169,8 @@ def _refuse_unsafe_ancestors(path: Path) -> None:
             metadata = current.lstat()
         except FileNotFoundError:
             return  # nothing exists from here down; creation below is 0o700
+        except PermissionError as exc:
+            raise AuditStoreError(f"audit-store ancestor is not inspectable: {current}") from exc
         if stat.S_ISLNK(metadata.st_mode):
             raise AuditStoreError(f"audit-store ancestor is a symlink: {current}")
         if stat.S_ISDIR(metadata.st_mode) and metadata.st_mode & 0o002:

@@ -219,3 +219,17 @@ remediation itself, both fixed in the cycle-2 commit:
 - **review-architecture P3**: `_resolved_broker_digest`'s halt branches had no hermetic test.
   Fix: `TestBrokerRootDigest` with a duck-typed stub runtime — agreement digest, runtime
   divergence halt, agreed-but-wrong-root halt, probe-failure halt. Suite 44 → 49.
+
+## Ceremony CONVERGED — round 3, HEAD e7ec568e
+
+Cycle-3 re-adjudication (2 fresh opus/high saga:readonly-verifier + worktree spawns): both
+cycle-2 P3s RESOLVED, zero new findings. Security lens probed the regex both directions
+(quote/bracket/equals/JSON-embedded prefixes all flag; every documented legit fact shape —
+URLs, git remotes, refs, version strings, dispatch ids, `#sha256=` refs — stays clean) and
+re-verified the committed bundle clean. Architecture lens verified the stub runtime is
+faithful to `InstalledRuntime.python`'s contract (tests non-vacuous), every halt branch
+pinned, KTD4 intact. Full ceremony record:
+`docs/validation/lease-safe-runtime-continuity/cross-runtime-acceptance-ceremony.md`.
+Next: programmatic saga:code-review (CLEAN gate) + saga:qa, then the PR + AFK halt report
+(red acceptance blocks the #605 close; #628 fix is a new production unit outside recorded
+authority).

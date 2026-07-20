@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.106.1] - 2026-07-20
+
+### Fixed - Handoff settled-guard refusal-precedence parity (#631)
+
+- The `accept_handoff` already-settled guard (`_settled_lookup`) now consults the shared v1/v2
+  dispatch reduction ONLY for the receipt-authoritative `dispatched` state (a codex-native
+  launched acknowledgement — the one settlement the #351 lane cannot see). Legacy commits and
+  operator handoffs fall through to the #351 dispatch-settlement lane, matching the codex
+  runtime's accept-path lookup. The 0.106.0 form consulted every settled state, which reordered
+  refusal codes in the byte-frozen `outcome_compat` accept flow: a handoff replayed by a second
+  receiver refused `handoff-already-settled` where the cross-runtime contract (and codex, given
+  identical state) refuses `handoff-receiver-conflict`.
+
+## [0.106.0] - 2026-07-20
+
+### Fixed - Outcome advance and handoff settled-guard read codex-native dispatch records (#628)
+
+- Ported the codex runtime's version-aware dispatch reducer (`reduce_dispatch_ledger`) into
+  `outcome_store.py`: legacy `{kind: dispatch, phase: commit}` records and codex-native
+  `outcome.dispatch.v2` intent/ack records now reduce through one shared path, so both runtimes
+  read a shared clone's ledger identically.
+- `advance` dedup (`_dispatch_records` / `_reconcile_once`) now counts a receipt-authoritative
+  native `ack_kind=launched` acknowledgement as SETTLED (no re-dispatch — restoring the
+  cross-runtime "exactly one dispatch side effect" invariant, R5/R6), and reads a live native
+  intent without an acknowledgement as IN FLIGHT: the leaf is refused with a visible halt
+  receipt directing to launch-evidence/operator-handoff reconciliation, never silently
+  re-driven under legacy crash-recovery semantics.
+- The handoff acceptance already-settled guard (`_settled_lookup`) additionally consults the
+  shared reduction, so `accept_handoff` refuses a natively-settled leaf with
+  `handoff-already-settled`.
+- `replay_pending` mirrors the codex arms: an authoritatively acknowledged native dispatch
+  counts as committed; a live native intent surfaces as pending only while unsettled.
+- `status`/`derive_states` surfaces a live native intent as `intent-created` instead of
+  `ready` (a `ready` reading invited the exact double dispatch the acceptance harness caught).
+
 ## [0.105.0] - 2026-07-20
 
 ### Fixed - Outcome CLI retired-bundle surface (#624, PA-1 of #605)

@@ -27,6 +27,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -42,10 +43,8 @@ ENV_NAME_ALLOWLIST: tuple[str, ...] = (
     "HOME",
     "PATH",
     "PWD",
-    "PYTHONPATH",
     "INFIQUETRA_FLEET_STATE_DIR",
     "FLEET_COMMONS_ROOT",
-    "XDG_STATE_HOME",
     "GIT_AUTHOR_NAME",
     "GIT_AUTHOR_EMAIL",
     "GIT_COMMITTER_NAME",
@@ -125,12 +124,12 @@ def _private_dir(path: Path) -> Path:
     return path
 
 
-# Any absolute filesystem path with two or more segments, under ANY root — not a closed
-# top-level-directory denylist. The lookbehind excludes interior slashes of relative paths
-# (refs/remotes/…, plugins/saga/…) but deliberately NOT a preceding colon: a colon-prefixed
-# path (tmpdir:/var/folders/…) must still flag, and URL slashes are self-protecting because
-# the "//" of a scheme fails the first-segment character class.
-_ABS_PATH_RE = re.compile(r"(?<![\w/])/(?:[\w.@+~-]+/)+[\w.@+~-]+")
+# Any absolute filesystem path — including single-segment ones like /etc or /tmp — under ANY
+# root, not a closed top-level-directory denylist. The lookbehind excludes interior slashes of
+# relative paths (refs/remotes/…, plugins/saga/…) but deliberately NOT a preceding colon: a
+# colon-prefixed path (tmpdir:/var/folders/…) must still flag, and URL slashes are
+# self-protecting because the "//" of a scheme fails the first-segment character class.
+_ABS_PATH_RE = re.compile(r"(?<![\w/])/(?:[\w.@+~-]+/)*[\w.@+~-]+")
 
 
 def _bounded(text: str, limit: int = 400) -> str:
@@ -220,10 +219,12 @@ def require_clean_pinned(pin: RuntimePin) -> dict[str, Any]:
     """R1: the checkout must be clean and at exactly the pinned SHA; versions must match."""
     if not (pin.repo / ".git").exists():
         raise HarnessError("pin-not-a-repo", f"{pin.name}: repo root has no .git")
-    status = _run(["git", "status", "--porcelain"], cwd=pin.repo)
+    status = _run(["git", "status", "--porcelain"], cwd=pin.repo, env=dict(_HARNESS_GIT_ENV))
     if status.returncode != 0 or status.stdout.strip():
         raise HarnessError("pin-dirty", f"{pin.name}: checkout is not clean")
-    head = _run(["git", "rev-parse", "HEAD"], cwd=pin.repo).stdout.strip()
+    head = _run(
+        ["git", "rev-parse", "HEAD"], cwd=pin.repo, env=dict(_HARNESS_GIT_ENV)
+    ).stdout.strip()
     if head != pin.sha:
         raise HarnessError("pin-sha", f"{pin.name}: HEAD {head[:12]} != pinned {pin.sha[:12]}")
     versions: dict[str, str] = {}
@@ -986,7 +987,7 @@ def _tree() -> dict[str, str]:
         if not base.is_dir():
             continue
         for path in sorted(base.rglob("*")):
-            if path.is_file():
+            if path.is_file() and not path.is_symlink():
                 key = f"{base.name}/{path.relative_to(base)}"
                 state[key] = hashlib.sha256(path.read_bytes()).hexdigest()
     return state
@@ -1927,7 +1928,10 @@ def _scenario_codex_first(bench: Workbench, rig: RaceRig) -> dict[str, Any]:
 
 def _scenario_simultaneous(bench: Workbench, rig: RaceRig) -> dict[str, Any]:
     """R5: barrier-released two-OS-process race; overlap proven by enter/exit receipts."""
-    control = bench.workdir / "race-control"
+    # Namespaced per rig: the race-serialized retry loop re-enters this function with a fresh
+    # rig, and a shared control dir would let attempt N's stale `go`/`ready-*` files satisfy
+    # attempt N+1's barrier before its children even start (defeating the synchronization).
+    control = bench.workdir / f"race-control-{rig.topo.outcome_id}"
     control.mkdir(exist_ok=True)
     barrier = control / "go"
     procs: dict[str, subprocess.Popen[str]] = {}
@@ -1965,7 +1969,18 @@ def _scenario_simultaneous(bench: Workbench, rig: RaceRig) -> dict[str, Any]:
     barrier.write_text("go", encoding="utf-8")
     receipts: dict[str, dict[str, Any]] = {}
     for name, proc in procs.items():
-        stdout, _stderr = proc.communicate(timeout=_TIMEOUT_S)
+        try:
+            stdout, _stderr = proc.communicate(timeout=_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            # A hung barrier-released advance must not orphan either OS process past the
+            # harness (raw Popen has no kill-on-timeout, unlike subprocess.run).
+            for straggler in procs.values():
+                straggler.kill()
+            for straggler in procs.values():
+                straggler.communicate()
+            raise HarnessError(
+                "race-simultaneous", f"{name} child hung past {_TIMEOUT_S}s; children killed"
+            ) from None
         if proc.returncode != 0:
             raise HarnessError("race-simultaneous", f"{name} child rc={proc.returncode}")
         receipts[name] = json.loads(stdout.strip().splitlines()[-1])
@@ -2477,6 +2492,12 @@ def main(argv: list[str] | None = None) -> int:
             scenarios.extend(_UNITS[name](bench))
     except HarnessError as exc:
         halt = {"code": exc.code, "detail": _bounded(exc.detail)}
+    # Evidence integrity: an untyped escape (child timeout, malformed child output) must
+    # record an honest halt in the persisted bundle rather than leaving halt:null over a
+    # partial scenario set.
+    except Exception as exc:  # noqa: BLE001
+        halt = {"code": "unhandled-exception", "detail": _bounded(f"{type(exc).__name__}: {exc}")}
+        traceback.print_exc(file=sys.stderr)
     finally:
         bundle = build_bundle(
             claude=claude_pin,

@@ -12,6 +12,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from types import ModuleType
 from typing import cast
@@ -509,6 +510,19 @@ class TestPrivacyGuardBreadth:
         assert "/data/creds" not in flat
         assert "<path>" in flat
 
+    def test_rejects_single_segment_absolute_paths(self, tool: ModuleType) -> None:
+        # A bare top-level path (/etc, /root) is still an absolute path leak.
+        for leak in ("/etc", "/root", "workdir kept at /tmp"):
+            assert tool.scrub_check({"k": leak}), leak
+
+    def test_bounded_redacts_single_segment_paths(self, tool: ModuleType) -> None:
+        flat = tool._bounded("workdir retained at /tmp for post-mortem")
+        assert "/tmp" not in flat
+        assert "<path>" in flat
+
+    def test_urls_stay_clean_with_single_segment_matching(self, tool: ModuleType) -> None:
+        assert tool.scrub_check({"u": "https://github.com/infiquetra/x"}) == []
+
 
 class TestVerdictOracles:
     """Hermetic pins for the load-bearing scenario pass/fail helpers."""
@@ -704,3 +718,141 @@ class TestBrokerRootDigest:
         with pytest.raises(tool.HarnessError) as exc:
             tool._resolved_broker_digest(runtimes, broker, tmp_path)
         assert exc.value.code == "broker-root-divergence"
+
+
+class _StubEnvRuntime:
+    """Duck-typed stand-in for InstalledRuntime: only .env() and .install_root are consumed
+    by _child_env_names, so the env-name-unlisted halt branch is testable hermetically."""
+
+    def __init__(self, names: list[str], install_root: Path) -> None:
+        self._names = names
+        self.install_root = install_root
+
+    def env(
+        self,
+        *,
+        fleet_state_dir: Path,
+        repo_root: Path,
+        path_prefix: Path | None = None,
+    ) -> dict[str, str]:
+        return dict.fromkeys(self._names, "x")
+
+
+class TestChildEnvNames:
+    """R10 attestation: environment_names_set derives from child truth and unlisted halts."""
+
+    def test_names_return_in_allowlist_order(self, tool: ModuleType, tmp_path: Path) -> None:
+        runtimes = {
+            "claude": _StubEnvRuntime(["PATH", "HOME"], tmp_path),
+            "codex": _StubEnvRuntime(["HOME", "GIT_CONFIG_NOSYSTEM"], tmp_path),
+        }
+        names = tool._child_env_names(runtimes, tmp_path / "broker")
+        expected = {"HOME", "PATH", "GIT_CONFIG_NOSYSTEM"}
+        assert names == [n for n in tool.ENV_NAME_ALLOWLIST if n in expected]
+
+    def test_unlisted_child_name_halts(self, tool: ModuleType, tmp_path: Path) -> None:
+        runtimes = {"claude": _StubEnvRuntime(["HOME", "OPENAI_API_KEY"], tmp_path)}
+        with pytest.raises(tool.HarnessError) as exc:
+            tool._child_env_names(runtimes, tmp_path / "broker")
+        assert exc.value.code == "env-name-unlisted"
+        assert "OPENAI_API_KEY" in exc.value.detail
+
+    def test_allowlist_carries_no_dead_entries(self, tool: ModuleType) -> None:
+        # Every allowlisted name must be one a child-env builder can actually emit; a
+        # dead entry would silently widen what a future builder may set.
+        emittable = {
+            "HOME",
+            "PATH",
+            "PWD",
+            "INFIQUETRA_FLEET_STATE_DIR",
+            "FLEET_COMMONS_ROOT",
+            "GIT_AUTHOR_NAME",
+            "GIT_AUTHOR_EMAIL",
+            "GIT_COMMITTER_NAME",
+            "GIT_COMMITTER_EMAIL",
+            "GIT_CONFIG_GLOBAL",
+            "GIT_CONFIG_NOSYSTEM",
+        }
+        assert set(tool.ENV_NAME_ALLOWLIST) == emittable
+
+
+class TestPinProbeEnv:
+    """R2 hygiene: the pin-verification git probes must run under the curated harness env,
+    never the operator's full environment."""
+
+    def test_pin_probes_pass_curated_git_env(
+        self, tool: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / ".git").mkdir()
+        seen: list[dict[str, str] | None] = []
+
+        def fake_run(
+            argv: list[str],
+            *,
+            cwd: Path | None = None,
+            env: dict[str, str] | None = None,
+            timeout: int = 0,
+        ) -> subprocess.CompletedProcess[str]:
+            seen.append(env)
+            return subprocess.CompletedProcess(args=argv, returncode=1, stdout="", stderr="")
+
+        monkeypatch.setattr(tool, "_run", fake_run)
+        pin = tool.RuntimePin(
+            name="x",
+            repo=tmp_path,
+            sha="a" * 40,
+            saga_version="0",
+            fleet_core_version="0",
+            manifest_dir=".claude-plugin",
+        )
+        with pytest.raises(tool.HarnessError):
+            tool.require_clean_pinned(pin)
+        assert seen and seen[0] is not None
+        assert seen[0].get("GIT_CONFIG_NOSYSTEM") == "1"
+
+
+class TestUnhandledEscapeHalt:
+    """An untyped escape (child timeout, malformed child output) must persist an honest
+    halt in the bundle — never halt:null over a partial scenario set — and exit 2."""
+
+    def test_non_harness_error_records_halt_and_rc_2(
+        self, tool: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        real_mkdtemp = tempfile.mkdtemp
+        monkeypatch.setattr(
+            tool.tempfile,
+            "mkdtemp",
+            lambda prefix: real_mkdtemp(prefix=prefix, dir=tmp_path),
+        )
+
+        def boom(pin: object) -> dict[str, object]:
+            raise subprocess.TimeoutExpired(cmd=["git"], timeout=1)
+
+        monkeypatch.setattr(tool, "require_clean_pinned", boom)
+        out = tmp_path / "bundle.json"
+        rc = tool.main(
+            [
+                "--claude-repo",
+                str(tmp_path),
+                "--claude-sha",
+                "a" * 40,
+                "--claude-saga-version",
+                "0",
+                "--claude-fleet-core-version",
+                "0",
+                "--codex-repo",
+                str(tmp_path),
+                "--codex-sha",
+                "b" * 40,
+                "--codex-saga-version",
+                "0",
+                "--codex-fleet-core-version",
+                "0",
+                "--output",
+                str(out),
+            ]
+        )
+        assert rc == 2
+        bundle = json.loads(out.read_text(encoding="utf-8"))
+        assert bundle["halt"]["code"] == "unhandled-exception"
+        assert "TimeoutExpired" in bundle["halt"]["detail"]

@@ -1431,6 +1431,504 @@ def unit_handoff(bench: Workbench) -> list[ScenarioResult]:
     return results
 
 
+# --------------------------------------------------------------------------- U4 race (R5/R6)
+
+RACE_NODES: list[dict[str, Any]] = [
+    {
+        "subplot_id": "race-leaf",
+        "title": "Race leaf",
+        "backend": "inline",
+        "kind": "code",
+        "github": {"pr": "infiquetra/xr-fixture-target#12"},
+    }
+]
+
+# Barrier-released advance: record wall-clock enter/exit around the installed CLI's advance so
+# the harness can prove the two OS processes genuinely overlapped (R5 monotonic receipts).
+_BARRIER_ADVANCE_SNIPPET = """
+import json
+import os
+import sys
+import time
+
+sys.path.insert(0, sys.argv[1])
+from pathlib import Path
+
+ready = Path(sys.argv[2])
+barrier = Path(sys.argv[3])
+ready.write_text("ready", encoding="utf-8")
+deadline = time.time() + 30
+while not barrier.exists():
+    if time.time() > deadline:
+        raise SystemExit(97)
+    time.sleep(0.002)
+
+import io
+from contextlib import redirect_stdout
+
+import outcome
+
+enter_ns = time.time_ns()
+buffer = io.StringIO()
+with redirect_stdout(buffer):
+    rc = outcome.main(["--repo-root", sys.argv[4], "advance", sys.argv[5]])
+exit_ns = time.time_ns()
+result = {}
+for line in buffer.getvalue().splitlines():
+    if line.startswith("{"):
+        result = json.loads(line)
+        break
+print(
+    json.dumps(
+        {
+            "enter_ns": enter_ns,
+            "exit_ns": exit_ns,
+            "rc": rc,
+            "dispatched": result.get("dispatched"),
+            "skipped_busy": result.get("skipped_busy"),
+        }
+    )
+)
+"""
+
+# The harness playing the launched Codex runner (R6): read the native dispatch intent, produce
+# the write-once backend effect, and materialize the protected launch receipt in the hermetic
+# home's user-state root — every path and vocabulary element comes from the INSTALLED package.
+_CODEX_LAUNCH_PREP_SNIPPET = """
+import hashlib
+import json
+import os
+import sys
+import time
+
+sys.path.insert(0, sys.argv[1])
+from pathlib import Path
+
+import fleet_commons_shim
+import outcome_store
+
+wc = fleet_commons_shim.load("workflow_compat")
+root = Path(sys.argv[2]).resolve()
+outcome_id = sys.argv[3]
+subplot_id = sys.argv[4]
+effect_path = Path(sys.argv[5])
+
+common = outcome_store.resolve_common_dir(root)
+ledger = common / outcome_store.STORE_NAMESPACE / outcome_id / "ledger.jsonl"
+records = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines() if line]
+intents = [
+    rec
+    for rec in records
+    if rec.get("kind") == "outcome.dispatch.v2"
+    and rec.get("phase") == "intent"
+    and rec.get("subplot_id") == subplot_id
+]
+if not intents:
+    raise SystemExit(96)
+intent = intents[-1]
+leaf = f"leaf-{outcome_id}-{subplot_id}"
+
+fd = os.open(str(effect_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(fd, "w", encoding="utf-8") as handle:
+    json.dump({"writer": "codex-runner", "pid": os.getpid()}, handle)
+
+receipt = {
+    "schema": "saga.outcome-dispatch-launch.v1",
+    "producer_kind": wc.emit(wc.PRODUCER_KIND),
+    "outcome_id": outcome_id,
+    "subplot_id": subplot_id,
+    "backend": intent["backend"],
+    "dispatch_intent_id": intent["key"],
+    "leaf_saga_id": leaf,
+    "run_identity": intent["run_identity"],
+    "issued_at": time.time(),
+}
+payload = json.dumps(receipt).encode("utf-8")
+digest = hashlib.sha256(payload).hexdigest()
+prefix = f"{wc.emit(wc.USER_STATE_ROOT)}{root.name}/"
+state_root = Path(prefix).expanduser()
+receipts_dir = state_root / "dispatch-receipts"
+receipts_dir.mkdir(parents=True, exist_ok=True)
+for directory in (state_root, receipts_dir):
+    os.chmod(directory, os.stat(directory).st_mode & ~0o022)
+marker = state_root / ".repo-identity.json"
+marker.write_text(
+    json.dumps(
+        {
+            "schema": "saga.workflow-repo-identity.v1",
+            "repo_root_sha256": hashlib.sha256(root.as_posix().encode()).hexdigest(),
+        }
+    ),
+    encoding="utf-8",
+)
+os.chmod(marker, 0o644)
+receipt_file = receipts_dir / "acceptance-launch.json"
+receipt_file.write_bytes(payload)
+os.chmod(receipt_file, 0o644)
+print(json.dumps({"ref": f"{prefix}dispatch-receipts/acceptance-launch.json#sha256={digest}", "leaf": leaf}))
+"""
+
+# Crash-window driver (R5): the injected dispatcher IS the write-once fake backend. Modes:
+# ``raise`` refuses before any effect; ``crash-after`` writes the effect then dies mid-tick;
+# ``recover`` is the idempotent retry (second O_EXCL attempt must find the first write).
+_CRASH_ADVANCE_SNIPPET = """
+import json
+import os
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from pathlib import Path
+
+import outcome
+import outcome_dispatcher
+
+root = Path(sys.argv[2])
+outcome_id = sys.argv[3]
+mode = sys.argv[4]
+effect_path = Path(sys.argv[5])
+
+
+def dispatcher(req):
+    if mode == "raise":
+        raise outcome_dispatcher.DispatcherError("acceptance crash-before-effect injection")
+    leaf = f"leaf-{req.outcome_id}-{req.subplot_id}"
+    try:
+        fd = os.open(str(effect_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        if mode == "recover":
+            return leaf  # idempotent backend: the effect already happened exactly once
+        raise outcome_dispatcher.DispatcherError("write-once backend refused a second effect")
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump({"writer": mode, "pid": os.getpid()}, handle)
+    if mode == "crash-after":
+        os._exit(9)
+    return leaf
+
+
+try:
+    result = outcome.advance(root, outcome_id, dispatcher=dispatcher, lease_ttl=0.5)
+except Exception as exc:  # noqa: BLE001 - the crash driver reports, never masks
+    print(json.dumps({"error": type(exc).__name__}))
+    raise SystemExit(8)
+print(json.dumps({"dispatched": result.dispatched, "halted": len(result.halted)}))
+"""
+
+
+def _ledger_records(clone: Path, outcome_id: str) -> list[dict[str, Any]]:
+    ledger = clone / ".git" / "saga-outcomes" / outcome_id / "ledger.jsonl"
+    if not ledger.exists():
+        return []
+    return [
+        json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
+
+
+def _chain_summary(records: list[dict[str, Any]], subplot_id: str) -> dict[str, Any]:
+    """One leaf's dispatch-chain census across both runtime vocabularies."""
+    mine = [rec for rec in records if rec.get("subplot_id") == subplot_id]
+    legacy = [rec for rec in mine if rec.get("kind") == "dispatch"]
+    native = [rec for rec in mine if rec.get("kind") == "outcome.dispatch.v2"]
+    acks = [rec for rec in native if rec.get("phase") in ("ack", "authority-ack")]
+    return {
+        "legacy_intents": sum(1 for rec in legacy if rec.get("phase") == "intent"),
+        "legacy_commits": sum(1 for rec in legacy if rec.get("phase") == "commit"),
+        "v2_intents": sum(1 for rec in native if rec.get("phase") == "intent"),
+        "v2_acks": len(acks),
+        "ack_kinds": sorted({str(rec.get("ack_kind")) for rec in acks}),
+        "settled_chains": (
+            sum(1 for rec in legacy if rec.get("phase") == "commit")
+            + sum(1 for rec in acks if rec.get("ack_kind") == "launched")
+        ),
+    }
+
+
+@dataclass
+class RaceRig:
+    """Per-scenario U4 state: a fresh single-leaf topology with an approved frontier."""
+
+    topo: Topology
+    broker_root: Path
+
+    def summary(self) -> dict[str, Any]:
+        return _chain_summary(_ledger_records(self.topo.clone_a, self.topo.outcome_id), "race-leaf")
+
+
+def _race_rig(bench: Workbench, scenario: str, creator: str) -> RaceRig:
+    broker_root = _private_dir(bench.workdir / f"broker-u4-{scenario}")
+    topo = build_topology(
+        bench,
+        creator=creator,
+        outcome_id=f"xr-u4-{scenario}",
+        nodes=RACE_NODES,
+        fixtures={"pr:12": {"state": "OPEN", "mergedAt": None}},
+    )
+    approved = bench.runtime(creator).outcome(
+        "approve",
+        topo.outcome_id,
+        repo_root=topo.clone_a,
+        fleet_state_dir=broker_root,
+        path_prefix=topo.gh_bin,
+    )
+    if approved.returncode != 0:
+        raise HarnessError("race-approve", f"{scenario}: rc={approved.returncode}")
+    return RaceRig(topo=topo, broker_root=broker_root)
+
+
+def _cli_advance(bench: Workbench, rig: RaceRig, runtime: str) -> tuple[int, dict[str, Any]]:
+    result = bench.runtime(runtime).outcome(
+        "advance",
+        rig.topo.outcome_id,
+        repo_root=rig.topo.clone_a,
+        fleet_state_dir=rig.broker_root,
+        path_prefix=rig.topo.gh_bin,
+    )
+    payload: dict[str, Any] = {}
+    for line in result.stdout.splitlines():
+        if line.startswith("{"):
+            payload = json.loads(line)
+            break
+    return result.returncode, payload
+
+
+def _scenario_claude_first(bench: Workbench, rig: RaceRig) -> dict[str, Any]:
+    """R5 ordering + the Claude half of R6: Codex observes shared settlement, invents nothing."""
+    rc, first = _cli_advance(bench, rig, "claude")
+    if rc != 0 or first.get("dispatched") != ["race-leaf"]:
+        raise HarnessError("race-claude-first", f"claude advance rc={rc}")
+    after_claude = rig.summary()
+    if after_claude["legacy_commits"] != 1 or after_claude["settled_chains"] != 1:
+        raise HarnessError("race-claude-first", f"unexpected chain {after_claude}")
+    rc, second = _cli_advance(bench, rig, "codex")
+    if rc != 0 or second.get("dispatched"):
+        raise HarnessError("race-claude-first", f"codex follow-up rc={rc} re-dispatched")
+    final = rig.summary()
+    if final != after_claude:
+        raise HarnessError("race-claude-first", f"codex follow-up mutated the chain: {final}")
+    if final["v2_acks"] != 0:
+        raise HarnessError("race-claude-first", "codex invented a native ack (R6)")
+    return {"chain": final}
+
+
+def _scenario_codex_first(bench: Workbench, rig: RaceRig) -> dict[str, Any]:
+    """R6: the full codex-native chain, then Claude must observe shared settlement."""
+    rc, first = _cli_advance(bench, rig, "codex")
+    if rc != 0:
+        raise HarnessError("race-codex-first", f"codex advance rc={rc}")
+    after_intent = rig.summary()
+    if after_intent["v2_intents"] != 1 or after_intent["settled_chains"] != 0:
+        raise HarnessError("race-codex-first", f"native intent missing: {after_intent}")
+
+    effect = bench.workdir / "effect-codex-first.json"
+    prepared = bench.codex.python(
+        _CODEX_LAUNCH_PREP_SNIPPET,
+        str(rig.topo.clone_a),
+        rig.topo.outcome_id,
+        "race-leaf",
+        str(effect),
+        repo_root=rig.topo.clone_a,
+        fleet_state_dir=rig.broker_root,
+    )
+    if prepared.returncode != 0:
+        raise HarnessError("race-codex-first", f"launch prep rc={prepared.returncode}")
+    launch = json.loads(prepared.stdout.strip().splitlines()[-1])
+    acked = bench.codex.outcome(
+        "reconcile-dispatch",
+        rig.topo.outcome_id,
+        "race-leaf",
+        "--ack-kind",
+        "launched",
+        "--dispatch-ack-ref",
+        launch["ref"],
+        "--leaf-saga-id",
+        launch["leaf"],
+        repo_root=rig.topo.clone_a,
+        fleet_state_dir=rig.broker_root,
+        path_prefix=rig.topo.gh_bin,
+    )
+    if acked.returncode != 0:
+        raise HarnessError(
+            "race-codex-first", f"launched ack refused: {_bounded(acked.stderr or acked.stdout)}"
+        )
+    after_ack = rig.summary()
+    if after_ack["v2_acks"] != 1 or after_ack["ack_kinds"] != ["launched"]:
+        raise HarnessError("race-codex-first", f"launched ack chain missing: {after_ack}")
+
+    rc, follow = _cli_advance(bench, rig, "claude")
+    if rc != 0:
+        raise HarnessError("race-codex-first", f"claude follow-up rc={rc}")
+    final = rig.summary()
+    if follow.get("dispatched") or final["settled_chains"] != 1 or final["legacy_commits"] != 0:
+        raise HarnessError(
+            "race-codex-first",
+            "claude re-dispatched a leaf codex already settled natively: "
+            f"claude dispatched {follow.get('dispatched')}, chain {final}",
+        )
+    if not effect.exists():
+        raise HarnessError("race-codex-first", "write-once backend effect missing")
+    return {"chain": final, "effect_writer": json.loads(effect.read_text())["writer"]}
+
+
+def _scenario_simultaneous(bench: Workbench, rig: RaceRig) -> dict[str, Any]:
+    """R5: barrier-released two-OS-process race; overlap proven by enter/exit receipts."""
+    control = bench.workdir / "race-control"
+    control.mkdir(exist_ok=True)
+    barrier = control / "go"
+    procs: dict[str, subprocess.Popen[str]] = {}
+    for name in ("claude", "codex"):
+        runtime = bench.runtime(name)
+        ready = control / f"ready-{name}"
+        procs[name] = subprocess.Popen(  # noqa: S603 — fixed argv, hermetic env
+            [
+                sys.executable,
+                "-c",
+                _BARRIER_ADVANCE_SNIPPET,
+                str(runtime.install_root / "plugins/saga/scripts"),
+                str(ready),
+                str(barrier),
+                str(rig.topo.clone_a),
+                rig.topo.outcome_id,
+            ],
+            cwd=runtime.install_root,
+            env=runtime.env(
+                fleet_state_dir=rig.broker_root,
+                repo_root=rig.topo.clone_a,
+                path_prefix=rig.topo.gh_bin,
+            ),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    deadline = time.time() + 30
+    while not all((control / f"ready-{name}").exists() for name in procs):
+        if time.time() > deadline:
+            for proc in procs.values():
+                proc.kill()
+            raise HarnessError("race-simultaneous", "children never reached the barrier")
+        time.sleep(0.005)
+    barrier.write_text("go", encoding="utf-8")
+    receipts: dict[str, dict[str, Any]] = {}
+    for name, proc in procs.items():
+        stdout, _stderr = proc.communicate(timeout=_TIMEOUT_S)
+        if proc.returncode != 0:
+            raise HarnessError("race-simultaneous", f"{name} child rc={proc.returncode}")
+        receipts[name] = json.loads(stdout.strip().splitlines()[-1])
+    if max(r["enter_ns"] for r in receipts.values()) >= min(
+        r["exit_ns"] for r in receipts.values()
+    ):
+        raise HarnessError("race-simultaneous", "processes serialized; no true overlap")
+
+    # Loser-retry: both runtimes advance again after the dust settles.
+    for name in ("claude", "codex"):
+        rc, _payload = _cli_advance(bench, rig, name)
+        if rc != 0:
+            raise HarnessError("race-simultaneous", f"{name} retry rc={rc}")
+    final = rig.summary()
+    dangling_native = final["v2_intents"] - sum(
+        1 for kind in final["ack_kinds"] if kind == "launched"
+    )
+    if final["settled_chains"] != 1:
+        raise HarnessError("race-simultaneous", f"expected exactly one settled chain: {final}")
+    if final["legacy_intents"] != final["legacy_commits"] or (
+        final["v2_acks"] == 0 and dangling_native > 0
+    ):
+        raise HarnessError("race-simultaneous", f"dangling dispatch unit: {final}")
+    return {
+        "chain": final,
+        "overlap": {
+            name: {"enter_ns": r["enter_ns"], "exit_ns": r["exit_ns"], "rc": r["rc"]}
+            for name, r in receipts.items()
+        },
+    }
+
+
+def _crash_advance(
+    bench: Workbench, rig: RaceRig, mode: str, effect: Path
+) -> subprocess.CompletedProcess[str]:
+    return bench.claude.python(
+        _CRASH_ADVANCE_SNIPPET,
+        str(rig.topo.clone_a),
+        rig.topo.outcome_id,
+        mode,
+        str(effect),
+        repo_root=rig.topo.clone_a,
+        fleet_state_dir=rig.broker_root,
+        path_prefix=rig.topo.gh_bin,
+    )
+
+
+def _scenario_crash(bench: Workbench, rig: RaceRig, *, crash_mode: str) -> dict[str, Any]:
+    """R5 crash windows: the write-once backend proves at most one effect across the retry."""
+    effect = bench.workdir / f"effect-{crash_mode}.json"
+    crashed = _crash_advance(bench, rig, crash_mode, effect)
+    if crashed.returncode == 0:
+        raise HarnessError("race-crash", f"{crash_mode}: driver did not crash")
+    mid = rig.summary()
+    if mid["legacy_commits"] != 0:
+        raise HarnessError("race-crash", f"{crash_mode}: commit landed despite the crash")
+    if crash_mode == "raise" and effect.exists():
+        raise HarnessError("race-crash", "crash-before-effect still produced an effect")
+    if crash_mode == "crash-after" and not effect.exists():
+        raise HarnessError("race-crash", "crash-after-effect lost its effect")
+
+    time.sleep(1.1)  # let the crashed holder's 0.5s coordinator/dispatch leases expire
+    recovered = _crash_advance(bench, rig, "recover", effect)
+    if recovered.returncode != 0:
+        raise HarnessError("race-crash", f"{crash_mode}: recovery rc={recovered.returncode}")
+    final = rig.summary()
+    if final["legacy_commits"] != 1 or not effect.exists():
+        raise HarnessError("race-crash", f"{crash_mode}: recovery did not settle once: {final}")
+    writer = json.loads(effect.read_text(encoding="utf-8"))["writer"]
+    expected_writer = "recover" if crash_mode == "raise" else "crash-after"
+    if writer != expected_writer:
+        raise HarnessError("race-crash", f"{crash_mode}: effect written twice ({writer})")
+    return {"chain": final, "effect_writer": writer, "intents_documented": final["legacy_intents"]}
+
+
+@unit("u4-race")
+def unit_race(bench: Workbench) -> list[ScenarioResult]:
+    """R5/R6: orderings, a true two-process race, and crash windows over one ready leaf."""
+    scenarios: list[tuple[str, str, Callable[[RaceRig], dict[str, Any]], str]] = [
+        ("race-claude-first", "claude", lambda rig: _scenario_claude_first(bench, rig), "R5"),
+        ("race-codex-first", "codex", lambda rig: _scenario_codex_first(bench, rig), "R6"),
+        ("race-simultaneous", "claude", lambda rig: _scenario_simultaneous(bench, rig), "R5"),
+        (
+            "race-crash-before-effect",
+            "claude",
+            lambda rig: _scenario_crash(bench, rig, crash_mode="raise"),
+            "R5",
+        ),
+        (
+            "race-crash-after-effect",
+            "claude",
+            lambda rig: _scenario_crash(bench, rig, crash_mode="crash-after"),
+            "R5",
+        ),
+    ]
+    results: list[ScenarioResult] = []
+    for scenario_id, creator, run, requirement in scenarios:
+        started = time.monotonic()
+        facts: dict[str, Any] = {}
+        verdict, summary = "pass", ""
+        try:
+            rig = _race_rig(bench, scenario_id.removeprefix("race-"), creator)
+            facts = run(rig)
+            summary = f"{scenario_id}: exactly one settled dispatch chain, contract held"
+        except HarnessError as exc:
+            verdict = "fail"
+            summary = f"{exc.code}: {_bounded(exc.detail)}"
+        results.append(
+            ScenarioResult(
+                scenario_id=scenario_id,
+                requirement=requirement,
+                verdict=verdict,
+                summary=summary,
+                facts=facts,
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
+        )
+    return results
+
+
 # --------------------------------------------------------------------------- main
 
 

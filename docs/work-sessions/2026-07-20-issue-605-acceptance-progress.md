@@ -1,6 +1,7 @@
 # Work session — #605 cross-runtime acceptance harness (U1-U5)
 
-**Status**: U1 + U2 + U3 COMPLETE and committed; U4/U5 next. Branch
+**Status**: U1 + U2 + U3 COMPLETE; U4 COMPLETE with **2 genuine production failures** (see
+"U4 findings" below — claude-side v2-blindness, upstream defect to file per KTD7); U5 next. Branch
 `work/605-cross-runtime-acceptance` (worktree `.claude/worktrees/work-605-acceptance`), base
 `origin/main` = `794b4da6`. Plan authority:
 `docs/plans/2026-07-15-cross-runtime-outcome-acceptance-plan.md` on the outcome branch
@@ -97,9 +98,47 @@ U3 mechanics learned (do not rediscover):
 - CLI refusals: `CompatibilityHaltError` → receipt JSON on stdout + exit 3; broker errors →
   `{"ok": false}` on stderr + exit 1.
 
-## Next: U4 (R5/R6) — two-process race
+## U4 — DONE (`u4-race` unit; 3 pass / 2 FAIL — the failures are production truth)
 
-- U4 (R5/R6): two OS processes + deterministic file-based barrier released just before broker
+Five scenarios on fresh single-leaf topologies (`race-leaf`, pr:12 OPEN, frontier approved via
+`approve` on clone A — approval lives in the SHARED STORE, run it on clone A, no push):
+
+- **race-claude-first PASS**: claude settles the legacy chain (intent+commit); codex observes
+  shared settlement, dispatches nothing, invents no native ack (R6 claude-half).
+- **race-codex-first FAIL (R6/R5 defect)**: the codex-native chain WORKS end to end — v2
+  intent, harness-as-launched-runner writes the write-once effect + protected launch receipt
+  (`saga.outcome-dispatch-launch.v1` under the hermetic home's user-state root with
+  `.repo-identity.json`, all vocabulary from installed `workflow_compat.emit`) and
+  `reconcile-dispatch --ack-kind launched` lands (`receipt_authority owner-user-state-v1`).
+  Then claude's advance RE-DISPATCHES the natively-settled leaf → `settled_chains: 2`.
+- **race-simultaneous FAIL (same root cause)**: barrier-released two-OS-process race with
+  wall-clock overlap receipts; codex entered first (v2 intent), claude dispatched anyway →
+  one settled legacy chain + a DANGLING un-acked codex intent.
+- **race-crash-before/after-effect PASS**: injected write-once dispatcher; crash windows leave
+  intent-only ledgers; recovery (0.5 s `lease_ttl`, sleep past expiry) settles exactly one
+  commit; effect file written exactly once (writer identity asserted).
+
+**U4 finding (upstream defect, claude repo)**: claude at 794b4da6 has ZERO
+`outcome.dispatch.v2` vocabulary in `outcome.py`/`outcome_store.py`/`outcome_compat.py` — its
+advance dedup (`_dispatch_records` = legacy commits only), in-flight derivation, AND the
+handoff `_settled_lookup` (#351 run-ledger only) are all blind to codex-native intents/acks.
+Codex-side is v2-aware AND legacy-aware (asymmetry: claude→codex safe, codex→claude double
+dispatch). Route per plan: "Failures retain artifacts and file/reopen the owning defect
+without production edits" + KTD7. The mirror of #627's codex-side findings.
+
+U4 mechanics learned: codex CLI verb `reconcile-dispatch <id> <sid> --ack-kind launched
+--dispatch-ack-ref '<user-state-path>#sha256=<hex>' --leaf-saga-id <leaf>`; receipt must sit
+under `emit(USER_STATE_ROOT)<repo-name>/dispatch-receipts/` with owner-only modes and a
+`.repo-identity.json` binding `repo_root_sha256`; `advance` returns `skipped_busy` when the
+coordinator lease is held; claude inline leaf saga id convention `leaf-<oid>-<sid>`.
+
+## Next: U5 — teardown, fleet doctor, final bundle
+
+Note: with U4 red at the current pins, the FINAL live bundle stays `overall: fail` until the
+claude defect ships and the pin advances. U5 + ceremony still complete the harness; the merge
+decision (a red acceptance cannot close #605) escalates via the AFK halt protocol.
+
+- U4 (R5/R6) original sketch: two OS processes + deterministic file-based barrier released just before broker
   admission; write-once fake backend (the dispatcher seam is ACTIVE codex-side since PA-2 —
   `DispatcherError` mid-tick records a reducer-visible halt, see PA-2 review artifact);
   orderings Claude-first/Codex-first/simultaneous/loser-retry/winner-crash-before-after/

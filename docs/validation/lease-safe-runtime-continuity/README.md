@@ -45,20 +45,27 @@ The bundle validates against `cross-runtime-acceptance.schema.json` (closed sche
 | `fleet-doctor-positions` | R9 | #353 fleet doctor reads zero open positions on a settled rig AND flags a planted dispatched-unsettled leaf |
 | `legacy-import-refused` | R8 | Both installed runtimes refuse legacy import unconditionally — by #604 design the CLI never reads the bundle file — with the retirement receipt text and zero writes |
 
-## Current verdict: `fail` — two scenarios document a real production defect
+## Current verdict: `pass` — 14/14 at Claude `787654d0` (saga 0.106.1) / Codex `f3e1af75`
 
-At the pinned runtimes (Claude `794b4da6` / saga 0.105.0, Codex `f3e1af75` / saga
-0.78.0+codex.20260720120109), `race-codex-first` and `race-simultaneous` FAIL because the
-Claude runtime carries no `outcome.dispatch.v2` vocabulary in its local advance dedup or its
-handoff already-settled guard: a codex-native intent (and even a fully receipt-validated
-launched acknowledgement) does not block Claude from re-dispatching the same leaf — a
-cross-runtime double dispatch (R5 violation). The codex-native chain itself is proven working
-by the same scenarios.
+The committed bundle records a full pass (exit 0) at the advanced Claude pin `787654d0`
+(saga 0.106.1, fleet-core 0.16.0) against Codex `f3e1af75` (saga
+0.78.0+codex.20260720120109). Two production defects were surfaced by earlier runs of this
+harness and fixed upstream before this verdict:
 
-This is recorded as production truth per the plan's failure rule ("Failures retain artifacts
-and file/reopen the owning defect without production edits"): the owning defect is
-**infiquetra/infiquetra-claude-plugins#628**. The bundle stays red until that fix ships, the
-Claude pin advances, and the harness is re-run with the new pin.
+- **#628** (fixed in PR #630, saga 0.106.0): the Claude runtime carried no
+  `outcome.dispatch.v2` vocabulary in its advance dedup or handoff already-settled guard, so a
+  codex-native settlement did not block re-dispatch — a cross-runtime double dispatch (R5).
+  `race-codex-first` and `race-simultaneous` documented it red at Claude `794b4da6` / 0.105.0.
+- **#631** (fixed in PR #632, saga 0.106.1): the #628 fix's settled-guard consulted the shared
+  reduction for ANY settled state — broader than the codex reference — which reordered refusal
+  codes in the byte-frozen accept flow (`handoff-already-settled` where the contract says
+  `handoff-receiver-conflict` for a replayed handoff). `handoff-negatives-codex-issued`
+  documented it red at Claude `22c9aa87` / 0.106.0 (13/14).
+
+Both were recorded as production truth per the plan's failure rule ("Failures retain
+artifacts and file/reopen the owning defect without production edits"), fixed upstream-first
+(KTD7), and the harness re-run at each advanced pin. The scenario history — red bundles
+included — lives in this branch's git history.
 
 ## Consciously bounded coverage
 

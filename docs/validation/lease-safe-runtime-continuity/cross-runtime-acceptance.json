@@ -19,12 +19,12 @@
     "PWD"
   ],
   "halt": null,
-  "overall_verdict": "fail",
+  "overall_verdict": "pass",
   "runtimes": {
     "claude": {
       "expected_versions": {
         "fleet-core": "0.16.0",
-        "saga": "0.105.0"
+        "saga": "0.106.1"
       },
       "identity": {
         "readback": {
@@ -33,16 +33,16 @@
           "runtime_label": "claude",
           "versions": {
             "fleet-core": "0.16.0",
-            "saga": "0.105.0"
+            "saga": "0.106.1"
           }
         },
-        "sha": "794b4da6971a5df3ba57ab7d15cb3deca2ec0ce3",
+        "sha": "787654d0ec376e3e0ff8d159cce87f6f21b6406e",
         "versions": {
           "fleet-core": "0.16.0",
-          "saga": "0.105.0"
+          "saga": "0.106.1"
         }
       },
-      "sha": "794b4da6971a5df3ba57ab7d15cb3deca2ec0ce3"
+      "sha": "787654d0ec376e3e0ff8d159cce87f6f21b6406e"
     },
     "codex": {
       "expected_versions": {
@@ -70,7 +70,7 @@
   },
   "scenarios": [
     {
-      "duration_ms": 1998,
+      "duration_ms": 1957,
       "facts": {
         "candidate_frontier": [
           "ready-leaf"
@@ -82,7 +82,7 @@
         ],
         "consumer": "codex",
         "creator": "claude",
-        "projection_digest": "bc66406da2c84084266b7e50310e10b34c34bf63ae1ee66f27396f6fb34afba7",
+        "projection_digest": "5a2e1c0ff091f13fc905dd14bcc483f20f903dbf280b4a962b37220e4d39a2fc",
         "unknown": [
           "untracked-leaf"
         ]
@@ -93,7 +93,7 @@
       "verdict": "pass"
     },
     {
-      "duration_ms": 2067,
+      "duration_ms": 1727,
       "facts": {
         "candidate_frontier": [
           "ready-leaf"
@@ -105,7 +105,7 @@
         ],
         "consumer": "claude",
         "creator": "codex",
-        "projection_digest": "7028b0450ae0ab7daebcd2112ad92b125faec2ad16ed58708c2edc334948d365",
+        "projection_digest": "cc12627ad95249209e2b19189e00ab7ce1b6701cae7e110e506414cb04fa42ca",
         "unknown": [
           "untracked-leaf"
         ]
@@ -116,15 +116,15 @@
       "verdict": "pass"
     },
     {
-      "duration_ms": 1106,
+      "duration_ms": 1001,
       "facts": {
         "advance_dispatched": [],
         "advance_outcomes": "{\"gated\": [\"done-leaf\", \"untracked-leaf\"], \"status\": {\"complete\": false, \"counts\": {\"intent-created\": 1, \"ready\": 2}, \"frontier\": [\"done-leaf\", \"untracked-leaf\"], \"nodes\": 3, \"objective\": \"Acceptance target xr-u3-claude\", \"outcome_id\": \"xr-u3-claude\", \"spec_revision\": 1, \"states\": {\"done-leaf\": \"ready\", \"ready-leaf\": \"intent-created\", \"untracked-leaf\": \"ready\"}}, \"ticks\": 1}",
-        "handoff_id": "9be3f9630693416e996b08487868540c",
+        "handoff_id": "678abff42c5c47d9aa4e6617f3ffd6bc",
         "issuer": "claude",
         "ready_leaf_state": "intent-created",
         "receiver": "codex",
-        "successor_lease_id": "cd855040-8542-47bc-97f0-a7ebe15cb617"
+        "successor_lease_id": "c8b5b7a1-b3f6-4e63-bf40-1f1a70515f10"
       },
       "requirement": "R4",
       "scenario_id": "handoff-claude-issued",
@@ -132,7 +132,7 @@
       "verdict": "pass"
     },
     {
-      "duration_ms": 4615,
+      "duration_ms": 4275,
       "facts": {
         "cases": {
           "broad-scope-operation": "schema-field-type",
@@ -163,17 +163,17 @@
       "verdict": "pass"
     },
     {
-      "duration_ms": 957,
+      "duration_ms": 935,
       "facts": {
         "advance_dispatched": [
           "ready-leaf"
         ],
         "advance_outcomes": "{\"dispatched\": [\"ready-leaf\"], \"gated\": [\"done-leaf\", \"untracked-leaf\"], \"status\": {\"complete\": false, \"counts\": {\"dispatched\": 1, \"ready\": 2}, \"frontier\": [\"done-leaf\", \"untracked-leaf\"], \"nodes\": 3, \"objective\": \"Acceptance target xr-u3-codex\", \"outcome_id\": \"xr-u3-codex\", \"spec_revision\": 1, \"states\": {\"done-leaf\": \"ready\", \"ready-leaf\": \"dispatched\", \"untracked-leaf\": \"ready\"}}, \"ticks\": 1}",
-        "handoff_id": "36bb4fe0f7914c0ba14f88f1e34bb917",
+        "handoff_id": "892cfff2aa2a474dab09a811bd155045",
         "issuer": "codex",
         "ready_leaf_state": "dispatched",
         "receiver": "claude",
-        "successor_lease_id": "2732160f-2286-4ce6-8898-fd547125e2d0"
+        "successor_lease_id": "be650440-c2e0-4a43-87cf-f7a248d43a4c"
       },
       "requirement": "R4",
       "scenario_id": "handoff-codex-issued",
@@ -181,7 +181,7 @@
       "verdict": "pass"
     },
     {
-      "duration_ms": 4633,
+      "duration_ms": 4234,
       "facts": {
         "cases": {
           "broad-scope-operation": "schema-field-type",
@@ -212,7 +212,7 @@
       "verdict": "pass"
     },
     {
-      "duration_ms": 1342,
+      "duration_ms": 1261,
       "facts": {
         "chain": {
           "ack_kinds": [],
@@ -229,58 +229,58 @@
       "verdict": "pass"
     },
     {
-      "duration_ms": 1370,
+      "duration_ms": 1218,
       "facts": {
         "chain": {
           "ack_kinds": [
             "launched"
           ],
-          "legacy_commits": 1,
-          "legacy_intents": 1,
-          "settled_chains": 2,
+          "legacy_commits": 0,
+          "legacy_intents": 0,
+          "settled_chains": 1,
           "v2_acks": 1,
           "v2_intents": 1
         },
-        "claude_dispatched": [
-          "race-leaf"
-        ]
+        "effect_writer": "codex-runner"
       },
       "requirement": "R6",
       "scenario_id": "race-codex-first",
-      "summary": "race-codex-first: claude re-dispatched a leaf codex already settled natively: claude dispatched ['race-leaf'], chain {'legacy_intents': 1, 'legacy_commits': 1, 'v2_intents': 1, 'v2_acks': 1, 'ack_kinds': ['launched'], 'settled_chains': 2}",
-      "verdict": "fail"
+      "summary": "race-codex-first: exactly one settled dispatch chain, contract held",
+      "verdict": "pass"
     },
     {
-      "duration_ms": 1526,
+      "duration_ms": 1817,
       "facts": {
         "chain": {
-          "ack_kinds": [],
-          "legacy_commits": 1,
-          "legacy_intents": 1,
+          "ack_kinds": [
+            "launched"
+          ],
+          "legacy_commits": 0,
+          "legacy_intents": 0,
           "settled_chains": 1,
-          "v2_acks": 0,
+          "v2_acks": 1,
           "v2_intents": 1
         },
         "overlap": {
           "claude": {
-            "enter_ns": 1784563634865076000,
-            "exit_ns": 1784563634911508000,
+            "enter_ns": 1784575421847529000,
+            "exit_ns": 1784575421886395000,
             "rc": 0
           },
           "codex": {
-            "enter_ns": 1784563634830700000,
-            "exit_ns": 1784563635109055000,
+            "enter_ns": 1784575421814122000,
+            "exit_ns": 1784575422077086000,
             "rc": 0
           }
         }
       },
       "requirement": "R5",
       "scenario_id": "race-simultaneous",
-      "summary": "race-simultaneous: dangling dispatch unit: {'legacy_intents': 1, 'legacy_commits': 1, 'v2_intents': 1, 'v2_acks': 0, 'ack_kinds': [], 'settled_chains': 1}",
-      "verdict": "fail"
+      "summary": "race-simultaneous: exactly one settled dispatch chain, contract held",
+      "verdict": "pass"
     },
     {
-      "duration_ms": 1368,
+      "duration_ms": 1655,
       "facts": {
         "chain": {
           "ack_kinds": [],
@@ -299,7 +299,7 @@
       "verdict": "pass"
     },
     {
-      "duration_ms": 1720,
+      "duration_ms": 1255,
       "facts": {
         "chain": {
           "ack_kinds": [],
@@ -318,7 +318,7 @@
       "verdict": "pass"
     },
     {
-      "duration_ms": 1008,
+      "duration_ms": 1000,
       "facts": {
         "complete": true,
         "reclamation_passes": 4
@@ -329,7 +329,7 @@
       "verdict": "pass"
     },
     {
-      "duration_ms": 1260,
+      "duration_ms": 1213,
       "facts": {
         "clean_findings": 0,
         "open_rig_diseases": {
@@ -346,7 +346,7 @@
       "verdict": "pass"
     },
     {
-      "duration_ms": 139,
+      "duration_ms": 135,
       "facts": {
         "refusals": {
           "claude": "rc=1 retirement-receipt",
@@ -360,5 +360,5 @@
     }
   ],
   "schema": "lease-safe-runtime-continuity/cross-runtime-acceptance.v1",
-  "started_at": "2026-07-20T16:06:55Z"
+  "started_at": "2026-07-20T19:23:23Z"
 }

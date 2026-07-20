@@ -14,6 +14,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import cast
 
 import jsonschema
 import pytest
@@ -41,7 +42,7 @@ def tool() -> ModuleType:
 
 @pytest.fixture(scope="module")
 def schema() -> dict:
-    return json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    return cast(dict, json.loads(SCHEMA_PATH.read_text(encoding="utf-8")))
 
 
 # --------------------------------------------------------------------------- fixture repos
@@ -274,26 +275,29 @@ def _sample_bundle(tool: ModuleType, tmp_path: Path) -> dict:
     codex = _mini_runtime_repo(tmp_path, label="codex", manifest_dir=".codex-plugin")
     claude_pin = _pin(tool, claude, name="claude", manifest_dir=".claude-plugin")
     codex_pin = _pin(tool, codex, name="codex", manifest_dir=".codex-plugin")
-    return tool.build_bundle(
-        claude=claude_pin,
-        codex=codex_pin,
-        claude_identity=tool.require_clean_pinned(claude_pin),
-        codex_identity=tool.require_clean_pinned(codex_pin),
-        digests=tool.contract_digests(claude_pin, codex_pin),
-        broker_root_digest="a" * 64,
-        scenarios=[
-            tool.ScenarioResult(
-                scenario_id="discovery-claude-created",
-                requirement="R3",
-                verdict="pass",
-                summary="codex discovered the claude-created committed spec",
-                facts={"nodes": 2},
-                duration_ms=10,
-            )
-        ],
-        env_names_set=["HOME", "PATH"],
-        started_at_iso="2026-07-20T00:00:00Z",
-        halt=None,
+    return cast(
+        dict,
+        tool.build_bundle(
+            claude=claude_pin,
+            codex=codex_pin,
+            claude_identity=tool.require_clean_pinned(claude_pin),
+            codex_identity=tool.require_clean_pinned(codex_pin),
+            digests=tool.contract_digests(claude_pin, codex_pin),
+            broker_root_digest="a" * 64,
+            scenarios=[
+                tool.ScenarioResult(
+                    scenario_id="discovery-claude-created",
+                    requirement="R3",
+                    verdict="pass",
+                    summary="codex discovered the claude-created committed spec",
+                    facts={"nodes": 2},
+                    duration_ms=10,
+                )
+            ],
+            env_names_set=["HOME", "PATH"],
+            started_at_iso="2026-07-20T00:00:00Z",
+            halt=None,
+        ),
     )
 
 
@@ -368,3 +372,69 @@ class TestAtomicOutput:
         tool.atomic_write_json(target, {"k": "v"})
         residue = [p for p in tmp_path.iterdir() if p.suffix == ".tmp"]
         assert residue == []
+
+
+# --------------------------------------------------------------------------- R2 gh fixture shim
+
+
+class TestFakeGhShim:
+    def _shim(self, tool: ModuleType, tmp_path: Path) -> Path:
+        return cast(
+            Path,
+            tool.write_fake_gh(
+                tmp_path / "bin",
+                {
+                    "pr:11": {"state": "MERGED", "mergedAt": "2026-07-20T00:00:00Z"},
+                    "pr:12": {"state": "OPEN", "mergedAt": None},
+                    "issue:7": {"state": "CLOSED"},
+                },
+            ),
+        )
+
+    def _gh(self, bin_dir: Path, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(bin_dir / "gh"), *args],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def test_serves_merged_pr_fields(self, tool: ModuleType, tmp_path: Path) -> None:
+        bin_dir = self._shim(tool, tmp_path)
+        out = self._gh(
+            bin_dir,
+            "pr",
+            "view",
+            "https://github.com/infiquetra/xr-fixture-target/pull/11",
+            "--json",
+            "state,mergedAt",
+        )
+        assert out.returncode == 0
+        assert json.loads(out.stdout) == {"state": "MERGED", "mergedAt": "2026-07-20T00:00:00Z"}
+
+    def test_serves_open_pr_and_closed_issue(self, tool: ModuleType, tmp_path: Path) -> None:
+        bin_dir = self._shim(tool, tmp_path)
+        pr = self._gh(bin_dir, "pr", "view", "12", "--json", "state,mergedAt")
+        assert json.loads(pr.stdout)["state"] == "OPEN"
+        issue = self._gh(bin_dir, "issue", "view", "7", "--json", "state")
+        assert json.loads(issue.stdout) == {"state": "CLOSED"}
+
+    def test_absent_fixture_fails_like_gh(self, tool: ModuleType, tmp_path: Path) -> None:
+        bin_dir = self._shim(tool, tmp_path)
+        out = self._gh(bin_dir, "pr", "view", "99", "--json", "state,mergedAt")
+        assert out.returncode == 1
+        assert out.stdout == ""
+
+    def test_never_reaches_the_network_vocabulary(self, tool: ModuleType, tmp_path: Path) -> None:
+        bin_dir = self._shim(tool, tmp_path)
+        out = self._gh(bin_dir, "api", "graphql")
+        assert out.returncode == 1
+        assert "unsupported" in out.stderr
+
+
+class TestBoundedRedaction:
+    def test_bounded_redacts_home_and_absolute_paths(self, tool: ModuleType) -> None:
+        raw = f"failed at {Path.home()}/x and /private/var/folders/zz/thing.py line 3"
+        flat = tool._bounded(raw)
+        assert "<home>" in flat and "<path>" in flat
+        assert tool.scrub_check({"detail": flat}) == []

@@ -41,6 +41,7 @@ ENV_NAME_ALLOWLIST: tuple[str, ...] = (
     "PATH",
     "PYTHONPATH",
     "INFIQUETRA_FLEET_STATE_DIR",
+    "FLEET_COMMONS_ROOT",
     "XDG_STATE_HOME",
     "GIT_AUTHOR_NAME",
     "GIT_AUTHOR_EMAIL",
@@ -106,8 +107,10 @@ def _sha256_text(text: str) -> str:
 
 
 def _bounded(text: str, limit: int = 400) -> str:
-    """A bounded, single-line summary — never raw stdout/stderr (R10)."""
+    """A bounded, single-line, path-redacted summary — never raw stdout/stderr (R10)."""
     flat = " ".join(text.split())
+    flat = flat.replace(str(Path.home()), "<home>")
+    flat = re.sub(r"(?<![\w])/(?:Users|home|private|var|tmp|opt|etc)/[^\s'\"]*", "<path>", flat)
     return flat[:limit]
 
 
@@ -252,12 +255,27 @@ class InstalledRuntime:
     def outcome_cli(self) -> Path:
         return self.install_root / "plugins/saga/scripts/outcome.py"
 
-    def env(self, *, fleet_state_dir: Path, repo_root: Path | None = None) -> dict[str, str]:
-        """Hermetic child environment: isolated HOME, pinned fleet root, no ambient state."""
+    def env(
+        self,
+        *,
+        fleet_state_dir: Path,
+        repo_root: Path | None = None,
+        path_prefix: Path | None = None,
+    ) -> dict[str, str]:
+        """Hermetic child environment: isolated HOME, pinned fleet root, no ambient state.
+
+        ``path_prefix`` prepends a directory to PATH — the deterministic ``gh`` fixture shim
+        (R2) lives there, so the installed runtime's GitHub reads resolve to canned evidence
+        instead of the live network.
+        """
+        path = os.environ.get("PATH", "")
+        if path_prefix is not None:
+            path = f"{path_prefix}{os.pathsep}{path}"
         env = {
             "HOME": str(self.home),
-            "PATH": os.environ.get("PATH", ""),
+            "PATH": path,
             "INFIQUETRA_FLEET_STATE_DIR": str(fleet_state_dir),
+            "FLEET_COMMONS_ROOT": str(self.install_root / "plugins/fleet-core"),
             "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_CONFIG_GLOBAL": str(self.home / ".gitconfig"),
             "GIT_AUTHOR_NAME": "acceptance-harness",
@@ -274,12 +292,40 @@ class InstalledRuntime:
         *args: str,
         repo_root: Path,
         fleet_state_dir: Path,
+        path_prefix: Path | None = None,
         timeout: int = _TIMEOUT_S,
     ) -> subprocess.CompletedProcess[str]:
         return _run(
             [sys.executable, str(self.outcome_cli), "--repo-root", str(repo_root), *args],
             cwd=self.install_root,
-            env=self.env(fleet_state_dir=fleet_state_dir, repo_root=repo_root),
+            env=self.env(
+                fleet_state_dir=fleet_state_dir, repo_root=repo_root, path_prefix=path_prefix
+            ),
+            timeout=timeout,
+        )
+
+    def python(
+        self,
+        code: str,
+        *argv: str,
+        repo_root: Path,
+        fleet_state_dir: Path,
+        path_prefix: Path | None = None,
+        timeout: int = _TIMEOUT_S,
+    ) -> subprocess.CompletedProcess[str]:
+        """Run a bounded snippet against the INSTALLED package (sys.argv[1] = scripts dir)."""
+        return _run(
+            [
+                sys.executable,
+                "-c",
+                code,
+                str(self.install_root / "plugins/saga/scripts"),
+                *argv,
+            ],
+            cwd=self.install_root,
+            env=self.env(
+                fleet_state_dir=fleet_state_dir, repo_root=repo_root, path_prefix=path_prefix
+            ),
             timeout=timeout,
         )
 
@@ -438,6 +484,338 @@ class Workbench:
 
     def runtime(self, name: str) -> InstalledRuntime:
         return {"claude": self.claude, "codex": self.codex}[name]
+
+
+# --------------------------------------------------------------------------- R2 fixtures
+
+_FAKE_GH = '''#!/usr/bin/env python3
+"""Deterministic gh fixture shim (R2): serves canned issue/PR JSON, never the network."""
+import json
+import re
+import sys
+from pathlib import Path
+
+FIXTURES = json.loads((Path(__file__).resolve().parent / "gh-fixtures.json").read_text())
+argv = sys.argv[1:]
+if len(argv) >= 3 and argv[0] in ("pr", "issue") and argv[1] == "view":
+    match = re.search(r"(\\d+)\\s*$", argv[2])
+    key = f"{argv[0]}:{match.group(1)}" if match else ""
+    entry = FIXTURES.get(key)
+    if entry is None:
+        print("GraphQL: Could not resolve (fixture absent)", file=sys.stderr)
+        sys.exit(1)
+    fields = ""
+    if "--json" in argv:
+        fields = argv[argv.index("--json") + 1]
+    payload = {f: entry.get(f) for f in fields.split(",")} if fields else dict(entry)
+    print(json.dumps(payload))
+    sys.exit(0)
+print("fake gh: unsupported invocation", file=sys.stderr)
+sys.exit(1)
+'''
+
+CANONICAL_REMOTE = "git@github.com:infiquetra/xr-fixture-target.git"
+REPO_IDENTITY = "github.com/infiquetra/xr-fixture-target"
+
+
+def write_fake_gh(bin_dir: Path, fixtures: dict[str, dict[str, Any]]) -> Path:
+    """Materialize the ``gh`` shim + its fixture map; returns the PATH-prefix directory."""
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    shim = bin_dir / "gh"
+    shim.write_text(_FAKE_GH, encoding="utf-8")
+    shim.chmod(0o755)
+    (bin_dir / "gh-fixtures.json").write_text(
+        json.dumps(fixtures, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    return bin_dir
+
+
+# --------------------------------------------------------------------------- U2 topology
+
+
+@dataclass
+class Topology:
+    """One acceptance target: bare origin, creator clone, clone A, independent clone B."""
+
+    outcome_id: str
+    origin: Path
+    creator_clone: Path  # where the creating runtime authors + pushes the committed spec
+    clone_a: Path  # shared coordination clone (canonical remote shape)
+    clone_b: Path  # independent clone: committed spec + gh fixture only, never store state
+    gh_bin: Path
+
+
+_HARNESS_GIT_ENV = {
+    "PATH": os.environ.get("PATH", ""),
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_AUTHOR_NAME": "acceptance-harness",
+    "GIT_AUTHOR_EMAIL": "acceptance@invalid.example",
+    "GIT_COMMITTER_NAME": "acceptance-harness",
+    "GIT_COMMITTER_EMAIL": "acceptance@invalid.example",
+}
+
+
+def _git_h(repo: Path | None, *args: str) -> subprocess.CompletedProcess[str]:
+    result = _run(["git", *args], cwd=repo, env=dict(_HARNESS_GIT_ENV))
+    if result.returncode != 0:
+        raise HarnessError(
+            "topology-git", f"git {' '.join(args[:2])} failed rc={result.returncode}"
+        )
+    return result
+
+
+_START_SNIPPET = (
+    "import json, sys; sys.path.insert(0, sys.argv[1]); import outcome; "
+    "from pathlib import Path; "
+    "outcome.start(Path(sys.argv[2]), sys.argv[3], sys.argv[4], json.loads(sys.argv[5]))"
+)
+
+
+def build_topology(
+    bench: Workbench,
+    *,
+    creator: str,
+    outcome_id: str,
+    nodes: list[dict[str, Any]],
+    fixtures: dict[str, dict[str, Any]],
+) -> Topology:
+    """Build the acceptance target: the CREATOR runtime authors and commits the Outcome spec
+    through its installed package, then two consumer clones are cut from the same origin.
+
+    Clone A and clone B both present the canonical github.com remote shape (discovery refuses
+    foreign remotes); neither ever receives git-common-dir coordination state from the creator —
+    clone B additionally never hosts broker/handoff/launch state (KTD5).
+    """
+    root = bench.workdir / f"topology-{outcome_id}"
+    origin = root / "origin.git"
+    origin.parent.mkdir(parents=True, exist_ok=True)
+    _git_h(None, "init", "-q", "--bare", "--initial-branch", "main", str(origin))
+    creator_clone = root / "creator"
+    _git_h(None, "clone", "-q", str(origin), str(creator_clone))
+    _git_h(creator_clone, "checkout", "-q", "-b", f"outcome/{outcome_id}")
+    (creator_clone / "README.md").write_text("acceptance fixture target\n", encoding="utf-8")
+    _git_h(creator_clone, "add", "-A")
+    _git_h(creator_clone, "commit", "-q", "-m", "seed")
+    _git_h(creator_clone, "push", "-q", "-u", "origin", f"outcome/{outcome_id}")
+    _git_h(origin, "symbolic-ref", "HEAD", f"refs/heads/outcome/{outcome_id}")
+
+    gh_bin = write_fake_gh(root / "gh-bin", fixtures)
+    runtime = bench.runtime(creator)
+    started = runtime.python(
+        _START_SNIPPET,
+        str(creator_clone),
+        outcome_id,
+        f"Acceptance target {outcome_id}",
+        json.dumps(nodes),
+        repo_root=creator_clone,
+        fleet_state_dir=bench.broker_root,
+        path_prefix=gh_bin,
+    )
+    if started.returncode != 0:
+        raise HarnessError("topology-start", f"{creator} start failed: {_bounded(started.stderr)}")
+    committed = runtime.outcome(
+        "commit",
+        outcome_id,
+        "--push",
+        repo_root=creator_clone,
+        fleet_state_dir=bench.broker_root,
+        path_prefix=gh_bin,
+    )
+    if committed.returncode != 0:
+        raise HarnessError(
+            "topology-commit", f"{creator} commit --push failed: {_bounded(committed.stderr)}"
+        )
+
+    clone_a = root / "clone-a"
+    clone_b = root / "clone-b"
+    for clone in (clone_a, clone_b):
+        _git_h(None, "clone", "-q", str(origin), str(clone))
+        _git_h(clone, "remote", "set-url", "origin", CANONICAL_REMOTE)
+    return Topology(
+        outcome_id=outcome_id,
+        origin=origin,
+        creator_clone=creator_clone,
+        clone_a=clone_a,
+        clone_b=clone_b,
+        gh_bin=gh_bin,
+    )
+
+
+DEFAULT_NODES: list[dict[str, Any]] = [
+    {
+        "subplot_id": "done-leaf",
+        "title": "Merged code leaf",
+        "backend": "inline",
+        "kind": "code",
+        "github": {"pr": "infiquetra/xr-fixture-target#11"},
+    },
+    {
+        "subplot_id": "ready-leaf",
+        "title": "Open code leaf",
+        "backend": "inline",
+        "kind": "code",
+        "github": {"pr": "infiquetra/xr-fixture-target#12"},
+        "deps": ["done-leaf"],
+    },
+    {
+        "subplot_id": "untracked-leaf",
+        "title": "Untracked non-code leaf",
+        "backend": "inline",
+        "kind": "non-code",
+        "deps": ["done-leaf"],
+    },
+]
+
+DEFAULT_FIXTURES: dict[str, dict[str, Any]] = {
+    "pr:11": {"state": "MERGED", "mergedAt": "2026-07-20T00:00:00Z"},
+    "pr:12": {"state": "OPEN", "mergedAt": None},
+}
+
+
+def _store_dirs(clone: Path) -> list[str]:
+    """Repo-relative coordination-state paths under the clone's git dir (empty = none)."""
+    git_dir = clone / ".git"
+    hits: list[str] = []
+    for candidate in ("outcome", "outcomes", "saga", "handoffs"):
+        target = git_dir / candidate
+        if target.exists():
+            hits.append(f".git/{candidate}")
+    return hits
+
+
+@unit("u2-discovery")
+def unit_discovery(bench: Workbench) -> list[ScenarioResult]:
+    """R3: canonical discovery + cross-clone read-only reconstruction, both creation directions."""
+    results: list[ScenarioResult] = []
+    for creator, consumer in (("claude", "codex"), ("codex", "claude")):
+        started = time.monotonic()
+        outcome_id = f"xr-{creator}-created"
+        topo = build_topology(
+            bench,
+            creator=creator,
+            outcome_id=outcome_id,
+            nodes=DEFAULT_NODES,
+            fixtures=DEFAULT_FIXTURES,
+        )
+        facts: dict[str, Any] = {}
+        verdict, summary = "pass", ""
+        try:
+            envelopes: dict[str, dict[str, Any]] = {}
+            projections: dict[str, dict[str, Any]] = {}
+            for name in ("claude", "codex"):
+                runtime = bench.runtime(name)
+                discover = runtime.outcome(
+                    "discover",
+                    outcome_id,
+                    repo_root=topo.clone_a,
+                    fleet_state_dir=bench.broker_root,
+                    path_prefix=topo.gh_bin,
+                )
+                if discover.returncode != 0:
+                    raise HarnessError(
+                        "discovery-failed", f"{name} discover rc={discover.returncode}"
+                    )
+                envelopes[name] = json.loads(discover.stdout)
+                for clone_name, clone in (("a", topo.clone_a), ("b", topo.clone_b)):
+                    attach = runtime.outcome(
+                        "attach",
+                        outcome_id,
+                        repo_root=clone,
+                        fleet_state_dir=bench.broker_root,
+                        path_prefix=topo.gh_bin,
+                    )
+                    if attach.returncode != 0:
+                        raise HarnessError(
+                            "projection-failed",
+                            f"{name} attach on clone {clone_name} rc={attach.returncode}",
+                        )
+                    projections[f"{name}:{clone_name}"] = json.loads(attach.stdout)
+
+            for name, envelope in envelopes.items():
+                if envelope["repository"]["identity"] != REPO_IDENTITY:
+                    raise HarnessError("discovery-identity", f"{name} envelope identity drifted")
+                if envelope["producer"]["runtime"] != name:
+                    raise HarnessError("discovery-producer", f"{name} produced foreign label")
+            neutral = {
+                name: {k: v for k, v in env.items() if k != "producer"}
+                for name, env in envelopes.items()
+            }
+            if neutral["claude"] != neutral["codex"]:
+                raise HarnessError("discovery-parity", "envelopes diverge beyond producer")
+
+            serialized = {
+                key: json.dumps(proj, sort_keys=True) for key, proj in projections.items()
+            }
+            if len(set(serialized.values())) != 1:
+                raise HarnessError(
+                    "projection-parity", "canonical projections diverge across runtimes/clones"
+                )
+            sample = projections["claude:a"]
+            if sample["mutation_allowed"] is not False:
+                raise HarnessError("projection-mutation", "projection claims mutation_allowed")
+            if sample["completed"] != ["done-leaf"]:
+                raise HarnessError("projection-completed", f"completed={sample['completed']}")
+            if sample["candidate_frontier"] != ["ready-leaf"]:
+                raise HarnessError(
+                    "projection-frontier", f"frontier={sample['candidate_frontier']}"
+                )
+            if sample["unknown"] != ["untracked-leaf"]:
+                raise HarnessError("projection-unknown", f"unknown={sample['unknown']}")
+
+            residue = _store_dirs(topo.clone_b)
+            if residue:
+                raise HarnessError("clone-b-state", f"coordination state on clone B: {residue}")
+            denied = bench.runtime(consumer).outcome(
+                "attach",
+                outcome_id,
+                "--advance",
+                "--handoff-id",
+                "h-none",
+                "--subplot",
+                "ready-leaf",
+                "--session-id",
+                "sess-b",
+                "--policy-sha256",
+                "c" * 64,
+                "--session-limit",
+                "1",
+                "--aggregate-limit",
+                "1",
+                repo_root=topo.clone_b,
+                fleet_state_dir=bench.broker_root,
+                path_prefix=topo.gh_bin,
+            )
+            if denied.returncode == 0:
+                raise HarnessError("clone-b-mutation", "clone B attach --advance did not refuse")
+            if _store_dirs(topo.clone_b):
+                raise HarnessError("clone-b-mutation", "refused attach still wrote state")
+            facts = {
+                "creator": creator,
+                "consumer": consumer,
+                "completed": sample["completed"],
+                "candidate_frontier": sample["candidate_frontier"],
+                "unknown": sample["unknown"],
+                "projection_digest": _sha256_text(next(iter(serialized.values()))),
+                "clone_b_refusal_rc": denied.returncode,
+            }
+            summary = (
+                f"{creator}-created spec discovered by both runtimes; projections byte-identical "
+                "across runtimes and clones; clone B state-free and mutation-denied"
+            )
+        except HarnessError as exc:
+            verdict = "fail"
+            summary = f"{exc.code}: {_bounded(exc.detail)}"
+        results.append(
+            ScenarioResult(
+                scenario_id=f"discovery-{creator}-created",
+                requirement="R3",
+                verdict=verdict,
+                summary=summary,
+                facts=facts,
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
+        )
+    return results
 
 
 # --------------------------------------------------------------------------- main

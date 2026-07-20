@@ -35,11 +35,14 @@ dependencies are merged and live-verified: `sub-353` (`cf15a09f`), the Codex sub
 remaining node. The operator (Jeff) directed in-session on 2026-07-20: "ok lets refresh the plan
 and assume I will be afk for this frontier." This refresh therefore records the delegated authority
 for unattended execution: Claude-direct cc-workflow inline ceremony (the vehicle approved for #604,
-#33, and #34); the standing 2026-07-18 merge pre-approval ("for the rest of this outcome") covers
-every merge in this frontier; doc-review of this refresh with all findings repaired substitutes for
+#33, and #34); the standing 2026-07-18 merge pre-approval ("for the rest of this outcome", granted
+by Jeff in the 2026-07-18 operator session and re-recorded in the outcome memory record and in this
+refresh's delta doc-review artifact under `docs/reviews/`) covers every merge inside this outcome,
+each still contingent on its own green gates; doc-review of this refresh with all findings repaired substitutes for
 the interactive plan-review touchpoint; and the Workflow Structure anchor is adopted under the same
 delegation. Execution pages the operator only by halting on a stop condition and leaving a durable
-report — it never widens authority to keep moving. Ceremony anchor:
+report — it never widens authority to keep moving. The plan freezes at PA-1 branch creation.
+Ceremony anchor:
 `4b21df73f98030f97b5f770adddaf33e14048a07af8221005f6d5e3699e1cb0f` over 3754 bytes from the
 `## Workflow Structure` heading to the `## Completion gate` heading, exclusive (the span includes
 the operating contract).
@@ -48,7 +51,11 @@ the operating contract).
 
 - Outcome specification
   `docs/outcomes/lease-safe-runtime-continuity/outcome-spec.json`, node
-  `cross-runtime-acceptance`; hard dependencies are `sub-353` and `codex-parity`.
+  `cross-runtime-acceptance`; hard dependencies are `sub-353` and `codex-parity`. The committed
+  spec file is the 2026-07-15 bootstrap snapshot (every node reads `state: pending`); completion
+  status is derived on read from the coordinator ledger plus GitHub events (ledger: 10 of 11
+  leaves done; #604 and codex #33/#34 merged and closed) and is authoritative over the snapshot,
+  which refreshes at the next `outcome commit --push`.
 - Verified baseline pins (live-verified 2026-07-20): Claude `infiquetra-claude-plugins`
   `origin/main` = `cf15a09f` (#353 squash; carries #604 `97d2fb15` and #358 `30bde209`) with saga
   `0.104.0` and fleet-core `0.15.0`; Codex `infiquetra-codex-plugins` `origin/main` = `d29e75fd`
@@ -156,6 +163,8 @@ outcome close only if QA accepts every criterion with no waiver.
 - **KTD3 - equivalent cross-clone status excludes transient state.** False equality is worse than an
   explicit unknown.
 - **KTD4 - acceptance never fixes production.** Failure routes to the owning Claude or Codex issue.
+  Pre-acceptance discharge under KTD7 does not narrow this: the PA PRs are separate tracked
+  production PRs, not the acceptance PR.
 - **KTD5 - handoff is same-clone protected state.** Only its opaque reference is printable; it is not
   copied to clone B or treated as a bearer credential.
 - **KTD6 - one settlement does not replace runtime acknowledgement.** The harness asserts both shared
@@ -181,13 +190,29 @@ outcome close only if QA accepts every criterion with no waiver.
 
 The #34 code-review and QA gates dispositioned five deferred items; three require production
 changes, and the operator's 2026-07-19 seam deferral placed dispatcher lease activation in this
-leaf. Both PA units below are discharged and merged before the harness pins its inputs (KTD7).
+leaf. Sources of record, both merged in codex `main` at `d29e75fd`: the #34 code-review artifact
+`docs/code-reviews/2026-07-19-outcome-cross-runtime-parity-code-review.md` (two inherited findings
+routed upstream-first — the stale `export`/`import` help strings and the dead import success-print)
+and the #34 QA artifact
+`docs/evidence/adhoc-work-34-codex-parity/artifacts/d000674258b48d451467cbe99b1a4c2e67ad41bf138e3fba49238ed9aaa7d09d.md`
+(five deferred lows: those two, the handoff-store umask owned by this leaf, and two advisories
+requiring no change). Both PA units below are discharged and merged before the harness pins its
+inputs (KTD7). PA git/GitHub operations (issue filing, PR, merge) are root actions under KTD9's
+recorded authority; the ceremony operating contract below constrains only the U1-U5 lens fan-out
+and does not govern the PA units. The same division applies to the acceptance PR itself: the
+ceremony grants no Git/GitHub authority, and root's merge draws on the recorded standing approval
+after the ceremony converges.
 Right-sizing: each PA unit ships under the programmatic `saga:code-review` gate (four always-on
 lenses plus independent validators) and its repo's full local battery — not the six-lens
 plan-anchored ceremony, which is reserved for the harness implementation (U1-U5). Rationale: both
 are remediation-class changes with narrow, enumerated diffs — the same class as #34's `39a9ed4`
 remediation commit, which shipped under the review gate alone. Each unit gets a small tracked
-issue (mission-control) so its PR closes it.
+issue (mission-control) so its PR closes it. Branch mechanics for both units: file the issue first
+(number `<N>`), then branch `work/<N>-<slug>` from freshly fetched `origin/main` in a dedicated
+worktree under the primary checkout's `.worktrees/` (never the outcome worktree), clean tree
+required. If `origin/main` has advanced past the recorded baseline pin at branch time, re-verify
+every listed target site still matches its described content before editing; content drift is an
+AFK HALT, not a judgment call.
 
 ### PA-1. Claude upstream hardening (`infiquetra-claude-plugins`)
 
@@ -199,15 +224,22 @@ At the `cf15a09f` sites:
 - Unreachable success-print after the unconditional `import_bundle` refusal
   (`outcome.py:2624-2627`): remove the dead success path; the refusal receipt is the only output.
 - Protected handoff-store directory created at default umask (`outcome_compat.py` `_write_once`,
-  line 1135): create with `0o700` and verify, mirroring the `audit_store` pattern; sealed records
-  stay `0o600`.
-- `fleet_commons/audit_store.py` ancestor hardening: refuse a symlinked store root and any
-  world-writable existing ancestor below the user's home; typed refusal, no silent fallback.
+  line 1135): create missing directories `0o700`; if the handoffs directory already exists,
+  require directory, non-symlink, euid-owned, mode exactly `0o700` — refuse otherwise with a
+  typed error (the same predicate `audit_store._ensure_private_dir` applies). Sealed records stay
+  `0o600`.
+- `fleet_commons/audit_store.py` ancestor hardening: for each path component strictly below the
+  user's home (home itself excluded; paths outside home exempt — the scope test is lexical on the
+  expanded absolute path), `lstat` without resolving: refuse any symlinked component and any
+  existing world-writable (`mode & 0o002`) directory with the typed `AuditStoreError`; no silent
+  fallback. (Scoped below home deliberately so temp-dir test roots — whose ancestors include the
+  sticky world-writable system temp directory — stay valid.)
 
-Behavior tests for each; release surfaces in the same PR (saga and fleet-core version rungs,
-changelogs, marketplace registry, guard floors per `{#release-event-guard-floor-604}` — floors,
-never current-version pins). Full battery, programmatic code review, PR, merge under the standing
-approval. The merge SHA becomes the Claude acceptance pin and the new frozen port source.
+Behavior tests for each; release surfaces in the same PR (saga `0.104.0 -> 0.105.0`, fleet-core
+`0.15.0 -> 0.16.0`, changelogs, marketplace registry, guard floors per
+`{#release-event-guard-floor-604}` — floors, never current-version pins). Full battery,
+programmatic code review, PR, merge under the standing approval. The merge SHA becomes the Claude
+acceptance pin and the new frozen port source.
 
 ### PA-2. Codex seam activation and re-port (`infiquetra-codex-plugins`)
 
@@ -219,16 +251,27 @@ approval. The merge SHA becomes the Claude acceptance pin and the new frozen por
 - Re-port PA-1: refresh `outcome_compat.py` byte-faithful to the PA-1 merge SHA and re-prove the
   divergence is exactly the `RUNTIME_LABEL` pair; re-port the CLI `--help`/dead-print fixes into
   the grafted arms (`outcome.py:1934/:1937/:2209`); port the `audit_store` ancestor hardening;
-  update the port manifest's frozen-source range (preserve `indent=2, sort_keys=True`).
-- Release surfaces: saga and fleet-core `+codex` version rungs, changelogs, legacy-token inventory
-  rebuild (`build_legacy_workflow_inventory.py --write` after every inventoried-file edit),
+  update the port manifest's frozen-source range (preserve `indent=2, sort_keys=True`) and every
+  pinned expectation in the per-port gate
+  (`tests/test_outcome_cross_runtime_parity_port_contract.py`) that binds the frozen range,
+  classification rows, or source digests — stale pins there are a silent-drift hazard, not a
+  formality.
+- Release surfaces: saga `0.77.0+codex.* -> 0.78.0+codex.<ts>`, fleet-core
+  `0.9.0+codex.* -> 0.10.0+codex.<ts>`, where `<ts>` is one UTC `date -u +%Y%m%d%H%M%S` value
+  captured at release-surface authoring and reused verbatim across manifest, changelog, and the
+  later acceptance pins (the existing `+codex.20260720023112` convention); changelogs,
+  legacy-token inventory rebuild
+  (`build_legacy_workflow_inventory.py --write` after every inventoried-file edit),
   `validate_codex_plugins` green from a worktree-free primary checkout.
 - Full battery, programmatic code review, PR, merge. The merge SHA becomes the Codex acceptance
   pin. Codex CLI invocations run with `env -u OPENAI_API_KEY` (the env var is a literal stub).
 
 ## Implementation units
 
-U1 begins only after PA-1 and PA-2 are merged and R1 re-verifies the advanced pins.
+U1 begins only after PA-1 and PA-2 are merged and root directly re-verifies the advanced pins
+(fresh fetch; merge SHAs and manifest versions match the PA merge receipts). The harness's own R1
+verification is then implemented in U1 and re-checks the same pins on every invocation — the
+pre-U1 check is root's, not the harness's.
 
 ### U1. Pinning, isolated installation, and evidence schema
 
@@ -321,8 +364,11 @@ boundary, and residual risk after the implementation/code-review loop.
 - Evidence cannot bind exact SHAs/versions/digests/commands or violates the privacy schema.
 - A production fix is needed in the acceptance PR, or any P0-P3 review/QA finding remains.
 - (AFK) A required authority is outside this plan's recorded delegation, an anchor or lens receipt
-  cannot be satisfied, or a gate demands operator judgment — HALT, write the durable report, and
-  wait; never proceed by widening authority.
+  cannot be satisfied, or a gate demands operator judgment — HALT: write
+  `docs/outcomes/lease-safe-runtime-continuity/afk-halt-report.md` (trigger, evidence, exact
+  repo/issue/PR state, safe resumption point), commit and push it to the outcome branch, deliver
+  the same report as the session's final message, and stop with no further mutation until the
+  operator returns; never proceed by widening authority.
 
 ## Workflow Structure
 
@@ -363,6 +409,10 @@ PA-1 and PA-2 are merged with their gates green and their tracked issues closed;
 selector passes against exact merged and installed identities; the durable evidence bundle
 validates and is privacy-safe; teardown and fleet doctor are clean; code review has zero open
 P0-P3 findings; `saga:qa` accepts without waiver; the acceptance PR merges; all four #579 children
-close and reconcile on Operations; #579 closes; the outcome report is final; the coordinator DAG
-has no pending node or leaked worktree/resource; and the AFK writebacks land (final outcome report,
-engineering-journal entries, memory update, and the closing report to the operator).
+close and reconcile on Operations (#604 and #605 in `infiquetra-claude-plugins`, #33 and #34 in
+`infiquetra-codex-plugins` — the codex pair is already closed); #579 closes; the outcome report is
+final; the coordinator DAG has no pending node or leaked worktree/resource; and the AFK writebacks
+land (final outcome report, engineering-journal entries, the assistant's persistent
+`lease-safe-runtime-continuity` outcome memory record, and the closing report delivered as the
+session's final message, including any flagged operator decisions — e.g. the unpushed local
+`main` commits `dc1d8bef`/`1a7b145a`).

@@ -27,9 +27,10 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 SCHEMA_VERSION = "lease-safe-runtime-continuity/cross-runtime-acceptance.v1"
 

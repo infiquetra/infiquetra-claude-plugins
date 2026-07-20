@@ -1929,6 +1929,200 @@ def unit_race(bench: Workbench) -> list[ScenarioResult]:
     return results
 
 
+# --------------------------------------------------------------------------- U5 teardown (R8/R9)
+
+DONE_NODES: list[dict[str, Any]] = [
+    {
+        "subplot_id": "done-leaf",
+        "title": "Merged code leaf",
+        "backend": "inline",
+        "kind": "code",
+        "github": {"pr": "infiquetra/xr-fixture-target#11"},
+    }
+]
+
+
+def _rig_state(rig: RaceRig) -> dict[str, dict[str, str]]:
+    return {
+        "store": _tree_state(rig.topo.clone_a / ".git" / "saga-outcomes"),
+        "broker": _tree_state(rig.broker_root),
+    }
+
+
+def _fleet_doctor(bench: Workbench, rig: RaceRig) -> dict[str, Any]:
+    """Run the INSTALLED claude fleet doctor (#353) strictly read-only over one rig."""
+    doctor = bench.claude.install_root / "plugins/saga/scripts/fleet_doctor.py"
+    before = _rig_state(rig)
+    result = _run(
+        [
+            sys.executable,
+            str(doctor),
+            "--repo-root",
+            str(rig.topo.clone_a),
+            "--lease-store",
+            str(rig.broker_root),
+            "--format",
+            "json",
+        ],
+        cwd=bench.claude.install_root,
+        env=bench.claude.env(fleet_state_dir=rig.broker_root, repo_root=rig.topo.clone_a),
+    )
+    if result.returncode not in (0, 1):  # 1 = findings present, still a valid report
+        raise HarnessError(
+            "doctor-run", f"fleet doctor rc={result.returncode}: {_bounded(result.stderr)}"
+        )
+    if _rig_state(rig) != before:
+        raise HarnessError("doctor-mutation", "fleet doctor mutated the rig (must be read-only)")
+    report: dict[str, Any] = json.loads(result.stdout)
+    if report.get("schema") != "fleet_doctor_report.v1" or report.get("complete") is not True:
+        raise HarnessError("doctor-run", "fleet doctor report incomplete or wrong schema")
+    return report
+
+
+def _scenario_reclaim(bench: Workbench, rig: RaceRig) -> dict[str, Any]:
+    """R9: harvest-complete the rig, then reclamation twice per runtime must be a no-op."""
+    rc, first = _cli_advance(bench, rig, "claude")
+    if rc != 0 or first.get("harvested") != ["done-leaf"]:
+        raise HarnessError("reclaim", f"initial advance rc={rc} harvested={first.get('harvested')}")
+    if not first.get("status", {}).get("complete"):
+        raise HarnessError("reclaim", "outcome did not read complete after harvest")
+    # Warm-up pass: each runtime's FIRST touch lays down one-time lock-guard scaffolding
+    # (e.g. locks/.coordinator.lock.guard) — creation artifacts, not coordination state.
+    for name in ("claude", "codex"):
+        rc, payload = _cli_advance(bench, rig, name)
+        if rc != 0 or payload.get("dispatched"):
+            raise HarnessError("reclaim", f"{name} warm-up pass rc={rc} dispatched")
+    settled = _rig_state(rig)
+    passes = 0
+    for _pass in range(2):
+        for name in ("claude", "codex"):
+            rc, payload = _cli_advance(bench, rig, name)
+            if rc != 0 or payload.get("dispatched"):
+                raise HarnessError("reclaim", f"{name} reclamation pass rc={rc} dispatched")
+            if _rig_state(rig) != settled:
+                raise HarnessError("reclaim", f"{name} reclamation pass mutated settled state")
+            passes += 1
+    return {"reclamation_passes": passes, "complete": True}
+
+
+def _scenario_doctor(bench: Workbench, clean_rig: RaceRig) -> dict[str, Any]:
+    """R9 both halves: zero open positions on the settled rig; a real open position is FLAGGED."""
+    clean = _fleet_doctor(bench, clean_rig)
+    if clean["counts"]["findings"] != 0:
+        diseases = [f.get("disease") for f in clean.get("findings", [])]
+        raise HarnessError(
+            "doctor-open-positions",
+            f"settled rig reports {clean['counts']['findings']} open position(s): {diseases}",
+        )
+    # Sensitivity half: a dispatched-but-never-settled leaf must be visible, or the zero above
+    # is vacuous. Build a rig, dispatch it, leave the execution open.
+    open_rig = _race_rig(bench, "doctor-open", "claude")
+    rc, payload = _cli_advance(bench, open_rig, "claude")
+    if rc != 0 or payload.get("dispatched") != ["race-leaf"]:
+        raise HarnessError("doctor-open-positions", f"open-rig dispatch rc={rc}")
+    flagged = _fleet_doctor(bench, open_rig)
+    if flagged["counts"]["findings"] < 1:
+        raise HarnessError(
+            "doctor-open-positions", "doctor missed a dispatched-unsettled open position"
+        )
+    return {
+        "clean_findings": clean["counts"]["findings"],
+        "open_rig_findings": flagged["counts"]["findings"],
+        "open_rig_diseases": flagged["counts"]["by_disease"],
+    }
+
+
+def _scenario_legacy_import(bench: Workbench, rig: RaceRig) -> dict[str, Any]:
+    """R8: both installed runtimes refuse outcome-bundle/1 import with zero writes."""
+    bundle = bench.workdir / "legacy-bundle.json"
+    bundle.write_text(
+        json.dumps({"schema": "outcome-bundle/1", "outcome_id": rig.topo.outcome_id}),
+        encoding="utf-8",
+    )
+    refusals: dict[str, str] = {}
+    for name in ("claude", "codex"):
+        before = _tree_state(rig.topo.clone_b / ".git" / "saga-outcomes")
+        result = bench.runtime(name).outcome(
+            "import",
+            str(bundle),
+            repo_root=rig.topo.clone_b,
+            fleet_state_dir=rig.broker_root,
+            path_prefix=rig.topo.gh_bin,
+        )
+        if result.returncode == 0:
+            raise HarnessError("legacy-import", f"{name} import did not refuse")
+        if _tree_state(rig.topo.clone_b / ".git" / "saga-outcomes") != before or _store_dirs(
+            rig.topo.clone_b
+        ):
+            raise HarnessError("legacy-import", f"{name} refusal wrote state")
+        refusals[name] = f"rc={result.returncode}"
+    return {"refusals": refusals}
+
+
+@unit("u5-teardown")
+def unit_teardown(bench: Workbench) -> list[ScenarioResult]:
+    """R8/R9: idempotent reclamation, fleet-doctor open-position audit, dead legacy import."""
+    started = time.monotonic()
+    results: list[ScenarioResult] = []
+    settled_rig: RaceRig | None = None
+    try:
+        broker_root = _private_dir(bench.workdir / "broker-u5")
+        topo = build_topology(
+            bench,
+            creator="claude",
+            outcome_id="xr-u5-teardown",
+            nodes=DONE_NODES,
+            fixtures={"pr:11": {"state": "MERGED", "mergedAt": "2026-07-20T00:00:00Z"}},
+        )
+        approved = bench.claude.outcome(
+            "approve",
+            topo.outcome_id,
+            repo_root=topo.clone_a,
+            fleet_state_dir=broker_root,
+            path_prefix=topo.gh_bin,
+        )
+        if approved.returncode != 0:
+            raise HarnessError("race-approve", f"u5 approve rc={approved.returncode}")
+        settled_rig = RaceRig(topo=topo, broker_root=broker_root)
+    except HarnessError as exc:
+        results.append(
+            ScenarioResult(
+                scenario_id="teardown-reclaim",
+                requirement="R9",
+                verdict="fail",
+                summary=f"{exc.code}: {_bounded(exc.detail)}",
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
+        )
+        return results
+
+    for scenario_id, requirement, run in (
+        ("teardown-reclaim", "R9", lambda: _scenario_reclaim(bench, settled_rig)),
+        ("fleet-doctor-positions", "R9", lambda: _scenario_doctor(bench, settled_rig)),
+        ("legacy-import-refused", "R8", lambda: _scenario_legacy_import(bench, settled_rig)),
+    ):
+        started = time.monotonic()
+        facts: dict[str, Any] = {}
+        verdict, summary = "pass", ""
+        try:
+            facts = run()
+            summary = f"{scenario_id}: contract held"
+        except HarnessError as exc:
+            verdict = "fail"
+            summary = f"{exc.code}: {_bounded(exc.detail)}"
+        results.append(
+            ScenarioResult(
+                scenario_id=scenario_id,
+                requirement=requirement,
+                verdict=verdict,
+                summary=summary,
+                facts=facts,
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
+        )
+    return results
+
+
 # --------------------------------------------------------------------------- main
 
 

@@ -1,7 +1,11 @@
 # Work session — #605 cross-runtime acceptance harness (U1-U5)
 
-**Status**: U1 + U2 + U3 COMPLETE; U4 COMPLETE with **2 genuine production failures** (see
-"U4 findings" below — claude-side v2-blindness, upstream defect to file per KTD7); U5 next. Branch
+**Status**: U1-U5 ALL COMPLETE. Final bundle at
+`docs/validation/lease-safe-runtime-continuity/cross-runtime-acceptance.json`:
+**overall fail — 12/14 pass**, both failures are the claude v2-blindness production defect,
+filed upstream as **#628** (Operations board, risk high, requirements-ready). Full battery
+green (5259 passed, ruff+format+mypy clean, release-surface parity). Next: ceremony, then the
+merge question escalates via the AFK halt protocol (a red acceptance cannot close #605). Branch
 `work/605-cross-runtime-acceptance` (worktree `.claude/worktrees/work-605-acceptance`), base
 `origin/main` = `794b4da6`. Plan authority:
 `docs/plans/2026-07-15-cross-runtime-outcome-acceptance-plan.md` on the outcome branch

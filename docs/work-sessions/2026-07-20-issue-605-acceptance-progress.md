@@ -233,3 +233,23 @@ pinned, KTD4 intact. Full ceremony record:
 Next: programmatic saga:code-review (CLEAN gate) + saga:qa, then the PR + AFK halt report
 (red acceptance blocks the #605 close; #628 fix is a new production unit outside recorded
 authority).
+
+## Programmatic saga:code-review gate — 8 findings, all repaired at 8b13b2a5
+
+The gate ran as cc-workflow `wf_2736f0d0-4fa` at REVIEWED_SHA d59f0dc2: 4 lenses
+(correctness + security at opus/high, testing + maintainability at sonnet/medium, all
+saga:readonly-verifier + worktree isolation, pool 3), then one independent validator per
+finding. 8 raw findings, 0 suppressed, 8/8 validated — 4 P2, 4 P3, no P0/P1. All four lenses
+independently re-upheld the #628 attribution, the 12/14 bundle, and the gate results.
+
+All 8 repaired in commit `8b13b2a5` (harness + tests only): single-segment absolute paths now
+flag in the privacy guard; the simultaneous-race control dir is namespaced per retry rig;
+untyped escapes (child timeout, malformed output) persist an honest `unhandled-exception`
+halt instead of `halt:null`; hung race children are killed on communicate timeout; pin probes
+run under the curated git env; the embedded stale-issuer tree spy regained the symlink guard;
+two dead allowlist entries dropped; hermetic suite 49 → 57 (env-name-unlisted halt,
+unhandled-escape halt, pin-probe env, single-segment privacy breadth). Full battery 5286
+passed / 1 skipped; ruff + format + mypy clean; committed bundle re-verified scrub-clean under
+the tightened regex (no regeneration needed — repairs touch retry/halt/hygiene paths the
+recorded run never entered). Durable artifact:
+`docs/code-reviews/2026-07-20-issue-605-cross-runtime-acceptance-code-review.md`.

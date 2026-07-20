@@ -1790,7 +1790,8 @@ def attended_handoff(
 
 
 # ---------------------------------------------------------------------------
-# export / import — portable bundle across machines/worktrees (R14)
+# export / import — retired outcome-bundle/1 surface (#604 R10: export aliases discover;
+# import always refuses)
 # ---------------------------------------------------------------------------
 
 
@@ -2278,10 +2279,16 @@ def main(argv: list[str] | None = None) -> int:
     p_commit.add_argument("outcome_id")
     p_commit.add_argument("--push", action="store_true")
 
-    p_export = sub.add_parser("export", help="print a portable bundle (spec + completion)")
+    p_export = sub.add_parser(
+        "export",
+        help="deprecated read-only alias of `discover` (#604 R10); prints the discovery envelope",
+    )
     p_export.add_argument("outcome_id")
 
-    p_import = sub.add_parser("import", help="reconstruct an outcome from a bundle file")
+    p_import = sub.add_parser(
+        "import",
+        help="retired (#604 R10): always refuses with discover/attach migration guidance",
+    )
     p_import.add_argument("path")
 
     p_approve = sub.add_parser(
@@ -2623,8 +2630,9 @@ def main(argv: list[str] | None = None) -> int:
                 return 3
         elif args.command == "import":
             bundle = json.loads(Path(args.path).read_text(encoding="utf-8"))
-            spec = import_bundle(root, bundle)
-            print(json.dumps({"imported": spec.outcome_id, "nodes": len(spec.nodes)}))
+            # Unconditionally refuses (#604 R10); the top-level handler prints the refusal
+            # receipt. No success path exists.
+            import_bundle(root, bundle)
         elif args.command == "reconcile":
             # #295 U5: explicit board<->saga drift detection (read-only on the world; no lease).
             import outcome_github

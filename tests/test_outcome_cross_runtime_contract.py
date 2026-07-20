@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -702,6 +704,41 @@ ADMISSION = {
     "session_limit": 3,
     "aggregate_limit": 6,
 }
+
+
+# ------------------------------------------------------------------ handoff-store privacy (#624)
+
+
+def test_write_once_creates_private_handoffs_dir(tmp_path: Path) -> None:
+    """PA-1 (#624): missing handoff-store directories are created owner-only (0o700)."""
+    target = tmp_path / "store" / "handoffs" / "h1.offer.json"
+    assert OC._write_once(target, {"schema": "x"}) is True
+    for directory in (target.parent, target.parent.parent):
+        assert stat.S_IMODE(directory.lstat().st_mode) == 0o700
+    assert stat.S_IMODE(target.lstat().st_mode) == 0o600
+
+
+def test_write_once_refuses_permissive_preexisting_dir(tmp_path: Path) -> None:
+    """PA-1 (#624): a pre-existing permissive handoffs directory is refused, never adopted."""
+    handoffs = tmp_path / "handoffs"
+    handoffs.mkdir()
+    os.chmod(handoffs, 0o755)
+    with pytest.raises(OC.CompatibilityHaltError) as exc:
+        OC._write_once(handoffs / "h1.offer.json", {"schema": "x"})
+    assert exc.value.receipt()["code"] == "handoff-store-unsafe"
+    assert not (handoffs / "h1.offer.json").exists()
+
+
+def test_write_once_refuses_symlinked_handoffs_dir(tmp_path: Path) -> None:
+    """PA-1 (#624): a symlinked handoffs directory is refused before any record write."""
+    real = tmp_path / "real"
+    real.mkdir(mode=0o700)
+    link = tmp_path / "handoffs"
+    link.symlink_to(real)
+    with pytest.raises(OC.CompatibilityHaltError) as exc:
+        OC._write_once(link / "h1.offer.json", {"schema": "x"})
+    assert exc.value.receipt()["code"] == "handoff-store-unsafe"
+    assert list(real.iterdir()) == []
 
 
 @pytest.fixture

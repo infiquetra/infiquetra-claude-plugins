@@ -37,6 +37,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 from collections.abc import Callable
@@ -1130,9 +1131,41 @@ def _handoffs_dir(repo_root: Path, outcome_id: str) -> Path:
     return common / outcome_store.STORE_NAMESPACE / safe_id / _HANDOFFS_DIR
 
 
+def _ensure_private_dir(path: Path) -> None:
+    """Create the handoff-store directory ``0o700``; refuse an unsafe pre-existing one.
+
+    The same predicate as fleet-core ``audit_store._ensure_private_dir``: the final directory
+    must be a real directory (never a symlink), owned by the effective uid, mode exactly
+    ``0o700``. A handoff record is protected same-clone state — its directory must not be
+    readable or traversable by other users, and a permissive pre-existing directory is refused
+    rather than silently adopted.
+    """
+    missing: list[Path] = []
+    current = path
+    while not current.exists() and not current.is_symlink():
+        missing.append(current)
+        current = current.parent
+    for directory in reversed(missing):
+        directory.mkdir(mode=0o700)
+        os.chmod(directory, 0o700, follow_symlinks=False)
+    metadata = path.lstat()
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_uid != os.geteuid()
+        or stat.S_IMODE(metadata.st_mode) != 0o700
+    ):
+        raise CompatibilityHaltError(
+            "handoff-store-unsafe",
+            unsupported=f"a handoff store directory failing the private-store predicate: {path}",
+            supported="a non-symlink handoff directory owned by this user with mode 0o700",
+            next_action="inspect the store path and restore owner-only permissions (chmod 700)",
+        )
+
+
 def _write_once(path: Path, record: dict[str, Any]) -> bool:
     """Write-once protected record write; False when the exact path already exists."""
-    path.parent.mkdir(parents=True, exist_ok=True)
+    _ensure_private_dir(path.parent)
     try:
         fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except FileExistsError:

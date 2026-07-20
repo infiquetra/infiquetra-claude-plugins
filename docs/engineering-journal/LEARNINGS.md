@@ -25,6 +25,45 @@
 
 ---
 
+## 2026-07-20
+
+### `uv run <tool>` silently falls through to PATH when the dev extra is unsynced {#uv-run-path-fallthrough-624}
+
+**Context.** In a fresh PA-1 worktree, `uv run pytest` reported "2 errors during collection —
+No module named 'mcp'" while `uv run python -c "import mcp"` succeeded in the same directory.
+**Evidence.** #624 worktree `work-624-pa1`: `.venv/bin/` had no pytest/ruff/mypy binaries;
+`which pytest` resolved to `/opt/homebrew/bin/pytest`, whose interpreter lacks the project deps.
+**Mechanism.** The repo's dev tools live in the optional `dev` extra
+(`[project.optional-dependencies]`, pyproject.toml), and a bare `uv sync` does not install
+extras. `uv run <cmd>` falls back to PATH when the venv has no such entrypoint — so pytest ran
+under homebrew's Python against the repo's tests, a mixed-interpreter run that fails on the
+first project-only import instead of announcing the wrong environment.
+**Fix.** `uv sync --extra dev` in every fresh worktree before the battery; verify with
+`.venv/bin/pytest --version`. Full suite then passed 5220/0/1.
+**Generalizable rule.** In a fresh worktree, prove the tool binary lives in the project venv
+before trusting its output — a PATH-fallthrough failure mode reports as *test* errors, not as
+the environment error it actually is.
+**Refs.** #624 (PA-1 of the #605 acceptance plan).
+
+### argparse `help=` strings are release surfaces a retirement sweep must grep {#help-strings-are-release-surfaces-624}
+
+**Context.** #604 retired the `outcome-bundle/1` authority path — docstrings, behavior, and
+changelog all updated — yet `outcome --help` still advertised "print a portable bundle" and
+"reconstruct an outcome from a bundle file" two releases later.
+**Evidence.** `outcome.py:2281/:2284` at `cf15a09f`; found only by the codex #34 external
+review (finding routed upstream-first), not by any local gate.
+**Mechanism.** Help strings live in the parser-construction block far from the retired arm
+bodies, and nothing pins them: tests asserted the refusal behavior, not the CLI's self-
+description, so the drift was invisible to every green gate.
+**Fix.** #624 rewords both strings to live semantics, deletes the dead import success print,
+and adds a normalized-whitespace `--help` pin (`test_cli_help_pins_retired_bundle_semantics`)
+so the next drift fails a test.
+**Generalizable rule.** When retiring a CLI surface, grep the top-level `--help` output as part
+of the sweep and pin the reworded strings — user-facing self-description drifts independently
+of behavior.
+**Refs.** #604, #624; codex review artifact
+`docs/code-reviews/2026-07-19-outcome-cross-runtime-parity-code-review.md` (codex repo).
+
 ## 2026-07-19
 
 ### A green local gate does not cover fixture-environment assumptions {#hermetic-git-fixtures-353}

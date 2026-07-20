@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.105.0] - 2026-07-20
+
+### Fixed - Outcome CLI retired-bundle surface (#624, PA-1 of #605)
+
+- `outcome export`/`import` `--help` strings no longer describe the retired `outcome-bundle/1`
+  flow: `export` is named a deprecated read-only alias of `discover`, `import` is named
+  always-refusing with `discover`/`attach` migration guidance (#604 R10).
+- Removed the unreachable success print after the unconditional `import_bundle` refusal — the
+  top-level refusal receipt (`{"ok": false, "error": ...}`, exit 1) is the import arm's only
+  output.
+
+### Security - Protected handoff-store directory (#624, PA-1 of #605)
+
+- `outcome_compat._write_once` now creates missing handoff-store directories `0o700` and refuses
+  a pre-existing handoffs directory that is a symlink, not owned by the effective uid, or not
+  mode `0o700` — a fail-closed `handoff-store-unsafe` compatibility halt (`chmod 700` remedy in
+  the receipt) instead of silently adopting a permissive directory. Sealed records stay `0o600`.
+
 ## [0.104.0] - 2026-07-19
 
 ### Added - Fleet doctor cross-source audit (#353)

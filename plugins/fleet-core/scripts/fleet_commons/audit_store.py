@@ -144,7 +144,33 @@ def _read_json(path: Path) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def _refuse_unsafe_ancestors(path: Path) -> None:
+    """Refuse symlinked or world-writable existing components strictly below the user's home.
+
+    The scope test is lexical on the expanded absolute path: the home directory itself and any
+    path outside home entirely (e.g. system temp roots, whose sticky world-writable mode is
+    expected) are exempt. Components are inspected with ``lstat`` — never resolved — so a
+    symlinked ancestor is refused before any ``mkdir`` could traverse it.
+    """
+    home = Path.home()
+    candidate = path if path.is_absolute() else Path(os.path.abspath(path))
+    if not candidate.is_relative_to(home) or candidate == home:
+        return
+    current = home
+    for part in candidate.relative_to(home).parts:
+        current = current / part
+        try:
+            metadata = current.lstat()
+        except FileNotFoundError:
+            return  # nothing exists from here down; creation below is 0o700
+        if stat.S_ISLNK(metadata.st_mode):
+            raise AuditStoreError(f"audit-store ancestor is a symlink: {current}")
+        if stat.S_ISDIR(metadata.st_mode) and metadata.st_mode & 0o002:
+            raise AuditStoreError(f"audit-store ancestor is world-writable: {current}")
+
+
 def _ensure_private_dir(path: Path) -> None:
+    _refuse_unsafe_ancestors(path)
     missing: list[Path] = []
     current = path
     while not current.exists() and not current.is_symlink():

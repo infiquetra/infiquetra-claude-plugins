@@ -27,6 +27,37 @@
 
 ## 2026-07-20
 
+### A broader settled-guard than the reference runtime silently reorders frozen refusal codes {#settled-guard-precedence-631}
+
+**Context.** The #628 fix (saga 0.106.0) taught claude's `accept_handoff` settled-guard
+(`_settled_lookup`) to consult the shared v1/v2 dispatch reduction for ANY settled state. The
+first full acceptance re-run at the fix pin went 13/14: `handoff-negatives-codex-issued` case
+`replay-second-receiver` refused `handoff-already-settled` where the contract — and codex,
+given byte-identical state — refuses `handoff-receiver-conflict`.
+
+**Evidence.** Issue #631; acceptance bundle at claude `22c9aa87` / codex `f3e1af75`
+(`replay-second-receiver: code 'handoff-already-settled' != 'handoff-receiver-conflict'`);
+retained workdir ledger `topology-xr-u3-codex/.../ledger.jsonl` holding exactly the first
+receiver's legacy intent+commit pair; codex `outcome.py:1521` (`_settled_lookup` is #351-only).
+
+**Mechanism.** The accept flow lives in `outcome_compat.py`, byte-frozen across runtimes, and
+probes the injected `settled_lookup` BEFORE its receiver-conflict checks. The callable is
+therefore not just a data source — it is a precedence lever. Claude's reduction-wide consult
+returned True for the first receiver's own legacy acceptance record (a settlement codex's
+#351-only lookup cannot see), so the frozen flow refused one branch earlier than codex on
+identical ledger bytes. No shared code diverged; only the injected judgment did.
+
+**Fix.** Restrict the reduction consult to `state == "dispatched"` (the receipt-authoritative
+native launched ack — the single shape the #351 lane cannot see, which is all #628 needed);
+regression test `test_settled_lookup_ignores_non_native_settlements` pins legacy and
+handed-off settlements to the fall-through.
+
+**Generalizable rule.** When two runtimes share a byte-frozen flow that consults injected
+callables, each callable's truth set is part of the cross-runtime contract: make one runtime's
+callable answer "yes" in more states than the reference and you have changed the frozen flow's
+observable precedence without touching a shared byte — so port callable semantics exactly, and
+widen them only for states the reference provably cannot reach.
+
 ### One-directional vocabulary awareness on a shared ledger is a double-dispatch generator {#v2-vocabulary-asymmetry-628}
 
 **Context.** The codex runtime writes `outcome.dispatch.v2` intent/ack records to the shared

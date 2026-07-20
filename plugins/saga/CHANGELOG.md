@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.106.1] - 2026-07-20
+
+### Fixed - Handoff settled-guard refusal-precedence parity (#631)
+
+- The `accept_handoff` already-settled guard (`_settled_lookup`) now consults the shared v1/v2
+  dispatch reduction ONLY for the receipt-authoritative `dispatched` state (a codex-native
+  launched acknowledgement — the one settlement the #351 lane cannot see). Legacy commits and
+  operator handoffs fall through to the #351 dispatch-settlement lane, matching the codex
+  runtime's accept-path lookup. The 0.106.0 form consulted every settled state, which reordered
+  refusal codes in the byte-frozen `outcome_compat` accept flow: a handoff replayed by a second
+  receiver refused `handoff-already-settled` where the cross-runtime contract (and codex, given
+  identical state) refuses `handoff-receiver-conflict`.
+
 ## [0.106.0] - 2026-07-20
 
 ### Fixed - Outcome advance and handoff settled-guard read codex-native dispatch records (#628)

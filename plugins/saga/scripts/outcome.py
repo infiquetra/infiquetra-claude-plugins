@@ -1735,6 +1735,12 @@ def _settled_lookup(repo_root: Path, outcome_id: str = ""):
     dispatch reduction (#628), so a codex-native launched acknowledgement makes
     ``accept_handoff`` refuse with ``handoff-already-settled`` instead of re-admitting a leaf
     whose dispatch already concluded natively. ``unit_id`` is the handoff offer's subplot id.
+
+    The reduction consult preempts ONLY for the receipt-authoritative ``dispatched`` state —
+    the one settlement shape the #351 lane cannot see. Legacy commits and operator handoffs
+    must fall through to the #351 lane so the byte-frozen ``outcome_compat`` accept flow keeps
+    codex-identical refusal-code precedence (a replayed handoff refuses
+    ``handoff-receiver-conflict``, not ``handoff-already-settled``) — #631.
     """
     import dispatch_settlement
 
@@ -1751,7 +1757,11 @@ def _settled_lookup(repo_root: Path, outcome_id: str = ""):
                 )
             except (OutcomeError, outcome_store.OutcomeStoreError, OSError):
                 reduced = None  # cannot prove natively settled -> the #351 lane still decides
-            if reduced is not None and reduced.get("settled"):
+            if (
+                reduced is not None
+                and reduced.get("settled")
+                and reduced.get("state") == "dispatched"
+            ):
                 return True
         try:
             return (

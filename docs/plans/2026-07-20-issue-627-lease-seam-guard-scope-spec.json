@@ -1,0 +1,149 @@
+{
+  "name": "issue-627-lease-seam-guard-scope",
+  "description": "Issue #627: the four validated PA-2 upstream routings at 83a170ff — refuse-mode lease admission (opt-in, KTD1), DispatcherError arm on the reconcile hot path (KTD3), reducer-visible halt records (KTD4), universal fail-closed ancestor walk (KTD2), release surfaces + codex follow-up definition. Concurrency shaped to the operator cap of 3: fully serialized U1->U2->U3->U4->U5 (U2 and U3 both edit outcome.py; serialization avoids write conflicts and keeps the refute-3 panels — at cap — from overlapping a running unit). Panels ride the unit tier on the three contract-bearing units: U1 (admission semantics on the shared broker), U2 (the reduction seam that produced #631), U4 (security guard scope on the byte-frozen seam).",
+  "repo": "infiquetra/infiquetra-claude-plugins",
+  "units": [
+    {
+      "unit_id": "U1",
+      "label": "refuse-mode lease admission + dispatcher wiring + prose de-overclaim",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "worth_it_because": "admission semantics on the fleet-shared broker: a liveness-check mistake either re-opens the cross-runtime double-dispatch class (#628's cousin) or breaks the #356 retry-supersede design every other consumer depends on.",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "U1: Add the opt-in on_conflict admission mode (supersede default | refuse) to fleet_commons lease_broker acquire_agent/_drop_superseded_resource_lease with a liveness check via the existing _expired predicate, a typed conflict error subclassing LeaseOwnershipError naming the holder, unchanged precedence for the settlement-retained and canonically-closed arms, and wire the outcome dispatcher (make_dispatcher in outcome_dispatcher.py) to pass refuse; de-overclaim the dispatcher/broker prose. Tests per the plan's U1 scenarios including the two-broker refusal with zero registry mutation, expired-prior reclaim, test_retry_supersedes_at_full_capacity untouched-and-green, and the KTD6 dispatch-identity determinism pin. Read the plan at docs/plans/2026-07-20-issue-627-lease-seam-guard-scope-plan.md (U1, R1/R2/R7, KTD1/KTD6) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [],
+      "files": [
+        "plugins/fleet-core/scripts/fleet_commons/lease_broker.py",
+        "plugins/saga/scripts/outcome_dispatcher.py",
+        "tests/test_fleet_lease_broker.py",
+        "tests/test_outcome_dispatcher.py"
+      ],
+      "verify": {
+        "n": 3,
+        "pass_rule": "majority"
+      }
+    },
+    {
+      "unit_id": "U2",
+      "label": "DispatcherError arm in _reconcile_once: release lock, durable visible halt, continue tick",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "worth_it_because": "the reconcile/reduction seam produced #628 and then #631 — injected-callable truth sets are cross-runtime contract here; a wrong halt shape or an ack-shaped record silently reorders settlement semantics.",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "U2: Add the except DispatcherError arm to _reconcile_once in plugins/saga/scripts/outcome.py beside the BackendRateLimitError/BackendHaltError arms: release the per-subplot lease exactly as the siblings, append a durable reducer-visible halt record ({**receipt, \"kind\": \"dispatch\"}, phase halt, the same key as the intent append so the orphaned-intent lane is paired, never an ack), settle the attempt as SILENT_NOOP (the LEDGER_CLASSIFICATIONS vocabulary is closed — no new member; the BackendHaltError arm's no-backend-effect precedent applies), append sid to halted, continue the tick. Mirror the codex pin name test_advance_records_lease_refusal_as_halt_and_continues. Tests per the plan's U2 scenarios (lock released without TTL wait, reduce_dispatch_ledger derives halted=True settled=False, second ready leaf still dispatches, renew-failure flavor takes the same arm). Read the plan at docs/plans/2026-07-20-issue-627-lease-seam-guard-scope-plan.md (U2, R3, KTD3/KTD4) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U1"
+      ],
+      "files": [
+        "plugins/saga/scripts/outcome.py",
+        "tests/test_outcome_command.py"
+      ],
+      "verify": {
+        "n": 3,
+        "pass_rule": "majority"
+      }
+    },
+    {
+      "unit_id": "U3",
+      "label": "halt-record visibility: kind survives the spread at all three sites, end-to-end report pin",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U3: At the three receipt-spread halt appends in plugins/saga/scripts/outcome.py (spend-gate, backend-menu, BackendHaltError arm — currently :1314/:1383/:1552) make the final kind \"dispatch\" (spread first, literal last), preserving the receipt's own kind under receipt_kind; retire the outcome_dispatcher.py:632-634 self-acknowledgment docstring; leave the three settlement-halt sites untouched; update the tests/test_outcome_report.py _halt fixture to spread a real HaltReceipt so it matches production shape. Tests per the plan's U3 scenarios (end-to-end forced BackendHaltError and spend/backend-menu halts through advance() -> reducer halted=True -> _halted_subplots -> consolidated report ambiguity item on a fresh read; halt-then-recovered stays non-sticky). Read the plan at docs/plans/2026-07-20-issue-627-lease-seam-guard-scope-plan.md (U3, R4, KTD4) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U2"
+      ],
+      "files": [
+        "plugins/saga/scripts/outcome.py",
+        "plugins/saga/scripts/outcome_dispatcher.py",
+        "tests/test_outcome_report.py",
+        "tests/test_outcome_command.py"
+      ]
+    },
+    {
+      "unit_id": "U4",
+      "label": "universal fail-closed ancestor walk in outcome_compat + audit_store, entry-point tests",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "worth_it_because": "security guard scope on the byte-frozen cross-runtime seam: the #624 lesson is that a guard can pass its own tests and be inert in production — the fix must be proven through the real resolve()-first entry points, and a scope mistake either re-opens the world-writable acceptance or refuses stock macOS roots fleet-wide.",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "U4: Rewrite _refuse_unsafe_handoff_ancestors (plugins/saga/scripts/outcome_compat.py) and _refuse_unsafe_ancestors (plugins/fleet-core/scripts/fleet_commons/audit_store.py) as the universal walk: every existing component from the filesystem root, lstat never resolve, refusing symlinked / world-writable-non-sticky / uninspectable components anywhere; sole mode exemption world-writable AND sticky (S_ISVTX); fail closed on NFS/SMB and FAT32/exFAT shapes per KTD2 with relocate guidance in the typed halts; keep FileNotFoundError/PermissionError arm semantics; rewrite both docstrings honestly (delete the audit_store 'covers every caller' claim); modules stay import-free of each other. Flip test_ensure_private_dir_exempts_paths_outside_home to a refusal pin; drive the symlinked-home-component and out-of-home probes through the REAL entry points (Store.for_root(...).ensure(), resolve_common_dir-derived _write_once); add the sticky-1777 acceptance, stock-root pass, FAT32-shape refusal, and the missing group-writable acceptance twin in the compat suite; keep the no-absolute-path receipt pin green. Read the plan at docs/plans/2026-07-20-issue-627-lease-seam-guard-scope-plan.md (U4, R5/R6/R7, KTD2/KTD5) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U3"
+      ],
+      "files": [
+        "plugins/saga/scripts/outcome_compat.py",
+        "plugins/fleet-core/scripts/fleet_commons/audit_store.py",
+        "tests/test_outcome_cross_runtime_contract.py",
+        "tests/test_audit_store.py"
+      ],
+      "verify": {
+        "n": 3,
+        "pass_rule": "majority"
+      }
+    },
+    {
+      "unit_id": "U5",
+      "label": "release surfaces saga 0.107.0 + fleet-core 0.17.0, journal entries, codex follow-up draft",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U5: Bump plugins/saga/.claude-plugin/plugin.json to 0.107.0 and plugins/fleet-core/.claude-plugin/plugin.json to 0.17.0, sync .claude-plugin/marketplace.json, write both CHANGELOG entries (refuse-mode admission with the honest seam description, universal fail-closed guard walk with the FAT32/exFAT boundary, DispatcherError arm, halt-record visibility), update the drift-guard version pins in-commit, commit the already-staged DECISIONS entry {#lease-refuse-mode-and-universal-guard-627} (do not duplicate it) and add a LEARNINGS entry if implementation surfaced a non-obvious mechanism, and author docs/sdlc-issue-drafts/2026-07-20-codex-627-refreeze-and-worktree-lease-port.md defining the codex follow-up (outcome_compat byte-faithful re-freeze at the merged SHA with RUNTIME_LABEL sole divergence, audit_store guard re-port, refuse-mode + arm mirroring, port-manifest frozen-range update, inventory rebuild, release surfaces, plus the COR3 outcome_worktrees lease-authority threading port unit re-verified at the merged SHA). Read the plan at docs/plans/2026-07-20-issue-627-lease-seam-guard-scope-plan.md (U5, R8, KTD5) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "summary"
+      ],
+      "depends_on": [
+        "U4"
+      ],
+      "files": [
+        "plugins/saga/.claude-plugin/plugin.json",
+        "plugins/fleet-core/.claude-plugin/plugin.json",
+        ".claude-plugin/marketplace.json",
+        "plugins/saga/CHANGELOG.md",
+        "plugins/fleet-core/CHANGELOG.md",
+        "tests/test_saga_plugin.py",
+        "docs/engineering-journal/DECISIONS.md",
+        "docs/engineering-journal/LEARNINGS.md",
+        "docs/sdlc-issue-drafts/2026-07-20-codex-627-refreeze-and-worktree-lease-port.md"
+      ]
+    }
+  ]
+}

@@ -1,5 +1,35 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-07-20
+
+### Lease admission refuses live conflicts only where the caller opts in; ancestor guards fail closed everywhere {#lease-refuse-mode-and-universal-guard-627}
+
+**Decision.** Two operator-adjudicated calls from the #627 plan (2026-07-20). (1) `acquire_agent`
+gains an `on_conflict` admission mode (`"supersede"` default | `"refuse"`); only the outcome
+dispatcher opts into `refuse`, so a live unexpired lease on the same content-derived resource
+digest refuses a racing runtime at admission while #356's retry-supersede design stays intact for
+every other broker consumer. (2) Both ancestor guards (`outcome_compat` handoff store, fleet-core
+`audit_store`) walk every existing path component regardless of location, exempting only
+world-writable AND sticky components — NFS/SMB mode-divergent homes and FAT32/exFAT
+world-writable non-sticky volumes are refused (fail closed), with no filesystem-type exemption
+logic.
+
+**Rejected alternatives.** Blanket refuse-on-conflict as the broker default (breaks the #356
+retry design and its pinned test, widest blast radius); prose-only supersede documentation
+(leaves double-preparation in the cross-runtime overlap window); `statfs f_fstypename` exemptions
+for external volumes (reintroduces an accepted-unsafe class inside the byte-frozen cross-runtime
+seam).
+
+**Revisit when.** A second production consumer wants refuse-mode admission (promote the mode to a
+documented broker contract rather than an outcome-dispatch detail); or a legitimate workflow
+needs stores on external non-HFS/APFS volumes (then design a signed exemption, not a mode-bit
+carve-out); or cross-clone settlement coordination lands (the documented per-clone boundary this
+decision leaves in place).
+
+**Refs.** Plan `docs/plans/2026-07-20-issue-627-lease-seam-guard-scope-plan.md` (KTD1/KTD2);
+issue #627; codex PA-2 review `2026-07-20-pa2-seam-activation-code-review.md` (SEC1/SEC2);
+[[resolve-disarms-symlink-guards-624]], [[lease-settlement-window-356]].
+
 ## 2026-07-19
 
 ### Fleet doctor is an independent cross-source auditor, never a shared projection {#fleet-doctor-independent-audit-353}

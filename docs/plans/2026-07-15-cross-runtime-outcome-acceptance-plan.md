@@ -3,6 +3,7 @@ title: Lease-safe runtime continuity - cross-runtime acceptance proof
 type: test
 status: ready-to-freeze
 date: 2026-07-15
+deepened: 2026-07-20
 origin: docs/outcomes/lease-safe-runtime-continuity/issue-sources/cross-runtime-acceptance.md
 issue: infiquetra/infiquetra-claude-plugins#605
 parent: infiquetra/infiquetra-claude-plugins#579
@@ -28,21 +29,41 @@ This plan is `ready-to-freeze`: implementation begins only after the exact merge
 Codex substrate, Codex protocol-parity, and #353 SHAs/versions/evidence are available and pass their
 own gates.
 
+**2026-07-20 refresh — bound inputs, pre-acceptance units, and AFK operating mode.** All hard
+dependencies are merged and live-verified: `sub-353` (`cf15a09f`), the Codex substrate (#33,
+`3723a818`), and the Codex parity port (#34, `d29e75fd`) shipped, leaving this leaf as the sole
+remaining node. The operator (Jeff) directed in-session on 2026-07-20: "ok lets refresh the plan
+and assume I will be afk for this frontier." This refresh therefore records the delegated authority
+for unattended execution: Claude-direct cc-workflow inline ceremony (the vehicle approved for #604,
+#33, and #34); the standing 2026-07-18 merge pre-approval ("for the rest of this outcome") covers
+every merge in this frontier; doc-review of this refresh with all findings repaired substitutes for
+the interactive plan-review touchpoint; and the Workflow Structure anchor is adopted under the same
+delegation. Execution pages the operator only by halting on a stop condition and leaving a durable
+report — it never widens authority to keep moving. Ceremony anchor:
+`4b21df73f98030f97b5f770adddaf33e14048a07af8221005f6d5e3699e1cb0f` over 3754 bytes from the
+`## Workflow Structure` heading to the `## Completion gate` heading, exclusive (the span includes
+the operating contract).
+
 ## Hard inputs and authority
 
 - Outcome specification
   `docs/outcomes/lease-safe-runtime-continuity/outcome-spec.json`, node
   `cross-runtime-acceptance`; hard dependencies are `sub-353` and `codex-parity`.
-- Exact merged PR SHAs and installed Saga/Fleet Core versions for Claude compatibility, Codex shared
-  substrate, and Codex protocol parity.
+- Verified baseline pins (live-verified 2026-07-20): Claude `infiquetra-claude-plugins`
+  `origin/main` = `cf15a09f` (#353 squash; carries #604 `97d2fb15` and #358 `30bde209`) with saga
+  `0.104.0` and fleet-core `0.15.0`; Codex `infiquetra-codex-plugins` `origin/main` = `d29e75fd`
+  (#34 squash) with saga `0.77.0+codex.20260720023112` and fleet-core
+  `0.9.0+codex.20260719174556`. The PA units below advance both pins; the harness receives the
+  exact post-PA merge SHAs and versions on invocation and re-verifies them itself (R1).
 - Claude compatibility schema and fixture digest plus both Codex port-manifest/cutover digests.
 - Runtime-neutral broker-root resolution contract and the redacted canonical-root digest reported by
   both installed runtimes.
 - Completed #353 command/report schema and exact merged SHA; transitively merged #351/#355/#357/#358.
 - Deterministic GitHub fixtures. No live issue, board, PR, credential, or production-data mutation is
   part of acceptance.
-- One acceptance branch/PR in `infiquetra-claude-plugins`; Codex remains read-only input at its exact
-  merged revision.
+- One acceptance branch/PR in `infiquetra-claude-plugins`; during acceptance (U1-U5) Codex remains
+  read-only input at its exact merged post-PA revision. PA-2 is the one pre-acceptance Codex PR and
+  merges before any pin is taken.
 
 ## Acceptance topology
 
@@ -139,8 +160,75 @@ outcome close only if QA accepts every criterion with no waiver.
   copied to clone B or treated as a bearer credential.
 - **KTD6 - one settlement does not replace runtime acknowledgement.** The harness asserts both shared
   idempotency truth and Codex's native launch proof where applicable.
+- **KTD7 - deferred-work discharge is upstream-first and precedes pinning (2026-07-20).** Items
+  touching shared or byte-faithful surfaces are fixed in `infiquetra-claude-plugins` first and
+  re-ported, never patched codex-only; both PA PRs merge before the harness pins its inputs, so
+  acceptance verifies final released behavior. The acceptance PR itself still contains no
+  production fix — KTD4 stands.
+- **KTD8 - lease-seam activation restores wiring parity (discharges the #34 plan's "KTD6"
+  deferral).** Claude's shipped `outcome.py` already passes
+  `lease_authority=outcome_dispatcher.default_lease_authority()` at both dispatcher call sites
+  (`:2422`/`:2478` at `cf15a09f`); the codex port withheld it by operator decision 2026-07-19.
+  PA-2 wires the two codex call sites identically — activation is parity restoration, not new
+  design.
+- **KTD9 - AFK operating mode (operator directive 2026-07-20).** The directive (verbatim in the
+  Summary) delegates this frontier's interactive gates: doc-review of this refresh with all
+  findings repaired replaces interactive plan review; the ceremony anchor is adopted under the
+  same delegation; merges ride the standing 2026-07-18 pre-approval. Anything outside this
+  recorded authority is a HALT with a durable report, never a judgment call.
+
+## Pre-acceptance production units
+
+The #34 code-review and QA gates dispositioned five deferred items; three require production
+changes, and the operator's 2026-07-19 seam deferral placed dispatcher lease activation in this
+leaf. Both PA units below are discharged and merged before the harness pins its inputs (KTD7).
+Right-sizing: each PA unit ships under the programmatic `saga:code-review` gate (four always-on
+lenses plus independent validators) and its repo's full local battery — not the six-lens
+plan-anchored ceremony, which is reserved for the harness implementation (U1-U5). Rationale: both
+are remediation-class changes with narrow, enumerated diffs — the same class as #34's `39a9ed4`
+remediation commit, which shipped under the review gate alone. Each unit gets a small tracked
+issue (mission-control) so its PR closes it.
+
+### PA-1. Claude upstream hardening (`infiquetra-claude-plugins`)
+
+At the `cf15a09f` sites:
+
+- Stale `export`/`import` `--help` strings still describing the retired bundle flow
+  (`plugins/saga/scripts/outcome.py:2281/:2284`): reword to live semantics (`export` is a
+  deprecated read-only alias of `discover`; `import` always refuses with migration guidance).
+- Unreachable success-print after the unconditional `import_bundle` refusal
+  (`outcome.py:2624-2627`): remove the dead success path; the refusal receipt is the only output.
+- Protected handoff-store directory created at default umask (`outcome_compat.py` `_write_once`,
+  line 1135): create with `0o700` and verify, mirroring the `audit_store` pattern; sealed records
+  stay `0o600`.
+- `fleet_commons/audit_store.py` ancestor hardening: refuse a symlinked store root and any
+  world-writable existing ancestor below the user's home; typed refusal, no silent fallback.
+
+Behavior tests for each; release surfaces in the same PR (saga and fleet-core version rungs,
+changelogs, marketplace registry, guard floors per `{#release-event-guard-floor-604}` — floors,
+never current-version pins). Full battery, programmatic code review, PR, merge under the standing
+approval. The merge SHA becomes the Claude acceptance pin and the new frozen port source.
+
+### PA-2. Codex seam activation and re-port (`infiquetra-codex-plugins`)
+
+- Dispatcher lease activation: wire `lease_authority=outcome_dispatcher.default_lease_authority()`
+  at both `make_dispatcher` call sites (`plugins/saga/scripts/outcome.py:2011/:2129` at
+  `d29e75fd`), matching Claude's shipped wiring (KTD8); replace
+  `test_dispatcher_lease_seam_stays_dormant_ktd6` with an activation pin asserting the authority
+  is threaded and a real lease is taken and released on the dispatch path.
+- Re-port PA-1: refresh `outcome_compat.py` byte-faithful to the PA-1 merge SHA and re-prove the
+  divergence is exactly the `RUNTIME_LABEL` pair; re-port the CLI `--help`/dead-print fixes into
+  the grafted arms (`outcome.py:1934/:1937/:2209`); port the `audit_store` ancestor hardening;
+  update the port manifest's frozen-source range (preserve `indent=2, sort_keys=True`).
+- Release surfaces: saga and fleet-core `+codex` version rungs, changelogs, legacy-token inventory
+  rebuild (`build_legacy_workflow_inventory.py --write` after every inventoried-file edit),
+  `validate_codex_plugins` green from a worktree-free primary checkout.
+- Full battery, programmatic code review, PR, merge. The merge SHA becomes the Codex acceptance
+  pin. Codex CLI invocations run with `env -u OPENAI_API_KEY` (the env var is a literal stub).
 
 ## Implementation units
+
+U1 begins only after PA-1 and PA-2 are merged and R1 re-verifies the advanced pins.
 
 ### U1. Pinning, isolated installation, and evidence schema
 
@@ -178,7 +266,7 @@ owning defect without production edits.
 
 ```text
 tools/run_cross_runtime_outcome_acceptance.py
-tests/test_outcome_cross_runtime.py
+tests/test_cross_runtime_acceptance.py
 tests/fixtures/outcome-cross-runtime-acceptance/
 docs/validation/lease-safe-runtime-continuity/cross-runtime-acceptance.schema.json
 docs/validation/lease-safe-runtime-continuity/cross-runtime-acceptance.json
@@ -192,8 +280,14 @@ and open/reopen the owning runtime defect.
 
 ## Verification
 
+PA units run their own repo's full battery before their PRs (Claude: pytest, ruff check and
+format --check, mypy, bandit, release-surface parity, marketplace sync check; Codex:
+`PYTHONPATH=. uv run pytest -q -p no:cacheprovider`, ruff check, `validate_codex_plugins` from a
+worktree-free primary). The harness suite name is deliberately distinct from the existing
+`tests/test_outcome_cross_runtime_contract.py` (#604's contract suite).
+
 ```bash
-uv run pytest tests/test_outcome_cross_runtime.py -v
+uv run pytest tests/test_cross_runtime_acceptance.py -v
 uv run python tools/run_cross_runtime_outcome_acceptance.py \
   --claude-repo <clean-claude-checkout> \
   --claude-sha <merged-sha> \
@@ -226,35 +320,49 @@ boundary, and residual risk after the implementation/code-review loop.
 - Teardown/doctor leaves any resource, dispatch, delegation, handoff, or wiring position open.
 - Evidence cannot bind exact SHAs/versions/digests/commands or violates the privacy schema.
 - A production fix is needed in the acceptance PR, or any P0-P3 review/QA finding remains.
+- (AFK) A required authority is outside this plan's recorded delegation, an anchor or lens receipt
+  cannot be satisfied, or a gate demands operator judgment — HALT, write the durable report, and
+  wait; never proceed by widening authority.
 
 ## Workflow Structure
 
-| step_id | depends_on | barrier | role_id | role_kind | independence | execution_class | runtime_agent_name | vehicle | mutation | required_evidence | role_lens_sha256 | profile_sha256 | expected_model | expected_effort | validator_required | validator_disabled | deterministic_contract_sha256 |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| implement | - | - | root | root | n/a | - | - | root | root-only | pinned-inputs,authorized-diff,focused-tests | - | - | - | - | n/a | n/a | - |
-| review-devils | implement | review | devils-advocate-reviewer | agent-lens | preferred | review-high | review_high | auto | none | scored-review,findings | 129f6dca0702ffcd4be7f9e5d0939e8e6806788846ba4058044c931883ef0e63 | 42e86e00e054281b0a79e4b3b9b544c04a31eb2fd6b53c0489adc42ea639c9a8 | gpt-5.6-sol | high | n/a | n/a | - |
-| review-security | implement | review | security-reviewer | agent-lens | preferred | review-high | review_high | auto | none | scored-review,findings | bf5bc1b66c0ee3d06071976b659c522c23057c56de5f6cc010556b2653c86980 | 42e86e00e054281b0a79e4b3b9b544c04a31eb2fd6b53c0489adc42ea639c9a8 | gpt-5.6-sol | high | n/a | n/a | - |
-| review-architecture | implement | review | architecture-reviewer | agent-lens | preferred | review-high | review_high | auto | none | scored-review,findings | e48b37cea0b26bf39cae4d6611b4219e907d52d284ba6b9489b523a4b16c835f | 42e86e00e054281b0a79e4b3b9b544c04a31eb2fd6b53c0489adc42ea639c9a8 | gpt-5.6-sol | high | n/a | n/a | - |
-| review-testing | implement | review | testing-reviewer | agent-lens | preferred | review-high | review_high | auto | none | scored-review,test-gaps | a867575e24c86b0573485d1d8bbd81514af3654d544342677b85f4bed0d9af63 | 42e86e00e054281b0a79e4b3b9b544c04a31eb2fd6b53c0489adc42ea639c9a8 | gpt-5.6-sol | high | n/a | n/a | - |
-| validate-concurrency | implement | validate | concurrency-tester | agent-lens | preferred | test-medium | test_medium | auto | none | happens-before-matrix,effect-counts,command-results | d40188645b7876e32ea592dd9799ee2ad7a2e230d82341611708dd492837b3da | 6d69bb4d5e477574ce186a353a3d2fcc7f8ab6b1f014b93aebb05084aecccc1b | gpt-5.6-terra | medium | true | false | - |
-| validate-event-flow | implement | validate | event-flow-tester | agent-lens | preferred | test-medium | test_medium | auto | none | event-trace,settlement-ack-chain,command-results | 2e20ab6935b1e17e363b5e28308a9288107532d0118a6a189f07b0e0eaaff356 | 6d69bb4d5e477574ce186a353a3d2fcc7f8ab6b1f014b93aebb05084aecccc1b | gpt-5.6-terra | medium | true | false | - |
-| validate-scenarios | implement | validate | scenario-tester | agent-lens | preferred | test-medium | test_medium | auto | none | acceptance-matrix,evidence-schema,command-results | 8167b31e38f328eca0bf4cfc4ad782ee3a85669af7b08be8aa422b8edbc46f68 | 6d69bb4d5e477574ce186a353a3d2fcc7f8ab6b1f014b93aebb05084aecccc1b | gpt-5.6-terra | medium | true | false | - |
-| integrate | review-devils,review-security,review-architecture,review-testing,validate-concurrency,validate-event-flow,validate-scenarios | - | root | root | n/a | - | - | root | root-only | fixed-findings,full-gate,qa-verdict,evidence-bundle,git-receipt | - | - | - | - | n/a | n/a | - |
+Vehicle: Claude-direct cc-workflow inline ceremony — the same form approved for #604 (anchor
+`214431cf`), #33 (`bc038d41`), and #34 (`c76ef1ee`). Root (the session) is the only writer; every
+reviewer and validator lens is one read-only `agent()` call spawned as `saga:readonly-verifier`
+with `isolation: "worktree"`. Reviewer lenses run at opus/high; validator lenses run at
+sonnet/medium. Fan-out routes through a bounded pool of 3 (the hard concurrency cap for
+above-Haiku agents); if the Workflow tool is unavailable the ceremony HALTS and pages rather than
+degrading to inline or unsandboxed review.
+
+| step_id | depends_on | role | tier | charter |
+|---|---|---|---|---|
+| implement | - | root | - | U1-U5 implementation, fixtures, evidence schema; root-only mutation. |
+| review-devils | implement | devils-advocate-reviewer | opus/high | Attack the harness's claim to prove R1-R10: where does a passing bundle overstate what was tested? Hunt accidental serialization masquerading as overlap (KTD2), false cross-clone equality (KTD3), and fixture shortcuts that make negative paths unreachable. |
+| review-security | implement | security-reviewer | opus/high | Privacy allowlist and evidence redaction (R10); no default-profile, credential, or transcript reads (R2); handoff-reference containment (KTD5); tamper/replay/skew rejections mutation-free (R4/R7); subprocess env hygiene including the `OPENAI_API_KEY` stub. |
+| review-architecture | implement | architecture-reviewer | opus/high | Harness/production boundary (KTD4 — no production repair in the acceptance PR), pin-verification layering (R1), clone A/B topology fidelity, teardown idempotency structure (R9), evidence-schema closure. |
+| review-testing | implement | testing-reviewer | opus/high | Scenario-matrix coverage against R3-R9 (both directions, both orderings, crash windows), oracle strength (typed errors and exact counts, never substrings), fixture determinism, negative-path completeness. |
+| validate-concurrency | implement | concurrency-tester | sonnet/medium | Execute the two-process barrier matrix; verify monotonic overlap receipts, write-once backend refusal, exactly-one settlement across orderings and crash injections (R5). |
+| validate-event-flow | implement | event-flow-tester | sonnet/medium | Trace dispatch -> settlement -> acknowledgement chains; verify Codex-native `outcome.dispatch.v2` plus `ack_kind=launched` when Codex launches and its absence when Claude launches (R6); settlement visibility cross-clone. |
+| validate-scenarios | implement | scenario-tester | sonnet/medium | Run the full acceptance matrix end-to-end from the pinned installed profiles; validate the evidence bundle against its schema, artifact digests, and privacy allowlist (R10). |
+| integrate | all lenses | root | - | Fix all P0-P3, re-adjudicate with originating lenses to convergence (three-cycle tripwire), full gate, QA routing, evidence-bundle commit. |
 
 ## Workflow operating contract
 
-Root is the only writer and owns commands, integration, Git, PR/merge, issue/board reconciliation,
-and QA routing. Reviewers/validators are read-only agent lenses and authorize no external mutation.
-The runtime receipt must match each requested Sol-high or Terra-medium profile/lens; missing or
-mismatched evidence is rerun fresh. Root fixes all P0-P3 findings and reruns affected roles, stopping
-after three unsuccessful remediation cycles. The workflow authorizes no deploy, credential,
-production/live GitHub data, real-profile mutation, live Outcome advance, force-push, or branch
-deletion.
+Root is the only writer and owns commands, integration, Git, PR/merge, issue and board
+reconciliation, and QA routing. Reviewer and validator lenses are read-only, spawned as
+`saga:readonly-verifier` with worktree isolation, and authorize no external mutation; a lens that
+cannot run as specified (tool unavailable, receipt mismatch) is rerun fresh or the ceremony HALTS —
+never silently downgraded. Root fixes all P0-P3 findings and re-adjudicates each with its
+originating lens, stopping after three unsuccessful remediation cycles on the same finding (halt
+plus durable report). The workflow authorizes no deploy, credential access, production or live
+GitHub data mutation, real-profile mutation, live Outcome advance, force-push, or branch deletion.
 
 ## Completion gate
 
-Every R1-R11 selector passes against exact merged and installed identities; the durable evidence
-bundle validates and is privacy-safe; teardown and fleet doctor are clean; code review has zero open
+PA-1 and PA-2 are merged with their gates green and their tracked issues closed; every R1-R11
+selector passes against exact merged and installed identities; the durable evidence bundle
+validates and is privacy-safe; teardown and fleet doctor are clean; code review has zero open
 P0-P3 findings; `saga:qa` accepts without waiver; the acceptance PR merges; all four #579 children
-close and reconcile on Operations; #579 closes; the outcome report is final; and the coordinator DAG
-has no pending node or leaked worktree/resource.
+close and reconcile on Operations; #579 closes; the outcome report is final; the coordinator DAG
+has no pending node or leaked worktree/resource; and the AFK writebacks land (final outcome report,
+engineering-journal entries, memory update, and the closing report to the operator).

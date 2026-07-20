@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-07-19
+
+### Fixed - external CLI children bypass terminal workspace wrappers
+
+- Supervised Codex subprocesses now force `CMUX_AGENT_BYPASS=1` in the child environment. This
+  keeps plugin-owned `codex exec` runs independent of inherited cmux workspace and status wrappers.
+
 ## [0.1.2] - 2026-07-10
 
 ### Changed - explicit model and effort provenance (#559)

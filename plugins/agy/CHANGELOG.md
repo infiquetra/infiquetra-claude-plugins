@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-07-19
+
+### Fixed - external CLI children bypass terminal workspace wrappers
+
+- Supervised Agy subprocesses now force `CMUX_AGENT_BYPASS=1` in the child environment. This
+  prevents a caller's inherited cmux shell integration from turning a plugin-owned external CLI
+  invocation into a new interactive workspace while preserving normal direct terminal launches.
+
 ## [0.5.0] - 2026-07-17
 
 ### Added - lease-fenced direct apply and orphan containment (#355)

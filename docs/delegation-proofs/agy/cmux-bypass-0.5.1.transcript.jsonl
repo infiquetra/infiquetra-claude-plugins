@@ -1,0 +1,2 @@
+{"type":"tool_use","tool_name":"Bash","command":"CMUX_AGENT_BYPASS=1 agy --model 'Gemini 3.1 Pro (High)' --print-timeout 120s --log-file /private/tmp/agy-cmux-bypass-0.5.1-genuine.log --add-dir /Users/jefcox/workspace/infiquetra/infiquetra-claude-plugins --sandbox --print 'Reply with exactly: cmux external CLI bypass verified. Do not modify files.'"}
+{"type":"tool_result","tool_name":"Bash","exit_code":0,"text":"cmux external CLI bypass verified."}

@@ -445,6 +445,35 @@ def test_run_agy_supervised_missing_agy_emits_no_receipt(
     )
 
 
+def test_run_agy_supervised_forces_cmux_bypass(
+    agy_delegate: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    fake_agy = tmp_path / "fake-agy"
+    fake_agy.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os\n"
+        "print(os.environ.get('CMUX_AGENT_BYPASS', ''), flush=True)\n",
+        encoding="utf-8",
+    )
+    fake_agy.chmod(0o755)
+    monkeypatch.setenv("CMUX_AGENT_BYPASS", "0")
+
+    envelope = agy_delegate.Envelope.from_mapping(_valid_payload())
+    stdout_path = tmp_path / "stdout.log"
+    run_result = agy_delegate.run_agy_supervised(
+        envelope,
+        prompt="do the thing",
+        repo_root=tmp_path,
+        bundle_path=tmp_path,
+        stdout_path=stdout_path,
+        stderr_path=tmp_path / "stderr.log",
+        agy_bin=str(fake_agy),
+    )
+
+    assert run_result.status == "success"
+    assert stdout_path.read_text(encoding="utf-8") == "1\n"
+
+
 def test_run_agy_supervised_oserror_on_launch_emits_no_receipt(
     agy_delegate: ModuleType, tmp_path: Path
 ) -> None:

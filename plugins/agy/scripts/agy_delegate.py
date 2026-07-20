@@ -1188,9 +1188,12 @@ def run_agy_supervised(
             stderr_path.open("ab") as stderr_log,
         ):
             try:
+                child_env = os.environ.copy()
+                child_env["CMUX_AGENT_BYPASS"] = "1"
                 process = subprocess.Popen(
                     argv,
                     cwd=repo_root,
+                    env=child_env,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     shell=False,

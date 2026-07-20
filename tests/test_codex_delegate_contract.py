@@ -333,6 +333,22 @@ if out_path:
 sys.exit(0)
 """
 
+_FAKE_CODEX_REPORTS_CMUX_BYPASS = """#!/usr/bin/env python3
+import json, os, sys
+argv = sys.argv[1:]
+out_path = None
+for i, tok in enumerate(argv):
+    if tok == "-o":
+        out_path = argv[i + 1]
+sys.stdin.read()
+print(json.dumps({"type": "cmux_bypass", "value": os.environ.get("CMUX_AGENT_BYPASS")}))
+sys.stdout.flush()
+if out_path:
+    with open(out_path, "w") as fh:
+        fh.write("final agent message")
+sys.exit(0)
+"""
+
 # Emits malformed lines interleaved with valid JSONL; still exits 0.
 _FAKE_CODEX_MALFORMED = """#!/usr/bin/env python3
 import json, sys
@@ -430,6 +446,17 @@ def test_supervised_success_writes_full_bundle_and_receipt(tmp_path) -> None:
     assert receipt["schema"] == "bridge_receipt.v1"
     assert receipt["engine_id"] == "codex"
     assert codex_delegate._bridge_receipt.validate_receipt(receipt) == []
+
+
+def test_supervised_codex_forces_cmux_bypass(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("CMUX_AGENT_BYPASS", "0")
+
+    result, bundle = _run_bundle(tmp_path, {}, _FAKE_CODEX_REPORTS_CMUX_BYPASS)
+
+    assert result.status == "success"
+    transcript = (bundle / "transcript.jsonl").read_text(encoding="utf-8")
+    assert '"type": "cmux_bypass"' in transcript
+    assert '"value": "1"' in transcript
 
 
 def test_supervised_launch_failure_is_fail_loud_with_no_receipt(tmp_path) -> None:

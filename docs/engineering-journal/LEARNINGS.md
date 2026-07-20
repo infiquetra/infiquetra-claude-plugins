@@ -160,6 +160,27 @@ of behavior.
 
 ## 2026-07-19
 
+### Terminal wrappers must distinguish operator launches from tool-owned children {#external-cli-cmux-bypass}
+
+**Context.** Claude Code external-engine plugins ran inside a cmux-hosted session whose Bash startup
+installed `agy`, `codex`, and `claude` shell functions. A bare child invocation could therefore be
+treated as a new operator session and create extra cmux workspaces.
+**Evidence.** A noninteractive `bash -lc` still resolved `agy` and `codex` as cmux functions before
+the fix. The guarded adapters themselves use `subprocess.Popen(..., shell=False)`, but inherited
+terminal state remained available to the external process and any nested shell it started.
+**Mechanism.** The cmux shim keyed only on `CMUX_WORKSPACE_ID`; it did not distinguish an interactive
+operator shell from a noninteractive tool child. Argument classification reduced some incidents but
+could not establish process ownership reliably.
+**Fix.** The machine shim now installs agent wrappers only in interactive shells and honors
+`CMUX_AGENT_BYPASS=1` as a direct-native execution contract. The Agy and Codex adapters force that
+flag in every supervised child environment.
+**Validation.** Noninteractive login shells resolve both CLIs as files, the interactive bypass path
+executes the configured native binary, and adapter contract tests verify a child sees the forced
+value even when the parent supplied `CMUX_AGENT_BYPASS=0`.
+**Generalizable rule.** Terminal integration is presentation state, not execution policy. External
+engine adapters must explicitly mark tool-owned children, and terminal wrappers must fail toward
+native execution whenever ownership is not interactive and operator-driven.
+
 ### A green local gate does not cover fixture-environment assumptions {#hermetic-git-fixtures-353}
 
 **Context.** The #353 branch passed the full local gate three times (pytest 5212/0/1) and the

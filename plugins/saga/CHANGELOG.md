@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.105.0] - 2026-07-20
+
+### Fixed - Outcome CLI retired-bundle surface (#624, PA-1 of #605)
+
+- `outcome export`/`import` `--help` strings no longer describe the retired `outcome-bundle/1`
+  flow: `export` is named a deprecated read-only alias of `discover`, `import` is named
+  always-refusing with `discover`/`attach` migration guidance (#604 R10).
+- Removed the unreachable success print after the unconditional `import_bundle` refusal — the
+  top-level refusal receipt (`{"ok": false, "error": ...}`, exit 1) is the import arm's only
+  output.
+- `outcome import` now refuses without reading its path argument, so a missing or malformed
+  bundle file yields the `#604 R10` migration guidance instead of an uncaught `FileNotFoundError`
+  traceback or a bare JSON parse error.
+
+### Security - Protected handoff-store directory (#624, PA-1 of #605)
+
+- `outcome_compat._write_once` now creates missing handoff-store directories `0o700` and refuses
+  a pre-existing handoffs directory that is a symlink, not owned by the effective uid, or not
+  mode `0o700` — a fail-closed `handoff-store-unsafe` compatibility halt (`chmod 700` remedy in
+  the receipt) instead of silently adopting a permissive directory. Sealed records stay `0o600`.
+- The same refusal now also walks existing path components strictly below the user's home and
+  rejects symlinked, world-writable, or uninspectable ancestors before any `mkdir` traverses
+  them — the fleet-core `audit_store` guard, ported (never imported: this module is the frozen
+  cross-runtime seam). Previously a symlinked intermediate parent was traversed silently and
+  only the leaf directory was checked.
+- `handoff-store-unsafe` receipts carry no absolute path, restoring the documented R12 invariant
+  that callers may print a receipt verbatim; the remedy names the git-common-dir store instead.
+
 ## [0.104.0] - 2026-07-19
 
 ### Added - Fleet doctor cross-source audit (#353)

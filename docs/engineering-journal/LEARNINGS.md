@@ -25,6 +25,85 @@
 
 ---
 
+## 2026-07-20
+
+### A `resolve()` upstream disarms the symlink half of a downstream ancestor guard {#resolve-disarms-symlink-guards-624}
+
+**Context.** PA-1 (#624) added `_refuse_unsafe_ancestors` to `fleet_commons/audit_store.py`: an
+`lstat` walk over each path component below `$HOME` that refuses symlinked or world-writable
+ancestors before `mkdir` can traverse them. Its docstring promised "a symlinked ancestor is
+refused before any `mkdir` could traverse it." The programmatic code-review gate found the
+promise false for every production caller.
+
+**Evidence.** `audit_store.Store.for_root` canonicalizes with `resolved.expanduser().resolve()`
+(`plugins/fleet-core/scripts/fleet_commons/audit_store.py`, `for_root`), and every write path
+derives from that root. Reviewer probe: with `~/.claude` a symlink, `Store.for_root(link /
+"delegation-audit").ensure()` created the directory under the link's target without raising,
+while `_ensure_private_dir(link / "delegation-audit")` on the *unresolved* path did raise. The
+tests hid it — all three new guard tests call `_ensure_private_dir` directly, never through
+`Store.for_root(...).ensure()`.
+
+**Mechanism.** `Path.resolve()` collapses symlinks, so by the time the walk runs there are no
+symlinked components left to find; the branch is unreachable from the resolved entry point. Mode
+bits, by contrast, are properties of the resolved inode, so the world-writable branch keeps
+working. One guard, two branches, different reach — determined by whether the property survives
+canonicalization.
+
+**Fix.** Docstring and CHANGELOG now state the split (world-writable covers all callers; symlink
+covers direct callers and the post-resolve window) rather than promising blanket protection.
+`.resolve()` was deliberately kept: `test_default_root_resolves_under_home_dot_claude_delegation_audit`
+pins canonical-root semantics, and refusing a symlinked `~/.claude` outright would break the
+common dotfile-manager layout. The same walk was ported into `outcome_compat` so the two sides
+share a real predicate.
+
+**What surprised.** A guard can pass its own tests, be genuinely correct in isolation, and still
+be inert in production — because the caller sanitized the input the guard exists to inspect.
+
+**Generalizable rule.** When a check inspects a *path*, confirm nothing upstream resolved it
+first, and test the guard through the real entry point, not just the private helper. Ask of every
+property a guard tests: does it survive canonicalization? If not, the guard only defends callers
+that skip canonicalization.
+
+**Refs.** `docs/code-reviews/2026-07-20-issue-624-pa1-upstream-hardening-code-review.md`
+(findings C1, S2); [[help-strings-are-release-surfaces-624]].
+
+### `uv run <tool>` silently falls through to PATH when the dev extra is unsynced {#uv-run-path-fallthrough-624}
+
+**Context.** In a fresh PA-1 worktree, `uv run pytest` reported "2 errors during collection —
+No module named 'mcp'" while `uv run python -c "import mcp"` succeeded in the same directory.
+**Evidence.** #624 worktree `work-624-pa1`: `.venv/bin/` had no pytest/ruff/mypy binaries;
+`which pytest` resolved to `/opt/homebrew/bin/pytest`, whose interpreter lacks the project deps.
+**Mechanism.** The repo's dev tools live in the optional `dev` extra
+(`[project.optional-dependencies]`, pyproject.toml), and a bare `uv sync` does not install
+extras. `uv run <cmd>` falls back to PATH when the venv has no such entrypoint — so pytest ran
+under homebrew's Python against the repo's tests, a mixed-interpreter run that fails on the
+first project-only import instead of announcing the wrong environment.
+**Fix.** `uv sync --extra dev` in every fresh worktree before the battery; verify with
+`.venv/bin/pytest --version`. Full suite then passed 5220/0/1.
+**Generalizable rule.** In a fresh worktree, prove the tool binary lives in the project venv
+before trusting its output — a PATH-fallthrough failure mode reports as *test* errors, not as
+the environment error it actually is.
+**Refs.** #624 (PA-1 of the #605 acceptance plan).
+
+### argparse `help=` strings are release surfaces a retirement sweep must grep {#help-strings-are-release-surfaces-624}
+
+**Context.** #604 retired the `outcome-bundle/1` authority path — docstrings, behavior, and
+changelog all updated — yet `outcome --help` still advertised "print a portable bundle" and
+"reconstruct an outcome from a bundle file" two releases later.
+**Evidence.** `outcome.py:2281/:2284` at `cf15a09f`; found only by the codex #34 external
+review (finding routed upstream-first), not by any local gate.
+**Mechanism.** Help strings live in the parser-construction block far from the retired arm
+bodies, and nothing pins them: tests asserted the refusal behavior, not the CLI's self-
+description, so the drift was invisible to every green gate.
+**Fix.** #624 rewords both strings to live semantics, deletes the dead import success print,
+and adds a normalized-whitespace `--help` pin (`test_cli_help_pins_retired_bundle_semantics`)
+so the next drift fails a test.
+**Generalizable rule.** When retiring a CLI surface, grep the top-level `--help` output as part
+of the sweep and pin the reworded strings — user-facing self-description drifts independently
+of behavior.
+**Refs.** #604, #624; codex review artifact
+`docs/code-reviews/2026-07-19-outcome-cross-runtime-parity-code-review.md` (codex repo).
+
 ## 2026-07-19
 
 ### A green local gate does not cover fixture-environment assumptions {#hermetic-git-fixtures-353}

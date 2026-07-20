@@ -5,6 +5,21 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-07-20
+
+### Security - Audit-store ancestor hardening (#624, PA-1 of #605)
+
+- `audit_store._ensure_private_dir` now refuses symlinked, world-writable, or uninspectable
+  existing path components strictly below the user's home (typed `AuditStoreError`, no silent
+  fallback) before creating anything — closing the walk that could previously `mkdir` through a
+  symlinked ancestor. The scope test is lexical on the expanded absolute path; home itself and
+  out-of-home roots (e.g. sticky system temp directories used by test fixtures) are exempt.
+  Group-writable ancestors remain permitted by design, now pinned by test.
+- Reach differs per branch because `Store.for_root` canonicalizes the root with `resolve()`:
+  mode bits survive resolution so the world-writable refusal covers every caller, while symlink
+  identity does not, so the symlink refusal covers direct callers and the post-resolve window.
+  The docstring states this rather than promising blanket symlink protection.
+
 ## [0.15.0] - 2026-07-18
 
 ### Added

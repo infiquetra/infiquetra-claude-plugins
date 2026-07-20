@@ -37,6 +37,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 from collections.abc import Callable
@@ -1130,9 +1131,97 @@ def _handoffs_dir(repo_root: Path, outcome_id: str) -> Path:
     return common / outcome_store.STORE_NAMESPACE / safe_id / _HANDOFFS_DIR
 
 
+def _handoff_store_halt(*, unsupported: str) -> CompatibilityHaltError:
+    """Build a ``handoff-store-unsafe`` receipt.
+
+    The store path is never embedded: receipts are printed verbatim by callers, so they carry
+    no absolute paths (R12). ``next_action`` names the store by its well-known location instead.
+    """
+    return CompatibilityHaltError(
+        "handoff-store-unsafe",
+        unsupported=unsupported,
+        supported=(
+            "a non-symlink handoff directory owned by this user with mode 0o700, below "
+            "ancestors that are real directories and not world-writable"
+        ),
+        next_action=(
+            "inspect this clone's git-common-dir handoff store; restore owner-only "
+            "permissions (chmod 700) and replace any symlinked or world-writable ancestor"
+        ),
+    )
+
+
+def _refuse_unsafe_handoff_ancestors(path: Path) -> None:
+    """Refuse symlinked or world-writable existing components strictly below the user's home.
+
+    Ported from fleet-core ``audit_store._refuse_unsafe_ancestors`` rather than imported: this
+    module is the frozen cross-runtime seam and never imports fleet-core. The scope test is
+    lexical on the expanded absolute path — the home directory itself and any path outside home
+    entirely (e.g. system temp roots, whose sticky world-writable mode is expected) are exempt.
+    Components are inspected with ``lstat``, never resolved.
+
+    Production callers reach this through ``outcome_store.resolve_common_dir``, which resolves
+    the store root: the world-writable refusal covers them in full, while the symlink refusal
+    covers direct callers and the window after that resolution.
+    """
+    home = Path.home()
+    candidate = path if path.is_absolute() else Path(os.path.abspath(path))
+    if not candidate.is_relative_to(home) or candidate == home:
+        return
+    current = home
+    for part in candidate.relative_to(home).parts:
+        current = current / part
+        try:
+            metadata = current.lstat()
+        except FileNotFoundError:
+            return  # nothing exists from here down; creation below is 0o700
+        except PermissionError as exc:
+            raise _handoff_store_halt(
+                unsupported="a handoff store ancestor this user cannot inspect"
+            ) from exc
+        if stat.S_ISLNK(metadata.st_mode):
+            raise _handoff_store_halt(
+                unsupported="a handoff store ancestor below home that is a symlink"
+            )
+        if stat.S_ISDIR(metadata.st_mode) and metadata.st_mode & 0o002:
+            raise _handoff_store_halt(
+                unsupported="a handoff store ancestor below home that is world-writable"
+            )
+
+
+def _ensure_private_dir(path: Path) -> None:
+    """Create the handoff-store directory ``0o700``; refuse an unsafe pre-existing one.
+
+    Mirrors fleet-core ``audit_store._ensure_private_dir`` in both halves: the ancestor walk
+    runs first, then the final directory must be a real directory (never a symlink), owned by
+    the effective uid, mode exactly ``0o700``. A handoff record is protected same-clone state —
+    its directory must not be readable or traversable by other users, and a permissive
+    pre-existing directory is refused rather than silently adopted.
+    """
+    _refuse_unsafe_handoff_ancestors(path)
+    missing: list[Path] = []
+    current = path
+    while not current.exists() and not current.is_symlink():
+        missing.append(current)
+        current = current.parent
+    for directory in reversed(missing):
+        directory.mkdir(mode=0o700)
+        os.chmod(directory, 0o700, follow_symlinks=False)
+    metadata = path.lstat()
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_uid != os.geteuid()
+        or stat.S_IMODE(metadata.st_mode) != 0o700
+    ):
+        raise _handoff_store_halt(
+            unsupported="a handoff store directory failing the private-store predicate"
+        )
+
+
 def _write_once(path: Path, record: dict[str, Any]) -> bool:
     """Write-once protected record write; False when the exact path already exists."""
-    path.parent.mkdir(parents=True, exist_ok=True)
+    _ensure_private_dir(path.parent)
     try:
         fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except FileExistsError:

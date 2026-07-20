@@ -1790,7 +1790,8 @@ def attended_handoff(
 
 
 # ---------------------------------------------------------------------------
-# export / import — portable bundle across machines/worktrees (R14)
+# export / import — retired outcome-bundle/1 surface (#604 R10: export aliases discover;
+# import always refuses)
 # ---------------------------------------------------------------------------
 
 
@@ -1825,8 +1826,9 @@ def import_bundle(
     """
     del repo_root, runner
     schema = bundle.get("schema") if isinstance(bundle, dict) else None
+    label = f" (schema {schema!r})" if schema else ""
     raise OutcomeError(
-        f"legacy bundle import is retired (#604 R10): a copied bundle (schema {schema!r}) "
+        f"legacy bundle import is retired (#604 R10): a copied bundle{label} "
         "carries no authority. Migrate: run `outcome discover <outcome-id>` in the source "
         "clone to emit the outcome.discovery.v1 envelope; run `outcome attach <outcome-id>` "
         "in this clone for read-only canonical reconstruction; same-clone mutation requires "
@@ -2278,10 +2280,16 @@ def main(argv: list[str] | None = None) -> int:
     p_commit.add_argument("outcome_id")
     p_commit.add_argument("--push", action="store_true")
 
-    p_export = sub.add_parser("export", help="print a portable bundle (spec + completion)")
+    p_export = sub.add_parser(
+        "export",
+        help="deprecated read-only alias of `discover` (#604 R10); prints the discovery envelope",
+    )
     p_export.add_argument("outcome_id")
 
-    p_import = sub.add_parser("import", help="reconstruct an outcome from a bundle file")
+    p_import = sub.add_parser(
+        "import",
+        help="retired (#604 R10): always refuses with discover/attach migration guidance",
+    )
     p_import.add_argument("path")
 
     p_approve = sub.add_parser(
@@ -2622,9 +2630,11 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps(halt.receipt()))
                 return 3
         elif args.command == "import":
-            bundle = json.loads(Path(args.path).read_text(encoding="utf-8"))
-            spec = import_bundle(root, bundle)
-            print(json.dumps({"imported": spec.outcome_id, "nodes": len(spec.nodes)}))
+            # Refuses without reading args.path (#604 R10): the retirement receipt must not
+            # depend on the file existing or parsing, or a missing/malformed bundle would
+            # surface an I/O error instead of the migration guidance. The top-level handler
+            # prints the receipt. No success path exists.
+            import_bundle(root, {})
         elif args.command == "reconcile":
             # #295 U5: explicit board<->saga drift detection (read-only on the world; no lease).
             import outcome_github

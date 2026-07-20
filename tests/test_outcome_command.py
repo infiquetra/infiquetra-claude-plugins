@@ -709,3 +709,81 @@ def test_set_intent_on_live_campaign_rejects_merge_auto_via_cli(repo: Path, tmp_
     M.start(repo, "fresh-x", "Ship X", nodes=[{"subplot_id": "a", "title": "A", "kind": "code"}])
     spec = M.set_intent(repo, "fresh-x", auto_env)
     assert ie.IntentEnvelope.from_dict(spec.intent).ceremony_gates.merge == "auto"
+
+
+# --------------------------------------------------------------------------- native v2 vocabulary (#628)
+
+
+def _native_v2(sid: str, phase: str, *, outcome_id: str = "ship-x", **extra: Any) -> dict[str, Any]:
+    """A codex-native ``outcome.dispatch.v2`` ledger record, shaped like the codex writer's."""
+    intent_id = f"dispatch-intent:{outcome_id}:{sid}"
+    return {
+        "phase": phase,
+        "kind": "outcome.dispatch.v2",
+        "key": intent_id,
+        "dispatch_intent_id": intent_id,
+        "subplot_id": sid,
+        "backend": "claude-direct",
+        "run_identity": "outcome-run-0f3a9c",
+        "at": 1000.0,
+        **extra,
+    }
+
+
+def _native_launched_ack(sid: str, leaf: str = "issue-42") -> dict[str, Any]:
+    return _native_v2(
+        sid,
+        "ack",
+        ack_kind="launched",
+        dispatch_ack_ref="launch-receipt:abc",
+        receipt_authority="owner-user-state-v1",
+        leaf_saga_id=leaf,
+    )
+
+
+def test_native_launched_ack_settles_leaf_no_redispatch(repo: Path) -> None:
+    """#628 codex-first ordering: a receipt-authoritative native ack settles the leaf exactly like
+    a legacy commit — a later advance on the same clone must NOT re-dispatch it (R5/R6)."""
+    M.start(repo, "ship-x", "Ship feature X")
+    store = STORE.Store.for_outcome("ship-x", repo).ensure()
+    STORE.append_ledger(store, _native_v2("design", "intent"))
+    STORE.append_ledger(store, _native_launched_ack("design"))
+    dispatcher, calls = _recorder()
+    result = M.advance(repo, "ship-x", dispatcher=dispatcher)
+    assert result.dispatched == []
+    assert calls == []  # the natively-settled leaf never reaches the backend again
+    # exactly one settled chain: the native ack — no legacy dispatch records were ever written
+    legacy = [r for r in STORE.read_ledger(store) if r.get("kind") == "dispatch"]
+    assert legacy == []
+    assert M.status(repo, "ship-x")["states"]["design"] == "dispatched"
+
+
+def test_live_native_intent_reads_in_flight_not_redriven(repo: Path) -> None:
+    """#628: a native intent WITHOUT an acknowledgement is IN FLIGHT — advance refuses loudly
+    (visible receipt) instead of re-dispatching under legacy crash-recovery semantics."""
+    M.start(repo, "ship-x", "Ship feature X")
+    store = STORE.Store.for_outcome("ship-x", repo).ensure()
+    STORE.append_ledger(store, _native_v2("design", "intent"))
+    dispatcher, calls = _recorder()
+    result = M.advance(repo, "ship-x", dispatcher=dispatcher)
+    assert result.dispatched == []
+    assert calls == []
+    reasons = [h.get("reason", "") for h in result.halted]
+    assert any("without an acknowledgement" in reason for reason in reasons)
+    # the refusal wrote nothing: the live intent stays the only dispatch-chain record
+    assert [r for r in STORE.read_ledger(store) if r.get("kind") == "dispatch"] == []
+    # the cockpit surfaces in-flight, never "ready" (which would invite a double dispatch)
+    assert M.status(repo, "ship-x")["states"]["design"] == "intent-created"
+
+
+def test_settled_lookup_sees_native_settlement(repo: Path) -> None:
+    """#628: the handoff already-settled guard consults the shared reduction, so a natively
+    concluded dispatch refuses re-admission even though #351 settlement never saw it."""
+    M.start(repo, "ship-x", "Ship feature X")
+    store = STORE.Store.for_outcome("ship-x", repo).ensure()
+    STORE.append_ledger(store, _native_v2("design", "intent"))
+    lookup = M._settled_lookup(repo, "ship-x")
+    assert lookup("dispatch-intent:ship-x:design", "design", 1) is False  # live, not settled
+    STORE.append_ledger(store, _native_launched_ack("design"))
+    assert lookup("dispatch-intent:ship-x:design", "design", 1) is True
+    assert lookup("dispatch-intent:ship-x:build", "build", 1) is False  # untouched leaf stays open

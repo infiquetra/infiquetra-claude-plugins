@@ -150,6 +150,102 @@ def test_crash_after_effect_before_commit_replays_without_duplicate(tmp_path: Pa
     assert M.replay_pending(store) == []
 
 
+# --------------------------------------------------------------------------- v2 vocabulary (#628)
+
+
+def _native_intent(sid: str, *, outcome_id: str = "ship-x") -> dict:
+    intent_id = f"dispatch-intent:{outcome_id}:{sid}"
+    return {
+        "phase": "intent",
+        "kind": "outcome.dispatch.v2",
+        "key": intent_id,
+        "dispatch_intent_id": intent_id,
+        "subplot_id": sid,
+        "backend": "claude-direct",
+        "run_identity": "outcome-run-0f3a9c",
+        "at": 1000.0,
+    }
+
+
+def _native_ack(
+    sid: str,
+    *,
+    ack_kind: str = "launched",
+    receipt_authority: str = "owner-user-state-v1",
+    leaf: str = "issue-42",
+    outcome_id: str = "ship-x",
+) -> dict:
+    intent_id = f"dispatch-intent:{outcome_id}:{sid}"
+    record = {
+        "phase": "ack",
+        "kind": "outcome.dispatch.v2",
+        "key": intent_id,
+        "dispatch_intent_id": intent_id,
+        "subplot_id": sid,
+        "backend": "claude-direct",
+        "ack_kind": ack_kind,
+        "dispatch_ack_ref": "launch-receipt:abc",
+        "receipt_authority": receipt_authority,
+        "run_identity": "outcome-run-0f3a9c",
+        "at": 1001.0,
+    }
+    if leaf:
+        record["leaf_saga_id"] = leaf
+    return record
+
+
+def test_reduce_dispatch_ledger_native_arms(tmp_path: Path) -> None:
+    """The shared v1/v2 reduction reads each vocabulary arm exactly like the codex runtime."""
+    store = _store(tmp_path)
+    # legacy commit -> settled, legacy-unverified
+    M.append_ledger(
+        store, {"phase": "commit", "kind": "dispatch", "key": "dispatch:a", "subplot_id": "a"}
+    )
+    # live native intent, no ack -> in flight, NOT settled
+    M.append_ledger(store, _native_intent("b"))
+    # native intent + authoritative launched ack -> dispatched, settled
+    M.append_ledger(store, _native_intent("c"))
+    M.append_ledger(store, _native_ack("c"))
+    # native intent + operator handed-off ack -> handed-off, settled (no leaf id claimed)
+    M.append_ledger(store, _native_intent("d"))
+    M.append_ledger(
+        store,
+        _native_ack("d", ack_kind="handed-off", receipt_authority="operator-confirmed-v1", leaf=""),
+    )
+    # an ack WITHOUT receipt authority still concludes conservatively (settled, unverified)
+    M.append_ledger(store, _native_intent("e"))
+    M.append_ledger(store, _native_ack("e", receipt_authority=""))
+    reduced = M.reduce_dispatch_ledger(store)
+    assert (reduced["a"]["state"], reduced["a"]["settled"]) == ("legacy-unverified", True)
+    assert (reduced["b"]["state"], reduced["b"]["settled"]) == ("intent-created", False)
+    assert (reduced["c"]["state"], reduced["c"]["settled"]) == ("dispatched", True)
+    assert reduced["c"]["record"]["leaf_saga_id"] == "issue-42"
+    assert (reduced["d"]["state"], reduced["d"]["settled"]) == ("handed-off", True)
+    assert (reduced["e"]["state"], reduced["e"]["settled"]) == ("legacy-unverified", True)
+
+
+def test_reduce_halt_preserves_settlement(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    M.append_ledger(
+        store, {"phase": "commit", "kind": "dispatch", "key": "dispatch:a", "subplot_id": "a"}
+    )
+    M.append_ledger(
+        store, {"phase": "halt", "kind": "dispatch", "key": "spend:a", "subplot_id": "a"}
+    )
+    reduced = M.reduce_dispatch_ledger(store)
+    assert reduced["a"]["settled"] is True  # a later halt never un-settles a concluded dispatch
+    assert reduced["a"]["halted"] is True
+
+
+def test_replay_pending_native_intent_until_acked(tmp_path: Path) -> None:
+    """A live native intent is pending; its authoritative ack retires it — never a legacy re-drive."""
+    store = _store(tmp_path)
+    M.append_ledger(store, _native_intent("race-leaf"))
+    assert [p["subplot_id"] for p in M.replay_pending(store)] == ["race-leaf"]
+    M.append_ledger(store, _native_ack("race-leaf"))
+    assert M.replay_pending(store) == []
+
+
 # --------------------------------------------------------------------------- cache loss (R27)
 
 

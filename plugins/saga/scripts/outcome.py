@@ -610,20 +610,30 @@ LIVE_BLOCKED = "blocked"
 
 
 def _dispatch_records(store: Any) -> dict[str, str]:
-    """subplot_id -> leaf_saga_id for every SETTLED dispatch (a ``commit`` record in the ledger).
+    """subplot_id -> leaf_saga_id for every SETTLED dispatch, across BOTH ledger vocabularies.
 
-    Keyed on the ``commit`` phase, not ``intent``: a dispatch is recorded intent -> effect -> commit,
-    so a leaf whose intent was written but whose dispatch then failed (no commit) is NOT counted as
-    dispatched here — it falls back to the frontier and is re-driven, and ``replay_pending`` flags its
-    dangling intent. This makes the dedup durable AND a failed dispatch recoverable rather than stuck.
+    Derived through the shared v1/v2 reducer (#628): a legacy ``{kind: dispatch, phase: commit}``
+    record and a codex-native ``outcome.dispatch.v2`` authoritative acknowledgement settle a leaf
+    identically, so a natively-launched dispatch is never re-driven by this runtime. A leaf whose
+    intent was written but never settled (legacy crash-before-commit, or a live native intent
+    awaiting its acknowledgement) is NOT counted here — the legacy case falls back to the frontier
+    and is re-driven via ``replay_pending``; the native case reads as in-flight in
+    ``_reconcile_once`` (refused loudly, never silently re-dispatched).
     """
     out: dict[str, str] = {}
-    for rec in outcome_store.read_ledger(store):
-        if rec.get("kind") == "dispatch" and rec.get("phase") == "commit":
-            sid = str(rec.get("subplot_id", ""))
-            if sid:
-                out[sid] = str(rec.get("leaf_saga_id", ""))
+    for sid, reduced in outcome_store.reduce_dispatch_ledger(store).items():
+        if reduced.get("settled"):
+            record = reduced.get("record") or {}
+            out[sid] = str(record.get("leaf_saga_id", ""))
     return out
+
+
+def _dispatch_ledger_states(store: Any) -> dict[str, str]:
+    """Derive per-subplot dispatch state through the shared append-only v1/v2 reducer (#628)."""
+    return {
+        sid: str(reduced.get("state", ""))
+        for sid, reduced in outcome_store.reduce_dispatch_ledger(store).items()
+    }
 
 
 def _dispatch_commit_records(store: Any) -> dict[str, dict[str, Any]]:
@@ -652,13 +662,16 @@ def derive_states(spec: outcome_spec.OutcomeSpec, store: Any) -> dict[str, str]:
 
     Precedence per node: a SUCCESS completion -> ``done``; any other terminal completion ->
     its actual negative terminal (``failed`` / ``rejected`` / ``stalled``) so a dead leaf is never
-    mislabeled as in-flight; else a settled dispatch -> ``dispatched``; else in the ready frontier ->
-    ``ready``; else ``blocked`` (an upstream is not yet done). No node's state is ever read from a
-    stored scalar (R17) — ``Node.state`` on the spec is authoring-time-only and ignored here.
+    mislabeled as in-flight; else a settled dispatch -> ``dispatched``; else a live codex-native
+    ``outcome.dispatch.v2`` intent -> ``intent-created`` (#628 — in flight, never shown as
+    ``ready``, which would invite a double dispatch); else in the ready frontier -> ``ready``;
+    else ``blocked`` (an upstream is not yet done). No node's state is ever read from a stored
+    scalar (R17) — ``Node.state`` on the spec is authoring-time-only and ignored here.
     """
     success = outcome_store.completed_subplots(store, successful_only=True)
     terminals = _terminal_state_map(store)
     dispatched = _dispatch_records(store)
+    ledger_states = _dispatch_ledger_states(store)
     frontier = set(outcome_spec.ready_frontier(spec, success))
     states: dict[str, str] = {}
     for node in spec.nodes:
@@ -669,6 +682,10 @@ def derive_states(spec: outcome_spec.OutcomeSpec, store: Any) -> dict[str, str]:
             states[sid] = terminals[sid]  # negative terminal — surfaced, not masked
         elif sid in dispatched:
             states[sid] = LIVE_DISPATCHED
+        elif ledger_states.get(sid) == "intent-created":
+            # Only the genuinely NEW reduced state is surfaced: every settled state is already
+            # covered by ``dispatched`` above, and halted-only leaves keep their pre-#628 reading.
+            states[sid] = "intent-created"
         elif sid in frontier:
             states[sid] = LIVE_READY
         else:
@@ -1147,7 +1164,17 @@ def _reconcile_once(
         actual_tokens = outcome_costs.rollup(spec, store).get("tokens")
 
     success = outcome_store.completed_subplots(store)  # success-only -> the frontier input
-    settled = set(_dispatch_records(store))  # subplots with a COMMIT dispatch record
+    # #628: settled and in-flight are derived through the shared v1/v2 reducer, so a codex-native
+    # authoritative acknowledgement dedups exactly like a legacy commit, and a live native intent
+    # (written by the codex runtime on this same clone, awaiting its acknowledgement) is refused
+    # loudly below instead of silently re-dispatched under legacy crash-recovery semantics.
+    reduced_dispatches = outcome_store.reduce_dispatch_ledger(store)
+    settled = {sid for sid, reduced in reduced_dispatches.items() if reduced.get("settled")}
+    in_flight = {
+        sid
+        for sid, reduced in reduced_dispatches.items()
+        if reduced.get("state") == "intent-created" and not reduced.get("settled")
+    }
     frontier = outcome_spec.ready_frontier(spec, success)
     dispatched: list[str] = []
     halted: list[dict[str, Any]] = []
@@ -1157,7 +1184,7 @@ def _reconcile_once(
     stale = False
     settlement_bindings: dict[str, tuple[str, dispatch_settlement.UnitSpec]] = {}
     settlement_blocked: set[str] = set()
-    settlement_frontier = [sid for sid in frontier if sid not in settled]
+    settlement_frontier = [sid for sid in frontier if sid not in settled and sid not in in_flight]
     if settlement_ledger is not None and settlement_frontier:
         settlement_bindings = dispatch_settlement.outcome_dispatch_bindings(
             settlement_ledger, spec.outcome_id, settlement_frontier
@@ -1221,6 +1248,26 @@ def _reconcile_once(
             continue
         node = spec.node_by_id(sid)
         if node is None:
+            continue
+        if sid in in_flight:
+            # #628: a live codex-native ``outcome.dispatch.v2`` intent means the leaf is IN FLIGHT
+            # under the native "intent until acknowledged" model — re-dispatching here is the
+            # cross-runtime double dispatch the acceptance harness exists to catch. The refusal is
+            # a visible receipt (returned, not ledger-appended — mirroring the codex runtime, and
+            # append-once would mask nothing since the intent record itself is the durable marker);
+            # the reclaim path for a stale intent is its typed acknowledgement (launch evidence or
+            # an operator handoff) in the issuing runtime, never a silent legacy re-drive.
+            halted.append(
+                {
+                    "kind": "halt",
+                    "subplot_id": sid,
+                    "backend": node.backend,
+                    "reason": (
+                        "dispatch intent already exists without an acknowledgement; "
+                        "reconcile launch evidence or an operator handoff before retrying"
+                    ),
+                }
+            )
             continue
         # Per-subplot lock guards the concurrent-tick race within the TTL window; the commit record
         # is the durable dedup. If another tick holds the lock right now, skip — it owns this leaf.
@@ -1668,8 +1715,15 @@ def _cli_admission(args: Any) -> dict[str, Any]:
     return values
 
 
-def _settled_lookup(repo_root: Path):
-    """A #351-backed settled-attempt query for handoff acceptance (R5) — never a new ledger."""
+def _settled_lookup(repo_root: Path, outcome_id: str = ""):
+    """A settled-attempt query for handoff acceptance (R5) — never a new ledger.
+
+    Two existing sources of truth, no new state: the #351 dispatch-settlement run ledger
+    (legacy attempts), and — when ``outcome_id`` is given — the outcome store's shared v1/v2
+    dispatch reduction (#628), so a codex-native launched acknowledgement makes
+    ``accept_handoff`` refuse with ``handoff-already-settled`` instead of re-admitting a leaf
+    whose dispatch already concluded natively. ``unit_id`` is the handoff offer's subplot id.
+    """
     import dispatch_settlement
 
     ledger = run_ledger.RunLedger.resolve(repo_root)
@@ -1678,6 +1732,15 @@ def _settled_lookup(repo_root: Path):
         del attempt  # terminal_attempt_status resolves the latest attempt itself
         if not dispatch_id:
             return False
+        if outcome_id and unit_id:
+            try:
+                reduced = outcome_store.reduce_dispatch_ledger(_store(repo_root, outcome_id)).get(
+                    unit_id
+                )
+            except (OutcomeError, outcome_store.OutcomeStoreError, OSError):
+                reduced = None  # cannot prove natively settled -> the #351 lane still decides
+            if reduced is not None and reduced.get("settled"):
+                return True
         try:
             return (
                 dispatch_settlement.terminal_attempt_status(
@@ -2562,7 +2625,7 @@ def main(argv: list[str] | None = None) -> int:
                                 receiver_owner_id=receiver,
                                 admission=admission,
                                 broker=broker,
-                                settled_lookup=_settled_lookup(root),
+                                settled_lookup=_settled_lookup(root, args.outcome_id),
                             )
                             print(json.dumps(outcome_result))
                         else:

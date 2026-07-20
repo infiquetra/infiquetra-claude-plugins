@@ -27,6 +27,29 @@
 
 ## 2026-07-20
 
+### One-directional vocabulary awareness on a shared ledger is a double-dispatch generator {#v2-vocabulary-asymmetry-628}
+
+**Context.** The codex runtime writes `outcome.dispatch.v2` intent/ack records to the shared
+per-clone outcome ledger; the Claude runtime at saga 0.105.0 derived its dispatch dedup from
+legacy `{kind: dispatch, phase: commit}` records only. Each runtime was individually correct
+against its own vocabulary and green in its own suite.
+**Evidence.** Cross-runtime acceptance harness (#605) scenarios `race-codex-first` /
+`race-simultaneous`: `settled_chains: 2` for one leaf (one codex launched ack + one Claude
+legacy commit). Filed as #628; fixed in `work/628-v2-vocabulary` (this commit).
+**Mechanism.** A shared append-only ledger with two writer vocabularies is only safe when every
+READER reduces both. Codex's reducer was dual-aware (PA-2), Claude's was not — so a
+codex-native settlement was invisible to Claude's `_dispatch_records`, its `_reconcile_once`
+frontier skip, and its `accept_handoff` settled-guard, and Claude's crash-recovery semantics
+("intent without commit = failed, re-drive") mistranslated codex's "intent until acked = in
+flight" model into a re-dispatch. Locks did not help: the coordinator lease serializes passes,
+but the *derivation* under the lock was blind.
+**Fix.** Port the codex reducer verbatim (`outcome_store.reduce_dispatch_ledger`) and hang all
+four Claude consumers (`_dispatch_records`, reconcile settled/in-flight sets, `_settled_lookup`,
+`replay_pending`) off it.
+**Generalizable rule.** When a second writer vocabulary lands on a shared ledger, the port is
+not done until every consumer on every runtime derives through one shared (or byte-ported)
+reduction — grep each runtime for readers of the raw record shape, not just writers.
+
 ### A `resolve()` upstream disarms the symlink half of a downstream ancestor guard {#resolve-disarms-symlink-guards-624}
 
 **Context.** PA-1 (#624) added `_refuse_unsafe_ancestors` to `fleet_commons/audit_store.py`: an

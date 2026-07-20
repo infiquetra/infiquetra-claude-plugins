@@ -476,6 +476,85 @@ def read_ledger(store: Store) -> list[dict[str, Any]]:
     return records
 
 
+def reduce_dispatch_ledger(store: Store) -> dict[str, dict[str, Any]]:
+    """Reduce legacy v1 commits and v2 intent/ack records through one version-aware path.
+
+    Ported from the codex runtime's reducer (infiquetra-codex-plugins ``outcome_store.py`` at
+    ``f3e1af75``, #628) so both runtimes read one shared ledger identically. Per ``subplot_id``
+    the reduction yields ``state`` (``legacy-unverified`` / ``intent-created`` / ``dispatched`` /
+    ``handed-off``), ``settled`` (a legacy commit or an authoritative v2 acknowledgement
+    concluded the dispatch), ``halted``, and the winning ``record``. A codex-native
+    ``outcome.dispatch.v2`` intent WITHOUT an acknowledgement reduces to an unsettled
+    ``intent-created`` — in flight, never re-drivable — and a receipt-authoritative
+    ``ack_kind=launched`` acknowledgement settles exactly like a legacy commit.
+    """
+
+    reduced: dict[str, dict[str, Any]] = {}
+    for record in read_ledger(store):
+        subplot_id = str(record.get("subplot_id", ""))
+        if not subplot_id:
+            continue
+        kind = record.get("kind")
+        phase = record.get("phase")
+        if kind == "dispatch" and phase == "halt":
+            current = reduced.get(subplot_id)
+            if current is None or current.get("state") not in {"dispatched", "handed-off"}:
+                reduced[subplot_id] = {
+                    "state": current.get("state", "ready") if current else "ready",
+                    "record": current.get("record", record) if current else record,
+                    "settled": bool(current and current.get("settled")),
+                    "halted": True,
+                }
+        elif kind == "dispatch" and phase == "commit":
+            current = reduced.get(subplot_id)
+            if current is None or current.get("state") not in {"dispatched", "handed-off"}:
+                reduced[subplot_id] = {
+                    "state": "legacy-unverified",
+                    "record": record,
+                    "settled": True,
+                    "halted": False,
+                }
+        elif kind == "outcome.dispatch.v2" and phase == "intent":
+            current = reduced.get(subplot_id)
+            if current is None or current.get("state") == "legacy-unverified":
+                reduced[subplot_id] = {
+                    "state": "intent-created",
+                    "record": record,
+                    # A legacy commit still prevents automatic relaunch while append-only
+                    # reconciliation is awaiting its typed acknowledgement.
+                    "settled": bool(current and current.get("settled")),
+                    "halted": False,
+                }
+        elif (
+            kind == "outcome.dispatch.v2"
+            and phase in {"ack", "authority-ack"}
+            and (
+                (
+                    record.get("ack_kind") == "launched"
+                    and record.get("receipt_authority") == "owner-user-state-v1"
+                )
+                or (
+                    record.get("ack_kind") == "handed-off"
+                    and record.get("receipt_authority") == "operator-confirmed-v1"
+                )
+            )
+        ):
+            reduced[subplot_id] = {
+                "state": ("dispatched" if record.get("ack_kind") == "launched" else "handed-off"),
+                "record": record,
+                "settled": True,
+                "halted": False,
+            }
+        elif kind == "outcome.dispatch.v2" and phase in {"ack", "authority-ack"}:
+            reduced[subplot_id] = {
+                "state": "legacy-unverified",
+                "record": record,
+                "settled": True,
+                "halted": False,
+            }
+    return reduced
+
+
 def replay_pending(store: Store) -> list[dict[str, Any]]:
     """Intent records with no matching commit — the ops to re-drive on crash recovery (R30).
 
@@ -483,7 +562,13 @@ def replay_pending(store: Store) -> list[dict[str, Any]]:
     the process died after (or during) the side effect but before recording success. Re-driving is
     safe because the effect itself dedups on the same key (completion-event idempotency / GitHub
     state), so replay never double-applies.
+
+    ``outcome.dispatch.v2`` records route through :func:`reduce_dispatch_ledger` (#628): an
+    authoritatively acknowledged native dispatch counts its key as committed, and a live native
+    intent surfaces as pending only while its reduction is an unsettled ``intent-created`` —
+    matching the codex runtime's arms so a shared ledger reads identically on both sides.
     """
+    reduced_dispatch = reduce_dispatch_ledger(store)
     committed: set[str] = set()
     intents: dict[str, dict[str, Any]] = {}
     for rec in read_ledger(store):
@@ -493,6 +578,14 @@ def replay_pending(store: Store) -> list[dict[str, Any]]:
         phase = rec.get("phase")
         if phase == "commit":
             committed.add(key)
+        elif phase in {"ack", "authority-ack"} and rec.get("kind") == "outcome.dispatch.v2":
+            reduced = reduced_dispatch.get(str(rec.get("subplot_id", "")), {})
+            if reduced.get("settled"):
+                committed.add(key)
+        elif phase == "intent" and rec.get("kind") == "outcome.dispatch.v2":
+            reduced = reduced_dispatch.get(str(rec.get("subplot_id", "")), {})
+            if reduced.get("state") == "intent-created" and not reduced.get("settled"):
+                intents.setdefault(key, rec)
         elif phase == "intent":
             intents.setdefault(key, rec)
     return [rec for key, rec in intents.items() if key not in committed]

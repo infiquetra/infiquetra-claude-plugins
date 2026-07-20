@@ -662,7 +662,9 @@ def derive_states(spec: outcome_spec.OutcomeSpec, store: Any) -> dict[str, str]:
 
     Precedence per node: a SUCCESS completion -> ``done``; any other terminal completion ->
     its actual negative terminal (``failed`` / ``rejected`` / ``stalled``) so a dead leaf is never
-    mislabeled as in-flight; else a settled dispatch -> ``dispatched``; else a live codex-native
+    mislabeled as in-flight; else an operator-handed-off settlement -> ``handed-off`` (#628 —
+    settled, but with no native leaf saga to attend, so the cockpit and ``attend`` tell one
+    story); else a settled dispatch -> ``dispatched``; else a live codex-native
     ``outcome.dispatch.v2`` intent -> ``intent-created`` (#628 — in flight, never shown as
     ``ready``, which would invite a double dispatch); else in the ready frontier -> ``ready``;
     else ``blocked`` (an upstream is not yet done). No node's state is ever read from a stored
@@ -680,10 +682,12 @@ def derive_states(spec: outcome_spec.OutcomeSpec, store: Any) -> dict[str, str]:
             states[sid] = LIVE_DONE
         elif sid in terminals:
             states[sid] = terminals[sid]  # negative terminal — surfaced, not masked
+        elif ledger_states.get(sid) == "handed-off":
+            states[sid] = "handed-off"  # settled by operator handoff — no leaf saga to attend
         elif sid in dispatched:
             states[sid] = LIVE_DISPATCHED
         elif ledger_states.get(sid) == "intent-created":
-            # Only the genuinely NEW reduced state is surfaced: every settled state is already
+            # Only the genuinely NEW reduced states are surfaced: every other settled state is
             # covered by ``dispatched`` above, and halted-only leaves keep their pre-#628 reading.
             states[sid] = "intent-created"
         elif sid in frontier:
@@ -1662,6 +1666,14 @@ def attend(repo_root: Path, outcome_id: str, subplot_id: str) -> str:
     store = _store(repo_root, outcome_id)
     records = _dispatch_records(store)
     leaf = records.get(subplot_id)
+    if subplot_id in records and not leaf:
+        # #628: settled, but with no native leaf saga to resume (an operator handed-off
+        # settlement, or an unverified acknowledgement that claimed no leaf). Distinct from
+        # "not dispatched" so the cockpit and this error tell one story.
+        raise OutcomeError(
+            f"subplot {subplot_id!r} settled without a native leaf saga "
+            f"(operator handoff or unverified acknowledgement) — nothing to attend"
+        )
     if not leaf:
         raise OutcomeError(
             f"subplot {subplot_id!r} is not dispatched yet — nothing to attend "

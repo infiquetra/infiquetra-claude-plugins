@@ -459,3 +459,29 @@ def test_cli_describes_policy(capsys: Any) -> None:
     assert DEC.main([]) == 0
     out = json.loads(capsys.readouterr().out)
     assert "elaborate-in-place" in out["mechanisms"] and "approval" in out
+
+
+def test_elaborate_a_natively_in_flight_node_is_rejected(tmp_path: Path) -> None:
+    # #628 review P3 (R33): a codex-native dispatch intent awaiting its acknowledgement is live
+    # work — prune/elaborate must refuse it exactly like a dispatched node.
+    spec = _spec()
+    store = _store(tmp_path)
+    intent_id = "dispatch-intent:o:b"
+    STORE.append_ledger(
+        store,
+        {
+            "phase": "intent",
+            "kind": "outcome.dispatch.v2",
+            "key": intent_id,
+            "dispatch_intent_id": intent_id,
+            "subplot_id": "b",
+            "backend": "claude-direct",
+            "run_identity": "outcome-run-0f3a9c",
+            "at": 1000.0,
+        },
+    )
+    try:
+        DEC.elaborate(spec, store, "b", [{"subplot_id": "b1", "title": "b1", "kind": "code"}])
+        raise AssertionError("expected an in-flight rejection")
+    except DEC.DecomposeError as exc:
+        assert "intent-created" in str(exc)

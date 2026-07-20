@@ -285,3 +285,55 @@ def test_deleting_cache_loses_no_canonical_state(tmp_path: Path) -> None:
         "design"
     }  # placeholder for U5's GitHub read — the canonical completion source
     assert OS_.ready_frontier(spec, completed=github_completed) == ["build"]
+
+
+def test_reduce_same_subplot_cross_vocabulary_collision(tmp_path: Path) -> None:
+    """#628 review P1: the literal defect shape — ONE subplot carrying records from BOTH
+    vocabularies. The reduction must converge on the native settlement in either order; a later
+    legacy commit must never clobber an already-settled native state (the ordering guard)."""
+    # Order A: native intent + launched ack, THEN a legacy commit lands on the same subplot.
+    store_a = M.Store(root=tmp_path / "store-a").ensure()
+    M.append_ledger(store_a, _native_intent("race-leaf"))
+    M.append_ledger(store_a, _native_ack("race-leaf"))
+    M.append_ledger(
+        store_a,
+        {
+            "phase": "commit",
+            "kind": "dispatch",
+            "key": "dispatch:race-leaf",
+            "subplot_id": "race-leaf",
+        },
+    )
+    reduced_a = M.reduce_dispatch_ledger(store_a)["race-leaf"]
+    assert (reduced_a["state"], reduced_a["settled"]) == ("dispatched", True)
+    assert reduced_a["record"]["leaf_saga_id"] == "issue-42"  # the ack won, not the late commit
+
+    # Order B: legacy commit first, then the native intent + launched ack arrive.
+    store_b = M.Store(root=tmp_path / "store-b").ensure()
+    M.append_ledger(
+        store_b,
+        {
+            "phase": "commit",
+            "kind": "dispatch",
+            "key": "dispatch:race-leaf",
+            "subplot_id": "race-leaf",
+        },
+    )
+    M.append_ledger(store_b, _native_intent("race-leaf"))
+    M.append_ledger(store_b, _native_ack("race-leaf"))
+    reduced_b = M.reduce_dispatch_ledger(store_b)["race-leaf"]
+    assert (reduced_b["state"], reduced_b["settled"]) == ("dispatched", True)
+    # settlement never lapsed mid-sequence: the interposed intent carried the commit's settled bit
+    store_c = M.Store(root=tmp_path / "store-c").ensure()
+    M.append_ledger(
+        store_c,
+        {
+            "phase": "commit",
+            "kind": "dispatch",
+            "key": "dispatch:race-leaf",
+            "subplot_id": "race-leaf",
+        },
+    )
+    M.append_ledger(store_c, _native_intent("race-leaf"))
+    mid = M.reduce_dispatch_ledger(store_c)["race-leaf"]
+    assert mid["settled"] is True  # a legacy commit still prevents relaunch while awaiting the ack

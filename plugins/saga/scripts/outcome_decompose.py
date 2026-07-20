@@ -43,8 +43,10 @@ import outcome_spec  # noqa: E402  (after the sys.path shim, by design)
 import outcome_store  # noqa: E402
 
 # Live derived states that mean "in-flight, handed to a backend" — an edit that would discard work
-# silently is illegal against these (R33); a terminal transition must come first.
-_IN_FLIGHT = frozenset({"dispatched"})
+# silently is illegal against these (R33); a terminal transition must come first. Includes the
+# #628 cross-runtime states: a codex-native intent awaiting its acknowledgement and an
+# operator-handed-off settlement are both live work this runtime must not discard.
+_IN_FLIGHT = frozenset({"dispatched", "intent-created", "handed-off"})
 
 
 class DecomposeError(ValueError):

@@ -787,3 +787,69 @@ def test_settled_lookup_sees_native_settlement(repo: Path) -> None:
     STORE.append_ledger(store, _native_launched_ack("design"))
     assert lookup("dispatch-intent:ship-x:design", "design", 1) is True
     assert lookup("dispatch-intent:ship-x:build", "build", 1) is False  # untouched leaf stays open
+
+
+def test_cli_attach_advance_wires_outcome_id_into_settled_lookup(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#628 review P2: the CLI seam — `attach --advance` must construct the settled guard with
+    the outcome id (a revert to `_settled_lookup(root)` passes every other test unnoticed)."""
+    M.start(repo, "ship-x", "Ship feature X")
+    seen: list[tuple[str, str]] = []
+    real = M._settled_lookup
+
+    def recording(repo_root: Path, outcome_id: str = "") -> Any:
+        seen.append((str(repo_root), outcome_id))
+        return real(repo_root, outcome_id)
+
+    monkeypatch.setattr(M, "_settled_lookup", recording)
+    rc = M.main(
+        [
+            "--repo-root",
+            str(repo),
+            "attach",
+            "ship-x",
+            "--advance",
+            "--handoff-id",
+            "hx-1",
+            "--subplot",
+            "design",
+            "--broker-root",
+            str(repo / "broker"),
+            "--session-id",
+            "s1",
+            "--policy-sha256",
+            "p1",
+            "--session-limit",
+            "1",
+            "--aggregate-limit",
+            "1",
+        ]
+    )
+    assert rc != 0  # no real handoff offer exists — the accept halts AFTER the guard is built
+    assert seen == [(str(repo), "ship-x")]
+
+
+def test_handed_off_leaf_status_and_attend_tell_one_story(repo: Path) -> None:
+    """#628 review P3: an operator handed-off settlement surfaces as ``handed-off`` (not
+    ``dispatched``) and ``attend`` explains there is no native leaf saga — no self-contradiction."""
+    M.start(repo, "ship-x", "Ship feature X")
+    store = STORE.Store.for_outcome("ship-x", repo).ensure()
+    STORE.append_ledger(store, _native_v2("design", "intent"))
+    STORE.append_ledger(
+        store,
+        _native_v2(
+            "design",
+            "ack",
+            ack_kind="handed-off",
+            dispatch_ack_ref="operator:jeff",
+            receipt_authority="operator-confirmed-v1",
+        ),
+    )
+    assert M.status(repo, "ship-x")["states"]["design"] == "handed-off"
+    with pytest.raises(M.OutcomeError, match="settled without a native leaf saga"):
+        M.attend(repo, "ship-x", "design")
+    # still settled for dispatch purposes: no re-dispatch
+    dispatcher, calls = _recorder()
+    assert M.advance(repo, "ship-x", dispatcher=dispatcher).dispatched == []
+    assert calls == []

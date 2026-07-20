@@ -106,6 +106,17 @@ def _sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _private_dir(path: Path) -> Path:
+    """Create (or adopt) a directory at exactly mode 0o700.
+
+    Broker roots must satisfy the lease authority's private-root predicate — a default-umask
+    ``mkdir`` (0o755) is refused with ``UnsafeAuthorityError`` at first acquire.
+    """
+    path.mkdir(mode=0o700, exist_ok=True)
+    os.chmod(path, 0o700)
+    return path
+
+
 def _bounded(text: str, limit: int = 400) -> str:
     """A bounded, single-line, path-redacted summary — never raw stdout/stderr (R10)."""
     flat = " ".join(text.split())
@@ -673,10 +684,14 @@ DEFAULT_FIXTURES: dict[str, dict[str, Any]] = {
 
 
 def _store_dirs(clone: Path) -> list[str]:
-    """Repo-relative coordination-state paths under the clone's git dir (empty = none)."""
+    """Repo-relative coordination-state paths under the clone's git dir (empty = none).
+
+    ``saga-outcomes`` is the real ``outcome_store.STORE_NAMESPACE``; the speculative names stay
+    as tripwires against a future namespace move silently blinding this check.
+    """
     git_dir = clone / ".git"
     hits: list[str] = []
-    for candidate in ("outcome", "outcomes", "saga", "handoffs"):
+    for candidate in ("saga-outcomes", "outcome", "outcomes", "saga", "handoffs"):
         target = git_dir / candidate
         if target.exists():
             hits.append(f".git/{candidate}")
@@ -818,6 +833,604 @@ def unit_discovery(bench: Workbench) -> list[ScenarioResult]:
     return results
 
 
+# --------------------------------------------------------------------------- U3 handoff (R4)
+
+
+def _tree_state(root: Path) -> dict[str, str]:
+    """Effect spy: relative-path -> content-sha256 map for a tree (empty when absent).
+
+    Captured before and after every refused acceptance; byte-equality of the maps proves the
+    refusal produced no mutable effect in that store.
+    """
+    if not root.exists():
+        return {}
+    state: dict[str, str] = {}
+    for path in sorted(root.rglob("*")):
+        if path.is_file() and not path.is_symlink():
+            state[path.relative_to(root).as_posix()] = _sha256_file(path)
+    return state
+
+
+_ADMISSION_POLICY = "c" * 64
+
+# Tamper rig for the R4 adversarial cases. Runs against the INSTALLED package so the re-seal
+# uses the runtime's own canonical_json — a tamper-and-reseal attacker has exactly this power,
+# and the semantic bindings (not the seal) must be what refuses the record.
+_TAMPER_SNIPPET = """
+import hashlib
+import json
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from pathlib import Path
+
+import outcome_compat as oc
+
+path = Path(sys.argv[2])
+mode = sys.argv[3]
+record = json.loads(path.read_text(encoding="utf-8"))
+if mode == "bump-fence":
+    record["token"]["fencing_sequence"] = int(record["token"]["fencing_sequence"]) + 1
+else:
+    record.update(json.loads(sys.argv[4]))
+if mode in ("reseal", "bump-fence"):
+    payload = {key: value for key, value in record.items() if key != "sha256"}
+    record["sha256"] = hashlib.sha256(oc.canonical_json(payload).encode("utf-8")).hexdigest()
+path.write_text(oc.canonical_json(record) + "\\n", encoding="utf-8")
+"""
+
+# Offer-side refusals that must fire BEFORE any broker interaction: driven with broker=None so
+# a broker touch would crash loudly instead of leaking a lease.
+_OFFER_NEGATIVE_SNIPPET = """
+import json
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from pathlib import Path
+
+import outcome_compat as oc
+
+try:
+    oc.offer_handoff(
+        Path(sys.argv[2]),
+        sys.argv[3],
+        sys.argv[4],
+        operation=sys.argv[5],
+        attempt=1,
+        broker=None,
+        lease=None,
+        dispatch_id=sys.argv[6],
+        ttl_seconds=int(sys.argv[7]),
+    )
+except oc.CompatibilityHaltError as halt:
+    print(json.dumps(halt.receipt()))
+    raise SystemExit(3)
+raise SystemExit(0)
+"""
+
+_REVISE_SPEC_SNIPPET = """
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from pathlib import Path
+
+import outcome
+
+root = Path(sys.argv[2])
+spec = outcome.load_spec(root, sys.argv[3])
+spec.bump_revision(reason="acceptance wrong-revision rig")
+outcome.save_spec(root, spec)
+"""
+
+
+@dataclass
+class HandoffRig:
+    """Per-direction U3 state: topology, dedicated broker root, and spy targets."""
+
+    topo: Topology
+    broker_root: Path
+    issuer: str
+    receiver: str
+
+    @property
+    def store_a(self) -> Path:
+        return self.topo.clone_a / ".git" / "saga-outcomes"
+
+    @property
+    def store_b(self) -> Path:
+        return self.topo.clone_b / ".git" / "saga-outcomes"
+
+    def spy(self) -> dict[str, dict[str, str]]:
+        return {
+            "store_a": _tree_state(self.store_a),
+            "store_b": _tree_state(self.store_b),
+            "broker": _tree_state(self.broker_root),
+        }
+
+    def offer_path(self, handoff_id: str) -> Path:
+        return self.store_a / self.topo.outcome_id / "handoffs" / f"{handoff_id}.offer.json"
+
+
+def _admission_args(session: str, broker_root: Path) -> list[str]:
+    return [
+        "--session-id",
+        session,
+        "--policy-sha256",
+        _ADMISSION_POLICY,
+        "--session-limit",
+        "4",
+        "--aggregate-limit",
+        "8",
+        "--broker-root",
+        str(broker_root),
+    ]
+
+
+def _mint(
+    bench: Workbench,
+    rig: HandoffRig,
+    *,
+    attempt: int,
+    operation: str = "advance-one",
+) -> str:
+    """Issue a fresh handoff on clone A as the issuing runtime; returns the handoff id."""
+    args = [
+        "handoff",
+        rig.topo.outcome_id,
+        "ready-leaf",
+        "--operation",
+        operation,
+        "--attempt",
+        str(attempt),
+    ]
+    if operation == "advance-one":
+        args += ["--dispatch-id", f"outcome:{rig.topo.outcome_id}:frontier:ready-leaf"]
+    args += _admission_args(f"u3-{rig.issuer}-{attempt}-iss", rig.broker_root)
+    minted = bench.runtime(rig.issuer).outcome(
+        *args,
+        repo_root=rig.topo.clone_a,
+        fleet_state_dir=bench.broker_root,
+        path_prefix=rig.topo.gh_bin,
+    )
+    if minted.returncode != 0:
+        raise HarnessError(
+            "handoff-mint",
+            f"{rig.issuer} attempt {attempt} rc={minted.returncode}: {_bounded(minted.stderr)}",
+        )
+    reference = json.loads(minted.stdout.strip().splitlines()[-1])
+    handoff_id = str(reference["handoff_id"])
+    if reference.get("schema") != "outcome.handoff-reference.v1" or not re.fullmatch(
+        r"[0-9a-f]{32}", handoff_id
+    ):
+        raise HarnessError("handoff-mint", f"{rig.issuer} attempt {attempt}: malformed reference")
+    return handoff_id
+
+
+def _attempt_accept(
+    bench: Workbench,
+    rig: HandoffRig,
+    *,
+    handoff_id: str,
+    clone: Path,
+    subplot: str = "ready-leaf",
+    receiver_id: str | None = None,
+    session: str,
+    broker_root: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
+    return bench.runtime(rig.receiver).outcome(
+        "attach",
+        rig.topo.outcome_id,
+        "--advance",
+        "--handoff-id",
+        handoff_id,
+        "--subplot",
+        subplot,
+        "--receiver",
+        receiver_id or f"recv-{rig.receiver}",
+        *_admission_args(session, broker_root if broker_root is not None else rig.broker_root),
+        repo_root=clone,
+        fleet_state_dir=bench.broker_root,
+        path_prefix=rig.topo.gh_bin,
+    )
+
+
+def _expect_refusal(result: subprocess.CompletedProcess[str], *, case: str, code: str) -> str:
+    """A refused acceptance must exit 3 with a receipt carrying exactly the expected code."""
+    if result.returncode != 3:
+        raise HarnessError(
+            "handoff-negative-rc",
+            f"{case}: rc={result.returncode} (expected 3): {_bounded(result.stderr or result.stdout)}",
+        )
+    receipt = json.loads(result.stdout.strip().splitlines()[-1])
+    observed = str(receipt.get("code"))
+    if observed != code:
+        raise HarnessError("handoff-negative-code", f"{case}: code {observed!r} != {code!r}")
+    return observed
+
+
+def _expect_unchanged(
+    pre: dict[str, dict[str, str]], post: dict[str, dict[str, str]], *, case: str
+) -> None:
+    for name in pre:
+        if pre[name] != post[name]:
+            raise HarnessError("handoff-negative-effect", f"{case}: {name} mutated on refusal")
+
+
+def _tamper(
+    bench: Workbench, rig: HandoffRig, handoff_id: str, *, mode: str, mutation: dict[str, Any]
+) -> None:
+    tampered = bench.runtime(rig.issuer).python(
+        _TAMPER_SNIPPET,
+        str(rig.offer_path(handoff_id)),
+        mode,
+        json.dumps(mutation),
+        repo_root=rig.topo.clone_a,
+        fleet_state_dir=bench.broker_root,
+    )
+    if tampered.returncode != 0:
+        raise HarnessError("handoff-tamper-rig", f"{mode}: {_bounded(tampered.stderr)}")
+
+
+def _handoff_positive(bench: Workbench, rig: HandoffRig) -> dict[str, Any]:
+    """R4 positive path: issuer mints on clone A, the OTHER runtime accepts and advances."""
+    handoff_id = _mint(bench, rig, attempt=1)
+    accepted = _attempt_accept(
+        bench,
+        rig,
+        handoff_id=handoff_id,
+        clone=rig.topo.clone_a,
+        session=f"u3-{rig.receiver}-1-acc",
+    )
+    if accepted.returncode != 0:
+        raise HarnessError(
+            "handoff-accept",
+            f"{rig.receiver} accept rc={accepted.returncode}: {_bounded(accepted.stderr)}",
+        )
+    outcome_result = json.loads(accepted.stdout.strip().splitlines()[-1])
+    if outcome_result.get("handoff_id") != handoff_id or not outcome_result.get(
+        "successor_lease_id"
+    ):
+        raise HarnessError("handoff-accept", "accept output missing successor binding")
+    for suffix in ("offer", "intent", "commit"):
+        record = rig.store_a / rig.topo.outcome_id / "handoffs" / f"{handoff_id}.{suffix}.json"
+        if not record.is_file():
+            raise HarnessError("handoff-accept", f"missing protected {suffix} record")
+    advance = outcome_result.get("advance", {})
+    # The one-subplot advance must have MOVED the leaf: claude's inline path reports
+    # "dispatched", codex's native outcome.dispatch.v2 path reports "intent-created" (R6) —
+    # a leaf still "ready" means the accepted handoff advanced nothing.
+    leaf_state = advance.get("status", {}).get("states", {}).get("ready-leaf")
+    if leaf_state not in ("dispatched", "intent-created"):
+        raise HarnessError("handoff-advance", f"ready-leaf state {leaf_state!r} after advance")
+    return {
+        "handoff_id": handoff_id,
+        "successor_lease_id": str(outcome_result["successor_lease_id"]),
+        "advance_dispatched": advance.get("dispatched"),
+        "ready_leaf_state": leaf_state,
+        # Bounded, path-redacted view of the non-empty tick outcomes — enough to diagnose a
+        # gated/halted leaf without carrying raw receipts into the bundle.
+        "advance_outcomes": _bounded(
+            json.dumps({k: v for k, v in advance.items() if v}, sort_keys=True)
+        ),
+    }
+
+
+def _handoff_negatives(
+    bench: Workbench, rig: HandoffRig, positive_handoff_id: str
+) -> dict[str, Any]:
+    """The R4 negative matrix; every case must refuse with zero mutable effect.
+
+    One deliberate exception: ``wrong-fence`` refuses inside successor acquisition, AFTER the
+    write-once accept-intent (the designed crash-resume artifact) — for that case the spy
+    asserts the intent file is the ONLY store delta and broker/ledger stay untouched.
+    """
+    topo, cases = rig.topo, {}
+    now = int(time.time())
+
+    def refused_unchanged(case: str, code: str, run: Callable[[], Any]) -> None:
+        pre = rig.spy()
+        cases[case] = _expect_refusal(run(), case=case, code=code)
+        _expect_unchanged(pre, rig.spy(), case=case)
+
+    # 1. A copied reference on independent clone B: the printable reference grants nothing
+    #    without the protected local record; clone B must also stay entirely state-free.
+    h_b = _mint(bench, rig, attempt=2)
+    refused_unchanged(
+        "copied-reference-clone-b",
+        "handoff-missing",
+        lambda: _attempt_accept(
+            bench, rig, handoff_id=h_b, clone=topo.clone_b, session="u3-neg-clone-b"
+        ),
+    )
+    if _store_dirs(topo.clone_b):
+        raise HarnessError("handoff-negative-effect", "clone B grew store state on refusal")
+
+    # 2. A well-formed handoff id with no protected record at all.
+    refused_unchanged(
+        "missing-record",
+        "handoff-missing",
+        lambda: _attempt_accept(
+            bench, rig, handoff_id="0" * 32, clone=topo.clone_a, session="u3-neg-missing"
+        ),
+    )
+
+    # 3. Byte tamper without re-seal: the seal check refuses first.
+    h_tamper = _mint(bench, rig, attempt=3)
+    _tamper(bench, rig, h_tamper, mode="raw", mutation={"subplot_id": "done-leaf"})
+    refused_unchanged(
+        "byte-tamper",
+        "handoff-seal-invalid",
+        lambda: _attempt_accept(
+            bench, rig, handoff_id=h_tamper, clone=topo.clone_a, session="u3-neg-tamper"
+        ),
+    )
+
+    # 4. Wrong repository: same clone, remote moved to a foreign identity.
+    h_repo = _mint(bench, rig, attempt=4)
+    _git_h(topo.clone_a, "remote", "set-url", "origin", "git@github.com:infiquetra/other.git")
+    try:
+        refused_unchanged(
+            "wrong-repository",
+            "handoff-wrong-repository",
+            lambda: _attempt_accept(
+                bench, rig, handoff_id=h_repo, clone=topo.clone_a, session="u3-neg-repo"
+            ),
+        )
+    finally:
+        _git_h(topo.clone_a, "remote", "set-url", "origin", CANONICAL_REMOTE)
+
+    # 5. Wrong operation: an attend offer never authorizes an advance.
+    h_attend = _mint(bench, rig, attempt=5, operation="attend")
+    refused_unchanged(
+        "wrong-operation",
+        "handoff-wrong-operation",
+        lambda: _attempt_accept(
+            bench, rig, handoff_id=h_attend, clone=topo.clone_a, session="u3-neg-op"
+        ),
+    )
+
+    # 6. Wrong subplot: the offer binds exactly one leaf.
+    h_subplot = _mint(bench, rig, attempt=6)
+    refused_unchanged(
+        "wrong-subplot",
+        "handoff-wrong-subplot",
+        lambda: _attempt_accept(
+            bench,
+            rig,
+            handoff_id=h_subplot,
+            clone=topo.clone_a,
+            subplot="done-leaf",
+            session="u3-neg-subplot",
+        ),
+    )
+
+    # 7. Replay / second receiver: the consumed positive handoff is bound to its receiver.
+    refused_unchanged(
+        "replay-second-receiver",
+        "handoff-receiver-conflict",
+        lambda: _attempt_accept(
+            bench,
+            rig,
+            handoff_id=positive_handoff_id,
+            clone=topo.clone_a,
+            receiver_id=f"intruder-{rig.receiver}",
+            session="u3-neg-replay",
+        ),
+    )
+
+    # 8. Wrong fence: tamper-and-reseal the fencing token — the seal passes, the broker head
+    #    comparison refuses. Runs AFTER the intent write; the intent must be the only delta.
+    h_fence = _mint(bench, rig, attempt=7)
+    _tamper(bench, rig, h_fence, mode="bump-fence", mutation={})
+    pre_fence = rig.spy()
+    cases["wrong-fence"] = _expect_refusal(
+        _attempt_accept(bench, rig, handoff_id=h_fence, clone=topo.clone_a, session="u3-neg-fence"),
+        case="wrong-fence",
+        code="handoff-superseded",
+    )
+    post_fence = rig.spy()
+    _expect_unchanged(
+        {k: v for k, v in pre_fence.items() if k != "store_a"},
+        {k: v for k, v in post_fence.items() if k != "store_a"},
+        case="wrong-fence",
+    )
+    fence_delta = set(post_fence["store_a"]) - set(pre_fence["store_a"])
+    intent_rel = f"{topo.outcome_id}/handoffs/{h_fence}.intent.json"
+    if fence_delta != {intent_rel} or any(
+        pre_fence["store_a"][k] != post_fence["store_a"][k] for k in pre_fence["store_a"]
+    ):
+        raise HarnessError(
+            "handoff-negative-effect", f"wrong-fence: store delta {sorted(fence_delta)}"
+        )
+
+    # 9. Wrong authority: the record + reference presented against a broker root that never
+    #    issued anything — no resource head, no successor, nothing minted anywhere.
+    h_auth = _mint(bench, rig, attempt=8)
+    foreign = rig.broker_root.parent / f"{rig.broker_root.name}-foreign"
+    _private_dir(foreign)
+    refused_unchanged(
+        "wrong-authority",
+        "handoff-superseded",
+        lambda: _attempt_accept(
+            bench,
+            rig,
+            handoff_id=h_auth,
+            clone=topo.clone_a,
+            session="u3-neg-auth",
+            broker_root=foreign,
+        ),
+    )
+    leaked = [
+        path
+        for path in foreign.rglob("*")
+        if path.is_file() and h_auth in path.read_text(encoding="utf-8", errors="ignore")
+    ]
+    if leaked:
+        raise HarnessError("handoff-negative-effect", "wrong-authority: successor state leaked")
+
+    # 10/11. Offer-side bounds, driven with broker=None so any broker touch crashes loudly:
+    # a TTL beyond the 300s cap and a scope beyond the single-subplot closed vocabulary.
+    for case, operation, ttl, code in (
+        ("ttl-beyond-bound", "advance-one", 301, "handoff-ttl-too-long"),
+        ("broad-scope-operation", "advance-all", 60, "schema-field-type"),
+    ):
+        pre = rig.spy()
+        cases[case] = _expect_refusal(
+            bench.runtime(rig.issuer).python(
+                _OFFER_NEGATIVE_SNIPPET,
+                str(topo.clone_a),
+                topo.outcome_id,
+                "ready-leaf",
+                operation,
+                f"outcome:{topo.outcome_id}:frontier:ready-leaf",
+                str(ttl),
+                repo_root=topo.clone_a,
+                fleet_state_dir=bench.broker_root,
+            ),
+            case=case,
+            code=code,
+        )
+        _expect_unchanged(pre, rig.spy(), case=case)
+
+    # 12/13. Freshness bounds via tamper-and-reseal: expired, and issued in the future.
+    for case, times, code in (
+        (
+            "expired",
+            {"issued_at_epoch": now - 4000, "expires_at_epoch": now - 3700},
+            "handoff-expired",
+        ),
+        (
+            "future-skew",
+            {"issued_at_epoch": now + 3600, "expires_at_epoch": now + 3900},
+            "handoff-clock-skew",
+        ),
+    ):
+        h_time = _mint(bench, rig, attempt=9 if case == "expired" else 10)
+        _tamper(bench, rig, h_time, mode="reseal", mutation=times)
+        pre = rig.spy()
+        cases[case] = _expect_refusal(
+            _attempt_accept(
+                bench, rig, handoff_id=h_time, clone=topo.clone_a, session=f"u3-neg-{case}"
+            ),
+            case=case,
+            code=code,
+        )
+        _expect_unchanged(pre, rig.spy(), case=case)
+
+    # 14. Wrong revision (LAST — it moves the committed spec): the offer binds the revision at
+    #     issue time; the creator advances the spec, clone A pulls, acceptance must refuse.
+    h_rev = _mint(bench, rig, attempt=11)
+    revised = bench.runtime(rig.issuer).python(
+        _REVISE_SPEC_SNIPPET,
+        str(topo.creator_clone),
+        topo.outcome_id,
+        repo_root=topo.creator_clone,
+        fleet_state_dir=bench.broker_root,
+    )
+    if revised.returncode != 0:
+        raise HarnessError("handoff-revise-rig", _bounded(revised.stderr))
+    committed = bench.runtime(rig.issuer).outcome(
+        "commit",
+        topo.outcome_id,
+        "--push",
+        repo_root=topo.creator_clone,
+        fleet_state_dir=bench.broker_root,
+        path_prefix=topo.gh_bin,
+    )
+    if (
+        committed.returncode != 0
+        or json.loads(committed.stdout.strip().splitlines()[-1]).get("pushed") is False
+    ):
+        raise HarnessError(
+            "handoff-revise-rig", f"revision push failed: {_bounded(committed.stderr)}"
+        )
+    # Clone A's configured origin is the canonical (unreachable) GitHub URL — fetch the bump
+    # from the local bare origin by path, keeping the remote-tracking ref in step so every
+    # committed-spec candidate ref agrees.
+    branch = f"outcome/{topo.outcome_id}"
+    _git_h(topo.clone_a, "fetch", "-q", str(topo.origin), f"{branch}:refs/remotes/origin/{branch}")
+    _git_h(topo.clone_a, "merge", "-q", "--ff-only", f"refs/remotes/origin/{branch}")
+    refused_unchanged(
+        "wrong-revision",
+        "handoff-wrong-revision",
+        lambda: _attempt_accept(
+            bench, rig, handoff_id=h_rev, clone=topo.clone_a, session="u3-neg-rev"
+        ),
+    )
+
+    return {"cases": cases, "intent_artifact_cases": ["wrong-fence"]}
+
+
+@unit("u3-handoff")
+def unit_handoff(bench: Workbench) -> list[ScenarioResult]:
+    """R4: protected bounded handoff both directions, plus the adversarial negative matrix."""
+    results: list[ScenarioResult] = []
+    for issuer, receiver in (("claude", "codex"), ("codex", "claude")):
+        started = time.monotonic()
+        broker_root = bench.workdir / f"broker-u3-{issuer}"
+        _private_dir(broker_root)
+        rig = HandoffRig(
+            topo=build_topology(
+                bench,
+                creator=issuer,
+                outcome_id=f"xr-u3-{issuer}",
+                nodes=DEFAULT_NODES,
+                fixtures=DEFAULT_FIXTURES,
+            ),
+            broker_root=broker_root,
+            issuer=issuer,
+            receiver=receiver,
+        )
+        positive_facts: dict[str, Any] = {}
+        verdict, summary = "pass", ""
+        try:
+            positive_facts = _handoff_positive(bench, rig)
+            summary = (
+                f"{issuer}-issued handoff accepted by {receiver}: successor lease minted, "
+                "one-subplot advance ran, all three protected records present"
+            )
+        except HarnessError as exc:
+            verdict = "fail"
+            summary = f"{exc.code}: {_bounded(exc.detail)}"
+        results.append(
+            ScenarioResult(
+                scenario_id=f"handoff-{issuer}-issued",
+                requirement="R4",
+                verdict=verdict,
+                summary=summary,
+                facts={"issuer": issuer, "receiver": receiver, **positive_facts},
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
+        )
+        started = time.monotonic()
+        negative_facts: dict[str, Any] = {}
+        verdict, summary = "pass", ""
+        if positive_facts:
+            try:
+                negative_facts = _handoff_negatives(bench, rig, positive_facts["handoff_id"])
+                summary = (
+                    f"{len(negative_facts['cases'])} adversarial acceptances refused with the "
+                    "expected codes and zero mutable effect (intent artifact on wrong-fence only)"
+                )
+            except HarnessError as exc:
+                verdict = "fail"
+                summary = f"{exc.code}: {_bounded(exc.detail)}"
+        else:
+            verdict = "fail"
+            summary = "skipped: positive handoff path failed in this direction"
+        results.append(
+            ScenarioResult(
+                scenario_id=f"handoff-negatives-{issuer}-issued",
+                requirement="R4",
+                verdict=verdict,
+                summary=summary,
+                facts={"issuer": issuer, "receiver": receiver, **negative_facts},
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
+        )
+    return results
+
+
 # --------------------------------------------------------------------------- main
 
 
@@ -882,7 +1495,7 @@ def main(argv: list[str] | None = None) -> int:
         claude_identity["readback"] = claude_rt.identity
         codex_identity["readback"] = codex_rt.identity
         broker_root = workdir / "broker-root"
-        broker_root.mkdir()
+        _private_dir(broker_root)
         # R2: both runtimes must agree on the redacted canonical broker-root digest — the digest
         # of the resolved root RELATIVE to the workbench, never the absolute path.
         broker_root_digest = _sha256_text("broker-root")

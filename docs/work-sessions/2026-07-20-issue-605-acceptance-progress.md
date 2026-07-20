@@ -1,6 +1,6 @@
 # Work session — #605 cross-runtime acceptance harness (U1-U5)
 
-**Status**: U1 + U2 COMPLETE and committed; U3/U4/U5 next. Branch
+**Status**: U1 + U2 + U3 COMPLETE and committed; U4/U5 next. Branch
 `work/605-cross-runtime-acceptance` (worktree `.claude/worktrees/work-605-acceptance`), base
 `origin/main` = `794b4da6`. Plan authority:
 `docs/plans/2026-07-15-cross-runtime-outcome-acceptance-plan.md` on the outcome branch
@@ -59,29 +59,46 @@ uv run python tools/run_cross_runtime_outcome_acceptance.py \
   --units all --output docs/validation/lease-safe-runtime-continuity/cross-runtime-acceptance.json
 ```
 
-## Next: U3 — protected handoff + negative matrix (R4)
+## U3 — DONE (`u3-handoff` unit; both directions + 14-case negative matrix)
 
-**Positive path PROBED WORKING end to end (2026-07-20, scratch xr-probe)**: Claude issued on a
-consumer clone (no prior store state needed — handoff works from the committed spec), codex
-accepted the same reference over the shared broker root and ran the attached advance
-(`successor_lease_id` minted, tick result `states: {a: intent-created}`).
+Committed in the harness: positive handoff each direction (issuer mints on clone A, the OTHER
+runtime accepts, successor lease + offer/intent/commit records asserted, advance must move
+ready-leaf), then 14 adversarial acceptances each direction, every one refused with the exact
+expected receipt code and byte-identical effect-spy state (`_tree_state` maps over clone A/B
+`saga-outcomes` stores + broker root). Smoke: all 6 scenarios (u2+u3) PASS rc 0 against the
+real pins.
 
-- Issuer CLI: `handoff <id> <sid> --operation advance-one --dispatch-id
-  outcome:<id>:frontier:<sid> --session-id S --policy-sha256 <64hex> --session-limit N
-  --aggregate-limit N --broker-root B` → prints `outcome.handoff-reference.v1`
-  (fields: digest, handoff_id, operation, protocol{...capabilities}, schema, subplot_id).
-  `advance-one` REQUIRES `--dispatch-id` (halt `schema-field-type` without it).
-- Receiver CLI: `attach <id> --advance --handoff-id <handoff_id> --subplot <sid>
-  <same admission flags> --broker-root B` → JSON `{handoff_id, subplot_id,
-  successor_lease_id, advance: {...advance tick result...}}`, rc 0. The target leaf must be in
-  the candidate frontier (gh fixture must serve its PR as OPEN — a missing fixture reads
-  unknown and the leaf is excluded). TTL cap 300 s, skew cap 30 s
-  (`HANDOFF_MAX_TTL_SECONDS`, `HANDOFF_MAX_CLOCK_SKEW_SECONDS` in outcome_compat).
-- Negatives (each must reject BEFORE any mutable effect — capture pre/post store hashes):
-  copied reference on clone B; wrong repository/revision/operation/subplot/receiver/issuer/
-  fence; broad scope; replay (second accept); byte tamper; missing protected record; expiry
-  >300 s; future skew >30 s. Effect spies: hash the handoffs dir + broker registry + ledger
-  before/after each refusal.
+Case → code: copied-reference-clone-b/missing-record→`handoff-missing`;
+byte-tamper→`handoff-seal-invalid`; wrong-repository/-operation/-subplot/-revision→their codes;
+replay-second-receiver→`handoff-receiver-conflict`; wrong-fence (tamper-and-reseal token) +
+wrong-authority (foreign broker root)→`handoff-superseded`; ttl 301→`handoff-ttl-too-long`;
+broad scope `advance-all`→`schema-field-type` (offer-side, driven with broker=None);
+expired/future-skew (tamper-and-reseal timestamps)→`handoff-expired`/`handoff-clock-skew`.
+`wrong-fence` is the ONE post-intent refusal: the write-once accept-intent is the designed
+crash-resume artifact — the spy asserts it is the only store delta.
+
+U3 mechanics learned (do not rediscover):
+
+- **Broker roots must be mode 0o700** — a default-umask mkdir is refused with
+  `UnsafeAuthorityError` at first acquire (`_private_dir` helper).
+- **`_store_dirs` was vacuous**: the real store namespace is `.git/saga-outcomes`
+  (`outcome_store.STORE_NAMESPACE`), not any of the guessed names — fixed + pinned by test;
+  the U2 clone-B state-free check is only now actually load-bearing.
+- Clone A/B carry the canonical (unreachable) GitHub remote — pull revision bumps by path:
+  `git fetch <origin_path> <branch>:refs/remotes/origin/<branch>` + `merge --ff-only` so all
+  committed-spec candidate refs agree.
+- `load_spec` returns an `OutcomeSpec` object — bump via `spec.bump_revision(reason=…)` +
+  `save_spec`, then `commit <id> --push` from the creator clone.
+- **Native-flavor asymmetry is correct (R6)**: after an accepted advance, claude reports
+  ready-leaf `dispatched` (inline path) while codex reports `intent-created` (native
+  outcome.dispatch.v2) — the positive assertion accepts exactly these two states.
+- Smoke invocations must use ABSOLUTE `--claude-repo`/`--codex-repo` paths (the shell cwd
+  resets between commands; a relative pin path halts `pin-not-a-repo`).
+- CLI refusals: `CompatibilityHaltError` → receipt JSON on stdout + exit 3; broker errors →
+  `{"ok": false}` on stderr + exit 1.
+
+## Next: U4 (R5/R6) — two-process race
+
 - U4 (R5/R6): two OS processes + deterministic file-based barrier released just before broker
   admission; write-once fake backend (the dispatcher seam is ACTIVE codex-side since PA-2 —
   `DispatcherError` mid-tick records a reducer-visible halt, see PA-2 review artifact);

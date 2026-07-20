@@ -438,3 +438,36 @@ class TestBoundedRedaction:
         flat = tool._bounded(raw)
         assert "<home>" in flat and "<path>" in flat
         assert tool.scrub_check({"detail": flat}) == []
+
+
+class TestEffectSpy:
+    def test_absent_tree_is_empty(self, tool: ModuleType, tmp_path: Path) -> None:
+        assert tool._tree_state(tmp_path / "nope") == {}
+
+    def test_maps_relative_paths_and_detects_byte_changes(
+        self, tool: ModuleType, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "store"
+        (root / "oid" / "handoffs").mkdir(parents=True)
+        record = root / "oid" / "handoffs" / "aa.offer.json"
+        record.write_text("{}\n", encoding="utf-8")
+        before = tool._tree_state(root)
+        assert list(before) == ["oid/handoffs/aa.offer.json"]
+        record.write_text('{"tampered": true}\n', encoding="utf-8")
+        after = tool._tree_state(root)
+        assert set(after) == set(before)
+        assert after != before
+
+
+class TestStoreDirs:
+    def test_detects_the_real_store_namespace(self, tool: ModuleType, tmp_path: Path) -> None:
+        # outcome_store.STORE_NAMESPACE is "saga-outcomes"; the U2 clone-B state-free assertion
+        # is vacuous unless this helper matches the real namespace.
+        clone = tmp_path / "clone"
+        (clone / ".git" / "saga-outcomes" / "xr" / "handoffs").mkdir(parents=True)
+        assert ".git/saga-outcomes" in tool._store_dirs(clone)
+
+    def test_clean_clone_reports_nothing(self, tool: ModuleType, tmp_path: Path) -> None:
+        clone = tmp_path / "clone"
+        (clone / ".git").mkdir(parents=True)
+        assert tool._store_dirs(clone) == []

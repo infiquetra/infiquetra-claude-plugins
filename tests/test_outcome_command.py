@@ -789,6 +789,36 @@ def test_settled_lookup_sees_native_settlement(repo: Path) -> None:
     assert lookup("dispatch-intent:ship-x:build", "build", 1) is False  # untouched leaf stays open
 
 
+def test_settled_lookup_ignores_non_native_settlements(repo: Path) -> None:
+    """#631: the reduction consult preempts ONLY for a receipt-authoritative native launched
+    ack — the one settlement the #351 lane cannot see. A legacy commit (claude's own accept
+    writes one via attached_advance) or an operator handoff must fall through to the #351
+    lane, keeping the byte-frozen accept flow's refusal precedence codex-identical: a
+    replayed handoff refuses handoff-receiver-conflict, never handoff-already-settled."""
+    M.start(repo, "ship-x", "Ship feature X")
+    dispatcher, _calls = _recorder()
+    M.advance(repo, "ship-x", dispatcher=dispatcher)  # legacy intent+commit for "design"
+    store = STORE.Store.for_outcome("ship-x", repo)
+    reduced = STORE.reduce_dispatch_ledger(store)["design"]
+    assert (reduced["state"], reduced["settled"]) == ("legacy-unverified", True)
+    lookup = M._settled_lookup(repo, "ship-x")
+    # settled in the reduction, but not via a native launched ack -> the #351 lane decides
+    assert lookup("dispatch:design", "design", 1) is False
+    # operator handoff: settled without a native leaf -> the same fall-through applies
+    STORE.append_ledger(store, _native_v2("build", "intent"))
+    STORE.append_ledger(
+        store,
+        _native_v2(
+            "build",
+            "ack",
+            ack_kind="handed-off",
+            receipt_authority="operator-confirmed-v1",
+        ),
+    )
+    assert STORE.reduce_dispatch_ledger(store)["build"]["settled"] is True
+    assert lookup("dispatch-intent:ship-x:build", "build", 1) is False
+
+
 def test_cli_attach_advance_wires_outcome_id_into_settled_lookup(
     repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

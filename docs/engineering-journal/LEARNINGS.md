@@ -3651,3 +3651,18 @@ asserting that the fallback returns a nonempty string.
 - **Generalizable rule**: invoke `evidence_ledger.py` with cwd == `--repo-root` (cd into the outcome
   worktree and pass `--repo-root .`); if a mis-rooted write is caught while still untracked, delete
   the whole evidence dir and redo — never hand-edit the custody log.
+
+## 2026-07-20: Closure-gate verdicts are a closed lowercase vocabulary {#closure-gate-verdict-vocab-34}
+
+- **Evidence**: leaf codex-parity would not harvest — `closure_gate.evaluate` returned
+  `unrecognized-verdict:code-review` for a ledger entry written with `--verdict CLEAN`; a second
+  append with `--verdict clean` (same content-addressed artifact, attempt 2) satisfied the gate
+  (harvest commit, this branch; codex PR infiquetra-codex-plugins#42).
+- **Mechanism**: `closure_gate.py` matches the ledger's latest verdict at the close SHA against
+  KTD7's closed vocabulary — the exact strings the shipped producers write (`/qa`:
+  `ship`/`ship-with-deferred`/`no-ship`; `/code-review`: `clean`/`blocked`). Anything else — case
+  variants included — is `unrecognized-verdict`, and harvest silently skips the node (a `continue`,
+  no surfaced diagnostic in the advance output).
+- **Generalizable rule**: when hand-writing closure evidence, copy the producer's verdict string
+  byte-for-byte; when a harvest silently refuses, probe `closure_gate.evaluate` directly — the
+  GateVerdict names the failing check and reason the advance tick swallows.

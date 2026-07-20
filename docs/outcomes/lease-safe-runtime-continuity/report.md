@@ -1,6 +1,6 @@
 # Outcome: Ship lease-safe cross-runtime Outcome continuity with bounded concurrency, settlement, liveness, and reclamation
 
-**Outcome ID:** `lease-safe-runtime-continuity` · **Revision:** 3 · **Progress:** 9/11 (82%)
+**Outcome ID:** `lease-safe-runtime-continuity` · **Revision:** 3 · **Progress:** 10/11 (91%)
 
 ## Topology
 
@@ -15,8 +15,8 @@ flowchart TD
     claude-cross-runtime["claude-cross-runtime: done"]
     sub-353["sub-353: done"]
     codex-substrate["codex-substrate: done"]
-    codex-parity["codex-parity: ready"]
-    cross-runtime-acceptance["cross-runtime-acceptance: blocked"]
+    codex-parity["codex-parity: done"]
+    cross-runtime-acceptance["cross-runtime-acceptance: ready"]
     sub-350 --> sub-356
     sub-351 --> sub-356
     sub-356 --> sub-355
@@ -55,8 +55,8 @@ flowchart TD
 | `claude-cross-runtime` | done | PR https://github.com/infiquetra/infiquetra-claude-plugins/pull/622, issue infiquetra/infiquetra-claude-plugins#604 | no data yet |
 | `sub-353` | done | PR https://github.com/infiquetra/infiquetra-claude-plugins/pull/623, issue infiquetra/infiquetra-claude-plugins#353 | no data yet |
 | `codex-substrate` | done | PR https://github.com/infiquetra/infiquetra-codex-plugins/pull/41, issue infiquetra/infiquetra-codex-plugins#33 | no data yet |
-| `codex-parity` | ready | issue infiquetra/infiquetra-codex-plugins#34 | no data yet |
-| `cross-runtime-acceptance` | blocked | issue infiquetra/infiquetra-claude-plugins#605 | no data yet |
+| `codex-parity` | done | PR https://github.com/infiquetra/infiquetra-codex-plugins/pull/42, issue infiquetra/infiquetra-codex-plugins#34 | no data yet |
+| `cross-runtime-acceptance` | ready | issue infiquetra/infiquetra-claude-plugins#605 | no data yet |
 
 ## Cost rollup
 

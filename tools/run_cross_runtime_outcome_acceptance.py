@@ -2003,6 +2003,60 @@ def _scenario_simultaneous(bench: Workbench, rig: RaceRig) -> dict[str, Any]:
         rc, _payload = _cli_advance(bench, rig, name)
         if rc != 0:
             raise HarnessError("race-simultaneous", f"{name} retry rc={rc}")
+    interim = rig.summary()
+    if (
+        interim["settled_chains"] == 0
+        and interim["legacy_commits"] == 0
+        and interim["v2_intents"] == 1
+        and interim["v2_acks"] == 0
+    ):
+        # Codex won the barrier race: its native intent is legitimately IN FLIGHT — the codex
+        # advance never self-settles (race-codex-first asserts exactly that), and a v2-aware
+        # Claude rightly refuses the in-flight leaf rather than re-dispatching it. Complete the
+        # native chain the same way the R6 scenario does (the launched runner produces the
+        # write-once effect and a receipt-validated launched ack), then judge R5 at quiescence:
+        # the settled native chain must be the ONLY chain, and BOTH runtimes must still refuse.
+        effect = bench.workdir / "effect-simultaneous.json"
+        prepared = bench.codex.python(
+            _CODEX_LAUNCH_PREP_SNIPPET,
+            str(rig.topo.clone_a),
+            rig.topo.outcome_id,
+            "race-leaf",
+            str(effect),
+            repo_root=rig.topo.clone_a,
+            fleet_state_dir=rig.broker_root,
+        )
+        if prepared.returncode != 0:
+            raise HarnessError("race-simultaneous", f"launch prep rc={prepared.returncode}")
+        launch = json.loads(prepared.stdout.strip().splitlines()[-1])
+        acked = bench.codex.outcome(
+            "reconcile-dispatch",
+            rig.topo.outcome_id,
+            "race-leaf",
+            "--ack-kind",
+            "launched",
+            "--dispatch-ack-ref",
+            launch["ref"],
+            "--leaf-saga-id",
+            launch["leaf"],
+            repo_root=rig.topo.clone_a,
+            fleet_state_dir=rig.broker_root,
+            path_prefix=rig.topo.gh_bin,
+        )
+        if acked.returncode != 0:
+            raise HarnessError(
+                "race-simultaneous",
+                f"launched ack refused: {_bounded(acked.stderr or acked.stdout)}",
+            )
+        if not effect.exists():
+            raise HarnessError("race-simultaneous", "write-once backend effect missing")
+        for name in ("claude", "codex"):
+            rc, payload = _cli_advance(bench, rig, name)
+            if rc != 0 or payload.get("dispatched"):
+                raise HarnessError(
+                    "race-simultaneous",
+                    f"{name} re-dispatched a natively settled leaf: {payload.get('dispatched')}",
+                )
     final = rig.summary()
     dangling_native = final["v2_intents"] - sum(
         1 for kind in final["ack_kinds"] if kind == "launched"

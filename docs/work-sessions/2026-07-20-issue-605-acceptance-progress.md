@@ -253,3 +253,19 @@ passed / 1 skipped; ruff + format + mypy clean; committed bundle re-verified scr
 the tightened regex (no regeneration needed — repairs touch retry/halt/hygiene paths the
 recorded run never entered). Durable artifact:
 `docs/code-reviews/2026-07-20-issue-605-cross-runtime-acceptance-code-review.md`.
+
+## race-simultaneous codex-won interleave — harness completion gap repaired (post-#628-fix)
+
+The #628 runtime fix (branch `work/628-v2-vocabulary`, `4b088552`) made the codex-won
+simultaneous interleave reachable for the first time: a v2-aware Claude now refuses the
+in-flight native intent instead of double-dispatching. That exposed a harness gap, masked
+until now by the old always-dispatching Claude: `_scenario_simultaneous` played no launched
+runner, so a codex-won race could never settle (`settled_chains: 0`, one legitimately
+in-flight intent) and the scenario was a coin flip on the barrier winner. Repair: when the
+post-retry census shows exactly one un-acked native intent and nothing settled, the scenario
+now completes the codex-native chain the same way `race-codex-first` does (launch prep →
+write-once effect → receipt-validated `launched` ack) and then re-asserts at quiescence that
+BOTH runtimes still refuse and exactly one settled chain exists. Verified: 3 consecutive
+`--units u4-race` runs at claude `4b088552` / codex `f3e1af75` — 5/5 pass each, all three
+exercising the codex-won branch (`v2_intents=1, legacy_commits=0`). Hermetic suite 57 passed;
+ruff clean.

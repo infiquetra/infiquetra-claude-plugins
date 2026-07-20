@@ -203,3 +203,19 @@ oracle strength, all fixed in the remediation commit:
 Regenerated bundle (sha `1cf824e6…`): still **12/14, overall fail** — both reds remain #628
 production truth, now with auditable in-bundle facts. Full battery 5273 passed; schema valid;
 44 hermetic harness tests.
+
+## Re-adjudication round 2 — all 17 round-1 findings RESOLVED; 2 new P3s fixed (cycle 2)
+
+Round-2 panel (workflow `wf_44b776e2-ed6`, 6 originating lenses, fresh saga:readonly-verifier +
+worktree spawns at round-1 tiers): **every round-1 finding confirmed genuinely resolved and
+non-vacuous**; the #628 attribution and the 12/14 bundle were re-upheld. Two NEW P3s from the
+remediation itself, both fixed in the cycle-2 commit:
+
+- **review-security P3**: the generalized `_ABS_PATH_RE` lookbehind excluded ':', so
+  colon-immediately-prefixed paths (`tmpdir:/var/folders/…`) slipped both scrub_check and
+  _bounded — a false negative the old denylist caught. Fix: drop ':' from the lookbehind; URLs
+  stay safe because a scheme's "//" fails the first-segment class (proven by test). Leak +
+  redaction tests added; committed bundle re-verified clean under the tightened guard.
+- **review-architecture P3**: `_resolved_broker_digest`'s halt branches had no hermetic test.
+  Fix: `TestBrokerRootDigest` with a duck-typed stub runtime — agreement digest, runtime
+  divergence halt, agreed-but-wrong-root halt, probe-failure halt. Suite 44 → 49.

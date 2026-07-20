@@ -126,9 +126,11 @@ def _private_dir(path: Path) -> Path:
 
 
 # Any absolute filesystem path with two or more segments, under ANY root — not a closed
-# top-level-directory denylist. The lookbehind excludes URL slashes (https://…) and interior
-# slashes of relative paths (refs/remotes/…, plugins/saga/…).
-_ABS_PATH_RE = re.compile(r"(?<![\w:/])/(?:[\w.@+~-]+/)+[\w.@+~-]+")
+# top-level-directory denylist. The lookbehind excludes interior slashes of relative paths
+# (refs/remotes/…, plugins/saga/…) but deliberately NOT a preceding colon: a colon-prefixed
+# path (tmpdir:/var/folders/…) must still flag, and URL slashes are self-protecting because
+# the "//" of a scheme fails the first-segment character class.
+_ABS_PATH_RE = re.compile(r"(?<![\w/])/(?:[\w.@+~-]+/)+[\w.@+~-]+")
 
 
 def _bounded(text: str, limit: int = 400) -> str:

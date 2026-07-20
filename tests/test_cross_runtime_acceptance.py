@@ -482,6 +482,10 @@ class TestPrivacyGuardBreadth:
             "/usr/local/secret/token",
             "/nix/store/abc123-pkg",
             "/data/creds/id_rsa",
+            # Colon-immediately-prefixed shapes (macOS temp roots in key:value error text)
+            # must flag too — URLs stay safe because "//" fails the segment class.
+            "tmpdir:/var/folders/ab/xr-acceptance/T/x",
+            "wd:/Users/otheruser/proj/key",
         ):
             assert tool.scrub_check({"k": leak}), leak
 
@@ -498,6 +502,11 @@ class TestPrivacyGuardBreadth:
     def test_bounded_redacts_any_absolute_root(self, tool: ModuleType) -> None:
         flat = tool._bounded("boom at /usr/local/lib/secret.pem here")
         assert "/usr/local" not in flat
+        assert "<path>" in flat
+
+    def test_bounded_redacts_colon_prefixed_paths(self, tool: ModuleType) -> None:
+        flat = tool._bounded("boom broker-root:/data/creds/id_rsa done")
+        assert "/data/creds" not in flat
         assert "<path>" in flat
 
 
@@ -620,3 +629,78 @@ class TestWorkdirRetention:
     def test_halt_and_flag_retain(self, tool: ModuleType) -> None:
         assert tool._should_keep(False, [], {"code": "x", "detail": "y"}) is True
         assert tool._should_keep(True, [], None) is True
+
+
+class _StubRuntime:
+    """Duck-typed stand-in for InstalledRuntime: only .python() is consumed by
+    _resolved_broker_digest, so the halt branches are testable hermetically."""
+
+    def __init__(self, resolved: str, rc: int = 0) -> None:
+        self._resolved = resolved
+        self._rc = rc
+
+    def python(
+        self,
+        code: str,
+        *argv: str,
+        repo_root: Path,
+        fleet_state_dir: Path,
+        path_prefix: Path | None = None,
+        timeout: int = 0,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=["stub"],
+            returncode=self._rc,
+            stdout=json.dumps({"resolved": self._resolved}) + "\n",
+            stderr="stub failure" if self._rc else "",
+        )
+
+
+class TestBrokerRootDigest:
+    """R2 agreement evidence: the digest must be run-derived and divergence must halt."""
+
+    def test_agreement_yields_workbench_relative_digest(
+        self, tool: ModuleType, tmp_path: Path
+    ) -> None:
+        broker = tmp_path / "broker-root"
+        broker.mkdir()
+        runtimes = {
+            "claude": _StubRuntime(str(broker)),
+            "codex": _StubRuntime(str(broker)),
+        }
+        digest = tool._resolved_broker_digest(runtimes, broker, tmp_path)
+        assert digest == tool._sha256_text("broker-root")
+
+    def test_runtime_divergence_halts(self, tool: ModuleType, tmp_path: Path) -> None:
+        broker = tmp_path / "broker-root"
+        other = tmp_path / "elsewhere"
+        broker.mkdir()
+        other.mkdir()
+        runtimes = {
+            "claude": _StubRuntime(str(broker)),
+            "codex": _StubRuntime(str(other)),
+        }
+        with pytest.raises(tool.HarnessError) as exc:
+            tool._resolved_broker_digest(runtimes, broker, tmp_path)
+        assert exc.value.code == "broker-root-divergence"
+
+    def test_agreed_but_wrong_root_halts(self, tool: ModuleType, tmp_path: Path) -> None:
+        broker = tmp_path / "broker-root"
+        wrong = tmp_path / "wrong-root"
+        broker.mkdir()
+        wrong.mkdir()
+        runtimes = {
+            "claude": _StubRuntime(str(wrong)),
+            "codex": _StubRuntime(str(wrong)),
+        }
+        with pytest.raises(tool.HarnessError) as exc:
+            tool._resolved_broker_digest(runtimes, broker, tmp_path)
+        assert exc.value.code == "broker-root-divergence"
+
+    def test_probe_failure_halts(self, tool: ModuleType, tmp_path: Path) -> None:
+        broker = tmp_path / "broker-root"
+        broker.mkdir()
+        runtimes = {"claude": _StubRuntime(str(broker), rc=1)}
+        with pytest.raises(tool.HarnessError) as exc:
+            tool._resolved_broker_digest(runtimes, broker, tmp_path)
+        assert exc.value.code == "broker-root-divergence"

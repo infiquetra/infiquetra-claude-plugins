@@ -44,9 +44,10 @@ launch every round. Dispatch of the `codex-parity` leaf under the outcome's quie
 requires operator approval of this candidate; any model, effort, lens, validator, or vehicle
 change afterward requires a newly approved candidate.
 
-**Operator approval:** pending. The 2026-07-19 in-session operator decisions bound so far are the
-execution vehicle (Claude-direct cc-workflow), the KTD6 seam deferral, and authorization to
-refresh this plan — not dispatch.
+**Operator approval:** Jeff, 2026-07-19, in-session ("approved"). The anchor was recomputed
+byte-exact against the committed plan at approval time (`c0913b22`, section bytes 6306) and
+matched. The approval authorizes dispatch of the `codex-parity` leaf only; the standing quiesce
+remains in force for `cross-runtime-acceptance`.
 
 ## Findings
 

@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lease-safe-runtime-continuity/cross-runtime-acceptance.schema.json",
+  "title": "Cross-runtime Outcome acceptance evidence bundle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "started_at",
+    "overall_verdict",
+    "halt",
+    "runtimes",
+    "contract_digests",
+    "broker_root_digest",
+    "environment_names_set",
+    "scenarios"
+  ],
+  "properties": {
+    "schema": {
+      "const": "lease-safe-runtime-continuity/cross-runtime-acceptance.v1"
+    },
+    "started_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "overall_verdict": { "enum": ["pass", "fail", "halt"] },
+    "halt": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "detail"],
+          "properties": {
+            "code": { "type": "string", "maxLength": 64 },
+            "detail": { "type": "string", "maxLength": 400 }
+          }
+        }
+      ]
+    },
+    "runtimes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claude", "codex"],
+      "properties": {
+        "claude": { "$ref": "#/$defs/runtime" },
+        "codex": { "$ref": "#/$defs/runtime" }
+      }
+    },
+    "contract_digests": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "claude_outcome_compat_sha256",
+        "codex_outcome_compat_sha256",
+        "codex_target_inventory_sha256"
+      ],
+      "properties": {
+        "claude_outcome_compat_sha256": { "$ref": "#/$defs/sha256" },
+        "codex_outcome_compat_sha256": { "$ref": "#/$defs/sha256" },
+        "codex_target_inventory_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "broker_root_digest": {
+      "oneOf": [{ "$ref": "#/$defs/sha256" }, { "const": "" }]
+    },
+    "environment_names_set": {
+      "type": "array",
+      "items": { "type": "string", "maxLength": 64 },
+      "maxItems": 32
+    },
+    "scenarios": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "scenario_id",
+          "requirement",
+          "verdict",
+          "summary",
+          "facts",
+          "duration_ms"
+        ],
+        "properties": {
+          "scenario_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,80}$" },
+          "requirement": { "type": "string", "pattern": "^R([1-9]|10)$" },
+          "verdict": { "enum": ["pass", "fail", "halt"] },
+          "summary": { "type": "string", "maxLength": 400 },
+          "facts": { "type": "object", "maxProperties": 40 },
+          "duration_ms": { "type": "integer", "minimum": 0 }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha", "expected_versions", "identity"],
+      "properties": {
+        "sha": { "type": "string", "pattern": "^[0-9a-f]{7,40}$" },
+        "expected_versions": { "$ref": "#/$defs/versions" },
+        "identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+            "versions": { "$ref": "#/$defs/versions" },
+            "readback": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "versions",
+                "runtime_label",
+                "compat_protocol_version",
+                "cli_help_ok"
+              ],
+              "properties": {
+                "versions": { "$ref": "#/$defs/versions" },
+                "runtime_label": { "enum": ["claude", "codex"] },
+                "compat_protocol_version": { "type": "integer", "minimum": 1 },
+                "cli_help_ok": { "const": true }
+              }
+            }
+          }
+        }
+      }
+    },
+    "versions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["saga", "fleet-core"],
+      "properties": {
+        "saga": { "type": "string", "maxLength": 64 },
+        "fleet-core": { "type": "string", "maxLength": 64 }
+      }
+    }
+  }
+}

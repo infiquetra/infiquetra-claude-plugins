@@ -161,3 +161,45 @@ tripwire) per the plan's `## Workflow Structure`; then programmatic code-review 
 then `saga:qa` (no waiver), then PR (session URL footer, Closes #605) and merge under the
 standing 2026-07-18 pre-approval. Merge closes #605; #579 close + board reconcile + harvest
 follow (tasks #50/#51).
+
+## Anchored ceremony — round 1 complete, all 17 findings remediated
+
+The anchored 7-lens ceremony (cc-workflow run `wf_d80aedc3-39c`, anchor `4b21df73…` verified
+byte-exact) ran against HEAD `eae03b4`. All 7 lenses reported (`missing: []`). Panel verdict:
+**the core acceptance claims and the #628 attribution SURVIVED adversarial refutation** — three
+lenses independently re-executed the harness against the real pins and reproduced the 12/14
+split scenario-for-scenario, and the event-flow validator confirmed the double-dispatch ledger
+records by direct inspection. 17 findings (2 P1, 6 P2, 9 P3), all on evidence integrity and
+oracle strength, all fixed in the remediation commit:
+
+- **P1 broker_root_digest constant** → now run-derived: each installed runtime resolves the
+  broker root from the hermetic child env (`resolve_state_root`), divergence halts
+  (`broker-root-divergence`), digest is over the workbench-relative path.
+- **P1 retention promise false on scenario failures** → `_should_keep()` retains the workdir
+  for any failing scenario, not just hard halts; help text fixed; hermetic test added.
+- **P2 environment_names_set sampled harness env** → computed from the real child env dicts;
+  PWD added to (and TMPDIR dropped from) the allowlist; out-of-list child names halt
+  (`env-name-unlisted`).
+- **P2 facts empty on failing race scenarios** → `HarnessError.facts` carries partial
+  structured evidence through the fail path; both red scenarios now record chain summaries +
+  overlap receipts in the bundle.
+- **P2 README R7 mis-citation** → attributed to the contract suites, not the hermetic suite.
+- **P2 verdict oracles untested** → hermetic tests for `_chain_summary` (double-settlement,
+  dangling native), `_expect_refusal` (rc/code/last-line/mechanism-text), `_expect_unchanged`
+  (mutation + addition), `_should_keep`.
+- **P2 clone-B denial accepted any nonzero** → typed refusal pinned: rc 3 + `handoff-missing`.
+- **P2 wrong-issuer negative absent** → new offer-side `stale-issuer` case (a successful offer
+  relinquishes the issuer's authority; re-offer from the closed lease refuses
+  `handoff-issuer-not-current` with in-process zero-effect proof). Matrix is now 15 cases.
+- **P3s** → legacy-import oracle pins the retirement-receipt text (refusal is
+  unconditional-by-design; fixture reframed); `handoff-superseded` aliasing broken by pinning
+  receipt mechanism text (wrong-authority → head-absent, wrong-fence → head-moved);
+  `scrub_check`/`_bounded` generalize to any absolute path root (`_ABS_PATH_RE`), not a 7-root
+  denylist; positive-handoff leaf state pinned per receiver; doctor sensitivity requires the
+  `unledgered-spawn` class; crash recovery polls past lease expiry instead of one fixed sleep;
+  serialized (non-overlapping) race runs get a distinct `race-serialized` code and up to two
+  fresh-rig retries instead of reading a scheduling hiccup as a defect.
+
+Regenerated bundle (sha `1cf824e6…`): still **12/14, overall fail** — both reds remain #628
+production truth, now with auditable in-bundle facts. Full battery 5273 passed; schema valid;
+44 hermetic harness tests.

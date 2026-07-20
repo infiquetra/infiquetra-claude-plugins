@@ -471,3 +471,152 @@ class TestStoreDirs:
         clone = tmp_path / "clone"
         (clone / ".git").mkdir(parents=True)
         assert tool._store_dirs(clone) == []
+
+
+class TestPrivacyGuardBreadth:
+    """The R10 guard must catch absolute paths under ANY root, not a fixed denylist."""
+
+    def test_rejects_paths_under_any_root(self, tool: ModuleType) -> None:
+        for leak in (
+            "/Library/Keychains/login.keychain",
+            "/usr/local/secret/token",
+            "/nix/store/abc123-pkg",
+            "/data/creds/id_rsa",
+        ):
+            assert tool.scrub_check({"k": leak}), leak
+
+    def test_accepts_urls_remotes_and_relative_paths(self, tool: ModuleType) -> None:
+        clean = {
+            "url": "https://github.com/infiquetra/xr-fixture-target",
+            "remote": "git@github.com:infiquetra/other.git",
+            "ref": "refs/remotes/origin/outcome/xr-u3",
+            "rel": "plugins/saga/scripts/outcome.py",
+            "ratio": "3 pass / 2 fail",
+        }
+        assert tool.scrub_check(clean) == []
+
+    def test_bounded_redacts_any_absolute_root(self, tool: ModuleType) -> None:
+        flat = tool._bounded("boom at /usr/local/lib/secret.pem here")
+        assert "/usr/local" not in flat
+        assert "<path>" in flat
+
+
+class TestVerdictOracles:
+    """Hermetic pins for the load-bearing scenario pass/fail helpers."""
+
+    def _proc(
+        self, rc: int, stdout: str = "", stderr: str = ""
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args=["x"], returncode=rc, stdout=stdout, stderr=stderr)
+
+    def test_expect_refusal_requires_rc_3(self, tool: ModuleType) -> None:
+        with pytest.raises(tool.HarnessError) as exc:
+            tool._expect_refusal(
+                self._proc(1, stdout='{"code": "handoff-missing"}'),
+                case="c",
+                code="handoff-missing",
+            )
+        assert exc.value.code == "handoff-negative-rc"
+
+    def test_expect_refusal_requires_exact_code(self, tool: ModuleType) -> None:
+        with pytest.raises(tool.HarnessError) as exc:
+            tool._expect_refusal(
+                self._proc(3, stdout='{"code": "handoff-expired"}'),
+                case="c",
+                code="handoff-missing",
+            )
+        assert exc.value.code == "handoff-negative-code"
+
+    def test_expect_refusal_reads_last_stdout_line(self, tool: ModuleType) -> None:
+        stdout = 'noise line\n{"code": "handoff-missing", "unsupported": "x"}'
+        observed = tool._expect_refusal(
+            self._proc(3, stdout=stdout), case="c", code="handoff-missing"
+        )
+        assert observed == "handoff-missing"
+
+    def test_expect_refusal_pins_the_mechanism_text(self, tool: ModuleType) -> None:
+        stdout = (
+            '{"code": "handoff-superseded",'
+            ' "unsupported": "a handoff whose broker resource head no longer exists"}'
+        )
+        assert tool._expect_refusal(
+            self._proc(3, stdout=stdout),
+            case="c",
+            code="handoff-superseded",
+            unsupported_contains="no longer exists",
+        )
+        with pytest.raises(tool.HarnessError) as exc:
+            tool._expect_refusal(
+                self._proc(3, stdout=stdout),
+                case="c",
+                code="handoff-superseded",
+                unsupported_contains="superseded by another authority",
+            )
+        assert exc.value.code == "handoff-negative-code"
+
+    def test_expect_unchanged_detects_added_and_mutated_files(self, tool: ModuleType) -> None:
+        pre = {"store": {"a.json": "1" * 64}}
+        tool._expect_unchanged(pre, {"store": {"a.json": "1" * 64}}, case="c")
+        with pytest.raises(tool.HarnessError):
+            tool._expect_unchanged(pre, {"store": {"a.json": "2" * 64}}, case="c")
+        with pytest.raises(tool.HarnessError):
+            tool._expect_unchanged(
+                pre, {"store": {"a.json": "1" * 64, "b.json": "3" * 64}}, case="c"
+            )
+
+
+class TestChainSummary:
+    """The dual-vocabulary dispatch census that decides every U4 verdict."""
+
+    def _legacy(self, phase: str) -> dict[str, str]:
+        return {"kind": "dispatch", "phase": phase, "subplot_id": "race-leaf"}
+
+    def _native(self, phase: str, ack_kind: str | None = None) -> dict[str, str]:
+        record = {"kind": "outcome.dispatch.v2", "phase": phase, "subplot_id": "race-leaf"}
+        if ack_kind:
+            record["ack_kind"] = ack_kind
+        return record
+
+    def test_double_settlement_counts_two_chains(self, tool: ModuleType) -> None:
+        records = [
+            self._native("intent"),
+            self._native("ack", "launched"),
+            self._legacy("intent"),
+            self._legacy("commit"),
+        ]
+        summary = tool._chain_summary(records, "race-leaf")
+        assert summary["settled_chains"] == 2
+        assert summary["v2_acks"] == 1
+        assert summary["legacy_commits"] == 1
+        assert summary["ack_kinds"] == ["launched"]
+
+    def test_dangling_native_intent_is_visible(self, tool: ModuleType) -> None:
+        records = [self._native("intent"), self._legacy("intent"), self._legacy("commit")]
+        summary = tool._chain_summary(records, "race-leaf")
+        assert summary["v2_intents"] == 1
+        assert summary["v2_acks"] == 0
+        assert summary["settled_chains"] == 1
+
+    def test_other_subplots_are_excluded(self, tool: ModuleType) -> None:
+        foreign = {"kind": "dispatch", "phase": "commit", "subplot_id": "other-leaf"}
+        summary = tool._chain_summary([foreign], "race-leaf")
+        assert summary["settled_chains"] == 0
+        assert summary["legacy_commits"] == 0
+
+
+class TestWorkdirRetention:
+    """Failed or halted runs must retain the workdir even without --keep-workdir."""
+
+    def _scenario(self, tool: ModuleType, verdict: str) -> object:
+        return tool.ScenarioResult(scenario_id="s", requirement="R5", verdict=verdict, summary="x")
+
+    def test_all_pass_without_flag_is_cleaned(self, tool: ModuleType) -> None:
+        assert tool._should_keep(False, [self._scenario(tool, "pass")], None) is False
+
+    def test_failing_scenario_always_retains(self, tool: ModuleType) -> None:
+        scenarios = [self._scenario(tool, "pass"), self._scenario(tool, "fail")]
+        assert tool._should_keep(False, scenarios, None) is True
+
+    def test_halt_and_flag_retain(self, tool: ModuleType) -> None:
+        assert tool._should_keep(False, [], {"code": "x", "detail": "y"}) is True
+        assert tool._should_keep(True, [], None) is True

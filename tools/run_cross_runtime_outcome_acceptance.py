@@ -34,11 +34,14 @@ from typing import Any
 
 SCHEMA_VERSION = "lease-safe-runtime-continuity/cross-runtime-acceptance.v1"
 
-# R10: environment-variable NAME allowlist. The bundle records which of these names were set for
-# child processes — never values, never names outside this closed list.
+# R10: environment-variable NAME allowlist. The bundle records which of these names the harness
+# actually sets in the hermetic CHILD environment — computed from the real child env dicts, never
+# from the harness's own os.environ — never values, never names outside this closed list. A child
+# env name outside the list halts the run before any scenario effect.
 ENV_NAME_ALLOWLIST: tuple[str, ...] = (
     "HOME",
     "PATH",
+    "PWD",
     "PYTHONPATH",
     "INFIQUETRA_FLEET_STATE_DIR",
     "FLEET_COMMONS_ROOT",
@@ -49,7 +52,6 @@ ENV_NAME_ALLOWLIST: tuple[str, ...] = (
     "GIT_COMMITTER_EMAIL",
     "GIT_CONFIG_GLOBAL",
     "GIT_CONFIG_NOSYSTEM",
-    "TMPDIR",
 )
 
 # R10: values with these shapes may never appear anywhere in the evidence bundle.
@@ -65,12 +67,18 @@ _TIMEOUT_S = 120
 
 
 class HarnessError(Exception):
-    """A HALT: the run stops before (further) scenario effects; the bundle records the code."""
+    """A HALT: the run stops before (further) scenario effects; the bundle records the code.
 
-    def __init__(self, code: str, message: str) -> None:
+    ``facts`` carries whatever bounded, scrub-clean structured evidence the failing scenario had
+    already computed (chain summaries, overlap receipts) so the fail path preserves it in the
+    bundle instead of flattening it into the summary string.
+    """
+
+    def __init__(self, code: str, message: str, *, facts: dict[str, Any] | None = None) -> None:
         super().__init__(f"{code}: {message}")
         self.code = code
         self.detail = message
+        self.facts = facts or {}
 
 
 # --------------------------------------------------------------------------- primitives
@@ -117,11 +125,17 @@ def _private_dir(path: Path) -> Path:
     return path
 
 
+# Any absolute filesystem path with two or more segments, under ANY root — not a closed
+# top-level-directory denylist. The lookbehind excludes URL slashes (https://…) and interior
+# slashes of relative paths (refs/remotes/…, plugins/saga/…).
+_ABS_PATH_RE = re.compile(r"(?<![\w:/])/(?:[\w.@+~-]+/)+[\w.@+~-]+")
+
+
 def _bounded(text: str, limit: int = 400) -> str:
     """A bounded, single-line, path-redacted summary — never raw stdout/stderr (R10)."""
     flat = " ".join(text.split())
     flat = flat.replace(str(Path.home()), "<home>")
-    flat = re.sub(r"(?<![\w])/(?:Users|home|private|var|tmp|opt|etc)/[^\s'\"]*", "<path>", flat)
+    flat = _ABS_PATH_RE.sub("<path>", flat)
     return flat[:limit]
 
 
@@ -150,7 +164,7 @@ def scrub_check(value: Any, *, home: str | None = None) -> list[str]:
             return
         if home in node:
             violations.append(f"{crumb}: contains the home directory path")
-        elif re.search(r"(?<![\w/])/(?:Users|home|private|var|tmp|opt|etc)/", node):
+        elif _ABS_PATH_RE.search(node):
             violations.append(f"{crumb}: contains an absolute filesystem path")
         for shape in _SECRET_SHAPES:
             if shape.search(node):
@@ -800,8 +814,20 @@ def unit_discovery(bench: Workbench) -> list[ScenarioResult]:
                 fleet_state_dir=bench.broker_root,
                 path_prefix=topo.gh_bin,
             )
-            if denied.returncode == 0:
-                raise HarnessError("clone-b-mutation", "clone B attach --advance did not refuse")
+            # The denial must be the TYPED refusal (receipt + exit 3), not any incidental
+            # non-zero exit — the same exact-code discipline as the U3 negative matrix.
+            if denied.returncode != 3:
+                raise HarnessError(
+                    "clone-b-mutation",
+                    f"clone B attach --advance rc={denied.returncode} (expected typed refusal "
+                    f"rc 3): {_bounded(denied.stderr or denied.stdout)}",
+                )
+            denial_receipt = json.loads(denied.stdout.strip().splitlines()[-1])
+            if denial_receipt.get("code") != "handoff-missing":
+                raise HarnessError(
+                    "clone-b-mutation",
+                    f"clone B refusal code {denial_receipt.get('code')!r} != 'handoff-missing'",
+                )
             if _store_dirs(topo.clone_b):
                 raise HarnessError("clone-b-mutation", "refused attach still wrote state")
             facts = {
@@ -812,6 +838,7 @@ def unit_discovery(bench: Workbench) -> list[ScenarioResult]:
                 "unknown": sample["unknown"],
                 "projection_digest": _sha256_text(next(iter(serialized.values()))),
                 "clone_b_refusal_rc": denied.returncode,
+                "clone_b_refusal_code": str(denial_receipt.get("code")),
             }
             summary = (
                 f"{creator}-created spec discovered by both runtimes; projections byte-identical "
@@ -904,6 +931,74 @@ try:
     )
 except oc.CompatibilityHaltError as halt:
     print(json.dumps(halt.receipt()))
+    raise SystemExit(3)
+raise SystemExit(0)
+"""
+
+# Wrong/stale issuer (offer-side R4): a successful offer RELINQUISHES the issuer's broker
+# authority, so a second offer from the same, now-closed lease must refuse
+# handoff-issuer-not-current. Both offers must share one process (the lease object is live
+# state), so the zero-effect check runs in-process: the store + broker trees are hashed after
+# the first (legitimate) offer and compared after the refused re-offer.
+_STALE_ISSUER_SNIPPET = """
+import hashlib
+import json
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from pathlib import Path
+
+import fleet_commons_shim
+import outcome_compat as oc
+
+lease_broker = fleet_commons_shim.load("lease_broker")
+root = Path(sys.argv[2])
+outcome_id = sys.argv[3]
+subplot_id = sys.argv[4]
+broker_root = Path(sys.argv[5])
+dispatch_id = sys.argv[6]
+session_id = sys.argv[7]
+policy_sha256 = sys.argv[8]
+
+broker = lease_broker.LeaseBroker(broker_root)
+identity = oc.repository_identity(root)
+lease = broker.acquire_agent(
+    owner_id="u3-stale-issuer",
+    session_id=session_id,
+    policy_sha256=policy_sha256,
+    session_limit=4,
+    aggregate_limit=8,
+    mutation="read-write",
+    resource_ref=oc.outcome_dispatch_resource(identity, outcome_id, subplot_id, 12),
+)
+oc.offer_handoff(
+    root, outcome_id, subplot_id,
+    operation="advance-one", attempt=12, broker=broker, lease=lease,
+    dispatch_id=dispatch_id, ttl_seconds=60,
+)
+
+
+def _tree() -> dict[str, str]:
+    state = {}
+    for base in (root / ".git" / "saga-outcomes", broker_root):
+        if not base.is_dir():
+            continue
+        for path in sorted(base.rglob("*")):
+            if path.is_file():
+                key = f"{base.name}/{path.relative_to(base)}"
+                state[key] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return state
+
+
+before = _tree()
+try:
+    oc.offer_handoff(
+        root, outcome_id, subplot_id,
+        operation="advance-one", attempt=12, broker=broker, lease=lease,
+        dispatch_id=dispatch_id, ttl_seconds=60,
+    )
+except oc.CompatibilityHaltError as halt:
+    print(json.dumps({**halt.receipt(), "stale_reoffer_unchanged": _tree() == before}))
     raise SystemExit(3)
 raise SystemExit(0)
 """
@@ -1034,8 +1129,19 @@ def _attempt_accept(
     )
 
 
-def _expect_refusal(result: subprocess.CompletedProcess[str], *, case: str, code: str) -> str:
-    """A refused acceptance must exit 3 with a receipt carrying exactly the expected code."""
+def _expect_refusal(
+    result: subprocess.CompletedProcess[str],
+    *,
+    case: str,
+    code: str,
+    unsupported_contains: str | None = None,
+) -> str:
+    """A refused acceptance must exit 3 with a receipt carrying exactly the expected code.
+
+    ``unsupported_contains`` additionally pins the receipt's ``unsupported`` text — used where
+    two cases share one coarse code (both supersession shapes refuse ``handoff-superseded``)
+    so the matrix proves each case took its INTENDED refusal mechanism, not the other's.
+    """
     if result.returncode != 3:
         raise HarnessError(
             "handoff-negative-rc",
@@ -1045,6 +1151,14 @@ def _expect_refusal(result: subprocess.CompletedProcess[str], *, case: str, code
     observed = str(receipt.get("code"))
     if observed != code:
         raise HarnessError("handoff-negative-code", f"{case}: code {observed!r} != {code!r}")
+    if unsupported_contains is not None and unsupported_contains not in str(
+        receipt.get("unsupported", "")
+    ):
+        raise HarnessError(
+            "handoff-negative-code",
+            f"{case}: receipt mechanism {receipt.get('unsupported')!r} lacks "
+            f"{unsupported_contains!r}",
+        )
     return observed
 
 
@@ -1096,12 +1210,18 @@ def _handoff_positive(bench: Workbench, rig: HandoffRig) -> dict[str, Any]:
         if not record.is_file():
             raise HarnessError("handoff-accept", f"missing protected {suffix} record")
     advance = outcome_result.get("advance", {})
-    # The one-subplot advance must have MOVED the leaf: claude's inline path reports
-    # "dispatched", codex's native outcome.dispatch.v2 path reports "intent-created" (R6) —
-    # a leaf still "ready" means the accepted handoff advanced nothing.
+    # The one-subplot advance must have MOVED the leaf in the RECEIVER's native vocabulary:
+    # claude's inline path reports "dispatched", codex's native outcome.dispatch.v2 path
+    # reports "intent-created" (R6). The direction is deterministic, so the expectation is
+    # pinned per receiver — a receiver emitting the other runtime's vocabulary must fail.
     leaf_state = advance.get("status", {}).get("states", {}).get("ready-leaf")
-    if leaf_state not in ("dispatched", "intent-created"):
-        raise HarnessError("handoff-advance", f"ready-leaf state {leaf_state!r} after advance")
+    expected_leaf_state = "intent-created" if rig.receiver == "codex" else "dispatched"
+    if leaf_state != expected_leaf_state:
+        raise HarnessError(
+            "handoff-advance",
+            f"ready-leaf state {leaf_state!r} after {rig.receiver} advance "
+            f"(expected {expected_leaf_state!r})",
+        )
     return {
         "handoff_id": handoff_id,
         "successor_lease_id": str(outcome_result["successor_lease_id"]),
@@ -1127,9 +1247,13 @@ def _handoff_negatives(
     topo, cases = rig.topo, {}
     now = int(time.time())
 
-    def refused_unchanged(case: str, code: str, run: Callable[[], Any]) -> None:
+    def refused_unchanged(
+        case: str, code: str, run: Callable[[], Any], *, unsupported_contains: str | None = None
+    ) -> None:
         pre = rig.spy()
-        cases[case] = _expect_refusal(run(), case=case, code=code)
+        cases[case] = _expect_refusal(
+            run(), case=case, code=code, unsupported_contains=unsupported_contains
+        )
         _expect_unchanged(pre, rig.spy(), case=case)
 
     # 1. A copied reference on independent clone B: the printable reference grants nothing
@@ -1220,6 +1344,8 @@ def _handoff_negatives(
 
     # 8. Wrong fence: tamper-and-reseal the fencing token — the seal passes, the broker head
     #    comparison refuses. Runs AFTER the intent write; the intent must be the only delta.
+    #    Shares the coarse "handoff-superseded" code with wrong-authority, so the receipt's
+    #    mechanism text is pinned too: this case must take the head-moved supersession branch.
     h_fence = _mint(bench, rig, attempt=7)
     _tamper(bench, rig, h_fence, mode="bump-fence", mutation={})
     pre_fence = rig.spy()
@@ -1227,6 +1353,7 @@ def _handoff_negatives(
         _attempt_accept(bench, rig, handoff_id=h_fence, clone=topo.clone_a, session="u3-neg-fence"),
         case="wrong-fence",
         code="handoff-superseded",
+        unsupported_contains="superseded by another authority",
     )
     post_fence = rig.spy()
     _expect_unchanged(
@@ -1244,7 +1371,9 @@ def _handoff_negatives(
         )
 
     # 9. Wrong authority: the record + reference presented against a broker root that never
-    #    issued anything — no resource head, no successor, nothing minted anywhere.
+    #    issued anything — no resource head, no successor, nothing minted anywhere. Must take
+    #    the head-ABSENT supersession branch (distinct from wrong-fence's head-moved branch),
+    #    and refuse pre-intent: zero store delta, versus wrong-fence's intent-only delta.
     h_auth = _mint(bench, rig, attempt=8)
     foreign = rig.broker_root.parent / f"{rig.broker_root.name}-foreign"
     _private_dir(foreign)
@@ -1259,6 +1388,7 @@ def _handoff_negatives(
             session="u3-neg-auth",
             broker_root=foreign,
         ),
+        unsupported_contains="no longer exists",
     )
     leaked = [
         path
@@ -1268,7 +1398,31 @@ def _handoff_negatives(
     if leaked:
         raise HarnessError("handoff-negative-effect", "wrong-authority: successor state leaked")
 
-    # 10/11. Offer-side bounds, driven with broker=None so any broker touch crashes loudly:
+    # 10. Wrong/stale issuer (offer-side): the first in-process offer legitimately closes the
+    #     issuer's authority; the second offer from that same lease must refuse with zero
+    #     effect (the snippet's in-process tree hash covers store AND broker).
+    stale = bench.runtime(rig.issuer).python(
+        _STALE_ISSUER_SNIPPET,
+        str(topo.clone_a),
+        topo.outcome_id,
+        "ready-leaf",
+        str(rig.broker_root),
+        f"outcome:{topo.outcome_id}:frontier:ready-leaf",
+        "u3-neg-issuer",
+        _ADMISSION_POLICY,
+        repo_root=topo.clone_a,
+        fleet_state_dir=bench.broker_root,
+    )
+    cases["stale-issuer"] = _expect_refusal(
+        stale, case="stale-issuer", code="handoff-issuer-not-current"
+    )
+    stale_receipt = json.loads(stale.stdout.strip().splitlines()[-1])
+    if stale_receipt.get("stale_reoffer_unchanged") is not True:
+        raise HarnessError(
+            "handoff-negative-effect", "stale-issuer: refused re-offer mutated state"
+        )
+
+    # 11/12. Offer-side bounds, driven with broker=None so any broker touch crashes loudly:
     # a TTL beyond the 300s cap and a scope beyond the single-subplot closed vocabulary.
     for case, operation, ttl, code in (
         ("ttl-beyond-bound", "advance-one", 301, "handoff-ttl-too-long"),
@@ -1292,7 +1446,7 @@ def _handoff_negatives(
         )
         _expect_unchanged(pre, rig.spy(), case=case)
 
-    # 12/13. Freshness bounds via tamper-and-reseal: expired, and issued in the future.
+    # 13/14. Freshness bounds via tamper-and-reseal: expired, and issued in the future.
     for case, times, code in (
         (
             "expired",
@@ -1317,7 +1471,7 @@ def _handoff_negatives(
         )
         _expect_unchanged(pre, rig.spy(), case=case)
 
-    # 14. Wrong revision (LAST — it moves the committed spec): the offer binds the revision at
+    # 15. Wrong revision (LAST — it moves the committed spec): the offer binds the revision at
     #     issue time; the creator advances the spec, clone A pulls, acceptance must refuse.
     h_rev = _mint(bench, rig, attempt=11)
     revised = bench.runtime(rig.issuer).python(
@@ -1762,6 +1916,7 @@ def _scenario_codex_first(bench: Workbench, rig: RaceRig) -> dict[str, Any]:
             "race-codex-first",
             "claude re-dispatched a leaf codex already settled natively: "
             f"claude dispatched {follow.get('dispatched')}, chain {final}",
+            facts={"chain": final, "claude_dispatched": follow.get("dispatched")},
         )
     if not effect.exists():
         raise HarnessError("race-codex-first", "write-once backend effect missing")
@@ -1812,10 +1967,19 @@ def _scenario_simultaneous(bench: Workbench, rig: RaceRig) -> dict[str, Any]:
         if proc.returncode != 0:
             raise HarnessError("race-simultaneous", f"{name} child rc={proc.returncode}")
         receipts[name] = json.loads(stdout.strip().splitlines()[-1])
+    overlap = {
+        name: {"enter_ns": r["enter_ns"], "exit_ns": r["exit_ns"], "rc": r["rc"]}
+        for name, r in receipts.items()
+    }
     if max(r["enter_ns"] for r in receipts.values()) >= min(
         r["exit_ns"] for r in receipts.values()
     ):
-        raise HarnessError("race-simultaneous", "processes serialized; no true overlap")
+        # A scheduling artifact, not a contract verdict: the distinct code lets the unit loop
+        # retry on a fresh rig instead of reading a saturated host as a defect (KTD2 demands
+        # TRUE overlap, so a serialized run proves nothing either way).
+        raise HarnessError(
+            "race-serialized", "processes serialized; no true overlap", facts={"overlap": overlap}
+        )
 
     # Loser-retry: both runtimes advance again after the dust settles.
     for name in ("claude", "codex"):
@@ -1827,18 +1991,20 @@ def _scenario_simultaneous(bench: Workbench, rig: RaceRig) -> dict[str, Any]:
         1 for kind in final["ack_kinds"] if kind == "launched"
     )
     if final["settled_chains"] != 1:
-        raise HarnessError("race-simultaneous", f"expected exactly one settled chain: {final}")
+        raise HarnessError(
+            "race-simultaneous",
+            f"expected exactly one settled chain: {final}",
+            facts={"chain": final, "overlap": overlap},
+        )
     if final["legacy_intents"] != final["legacy_commits"] or (
         final["v2_acks"] == 0 and dangling_native > 0
     ):
-        raise HarnessError("race-simultaneous", f"dangling dispatch unit: {final}")
-    return {
-        "chain": final,
-        "overlap": {
-            name: {"enter_ns": r["enter_ns"], "exit_ns": r["exit_ns"], "rc": r["rc"]}
-            for name, r in receipts.items()
-        },
-    }
+        raise HarnessError(
+            "race-simultaneous",
+            f"dangling dispatch unit: {final}",
+            facts={"chain": final, "overlap": overlap},
+        )
+    return {"chain": final, "overlap": overlap}
 
 
 def _crash_advance(
@@ -1870,10 +2036,21 @@ def _scenario_crash(bench: Workbench, rig: RaceRig, *, crash_mode: str) -> dict[
     if crash_mode == "crash-after" and not effect.exists():
         raise HarnessError("race-crash", "crash-after-effect lost its effect")
 
-    time.sleep(1.1)  # let the crashed holder's 0.5s coordinator/dispatch leases expire
+    # Recovery: POLL past the crashed holder's 0.5s coordinator/dispatch leases instead of
+    # trusting a single fixed sleep — on a saturated host the lease can outlive a fixed margin,
+    # and a retried recovery attempt is harmless (settlement is idempotent, the effect is
+    # write-once). Only a deadline exhaust is a contract failure.
+    deadline = time.monotonic() + 10
     recovered = _crash_advance(bench, rig, "recover", effect)
-    if recovered.returncode != 0:
-        raise HarnessError("race-crash", f"{crash_mode}: recovery rc={recovered.returncode}")
+    while recovered.returncode != 0 or rig.summary()["legacy_commits"] != 1:
+        if time.monotonic() > deadline:
+            raise HarnessError(
+                "race-crash",
+                f"{crash_mode}: recovery never settled: rc={recovered.returncode} "
+                f"{_bounded(recovered.stderr or recovered.stdout)}",
+            )
+        time.sleep(0.3)
+        recovered = _crash_advance(bench, rig, "recover", effect)
     final = rig.summary()
     if final["legacy_commits"] != 1 or not effect.exists():
         raise HarnessError("race-crash", f"{crash_mode}: recovery did not settle once: {final}")
@@ -1910,12 +2087,22 @@ def unit_race(bench: Workbench) -> list[ScenarioResult]:
         facts: dict[str, Any] = {}
         verdict, summary = "pass", ""
         try:
-            rig = _race_rig(bench, scenario_id.removeprefix("race-"), creator)
-            facts = run(rig)
+            # "race-serialized" is a scheduling artifact (no true overlap), not a verdict —
+            # retry on a FRESH rig (a raced rig is already dispatched) up to three times.
+            for attempt in range(1, 4):
+                suffix = "" if attempt == 1 else f"-r{attempt}"
+                rig = _race_rig(bench, scenario_id.removeprefix("race-") + suffix, creator)
+                try:
+                    facts = run(rig)
+                    break
+                except HarnessError as exc:
+                    if exc.code != "race-serialized" or attempt == 3:
+                        raise
             summary = f"{scenario_id}: exactly one settled dispatch chain, contract held"
         except HarnessError as exc:
             verdict = "fail"
             summary = f"{exc.code}: {_bounded(exc.detail)}"
+            facts = exc.facts
         results.append(
             ScenarioResult(
                 scenario_id=scenario_id,
@@ -2021,9 +2208,15 @@ def _scenario_doctor(bench: Workbench, clean_rig: RaceRig) -> dict[str, Any]:
     if rc != 0 or payload.get("dispatched") != ["race-leaf"]:
         raise HarnessError("doctor-open-positions", f"open-rig dispatch rc={rc}")
     flagged = _fleet_doctor(bench, open_rig)
-    if flagged["counts"]["findings"] < 1:
+    # The sensitivity half must flag the PLANTED class — a dispatched-but-unsettled leaf reads
+    # as an unledgered spawn — not merely any disease, or the zero above stays vacuous for
+    # exactly the class this scenario exists to prove.
+    if flagged["counts"]["findings"] < 1 or "unledgered-spawn" not in flagged["counts"].get(
+        "by_disease", {}
+    ):
         raise HarnessError(
-            "doctor-open-positions", "doctor missed a dispatched-unsettled open position"
+            "doctor-open-positions",
+            f"doctor missed the dispatched-unsettled class: {flagged['counts']}",
         )
     return {
         "clean_findings": clean["counts"]["findings"],
@@ -2033,7 +2226,13 @@ def _scenario_doctor(bench: Workbench, clean_rig: RaceRig) -> dict[str, Any]:
 
 
 def _scenario_legacy_import(bench: Workbench, rig: RaceRig) -> dict[str, Any]:
-    """R8: both installed runtimes refuse outcome-bundle/1 import with zero writes."""
+    """R8: both installed runtimes refuse legacy bundle import with zero writes.
+
+    The refusal is UNCONDITIONAL by upstream design (#604 R10/R7): the CLI never reads the
+    bundle file, so the retirement receipt cannot depend on it existing or parsing. The fixture
+    below only makes the invocation realistic; the load-bearing oracle is the retirement
+    receipt TEXT plus the zero-write spy — not any schema sniffing.
+    """
     bundle = bench.workdir / "legacy-bundle.json"
     bundle.write_text(
         json.dumps({"schema": "outcome-bundle/1", "outcome_id": rig.topo.outcome_id}),
@@ -2051,11 +2250,19 @@ def _scenario_legacy_import(bench: Workbench, rig: RaceRig) -> dict[str, Any]:
         )
         if result.returncode == 0:
             raise HarnessError("legacy-import", f"{name} import did not refuse")
+        # Pin the refusal REASON, not just a non-zero exit: a crash or argparse error must not
+        # read as "contract held".
+        blob = (result.stderr or "") + (result.stdout or "")
+        if "legacy bundle import is retired" not in blob:
+            raise HarnessError(
+                "legacy-import",
+                f"{name} refusal lacks the retirement receipt: {_bounded(blob)}",
+            )
         if _tree_state(rig.topo.clone_b / ".git" / "saga-outcomes") != before or _store_dirs(
             rig.topo.clone_b
         ):
             raise HarnessError("legacy-import", f"{name} refusal wrote state")
-        refusals[name] = f"rc={result.returncode}"
+        refusals[name] = f"rc={result.returncode} retirement-receipt"
     return {"refusals": refusals}
 
 
@@ -2110,6 +2317,7 @@ def unit_teardown(bench: Workbench) -> list[ScenarioResult]:
         except HarnessError as exc:
             verdict = "fail"
             summary = f"{exc.code}: {_bounded(exc.detail)}"
+            facts = exc.facts
         results.append(
             ScenarioResult(
                 scenario_id=scenario_id,
@@ -2124,6 +2332,69 @@ def unit_teardown(bench: Workbench) -> list[ScenarioResult]:
 
 
 # --------------------------------------------------------------------------- main
+
+# R2: each INSTALLED runtime independently resolves the canonical broker root from the hermetic
+# child environment (the same resolution the CLIs use at run time) — the harness then asserts
+# both agree AND match the configured root, so the recorded digest is run-derived agreement
+# evidence, never a constant.
+_BROKER_RESOLVE_SNIPPET = """
+import json
+import os
+import sys
+
+sys.path.insert(0, sys.argv[1])
+
+import fleet_commons_shim
+
+lease_broker = fleet_commons_shim.load("lease_broker")
+print(json.dumps({"resolved": str(lease_broker.resolve_state_root(dict(os.environ)))}))
+"""
+
+
+def _resolved_broker_digest(
+    runtimes: dict[str, InstalledRuntime], broker_root: Path, workdir: Path
+) -> str:
+    """Digest of the workbench-relative broker root, proven identical across both runtimes."""
+    resolved: dict[str, Path] = {}
+    for name, runtime in runtimes.items():
+        probe = runtime.python(
+            _BROKER_RESOLVE_SNIPPET, repo_root=workdir, fleet_state_dir=broker_root
+        )
+        if probe.returncode != 0:
+            raise HarnessError(
+                "broker-root-divergence",
+                f"{name} broker-root resolve rc={probe.returncode}: {_bounded(probe.stderr)}",
+            )
+        resolved[name] = Path(
+            json.loads(probe.stdout.strip().splitlines()[-1])["resolved"]
+        ).resolve()
+    if len(set(resolved.values())) != 1 or next(iter(resolved.values())) != broker_root.resolve():
+        raise HarnessError(
+            "broker-root-divergence",
+            "runtimes disagree on the canonical broker root: "
+            + ", ".join(f"{n}={_bounded(str(p))}" for n, p in resolved.items()),
+        )
+    relative = next(iter(resolved.values())).relative_to(workdir.resolve())
+    return _sha256_text(str(relative))
+
+
+def _child_env_names(runtimes: dict[str, InstalledRuntime], broker_root: Path) -> list[str]:
+    """The allowlisted names actually SET in the hermetic child env — child truth, not
+    the harness's own ``os.environ`` (R2/R10). Any out-of-list child name is a halt."""
+    names: set[str] = set()
+    for runtime in runtimes.values():
+        names |= set(runtime.env(fleet_state_dir=broker_root, repo_root=runtime.install_root))
+    unlisted = sorted(names - set(ENV_NAME_ALLOWLIST))
+    if unlisted:
+        raise HarnessError(
+            "env-name-unlisted", f"child env names outside the closed allowlist: {unlisted}"
+        )
+    return [name for name in ENV_NAME_ALLOWLIST if name in names]
+
+
+def _should_keep(flag: bool, scenarios: list[ScenarioResult], halt: dict[str, str] | None) -> bool:
+    """Failed or halted runs always retain the workdir for post-mortem inspection."""
+    return flag or halt is not None or any(s.verdict != "pass" for s in scenarios)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -2145,7 +2416,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--keep-workdir",
         action="store_true",
-        help="retain the temporary work directory (failed runs always retain it)",
+        help=(
+            "retain the temporary work directory (runs with any failing scenario, or halts, "
+            "always retain it)"
+        ),
     )
     return parser.parse_args(argv)
 
@@ -2177,7 +2451,7 @@ def main(argv: list[str] | None = None) -> int:
     codex_identity: dict[str, Any] = {}
     digests: dict[str, str] = {}
     broker_root_digest = ""
-    keep = args.keep_workdir
+    env_names_set: list[str] = []
     try:
         claude_identity = require_clean_pinned(claude_pin)
         codex_identity = require_clean_pinned(codex_pin)
@@ -2188,9 +2462,9 @@ def main(argv: list[str] | None = None) -> int:
         codex_identity["readback"] = codex_rt.identity
         broker_root = workdir / "broker-root"
         _private_dir(broker_root)
-        # R2: both runtimes must agree on the redacted canonical broker-root digest — the digest
-        # of the resolved root RELATIVE to the workbench, never the absolute path.
-        broker_root_digest = _sha256_text("broker-root")
+        runtimes = {"claude": claude_rt, "codex": codex_rt}
+        broker_root_digest = _resolved_broker_digest(runtimes, broker_root, workdir)
+        env_names_set = _child_env_names(runtimes, broker_root)
         bench = Workbench(
             workdir=workdir, claude=claude_rt, codex=codex_rt, broker_root=broker_root
         )
@@ -2201,7 +2475,6 @@ def main(argv: list[str] | None = None) -> int:
             scenarios.extend(_UNITS[name](bench))
     except HarnessError as exc:
         halt = {"code": exc.code, "detail": _bounded(exc.detail)}
-        keep = True
     finally:
         bundle = build_bundle(
             claude=claude_pin,
@@ -2211,14 +2484,14 @@ def main(argv: list[str] | None = None) -> int:
             digests=digests,
             broker_root_digest=broker_root_digest,
             scenarios=scenarios,
-            env_names_set=[n for n in ENV_NAME_ALLOWLIST if n in os.environ],
+            env_names_set=env_names_set,
             started_at_iso=started,
             halt=halt,
         )
         assert_privacy(bundle)
         bundle_sha = atomic_write_json(args.output, bundle)
         print(json.dumps({"ok": halt is None, "bundle_sha256": bundle_sha}))
-        if not keep:
+        if not _should_keep(args.keep_workdir, scenarios, halt):
             shutil.rmtree(workdir, ignore_errors=True)
     if halt:
         return 2

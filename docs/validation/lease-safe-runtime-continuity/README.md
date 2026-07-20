@@ -16,10 +16,17 @@ The bundle validates against `cross-runtime-acceptance.schema.json` (closed sche
   imported, not to working-tree claims).
 - `contract_digests` — byte-identity of the two `outcome_compat.py` copies after normalizing
   the single allowed divergence (`RUNTIME_LABEL`), plus the codex target-inventory digest.
-- `environment_names_set` — which allowlisted environment-variable NAMES were set for child
-  processes. Never values, never names outside the closed list (R10).
+- `broker_root_digest` — run-derived agreement evidence: each installed runtime independently
+  resolves the canonical broker root from the hermetic child environment; the harness halts on
+  divergence and records the digest of the workbench-relative resolved path.
+- `environment_names_set` — which allowlisted environment-variable NAMES were actually set in
+  the hermetic CHILD environment (computed from the real child env dicts, not the harness's
+  own environment). Never values, never names outside the closed list (R10); an out-of-list
+  child name halts the run.
 - `scenarios[]` — one entry per acceptance scenario, keyed to a plan requirement (`R3`–`R9`).
   `facts` are bounded and path-redacted; refusal receipts appear as code strings only.
+  Failing scenarios keep whatever structured facts they had computed (chain summaries,
+  overlap receipts), so the two red race scenarios are auditable from the bundle alone.
 - `overall_verdict` — `pass` only when every scenario passes; `halt` when the run stopped
   before completing (the `halt` object carries the code).
 
@@ -29,14 +36,14 @@ The bundle validates against `cross-runtime-acceptance.schema.json` (closed sche
 | --- | --- | --- |
 | `discovery-*-created` | R3 | Canonical discovery + byte-identical projections across runtimes AND clones; independent clone B state-free and mutation-denied |
 | `handoff-*-issued` | R4 | Protected bounded handoff accepted cross-runtime; successor lease + offer/intent/commit records; advance moves the leaf |
-| `handoff-negatives-*` | R4 | 14 adversarial acceptances each direction, all refused with the exact receipt code and zero mutable effect |
+| `handoff-negatives-*` | R4 | 15 adversarial cases each direction (including offer-side stale-issuer), all refused with the exact receipt code — plus the receipt mechanism text where two cases share the coarse `handoff-superseded` code — and zero mutable effect |
 | `race-claude-first` | R5 | Claude settles the legacy chain; Codex observes shared settlement and invents no native ack |
 | `race-codex-first` | R6 | Full codex-native chain (v2 intent + protected `ack_kind=launched`), then Claude must observe it |
 | `race-simultaneous` | R5 | Barrier-released two-OS-process race with overlap receipts; exactly one settled chain, no dangling unit |
 | `race-crash-*-effect` | R5 | Write-once fake backend across crash windows: at most one effect, recovery settles exactly once |
 | `teardown-reclaim` | R9 | Reclamation passes are idempotent no-ops once settled |
 | `fleet-doctor-positions` | R9 | #353 fleet doctor reads zero open positions on a settled rig AND flags a planted dispatched-unsettled leaf |
-| `legacy-import-refused` | R8 | Both installed runtimes refuse `outcome-bundle/1` import with zero writes |
+| `legacy-import-refused` | R8 | Both installed runtimes refuse legacy import unconditionally — by #604 design the CLI never reads the bundle file — with the retirement receipt text and zero writes |
 
 ## Current verdict: `fail` — two scenarios document a real production defect
 
@@ -59,10 +66,11 @@ Claude pin advances, and the harness is re-run with the new pin.
   TTL expiry is not deterministically inducible through the installed CLI without clock
   injection into the lease authority. The expiry contract is covered by both repos' dispatcher
   unit suites; the crash-window scenarios here cover the recovery semantics.
-- **R7 compatibility-refusal breadth**: wrong repository/revision/operation/subplot, foreign
-  authority, tamper, freshness, and clone-B denial are driven live (U2/U3); malformed-envelope
-  and protocol-skew shapes are pinned by the hermetic suites
-  (`tests/test_cross_runtime_acceptance.py` and both repos' contract suites).
+- **R7 compatibility-refusal breadth**: wrong repository/revision/operation/subplot/issuer,
+  foreign authority, tamper, freshness, and clone-B denial are driven live (U2/U3);
+  malformed-envelope and protocol-skew shapes are pinned by both repos' contract suites
+  (`tests/test_outcome_cross_runtime_contract.py` here and its codex counterpart) — the
+  harness's own hermetic suite covers harness machinery, not those envelope negatives.
 - `fleet_doctor` runs from the installed Claude package only — the doctor is a Claude-side
   #353 deliverable with no codex port.
 
@@ -79,5 +87,6 @@ uv run python tools/run_cross_runtime_outcome_acceptance.py \
 ```
 
 Repo paths must be absolute, clean, and at exactly the pinned SHAs (R1 refuses otherwise).
-Exit codes: 0 all-pass, 1 scenario failure(s), 2 halt. Failed or halted runs retain the
-temporary work directory for inspection.
+Exit codes: 0 all-pass, 1 scenario failure(s), 2 halt. Any run with a failing scenario or a
+halt retains its temporary `xr-acceptance-*` work directory for post-mortem inspection
+(`--keep-workdir` retains it unconditionally).

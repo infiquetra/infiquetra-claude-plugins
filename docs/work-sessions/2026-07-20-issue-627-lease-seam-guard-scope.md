@@ -74,8 +74,30 @@ See LEARNINGS `{#workflow-emitter-export-pins-627}`.
 - R7 gate: `grep -rn 'covers every caller' plugins/ --include='*.py'` → 0 matches
 - Merge base re-verified: `git merge-base HEAD origin/main` = `origin/main` = `83a170ff`
 
+## Code-review gate (Phase 5)
+
+Programmatic `/code-review` at `REVIEWED_SHA 31d72dc8` (staleness count 0 at review time; the
+only later commit is this docs-only review record). **Verdict: CLEAN** — 0 P0, 0 P1, 0 P2,
+3 P3 advisories, all Stage-B validated (3 validators, 0 dropped). Five lenses (correctness,
+security, concurrency/reliability at opus; testing, maintainability/release-surfaces at
+sonnet), all spawned as `saga:readonly-verifier` in isolated worktrees. Plan-completion audit:
+U1–U5 all DONE. Scope check CLEAN. Envelope persisted through the evidence ledger:
+`docs/evidence/issue-627/artifacts/ce4ff960…f44ebd.md`.
+
+The three validated advisories (all accepted tradeoffs or pre-existing, none blocking):
+
+1. **Crash-orphan self-refusal window (P3, new):** refuse-mode admission has no same-owner
+   exemption, so a SIGKILL'd dispatch self-refuses retries until the 300s broker TTL. Inherent
+   cost of the operator-locked fail-closed design (KTD1). Validator-confirmed hardening anchor:
+   the broker's pid-liveness (`_owner_state`) is wired only into `sweep()`, never admission.
+2. **Broad DispatcherError arm (P3, new):** permanent faults (protocol skew, fleet-core
+   resolution failure) loop through visible per-tick halt-and-retry instead of aborting;
+   KTD3's deliberate transient-arm modeling. Candidate hardening: branch on
+   `LeaseConflictError` vs other causes.
+3. **Guard-walk TOCTOU (P3, pre-existing):** lstat walk and mkdir/chmod are not atomic;
+   same-user/parent-controlling exposure only; unchanged by this diff.
+
 ## Next step
 
-Run the Phase 5 programmatic `/code-review` gate at the branch head, then pause for operator
-confirmation to open the PR (destination: merge; codex follow-up files via mission-control at
-ship ceremony).
+Operator confirmation to open the PR (destination: merge; codex follow-up files via
+mission-control at ship ceremony).

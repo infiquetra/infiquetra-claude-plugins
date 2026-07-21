@@ -201,16 +201,60 @@ def test_ensure_private_dir_refuses_world_writable_ancestor_below_home(
     assert not (loose / "audit").exists()
 
 
-def test_ensure_private_dir_exempts_paths_outside_home(
+def test_for_root_ensure_refuses_world_writable_ancestor_outside_home(
     audit_store: ModuleType, tmp_path: Path
 ) -> None:
-    """PA-1 (#624): out-of-home roots (system temp style) keep working under loose ancestors."""
+    """#627 (U4): the universal walk refuses a world-writable-non-sticky ancestor even OUTSIDE
+    home — the FAT32/exFAT fail-closed shape (KTD2). This flips the #624 out-of-home exemption:
+    a 0o777 non-sticky volume component can no longer host the store, and the refusal is reached
+    through the real ``Store.for_root(...).ensure()`` entry point that resolves the root first."""
     outside = tmp_path / "outside-home"  # tmp_path is not under the monkeypatched home
     outside.mkdir()
-    os.chmod(outside, 0o777)
-    target = outside / "audit"
-    audit_store._ensure_private_dir(target)
-    assert stat.S_IMODE(target.lstat().st_mode) == 0o700
+    os.chmod(outside, 0o777)  # world-writable, no sticky bit — the exFAT/FAT32 shape
+    store = audit_store.Store.for_root(outside / "audit")
+    with pytest.raises(audit_store.AuditStoreError, match="world-writable"):
+        store.ensure()
+    assert not (outside / "audit").exists()
+
+
+def test_for_root_ensure_accepts_sticky_world_writable_ancestor(
+    audit_store: ModuleType, tmp_path: Path
+) -> None:
+    """#627 (U4): world-writable AND sticky (``S_ISVTX``, the 1777 system-temp shape) is the sole
+    mode exemption — the store is created 0o700 below it, reached through the real entry point."""
+    sticky = tmp_path / "sticky-tmp"
+    sticky.mkdir()
+    os.chmod(sticky, 0o1777)  # world-writable + sticky, e.g. /tmp
+    store = audit_store.Store.for_root(sticky / "audit").ensure()
+    assert stat.S_IMODE(store.root.lstat().st_mode) == 0o700
+
+
+def test_for_root_ensure_refuses_symlinked_home_component(
+    audit_store: ModuleType, tmp_path: Path
+) -> None:
+    """#627 (U4): the #624 probe shape (``~/link -> wwroot 0o777 non-sticky``) driven through the
+    real ``Store.for_root(...).ensure()`` entry point. ``for_root`` resolves the root, collapsing
+    the symlink — but the world-writable target's mode bits survive, so the world-writable arm
+    still refuses it (the resolve-disarm lesson, #624)."""
+    home = Path.home()
+    home.mkdir(parents=True, exist_ok=True)
+    wwroot = tmp_path / "wwroot"
+    wwroot.mkdir()
+    os.chmod(wwroot, 0o777)
+    link = home / "link"
+    link.symlink_to(wwroot)
+    store = audit_store.Store.for_root(link / "audit")
+    with pytest.raises(audit_store.AuditStoreError, match="world-writable"):
+        store.ensure()
+    assert list(wwroot.iterdir()) == []  # nothing created through the resolved link
+
+
+def test_for_root_ensure_passes_stock_root_walk(audit_store: ModuleType, tmp_path: Path) -> None:
+    """#627 (U4): the universal walk starts at the filesystem root, so it must pass the stock
+    ancestor chain (``/`` and the resolved temp tree, all 0755/0700 or 1777 sticky) and create
+    the store 0o700. Guards against a walk that spuriously refuses ordinary machine roots."""
+    store = audit_store.Store.for_root(tmp_path / "audit-store").ensure()
+    assert stat.S_IMODE(store.root.lstat().st_mode) == 0o700
 
 
 def test_ensure_private_dir_creates_fresh_below_home_path(

@@ -802,6 +802,93 @@ def test_ensure_private_dir_creates_fresh_below_home_path(
     assert stat.S_IMODE(target.lstat().st_mode) == 0o700
 
 
+def test_ensure_private_dir_refuses_world_writable_ancestor_outside_home(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#627 (U4): the universal walk refuses a world-writable-non-sticky ancestor OUTSIDE home —
+    the FAT32/exFAT fail-closed shape (KTD2). This flips the #624 out-of-home exemption in the
+    frozen cross-runtime seam: such a volume component can no longer host a handoff store."""
+    home = tmp_path / "fake-home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    outside = tmp_path / "exfat-volume"  # not under the monkeypatched home
+    outside.mkdir()
+    os.chmod(outside, 0o777)  # world-writable, no sticky bit
+    with pytest.raises(OC.CompatibilityHaltError) as exc:
+        OC._ensure_private_dir(outside / "handoffs")
+    assert exc.value.receipt()["code"] == "handoff-store-unsafe"
+    assert not (outside / "handoffs").exists()
+
+
+def test_ensure_private_dir_accepts_sticky_world_writable_ancestor(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#627 (U4): world-writable AND sticky (``S_ISVTX``, the 1777 system-temp shape) is the sole
+    mode exemption — the handoff store is created 0o700 below it."""
+    home = tmp_path / "fake-home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    sticky = tmp_path / "sticky-tmp"
+    sticky.mkdir()
+    os.chmod(sticky, 0o1777)  # world-writable + sticky, e.g. /tmp
+    target = sticky / "handoffs"
+    OC._ensure_private_dir(target)
+    assert stat.S_IMODE(target.lstat().st_mode) == 0o700
+
+
+def test_ensure_private_dir_accepts_group_writable_ancestor(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#627 (U4): the R6 twin the compat suite lacked — group-writable (0o770) is NOT world-
+    writable and stays accepted, pinning the #624 boundary inside the frozen seam too."""
+    home = tmp_path / "fake-home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    shared = home / "shared"
+    shared.mkdir()
+    os.chmod(shared, 0o770)
+    target = shared / "handoffs"
+    OC._ensure_private_dir(target)
+    assert stat.S_IMODE(target.lstat().st_mode) == 0o700
+
+
+def test_ensure_private_dir_passes_stock_root_walk(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#627 (U4): the walk starts at the filesystem root, so the stock ancestor chain (``/`` and
+    the resolved temp tree) must pass and the store be created 0o700. Guards against a universal
+    walk that spuriously refuses ordinary machine roots."""
+    home = tmp_path / "fake-home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    target = home / "store" / "handoffs"
+    OC._ensure_private_dir(target)
+    assert stat.S_IMODE(target.lstat().st_mode) == 0o700
+
+
+def test_write_once_refuses_symlinked_home_component_via_resolved_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#627 (U4): the #624 probe (``~/link -> wwroot 0o777 non-sticky``) driven through a
+    ``resolve_common_dir``-derived path. Production resolves the store root before ``_write_once``,
+    which collapses the symlink; the world-writable target's mode bits survive resolution, so the
+    world-writable arm still refuses it (the resolve-disarm lesson, #624)."""
+    home = tmp_path / "fake-home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    wwroot = tmp_path / "wwroot"
+    wwroot.mkdir()
+    os.chmod(wwroot, 0o777)
+    link = home / "link"
+    link.symlink_to(wwroot)
+    # resolve_common_dir resolves the store root before any write path; emulate that resolution.
+    resolved = (link / "handoffs" / "h1.offer.json").resolve()
+    with pytest.raises(OC.CompatibilityHaltError) as exc:
+        OC._write_once(resolved, {"schema": "x"})
+    assert exc.value.receipt()["code"] == "handoff-store-unsafe"
+    assert list(wwroot.iterdir()) == []  # nothing created through the resolved link
+
+
 @pytest.fixture
 def broker(tmp_path: Path) -> Any:
     root = tmp_path / "fleet-leases"

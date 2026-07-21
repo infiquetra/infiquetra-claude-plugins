@@ -740,6 +740,89 @@ def test_retry_supersedes_at_full_capacity(broker: Any) -> None:
     assert len(broker.inspect()["leases"]) == 1
 
 
+def _refuse_acquire(
+    broker: Any,
+    *,
+    owner: str,
+    resource: str,
+    limits: Any | None = None,
+    ttl: int = 300,
+) -> Any:
+    effective = _limits() if limits is None else limits
+    return broker.acquire_agent(
+        owner_id=owner,
+        session_id="session",
+        policy_sha256=effective.policy_sha256(),
+        session_limit=effective.max_concurrent,
+        aggregate_limit=effective.aggregate_max_concurrent,
+        mutation="none",
+        ttl_seconds=ttl,
+        resource_ref={"logical_unit_id": resource},
+        agent_type="worker",
+        on_conflict="refuse",
+    )
+
+
+def test_refuse_mode_rejects_live_prior_and_leaves_registry_untouched(
+    tmp_path: Path, runtime: FakeRuntime
+) -> None:
+    # Two brokers over one state dir model the cross-runtime dispatch seam (#627 R1/R2). A holds a
+    # live lease on the shared digest; B's refuse-mode acquire must fail closed without mutating
+    # A's authority — no supersede, no registry byte change.
+    root = tmp_path / "authority"
+    broker_a = B.LeaseBroker(root, providers=runtime.providers())
+    broker_b = B.LeaseBroker(root, providers=runtime.providers())
+    held = broker_a.acquire_agent(
+        owner_id="runtime-a",
+        session_id="session",
+        policy_sha256=_limits().policy_sha256(),
+        session_limit=_limits().max_concurrent,
+        aggregate_limit=_limits().aggregate_max_concurrent,
+        mutation="none",
+        resource_ref={"logical_unit_id": "shared-leaf"},
+        agent_type="worker",
+        on_conflict="refuse",
+    )
+    before = broker_a.registry_path.read_bytes()
+
+    with pytest.raises(B.LeaseConflictError, match="runtime-a") as exc:
+        _refuse_acquire(broker_b, owner="runtime-b", resource="shared-leaf")
+
+    assert isinstance(exc.value, B.LeaseOwnershipError)  # broad handlers still catch it
+    assert exc.value.holder_owner_id == "runtime-a"
+    assert broker_a.registry_path.read_bytes() == before  # zero-mutation on refusal
+    assert broker_a.verify(held.resource_ref, held.token).lease_id == held.lease_id
+
+
+def test_refuse_mode_reclaims_expired_prior(tmp_path: Path, runtime: FakeRuntime) -> None:
+    # An expired prior is not a live conflict — refuse mode reclaims exactly as supersede does (R1).
+    root = tmp_path / "authority"
+    broker_a = B.LeaseBroker(root, providers=runtime.providers())
+    broker_b = B.LeaseBroker(root, providers=runtime.providers())
+    _refuse_acquire(broker_a, owner="runtime-a", resource="shared-leaf", ttl=60)
+    runtime.advance(120)  # past the prior lease TTL -> _expired is True
+
+    reclaimed = _refuse_acquire(broker_b, owner="runtime-b", resource="shared-leaf")
+
+    assert broker_b.verify(reclaimed.resource_ref, reclaimed.token).lease_id == reclaimed.lease_id
+    assert len(broker_b.inspect()["leases"]) == 1
+
+
+def test_acquire_agent_rejects_unknown_on_conflict(broker: Any) -> None:
+    with pytest.raises(B.LeaseBrokerError, match="on_conflict"):
+        broker.acquire_agent(
+            owner_id="owner",
+            session_id="session",
+            policy_sha256=_limits().policy_sha256(),
+            session_limit=_limits().max_concurrent,
+            aggregate_limit=_limits().aggregate_max_concurrent,
+            mutation="none",
+            resource_ref={"logical_unit_id": "x"},
+            agent_type="worker",
+            on_conflict="explode",  # type: ignore[arg-type]
+        )
+
+
 def test_recreated_store_has_new_epoch_and_old_token_is_not_current(
     tmp_path: Path, runtime: FakeRuntime
 ) -> None:

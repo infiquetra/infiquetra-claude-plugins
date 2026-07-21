@@ -194,6 +194,73 @@ def test_make_dispatcher_preserves_primary_failure_when_release_also_fails(
     )
 
 
+def test_make_dispatcher_refuses_live_cross_runtime_prior(tmp_path: Path) -> None:
+    # #627 R2: a concurrent runtime already holding the outcome-dispatch lease on the same
+    # content-derived digest makes the refuse-mode acquire surface as a typed DispatcherError at
+    # admission — not as the loser's later renew failure. Two brokers over one state dir stand in
+    # for the two runtimes.
+    authority = D.fleet_commons_shim.load("lease_broker")
+    policy = D.fleet_commons_shim.load("concurrency_policy")
+    root = tmp_path / "authority"
+    peer = authority.LeaseBroker(root)
+    selected = authority.LeaseBroker(root)
+    limits = policy.AdmissionLimits()
+    req = _req("inline")
+    req.dispatch_id = "outcome:ship-x:frontier:build"
+    req.attempt = 1
+    # The peer holds the exact resource_ref make_dispatcher will compute for this request.
+    peer.acquire_agent(
+        owner_id="peer-runtime",
+        session_id="outcome:ship-x",
+        policy_sha256=limits.policy_sha256(),
+        session_limit=limits.max_concurrent,
+        aggregate_limit=limits.aggregate_max_concurrent,
+        mutation="none",
+        resource_ref={"logical_unit_id": "outcome:ship-x:build:outcome:ship-x:frontier:build"},
+        agent_type="outcome-dispatch",
+        on_conflict="refuse",
+    )
+
+    with pytest.raises(D.DispatcherError, match="lease admission refused") as exc:
+        D.make_dispatcher(lease_authority=selected)(req)
+    assert "peer-runtime" in str(exc.value)  # the holder is named through the wrapped conflict
+
+
+def test_make_dispatcher_resource_digest_is_deterministic(monkeypatch: pytest.MonkeyPatch) -> None:
+    # #627 KTD6: dispatch_identity is content-derived, so two DispatchRequests for the same
+    # outcome/subplot/attempt resolve to ONE resource digest. Pinned by capturing the resource_ref
+    # make_dispatcher actually hands the broker, not by reimplementing the key here.
+    authority = D.fleet_commons_shim.load("lease_broker")
+    captured: list[dict[str, Any]] = []
+
+    class _Capturing:
+        DEFAULT_TTL_SECONDS = 900
+
+        def acquire_agent(self, **kwargs: Any) -> Any:
+            captured.append(kwargs)
+            return SimpleNamespace(lease_id="lease-1", token=SimpleNamespace())
+
+        def renew(self, *_a: Any, **_k: Any) -> Any:
+            return SimpleNamespace()
+
+        def release(self, *_a: Any, **_k: Any) -> bool:
+            return True
+
+    def _make_req() -> Any:
+        req = _req("inline")
+        req.dispatch_id = "outcome:ship-x:frontier:build"
+        req.attempt = 1
+        return req
+
+    D.make_dispatcher(lease_authority=_Capturing())(_make_req())
+    D.make_dispatcher(lease_authority=_Capturing())(_make_req())
+
+    assert len(captured) == 2
+    assert all(call["on_conflict"] == "refuse" for call in captured)  # R2 wiring
+    digests = {authority.resource_sha256(call["resource_ref"]) for call in captured}
+    assert len(digests) == 1  # same outcome/subplot/attempt -> one resource digest
+
+
 @pytest.mark.parametrize("version", [1, 99])
 def test_outcome_dispatch_rejects_lease_protocol_skew(version: int) -> None:
     with pytest.raises(D.DispatcherError, match="install/update fleet-core"):

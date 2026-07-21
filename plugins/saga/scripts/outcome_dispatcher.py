@@ -256,6 +256,13 @@ def make_dispatcher(
                 dispatch_identity = str(getattr(req, "dispatch_id", "")) or str(
                     getattr(req, "attempt", 1)
                 )
+                # refuse-mode admission (#627 R2/KTD1): this lease guards only the
+                # outcome-dispatch resource class within one clone's settlement ledger (per
+                # ``git-common-dir``), covering the dispatch-preparation window — not every caller
+                # and not cross-clone sequencing. A live, unexpired prior on the same
+                # content-derived digest (a concurrent runtime preparing the same leaf) refuses here
+                # at admission with a typed conflict, surfaced as ``DispatcherError`` by the normalize
+                # arm below, rather than silently superseding the peer and double-preparing the leaf.
                 lease = selected.acquire_agent(
                     owner_id=owner_id,
                     owner_pid=os.getpid(),
@@ -271,6 +278,7 @@ def make_dispatcher(
                         )
                     },
                     agent_type="outcome-dispatch",
+                    on_conflict="refuse",
                 )
             except Exception as exc:  # noqa: BLE001 - normalize fleet version/admission failures
                 raise DispatcherError(f"outcome dispatch lease admission refused: {exc}") from exc
@@ -630,8 +638,9 @@ class SpendHaltReceipt:
     step-up authorization and is NEVER silently run at a lower tier (T8-F5-7). The receipt
     echoes the compared values so the operator sees exactly what tripped — surfaced per-tick
     in the advance output (``AdvanceResult.halted``) and durably on the ``spend:<sid>`` ledger
-    lane. The consolidated report's ambiguity tier does not yet render halt receipts (it
-    filters on ``kind == "dispatch"``; backend halts on main are equally invisible there).
+    lane. The receipt's own ``kind`` (``"spend-halt"``) is preserved under ``receipt_kind`` on
+    that ledger record; the record's ``kind`` field is ``"dispatch"`` so the consolidated
+    report's ambiguity tier (which filters on ``kind == "dispatch"``) renders it.
     """
 
     outcome_id: str

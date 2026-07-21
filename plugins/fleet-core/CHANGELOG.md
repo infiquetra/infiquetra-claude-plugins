@@ -5,6 +5,35 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0] - 2026-07-20
+
+### Fixed - Refuse-mode lease admission; universal fail-closed ancestor walk (#627)
+
+- `LeaseBroker.acquire_agent` gains an opt-in `on_conflict` parameter (`"supersede"` default |
+  `"refuse"`). `"supersede"` is byte-for-byte today's behavior for every existing consumer — the
+  #356 retry-supersede design and its pinned test are untouched. `"refuse"` is the new mode: a
+  live, unexpired prior lease on the same resource digest raises the typed `LeaseConflictError`
+  (a `LeaseOwnershipError` subclass, so existing broad handlers keep working) naming the current
+  holder, instead of superseding it. Expired or canonically-settled priors behave identically in
+  both modes; the settlement-retained and canonically-closed precedence checks run unchanged,
+  above the new liveness check. Saga's outcome dispatcher is the first (and so far only) caller
+  to opt in, closing a cross-runtime double-preparation window on the outcome-dispatch resource
+  class.
+- `audit_store._ensure_private_dir` / `_refuse_unsafe_ancestors` now walk **every existing
+  component from the filesystem root down**, not only components strictly below the user's home
+  — the previous home-scoped walk silently exempted every out-of-home store location. The only
+  mode exemption is world-writable **and** sticky (`S_ISVTX`, the system-temp shape, e.g. `/tmp`
+  at 1777); a plain world-writable component is refused fail-closed wherever it sits, which now
+  correctly catches NFS/SMB mounts whose mode bits diverge from local expectations and
+  FAT32/exFAT volumes that `lstat` every entry `0o777`. Group-writable ancestors remain accepted
+  by design (the #624 pinned boundary — unchanged, now with an explicit acceptance-twin test).
+- **Correction to the record**: the 0.16.0 entry below claimed the world-writable refusal
+  "covers every caller" via `Store.for_root`'s pre-walk `resolve()`. That claim was never
+  accurate scope language for a guard that only inspected components below `$HOME` — the
+  guard's actual reach is now the universal walk described above, and the source docstrings no
+  longer make a caller-coverage claim of any kind. The 0.16.0 entry itself is left as written,
+  as a historical record of what shipped then.
+
 ## [0.16.0] - 2026-07-20
 
 ### Security - Audit-store ancestor hardening (#624, PA-1 of #605)

@@ -40,6 +40,15 @@ def _load(name: str) -> ModuleType:
 M = _load("outcome")
 SPEC = _load("outcome_spec")
 STORE = _load("outcome_store")
+# Bind to the SAME submodule objects ``outcome`` imported — re-``_load``-ing them would mint a
+# second module object whose ``DispatcherError`` is a distinct class the reconcile ``except`` arm
+# would not catch (the classic double-load identity trap).
+DISPATCHER = M.outcome_dispatcher
+SETTLEMENT = M.dispatch_settlement
+RUN_LEDGER = M.run_ledger
+REPORT = _load("outcome_report")
+IE = _load("intent_envelope")
+OC = _load("outcome_costs")
 
 
 @pytest.fixture
@@ -883,3 +892,251 @@ def test_handed_off_leaf_status_and_attend_tell_one_story(repo: Path) -> None:
     dispatcher, calls = _recorder()
     assert M.advance(repo, "ship-x", dispatcher=dispatcher).dispatched == []
     assert calls == []
+
+
+# --------------------------------------------------------------------------- #627/R3: DispatcherError arm
+
+
+def _refusing_dispatcher(message: str = "outcome dispatch lease admission refused: holder owner-A"):
+    """A dispatcher that raises a typed ``DispatcherError`` (a cross-runtime lease refusal or a
+    mid-flight renew failure) for a target subplot; other subplots dispatch normally."""
+
+    def _disp(req: Any) -> str:
+        raise DISPATCHER.DispatcherError(message)
+
+    return _disp
+
+
+def test_advance_records_lease_refusal_as_halt_and_continues(repo: Path) -> None:
+    """#627/R3/KTD3 (codex COR1 pin parity): a mid-tick lease REFUSAL — the dispatcher raising a
+    typed ``DispatcherError`` at admission — releases the per-subplot lease WITHOUT a TTL wait,
+    writes a reducer-VISIBLE ``(dispatch, halt)`` record paired to the intent's key, surfaces the
+    subplot in ``halted``, and the tick continues (a second ready leaf still dispatches). Never a
+    wedge, never a leaked lock, never a silent orphaned intent."""
+    M.start(
+        repo,
+        "ship-x",
+        "Ship X",
+        nodes=[
+            {"subplot_id": "a", "title": "A", "kind": "code"},
+            {"subplot_id": "b", "title": "B", "kind": "code"},
+        ],
+    )
+
+    calls: list[str] = []
+
+    def dispatcher(req: Any) -> str:
+        calls.append(req.subplot_id)
+        if req.subplot_id == "a":
+            raise DISPATCHER.DispatcherError(
+                "outcome dispatch lease admission refused: holder owner-A"
+            )
+        return f"leaf-{req.subplot_id}"
+
+    result = M.advance(repo, "ship-x", dispatcher=dispatcher, now=lambda: 1_700_000_000.0)
+
+    # the refused leaf is surfaced in `halted` (operator-visible), NOT in `retriable`
+    assert [h["subplot_id"] for h in result.halted] == ["a"]
+    assert "a" not in result.retriable
+    assert any("refused" in h.get("reason", "") for h in result.halted)
+    # the tick CONTINUED: the independent ready leaf `b` still dispatched in the SAME advance
+    assert result.dispatched == ["b"]
+    assert calls == ["a", "b"]
+
+    store = STORE.Store.for_outcome("ship-x", repo)
+    # the per-subplot dispatch lease was released — a fresh acquire succeeds WITHOUT a TTL wait
+    # (same `now`, no clock advance): the lock is gone, not merely expired.
+    assert STORE.acquire_dispatch(store, "a", "next-holder", 900.0, now=lambda: 1_700_000_000.0)
+
+    # the halt is reducer-VISIBLE: `kind` survived the spread as "dispatch", so the halt arm fires
+    reduced = STORE.reduce_dispatch_ledger(store)["a"]
+    assert reduced["halted"] is True and reduced["settled"] is False
+    # the receipt's own kind is preserved so no data is lost
+    halt_record = next(
+        r
+        for r in STORE.read_ledger(store)
+        if r.get("kind") == "dispatch" and r.get("phase") == "halt" and r.get("subplot_id") == "a"
+    )
+    assert halt_record["receipt_kind"] == "halt"
+    # paired to the intent lane: same `key` as the intent append
+    assert halt_record["key"] == "dispatch:a"
+
+
+def test_lease_refusal_halt_reaches_report_and_settles_silent_noop(repo: Path) -> None:
+    """#627/R3/KTD3: end-to-end — a refused leaf reaches the consolidated report's ambiguity tier
+    from a FRESH store read, and (settlement on) the attempt settles as a no-backend-effect
+    SILENT_NOOP without minting a new ledger classification."""
+    spec = M.start(
+        repo,
+        "ship-x",
+        "Ship X",
+        nodes=[{"subplot_id": "build", "title": "Build", "backend": "team-execution"}],
+    )
+    ledger = RUN_LEDGER.RunLedger(repo / "settlement" / "facts.jsonl")
+    dispatch_id, _units = SETTLEMENT.outcome_frontier_identity("ship-x", ["build"])
+
+    result = M.advance(
+        repo,
+        "ship-x",
+        dispatcher=_refusing_dispatcher(),
+        settlement_ledger=ledger,
+        now=lambda: 1_700_000_000.0,
+    )
+    assert [h["subplot_id"] for h in result.halted] == ["build"]
+    assert result.dispatched == []
+
+    # fresh store read (nothing cached): the report surfaces the still-live HALT as an ambiguity
+    fresh = STORE.Store.for_outcome("ship-x", repo)
+    assert REPORT._halted_subplots(fresh) == {"build"}
+    items = REPORT.consolidate(spec, fresh)
+    assert any(getattr(item, "subplot_id", None) == "build" for item in items)
+
+    # the settlement attempt was concluded as SILENT_NOOP — the closed vocabulary gained no member
+    settlement = next(
+        record
+        for record in RUN_LEDGER.read_facts(ledger)
+        if record.get("dispatch_id") == dispatch_id and record.get("event") == "settle"
+    )
+    assert settlement["classification"] == SETTLEMENT.SILENT_NOOP
+
+
+def test_lease_renew_failure_flavor_takes_the_same_arm(repo: Path) -> None:
+    """#627/R3: the renew-failure flavor of the refusal (``lease expired before settlement`` — a
+    mid-flight renew loss surfaced as ``DispatcherError``) takes the SAME arm: released lock,
+    visible halt, tick continues, attempt settled."""
+    M.start(
+        repo,
+        "ship-x",
+        "Ship X",
+        nodes=[{"subplot_id": "build", "title": "Build", "backend": "team-execution"}],
+    )
+    ledger = RUN_LEDGER.RunLedger(repo / "settlement" / "facts.jsonl")
+
+    result = M.advance(
+        repo,
+        "ship-x",
+        dispatcher=_refusing_dispatcher("outcome dispatch lease expired before settlement"),
+        settlement_ledger=ledger,
+        now=lambda: 1_700_000_000.0,
+    )
+    assert [h["subplot_id"] for h in result.halted] == ["build"]
+    assert any("expired before settlement" in h.get("reason", "") for h in result.halted)
+
+    store = STORE.Store.for_outcome("ship-x", repo)
+    reduced = STORE.reduce_dispatch_ledger(store)["build"]
+    assert reduced["halted"] is True and reduced["settled"] is False
+    # lock released without a TTL wait
+    assert STORE.acquire_dispatch(store, "build", "next-holder", 900.0, now=lambda: 1_700_000_000.0)
+
+
+# --------------------------------------------------------------------------- #627/U3: the three
+# receipt-spread halt appends (spend-gate, backend-menu, BackendHaltError) are ledger-visible as
+# ``kind == "dispatch"`` end to end — advance() -> reduce_dispatch_ledger halted=True ->
+# outcome_report._halted_subplots -> the consolidated report's ambiguity item, from a fresh read.
+
+
+def _intent(**extra: Any) -> dict[str, Any]:
+    """A valid committed intent built through the production capture path, plus #373 fields."""
+    data: dict[str, Any] = IE.apply_answers({"run_mode": "attended"}).to_dict()
+    data.update(extra)
+    # Round-trip through the canonical schema so a mis-shaped fixture fails HERE, not downstream.
+    return dict(IE.IntentEnvelope.from_dict(data).to_dict())
+
+
+def _assert_halt_is_ledger_visible_and_reaches_report(
+    repo: Path, outcome_id: str, spec: Any, sid: str, expected_receipt_kind: str
+) -> None:
+    store = STORE.Store.for_outcome(outcome_id, repo)
+    reduced = STORE.reduce_dispatch_ledger(store)[sid]
+    assert reduced["halted"] is True and reduced["settled"] is False
+
+    halt_record = next(
+        r
+        for r in STORE.read_ledger(store)
+        if r.get("kind") == "dispatch" and r.get("phase") == "halt" and r.get("subplot_id") == sid
+    )
+    # spread-first, literal-last (U3/KTD4): the record's own `kind` survives as "dispatch" so
+    # the report filter sees it; the receipt's own kind is preserved, not lost.
+    assert halt_record["receipt_kind"] == expected_receipt_kind
+
+    # fresh store read (nothing cached): the report surfaces the still-live HALT as an ambiguity.
+    fresh = STORE.Store.for_outcome(outcome_id, repo)
+    assert REPORT._halted_subplots(fresh) == {sid}
+    items = REPORT.consolidate(spec, fresh)
+    assert any(
+        getattr(item, "subplot_id", None) == sid and item.kind == "ambiguity" for item in items
+    )
+
+
+def test_spend_gate_halt_reaches_report_end_to_end(repo: Path) -> None:
+    """U3 (:1314 site): an over-ceiling spend-gate HALT is ledger-visible as ``kind ==
+    "dispatch"`` (receipt's own kind preserved under ``receipt_kind``), reaches
+    ``reduce_dispatch_ledger``'s halted arm, and surfaces as a fresh-read ambiguity."""
+    spec = M.start(
+        repo,
+        "ship-spend",
+        "Ship X",
+        nodes=[{"subplot_id": "a", "title": "A"}],
+        intent=_intent(spend_envelope={"cost_ceiling_tokens": 1000}),
+    )
+    store = STORE.Store.for_outcome("ship-spend", repo)
+    OC.record_cost(store, "a", executor="inline", tokens=1200)  # over the ceiling
+
+    result = M.advance(repo, "ship-spend", attending=False)
+    assert result.dispatched == [] and result.degraded == []
+    assert [h["subplot_id"] for h in result.halted] == ["a"]
+
+    _assert_halt_is_ledger_visible_and_reaches_report(
+        repo, "ship-spend", spec, "a", expected_receipt_kind="spend-halt"
+    )
+
+
+def test_backend_menu_halt_reaches_report_end_to_end(repo: Path) -> None:
+    """U3 (:1383 site): a captured-posture backend-menu HALT (the leaf's backend is not in the
+    effective ``backends_permitted`` menu) is ledger-visible as ``kind == "dispatch"`` and
+    surfaces as a fresh-read ambiguity."""
+    spec = M.start(
+        repo,
+        "ship-menu",
+        "Ship X",
+        nodes=[{"subplot_id": "build", "title": "B", "backend": "team-execution"}],
+        intent=_intent(backends_permitted=["inline"]),
+    )
+    result = M.advance(repo, "ship-menu")
+    assert result.dispatched == []
+    assert [h["subplot_id"] for h in result.halted] == ["build"]
+
+    _assert_halt_is_ledger_visible_and_reaches_report(
+        repo, "ship-menu", spec, "build", expected_receipt_kind="halt"
+    )
+
+
+def test_backend_halt_error_reaches_report_end_to_end(repo: Path) -> None:
+    """U3 (:1552 site): a dispatcher-raised ``BackendHaltError`` (legacy / a restricted injected
+    dispatcher, no captured posture involved) is ledger-visible as ``kind == "dispatch"`` and
+    surfaces as a fresh-read ambiguity."""
+    spec = M.start(
+        repo,
+        "ship-legacy",
+        "Ship X",
+        nodes=[{"subplot_id": "build", "title": "B", "backend": "team-execution"}],
+    )
+
+    def dispatcher(req: Any) -> str:
+        raise DISPATCHER.BackendHaltError(
+            DISPATCHER.HaltReceipt(
+                outcome_id="ship-legacy",
+                subplot_id=req.subplot_id,
+                backend=req.backend,
+                reason="restricted injected dispatcher: backend unavailable",
+                available=(),
+            )
+        )
+
+    result = M.advance(repo, "ship-legacy", dispatcher=dispatcher)
+    assert result.dispatched == []
+    assert [h["subplot_id"] for h in result.halted] == ["build"]
+
+    _assert_halt_is_ledger_visible_and_reaches_report(
+        repo, "ship-legacy", spec, "build", expected_receipt_kind="halt"
+    )

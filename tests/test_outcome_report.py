@@ -72,14 +72,26 @@ def _dispatched(store: Any, sid: str) -> None:
 
 
 def _halt(store: Any, sid: str) -> None:
+    dispatcher = sys.modules["outcome_dispatcher"]
+    receipt = dispatcher.HaltReceipt(
+        outcome_id="o",
+        subplot_id=sid,
+        backend="claude",
+        reason="backend down",
+        available=(),
+    ).to_dict()
+    # Production shape (U3): spread the receipt first, then set the ledger record's own
+    # "kind" literal LAST so it wins over the receipt's own "kind" ("halt") — the receipt's
+    # kind is preserved separately under "receipt_kind" so the report's `kind == "dispatch"`
+    # filter (outcome_report._halted_subplots) sees this record.
     STORE.append_ledger(
         store,
         {
             "phase": "halt",
-            "kind": "dispatch",
             "key": f"d:{sid}",
-            "subplot_id": sid,
-            "reason": "backend down",
+            **receipt,
+            "receipt_kind": receipt.get("kind"),
+            "kind": "dispatch",
         },
     )
 

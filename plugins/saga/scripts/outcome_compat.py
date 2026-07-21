@@ -1142,50 +1142,64 @@ def _handoff_store_halt(*, unsupported: str) -> CompatibilityHaltError:
         unsupported=unsupported,
         supported=(
             "a non-symlink handoff directory owned by this user with mode 0o700, below "
-            "ancestors that are real directories and not world-writable"
+            "ancestors that are real directories and either not world-writable or "
+            "world-writable-and-sticky (the system-temp shape)"
         ),
         next_action=(
             "inspect this clone's git-common-dir handoff store; restore owner-only "
-            "permissions (chmod 700) and replace any symlinked or world-writable ancestor"
+            "permissions (chmod 700) and replace any symlinked or world-writable-non-sticky "
+            "ancestor. If the clone lives on an NFS/SMB share or a FAT32/exFAT volume whose "
+            "components lstat world-writable, relocate the clone onto a native filesystem"
         ),
     )
 
 
 def _refuse_unsafe_handoff_ancestors(path: Path) -> None:
-    """Refuse symlinked or world-writable existing components strictly below the user's home.
+    """Refuse any unsafe component of ``path`` — every component, from the filesystem root down.
+
+    Walks each existing component with ``lstat`` (never ``resolve`` inside the walk) and refuses
+    a component that is a symlink, world-writable-but-not-sticky, or uninspectable — wherever it
+    sits, inside the user's home or not. There is no home-scope exemption: the walk is the whole
+    guard, applied uniformly to every path handed in.
+
+    The sole mode exemption is a world-writable component that is ALSO sticky (``S_ISVTX``): the
+    system-temp shape (``/tmp`` at 1777) is expected and safe, because the sticky bit blocks
+    cross-user rename/delete. A plain world-writable component (no sticky bit) is refused.
+
+    Fail closed (KTD2): a world-writable non-sticky component is refused regardless of why the
+    mount made it so — an NFS/SMB home whose mode bits diverge, or a FAT32/exFAT volume that
+    lstats every entry 0o777, cannot host a handoff store. The typed halt carries relocate/remount
+    guidance in its ``next_action``.
 
     Ported from fleet-core ``audit_store._refuse_unsafe_ancestors`` rather than imported: this
-    module is the frozen cross-runtime seam and never imports fleet-core. The scope test is
-    lexical on the expanded absolute path — the home directory itself and any path outside home
-    entirely (e.g. system temp roots, whose sticky world-writable mode is expected) are exempt.
-    Components are inspected with ``lstat``, never resolved.
-
-    Production callers reach this through ``outcome_store.resolve_common_dir``, which resolves
-    the store root: the world-writable refusal covers them in full, while the symlink refusal
-    covers direct callers and the window after that resolution.
+    module is the frozen cross-runtime seam and never imports fleet-core. Production callers reach
+    this through ``outcome_store.resolve_common_dir``, which resolves the store root before the
+    walk; ``resolve`` collapses a symlinked component but its mode bits survive, so a symlink onto
+    a world-writable target is still caught by the world-writable arm (the #624 resolve-disarm
+    lesson). ``FileNotFoundError`` short-circuits (the fresh subtree is created 0o700);
+    ``PermissionError`` is a typed halt.
     """
-    home = Path.home()
     candidate = path if path.is_absolute() else Path(os.path.abspath(path))
-    if not candidate.is_relative_to(home) or candidate == home:
-        return
-    current = home
-    for part in candidate.relative_to(home).parts:
+    current = Path(candidate.anchor or os.sep)
+    components = [current]
+    for part in candidate.parts[1:]:
         current = current / part
+        components.append(current)
+    for component in components:
         try:
-            metadata = current.lstat()
+            metadata = component.lstat()
         except FileNotFoundError:
             return  # nothing exists from here down; creation below is 0o700
         except PermissionError as exc:
             raise _handoff_store_halt(
                 unsupported="a handoff store ancestor this user cannot inspect"
             ) from exc
-        if stat.S_ISLNK(metadata.st_mode):
+        mode = metadata.st_mode
+        if stat.S_ISLNK(mode):
+            raise _handoff_store_halt(unsupported="a handoff store ancestor that is a symlink")
+        if (mode & 0o002) and not (mode & stat.S_ISVTX):
             raise _handoff_store_halt(
-                unsupported="a handoff store ancestor below home that is a symlink"
-            )
-        if stat.S_ISDIR(metadata.st_mode) and metadata.st_mode & 0o002:
-            raise _handoff_store_halt(
-                unsupported="a handoff store ancestor below home that is world-writable"
+                unsupported="a handoff store ancestor that is world-writable and not sticky"
             )
 
 

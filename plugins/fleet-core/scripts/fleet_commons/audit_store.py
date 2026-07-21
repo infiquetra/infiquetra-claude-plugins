@@ -145,36 +145,49 @@ def _read_json(path: Path) -> dict[str, Any] | None:
 
 
 def _refuse_unsafe_ancestors(path: Path) -> None:
-    """Refuse symlinked or world-writable existing components strictly below the user's home.
+    """Refuse any unsafe component of ``path`` — every component, from the filesystem root down.
 
-    The scope test is lexical on the expanded absolute path: the home directory itself and any
-    path outside home entirely (e.g. system temp roots, whose sticky world-writable mode is
-    expected) are exempt. Components are inspected with ``lstat``, never resolved, so a
-    symlinked ancestor is refused before any ``mkdir`` traverses it.
+    Walks each existing component with ``lstat`` (never ``resolve`` inside the walk) and refuses
+    a component that is a symlink, world-writable-but-not-sticky, or uninspectable — wherever it
+    sits, inside the user's home or not. There is no home-scope exemption and no "covers every
+    caller" guarantee: the walk is the whole guard, applied uniformly to every path handed in.
 
-    Reach differs per branch because ``Store.for_root`` canonicalizes the root with
-    ``resolve()`` before any write path gets here. Mode bits survive that resolution, so the
-    world-writable refusal covers every caller; symlink identity does not, so the symlink
-    refusal covers direct callers of this function and the window after resolution — not a
-    symlinked ancestor of a root that ``for_root`` already collapsed.
+    The sole mode exemption is a world-writable component that is ALSO sticky (``S_ISVTX``): the
+    system-temp shape (``/tmp`` at 1777) is expected and safe, because the sticky bit blocks
+    cross-user rename/delete. A plain world-writable component (no sticky bit) is refused.
+
+    Fail closed (KTD2): a world-writable non-sticky component is refused regardless of why the
+    mount made it so — an NFS/SMB home whose mode bits diverge, or a FAT32/exFAT volume that
+    lstats every entry 0o777, cannot host the store. Relocate the store onto a native
+    owner-controlled filesystem (fix the offending component's mode, or point the store root at a
+    path on the local disk).
+
+    ``FileNotFoundError`` short-circuits: nothing exists from the first-missing component down, and
+    ``_ensure_private_dir`` creates that fresh subtree 0o700. ``PermissionError`` is a typed halt.
+    Callers that resolve the root first (``Store.for_root``) collapse a symlinked component before
+    the walk, but its mode bits survive resolution — so a symlink onto a world-writable target is
+    still caught by the world-writable arm (the #624 resolve-disarm lesson).
     """
-    home = Path.home()
     candidate = path if path.is_absolute() else Path(os.path.abspath(path))
-    if not candidate.is_relative_to(home) or candidate == home:
-        return
-    current = home
-    for part in candidate.relative_to(home).parts:
+    current = Path(candidate.anchor or os.sep)
+    components = [current]
+    for part in candidate.parts[1:]:
         current = current / part
+        components.append(current)
+    for component in components:
         try:
-            metadata = current.lstat()
+            metadata = component.lstat()
         except FileNotFoundError:
             return  # nothing exists from here down; creation below is 0o700
         except PermissionError as exc:
-            raise AuditStoreError(f"audit-store ancestor is not inspectable: {current}") from exc
-        if stat.S_ISLNK(metadata.st_mode):
-            raise AuditStoreError(f"audit-store ancestor is a symlink: {current}")
-        if stat.S_ISDIR(metadata.st_mode) and metadata.st_mode & 0o002:
-            raise AuditStoreError(f"audit-store ancestor is world-writable: {current}")
+            raise AuditStoreError(f"audit-store ancestor is not inspectable: {component}") from exc
+        mode = metadata.st_mode
+        if stat.S_ISLNK(mode):
+            raise AuditStoreError(f"audit-store ancestor is a symlink: {component}")
+        if (mode & 0o002) and not (mode & stat.S_ISVTX):
+            raise AuditStoreError(
+                f"audit-store ancestor is world-writable and not sticky: {component}"
+            )
 
 
 def _ensure_private_dir(path: Path) -> None:

@@ -1311,7 +1311,13 @@ def _reconcile_once(
                 # halt kind can mask the other.
                 _append_ledger_once(
                     store,
-                    {"phase": "halt", "kind": "dispatch", "key": f"spend:{sid}", **receipt},
+                    {
+                        "phase": "halt",
+                        "key": f"spend:{sid}",
+                        **receipt,
+                        "receipt_kind": receipt.get("kind"),
+                        "kind": "dispatch",
+                    },
                 )
                 halted.append(receipt)
                 continue
@@ -1380,7 +1386,13 @@ def _reconcile_once(
                 # backend must not re-append a halt record every tick (unbounded ledger growth).
                 _append_ledger_once(
                     store,
-                    {"phase": "halt", "kind": "dispatch", "key": f"dispatch:{sid}", **receipt},
+                    {
+                        "phase": "halt",
+                        "key": f"dispatch:{sid}",
+                        **receipt,
+                        "receipt_kind": receipt.get("kind"),
+                        "kind": "dispatch",
+                    },
                 )
                 halted.append(receipt)
                 continue
@@ -1549,7 +1561,16 @@ def _reconcile_once(
             # later tick re-attempts + re-surfaces it; record the receipt durably; never abort the tick.
             outcome_store.release_lease(store, f"dispatch-{sid}", holder)
             receipt = halt.receipt.to_dict()
-            _append_ledger_once(store, {"phase": "halt", "kind": "dispatch", "key": key, **receipt})
+            _append_ledger_once(
+                store,
+                {
+                    "phase": "halt",
+                    "key": key,
+                    **receipt,
+                    "receipt_kind": receipt.get("kind"),
+                    "kind": "dispatch",
+                },
+            )
             halted.append(receipt)
             if settlement_ledger is not None:
                 if settlement_attempt is None:
@@ -1563,6 +1584,58 @@ def _reconcile_once(
                     attempt=settlement_attempt,
                     classification=dispatch_settlement.SILENT_NOOP,
                     reason="backend halted before returning a dispatch handle",
+                )
+            continue
+        except outcome_dispatcher.DispatcherError as dispatch_error:
+            # #627/R3/KTD3: a cross-runtime lease REFUSAL — admission (refuse-mode acquire on a live
+            # unexpired prior) OR a mid-flight renew failure ("lost its lease authority" /
+            # "lease expired before settlement") — is TRANSIENT-retriable, not a wedge. Model the
+            # lock-release/continue mechanics on the BackendRateLimitError/BackendHaltError siblings
+            # above, but ALSO append a reducer-VISIBLE halt paired to the intent's `key`.
+            # Why the extra record: post-#628 an UNCAUGHT DispatcherError is worse in the quiet
+            # direction — the `kind: dispatch, phase: intent` record appended above (near line 1447)
+            # matches NO branch in reduce_dispatch_ledger, so the orphaned intent is invisible, the
+            # per-subplot lease leaks until TTL (900 s), and the leaf silently re-dispatches: no halt,
+            # no operator page. Release the lock, write a `(dispatch, halt)` record — KTD4:
+            # spread-first, literal-last, so `kind` survives as "dispatch" for both
+            # reduce_dispatch_ledger's halt arm and outcome_report._halted_subplots; the receipt's own
+            # `kind` is preserved under `receipt_kind` so no receipt data is lost. Settle the attempt
+            # as a no-backend-effect SILENT_NOOP (the LEDGER_CLASSIFICATIONS vocabulary is closed and
+            # gains no member; the BackendHaltError no-backend-effect precedent applies — no work was
+            # dispatched). Surface `sid` in `halted` (NOT `retriable`) so the operator SEES the
+            # conflict while a later tick still re-attempts once the holder releases. Never an ack:
+            # the reducer's ack arms SETTLE a leaf, and a refusal must not settle it.
+            outcome_store.release_lease(store, f"dispatch-{sid}", holder)
+            receipt = {
+                "kind": "halt",
+                "outcome_id": spec.outcome_id,
+                "subplot_id": sid,
+                "backend": resolved_backend,
+                "reason": f"outcome dispatch refused: {dispatch_error}",
+            }
+            _append_ledger_once(
+                store,
+                {
+                    **receipt,
+                    "receipt_kind": receipt["kind"],
+                    "phase": "halt",
+                    "key": key,
+                    "kind": "dispatch",
+                },
+            )
+            halted.append(receipt)
+            if settlement_ledger is not None:
+                if settlement_attempt is None:
+                    raise OutcomeError("settlement attempt binding is missing") from dispatch_error
+                dispatch_settlement.settle_attempt(
+                    settlement_ledger,
+                    subplot_id=sid,
+                    at=dispatch_settlement.iso_at(now()),
+                    dispatch_id=settlement_dispatch_id,
+                    unit_id=sid,
+                    attempt=settlement_attempt,
+                    classification=dispatch_settlement.SILENT_NOOP,
+                    reason="outcome dispatch lease refused before any backend effect",
                 )
             continue
         if degrade_receipt is not None:

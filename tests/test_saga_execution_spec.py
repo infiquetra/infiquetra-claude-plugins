@@ -314,7 +314,7 @@ def test_emitted_workflow_exports_settlement_without_ledger_write_permission() -
     script = ES.emit_workflow_script(spec)
     metadata = ES.workflow_settlement_metadata(spec)
     assert (
-        "export const settlement = " + json.dumps(metadata, sort_keys=True, separators=(",", ":"))
+        "const settlement = " + json.dumps(metadata, sort_keys=True, separators=(",", ":"))
         in script
     )
     assert "run_ledger.py" not in script
@@ -326,7 +326,7 @@ def test_emitted_settlement_identity_ignores_session_tier_ceiling() -> None:
     metadata = ES.workflow_settlement_metadata(spec)
     script = ES.emit_workflow_script(spec, session_ceiling=ES.Tier("sonnet", "medium"))
     assert (
-        "export const settlement = " + json.dumps(metadata, sort_keys=True, separators=(",", ":"))
+        "const settlement = " + json.dumps(metadata, sort_keys=True, separators=(",", ":"))
         in script
     )
     assert 'model: "sonnet"' in script and 'effort: "medium"' in script

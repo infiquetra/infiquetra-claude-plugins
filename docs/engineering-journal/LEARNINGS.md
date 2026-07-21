@@ -27,6 +27,40 @@
 
 ## 2026-07-20
 
+### Workflow-emitter output was unparseable and its test pins asserted the defect {#workflow-emitter-export-pins-627}
+
+**Context.** The first live `Workflow({scriptPath})` launch of an emitted execution-spec script
+(#627 run `wf_82b39fe9-ab8`) failed instantly with `SyntaxError: Unexpected keyword 'export'`.
+The emitter had been writing `export const settlement = ...` and `export const lease = ...`
+since the driver-owned lease contract landed, and the full test suite was green the whole time.
+
+**Evidence.** Fix commit `44a5780f`: two string literals in
+`plugins/saga/scripts/execution_spec.py` (~`:3445`/`:3453`) changed from `"export const ..."`
+to `"const ..."`, plus three assertion-prefix updates in `tests/test_saga_execution_spec.py`
+(`:317`/`:329`) and `tests/test_saga_workflow_emitter.py` (`:126`). Every earlier
+`docs/plans/*.workflow.js` predates the exports, so no prior launch could have caught it.
+
+**Mechanism.** The Workflow runtime parses only the leading `export const meta = {...}`
+statement as an export; any later `export` keyword is a parse error. The emitter tests pinned
+the emitted *text* (`"export const settlement = " in script`) rather than the script's
+*parseability against the runtime grammar*, so the pins enforced the broken prefix — the suite
+certified the defect instead of catching it.
+
+**Fix (or queued).** `44a5780f` (emitter + pins), re-emitted artifact verified to contain
+exactly one `export` line, relaunch succeeded. Chose the emitter fix over hand-patching the
+artifact because re-emit-for-freshness means every future run would have re-broken.
+
+**Validation.** `wf_82b39fe9-ab8` launched and completed 14/14 agents on the re-emitted script;
+380 focused emitter/spec tests pass with the updated pins.
+
+**Generalizable rule.** A test that pins generated output as a string literal certifies bytes,
+not validity — when the consumer is an external parser (a runtime grammar, a schema, a CLI),
+add at least one gate that feeds the real artifact to that consumer (or a faithful grammar
+check), or the pins will encode the first bug that ships.
+
+**Refs.** DECISIONS `{#lease-refuse-mode-and-universal-guard-627}`; work session
+`docs/work-sessions/2026-07-20-issue-627-lease-seam-guard-scope.md`.
+
 ### fleet-core version bumps have drift-guard pins outside the release-parity triad {#fleet-core-version-pins-outside-parity-627}
 
 **Context.** Bumping `plugins/fleet-core/.claude-plugin/plugin.json` for #627 (0.16.0 → 0.17.0)

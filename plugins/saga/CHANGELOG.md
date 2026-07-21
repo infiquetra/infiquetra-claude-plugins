@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.107.0] - 2026-07-20
+
+### Fixed - Cross-runtime lease refusal, dispatcher halt visibility, universal ancestor guard (#627)
+
+- The outcome dispatcher's `make_dispatcher` now acquires its per-leaf lease in the new opt-in
+  `on_conflict="refuse"` admission mode (`fleet-core` 0.17.0): a live, unexpired prior lease on
+  the same content-derived resource digest — a concurrent runtime preparing the same leaf —
+  refuses at admission with a typed `DispatcherError` instead of being silently superseded and
+  double-prepared. Every other lease-broker consumer keeps the existing supersede-on-acquire
+  default unchanged (the #356 retry-supersede design and its pinned test are untouched). The
+  seam this closes is real but narrow: admission exclusion for the outcome-dispatch resource
+  class, scoped to one clone's settlement ledger (per `git-common-dir`) and to the
+  dispatch-preparation window only — it is not a cross-clone sequencing guarantee, and prose
+  claiming otherwise has been removed.
+- `_reconcile_once` now catches `DispatcherError` on the dispatch hot path (mirroring the
+  existing `BackendRateLimitError`/`BackendHaltError` arms): the per-subplot lease is released,
+  a durable **reducer-visible** `(dispatch, halt)` record is appended paired to the same intent
+  `key`, the attempt settles as a no-backend-effect `SILENT_NOOP`, and the tick continues. Before
+  this fix, an uncaught refusal left the legacy `kind: dispatch, phase: intent` record matching
+  no reducer branch — the orphaned intent was invisible, the per-subplot lease leaked until TTL
+  (900s), and the leaf silently re-dispatched with no halt and no operator page.
+- All three receipt-spread halt appends (`spend:<sid>`, `dispatch:<sid>` backend-menu halt, and
+  the backend-halt lane) now store a final `"kind": "dispatch"` after the receipt spread, so
+  `reduce_dispatch_ledger`'s halt arm and `outcome_report._halted_subplots` both see them and a
+  halted leaf reaches the consolidated report's ambiguity tier end-to-end. The receipt's own
+  `kind` (`halt`/`spend-halt`) moves to a non-colliding `receipt_kind` field — no receipt data is
+  lost.
+- Both ancestor guards (`outcome_compat._refuse_unsafe_handoff_ancestors` here; the ported
+  fleet-core twin below) now walk **every existing path component from the filesystem root**,
+  not just components strictly below `$HOME` — the previous under-home scope silently exempted
+  every out-of-home clone location. The only mode exemption is world-writable **and** sticky
+  (the system-temp shape, e.g. macOS `/private/tmp` at 1777); a plain world-writable component
+  anywhere is refused fail-closed, which now correctly catches NFS/SMB homes with divergent mode
+  bits and FAT32/exFAT volumes that `lstat` every entry `0o777`. Group-writable ancestors remain
+  accepted (the #624 pinned boundary, unchanged, now with an explicit acceptance-twin test).
+
 ## [0.106.1] - 2026-07-20
 
 ### Fixed - Handoff settled-guard refusal-precedence parity (#631)

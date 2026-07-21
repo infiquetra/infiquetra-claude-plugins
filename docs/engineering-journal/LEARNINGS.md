@@ -27,6 +27,47 @@
 
 ## 2026-07-20
 
+### fleet-core version bumps have drift-guard pins outside the release-parity triad {#fleet-core-version-pins-outside-parity-627}
+
+**Context.** Bumping `plugins/fleet-core/.claude-plugin/plugin.json` for #627 (0.16.0 → 0.17.0)
+and re-running `scripts/check_release_surface_parity.py` reported clean immediately — but that
+script only checks the plugin.json/marketplace.json/CHANGELOG.md triad. Three unrelated
+consumer test files separately hardcode the runtime-resolved fleet-core version as an assertion
+value.
+
+**Evidence.** `fleet_commons_shim.resolved_version()`
+(`plugins/saga/scripts/fleet_commons_shim.py:131-138`, identical twin in
+`plugins/fleet-core/scripts/fleet_commons_shim.py`) reads `manifest["version"]` straight out of
+the resolved fleet-core's own `plugin.json` at runtime and is surfaced as
+`result["fleet_core_version"]` by `liveness_events.describe`. Three test files pin that value as
+a literal: `tests/test_liveness_events.py:698`,
+`tests/test_team_execution_liveness.py:179,409`. None of the three is reachable from
+`check_release_surface_parity.py`, `test_saga_plugin.py`'s marketplace-parity test, or a
+fleet-core-specific plugin-metadata test (no such file exists) — they only fail if `pytest` is
+run against the fully committed tree.
+
+**Mechanism.** The release-parity gate validates one plugin's own three release-surface files
+stay in lockstep; it has no notion of cross-plugin consumers who snapshot a dependency's runtime
+version as a test oracle. Those pins are logically drift-guards but live outside every guard
+that advertises itself as one. (A fourth "0.16.0" appears at
+`tests/test_team_execution_liveness.py:361` as a cache-directory *name* in a fixture that copies
+the real `plugin.json` bytes into that directory; the directory name is an arbitrary cache-slot
+label the resolution logic doesn't parse, so it does NOT need to move with the version bump —
+conflating it with the real pins would be a false fix.)
+
+**Fix.** `grep -rn 'fleet_core_version.*==' tests/` before declaring a fleet-core bump complete;
+updated the three real pins to `0.17.0` in the #627 U5 commit, left the cache-directory-name
+literal untouched.
+
+**Generalizable rule.** `check_release_surface_parity.py` passing proves triad self-consistency,
+not that every dependent's hardcoded expectation of that plugin's version moved. For a
+widely-depended-on plugin (fleet-core sits under saga and team-execution), grep the whole test
+tree for the literal old version string before calling a bump done — and read each hit's context
+before editing it, since not every string match is a drift-guard pin.
+
+**Refs.** LEARNINGS `{#release-guard-version-expectation-drift}` (the general precedent this
+narrows); plan `docs/plans/2026-07-20-issue-627-lease-seam-guard-scope-plan.md` (U5); issue #627.
+
 ### A broader settled-guard than the reference runtime silently reorders frozen refusal codes {#settled-guard-precedence-631}
 
 **Context.** The #628 fix (saga 0.106.0) taught claude's `accept_handoff` settled-guard

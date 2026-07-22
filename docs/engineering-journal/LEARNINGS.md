@@ -3984,3 +3984,30 @@ asserting that the fallback returns a nonempty string.
 
 **Refs.** `plugins/fleet-core/scripts/fleet_commons/lease_broker.py` and
 `tests/test_fleet_lease_broker.py`; decision `{#fleet-ttl-lease-broker-356}`.
+
+---
+
+### Prepared-issue sidecar project fields are provenance, not board writes {#prepared-sidecar-objective-inert-637}
+
+**Evidence.** Filing enhancement #637 (2026-07-21): `sdlc_manager.py issue prepare --from <ref>`
+recorded `project_fields.Objective` as the literal source-file path, and
+`issue create-prepared` filed the issue, added it to Operations, and set Status — but never
+touched Objective. codex#45 shipped the same path-shaped Objective in its sidecar with zero
+board effect. `_prepared_project_fields` (sdlc_manager.py:3529) documents this: "`create` does
+not yet read `project_fields`".
+
+**Mechanism.** The prepare step copies `source_artifact.ref` into the sidecar verbatim as
+provenance for a future consumer; create-prepared's mutation plan is issue create → board-add →
+set-status → mark-draft only. Custom project fields (Objective, Technical Risk, …) reach the
+board solely via an explicit
+`flow set-field --project <p> --repo <r> --number <n> --field Objective --option <slug>`
+after creation.
+
+**Generalizable rule.** A recorded field in a handoff artifact is not an applied field — check
+which pipeline stage actually consumes it before trusting the record. When filing prepared
+issues, follow create-prepared with an explicit `flow set-field` for every board field the
+operator asked for.
+
+**Refs.** `plugins/mission-control/scripts/sdlc_manager.py:3529`,
+`docs/sdlc-issue-drafts/2026-07-21-harden-refuse-mode-lease-admission-pid-liveness.{md,json}`;
+issues infiquetra-claude-plugins#637, infiquetra-codex-plugins#45.

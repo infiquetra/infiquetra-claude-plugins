@@ -1,0 +1,82 @@
+{
+  "approval_state": null,
+  "created_at": "2026-07-21T22:52:42.745541+00:00",
+  "created_issue_number": 637,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/637",
+  "draft_path": "docs/sdlc-issue-drafts/2026-07-21-harden-refuse-mode-lease-admission-pid-liveness.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "improve-claude-plugins",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "'Acceptance criteria' is not executable (card_validator requires each criterion to name a runnable check -- a `code span` or a ``` fenced block -- with its expected result)",
+      "'Verification' has no fenced code block (card_validator requires at least one ``` block)",
+      "'Files expected to change' has no path-like line (card_validator requires at least one `dir/file` style entry)",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-07-21-harden-refuse-mode-lease-admission-pid-liveness.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "# Work session \u2014 issue #627 lease-seam and guard-scope defects\n\n- **Date:** 2026-07-20\n- **Issue:** [infiquetra/infiquetra-claude-plugins#627](https://github.com/infiquetra/infiquetra-claude-plugins/issues/627)\n- **Branch:** `work/627-lease-seam-guard-scope` (from `origin/main` `83a170ff`)\n- **Plan:** `docs/plans/2026-07-20-issue-627-lease-seam-guard-scope-plan.md` (doc-review READY,\n  artifact `docs/reviews/2026-07-20-issue-627-lease-seam-guard-scope-plan-doc-review.md`)\n- **Execution vehicle:** cc-workflows-ultracode (operator-chosen), spec\n  `docs/plans/2026-07-20-issue-627-lease-seam-guard-scope-spec.json`, run `wf_82b39fe9-ab8`,\n  invocation `bc0fcde8-b181-4215-ad9f-ee76322b9ee0` \u2014 U1\u2192U2\u2192U3\u2192U4\u2192U5 fully serialized,\n  refute-3 verifier panels on U1/U2/U4 (worktree-isolated `saga:readonly-verifier`)\n\n## What was built (by unit)\n\n- **U1 (opus/high, panel 3-0 upheld):** opt-in `on_conflict` admission mode\n  (`supersede` default | `refuse`) on `LeaseBroker.acquire_agent` /\n  `_drop_superseded_resource_lease`, liveness via the existing `_expired` predicate, typed\n  `LeaseConflictError` (subclass of `LeaseOwnershipError`) naming the live holder;\n  `make_dispatcher` in `outcome_dispatc",
+    "inferred_maturity": "resume-ready",
+    "kind": "work-session",
+    "path": "docs/work-sessions/2026-07-20-issue-627-lease-seam-guard-scope.md",
+    "ref": "docs/work-sessions/2026-07-20-issue-627-lease-seam-guard-scope.md",
+    "title": "Work session \u2014 issue #627 lease-seam and guard-scope defects",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "Harden refuse-mode lease admission: pid-liveness at admission + LeaseConflictError cause-branching",
+  "updated_at": "2026-07-21T22:53:02.675089+00:00"
+}

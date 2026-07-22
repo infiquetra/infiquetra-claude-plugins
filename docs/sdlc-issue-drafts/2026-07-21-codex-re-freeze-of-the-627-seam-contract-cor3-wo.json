@@ -1,0 +1,68 @@
+{
+  "approval_state": "needs_operator_approval",
+  "created_at": "2026-07-21T11:02:50.818451+00:00",
+  "created_issue_number": 45,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-codex-plugins/issues/45",
+  "draft_path": "docs/sdlc-issue-drafts/2026-07-21-codex-re-freeze-of-the-627-seam-contract-cor3-wo.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-codex-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/sdlc-issue-drafts/2026-07-20-codex-627-refreeze-and-worktree-lease-port.md",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-codex-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-07-21-codex-re-freeze-of-the-627-seam-contract-cor3-wo.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ntitle: Codex re-freeze of the #627 seam contract + COR3 worktree lease-authority port\nrepo: infiquetra-codex-plugins\ntype: capability\nteam: asgard\nproject: operations\nstatus: Shaping\nlabels: capability, hermes-task, needs-plan\nrisk: medium\nhandoff_maturity: requirements-ready\napproval_state: approved\n---\n\n# Codex re-freeze of the #627 seam contract + COR3 worktree lease-authority port\n\n### Objective\n\nRestore codex/claude byte-identity on the frozen cross-runtime seam after\n`infiquetra-claude-plugins#627` lands, and complete the COR3 `outcome_worktrees`\nlease-authority-threading port that #627's grounding survey re-scoped and re-verified against the\nmerged SHA.\n\n### Intent\n\n`infiquetra-claude-plugins#627` (saga 0.107.0, fleet-core 0.17.0) intentionally breaks byte\nidentity between Claude's `outcome_compat.py` and codex's frozen twin: the universal fail-closed\nancestor walk (dropping the under-`$HOME` early return; exempting only world-writable-and-sticky\ncomponents) and the refuse-mode lease-admission wiring are upstream-first changes per KTD5 \u2014 root\ncauses land in `infiquetra-claude-plugins` first, codex re-freezes after merge, never the reverse.\nUntil this issue ships, the cro",
+    "inferred_maturity": "resume-ready",
+    "kind": "prepared-draft",
+    "path": "docs/sdlc-issue-drafts/2026-07-20-codex-627-refreeze-and-worktree-lease-port.md",
+    "ref": "docs/sdlc-issue-drafts/2026-07-20-codex-627-refreeze-and-worktree-lease-port.md",
+    "title": "Codex re-freeze of the #627 seam contract + COR3 worktree lease-authority port",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "Codex re-freeze of the #627 seam contract + COR3 worktree lease-authority port",
+  "updated_at": "2026-07-21T11:03:09.721658+00:00"
+}

@@ -61,11 +61,14 @@ ledger receipts, no mutation gate — evidently the posture under which #627 its
 Which armed plane emitted the halt-time denials (the session's pin vs the marketplace clone)
 remains unresolved; the cache 0.104.0 copies were already no-ops two days before the halt.
 
-**Fix (queued).** Defect to be filed via mission-control: stamp workflow batch slots at
-reserve time (synthetic per-slot `tool_use_id`, execution-window TTL) or relax the claim
-contract for `workflow-subagent` children. Operator decision 2026-07-22: relaunch #637
-ungoverned under the disabled hooks (matching the #627 precedent), restore the armed `.orig`
-hooks after the run.
+**Fix (queued).** Already filed as **#615** (2026-07-17, session `2c563b9d`) — that defect
+documents this exact mechanism (stamp-only-from-`PreToolUse`, no slot recycling,
+`session_limit` charging), proposes claim-time provisioning or a `workflow-subagent`
+exemption, and declares the cache-hook neutralization as its own documented workaround with
+the revert hazard ("any saga plugin update silently reverts the neutralization"). The
+2026-07-2x re-applies are maintenance of that workaround. Operator decision 2026-07-22:
+relaunch #637 ungoverned under the disabled hooks (matching the #627 precedent), restore the
+armed `.orig` hooks after the run.
 
 **What surprised.** The plausible skew story fit the timeline perfectly (registry pinned an
 older version than the repo protocol) and still had zero causal relevance — the "fix"

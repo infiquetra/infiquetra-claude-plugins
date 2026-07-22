@@ -58,10 +58,13 @@ how #627 shipped. The #616 attribution below is likewise unproven.
 ## Resume (next session) — amended 2026-07-22 per operator decision
 
 Operator-chosen path (2026-07-22): **relaunch ungoverned** under the disabled cache hooks
-(the #627 precedent) with a fresh `WORKFLOW_INVOCATION_ID` on the same spec; file a defect
-for the batch-stamp seam via mission-control; **restore the armed `.orig-2026-07-22` hooks
+(the #627 precedent) with a fresh `WORKFLOW_INVOCATION_ID` on the same spec; the seam defect
+already exists as **#615** (filed 2026-07-17 with the same mechanism and the neutralization
+workaround documented, revert hazard included); **restore the armed `.orig-2026-07-22` hooks
 after the run completes**. The originally-prescribed restart was performed (plugins reloaded
-at saga 0.107.0 / fleet-core 0.17.0) but is causally irrelevant to the halt.
+at saga 0.107.0 / fleet-core 0.17.0) but is causally irrelevant to the halt. Relaunched as
+`wf_36c601cc-5a6`, invocation `98d9b60a-db43-4608-9f45-9fb95b100563`, after canary
+`wf_428d7af7-c5a` proved workflow-child mutation lands under the current hook plane.
 
 ## Checks run
 

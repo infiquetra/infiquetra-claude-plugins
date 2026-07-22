@@ -8,6 +8,10 @@ rationale) plus 2 non-blocking advisories.
   U3 `8af39df2`)
 - **Post-repair head**: `4746a06b` — delta since REVIEWED_SHA is tests + one comment line only
   (no production code); delta adjudicated **clean**, lens verdicts carry over.
+- **Pre-merge delta**: `0f7138a6` (docs-only tail) + `4f830e1c` (ruff-format collapse of the
+  version-pin assertion in `tests/test_saga_plugin.py` — caught by CI Lint on PR #640; the
+  finding-7 comment repair shortened the line below the wrap threshold). No production code;
+  adjudicated **clean**, verdict carries to the merge head.
 - **Mode**: programmatic (called by `/work` Phase 5.1); persistence owned by `/work` via the
   evidence ledger. Saga `issue-618` `review_paths` appended.
 - **Plan judged against**: `docs/plans/2026-07-22-issue-618-settlement-gate-operator-waiver-plan.md`

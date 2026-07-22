@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run_ledger  # noqa: E402
 
 FACT_KIND = "dispatch-settlement"
+WAIVER_KIND = "dispatch-waiver"
 EVENT_MANIFEST = "manifest"
 EVENT_SPAWN = "spawn"
 EVENT_SETTLE = "settle"
@@ -37,6 +38,9 @@ IDLE = "idle"
 SILENT_NOOP = "silent-no-op"
 LEDGER_CLASSIFICATIONS = frozenset({DELIVERED, RATE_KILLED, IDLE, SILENT_NOOP})
 CASUALTY_CLASSIFICATIONS = frozenset({RATE_KILLED, IDLE, SILENT_NOOP})
+# Every state a blocking-roster pair may carry: the synthetic non-terminal states plus the
+# casualty classifications. DELIVERED can never block, so it is deliberately excluded.
+BLOCKING_STATES = frozenset({"open", "unspawned"}) | CASUALTY_CLASSIFICATIONS
 
 DELIVERY_RECEIPTS = frozenset({"artifact", "worker-manifest", "workflow-result"})
 RATE_RECEIPT = "rate_limited"
@@ -961,6 +965,26 @@ def _verified_snapshot(ledger: run_ledger.RunLedger) -> run_ledger.LedgerSnapsho
 def settlement_report(ledger: run_ledger.RunLedger, dispatch_id: str) -> CasualtyReport:
     dispatch = _identifier(dispatch_id, field="dispatch_id")
     records = _fact_records(_verified_snapshot(ledger), dispatch)
+    return _report_and_roster(records, dispatch)[0]
+
+
+def blocking_roster(
+    ledger: run_ledger.RunLedger, dispatch_id: str
+) -> frozenset[tuple[str, int, str]]:
+    """The ``(unit_id, attempt, state)`` pairs currently making ``halt_required`` true.
+
+    Derived from the same ``latest_states`` / unresolved-breach computation the halt itself uses —
+    never from ``CasualtyReport.entries``, which keep a late-delivered casualty's original
+    classification — so roster-empty <=> halt-false holds by construction.
+    """
+    dispatch = _identifier(dispatch_id, field="dispatch_id")
+    records = _fact_records(_verified_snapshot(ledger), dispatch)
+    return _report_and_roster(records, dispatch)[1]
+
+
+def _report_and_roster(
+    records: Sequence[Mapping[str, Any]], dispatch: str
+) -> tuple[CasualtyReport, frozenset[tuple[str, int, str]]]:
     manifest = _require_manifest(records, dispatch)
     units = _manifest_units(manifest)
     threshold = _threshold(manifest.get("casualty_threshold_percent"))
@@ -1043,21 +1067,26 @@ def settlement_report(ledger: run_ledger.RunLedger, dispatch_id: str) -> Casualt
             latest_states[unit_id] = (latest_attempt, str(settlement.get("classification")))
 
     current_complete = all(state in LEDGER_CLASSIFICATIONS for _, state in latest_states.values())
+    roster: set[tuple[str, int, str]] = {
+        (unit_id, attempt, state)
+        for unit_id, (attempt, state) in latest_states.items()
+        if state not in LEDGER_CLASSIFICATIONS
+    }
     unresolved_threshold_breach = False
     for attempt in sorted(attempts):
         attempt_units = {entry.unit_id for entry in entries if entry.attempt == attempt}
-        unresolved_casualties = sum(
-            1
-            for unit_id in attempt_units
+        unresolved_casualties = [
+            (unit_id, attempt, str(settlement.get("classification")))
+            for unit_id in sorted(attempt_units)
             if (settlement := settles.get((unit_id, attempt))) is not None
             and settlement.get("classification") in CASUALTY_CLASSIFICATIONS
             and latest_states[unit_id][1] != DELIVERED
-        )
-        if unresolved_casualties * 100 > threshold * len(attempt_units):
+        ]
+        if len(unresolved_casualties) * 100 > threshold * len(attempt_units):
             unresolved_threshold_breach = True
-            break
+            roster.update(unresolved_casualties)
     progress_halt = not current_complete or unresolved_threshold_breach
-    return CasualtyReport(
+    report = CasualtyReport(
         dispatch_id=dispatch,
         site=str(manifest.get("site")),
         entries=tuple(entries),
@@ -1066,6 +1095,182 @@ def settlement_report(ledger: run_ledger.RunLedger, dispatch_id: str) -> Casualt
         # each attempt's own denominator, so a small retry cohort cannot be diluted by attempt one.
         halt_required=progress_halt,
     )
+    return report, frozenset(roster)
+
+
+def _waiver_roster(value: object) -> tuple[tuple[str, int, str], ...]:
+    """Normalize and validate a blocking-roster payload into sorted unique triples."""
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise DispatchSettlementError("waived_roster must be a list of (unit_id, attempt, state)")
+    triples: list[tuple[str, int, str]] = []
+    for item in value:
+        if not isinstance(item, Sequence) or isinstance(item, (str, bytes)) or len(item) != 3:
+            raise DispatchSettlementError(
+                "waived_roster must be a list of (unit_id, attempt, state)"
+            )
+        unit_id, attempt, state = item
+        state_name = str(state).strip()
+        if state_name not in BLOCKING_STATES:
+            raise DispatchSettlementError(
+                f"waived_roster state must be one of {sorted(BLOCKING_STATES)}"
+            )
+        triples.append((_identifier(unit_id, field="unit_id"), _attempt(attempt), state_name))
+    normalized = tuple(sorted(set(triples)))
+    if not normalized:
+        raise DispatchSettlementError("waived_roster must name at least one blocking pair")
+    return normalized
+
+
+def waiver_fact(
+    *,
+    subplot_id: str,
+    at: str,
+    dispatch_id: str,
+    waived_by: str,
+    reason: str,
+    transport: str = "",
+    waived_roster: Iterable[Sequence[object]] = (),
+) -> dict[str, Any]:
+    """Build the closed-schema ``dispatch-waiver`` fact (#618).
+
+    A NEW run-fact kind, never a ``dispatch-settlement`` event: the settlement event schema is
+    closed and re-validated per record on every snapshot read, so readers predating this kind
+    (including the byte-frozen codex runtime) never see it — they keep halting, fail-closed.
+    """
+    normalized = _waiver_roster(tuple(waived_roster))
+    transport_name = str(transport).strip() if transport else ""
+    if transport_name:
+        transport_name = _bounded_text(transport_name, field="transport", limit=100)
+    return run_ledger.build_fact(
+        WAIVER_KIND,
+        subplot_id=_identifier(subplot_id, field="subplot_id"),
+        at=_timestamp(at),
+        dispatch_id=_identifier(dispatch_id, field="dispatch_id"),
+        waived_by=_bounded_text(waived_by, field="waived_by", limit=100),
+        transport=transport_name,
+        reason=_bounded_text(reason, field="reason"),
+        waived_roster=[list(pair) for pair in normalized],
+        roster_digest=evidence_digest([list(pair) for pair in normalized]),
+    )
+
+
+def _canonical_waiver_fact(fact: Mapping[str, Any]) -> dict[str, Any]:
+    """Rebuild a waiver fact from its closed schema and reject every extra or drifted field."""
+    canonical = waiver_fact(
+        subplot_id=fact.get("subplot_id", ""),
+        at=fact.get("at", ""),
+        dispatch_id=fact.get("dispatch_id", ""),
+        waived_by=fact.get("waived_by", ""),
+        transport=str(fact.get("transport", "")),
+        reason=fact.get("reason", ""),
+        waived_roster=fact.get("waived_roster", ()),
+    )
+    if dict(fact) != canonical:
+        missing = sorted(set(canonical) - set(fact))
+        extra = sorted(set(fact) - set(canonical))
+        detail = []
+        if missing:
+            detail.append(f"missing={missing}")
+        if extra:
+            detail.append(f"extra={extra}")
+        if not detail:
+            detail.append("field values are not canonical")
+        raise DispatchSettlementError("malformed dispatch-waiver fact: " + "; ".join(detail))
+    return canonical
+
+
+def _waiver_records(snapshot: run_ledger.LedgerSnapshot, dispatch_id: str) -> list[dict[str, Any]]:
+    if not snapshot.report.ok:
+        raise DispatchSettlementError(f"broken run-fact chain: {snapshot.report.reason}")
+    matched: list[dict[str, Any]] = []
+    for record in snapshot.records:
+        if record.get("kind") != WAIVER_KIND:
+            continue
+        payload = {k: v for k, v in record.items() if k not in {"prev_hash", "this_hash"}}
+        _canonical_waiver_fact(payload)
+        if record.get("dispatch_id") == dispatch_id:
+            matched.append(record)
+    return matched
+
+
+class _ExistingWaiverError(Exception):
+    """Internal control flow: an identical-roster waiver already exists (R7 idempotence)."""
+
+    def __init__(self, record: Mapping[str, Any]) -> None:
+        super().__init__("identical waiver already recorded")
+        self.record = dict(record)
+
+
+def record_waiver(
+    ledger: run_ledger.RunLedger,
+    *,
+    subplot_id: str,
+    at: str,
+    dispatch_id: str,
+    waived_by: str,
+    reason: str,
+    transport: str = "",
+) -> dict[str, Any]:
+    """Grant an operator waiver for one currently halt-required dispatch cohort (#618).
+
+    Validates loudly under the ledger's own write lock: the dispatch must have a manifest and its
+    report must be halt-required *in the locked snapshot*, so a settle racing the grant can never
+    stamp a stale roster. Idempotent on an identical blocking-roster digest (R7). Returns
+    ``{"appended": bool, "record": <the stored fact>}``.
+    """
+    dispatch = _identifier(dispatch_id, field="dispatch_id")
+
+    def build(snapshot: run_ledger.LedgerSnapshot) -> dict[str, Any]:
+        records = _fact_records(snapshot, dispatch)
+        report, roster = _report_and_roster(records, dispatch)
+        if not report.halt_required:
+            raise DispatchSettlementError(
+                f"dispatch {dispatch!r} is not halt-required; nothing to waive"
+            )
+        fact = waiver_fact(
+            subplot_id=subplot_id,
+            at=at,
+            dispatch_id=dispatch,
+            waived_by=waived_by,
+            reason=reason,
+            transport=transport,
+            waived_roster=sorted(roster),
+        )
+        for existing in _waiver_records(snapshot, dispatch):
+            if existing.get("roster_digest") == fact["roster_digest"]:
+                raise _ExistingWaiverError(existing)
+        return fact
+
+    try:
+        return {"appended": True, "record": run_ledger.append_fact_built_atomic(ledger, build)}
+    except _ExistingWaiverError as existing:
+        return {"appended": False, "record": existing.record}
+
+
+def covering_waivers(ledger: run_ledger.RunLedger, report: CasualtyReport) -> list[dict[str, Any]]:
+    """Every stored waiver whose grant-time roster covers the report's CURRENT blocking roster.
+
+    Coverage is the KTD3 subset rule: a delivery only shrinks the roster (the waiver keeps
+    covering), while any new blocking pair — a fresh casualty, a new attempt cohort, a newly
+    open unit — falls outside the stored snapshot and re-halts with no operator action.
+    """
+    dispatch = _identifier(report.dispatch_id, field="dispatch_id")
+    snapshot = _verified_snapshot(ledger)
+    waivers = _waiver_records(snapshot, dispatch)
+    if not waivers:
+        return []
+    records = _fact_records(snapshot, dispatch)
+    current = set(_report_and_roster(records, dispatch)[1])
+    return [
+        waiver
+        for waiver in waivers
+        if current <= set(_waiver_roster(waiver.get("waived_roster", ())))
+    ]
+
+
+def active_waiver_covers(ledger: run_ledger.RunLedger, report: CasualtyReport) -> bool:
+    """True iff some stored waiver's roster is a superset of the current blocking roster (KTD3)."""
+    return bool(covering_waivers(ledger, report))
 
 
 def open_positions(ledger: run_ledger.RunLedger) -> list[dict[str, Any]]:
@@ -1710,6 +1915,13 @@ def main(argv: list[str] | None = None) -> int:
     claim_cmd.add_argument("--unit-id", required=True)
     claim_cmd.add_argument("--at", required=True)
 
+    waive_cmd = sub.add_parser("waive")
+    waive_cmd.add_argument("--dispatch-id", required=True)
+    waive_cmd.add_argument("--at", required=True)
+    waive_cmd.add_argument("--waived-by", required=True)
+    waive_cmd.add_argument("--reason", required=True)
+    waive_cmd.add_argument("--transport", default="")
+
     report_cmd = sub.add_parser("report")
     report_cmd.add_argument("--dispatch-id", required=True)
     report_cmd.add_argument("--format", choices=("json", "text"), default="json")
@@ -1797,6 +2009,18 @@ def main(argv: list[str] | None = None) -> int:
                     at=args.at,
                     dispatch_id=args.dispatch_id,
                     unit_id=args.unit_id,
+                )
+            )
+        elif args.command == "waive":
+            _print(
+                record_waiver(
+                    ledger,
+                    subplot_id=subplot_id,
+                    at=args.at,
+                    dispatch_id=args.dispatch_id,
+                    waived_by=args.waived_by,
+                    reason=args.reason,
+                    transport=args.transport,
                 )
             )
         elif args.command == "report":

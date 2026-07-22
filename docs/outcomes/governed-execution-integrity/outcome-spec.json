@@ -176,7 +176,7 @@
       "timeout_seconds": null,
       "heartbeat_seconds": null,
       "depends_on": [],
-      "leaf_saga_id": "",
+      "leaf_saga_id": "leaf-governed-execution-integrity-sub-633",
       "child_spec_ref": "",
       "github": {
         "repo": "infiquetra/infiquetra-claude-plugins",
@@ -185,7 +185,9 @@
         "pr": "https://github.com/infiquetra/infiquetra-claude-plugins/pull/636"
       },
       "worktree": {},
-      "evidence": {},
+      "evidence": {
+        "reviewed_sha": "31d72dc8a88af0d4e911aef12161324272692763"
+      },
       "cost": {}
     },
     {

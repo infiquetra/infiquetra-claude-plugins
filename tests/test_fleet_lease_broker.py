@@ -1701,9 +1701,7 @@ def test_non_batch_claim_ordering_ignores_stamp_state(broker: Any) -> None:
     assert claimed.lease_id == unstamped.lease_id
 
 
-def test_unstamped_slot_recycles_on_child_terminal_alone(
-    broker: Any, runtime: FakeRuntime
-) -> None:
+def test_unstamped_slot_recycles_on_child_terminal_alone(broker: Any, runtime: FakeRuntime) -> None:
     _workflow_batch(broker, count=1)
     first = broker.claim(
         session_id="workflow", agent_type="worker", agent_id="wave-1", batch_id="wf-batch"

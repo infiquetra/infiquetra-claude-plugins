@@ -345,6 +345,7 @@ def test_no_pulse_owned_status_field(tmp_path: Path) -> None:
                 "reconciliation",
                 "benchmark",
                 "dispatch-settlement",
+                "dispatch-waiver",
                 "liveness",
                 "teardown",
             }

@@ -1055,7 +1055,7 @@ def _waive(
     waived_by: str = "jeff",
     transport: str = "",
 ) -> dict[str, Any]:
-    return DS.record_waiver(
+    result: dict[str, Any] = DS.record_waiver(
         ledger,
         subplot_id="sub-351",
         at=AT,
@@ -1064,6 +1064,7 @@ def _waive(
         reason=reason,
         transport=transport,
     )
+    return result
 
 
 def _waiver_facts(ledger: Any) -> list[dict[str, Any]]:
@@ -1255,9 +1256,7 @@ def test_blocking_roster_empty_iff_halt_false(tmp_path: Path) -> None:
     check()  # casualty + open
     _settle(ledger, 1)
     check()  # complete, unresolved breach at threshold 0
-    assert DS.blocking_roster(ledger, "dispatch-1") == frozenset(
-        {("unit-0", 1, DS.RATE_KILLED)}
-    )
+    assert DS.blocking_roster(ledger, "dispatch-1") == frozenset({("unit-0", 1, DS.RATE_KILLED)})
     DS.append_late_delivery(
         ledger,
         DS.late_delivery_fact(

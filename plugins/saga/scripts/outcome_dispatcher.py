@@ -63,6 +63,35 @@ class DispatcherError(ValueError):
     """A dispatch was rejected for a malformed request (unknown backend vocabulary, etc.)."""
 
 
+class DispatcherLeaseTransientError(DispatcherError):
+    """A lease-LIFECYCLE transient at the dispatch seam (#637 R4/KTD2): a refuse-mode admission
+    conflict on a live-unexpired prior (``LeaseConflictError``), a mid-flight renew failure, or a
+    lost/vanished lease authority. TRANSIENT-retriable — a later tick re-attempts once the holder
+    releases. Every OTHER dispatch fault (fleet-core shim/protocol skew, a fail-closed settlement
+    release refusal, malformed request) stays a plain :class:`DispatcherError` — a PERMANENT fault.
+
+    A subclass so the ``outcome.py`` reconcile arm branches with one ``isinstance`` on this exported
+    type (KTD2) and never imports fleet-core to classify; every existing ``except DispatcherError``
+    (the seam's own ``main`` consumer, the reconcile arm's base catch) still catches both.
+    """
+
+
+def _lease_conflict_error_type() -> type[BaseException] | None:
+    """The shim-loaded ``LeaseConflictError`` class, or ``None`` when fleet-core is unresolvable.
+
+    Classification lives where the cause is in hand (KTD2), so the normalize arm resolves the
+    authority's conflict type through the SAME shim the acquire used. A load failure means the fault
+    was itself the shim/protocol skew — permanent — so ``None`` correctly declines the transient
+    classification and the caller falls through to a plain :class:`DispatcherError`.
+    """
+    try:
+        authority = fleet_commons_shim.load("lease_broker")
+    except Exception:  # noqa: BLE001 - an unresolvable shim is itself the permanent fault
+        return None
+    conflict = getattr(authority, "LeaseConflictError", None)
+    return conflict if isinstance(conflict, type) else None
+
+
 def _require_lease_protocol(authority: Any) -> None:
     observed = getattr(authority, "PROTOCOL_VERSION", None)
     if observed != _REQUIRED_LEASE_PROTOCOL_VERSION:
@@ -281,17 +310,29 @@ def make_dispatcher(
                     on_conflict="refuse",
                 )
             except Exception as exc:  # noqa: BLE001 - normalize fleet version/admission failures
+                # #637 KTD2: a refuse-mode admission conflict on a live-unexpired prior is a
+                # lease-lifecycle TRANSIENT (a later tick re-attempts once the holder releases);
+                # every other admission failure (shim load / protocol skew / malformed request) is
+                # a PERMANENT fault. Classify on the in-hand cause against the shim-loaded conflict
+                # type so ``outcome.py`` never imports fleet-core to branch.
+                conflict_type = _lease_conflict_error_type()
+                if conflict_type is not None and isinstance(exc, conflict_type):
+                    raise DispatcherLeaseTransientError(
+                        f"outcome dispatch lease admission refused: {exc}"
+                    ) from exc
                 raise DispatcherError(f"outcome dispatch lease admission refused: {exc}") from exc
         primary_error: BaseException | None = None
         try:
             result = dispatch(req, available=available)
             if lease is not None:
                 if selected is None:
-                    raise DispatcherError("outcome dispatch lost its lease authority")
+                    # #637 KTD2: lost lease authority mid-flight — a lease-lifecycle TRANSIENT.
+                    raise DispatcherLeaseTransientError("outcome dispatch lost its lease authority")
                 try:
                     selected.renew(lease.lease_id, owner_id=owner_id, token=lease.token)
                 except Exception as exc:  # noqa: BLE001 - normalize fleet version/expiry failures
-                    raise DispatcherError(
+                    # #637 KTD2: a mid-flight renew loss (the lease expired under us) is TRANSIENT.
+                    raise DispatcherLeaseTransientError(
                         f"outcome dispatch lease expired before settlement: {exc}"
                     ) from exc
         except BaseException as exc:
@@ -300,7 +341,9 @@ def make_dispatcher(
         finally:
             if lease is not None:
                 if selected is None:
-                    cleanup_error = DispatcherError(
+                    # #637 KTD2: lost lease authority during settlement — a lease-lifecycle
+                    # TRANSIENT (same class as the pre-settlement lost-authority raise above).
+                    cleanup_error: DispatcherError = DispatcherLeaseTransientError(
                         "outcome dispatch lost its lease authority during settlement"
                     )
                     if primary_error is not None:
@@ -313,6 +356,10 @@ def make_dispatcher(
                             lease.lease_id, owner_id=owner_id, token=lease.token
                         )
                     except Exception as exc:  # noqa: BLE001 - wrong token must fail closed
+                        # #637 KTD2: a release the broker actively REFUSED (wrong token / protocol
+                        # skew) is a fail-closed integrity fault, NOT a lease-lifecycle transient —
+                        # it stays a plain DispatcherError so the reconcile arm aborts the tick
+                        # loudly rather than silently re-queuing a corrupt settlement.
                         cleanup_error = DispatcherError(
                             f"outcome dispatch lease settlement refused: {exc}"
                         )
@@ -322,7 +369,9 @@ def make_dispatcher(
                             raise cleanup_error from exc
                     else:
                         if not released:
-                            cleanup_error = DispatcherError(
+                            # #637 KTD2: the lease was already gone at release (expired/swept) — the
+                            # same lease-lifecycle category as an expiry, so TRANSIENT-retriable.
+                            cleanup_error = DispatcherLeaseTransientError(
                                 "outcome dispatch lease disappeared before authoritative settlement"
                             )
                             if primary_error is not None:

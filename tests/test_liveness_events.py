@@ -695,6 +695,6 @@ def test_cli_describes_closed_protocol(capsys: Any) -> None:
     assert result["subject_schema"] == "liveness.subject.v1"
     assert result["decision_schema"] == "liveness_decision.v1"
     assert result["engine_protocol_version"] == 1
-    assert result["fleet_core_version"] == "0.17.0"
+    assert result["fleet_core_version"] == "0.18.0"
     assert len(result["engine_sha256"]) == 64
     assert result["max_definitive_not_sent_retries_per_attempt"] == 1

@@ -1587,16 +1587,33 @@ def _reconcile_once(
                 )
             continue
         except outcome_dispatcher.DispatcherError as dispatch_error:
-            # #627/R3/KTD3: a cross-runtime lease REFUSAL — admission (refuse-mode acquire on a live
-            # unexpired prior) OR a mid-flight renew failure ("lost its lease authority" /
-            # "lease expired before settlement") — is TRANSIENT-retriable, not a wedge. Model the
+            # #637 R4/R6/KTD2/KTD3: branch on the dispatcher's TYPED transient/permanent contract.
+            # A permanent DispatcherError (fleet-core shim load / lease protocol skew, a fail-closed
+            # settlement release refusal, a malformed dispatch request) is environmental — it would
+            # hit every leaf this tick — so continuing buys nothing. Re-raise it BEFORE any
+            # lease-release or ledger write to ABORT the tick loudly (restoring the pre-#627
+            # page-the-operator posture) with zero new state.
+            #   Named consequence (R6): the per-subplot `dispatch-{sid}` STORE lock stays HELD on an
+            #   aborted tick and self-heals via acquire_lease's stale-reclaim after the 900 s
+            #   store-lock TTL (DEFAULT_LEASE_TTL, :66 — reclaim semantics at outcome_store.py:612).
+            #   The distinct 300 s broker dispatch lease (lease_broker DEFAULT_TTL_SECONDS) is
+            #   already released by make_dispatcher's own finally before this arm runs. The
+            #   coordinator lock is released by the outer finally (:1072-1073), so a loud abort never
+            #   wedges the coordinator.
+            if not isinstance(dispatch_error, outcome_dispatcher.DispatcherLeaseTransientError):
+                raise
+            # #627/R3/KTD3 (TRANSIENT path — a DispatcherLeaseTransientError — unchanged behavior):
+            # a cross-runtime lease REFUSAL — admission (refuse-mode acquire on a live unexpired
+            # prior, guarding the 300 s broker dispatch lease) OR a mid-flight renew/settlement loss
+            # ("lost its lease authority" / "lease expired before settlement" / "lease disappeared
+            # before authoritative settlement") — is TRANSIENT-retriable, not a wedge. Model the
             # lock-release/continue mechanics on the BackendRateLimitError/BackendHaltError siblings
             # above, but ALSO append a reducer-VISIBLE halt paired to the intent's `key`.
             # Why the extra record: post-#628 an UNCAUGHT DispatcherError is worse in the quiet
             # direction — the `kind: dispatch, phase: intent` record appended above (near line 1447)
             # matches NO branch in reduce_dispatch_ledger, so the orphaned intent is invisible, the
-            # per-subplot lease leaks until TTL (900 s), and the leaf silently re-dispatches: no halt,
-            # no operator page. Release the lock, write a `(dispatch, halt)` record — KTD4:
+            # per-subplot store lock leaks until its 900 s TTL, and the leaf silently re-dispatches:
+            # no halt, no operator page. Release the lock, write a `(dispatch, halt)` record — KTD4:
             # spread-first, literal-last, so `kind` survives as "dispatch" for both
             # reduce_dispatch_ledger's halt arm and outcome_report._halted_subplots; the receipt's own
             # `kind` is preserved under `receipt_kind` so no receipt data is lost. Settle the attempt

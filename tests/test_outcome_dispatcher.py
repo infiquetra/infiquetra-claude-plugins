@@ -267,6 +267,70 @@ def test_outcome_dispatch_rejects_lease_protocol_skew(version: int) -> None:
         D._require_lease_protocol(SimpleNamespace(PROTOCOL_VERSION=version))
 
 
+# ------------------------------------------------------- #637: typed transient/permanent contract
+# The dispatcher seam classifies WHERE the cause is in hand (KTD2): a lease-lifecycle transient
+# raises the exported ``DispatcherLeaseTransientError`` subclass; every other fault stays a plain
+# ``DispatcherError``. ``outcome.py`` then branches with one isinstance and never imports fleet-core.
+
+
+def test_lease_transient_is_a_dispatcher_error_subclass() -> None:
+    # KTD2: a subclass so every existing ``except DispatcherError`` (the seam's own ``main``, the
+    # reconcile arm's base catch) still catches both flavors; the branch is by isinstance, not type.
+    assert issubclass(D.DispatcherLeaseTransientError, D.DispatcherError)
+
+
+def test_admission_conflict_raises_transient_subclass() -> None:
+    # #637 KTD2: a refuse-mode admission conflict (the broker raising ``LeaseConflictError`` on a
+    # live-unexpired prior) is classified TRANSIENT by the normalize arm.
+    authority = D.fleet_commons_shim.load("lease_broker")
+
+    class _ConflictAuthority:
+        def acquire_agent(self, **_kwargs: Any) -> Any:
+            raise authority.LeaseConflictError(
+                "holder peer-runtime already holds this resource",
+                holder_owner_id="peer-runtime",
+            )
+
+    with pytest.raises(D.DispatcherLeaseTransientError, match="lease admission refused") as exc:
+        D.make_dispatcher(lease_authority=_ConflictAuthority())(_req("inline"))
+    assert "peer-runtime" in str(exc.value)  # the conflict cause is preserved through the wrap
+
+
+def test_admission_shim_failure_raises_plain_permanent(monkeypatch: pytest.MonkeyPatch) -> None:
+    # #637 KTD2: a fleet-core shim-load / protocol-resolution failure at admission is PERMANENT —
+    # it stays a plain ``DispatcherError`` (NOT the transient subclass), so the reconcile arm aborts
+    # the tick loudly rather than re-queuing forever. The classifier's own shim load also fails and
+    # correctly declines the transient classification (fails closed to permanent).
+    def _boom(_name: str) -> Any:
+        raise RuntimeError("fleet-core not installed")
+
+    monkeypatch.setattr(D.fleet_commons_shim, "load", _boom)
+
+    class _Auth:
+        def acquire_agent(self, **_kwargs: Any) -> Any:  # pragma: no cover - never reached
+            raise AssertionError("shim load fails before acquire")
+
+    with pytest.raises(D.DispatcherError, match="lease admission refused") as exc:
+        D.make_dispatcher(lease_authority=_Auth())(_req("inline"))
+    assert not isinstance(exc.value, D.DispatcherLeaseTransientError)
+
+
+def test_renew_failure_raises_transient_subclass() -> None:
+    # #637 KTD2: a mid-flight renew loss (the lease expired under us before settlement) is TRANSIENT.
+    class _RenewFailAuthority:
+        def acquire_agent(self, **_kwargs: Any) -> Any:
+            return SimpleNamespace(lease_id="lease-1", token=SimpleNamespace())
+
+        def renew(self, *_a: Any, **_k: Any) -> Any:
+            raise RuntimeError("lease vanished under us")
+
+        def release(self, *_a: Any, **_k: Any) -> bool:
+            return True
+
+    with pytest.raises(D.DispatcherLeaseTransientError, match="expired before settlement"):
+        D.make_dispatcher(lease_authority=_RenewFailAuthority())(_req("inline"))
+
+
 # --------------------------------------------------------------------------- team_emitter wiring (R5)
 
 

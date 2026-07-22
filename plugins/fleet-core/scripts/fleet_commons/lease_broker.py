@@ -2143,11 +2143,16 @@ class LeaseBroker:
     ) -> None:
         """Remove prior authority before applying capacity to an atomic retry grant.
 
-        ``on_conflict="refuse"`` (the outcome-dispatch opt-in, #627 KTD1) inserts one liveness gate
-        *below* the settlement-retained and canonically-closed precedence: if the prior fence still
-        points at a live, unexpired lease, admission refuses with :class:`LeaseConflictError` instead
-        of superseding it. ``"supersede"`` (the default for every other consumer) is byte-for-byte the
-        prior behavior — the #356 retry-supersede design and its pins stay intact.
+        ``on_conflict="refuse"`` (the outcome-dispatch opt-in, #627 KTD1) gates admission *below*
+        the settlement-retained and canonically-closed precedence with two checks against the prior
+        fence's lease. First :meth:`_expired` (TTL + boot-id): an expired prior is reclaimed in both
+        modes. A still-unexpired prior is then probed for owner liveness with :meth:`_owner_state`
+        (#637): a ``"live"`` or ``"unknown"`` owner refuses with :class:`LeaseConflictError` —
+        fail-closed, only proof of death admits, so an identity-blind or cross-host peer is never
+        superseded while possibly alive — while a provably ``"dead"`` owner (crash orphan, stale
+        boot-id, or reused pid) falls through to supersede with no TTL wait, closing the crash-orphan
+        self-refusal window. ``"supersede"`` (the default for every other consumer) is byte-for-byte
+        the prior behavior — the #356 retry-supersede design and its pins stay intact.
         """
 
         digest = resource_sha256(resource_ref)
@@ -2167,8 +2172,10 @@ class LeaseBroker:
         if prior is not None:
             if on_conflict == "refuse":
                 prior_lease = registry.leases.get(prior.lease_id)
-                if prior_lease is not None and not self._expired(
-                    prior_lease, monotonic=monotonic, boot_id=boot_id
+                if (
+                    prior_lease is not None
+                    and not self._expired(prior_lease, monotonic=monotonic, boot_id=boot_id)
+                    and self._owner_state(prior_lease) != "dead"
                 ):
                     raise LeaseConflictError(
                         "resource is held by a live lease owned by "

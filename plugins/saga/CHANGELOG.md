@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.108.0] - 2026-07-22
+
+### Fixed - Typed dispatcher lease-transient contract; loud abort on permanent faults (#637)
+
+- `outcome_dispatcher` now exports `DispatcherLeaseTransientError(DispatcherError)`, raised at
+  exactly the lease-lifecycle sites the #627 halt-and-continue arm was already scoped to:
+  admission `LeaseConflictError` (classified against the shim-loaded broker authority class,
+  checked in-place — `outcome_dispatcher` never leaks that classification to `outcome.py`), the
+  renew-failure raise, and the lost-authority raises. Every other `DispatcherError` cause (shim
+  load failure, protocol skew, and any other fleet-core resolution failure) stays a plain
+  `DispatcherError`.
+- `_reconcile_once`'s `except DispatcherError` arm now branches on `DispatcherLeaseTransientError`
+  with one `isinstance` check — `outcome.py` still imports no fleet-core types. The transient
+  branch is #627's existing body unchanged: release the per-subplot lease, append the
+  reducer-visible `(dispatch, halt)` record (spread-first, literal-last, `receipt_kind`
+  preserved), settle `SILENT_NOOP`, continue the tick — `test_advance_records_lease_refusal_as_
+  halt_and_continues` is green unmodified. A non-transient `DispatcherError` now **re-raises and
+  aborts the tick loudly** (the pre-#627 posture for permanent faults): no backoff state, no new
+  ledger classification; the per-subplot `dispatch-{sid}` store lock is left held and self-heals
+  via `acquire_lease`'s stale-reclaim after the 900s store-lock TTL, while the coordinator lock
+  is released by the existing outer `finally` — an aborted tick never wedges the coordinator.
+
 ## [0.107.0] - 2026-07-20
 
 ### Fixed - Cross-runtime lease refusal, dispatcher halt visibility, universal ancestor guard (#627)

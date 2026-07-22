@@ -1042,3 +1042,328 @@ def test_cli_read_views_have_deterministic_text_format(tmp_path: Path, capsys: A
 
     assert DS.main([*common, "reconcile", "--leaks", "--format", "text"]) == 0
     assert capsys.readouterr().out == "open_positions=0\n"
+
+
+# ------------------------------------------------------------------ operator waivers (#618)
+
+
+def _waive(
+    ledger: Any,
+    *,
+    dispatch_id: str = "dispatch-1",
+    reason: str = "operator waiver",
+    waived_by: str = "jeff",
+    transport: str = "",
+) -> dict[str, Any]:
+    result: dict[str, Any] = DS.record_waiver(
+        ledger,
+        subplot_id="sub-351",
+        at=AT,
+        dispatch_id=dispatch_id,
+        waived_by=waived_by,
+        reason=reason,
+        transport=transport,
+    )
+    return result
+
+
+def _waiver_facts(ledger: Any) -> list[dict[str, Any]]:
+    return [rec for rec in RL.read_facts(ledger) if rec.get("kind") == DS.WAIVER_KIND]
+
+
+def test_waiver_happy_path_covers_open_units(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    _manifest(ledger, count=2)
+    _spawn(ledger, 0)
+    _spawn(ledger, 1)
+    result = _waive(ledger, transport="terminal")
+    assert result["appended"] is True
+    record = result["record"]
+    assert record["kind"] == DS.WAIVER_KIND
+    assert record["waived_by"] == "jeff"
+    assert record["transport"] == "terminal"
+    assert record["reason"] == "operator waiver"
+    assert record["waived_roster"] == [["unit-0", 1, "open"], ["unit-1", 1, "open"]]
+    assert record["roster_digest"] == DS.evidence_digest(record["waived_roster"])
+    report = DS.settlement_report(ledger, "dispatch-1")
+    assert report.halt_required is True
+    assert DS.active_waiver_covers(ledger, report) is True
+
+
+def test_waiver_survives_delivery_shrinking_roster(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    _manifest(ledger, count=2)
+    _spawn(ledger, 0)
+    _spawn(ledger, 1)
+    _waive(ledger)
+    _settle(ledger, 0)  # delivered: the roster shrinks, the waiver keeps covering (KTD3)
+    report = DS.settlement_report(ledger, "dispatch-1")
+    assert report.halt_required is True
+    assert DS.blocking_roster(ledger, "dispatch-1") == frozenset({("unit-1", 1, "open")})
+    assert DS.active_waiver_covers(ledger, report) is True
+
+
+def test_waiver_stale_after_new_casualty(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    _manifest(ledger, count=2)
+    _spawn(ledger, 0)
+    _spawn(ledger, 1)
+    _waive(ledger)
+    _settle(ledger, 0, DS.RATE_KILLED)  # a NEW blocking pair falls outside the snapshot
+    report = DS.settlement_report(ledger, "dispatch-1")
+    assert report.halt_required is True
+    assert DS.active_waiver_covers(ledger, report) is False
+
+
+def test_waiver_stale_after_new_attempt_cohort(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    _manifest(ledger, count=2)
+    _spawn(ledger, 0)
+    _spawn(ledger, 1)
+    _settle(ledger, 0, DS.RATE_KILLED)
+    _waive(ledger)
+    report = DS.settlement_report(ledger, "dispatch-1")
+    assert DS.active_waiver_covers(ledger, report) is True
+    _spawn(ledger, 0, attempt=2)  # retry cohort: a new open pair re-halts unwaived
+    report = DS.settlement_report(ledger, "dispatch-1")
+    assert report.halt_required is True
+    assert DS.active_waiver_covers(ledger, report) is False
+
+
+def test_waiver_requires_manifest(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    with pytest.raises(DS.DispatchSettlementError, match="no manifest"):
+        _waive(ledger)
+
+
+def test_waiver_refuses_healthy_cohort(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    _manifest(ledger, count=1)
+    _spawn(ledger, 0)
+    _settle(ledger, 0)
+    with pytest.raises(DS.DispatchSettlementError, match="not halt-required"):
+        _waive(ledger)
+
+
+def test_waiver_duplicate_grant_is_reported_noop(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    _manifest(ledger, count=2)
+    _spawn(ledger, 0)
+    _spawn(ledger, 1)
+    first = _waive(ledger)
+    second = _waive(ledger, reason="same roster, different wording")
+    assert second["appended"] is False
+    assert second["record"]["this_hash"] == first["record"]["this_hash"]
+    assert len(_waiver_facts(ledger)) == 1
+
+
+def test_rewaive_after_roster_change_appends_a_second_fact(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    _manifest(ledger, count=2)
+    _spawn(ledger, 0)
+    _spawn(ledger, 1)
+    first = _waive(ledger)
+    _settle(ledger, 0, DS.RATE_KILLED)
+    second = _waive(ledger, reason="casualty acknowledged")
+    assert second["appended"] is True
+    assert second["record"]["roster_digest"] != first["record"]["roster_digest"]
+    report = DS.settlement_report(ledger, "dispatch-1")
+    assert DS.active_waiver_covers(ledger, report) is True
+    assert len(_waiver_facts(ledger)) == 2
+
+
+def test_old_readers_ignore_waiver_facts(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    _manifest(ledger, count=2)
+    _spawn(ledger, 0)
+    _spawn(ledger, 1)
+    _waive(ledger)
+    # The settlement stream never sees the new kind: reports, open positions, and later appends
+    # all succeed, and the hash chain still verifies (R5 fail-closed isolation).
+    report = DS.settlement_report(ledger, "dispatch-1")
+    assert [entry.classification for entry in report.entries] == ["open", "open"]
+    assert RL.verify_chain(ledger).ok is True
+    _settle(ledger, 0)
+    assert DS.settlement_report(ledger, "dispatch-1").halt_required is True
+    assert {pos["unit_id"] for pos in DS.open_positions(ledger)} == {"unit-1"}
+
+
+def test_waiver_field_bounds(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    _manifest(ledger, count=1)
+    _spawn(ledger, 0)
+    with pytest.raises(DS.DispatchSettlementError, match="reason"):
+        _waive(ledger, reason="")
+    with pytest.raises(DS.DispatchSettlementError, match="waived_by"):
+        _waive(ledger, waived_by="")
+    with pytest.raises(DS.DispatchSettlementError, match="reason"):
+        _waive(ledger, reason="x" * 501)
+    with pytest.raises(DS.DispatchSettlementError, match="waived_roster state"):
+        DS.waiver_fact(
+            subplot_id="sub-351",
+            at=AT,
+            dispatch_id="dispatch-1",
+            waived_by="jeff",
+            reason="bad state",
+            waived_roster=[("unit-0", 1, DS.DELIVERED)],
+        )
+    with pytest.raises(DS.DispatchSettlementError, match="at least one blocking pair"):
+        DS.waiver_fact(
+            subplot_id="sub-351",
+            at=AT,
+            dispatch_id="dispatch-1",
+            waived_by="jeff",
+            reason="empty roster",
+            waived_roster=[],
+        )
+
+
+def test_stored_waiver_fact_with_extra_field_breaks_waiver_reads(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    _manifest(ledger, count=1)
+    _spawn(ledger, 0)
+    fact = DS.waiver_fact(
+        subplot_id="sub-351",
+        at=AT,
+        dispatch_id="dispatch-1",
+        waived_by="jeff",
+        reason="tampered",
+        waived_roster=[("unit-0", 1, "open")],
+    )
+    fact["surprise"] = True
+    RL.append_fact(ledger, fact)
+    report = DS.settlement_report(ledger, "dispatch-1")  # settlement readers stay unaffected
+    with pytest.raises(DS.DispatchSettlementError, match="extra=\\['surprise'\\]"):
+        DS.active_waiver_covers(ledger, report)
+
+
+def test_blocking_roster_empty_iff_halt_false(tmp_path: Path) -> None:
+    """Property pin: roster-empty <=> halt-false at every step, incl. the late-delivery resolve."""
+    ledger = _ledger(tmp_path)
+    _manifest(ledger, count=2)
+
+    def check() -> None:
+        report = DS.settlement_report(ledger, "dispatch-1")
+        roster = DS.blocking_roster(ledger, "dispatch-1")
+        assert (roster == frozenset()) == (report.halt_required is False)
+
+    check()  # both unspawned
+    _spawn(ledger, 0)
+    check()  # open + unspawned
+    _spawn(ledger, 1)
+    check()  # both open
+    _settle(ledger, 0, DS.RATE_KILLED)
+    check()  # casualty + open
+    _settle(ledger, 1)
+    check()  # complete, unresolved breach at threshold 0
+    assert DS.blocking_roster(ledger, "dispatch-1") == frozenset({("unit-0", 1, DS.RATE_KILLED)})
+    DS.append_late_delivery(
+        ledger,
+        DS.late_delivery_fact(
+            subplot_id="sub-351",
+            at=AT,
+            dispatch_id="dispatch-1",
+            unit_id="unit-0",
+            attempt=1,
+            evidence_ref="receipt-late-0",
+            evidence_sha256=DIGEST,
+        ),
+    )
+    # entries still say rate-killed, but latest_states says delivered — the roster must follow
+    # the halt derivation, not the entries.
+    report = DS.settlement_report(ledger, "dispatch-1")
+    assert report.halt_required is False
+    assert DS.blocking_roster(ledger, "dispatch-1") == frozenset()
+
+
+def test_cli_waive_verb_roundtrip_and_error_paths(tmp_path: Path, capsys: Any) -> None:
+    ledger = _ledger(tmp_path)
+    _manifest(ledger, count=2)
+    _spawn(ledger, 0)
+    _spawn(ledger, 1)
+    common = ["--ledger-path", str(ledger.path), "--subplot-id", "sub-351"]
+    assert (
+        DS.main(
+            [
+                *common,
+                "waive",
+                "--dispatch-id",
+                "dispatch-1",
+                "--at",
+                AT,
+                "--waived-by",
+                "jeff",
+                "--reason",
+                "unblock new frontier dispatch",
+                "--transport",
+                "terminal",
+            ]
+        )
+        == 0
+    )
+    out = json.loads(capsys.readouterr().out)
+    assert out["appended"] is True
+    assert out["record"]["transport"] == "terminal"
+    assert (
+        DS.main(
+            [
+                *common,
+                "waive",
+                "--dispatch-id",
+                "missing-dispatch",
+                "--at",
+                AT,
+                "--waived-by",
+                "jeff",
+                "--reason",
+                "no such cohort",
+            ]
+        )
+        == 1
+    )
+    assert "no manifest" in capsys.readouterr().err
+
+
+def test_waiver_reads_and_grants_refuse_broken_chain(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    _manifest(ledger, count=1)
+    _spawn(ledger, 0)
+    report = DS.settlement_report(ledger, "dispatch-1")
+    lines = ledger.path.read_text(encoding="utf-8").splitlines()
+    record = json.loads(lines[0])
+    record["subplot_id"] = "tampered"
+    lines[0] = json.dumps(record, sort_keys=True, separators=(",", ":"))
+    ledger.path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    with pytest.raises(DS.DispatchSettlementError, match="broken run-fact chain"):
+        DS.active_waiver_covers(ledger, report)
+    with pytest.raises(RL.RunLedgerError, match="broken run-fact chain"):
+        _waive(ledger)
+
+
+def test_stored_waiver_drift_and_malformed_roster_break_waiver_reads(tmp_path: Path) -> None:
+    """The remaining canonicalizer branches: value drift, missing field, malformed roster."""
+    corruptions: list[tuple[str, Any, str]] = [
+        ("roster_digest", "f" * 64, "not canonical"),
+        ("transport", None, r"missing=\['transport'\]"),
+        ("waived_roster", "not-a-list", "waived_roster must be a list"),
+    ]
+    for index, (field, value, pattern) in enumerate(corruptions):
+        ledger = RL.RunLedger(tmp_path / f"run-facts-{index}.jsonl")
+        _manifest(ledger, count=1)
+        _spawn(ledger, 0)
+        report = DS.settlement_report(ledger, "dispatch-1")
+        fact = DS.waiver_fact(
+            subplot_id="sub-351",
+            at=AT,
+            dispatch_id="dispatch-1",
+            waived_by="jeff",
+            reason="corruption probe",
+            waived_roster=[("unit-0", 1, "open")],
+        )
+        if value is None:
+            del fact[field]
+        else:
+            fact[field] = value
+        RL.append_fact(ledger, fact)
+        with pytest.raises(DS.DispatchSettlementError, match=pattern):
+            DS.active_waiver_covers(ledger, report)

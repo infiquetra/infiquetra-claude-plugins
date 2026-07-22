@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.109.0] - 2026-07-22
+
+### Added - Settlement-gate operator waiver (#618)
+
+- New `dispatch-waiver` run-fact kind (`dispatch_settlement.record_waiver` /
+  `active_waiver_covers` / `blocking_roster`): a provenance-stamped, append-only operator waiver
+  for a halt-required dispatch cohort. The waiver snapshots the blocking roster
+  `(unit_id, attempt, state)` at grant time and covers only while the current roster stays a
+  subset of it — deliveries never invalidate; any new casualty, attempt cohort, or open unit
+  re-halts with no operator action. Grants validate loudly (manifest + currently halt-required)
+  and are idempotent on the roster digest. A new kind, never a `dispatch-settlement` event, so
+  readers predating it (including the byte-frozen codex runtime) keep halting, fail-closed.
+- `outcome.py waive <outcome-id> --dispatch-id --reason --answerer [--transport] [--at]`:
+  operator verb with `approve`-style provenance (`--answerer` maps to the fact's `waived_by`).
+  Site-agnostic `dispatch_settlement.py waive` subcommand uses the fact's own field names.
+- The frontier settlement gate partitions halt-required reports by waiver coverage: uncovered
+  reports halt exactly as before (reason names only uncovered dispatch ids); a fully covered
+  gate dispatches and appends one durable `settlement-waived` receipt per newly dispatched unit,
+  naming every covered dispatch id and its waiver provenance.
+- No settlement truth is mutated: classifications, `halt_required`, and every existing fact
+  schema stay byte-identical.
+
 ## [0.108.0] - 2026-07-22
 
 ### Fixed - Typed dispatcher lease-transient contract; loud abort on permanent faults (#637)

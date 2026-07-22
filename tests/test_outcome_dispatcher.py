@@ -1517,3 +1517,260 @@ def test_ac7_pre_373_intent_leaves_the_seam_byte_identical(repo: Path) -> None:
     result = OUTCOME.advance(repo, "oc373", available=("inline", "manual"), attending=False)
     assert result.dispatched == ["build"]
     assert result.degraded and result.degraded[0]["to_backend"] == "inline"  # legacy cascade
+
+
+# ------------------------------------------------------------------ settlement waivers (#618)
+
+
+def _leaf_dispatcher(req: Any) -> str:
+    return f"leaf-ship-x-{req.subplot_id}"
+
+
+def _deliver(ledger: Any, dispatch_id: str, unit_id: str, *, at: str) -> None:
+    SETTLEMENT.settle_attempt(
+        ledger,
+        subplot_id=unit_id,
+        at=at,
+        dispatch_id=dispatch_id,
+        unit_id=unit_id,
+        attempt=1,
+        classification=SETTLEMENT.DELIVERED,
+        reason="canonical completion",
+        evidence_ref="github-completion",
+        evidence_sha256="b" * 64,
+    )
+    STORE.write_completion_event(
+        STORE.Store.for_outcome("ship-x", ledger.path.parent.parent).ensure(),
+        STORE.CompletionEvent(
+            subplot_id=unit_id,
+            state="done",
+            idempotency_key=f"github-{unit_id}",
+            payload={"canonical": True},
+        ),
+    )
+
+
+def _waived_receipts(repo: Path) -> list[dict[str, Any]]:
+    store = STORE.Store.for_outcome("ship-x", repo).ensure()
+    return [r for r in STORE.read_ledger(store) if r.get("kind") == "settlement-waived"]
+
+
+def test_waived_halt_dispatches_new_cohort_with_receipt(repo: Path) -> None:
+    OUTCOME.start(
+        repo,
+        "ship-x",
+        "Ship X",
+        nodes=[
+            {"subplot_id": "a", "title": "A", "backend": "team-execution"},
+            {"subplot_id": "b", "title": "B", "backend": "team-execution"},
+            {"subplot_id": "c", "title": "C", "backend": "team-execution", "depends_on": ["b"]},
+        ],
+    )
+    ledger = RUN_LEDGER.RunLedger(repo / "settlement" / "facts.jsonl")
+    dispatch_id, _units = SETTLEMENT.outcome_frontier_identity("ship-x", ["a", "b"])
+    first = OUTCOME.advance(
+        repo,
+        "ship-x",
+        dispatcher=_leaf_dispatcher,
+        settlement_ledger=ledger,
+        now=lambda: 1_700_000_000.0,
+    )
+    assert sorted(first.dispatched) == ["a", "b"]
+    _deliver(ledger, dispatch_id, "b", at="2023-11-14T22:13:21Z")
+
+    second = OUTCOME.advance(
+        repo,
+        "ship-x",
+        dispatcher=_leaf_dispatcher,
+        settlement_ledger=ledger,
+        now=lambda: 1_700_000_001.0,
+    )
+    assert any(
+        item["kind"] == "settlement-halt" and item["subplot_id"] == "c" for item in second.halted
+    )
+
+    grant = SETTLEMENT.record_waiver(
+        ledger,
+        subplot_id="ship-x",
+        at="2023-11-14T22:13:22Z",
+        dispatch_id=dispatch_id,
+        waived_by="jeff",
+        reason="a is externally blocked; dispatch may proceed",
+        transport="terminal",
+    )
+    assert grant["appended"] is True
+
+    third = OUTCOME.advance(
+        repo,
+        "ship-x",
+        dispatcher=_leaf_dispatcher,
+        settlement_ledger=ledger,
+        now=lambda: 1_700_000_002.0,
+    )
+    assert third.dispatched == ["c"]
+    assert not [item for item in third.halted if item.get("kind") == "settlement-halt"]
+    receipts = _waived_receipts(repo)
+    assert [r["subplot_id"] for r in receipts] == ["c"]
+    assert receipts[0]["dispatch_ids"] == [dispatch_id]
+    assert receipts[0]["waivers"][0]["waived_by"] == "jeff"
+    assert receipts[0]["waivers"][0]["transport"] == "terminal"
+    assert receipts[0]["waivers"][0]["roster_digest"] == grant["record"]["roster_digest"]
+    assert receipts[0]["waivers"][0]["reason"] == "a is externally blocked; dispatch may proceed"
+    assert receipts[0]["waivers"][0]["at"] == "2023-11-14T22:13:22Z"
+
+    fourth = OUTCOME.advance(
+        repo,
+        "ship-x",
+        dispatcher=lambda _req: pytest.fail("nothing new may dispatch"),
+        settlement_ledger=ledger,
+        now=lambda: 1_700_000_003.0,
+    )
+    assert fourth.dispatched == []
+    assert len(_waived_receipts(repo)) == 1  # level-triggered re-ticks append nothing
+
+
+def test_stale_waiver_rehalts_and_names_the_dispatch(repo: Path) -> None:
+    OUTCOME.start(
+        repo,
+        "ship-x",
+        "Ship X",
+        nodes=[
+            {"subplot_id": "a", "title": "A", "backend": "team-execution"},
+            {"subplot_id": "b", "title": "B", "backend": "team-execution"},
+            {"subplot_id": "c", "title": "C", "backend": "team-execution", "depends_on": ["b"]},
+        ],
+    )
+    ledger = RUN_LEDGER.RunLedger(repo / "settlement" / "facts.jsonl")
+    dispatch_id, _units = SETTLEMENT.outcome_frontier_identity("ship-x", ["a", "b"])
+    OUTCOME.advance(
+        repo,
+        "ship-x",
+        dispatcher=_leaf_dispatcher,
+        settlement_ledger=ledger,
+        now=lambda: 1_700_000_000.0,
+    )
+    _deliver(ledger, dispatch_id, "b", at="2023-11-14T22:13:21Z")
+    SETTLEMENT.record_waiver(
+        ledger,
+        subplot_id="ship-x",
+        at="2023-11-14T22:13:22Z",
+        dispatch_id=dispatch_id,
+        waived_by="jeff",
+        reason="a is externally blocked",
+    )
+    # A NEW blocking fact after the grant: the waived snapshot no longer covers (KTD3).
+    SETTLEMENT.settle_attempt(
+        ledger,
+        subplot_id="a",
+        at="2023-11-14T22:13:23Z",
+        dispatch_id=dispatch_id,
+        unit_id="a",
+        attempt=1,
+        classification=SETTLEMENT.RATE_KILLED,
+        reason="terminated by rate limit",
+        evidence_ref="rate-receipt",
+        evidence_sha256="a" * 64,
+    )
+    result = OUTCOME.advance(
+        repo,
+        "ship-x",
+        dispatcher=lambda _req: pytest.fail("uncovered halt must not dispatch"),
+        settlement_ledger=ledger,
+        now=lambda: 1_700_000_001.0,
+    )
+    assert result.dispatched == []
+    halts = [item for item in result.halted if item["kind"] == "settlement-halt"]
+    assert halts and halts[0]["dispatch_ids"] == [dispatch_id]
+    assert dispatch_id in halts[0]["reason"]
+    assert _waived_receipts(repo) == []
+
+
+def test_partial_coverage_halts_then_dual_waiver_receipt_names_both(repo: Path) -> None:
+    OUTCOME.start(
+        repo,
+        "ship-x",
+        "Ship X",
+        nodes=[
+            {"subplot_id": "a", "title": "A", "backend": "team-execution"},
+            {"subplot_id": "b", "title": "B", "backend": "team-execution"},
+            {"subplot_id": "c", "title": "C", "backend": "team-execution", "depends_on": ["a"]},
+            {"subplot_id": "e", "title": "E", "backend": "team-execution", "depends_on": ["a"]},
+            {"subplot_id": "d", "title": "D", "backend": "team-execution", "depends_on": ["c"]},
+        ],
+    )
+    ledger = RUN_LEDGER.RunLedger(repo / "settlement" / "facts.jsonl")
+    cohort1, _units = SETTLEMENT.outcome_frontier_identity("ship-x", ["a", "b"])
+    OUTCOME.advance(
+        repo,
+        "ship-x",
+        dispatcher=_leaf_dispatcher,
+        settlement_ledger=ledger,
+        now=lambda: 1_700_000_000.0,
+    )
+    _deliver(ledger, cohort1, "a", at="2023-11-14T22:13:21Z")
+    waiver1 = SETTLEMENT.record_waiver(
+        ledger,
+        subplot_id="ship-x",
+        at="2023-11-14T22:13:22Z",
+        dispatch_id=cohort1,
+        waived_by="jeff",
+        reason="b is externally blocked",
+    )
+
+    second = OUTCOME.advance(
+        repo,
+        "ship-x",
+        dispatcher=_leaf_dispatcher,
+        settlement_ledger=ledger,
+        now=lambda: 1_700_000_001.0,
+    )
+    assert sorted(second.dispatched) == ["c", "e"]
+    # One receipt per newly dispatched sid, all under cohort1's waiver.
+    receipts = _waived_receipts(repo)
+    assert sorted(r["subplot_id"] for r in receipts) == ["c", "e"]
+    assert all(r["dispatch_ids"] == [cohort1] for r in receipts)
+
+    cohort2, _units2 = SETTLEMENT.outcome_frontier_identity("ship-x", ["c", "e"])
+    _deliver(ledger, cohort2, "c", at="2023-11-14T22:13:23Z")
+
+    # d is ready, cohort1 stays covered (delivery only shrank its roster), cohort2 is NOT
+    # covered -> halt, naming ONLY the uncovered dispatch id.
+    third = OUTCOME.advance(
+        repo,
+        "ship-x",
+        dispatcher=lambda _req: pytest.fail("partially covered halt must not dispatch"),
+        settlement_ledger=ledger,
+        now=lambda: 1_700_000_002.0,
+    )
+    halts = [item for item in third.halted if item["kind"] == "settlement-halt"]
+    assert halts and halts[0]["subplot_id"] == "d"
+    assert halts[0]["dispatch_ids"] == [cohort2]
+    assert cohort1 not in halts[0]["reason"]
+
+    waiver2 = SETTLEMENT.record_waiver(
+        ledger,
+        subplot_id="ship-x",
+        at="2023-11-14T22:13:24Z",
+        dispatch_id=cohort2,
+        waived_by="jeff",
+        reason="e is externally blocked",
+        transport="redis-channel",
+    )
+    fourth = OUTCOME.advance(
+        repo,
+        "ship-x",
+        dispatcher=_leaf_dispatcher,
+        settlement_ledger=ledger,
+        now=lambda: 1_700_000_003.0,
+    )
+    assert fourth.dispatched == ["d"]
+    receipt_d = next(r for r in _waived_receipts(repo) if r["subplot_id"] == "d")
+    assert receipt_d["dispatch_ids"] == sorted([cohort1, cohort2])
+    digests = {w["roster_digest"] for w in receipt_d["waivers"]}
+    assert digests == {
+        waiver1["record"]["roster_digest"],
+        waiver2["record"]["roster_digest"],
+    }
+    # The dual-coverage receipt is keyed under a different digest than the single-coverage ones.
+    receipt_c = next(r for r in _waived_receipts(repo) if r["subplot_id"] == "c")
+    assert receipt_d["key"].split(":")[-1] != receipt_c["key"].split(":")[-1]

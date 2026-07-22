@@ -1208,3 +1208,113 @@ def test_backend_halt_error_reaches_report_end_to_end(repo: Path) -> None:
     _assert_halt_is_ledger_visible_and_reaches_report(
         repo, "ship-legacy", spec, "build", expected_receipt_kind="halt"
     )
+
+
+# ------------------------------------------------------------------ operator waive verb (#618)
+
+
+def test_cli_waive_verb_happy_idempotent_and_error_paths(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    common = ["--repo-root", str(repo)]
+    assert M.main([*common, "start", "ship-x", "Ship feature X"]) == 0
+    assert M.main([*common, "approve", "ship-x"]) == 0
+    assert M.main([*common, "advance", "ship-x"]) == 0
+    capsys.readouterr()
+    dispatch_id, _units = SETTLEMENT.outcome_frontier_identity("ship-x", ["design"])
+
+    waive = [
+        *common,
+        "waive",
+        "ship-x",
+        "--dispatch-id",
+        dispatch_id,
+        "--reason",
+        "design is externally blocked",
+        "--answerer",
+        "jeff",
+        "--transport",
+        "terminal",
+        "--at",
+        "2026-07-22T00:00:00Z",
+    ]
+    assert M.main(waive) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["appended"] is True
+    assert out["outcome_id"] == "ship-x"
+    assert out["dispatch_id"] == dispatch_id
+    assert out["waived_by"] == "jeff"
+    assert out["transport"] == "terminal"
+    assert out["reason"] == "design is externally blocked"
+    assert len(out["roster_digest"]) == 64
+
+    # R7: an identical-roster re-grant is a reported no-op success, not an error.
+    assert M.main(waive) == 0
+    again = json.loads(capsys.readouterr().out)
+    assert again["appended"] is False
+    assert again["roster_digest"] == out["roster_digest"]
+
+    # Unknown outcome id -> loud non-zero exit.
+    rc = M.main(
+        [
+            *common,
+            "waive",
+            "nope",
+            "--dispatch-id",
+            dispatch_id,
+            "--reason",
+            "r",
+            "--answerer",
+            "jeff",
+        ]
+    )
+    assert rc == 1
+    assert "nope" in capsys.readouterr().err
+
+    # Dispatch without a manifest -> loud non-zero exit (R4), never a silent success.
+    rc = M.main(
+        [
+            *common,
+            "waive",
+            "ship-x",
+            "--dispatch-id",
+            "outcome:unknown:frontier:absent",
+            "--reason",
+            "r",
+            "--answerer",
+            "jeff",
+        ]
+    )
+    assert rc == 1
+    assert "no manifest" in capsys.readouterr().err
+
+    # Healthy (non-halt-required) cohort -> loud non-zero exit (R4). Also exercises the
+    # wall-clock --at default path on the way to the refusal.
+    ledger = M.run_ledger.RunLedger.resolve(repo)
+    SETTLEMENT.settle_attempt(
+        ledger,
+        subplot_id="design",
+        at="2026-07-22T00:01:00Z",
+        dispatch_id=dispatch_id,
+        unit_id="design",
+        attempt=1,
+        classification=SETTLEMENT.DELIVERED,
+        reason="canonical completion",
+        evidence_ref="github-completion",
+        evidence_sha256="d" * 64,
+    )
+    rc = M.main(
+        [
+            *common,
+            "waive",
+            "ship-x",
+            "--dispatch-id",
+            dispatch_id,
+            "--reason",
+            "already healthy",
+            "--answerer",
+            "jeff",
+        ]
+    )
+    assert rc == 1
+    assert "not halt-required" in capsys.readouterr().err

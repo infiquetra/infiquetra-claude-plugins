@@ -1199,6 +1199,18 @@ def _reconcile_once(
             for report in dispatch_settlement.outcome_reports(settlement_ledger, spec.outcome_id)
             if report.halt_required
         ]
+        covered_reports: list[dispatch_settlement.CasualtyReport] = []
+        if new_units and blocking_reports:
+            # #618: an operator waiver covering a report's CURRENT blocking roster (KTD3 subset
+            # rule) excludes that cohort from blocking. Anything left uncovered halts exactly as
+            # before, with the receipt naming only the uncovered dispatch ids.
+            uncovered_reports: list[dispatch_settlement.CasualtyReport] = []
+            for report in blocking_reports:
+                if dispatch_settlement.active_waiver_covers(settlement_ledger, report):
+                    covered_reports.append(report)
+                else:
+                    uncovered_reports.append(report)
+            blocking_reports = uncovered_reports
         if new_units and blocking_reports:
             settlement_blocked.update(new_units)
             for sid in new_units:
@@ -1237,6 +1249,53 @@ def _reconcile_once(
                 ),
             )
             settlement_bindings.update({unit.unit_id: (dispatch_id, unit) for unit in units})
+            if covered_reports:
+                # #618 R6: dispatch proceeding under waiver leaves one durable receipt per newly
+                # dispatched unit, mirroring the halt receipt's per-sid shape. Keyed on the digest
+                # over the covering waivers' roster digests: repeated ticks under the same coverage
+                # append nothing; a re-waive (changed roster) mints a fresh receipt.
+                covering = sorted(
+                    (
+                        waiver
+                        for report in covered_reports
+                        for waiver in dispatch_settlement.covering_waivers(
+                            settlement_ledger, report
+                        )
+                    ),
+                    key=lambda waiver: (
+                        str(waiver.get("dispatch_id", "")),
+                        str(waiver.get("roster_digest", "")),
+                    ),
+                )
+                waiver_digest = dispatch_settlement.evidence_digest(
+                    sorted({str(waiver.get("roster_digest", "")) for waiver in covering})
+                )[:16]
+                for sid in new_units:
+                    waived_receipt: dict[str, Any] = {
+                        "kind": "settlement-waived",
+                        "outcome_id": spec.outcome_id,
+                        "subplot_id": sid,
+                        "dispatch_ids": [report.dispatch_id for report in covered_reports],
+                        "waivers": [
+                            {
+                                "dispatch_id": str(waiver.get("dispatch_id", "")),
+                                "roster_digest": str(waiver.get("roster_digest", "")),
+                                "waived_by": str(waiver.get("waived_by", "")),
+                                "transport": str(waiver.get("transport", "")),
+                                "reason": str(waiver.get("reason", "")),
+                                "at": str(waiver.get("at", "")),
+                            }
+                            for waiver in covering
+                        ],
+                    }
+                    _append_ledger_once(
+                        store,
+                        {
+                            "phase": "waive",
+                            "key": f"settlement-waiver:{sid}:{waiver_digest}",
+                            **waived_receipt,
+                        },
+                    )
     # #433 R4: the posture era every dispatch THIS pass happens under. None (never renegotiated)
     # reads as the revision-1 run-start baseline.
     active_intent_revision = getattr(spec, "intent_revision", None) or 1
@@ -2482,6 +2541,27 @@ def main(argv: list[str] | None = None) -> int:
         help="transport the approval arrived over, e.g. redis-channel/discord — provenance (#379)",
     )
 
+    p_waive = sub.add_parser(
+        "waive",
+        help="waive a halt-required prior cohort so NEW frontier dispatch may proceed (#618)",
+    )
+    p_waive.add_argument("outcome_id")
+    p_waive.add_argument("--dispatch-id", required=True)
+    p_waive.add_argument("--reason", required=True)
+    p_waive.add_argument(
+        "--answerer",
+        required=True,
+        help="who granted the waiver — provenance, not authorization (approve convention)",
+    )
+    p_waive.add_argument(
+        "--transport",
+        default=None,
+        help="transport the grant arrived over, e.g. redis-channel/discord — provenance (#379)",
+    )
+    p_waive.add_argument(
+        "--at", default=None, help="ISO-8601 UTC grant time (defaults to the current time)"
+    )
+
     p_prune = sub.add_parser("prune", help="prune a node + reconcile its orphans (R33)")
     p_prune.add_argument("outcome_id")
     p_prune.add_argument("subplot_id")
@@ -2640,6 +2720,37 @@ def main(argv: list[str] | None = None) -> int:
                         "outcome_id": spec.outcome_id,
                         "answerer": args.answerer,
                         "transport": args.transport,
+                    }
+                )
+            )
+        elif args.command == "waive":
+            spec = load_spec(root, args.outcome_id)
+            try:
+                waive_result = dispatch_settlement.record_waiver(
+                    run_ledger.RunLedger.resolve(root),
+                    subplot_id=spec.outcome_id,
+                    at=args.at or dispatch_settlement.iso_at(time.time()),
+                    dispatch_id=args.dispatch_id,
+                    waived_by=args.answerer,
+                    reason=args.reason,
+                    transport=args.transport or "",
+                )
+            except (
+                dispatch_settlement.DispatchSettlementError,
+                run_ledger.RunLedgerError,
+            ) as exc:
+                raise OutcomeError(str(exc)) from exc
+            waiver_record = waive_result["record"]
+            print(
+                json.dumps(
+                    {
+                        "outcome_id": spec.outcome_id,
+                        "dispatch_id": waiver_record["dispatch_id"],
+                        "appended": waive_result["appended"],
+                        "waived_by": waiver_record["waived_by"],
+                        "transport": waiver_record["transport"],
+                        "reason": waiver_record["reason"],
+                        "roster_digest": waiver_record["roster_digest"],
                     }
                 )
             )

@@ -1,0 +1,93 @@
+{
+  "name": "issue-637-refuse-mode-hardening",
+  "description": "Issue #637: the two validated P3 advisories from #627's CLEAN review at 47dacede — pid-liveness at the refuse-mode admission gate (KTD1, dead admits / live+unknown refuse) and the typed transient/permanent DispatcherError contract with loud tick-abort for permanent faults (KTD2/KTD3), plus release surfaces. Fully serialized U1->U2->U3 under the operator cap of 3: refute-3 panels on the two contract-bearing units ride at the unit tier and would overlap a running unit otherwise.",
+  "repo": "infiquetra/infiquetra-claude-plugins",
+  "units": [
+    {
+      "unit_id": "U1",
+      "label": "pid-liveness at the refuse-mode admission gate",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "worth_it_because": "admission semantics on the fleet-shared broker: an admit-on-unknown mistake re-opens cross-runtime double dispatch (#628's class), an over-refuse mistake reinstates the crash-orphan wedge #637 exists to close.",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "U1: In the on_conflict==refuse branch of _drop_superseded_resource_lease (plugins/fleet-core/scripts/fleet_commons/lease_broker.py:2168-2178), consult self._owner_state(prior_lease) on a live-unexpired prior: dead falls through to supersede, live AND unknown refuse with LeaseConflictError (fail-closed; no same-owner bypass). Keep the settlement-retained and canonically-closed precedence arms strictly above the liveness gate, and update the refuse-gate docstring honestly. Tests per the plan's U1 scenarios in tests/test_fleet_lease_broker.py (crash-orphan admit without TTL wait, live-holder refusal with zero registry mutation, owner_pid=None and unreadable-identity refusals, same-owner-live refusal, stale-boot-id-as-dead, test_retry_supersedes_at_full_capacity untouched-and-green). Read the plan at docs/plans/2026-07-21-issue-637-refuse-mode-hardening-plan.md (U1, R1-R3, KTD1) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [],
+      "files": [
+        "plugins/fleet-core/scripts/fleet_commons/lease_broker.py",
+        "tests/test_fleet_lease_broker.py"
+      ],
+      "verify": {
+        "n": 3,
+        "pass_rule": "majority"
+      }
+    },
+    {
+      "unit_id": "U2",
+      "label": "typed transient contract + loud-abort branch in _reconcile_once",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "worth_it_because": "the reconcile/reduction seam produced #628 and #631: a wrong transient classification either wedges every outcome tick on a transient blip or silently retries a permanent misconfiguration forever — and the #627 halt-and-continue pins are cross-runtime contract codex#45 will mirror.",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "U2: Add DispatcherLeaseTransientError(DispatcherError) exported from plugins/saga/scripts/outcome_dispatcher.py, raised exactly at the lease-lifecycle sites: the normalize arm at :283-284 when the in-hand cause is authority.LeaseConflictError, the renew-failure raise at :292-296, the lost-authority raise at :290, and the settlement-cleanup sites :303/:316/:325 reviewed site-by-site against the transient set the #627 arm comment names (outcome.py:1590-1592); everything else stays plain DispatcherError; check the :822 consumer stays coherent. In the outcome.py:1589 arm, re-raise non-transient instances BEFORE any lease-release/ledger work; the transient path is the existing #627 body unchanged under the isinstance check; update the arm comment to describe the branch. Tests per the plan's U2 scenarios (tests/test_outcome_dispatcher.py: conflict->transient subclass, shim/protocol-skew->plain, renew-failure->transient; tests/test_outcome_command.py: test_advance_records_lease_refusal_as_halt_and_continues green unmodified, new permanent-fault pin where plain DispatcherError aborts advance() loudly with no SILENT_NOOP settle and no halt record for that subplot, transient renew-failure flavor still halts-and-continues). Read the plan at docs/plans/2026-07-21-issue-637-refuse-mode-hardening-plan.md (U2, R4-R7, KTD2/KTD3) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U1"
+      ],
+      "files": [
+        "plugins/saga/scripts/outcome_dispatcher.py",
+        "plugins/saga/scripts/outcome.py",
+        "tests/test_outcome_dispatcher.py",
+        "tests/test_outcome_command.py"
+      ],
+      "verify": {
+        "n": 3,
+        "pass_rule": "majority"
+      }
+    },
+    {
+      "unit_id": "U3",
+      "label": "release surfaces fleet-core 0.18.0 + saga 0.108.0, journal, drift-guard pins",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U3: Bump plugins/fleet-core/.claude-plugin/plugin.json to 0.18.0 and plugins/saga/.claude-plugin/plugin.json to 0.108.0, sync .claude-plugin/marketplace.json, write both CHANGELOG entries (pid-liveness at the refuse gate with the fail-closed unknown posture; the typed DispatcherLeaseTransientError contract and loud tick-abort for permanent faults), update drift-guard version pins in-commit (tests/test_saga_plugin.py and any release-triad pins), commit the already-staged DECISIONS entry {#refuse-liveness-and-loud-abort-637} (do not duplicate it), and add a LEARNINGS entry only if implementation surfaced a non-obvious mechanism. Verify python3 scripts/check_release_surface_parity.py reports parity. Read the plan at docs/plans/2026-07-21-issue-637-refuse-mode-hardening-plan.md (U3, R8) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "summary"
+      ],
+      "depends_on": [
+        "U2"
+      ],
+      "files": [
+        "plugins/fleet-core/.claude-plugin/plugin.json",
+        "plugins/saga/.claude-plugin/plugin.json",
+        ".claude-plugin/marketplace.json",
+        "plugins/fleet-core/CHANGELOG.md",
+        "plugins/saga/CHANGELOG.md",
+        "tests/test_saga_plugin.py",
+        "docs/engineering-journal/DECISIONS.md",
+        "docs/engineering-journal/LEARNINGS.md"
+      ]
+    }
+  ]
+}

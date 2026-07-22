@@ -1,5 +1,37 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-07-21
+
+### Refuse-mode admits only proven-dead holders; permanent dispatcher faults abort the tick {#refuse-liveness-and-loud-abort-637}
+
+**Decision.** Two operator-adjudicated calls from the #637 plan (2026-07-21). (1) The refuse-mode
+admission gate consults the broker's existing `_owner_state` pid-liveness on a live-unexpired
+conflicting prior: `dead` (stale boot-id, missing pid, or process-start mismatch) falls through to
+supersede, while `live` **and** `unknown` both still refuse — only proof of death admits, so the
+SIGKILL crash-orphan window closes without weakening cross-runtime exclusion. (2) The
+`except DispatcherError` arm in `_reconcile_once` branches on a typed
+`DispatcherLeaseTransientError` exported by `outcome_dispatcher` (raised exactly at the
+lease-lifecycle sites: admission `LeaseConflictError`, renew failure, lost authority): transients
+keep #627's halt-and-continue byte-for-byte; every other `DispatcherError` re-raises and aborts
+the tick loudly, restoring the pre-#627 posture for permanent faults with zero new state.
+
+**Rejected alternatives.** Shorter dispatch TTL (shrinks the orphan window, never removes it, and
+risks expiring live slow dispatches); admitting on `unknown` owner state (an identity-blind live
+peer could be superseded — fail-open); `__cause__` isinstance-checking in `outcome.py` (drags
+fleet-core broker types across the dispatcher seam); capped backoff for permanent faults (durable
+attempt state for faults that are environmental and hit every leaf anyway); per-subplot quarantine
+(needs a new reducer-visible blocking state — blast radius beyond a P3 hardening).
+
+**Revisit when.** A cross-host deployment makes pid-liveness unverifiable for legitimate peers
+(then `unknown` refusals dominate and need an attestation channel); or a genuinely transient
+non-lease dispatcher fault class appears in production (then the typed set widens, not the catch
+arm); or capped-retry semantics become wanted at the outcome layer (design it as a reducer-visible
+policy, not an exception-arm patch).
+
+**Refs.** Plan `docs/plans/2026-07-21-issue-637-refuse-mode-hardening-plan.md` (KTD1–KTD3);
+issue #637; #627 review envelope `docs/evidence/issue-627/artifacts/`;
+[[lease-refuse-mode-and-universal-guard-627]], [[lease-settlement-window-356]].
+
 ## 2026-07-20
 
 ### Lease admission refuses live conflicts only where the caller opts in; ancestor guards fail closed everywhere {#lease-refuse-mode-and-universal-guard-627}

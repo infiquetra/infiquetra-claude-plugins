@@ -20,12 +20,13 @@
       "depends_on": [
         "sub-633"
       ],
-      "leaf_saga_id": "",
+      "leaf_saga_id": "leaf-governed-execution-integrity-sub-615",
       "child_spec_ref": "",
       "github": {
         "repo": "infiquetra/infiquetra-claude-plugins",
         "issue": "infiquetra/infiquetra-claude-plugins#615",
-        "sub_issue": 615
+        "sub_issue": 615,
+        "pr": "https://github.com/infiquetra/infiquetra-claude-plugins/pull/641"
       },
       "worktree": {},
       "evidence": {},

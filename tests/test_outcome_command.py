@@ -898,11 +898,12 @@ def test_handed_off_leaf_status_and_attend_tell_one_story(repo: Path) -> None:
 
 
 def _refusing_dispatcher(message: str = "outcome dispatch lease admission refused: holder owner-A"):
-    """A dispatcher that raises a typed ``DispatcherError`` (a cross-runtime lease refusal or a
-    mid-flight renew failure) for a target subplot; other subplots dispatch normally."""
+    """A dispatcher that raises a typed ``DispatcherLeaseTransientError`` (a cross-runtime lease
+    refusal or a mid-flight renew failure — both TRANSIENT per #637's dispatcher contract) for a
+    target subplot; other subplots dispatch normally."""
 
     def _disp(req: Any) -> str:
-        raise DISPATCHER.DispatcherError(message)
+        raise DISPATCHER.DispatcherLeaseTransientError(message)
 
     return _disp
 
@@ -928,7 +929,10 @@ def test_advance_records_lease_refusal_as_halt_and_continues(repo: Path) -> None
     def dispatcher(req: Any) -> str:
         calls.append(req.subplot_id)
         if req.subplot_id == "a":
-            raise DISPATCHER.DispatcherError(
+            # #637: an admission refusal is a TRANSIENT — the production normalize arm now raises
+            # the typed subclass for a live-prior conflict; the halt-and-continue scenario is
+            # otherwise byte-identical to the #627 pin.
+            raise DISPATCHER.DispatcherLeaseTransientError(
                 "outcome dispatch lease admission refused: holder owner-A"
             )
         return f"leaf-{req.subplot_id}"
@@ -1027,6 +1031,70 @@ def test_lease_renew_failure_flavor_takes_the_same_arm(repo: Path) -> None:
     assert reduced["halted"] is True and reduced["settled"] is False
     # lock released without a TTL wait
     assert STORE.acquire_dispatch(store, "build", "next-holder", 900.0, now=lambda: 1_700_000_000.0)
+
+
+def test_advance_permanent_dispatcher_fault_aborts_tick_loudly(repo: Path) -> None:
+    """#637 R4/R6/KTD2/KTD3: a PERMANENT DispatcherError (a plain base — fleet-core shim/protocol
+    skew, a fail-closed settlement refusal) is environmental and RE-RAISES to abort the tick loudly
+    (pre-#627 posture), BEFORE any lease-release or ledger write. No SILENT_NOOP settle and no halt
+    record for that subplot; the per-subplot ``dispatch-{sid}`` store lock stays HELD for its 900 s
+    TTL stale-reclaim (never released here), while the coordinator lock is freed by advance()'s
+    outer finally so an aborted tick never wedges the coordinator."""
+    M.start(
+        repo,
+        "ship-x",
+        "Ship X",
+        nodes=[
+            {"subplot_id": "a", "title": "A", "kind": "code"},
+            {"subplot_id": "b", "title": "B", "kind": "code"},
+        ],
+    )
+    ledger = RUN_LEDGER.RunLedger(repo / "settlement" / "facts.jsonl")
+
+    calls: list[str] = []
+
+    def dispatcher(req: Any) -> str:
+        calls.append(req.subplot_id)
+        if req.subplot_id == "a":
+            # a plain BASE DispatcherError == a PERMANENT fault (e.g. fleet-core protocol skew) —
+            # NOT the transient subclass, so the reconcile arm re-raises rather than halt-continues.
+            raise DISPATCHER.DispatcherError(
+                "outcome dispatch requires lease-capable fleet-core; install/update fleet-core"
+            )
+        return f"leaf-{req.subplot_id}"
+
+    with pytest.raises(DISPATCHER.DispatcherError) as exc:
+        M.advance(
+            repo,
+            "ship-x",
+            dispatcher=dispatcher,
+            settlement_ledger=ledger,
+            now=lambda: 1_700_000_000.0,
+        )
+    # the typed permanent fault surfaced and was NOT reclassified as the transient subclass
+    assert not isinstance(exc.value, DISPATCHER.DispatcherLeaseTransientError)
+    assert "fleet-core" in str(exc.value)
+    # the tick ABORTED at `a`: the independent ready leaf `b` was never reached in this tick
+    assert calls == ["a"]
+
+    store = STORE.Store.for_outcome("ship-x", repo)
+    # re-raise happened BEFORE any ledger write: no (dispatch, halt) record for `a`
+    assert not any(
+        r.get("kind") == "dispatch" and r.get("phase") == "halt" and r.get("subplot_id") == "a"
+        for r in STORE.read_ledger(store)
+    )
+    reduced_a = STORE.reduce_dispatch_ledger(store).get("a", {})
+    assert reduced_a.get("halted") is not True and reduced_a.get("settled") is not True
+    # no SILENT_NOOP settle (no settle fact at all for the aborted attempt)
+    assert not any(r.get("event") == "settle" for r in RUN_LEDGER.read_facts(ledger))
+    # R6 named consequence: the per-subplot dispatch lock is still HELD (never released on abort) —
+    # a fresh acquire at the SAME clock is refused (held, not merely expired).
+    assert not STORE.acquire_dispatch(store, "a", "next-holder", 900.0, now=lambda: 1_700_000_000.0)
+    # ...but the coordinator lock WAS freed by advance()'s outer finally: a second advance is NOT a
+    # skipped-busy no-op — it runs, skips the still-locked `a`, and dispatches the ready `b`.
+    result2 = M.advance(repo, "ship-x", dispatcher=dispatcher, now=lambda: 1_700_000_000.0)
+    assert result2.skipped_busy is False
+    assert result2.dispatched == ["b"]
 
 
 # --------------------------------------------------------------------------- #627/U3: the three

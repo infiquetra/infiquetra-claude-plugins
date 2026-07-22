@@ -25,6 +25,65 @@
 
 ---
 
+## 2026-07-21
+
+### Workflow children can never bind a fleet lease — the batch claim requires a PreToolUse stamp that internal spawns never produce {#installed-hook-skew-fail-close-637}
+
+**Context.** First `cc-workflows-ultracode` launch for issue #637. Driver-side reserve →
+attest succeeded, the workflow launched, and U1's agent was refused on every Edit/Write/Bash
+call. Initially misdiagnosed as installed-plugin version skew (pre-correction version archived
+as [#installed-hook-skew-fail-close-637-v1](ARCHIVE.md#installed-hook-skew-fail-close-637-v1));
+next-session forensics on the verbatim journal evidence found a deterministic protocol defect.
+
+**Evidence.** Workflow `wf_881dd2cb-fa1`, child `a007fa899613a0eb0`, verbatim SubagentStart
+warning: `no live provisional reservation for session='a2c17e16-…', agent_type='workflow-subagent',
+batch_id='workflow:922e7a2d96eb74d4d21b6b48:91dfbc4a3a3a14aa30cc2b00'` — batch discovery
+*succeeded*; the claim found no claimable slot. Code: `LeaseBroker.claim`
+(`plugins/fleet-core/scripts/fleet_commons/lease_broker.py:2619-2634`) filters batch candidates
+to `lease.tool_use_id is not None`; that stamp is written only by `prepare_batch_call`
+(`:2660`), which is reached only from the `PreToolUse Agent|Task` hook path
+(`plugins/saga/scripts/lease_broker.py:288-306`). `active_batch_id` is present in the 0.104.0,
+0.105.0, and 0.107.0 cached adapters alike — the failure is version-independent.
+
+**Mechanism.** Workflow-runtime spawns fire no `PreToolUse Agent|Task` event in the driving
+session, so no batch slot is ever stamped with a `tool_use_id`. `claim` at `SubagentStart` then
+deterministically raises `no live provisional reservation` for every workflow child, and the
+armed `lease_mutation_hook` fail-closes all of the child's mutations. The `claim_ttl_seconds:
+30` pre-spawn window is irrelevant — the stamp never exists at any point. Direct Agent-tool
+spawns are unaffected (they do fire `PreToolUse`, so `prepare_batch_call`/`reserve` stamp them).
+
+**Standing workaround found on this machine.** The installed cache lease hooks
+(`lease_lifecycle_hook.py`, `lease_mutation_hook.py`) have been hand-disabled (early `return`
++ `.orig-*` backups) three times: snapshot 0.99.1 on 2026-07-17, 0.104.0 on 2026-07-19, and
+0.107.0 on 2026-07-21 23:22:57 (author untraced from this session; the patch comment cites a
+"session report"). Under disabled hooks, workflow runs proceed ungoverned — no claims, no
+ledger receipts, no mutation gate — evidently the posture under which #627 itself shipped.
+Which armed plane emitted the halt-time denials (the session's pin vs the marketplace clone)
+remains unresolved; the cache 0.104.0 copies were already no-ops two days before the halt.
+
+**Fix (queued).** Already filed as **#615** (2026-07-17, session `2c563b9d`) — that defect
+documents this exact mechanism (stamp-only-from-`PreToolUse`, no slot recycling,
+`session_limit` charging), proposes claim-time provisioning or a `workflow-subagent`
+exemption, and declares the cache-hook neutralization as its own documented workaround with
+the revert hazard ("any saga plugin update silently reverts the neutralization"). The
+2026-07-2x re-applies are maintenance of that workaround. Operator decision 2026-07-22:
+relaunch #637 ungoverned under the disabled hooks (matching the #627 precedent), restore the
+armed `.orig` hooks after the run.
+
+**What surprised.** The plausible skew story fit the timeline perfectly (registry pinned an
+older version than the repo protocol) and still had zero causal relevance — the "fix"
+(`claude plugin update` + restart) changed nothing about the failing seam.
+
+**Generalizable rule.** Before attributing a fail-closed denial to version skew, trace the
+verbatim denial message to the emitting `file:line` and re-derive the failing predicate from
+the code actually on disk; a mechanism story that merely fits the timeline is a hypothesis,
+not a diagnosis. Hook *files* are read per-invocation — only the version *pin* is
+session-start — so on-disk hook edits take effect immediately, restart or not.
+
+**Refs.** [[workflow-emitter-export-pins-627]], DECISIONS
+`{#refuse-liveness-and-loud-abort-637}`, ARCHIVE `{#installed-hook-skew-fail-close-637-v1}`,
+issue #616.
+
 ## 2026-07-20
 
 ### Workflow-emitter output was unparseable and its test pins asserted the defect {#workflow-emitter-export-pins-627}

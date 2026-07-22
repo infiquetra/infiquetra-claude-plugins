@@ -5,6 +5,21 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.0] - 2026-07-22
+
+### Fixed - Pid-liveness at the refuse-mode admission gate (#637)
+
+- The refuse-mode admission branch in `_drop_superseded_resource_lease` (`acquire_agent`,
+  `on_conflict="refuse"`) now consults the broker's existing `_owner_state` pid-liveness check
+  on a live-unexpired conflicting prior lease, not just `_expired` (TTL + boot-id). A provably
+  **dead** prior owner (stale boot-id, missing pid, or process-start identity mismatch) falls
+  through to supersede immediately instead of blocking re-dispatch for the full 300s dispatch
+  lease TTL — closing the crash-orphan window `#627` left behind. A **live** or **unknown**
+  owner state still refuses, fail-closed, matching the posture the recovery gate
+  (`lease_broker.py:4202`) already enforces; same-owner live conflicts still refuse (#627 KTD1
+  unchanged, no same-owner bypass). Supersede-mode call sites and `_owner_state`'s other
+  consumers (`sweep()`, the recovery gate) are byte-unchanged.
+
 ## [0.17.0] - 2026-07-20
 
 ### Fixed - Refuse-mode lease admission; universal fail-closed ancestor walk (#627)

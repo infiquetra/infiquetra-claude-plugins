@@ -756,3 +756,35 @@ def test_hooks_json_arms_bounded_teardown_recovery_seams() -> None:
         if "team_teardown_hook.py" in hook["command"]
     ]
     assert session_start and session_start[0]["timeout"] == 15
+
+
+def test_kill_switch_off_bypasses_both_hooks_and_touches_no_state(tmp_path: Path) -> None:
+    """#615 R7: the exact value "off" disarms both hooks loudly and reads no broker state."""
+
+    authority = tmp_path / "state"
+    env = _environment(authority, INFIQUETRA_FLEET_LEASE_ENFORCEMENT="off")
+    mutation = _run_hook(
+        MUTATION_HOOK, _mutation_payload(tmp_path, child="ghost"), cwd=tmp_path, environment=env
+    )
+    assert mutation.returncode == 0
+    assert "INFIQUETRA_FLEET_LEASE_ENFORCEMENT=off" in mutation.stderr
+    assert "DISABLED" in mutation.stderr
+    lifecycle = _run_hook(
+        LIFECYCLE_HOOK, _spawn_payload(tmp_path, "tool-1"), cwd=tmp_path, environment=env
+    )
+    assert lifecycle.returncode == 0
+    assert "DISABLED" in lifecycle.stderr
+    assert not authority.exists()
+
+
+@pytest.mark.parametrize("value", ["", "On", "false", "OFF", "disable"])
+def test_kill_switch_unrecognized_values_stay_armed(tmp_path: Path, value: str) -> None:
+    """#615 R7 fail-safe direction: anything but the exact string "off" keeps enforcement."""
+
+    authority = tmp_path / "state"
+    env = _environment(authority, INFIQUETRA_FLEET_LEASE_ENFORCEMENT=value)
+    result = _run_hook(
+        MUTATION_HOOK, _mutation_payload(tmp_path, child="ghost"), cwd=tmp_path, environment=env
+    )
+    assert result.returncode == 2
+    assert "HALT" in result.stderr

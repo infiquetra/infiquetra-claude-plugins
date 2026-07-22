@@ -2,6 +2,43 @@
 
 ## 2026-07-22
 
+### Workflow children claim attested unstamped batch slots — complete the protocol, never exempt {#workflow-child-lease-binding-615}
+
+**Decision.** From the #615 plan (2026-07-22, operator-pinned). Workflow-runtime children emit
+lifecycle hook events (`SubagentStart`/`SubagentStop`) but never the tool-call events
+(`PreToolUse`/`PostToolUse` on `Agent|Task`) that stamp and release batch slots — so the #356
+driver protocol reserved and attested a wave the broker's `claim` could never bind (`attest`
+requires every slot unstamped; the claim filter required a stamp). Six load-bearing calls:
+(KTD1) complete the protocol at the broker's claim/terminal seam — no `agent_type` exemption, no
+adapter special-case; batch presence is a root-authorized signal, an agent-type string is not.
+(KTD2) stamped-first claim ordering `(unstamped-last, fencing_sequence, lease_id)` for strict
+additivity — unstamped binding activates only where the old filter raised `LeaseNotFoundError`;
+non-batch ordering byte-identical. (KTD3) an unstamped slot recycles on child-terminal alone (it
+provably has no parent tool call); stamped slots keep the dual-signal contract. (KTD4, D1
+resolution i) keep-alive rides lifecycle events AND `assert_write_target` — every verified
+delegated mutation renews the batch member and its live siblings in-lock, closing TTL event
+starvation under the emitted 30s/300s TTLs; a wedged child stops renewing and TTL reaps.
+(KTD5) the emergency kill-switch `INFIQUETRA_FLEET_LEASE_ENFORCEMENT=off` lives in the saga hook
+adapters, exact-string, fail-armed; the broker's invariants never learn a bypass. (KTD6) no
+protocol version bump — version skew degrades to today's fail-closed behavior, never unfenced.
+
+**Rejected alternatives.** Claim-time auto-provisioning keyed on `agent_type=workflow-subagent`
+(creates capacity at claim time, violating #356 "reservation precedes launch"; trusts an
+unverified runtime string); exempting Workflow children from enforcement (unfences the
+highest-mutation fleet class); adapter-side special-casing (leaves team-execution broken,
+touches the codex frozen seam for no reason); driver-side TTL renewal at task-notification
+seams and horizon-scale TTLs (D1 options ii/iii — cadence-dependent or reaping-weakening).
+
+**Revisit when.** #616 lands the worktree write-fence layer (both touch `lease_broker.py`;
+second lander rebases); the Workflow runtime ever exposes per-child parent tool-use ids (true
+flow-matched stamping would become possible); or R9 live canary exposes session-id mismatch for
+workflow children (mitigation: `INFIQUETRA_FLEET_BATCH_ID` export at launch).
+
+**Refs.** Plan `docs/plans/2026-07-22-issue-615-workflow-child-lease-binding-plan.md`
+(KTD1–KTD6, R1–R9); doc-review
+`docs/reviews/2026-07-22-issue-615-workflow-child-lease-binding-plan-doc-review.md` (D1
+operator fork); issue #615; [[fleet-ttl-lease-broker-356]]; [[settlement-waiver-618]].
+
 ### Settlement-gate deadlock is cleared by a snapshot-scoped operator waiver, not by reclassifying truth {#settlement-waiver-618}
 
 **Decision.** From the #618 plan (2026-07-22). The outcome frontier settlement gate gains an operator

@@ -2631,7 +2631,6 @@ class LeaseBroker:
                 and lease.agent_type in (kind, "*")
                 and lease.batch_id == batch
                 and lease.agent_id is None
-                and (batch is None or lease.tool_use_id is not None)
                 and not self._expired(lease, monotonic=monotonic, boot_id=boot_id)
             ]
             if not candidates:
@@ -2639,7 +2638,17 @@ class LeaseBroker:
                     f"no live provisional reservation for session={session!r}, "
                     f"agent_type={kind!r}, batch_id={batch!r}"
                 )
-            selected = min(candidates, key=lambda lease: (lease.fencing_sequence, lease.lease_id))
+            # Stamped-first keeps today's batch selection byte-identical whenever a stamp
+            # exists; an attested-but-unstamped slot (Workflow children — no PreToolUse
+            # event ever stamps one) is claimable only where the old filter raised.
+            selected = min(
+                candidates,
+                key=lambda lease: (
+                    batch is not None and lease.tool_use_id is None,
+                    lease.fencing_sequence,
+                    lease.lease_id,
+                ),
+            )
             self._require_owner_admission_open(registry, selected.owner_id)
             if resource is None:
                 logical_unit_id = selected.tool_use_id or f"{session}:{kind}:{child}"
@@ -2661,8 +2670,43 @@ class LeaseBroker:
             )
             registry.leases[selected.lease_id] = claimed
             self._make_resource_current(registry, claimed)
+            if batch is not None:
+                self._renew_live_batch_siblings(
+                    registry,
+                    batch,
+                    exclude_lease_id=claimed.lease_id,
+                    now_text=now_text,
+                    monotonic=monotonic,
+                    boot_id=boot_id,
+                )
             self._write_registry(registry)
             return claimed
+
+    def _renew_live_batch_siblings(
+        self,
+        registry: Registry,
+        batch_id: str,
+        *,
+        exclude_lease_id: str | None,
+        now_text: str,
+        monotonic: int,
+        boot_id: str,
+    ) -> None:
+        """Keep-alive: renew live slots of one batch in-lock; never resurrect expired ones."""
+
+        for lease in list(registry.leases.values()):
+            if (
+                lease.batch_id != batch_id
+                or lease.lease_id == exclude_lease_id
+                or self._expired(lease, monotonic=monotonic, boot_id=boot_id)
+            ):
+                continue
+            registry.leases[lease.lease_id] = replace(
+                lease,
+                renewed_at=now_text,
+                renewed_monotonic_ns=monotonic,
+                boot_id=boot_id,
+            )
 
     def prepare_batch_call(
         self,
@@ -3003,6 +3047,11 @@ class LeaseBroker:
         lease = self.verify_agent(agent_id)
         if lease.mutation != "read-write":
             raise LeaseOwnershipError("agent lease does not authorize mutation")
+        if lease.batch_id is not None:
+            # Workflow children emit no lifecycle events between waves, so every
+            # verified mutation opportunistically renews the batch (#615); a wedged
+            # child stops mutating and TTL reaps. Non-batch leases are untouched.
+            lease = self._renew_batch_member(lease)
         worktree_raw = (
             None if lease.resource_ref is None else lease.resource_ref.get("worktree_root")
         )
@@ -3037,6 +3086,38 @@ class LeaseBroker:
                     f"write target {normalized} is outside leased worktree {worktree} through a symlink"
                 ) from exc
         return lease
+
+    def _renew_batch_member(self, lease: Lease) -> Lease:
+        """Renew a mutating batch-member lease and its live siblings in-lock."""
+
+        with self._locked():
+            registry = cast(Registry, self._read_registry(create=True))
+            current = registry.leases.get(lease.lease_id)
+            _wall, now_text, monotonic, boot_id = self._now()
+            if (
+                current is None
+                or current.agent_id != lease.agent_id
+                or current.batch_id is None
+                or self._expired(current, monotonic=monotonic, boot_id=boot_id)
+            ):
+                return lease
+            updated = replace(
+                current,
+                renewed_at=now_text,
+                renewed_monotonic_ns=monotonic,
+                boot_id=boot_id,
+            )
+            registry.leases[current.lease_id] = updated
+            self._renew_live_batch_siblings(
+                registry,
+                current.batch_id,
+                exclude_lease_id=current.lease_id,
+                now_text=now_text,
+                monotonic=monotonic,
+                boot_id=boot_id,
+            )
+            self._write_registry(registry)
+            return updated
 
     def renew(
         self,
@@ -3746,12 +3827,25 @@ class LeaseBroker:
             lease = matches[0]
             _wall, now_text, monotonic, boot_id = self._now()
             updated = replace(lease, child_terminal_at=lease.child_terminal_at or now_text)
-            if updated.parent_completed_at is not None:
+            # An unstamped batch slot provably has no parent tool call, so no
+            # parent-completion signal can ever arrive — the child signal alone
+            # recycles it. Stamped slots keep the dual-signal release contract.
+            unstamped_batch_slot = updated.batch_id is not None and updated.tool_use_id is None
+            if updated.parent_completed_at is not None or unstamped_batch_slot:
                 self._complete_foreground_lease(
                     registry, updated, now_text=now_text, monotonic=monotonic, boot_id=boot_id
                 )
             else:
                 registry.leases[lease.lease_id] = updated
+            if lease.batch_id is not None:
+                self._renew_live_batch_siblings(
+                    registry,
+                    lease.batch_id,
+                    exclude_lease_id=lease.lease_id,
+                    now_text=now_text,
+                    monotonic=monotonic,
+                    boot_id=boot_id,
+                )
             if not self._session_has_live_agents(
                 registry, lease.session_id, monotonic=monotonic, boot_id=boot_id
             ):

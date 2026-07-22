@@ -5,6 +5,25 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.0] - 2026-07-22
+
+### Fixed - Workflow children bind attested unstamped batch slots (#615)
+
+- `claim` accepts an attested-but-unstamped batch slot: Workflow-runtime children never emit a
+  `PreToolUse Agent|Task` event, so no slot is ever stamped for them — the old candidate filter
+  refused exactly the prelaunch state the driver `attest` step guarantees. Selection is
+  stamped-first (`(unstamped-last, fencing_sequence, lease_id)`), so existing stamped claims are
+  byte-identical and unstamped binding activates only where the old filter raised
+  `LeaseNotFoundError`. Non-batch claims are unchanged.
+- `record_child_terminal` recycles an unstamped batch slot on the child signal alone (it provably
+  has no parent tool call, so the dual-signal contract cannot complete); stamped slots keep the
+  dual-signal release unchanged.
+- Batch keep-alive: `claim` and `record_child_terminal` renew live sibling slots in-lock, and
+  `assert_write_target` opportunistically renews a mutating batch-member lease plus its live
+  siblings — renewal scales with real child activity, a wedged child stops renewing and TTL
+  reaps (fail-closed preserved; expired slots are never resurrected). Non-batch leases keep
+  today's mutation-verification behavior byte-identical.
+
 ## [0.18.0] - 2026-07-22
 
 ### Fixed - Pid-liveness at the refuse-mode admission gate (#637)

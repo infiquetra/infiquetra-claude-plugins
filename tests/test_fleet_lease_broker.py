@@ -1624,3 +1624,194 @@ def test_batch_reservation_contention_is_all_or_nothing_across_processes(tmp_pat
         assert process.exitcode == 0
     assert sorted(results) == [("granted", 2), ("refused", 0)]
     assert len(B.LeaseBroker(authority).inspect()["leases"]) == 2
+
+
+def _workflow_batch(
+    broker: Any, *, count: int = 2, batch_id: str = "wf-batch", ttl: int = 30
+) -> Any:
+    limits = _limits(max_concurrent=4, readonly_max_concurrent=4, aggregate_max_concurrent=4)
+    return broker.reserve_batch(
+        count=count,
+        owner_id="driver",
+        session_id="workflow",
+        batch_id=batch_id,
+        agent_type="*",
+        policy_sha256=limits.policy_sha256(),
+        session_limit=4,
+        aggregate_limit=4,
+        mutation="read-write",
+        ttl_seconds=ttl,
+    )
+
+
+def test_unstamped_batch_claim_binds_oldest_slot_and_derives_logical_unit(broker: Any) -> None:
+    batch = _workflow_batch(broker)
+    claimed = broker.claim(
+        session_id="workflow",
+        agent_type="reviewer",
+        agent_id="wf-child-1",
+        batch_id="wf-batch",
+    )
+    assert claimed.lease_id == batch[0].lease_id
+    assert claimed.resource_ref["logical_unit_id"] == "workflow:reviewer:wf-child-1"
+    replay = broker.claim(
+        session_id="workflow",
+        agent_type="reviewer",
+        agent_id="wf-child-1",
+        batch_id="wf-batch",
+    )
+    assert replay.lease_id == claimed.lease_id
+
+
+def test_stamped_slot_is_preferred_and_unstamped_claims_activate_the_remainder(
+    broker: Any,
+) -> None:
+    batch = _workflow_batch(broker)
+    stamped = broker.prepare_batch_call(
+        session_id="workflow",
+        batch_id="wf-batch",
+        agent_type="reviewer",
+        tool_use_id="tool-1",
+    )
+    first = broker.claim(
+        session_id="workflow", agent_type="reviewer", agent_id="child-a", batch_id="wf-batch"
+    )
+    assert first.lease_id == stamped.lease_id
+    assert first.resource_ref["logical_unit_id"] == "tool-1"
+    second = broker.claim(
+        session_id="workflow", agent_type="reviewer", agent_id="child-b", batch_id="wf-batch"
+    )
+    assert second.lease_id == batch[1].lease_id
+    assert second.resource_ref["logical_unit_id"] == "workflow:reviewer:child-b"
+    with pytest.raises(B.LeaseNotFoundError):
+        broker.claim(
+            session_id="workflow", agent_type="reviewer", agent_id="child-c", batch_id="wf-batch"
+        )
+
+
+def test_non_batch_claim_ordering_ignores_stamp_state(broker: Any) -> None:
+    unstamped = _agent(broker, tool=None, agent_type="worker")
+    _agent(broker, tool="tool-late", agent_type="worker")
+    claimed = broker.claim(
+        session_id="session",
+        agent_type="worker",
+        agent_id="plain-child",
+        resource_ref={"logical_unit_id": "unit"},
+    )
+    assert claimed.lease_id == unstamped.lease_id
+
+
+def test_unstamped_slot_recycles_on_child_terminal_alone(broker: Any, runtime: FakeRuntime) -> None:
+    _workflow_batch(broker, count=1)
+    first = broker.claim(
+        session_id="workflow", agent_type="worker", agent_id="wave-1", batch_id="wf-batch"
+    )
+    assert broker.record_child_terminal("wave-1") is True
+    snapshot = broker.inspect()["leases"]
+    assert len(snapshot) == 1
+    assert snapshot[0]["agent_id"] is None
+    assert snapshot[0]["tool_use_id"] is None
+    second = broker.claim(
+        session_id="workflow", agent_type="worker", agent_id="wave-2", batch_id="wf-batch"
+    )
+    assert second.lease_id == first.lease_id
+    assert second.agent_id == "wave-2"
+    assert broker.record_child_terminal("wave-2") is True
+    runtime.advance(B.DEFAULT_CLAIM_TTL_SECONDS + 1)
+    with pytest.raises(B.LeaseNotFoundError):
+        broker.claim(
+            session_id="workflow", agent_type="worker", agent_id="wave-3", batch_id="wf-batch"
+        )
+
+
+def test_stamped_batch_slot_keeps_dual_signal_release(broker: Any) -> None:
+    _workflow_batch(broker, count=1)
+    broker.prepare_batch_call(
+        session_id="workflow", batch_id="wf-batch", agent_type="worker", tool_use_id="tool-9"
+    )
+    claimed = broker.claim(
+        session_id="workflow", agent_type="worker", agent_id="stamped-child", batch_id="wf-batch"
+    )
+    assert broker.record_child_terminal("stamped-child") is True
+    still = {lease["lease_id"]: lease for lease in broker.inspect()["leases"]}
+    assert still[claimed.lease_id]["agent_id"] == "stamped-child"
+    broker.record_parent_completed("workflow", "tool-9")
+    after = {lease["lease_id"]: lease for lease in broker.inspect()["leases"]}
+    assert after[claimed.lease_id]["agent_id"] is None
+    assert after[claimed.lease_id]["tool_use_id"] is None
+
+
+def test_batch_keep_alive_renews_live_siblings_but_never_resurrects(
+    broker: Any, runtime: FakeRuntime
+) -> None:
+    _workflow_batch(broker, count=3, ttl=30)
+    runtime.advance(20)
+    first = broker.claim(
+        session_id="workflow", agent_type="worker", agent_id="child-1", batch_id="wf-batch"
+    )
+    runtime.advance(20)
+    second = broker.claim(
+        session_id="workflow", agent_type="worker", agent_id="child-2", batch_id="wf-batch"
+    )
+    assert second.lease_id != first.lease_id
+    runtime.advance(31)
+    with pytest.raises(B.LeaseNotFoundError):
+        broker.claim(
+            session_id="workflow", agent_type="worker", agent_id="child-3", batch_id="wf-batch"
+        )
+    assert broker.record_child_terminal("child-1") is True
+    third = broker.claim(
+        session_id="workflow", agent_type="worker", agent_id="child-4", batch_id="wf-batch"
+    )
+    assert third.lease_id == first.lease_id
+    with pytest.raises(B.LeaseNotFoundError):
+        broker.claim(
+            session_id="workflow", agent_type="worker", agent_id="child-5", batch_id="wf-batch"
+        )
+
+
+def test_mutation_verification_renews_batch_member_and_live_siblings(
+    broker: Any, runtime: FakeRuntime
+) -> None:
+    batch = _workflow_batch(broker, count=2, ttl=30)
+    child = broker.claim(
+        session_id="workflow", agent_type="worker", agent_id="long-child", batch_id="wf-batch"
+    )
+    for _ in range(20):
+        runtime.advance(25)
+        renewed = broker.assert_write_target("long-child")
+        assert renewed.lease_id == child.lease_id
+    second = broker.claim(
+        session_id="workflow", agent_type="worker", agent_id="second-child", batch_id="wf-batch"
+    )
+    assert second.lease_id in {lease.lease_id for lease in batch}
+    assert second.lease_id != child.lease_id
+
+
+def test_mutation_verification_does_not_renew_non_batch_leases(
+    broker: Any, runtime: FakeRuntime
+) -> None:
+    _agent(broker, tool="tool-nb")
+    broker.claim(
+        session_id="session",
+        agent_type="worker",
+        agent_id="nb-child",
+        resource_ref={"logical_unit_id": "nb-unit"},
+    )
+    runtime.advance(200)
+    broker.assert_write_target("nb-child")
+    runtime.advance(150)
+    with pytest.raises(B.LeaseExpiredError):
+        broker.assert_write_target("nb-child")
+
+
+def test_expired_batch_member_is_not_resurrected_by_mutation_path(
+    broker: Any, runtime: FakeRuntime
+) -> None:
+    _workflow_batch(broker, count=1)
+    broker.claim(
+        session_id="workflow", agent_type="worker", agent_id="stalled", batch_id="wf-batch"
+    )
+    runtime.advance(B.DEFAULT_TTL_SECONDS + 1)
+    with pytest.raises(B.LeaseExpiredError):
+        broker.assert_write_target("stalled")

@@ -253,3 +253,47 @@ def test_contract_is_closed_and_rejects_filesystem_grant() -> None:
         W.validate_metadata({**metadata, "registry_path": "/tmp/authority"})
     with pytest.raises(W.WorkflowLeaseContractError, match="filesystem access must be false"):
         W.validate_metadata({**metadata, "generated_runtime_filesystem_access": True})
+
+
+def test_workflow_child_binds_without_pretool_stamp_and_waves_recycle(tmp_path: Path) -> None:
+    """#615: Workflow-runtime children never emit PreToolUse, so SubagentStart
+    must bind an attested-but-unstamped slot directly; child terminals alone
+    recycle the slots for later waves."""
+
+    metadata = _metadata()
+    authority = tmp_path / "authority"
+    env = _environment(authority, metadata)
+    receipt = W.reserve(metadata, session_id="session", environment=env)
+    assert W.attest(metadata, session_id="session", environment=env)["launch_authorized"] is True
+    hook_env = {key: value for key, value in env.items() if key != A.BATCH_ID_ENV}
+
+    width = metadata["reservation_width"]
+    for index in range(width):
+        claimed = A.claim_hook_agent(_start(tmp_path, f"wf-child-{index}"), hook_env)
+        assert claimed.batch_id == metadata["batch_id"]
+        assert claimed.tool_use_id is None
+        assert claimed.agent_id == f"wf-child-{index}"
+    with pytest.raises(B.LeaseNotFoundError):
+        A.claim_hook_agent(_start(tmp_path, "wf-child-extra"), hook_env)
+
+    target = tmp_path / "artifact.txt"
+    for index in range(width):
+        verified = A.verify_hook_mutation(
+            {"agent_id": f"wf-child-{index}", "tool_input": {"file_path": str(target)}},
+            hook_env,
+        )
+        assert verified is not None
+
+    for index in range(width):
+        assert A.record_hook_terminal(_start(tmp_path, f"wf-child-{index}"), hook_env) is True
+    snapshot = B.LeaseBroker(authority).inspect()["leases"]
+    assert len(snapshot) == width
+    assert all(lease["agent_id"] is None for lease in snapshot)
+    assert all(lease["tool_use_id"] is None for lease in snapshot)
+
+    second_wave = A.claim_hook_agent(_start(tmp_path, "wave2-child"), hook_env)
+    assert second_wave.agent_id == "wave2-child"
+    assert A.record_hook_terminal(_start(tmp_path, "wave2-child"), hook_env) is True
+    released = W.release(metadata, session_id="session", environment=env)
+    assert set(released) == set(receipt["lease_ids"])
+    assert B.LeaseBroker(authority).inspect()["leases"] == []

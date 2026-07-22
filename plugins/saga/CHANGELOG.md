@@ -16,7 +16,9 @@
   branch is #627's existing body unchanged: release the per-subplot lease, append the
   reducer-visible `(dispatch, halt)` record (spread-first, literal-last, `receipt_kind`
   preserved), settle `SILENT_NOOP`, continue the tick — `test_advance_records_lease_refusal_as_
-  halt_and_continues` is green unmodified. A non-transient `DispatcherError` now **re-raises and
+  halt_and_continues` stays green (its dispatcher raise updated to the transient subclass to
+  match the type production now emits at that admission site). A non-transient
+  `DispatcherError` now **re-raises and
   aborts the tick loudly** (the pre-#627 posture for permanent faults): no backoff state, no new
   ledger classification; the per-subplot `dispatch-{sid}` store lock is left held and self-heals
   via `acquire_lease`'s stale-reclaim after the 900s store-lock TTL, while the coordinator lock

@@ -50,6 +50,7 @@ FACT_KINDS = frozenset(
         "reconciliation",
         "benchmark",
         "dispatch-settlement",
+        "dispatch-waiver",
         "liveness",
         "teardown",
     }

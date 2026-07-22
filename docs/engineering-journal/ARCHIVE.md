@@ -516,7 +516,21 @@ the Infiquetra command after normal README and marketplace documentation.
 
 ## Superseded
 
-### "Keep `oneOf` under a top-level `type`" (pre-correction of `#toplevel-oneof-schema-dispatch-400`)  {#toplevel-oneof-schema-dispatch-400-v1}
+### "Installed-hook version skew fail-closes workflow children" (pre-correction of `#installed-hook-skew-fail-close-637`)  {#installed-hook-skew-fail-close-637-v1}
+
+**SUPERSEDED 2026-07-22** (next session after it was written) by the corrected inline
+LEARNINGS entry [#installed-hook-skew-fail-close-637](LEARNINGS.md#installed-hook-skew-fail-close-637).
+
+**Original (pre-correction) Mechanism claim.** The 2026-07-21 halt diagnosis attributed
+workflow `wf_881dd2cb-fa1`'s U1 fail-close to version skew: installed saga 0.104.0 hooks
+"have no batch-discovery" while repo/marketplace 0.107.0 binds workflow children to the live
+batch via `active_batch_id`, so `claude plugin update` + restart was recorded as the fix.
+Wrong on both counts: `active_batch_id` is present in the 0.104.0, 0.105.0, and 0.107.0
+cached saga adapters alike (4 references each), and the child's verbatim SubagentStart
+warning shows batch discovery *succeeded* — the claim failed on
+`no live provisional reservation` because no batch slot ever gets its `tool_use_id` stamp
+for workflow-runtime spawns. The failure is deterministic on every version; the plugin
+update changed nothing about this seam.
 
 **SUPERSEDED 2026-07-10** (same day it shipped as saga 0.75.19) by the corrected inline
 LEARNINGS entry [#toplevel-oneof-schema-dispatch-400](LEARNINGS.md#toplevel-oneof-schema-dispatch-400)

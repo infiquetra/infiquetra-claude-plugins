@@ -20,22 +20,26 @@
 4. Driver stopped the run (host-confirmed), released the reservation
    (`dcf8513b-7581-40bf-bab5-8c31d7a581da`), and diagnosed.
 
-## Root cause
+## Root cause — CORRECTED 2026-07-22 (original skew diagnosis was wrong)
 
-Version skew between the repo scripts driving the lease protocol and the installed plugin
-snapshot the hooks execute from:
+> The version-skew story recorded here on 2026-07-21 is superseded — see LEARNINGS
+> `{#installed-hook-skew-fail-close-637}` and ARCHIVE `{#installed-hook-skew-fail-close-637-v1}`.
 
-- Driver-side reserve/attest ran repo code (saga 0.107.0 / fleet-core 0.17.0 protocol), which
-  binds workflow children to the live batch **by trusted session id** (`claim_hook_agent(...,
-  batch_id=active_batch_id(payload, env))`).
-- The session's hooks resolved to the **installed cache snapshot at saga 0.104.0 /
-  fleet-core 0.15.0**, which predates batch-discovery binding: with no per-agent
-  `PreToolUse Agent|Task` reservation (workflow-runtime spawns never fire one in the driving
-  session), `SubagentStart` claim found nothing and the child's mutations fail-closed —
-  exactly the hook's designed posture, applied by a stale implementation.
+Deterministic protocol defect, version-independent. The child's verbatim SubagentStart warning
+(`wf_881dd2cb-fa1`, agent `a007fa899613a0eb0`) was `no live provisional reservation for
+session='a2c17e16-…', agent_type='workflow-subagent', batch_id='workflow:922e…'` — batch
+discovery **succeeded**; there was no claimable slot. `LeaseBroker.claim`
+(`fleet_commons/lease_broker.py:2619-2634`) requires a batch slot stamped with a
+`tool_use_id`, and only `prepare_batch_call` (`:2660`) writes that stamp — reached solely from
+the `PreToolUse Agent|Task` hook. Workflow-runtime spawns never fire that event, so **every
+workflow child fails the claim on every saga version** (0.104.0/0.105.0/0.107.0 adapters all
+carry `active_batch_id`). The plugin update + restart prescribed below changed nothing about
+this seam.
 
-This same skew is the likely mechanism behind the #616-shaped direct-Agent lease-binding
-failures observed on 2026-07-21.
+Also found: the installed cache lease hooks were hand-disabled (early `return`, `.orig-*`
+backups) on 2026-07-17 (0.99.1), 2026-07-19 (0.104.0), and 2026-07-21 23:22:57 (0.107.0) —
+author untraced; under those no-op hooks workflow runs proceed ungoverned, which is evidently
+how #627 shipped. The #616 attribution below is likewise unproven.
 
 ## State at halt
 
@@ -51,13 +55,13 @@ failures observed on 2026-07-21.
 - Installed plugins: updated/confirmed at saga **0.107.0** / fleet-core **0.17.0** (user
   scope). **Restart required** for hooks to load the new snapshot.
 
-## Resume (next session)
+## Resume (next session) — amended 2026-07-22 per operator decision
 
-1. Restart Claude Code (picks up 0.107.0/0.17.0 hooks).
-2. `/saga:work` — Phase 0 restores saga `issue-637` on `work/637-refuse-mode-hardening`.
-3. Re-run the Phase 1.5 pre-launch protocol with a **fresh** `WORKFLOW_INVOCATION_ID`
-   (same spec `docs/plans/2026-07-21-issue-637-refuse-mode-hardening-spec.json`), then
-   relaunch the workflow. U1 re-executes at opus with mutation authority.
+Operator-chosen path (2026-07-22): **relaunch ungoverned** under the disabled cache hooks
+(the #627 precedent) with a fresh `WORKFLOW_INVOCATION_ID` on the same spec; file a defect
+for the batch-stamp seam via mission-control; **restore the armed `.orig-2026-07-22` hooks
+after the run completes**. The originally-prescribed restart was performed (plugins reloaded
+at saga 0.107.0 / fleet-core 0.17.0) but is causally irrelevant to the halt.
 
 ## Checks run
 

@@ -1,0 +1,260 @@
+{
+  "schema_version": 1,
+  "outcome_id": "governed-execution-integrity",
+  "spec_revision": 1,
+  "objective": "objective: governed execution integrity \u2014 self-hosting outcome/workflow substrate",
+  "nodes": [
+    {
+      "subplot_id": "sub-615",
+      "title": "defect(saga): fleet-lease hooks fail closed for every Workflow-dispatched subagent \u2014 no reservation path for internal agent() spawns",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [
+        "sub-633"
+      ],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#615",
+        "sub_issue": 615
+      },
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-616",
+      "title": "defect(fleet): lease claim write-fences agents to their spawn cwd, blocking cross-repo builders",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#616",
+        "sub_issue": 616
+      },
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-617",
+      "title": "defect(fleet): lease registry has no schema forward-compatibility \u2014 one newer write bricks older readers with RegistryCorruptError",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [
+        "sub-616"
+      ],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#617",
+        "sub_issue": 617
+      },
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-618",
+      "title": "saga outcome: settlement gate has no operator waiver \u2014 threshold-0 cohort with an externally-blocked unit deadlocks dispatch even after approve",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#618",
+        "sub_issue": 618
+      },
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-620",
+      "title": "defect(saga): outcome board-sync resolves mission-control at <repo-root>/plugins/... \u2014 every board write fails in consumer repos",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#620",
+        "sub_issue": 620
+      },
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-626",
+      "title": "saga 0.104.0: outcome advance settlement-halt unresolvable for Workflow-executed leaves; board-sync path breakage",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [
+        "sub-615",
+        "sub-618",
+        "sub-620"
+      ],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#626",
+        "sub_issue": 626
+      },
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-633",
+      "title": "defect: execution_spec.py emitter writes non-meta export statements the Workflow runtime rejects",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#633",
+        "sub_issue": 633
+      },
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-635",
+      "title": "defect(saga): ship_ceremony resolves branch_delete from the saga's rolling branch field \u2014 on a leaf-into-outcome PR it deletes the BASE branch (local + origin)",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-claude-plugins",
+        "issue": "infiquetra/infiquetra-claude-plugins#635",
+        "sub_issue": 635
+      },
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    },
+    {
+      "subplot_id": "sub-45",
+      "title": "Codex re-freeze of the #627 seam contract + COR3 worktree lease-authority port",
+      "kind": "code",
+      "state": "pending",
+      "backend": "inline",
+      "gated": false,
+      "risky": false,
+      "destructive": false,
+      "guarantee_tags": [],
+      "degrade_policy": "none",
+      "timeout_seconds": null,
+      "heartbeat_seconds": null,
+      "depends_on": [
+        "sub-615",
+        "sub-626"
+      ],
+      "leaf_saga_id": "",
+      "child_spec_ref": "",
+      "github": {
+        "repo": "infiquetra/infiquetra-codex-plugins",
+        "issue": "infiquetra/infiquetra-codex-plugins#45",
+        "sub_issue": 45
+      },
+      "worktree": {},
+      "evidence": {},
+      "cost": {}
+    }
+  ],
+  "decision_trail": [],
+  "cost_rollup": {},
+  "created_at": "",
+  "updated_at": "",
+  "intent": {
+    "schema_version": 1,
+    "run_mode": "attended",
+    "ceremony_gates": {
+      "reviews_required": "gate",
+      "merge": "gate",
+      "deploy_nonprod": "gate"
+    },
+    "source": "issue-capture",
+    "authored_at": "2026-07-22T12:18:56Z",
+    "authored_by": "claude"
+  }
+}

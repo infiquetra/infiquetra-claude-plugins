@@ -25,6 +25,41 @@
 
 ---
 
+## 2026-07-21
+
+### Hooks run from the installed plugin snapshot pinned at session start, not the repo — skew fail-closes workflow children {#installed-hook-skew-fail-close-637}
+
+**Context.** First `cc-workflows-ultracode` launch for issue #637 after the #627 merge shipped
+saga 0.107.0 / fleet-core 0.17.0. Driver-side reserve → attest succeeded, the workflow
+launched, and U1's agent was then refused on every Edit/Write/Bash call.
+
+**Evidence.** Workflow `wf_881dd2cb-fa1` journal: U1 agent `a007fa899613a0eb0` result records
+`no fleet lease bound to agent ...; found 0` from `lease_mutation_hook`. Installed registry
+(`~/.claude/plugins/installed_plugins.json`) read saga 0.104.0 / fleet-core 0.15.0 while the
+repo and marketplace clone (`8882bdc`) carried 0.107.0 / 0.17.0. Work-session:
+`docs/work-sessions/2026-07-21-issue-637-work-halt-stale-hooks.md`.
+
+**Mechanism.** Two different code planes touch one broker store. The driving session runs
+repo scripts (`plugins/saga/scripts/...` — 0.107.0 protocol: `claim_hook_agent` binds a
+workflow child to the live batch via `active_batch_id` by trusted session id). Hooks execute
+from `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/`, resolved through
+`CLAUDE_PLUGIN_ROOT` at session start. A 0.104.0 hook has no batch-discovery: workflow-runtime
+spawns fire no `PreToolUse Agent|Task` in the driving session, so nothing is reserved
+per-agent, `SubagentStart` claim finds nothing, and the mutation gate fail-closes the child —
+correct posture, stale implementation. Likely also the mechanism behind the #616-shaped
+direct-spawn binding failures.
+
+**Fix.** `claude plugin update saga@infiquetra-plugins fleet-core@infiquetra-plugins`
+(registry now pins 0.107.0 / 0.17.0) + session restart — updates apply only to new sessions.
+
+**Generalizable rule.** Before launching a lease-gated workflow, compare the installed plugin
+version against the repo's release surface (`installed_plugins.json` vs `plugin.json`); a
+session whose hooks predate the protocol the driver scripts speak will fail closed at the
+first child mutation, after the opus spend on the unit has already happened.
+
+**Refs.** [[workflow-emitter-export-pins-627]], DECISIONS
+`{#refuse-liveness-and-loud-abort-637}`, issue #616.
+
 ## 2026-07-20
 
 ### Workflow-emitter output was unparseable and its test pins asserted the defect {#workflow-emitter-export-pins-627}

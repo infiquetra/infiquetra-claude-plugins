@@ -1,5 +1,39 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-07-22
+
+### Settlement-gate deadlock is cleared by a snapshot-scoped operator waiver, not by reclassifying truth {#settlement-waiver-618}
+
+**Decision.** From the #618 plan (2026-07-22). The outcome frontier settlement gate gains an operator
+waiver: a provenance-stamped, append-only run-fact of a NEW kind (`dispatch-waiver`) that excludes a
+named halt-required cohort from `blocking_reports`. Three load-bearing calls: (1) waiver-only — the
+issue's other directions are rejected for this leaf (`deferred-external` classification is #626's
+external-executor settlement model; threshold renegotiation cannot fix the `not current_complete`
+branch at `dispatch_settlement.py:1059` that is actually halting both known occurrences). (2) A new
+fact *kind*, never a new `dispatch-settlement` *event* — the settlement event schema is closed and
+re-validated per record on every snapshot read, so a new event would crash every older reader on a
+shared clone (including the byte-frozen codex runtime); a new kind is invisible to old readers, which
+keep halting (fail-closed) instead of erroring. (3) Coverage-snapshot subset rule — the waiver stores
+the blocking roster `(unit_id, attempt, state)` at grant time and covers only while the current
+blocking roster is a subset of it: deliveries never invalidate, any new casualty/attempt/open unit
+re-halts with no operator action. Reports stay honest (`halt_required` unchanged everywhere); the
+waiver is machine-local, matching the R20 approval precedent.
+
+**Rejected alternatives.** Unconditional per-dispatch waiver (silently suppresses future breaches);
+whole-report-digest invalidation (every benign delivery forces a re-waive); settling blocked units
+`silent-no-op` + manual dispatch outside `advance` (the l2-consent-registration workaround — records
+stop reflecting reality); extending `approve` (revision-scoped R20 semantics don't fit a
+cohort-scoped fact).
+
+**Revisit when.** #626 lands the external-executor settlement model (a `deferred-external`
+classification may absorb most waiver use); or multi-host coordination (#617/Herdr) wants waivers to
+travel with the outcome branch; or a revocation/observability verb is wanted (deferred follow-up).
+
+**Refs.** Plan `docs/plans/2026-07-22-issue-618-settlement-gate-operator-waiver-plan.md`
+(KTD1–KTD5); issue #618; live second occurrence in
+`.git/saga-outcomes/governed-execution-integrity/ledger.jsonl` (sub-615 halt receipts);
+[[refuse-liveness-and-loud-abort-637]].
+
 ## 2026-07-21
 
 ### Refuse-mode admits only proven-dead holders; permanent dispatcher faults abort the tick {#refuse-liveness-and-loud-abort-637}

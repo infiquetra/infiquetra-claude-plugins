@@ -1615,6 +1615,8 @@ def test_waived_halt_dispatches_new_cohort_with_receipt(repo: Path) -> None:
     assert receipts[0]["waivers"][0]["waived_by"] == "jeff"
     assert receipts[0]["waivers"][0]["transport"] == "terminal"
     assert receipts[0]["waivers"][0]["roster_digest"] == grant["record"]["roster_digest"]
+    assert receipts[0]["waivers"][0]["reason"] == "a is externally blocked; dispatch may proceed"
+    assert receipts[0]["waivers"][0]["at"] == "2023-11-14T22:13:22Z"
 
     fourth = OUTCOME.advance(
         repo,

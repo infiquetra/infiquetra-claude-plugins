@@ -1287,3 +1287,34 @@ def test_cli_waive_verb_happy_idempotent_and_error_paths(
     )
     assert rc == 1
     assert "no manifest" in capsys.readouterr().err
+
+    # Healthy (non-halt-required) cohort -> loud non-zero exit (R4). Also exercises the
+    # wall-clock --at default path on the way to the refusal.
+    ledger = M.run_ledger.RunLedger.resolve(repo)
+    SETTLEMENT.settle_attempt(
+        ledger,
+        subplot_id="design",
+        at="2026-07-22T00:01:00Z",
+        dispatch_id=dispatch_id,
+        unit_id="design",
+        attempt=1,
+        classification=SETTLEMENT.DELIVERED,
+        reason="canonical completion",
+        evidence_ref="github-completion",
+        evidence_sha256="d" * 64,
+    )
+    rc = M.main(
+        [
+            *common,
+            "waive",
+            "ship-x",
+            "--dispatch-id",
+            dispatch_id,
+            "--reason",
+            "already healthy",
+            "--answerer",
+            "jeff",
+        ]
+    )
+    assert rc == 1
+    assert "not halt-required" in capsys.readouterr().err

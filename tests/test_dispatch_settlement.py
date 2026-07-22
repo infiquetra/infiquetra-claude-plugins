@@ -1322,3 +1322,48 @@ def test_cli_waive_verb_roundtrip_and_error_paths(tmp_path: Path, capsys: Any) -
         == 1
     )
     assert "no manifest" in capsys.readouterr().err
+
+
+def test_waiver_reads_and_grants_refuse_broken_chain(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    _manifest(ledger, count=1)
+    _spawn(ledger, 0)
+    report = DS.settlement_report(ledger, "dispatch-1")
+    lines = ledger.path.read_text(encoding="utf-8").splitlines()
+    record = json.loads(lines[0])
+    record["subplot_id"] = "tampered"
+    lines[0] = json.dumps(record, sort_keys=True, separators=(",", ":"))
+    ledger.path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    with pytest.raises(DS.DispatchSettlementError, match="broken run-fact chain"):
+        DS.active_waiver_covers(ledger, report)
+    with pytest.raises(RL.RunLedgerError, match="broken run-fact chain"):
+        _waive(ledger)
+
+
+def test_stored_waiver_drift_and_malformed_roster_break_waiver_reads(tmp_path: Path) -> None:
+    """The remaining canonicalizer branches: value drift, missing field, malformed roster."""
+    corruptions: list[tuple[str, Any, str]] = [
+        ("roster_digest", "f" * 64, "not canonical"),
+        ("transport", None, r"missing=\['transport'\]"),
+        ("waived_roster", "not-a-list", "waived_roster must be a list"),
+    ]
+    for index, (field, value, pattern) in enumerate(corruptions):
+        ledger = RL.RunLedger(tmp_path / f"run-facts-{index}.jsonl")
+        _manifest(ledger, count=1)
+        _spawn(ledger, 0)
+        report = DS.settlement_report(ledger, "dispatch-1")
+        fact = DS.waiver_fact(
+            subplot_id="sub-351",
+            at=AT,
+            dispatch_id="dispatch-1",
+            waived_by="jeff",
+            reason="corruption probe",
+            waived_roster=[("unit-0", 1, "open")],
+        )
+        if value is None:
+            del fact[field]
+        else:
+            fact[field] = value
+        RL.append_fact(ledger, fact)
+        with pytest.raises(DS.DispatchSettlementError, match=pattern):
+            DS.active_waiver_covers(ledger, report)

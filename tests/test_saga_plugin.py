@@ -47,7 +47,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     assert plugin_json["name"] == "saga"
     assert (
         plugin_json["version"] == "0.109.0"
-    )  # refuse-liveness admission + loud-abort dispatcher contract (#637)
+    )  # settlement-gate operator waiver (#618)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]

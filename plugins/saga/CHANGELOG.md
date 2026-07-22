@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.110.0] - 2026-07-22
+
+### Added - Fleet-lease emergency kill-switch (#615)
+
+- Both lease hooks (`lease_lifecycle_hook.py`, `lease_mutation_hook.py`) honor
+  `INFIQUETRA_FLEET_LEASE_ENFORCEMENT=off`: the exact string `off` disarms enforcement with a
+  loud per-event stderr notice and touches no broker state; any other value or absence leaves
+  the hooks armed (fail-safe direction). Emergency use only — with fleet-core 0.19.0 binding
+  Workflow children to attested batch slots, routine runs no longer need any neutralization.
+
 ## [0.109.0] - 2026-07-22
 
 ### Added - Settlement-gate operator waiver (#618)

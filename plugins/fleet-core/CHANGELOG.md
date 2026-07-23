@@ -5,6 +5,33 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.0] - 2026-07-22
+
+### Fixed - Worktree write-fence scoped to declared isolation, not spawn cwd (#616)
+
+- `isolation` is now a first-class nullable `Lease` field (not a `resource_ref` key —
+  `_AGENT_RESOURCE_KEYS` stays closed at `{logical_unit_id, worktree_root}`), reservation-carried
+  from the PreToolUse payload's `tool_input.isolation` and forwarded through `acquire_agent` and
+  `prepare_batch_call`. The adapter normalizes: only the exact string `worktree` is stored, any
+  other declared value (e.g. `remote`) or absence stores `None`.
+- `claim` replaces the unconditional cwd stamp with a three-way branch on reservation state:
+  `isolation == "worktree"` stamps `worktree_root` from the child cwd (fenced, unchanged
+  containment check); a PreToolUse-stamped reservation with no worktree isolation claims with no
+  `worktree_root` (unfenced — admission, `read-write` mutation mode, and hook verification still
+  apply); an unstamped attested batch slot (`tool_use_id is None`, #615's Workflow-runtime
+  children) keeps today's cwd stamp byte-for-byte. `assert_write_target` changes zero lines — the
+  fence trigger stays "is `worktree_root` present."
+- Batch-slot recycle (`_complete_foreground_lease`) resets `isolation` to `None` alongside
+  `agent_id`/`tool_use_id`, so a recycled slot re-claimed by a workflow child gets the conservative
+  unstamped-slot behavior, never the prior occupant's declaration.
+- Registry compatibility uses the existing backfill-before-closed-mapping idiom: a pre-#616
+  (0.19.0-shaped) `leases.*` dict with no `isolation` key backfills to `None` before validation —
+  no migration machinery.
+- **Privilege-widening note (operator-pinned, D1):** a non-isolated `Agent|Task` spawn now writes
+  cross-repo with no cwd fence. This is inert unless the parent's spawn was PreToolUse-stamped
+  without `isolation: 'worktree'` — exactly the declared-intent case — and admission caps,
+  `read-write` mutation gating, and hook verification are all unchanged.
+
 ## [0.19.0] - 2026-07-22
 
 ### Fixed - Workflow children bind attested unstamped batch slots (#615)

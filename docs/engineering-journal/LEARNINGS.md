@@ -25,6 +25,63 @@
 
 ---
 
+## 2026-07-22
+
+### A landed broker schema addition poisons every armed-hook Bash call fleet-wide until #617's read-tolerance ships {#broker-schema-forward-poisoning-616}
+
+**Context.** #616's worktree write-fence work (`Lease.isolation` field addition) ran under
+governed `cc-workflows-ultracode` choreography, verified by a refute-mandate panel. Pass 1
+refuted 3/3 on a TTL-expiry machinery fault (renewal-path gap, unrelated); a driver-side
+cooperative renewal loop fixed that, and pass 2 relaunched — then refuted 3/3 again, this time on
+a second, distinct fault.
+
+**Evidence.** Pass 2's driver re-reservation ran *after* U1's `Lease.isolation` diff had already
+landed in the repo broker, so the repo broker serialized the new `isolation` key into batch lease
+records written to the shared, machine-wide registry
+(`~/.local/state/infiquetra/fleet-leases/registry.json`). The *installed* hook broker (fleet-core
+0.19.0 — correctly current, not the separate #642 staleness hazard) hard-rejects unknown
+registry fields on read: `HALT — delegated mutation refused: leases.0305cda0…: unknown field(s):
+isolation`. Every hook-fenced Bash call on the machine then failed closed — verifier claims never
+bound, a slot lapsed at the 30 s claim TTL, and `renew_batch`'s all-or-nothing semantics refused
+the whole batch once one member expired. Full detail:
+`docs/work-sessions/2026-07-22-issue-616-worktree-write-fence-scoping.md` ("Pass 2 outcome").
+
+**Mechanism.** The registry has no schema-version negotiation: any process (repo broker or
+installed broker) that writes a new field makes every *other* process on the same machine reading
+an older broker code version reject the record outright, because `from_dict` validates against a
+closed key set with no unknown-field tolerance. A repo-code broker landing a schema change while
+governed choreography is still running against the shared machine-wide registry is therefore a
+fleet-wide self-inflicted outage, not a scoped one — it doesn't matter that the installed plugin
+was current; the repo diff being ahead of it is enough.
+
+**Fix (or queued).** Working mitigation used mid-session: pin the choreography's writes to the
+installed (older-schema) broker via `FLEET_COMMONS_ROOT` (the existing rung-1 override) so the
+shared registry stays old-schema through pre-merge verification. The durable fix is #617's
+accept-unknown-fields read-tolerance layer, which must land *before* any further broker schema
+field additions ship through governed choreography.
+
+**Validation.** Driver-side reproduction after the mitigation: `uv run pytest -q
+tests/test_fleet_lease_broker.py` 75 passed, ruff/format/mypy clean, broader suite green except
+the plan-anticipated U2 adapter seam — recorded as the producer-of-record evidence per the saga
+driver-adjudication pattern (unfenced driving session is not subject to the same hook fencing).
+
+**What surprised.** Two structurally different pass-1/pass-2 refute-3/3 votes looked identical
+from the panel's side (unproven-not-false on every quantitative claim) but had unrelated root
+causes — TTL-renewal-gap vs. schema-forward-poisoning. The panel's own verdict text ("unproven,
+not shown false") is the tell that the fault is verifier-tooling, not the diff; don't stop at the
+first plausible machinery explanation once one is fixed and the exact same refute pattern recurs.
+
+**Generalizable rule.** Any repo-code change to a fleet-lease broker's persisted schema is a
+live-fleet hazard the moment it lands, independent of merge state — governed choreography that
+writes through the shared machine-wide registry must either pin to the installed (unchanged)
+broker for the duration, or run after #617-class read-tolerance exists. Treat "landed a schema
+field" the same as "changed a shared production data format" — sequence it behind compatibility,
+not behind test-green.
+
+**Refs.** `docs/work-sessions/2026-07-22-issue-616-worktree-write-fence-scoping.md`; DECISIONS
+[[worktree-fence-scoping-616]]; issue #617 (registry schema-skew hardening, this leaf's declared
+non-goal); #642 (the separate stale-`installed_plugins.json` hazard, explicitly ruled out here).
+
 ## 2026-07-21
 
 ### Workflow children can never bind a fleet lease — the batch claim requires a PreToolUse stamp that internal spawns never produce {#installed-hook-skew-fail-close-637}

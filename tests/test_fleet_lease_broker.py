@@ -2037,3 +2037,64 @@ def test_invalid_isolation_value_rejected_at_boundary(broker: Any) -> None:
             tool_use_id="tool-bad-batch",
             isolation="remote",
         )
+
+
+def test_registry_with_invalid_isolation_value_raises_registry_corrupt(broker: Any) -> None:
+    """An on-disk isolation value outside 'worktree'/None is registry corruption, not an API
+    error: the from_dict read path (corrupt=True) raises RegistryCorruptError."""
+    lease = _agent(broker, resource="corrupt-unit", tool="corrupt-tool")
+    raw = _raw_registry(broker)
+    raw["leases"][lease.lease_id]["isolation"] = "remote"
+    broker.registry_path.write_text(json.dumps(raw), encoding="utf-8")
+    os.chmod(broker.registry_path, 0o600)
+    with pytest.raises(B.RegistryCorruptError, match="isolation must be"):
+        broker.inspect()
+
+
+def test_recycled_slot_re_stamp_honors_new_isolation(broker: Any, tmp_path: Path) -> None:
+    """A recycled batch slot re-stamped by a second prepare_batch_call honors the NEW declared
+    isolation: an unfenced first wave (isolation None) followed by a worktree-declared second
+    wave claims fenced, proving the reuse path re-applies the fresh declaration."""
+    first_cwd = tmp_path / "wave1-cwd"
+    first_cwd.mkdir()
+    _workflow_batch(broker, count=1)
+    broker.prepare_batch_call(
+        session_id="workflow",
+        batch_id="wf-batch",
+        agent_type="worker",
+        tool_use_id="tool-wave1",
+        isolation=None,
+    )
+    first = broker.claim(
+        session_id="workflow",
+        agent_type="worker",
+        agent_id="child-wave1",
+        batch_id="wf-batch",
+        worktree_root=str(first_cwd),
+    )
+    assert first.isolation is None
+    assert first.resource_ref == {"logical_unit_id": "tool-wave1"}
+    assert broker.record_parent_completed("workflow", "tool-wave1") == ()
+    assert broker.record_child_terminal("child-wave1") is True
+
+    second_cwd = tmp_path / "wave2-wt"
+    second_cwd.mkdir()
+    broker.prepare_batch_call(
+        session_id="workflow",
+        batch_id="wf-batch",
+        agent_type="worker",
+        tool_use_id="tool-wave2",
+        isolation="worktree",
+    )
+    second = broker.claim(
+        session_id="workflow",
+        agent_type="worker",
+        agent_id="child-wave2",
+        batch_id="wf-batch",
+        worktree_root=str(second_cwd),
+    )
+    assert second.isolation == "worktree"
+    assert second.resource_ref == {
+        "logical_unit_id": "tool-wave2",
+        "worktree_root": str(second_cwd),
+    }

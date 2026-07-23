@@ -323,3 +323,62 @@ with the session URL). Merge only on explicit operator confirmation; merge-time 
 version-collision re-check owed. Post-merge: R8 live canary (operator-gated, #642
 `FLEET_COMMONS_DEBUG=1` provenance check first) and the installed-plugin registry-skew rollout
 note.
+
+## Post-merge rollout + R8 acceptance (2026-07-23, operator "go ahead and merge, then continue")
+
+**Merge.** PR #643 squash-merged to `main` as `0b6bcbf5` (single parent `ab84003b`, repo
+convention); issue #616 auto-closed (completed) at 11:42Z; branch deleted local+origin. CI was
+8/8 green at head `a52e36e3` and #643 was the only open PR (no sibling version collisions).
+
+**Rollout + #642 provenance preamble.** `claude plugin update` materialized fleet-core 0.20.0
+and saga 0.111.0 into the cache (unlike the 2026-07-22 incident it did not claim
+"already latest") — but `installed_plugins.json` records **stayed pinned to 0.19.0/0.110.0**,
+the #642 hazard recurring exactly as memorized. Hand-repaired both records (backup:
+scratchpad `installed_plugins.json.bak-20260723-pre-616-rollout`), then the gate:
+`FLEET_COMMONS_DEBUG=1` through the installed saga 0.111.0 shim from a neutral cwd resolved
+**rung 3 → fleet-core 0.20.0** — provenance PASS.
+
+**R8 legs.**
+
+- **Unadmitted direct Agent spawn refused — PASS (live).** With 0 admissions, a real Agent
+  spawn was halted pre-launch by the armed PreToolUse hook with the admission-required message.
+- **Leg (a) non-isolated cross-cwd write — PASS (scripted-live).** Reservation via
+  `reserve_hook_agent` (no `isolation` in tool_input) → `claim_hook_agent` → lease
+  `isolation=None`, `resource_ref={logical_unit_id}` **without** `worktree_root` →
+  `assert_write_target` permits a write outside the spawn cwd; file actually written.
+- **Leg (b) worktree-isolated fence — PASS (scripted-live).** `tool_input.isolation='worktree'`
+  → lease `isolation='worktree'`, `resource_ref` pins the canonicalized worktree root →
+  outside-write refused (`MissingResourceError: write target … outside leased worktree`),
+  inside-write permitted. Registry drained to 0 leases/0 admissions afterward.
+- **Leg (c) #615 workflow-child canary — PASS (installed adapter).** The U3 rehearsal script
+  re-pointed at the installed saga 0.111.0 adapter (broker resolved 0.20.0): width-1 reserve →
+  attest → unstamped child claim with byte-parity `worktree_root` cwd stamp (R3) → child
+  terminal recycle → release → 0 leases. `status: PASS`.
+
+**Why legs (a)/(b) are scripted-live, not spawn-live — new machinery defect diagnosed.** Three
+consecutive real spawn attempts lost their lease ("expected exactly one fleet lease bound;
+found 0"); a 100 ms-resolution registry watcher pinned the mechanism: the PreToolUse
+reservation (boot id and admission both healthy, same sysctl-derived cohort) is **wiped
+101–156 ms after creation** — the moment the async Agent tool call returns its launch
+metadata. PostToolUse[Agent|Task] runs `record_hook_parent` → broker
+`record_parent_completed` (fleet-core 0.20.0 `lease_broker.py:3895`), which treats a matching
+lease with `agent_id is None` as spawn-never-happened and removes it (:3913-3921), then pops
+the session admission once no live agents remain (:3924-3927). With **async spawns the tool
+result returns at launch**, so this "completion" cleanup races SubagentStart's claim; when it
+wins, the child starts unbound and every delegated mutation is refused. This also explains the
+code-review phase's 3-of-8 verifier lease losses (the claim won the race 5 times) and is a
+strong suspect for pass-4's whole-batch disappearance at first child terminal. Timelines:
+scratchpad `registry_timeline.log` / `registry_timeline2.log`.
+
+**Additional structural hazard (not today's trigger).** macOS boot identity is derived
+preferentially from `sysctl -n kern.boottime` (`darwin:<sha>`) with a utmpx fallback
+(`darwin-utmpx:<sec>:<usec>`) — the two formats can never compare equal, and even the raw
+seconds differ by 1 on this host. Any process cohort that fails `sysctl` (PATH, sandbox, fork
+pressure on the 2 s timeout) silently treats all other cohorts' leases and admissions as
+boot-stale and purges them on its next locked write.
+
+**R8 verdict: PASS** — every fence-policy assertion holds on the shipped installed artifacts;
+the live-spawn path is blocked by the pre-existing async-race machinery defect above, not by
+the #616 diff. Follow-up defects to file (operator-directed): the async PostToolUse race, the
+boot-id cohort split, findings 1/2/4 from the durable list, the pre-existing unfenced edge
+(code-review finding #2), and the #642 recurrence evidence.

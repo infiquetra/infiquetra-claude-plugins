@@ -4127,3 +4127,32 @@ operator asked for.
 **Refs.** `plugins/mission-control/scripts/sdlc_manager.py:3529`,
 `docs/sdlc-issue-drafts/2026-07-21-harden-refuse-mode-lease-admission-pid-liveness.{md,json}`;
 issues infiquetra-claude-plugins#637, infiquetra-codex-plugins#45.
+
+---
+
+### Async Agent spawns turn PostToolUse into a lease kill switch {#async-spawn-posttooluse-race-616-r8}
+
+**Evidence.** R8 rollout canary for #616 (2026-07-23, work-session doc
+`2026-07-22-issue-616-worktree-write-fence-scoping.md` post-merge section): three consecutive
+real Agent spawns lost their lease ("expected exactly one fleet lease bound; found 0"); a
+100 ms registry watcher showed the healthy PreToolUse reservation and the session admission
+wiped in one write 101–156 ms after reservation — exactly when the async Agent tool call
+returned its launch metadata.
+
+**Mechanism.** PostToolUse[Agent|Task] → `record_hook_parent` → broker
+`record_parent_completed` (fleet-core 0.20.0 `lease_broker.py:3895`) removes any matching
+lease with `agent_id is None` as "spawn never happened" (:3913-3921) and pops the session
+admission when no live agents remain (:3924-3927). That contract assumes PostToolUse is a
+*completion* signal — true for synchronous spawns only. Background/async spawns return the
+tool result at launch, so the cleanup races SubagentStart's claim; when cleanup wins, the
+child runs unbound and all delegated mutations are refused. Same signature as the 3-of-8
+code-review verifier losses (claim won 5 races).
+
+**Generalizable rule.** Any lifecycle hook keyed on "tool call returned" must distinguish
+launch-return from completion-return before destroying state; a reservation younger than the
+spawn round-trip is not abandoned. Verify hook-event semantics against the harness's actual
+execution mode (sync vs async) rather than the tool's nominal lifecycle.
+
+**Refs.** `plugins/fleet-core/scripts/fleet_commons/lease_broker.py:3895-3928`,
+`plugins/saga/scripts/lease_broker.py:379-394` (`record_hook_parent`); learning
+`{#broker-schema-forward-poisoning-616}`; issue #616 / PR #643.

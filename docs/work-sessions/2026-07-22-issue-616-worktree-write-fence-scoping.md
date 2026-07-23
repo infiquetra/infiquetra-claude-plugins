@@ -306,9 +306,20 @@ R3 canary PASS (section above). U4 landed the release surfaces (fleet-core 0.20.
   `check_release_surface_parity` all plugins in parity, bandit on both changed brokers
   **identical to base** (5 pre-existing Low, 0 new).
 
-## Next step
+## Code review + PR
 
-Programmatic code-review at branch HEAD (capture REVIEWED_SHA; block on P0/P1), then commits +
-PR via ship ceremony. Merge only under explicit operator confirmation. Post-merge: R8 live
-canary (operator-gated, starts with the #642 `FLEET_COMMONS_DEBUG=1` provenance check) and the
-installed-plugin registry-skew rollout note.
+Programmatic code-review at REVIEWED_SHA `c816aad5`: **clean** — 4 lenses (correctness,
+security, testing at opus; conventions at sonnet, all sandboxed), zero P0/P1/P2; two confirmed
+P3 test-coverage findings **repaired** at `a0a2dc02` (corrupt-isolation read path + recycled
+slot re-stamp; 127 passed post-repair); one pre-existing P3 advisory deferred; one finding
+validator-rejected with counter-evidence. Artifact:
+`docs/code-reviews/2026-07-23-issue-616-worktree-write-fence-scoping-code-review.md`.
+Reviewer-environment note: 3 of 8 sandboxed subagents hit the lease "found 0" fence mid-run —
+same machinery family as the workflow faults; verification completed via retries and Read
+fallback.
+
+**PR #643** opened (draft) via ship_ceremony: branch pushed, title/body set (Fixes #616, ends
+with the session URL). Merge only on explicit operator confirmation; merge-time sibling-PR
+version-collision re-check owed. Post-merge: R8 live canary (operator-gated, #642
+`FLEET_COMMONS_DEBUG=1` provenance check first) and the installed-plugin registry-skew rollout
+note.

@@ -5,6 +5,28 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.21.0] - 2026-07-23
+
+### Fixed - Unclaimed reservation survives async PostToolUse launch-return, defers to spawn_failed or claim TTL (#644)
+
+- `record_parent_completed` gains a keyword-only `spawn_failed: bool = False` parameter. The
+  unclaimed-reservation branch at the parent-completed kill site now completes (removes/recycles)
+  an unclaimed lease only when `spawn_failed=True`; otherwise the reservation falls through to the
+  existing stamp-and-keep path, surviving with `parent_completed_at` set, still claimable, with the
+  session admission left intact. Fixes the async-launch race where the harness fires PostToolUse at
+  spawn launch-return (~100-156 ms after PreToolUse, well before SubagentStart can claim), which
+  previously deleted the still-unclaimed reservation and made direct Agent/Task spawns fail
+  ~50% of the time under armed hooks ("expected exactly one fleet lease bound; found 0").
+- `settle_batch` gains one release arm for stamped batch slots: an unclaimed slot whose parent
+  signal already landed (`agent_id is None and parent_completed_at is not None`) is released at
+  settlement so the registry still drains to zero leases when a batch child's spawn never claims
+  its slot. Mid-run stamped slots awaiting their child (no parent signal yet) are unaffected.
+- All claimed-lease paths, the admission guard, and the `record_parent_completed` return contract
+  (tuple of removed lease ids) are unchanged — this is a single-branch change scoped to the
+  unclaimed arm. Zero registry schema change.
+- Abandoned reservations (parent-completed stamped, child never arrives) stop counting as live
+  once the existing 30-second claim TTL expires — no new grace-window clock introduced.
+
 ## [0.20.0] - 2026-07-22
 
 ### Fixed - Worktree write-fence scoped to declared isolation, not spawn cwd (#616)

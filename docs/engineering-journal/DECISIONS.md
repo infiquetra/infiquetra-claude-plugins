@@ -1,5 +1,66 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-07-23
+
+### Unclaimed parent-completed reservations stamp-and-survive instead of dying at async launch-return {#async-parent-signal-644}
+
+**Decision.** From the #644 plan (2026-07-23). With async Agent/Task spawns, the harness fires
+PostToolUse at launch-return (~100-156 ms after PreToolUse) — well before SubagentStart can claim
+the reservation. `record_parent_completed`'s unclaimed-reservation branch treated that early signal
+as "spawn never happened" and deleted the still-unclaimed lease (and popped the session admission
+riding the same write), a per-spawn coin-flip that made direct Agent/Task spawns fail roughly half
+the time under armed hooks ("expected exactly one fleet lease bound; found 0" — diagnosed live
+during the #616 R8 rollout, LEARNINGS `{#async-spawn-posttooluse-race-616-r8}`).
+
+KTD1 — **Fix locus: broker `record_parent_completed` unclaimed arm, stamp-and-survive.** The
+unclaimed-reservation branch completes (removes/recycles) the lease only when the caller passes
+`spawn_failed=True`; otherwise it falls into the existing stamp-and-keep else-branch, unchanged.
+One branch, zero registry schema change. The admission half needed no companion change —
+`_session_has_live_agents` already counts any unexpired agent-pool lease, claimed or not, so a
+surviving reservation keeps the admission slot alive on its own. Rejected: *payload
+launch-vs-completion sniffing* (depends on an unverified harness payload contract, and is
+unnecessary since the parent tool call genuinely did return — the early stamp is semantically
+correct); *age-based grace window* (introduces an arbitrary time constant when the existing 30 s
+claim TTL already bounds the linger, and only shrinks the race instead of eliminating it);
+*unconditional no-cleanup* (discards the one genuine-failure signal available —
+`PostToolUseFailure` — and would leave never-started spawns holding slots for the full TTL).
+
+KTD2 — **Event-aware routing lands adapter-side as a keyword-only broker parameter.**
+`record_parent_completed(session_id, tool_use_id, *, spawn_failed: bool = False)`; the saga
+adapter's `record_hook_parent` passes `spawn_failed = (payload hook_event_name ==
+"PostToolUseFailure")`. The adapter is the only layer that sees the raw hook event; the
+default-False keyword keeps every existing caller and the tuple-of-removed-lease-ids return
+contract byte-compatible, and the `tests/test_concurrency_conformance.py` truth-set (which records
+callable names only) stays frozen.
+
+KTD3 — **Version-skew posture: no compatibility shim.** The new adapter call passes `spawn_failed`
+unconditionally; against a pre-0.21.0 broker this raises `TypeError` on the observational
+`PostToolUse` path only (`PostToolUse` is already retained-for-retry there), degrading skew to
+TTL-bounded release instead of signal-bounded release — soft, bounded, and exactly the drift the
+#642 provenance preamble exists to catch. A try/except shim was rejected as silently masking the
+skew instead of surfacing it.
+
+KTD4 — **Batch stamped slots get the same deferral, plus one settlement arm.** The identical race
+applies to Workflow-runtime children (stamped batch slots carry `tool_use_id` from PreToolUse and
+were recycled by the same kill branch — prime suspect for the #616 pass-4 batch disappearance).
+The one branch change covers both shapes; the stamped-slot recycle at child terminal is untouched,
+preserving the #615 R9 contract. One companion change was required: `settle_batch` previously
+released only unclaimed-and-unstamped or claimed-and-dual-signal slots — the new surviving state
+(stamped-unclaimed, `parent_completed_at` set) matched neither arm and would have leaked an
+expired slot past settlement. Extended the release condition with one arm: `lease.agent_id is
+None and lease.parent_completed_at is not None` — an unclaimed slot whose parent call already
+returned can owe no child. Mid-run wave settlements are unaffected (a stamped slot still awaiting
+its child carries no parent signal yet).
+
+**Rejected alternatives.** See KTD1 (payload sniffing, age-based grace window, unconditional
+no-cleanup) and KTD3 (compatibility shim) above.
+
+**Revisit when.** #617 lands registry schema-skew hardening (this leaf shipped zero schema change
+by design and should not be the leaf that adds one); #645 (boot-id cohort split) or #646 (admission
+policy / lease-TTL redesign, `renew_batch` all-or-nothing) touch adjacent admission/TTL machinery
+this fix deliberately left alone; #647 (pre-existing unfenced edge) is explicitly out of scope
+here.
+
 ## 2026-07-22
 
 ### Worktree write-fence is scoped to declared isolation, not spawn cwd {#worktree-fence-scoping-616}

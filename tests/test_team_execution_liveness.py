@@ -176,7 +176,7 @@ def test_preflight_proves_installed_subject_and_decision_contract(tmp_path: Path
     assert result["subject_schema"] == "liveness.subject.v1"
     assert result["decision_schema"] == "liveness_decision.v1"
     assert result["engine_protocol_version"] == 1
-    assert result["fleet_core_version"] == "0.20.0"
+    assert result["fleet_core_version"] == "0.21.0"
     assert result["engine_sha256"] == hashlib.sha256(ENGINE.read_bytes()).hexdigest()
     assert result["max_definitive_not_sent_retries_per_attempt"] == 1
 
@@ -406,5 +406,5 @@ def test_cache_installed_layout_attests_exact_fleet_engine_bytes(tmp_path: Path)
     )
     result = json.loads(completed.stdout)
     assert result["resolution_name"] == "cache-sibling"
-    assert result["fleet_core_version"] == "0.20.0"
+    assert result["fleet_core_version"] == "0.21.0"
     assert result["engine_sha256"] == hashlib.sha256(ENGINE.read_bytes()).hexdigest()

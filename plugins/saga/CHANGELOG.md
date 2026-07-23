@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.113.0] - 2026-07-23
+
+### Added - `doctor` and `repair` adapter CLI verbs for registry forward-compatibility (#617)
+
+- `plugins/saga/scripts/lease_broker.py` gains two subcommands beside `inspect`/`sweep`, routed
+  through the shim-resolved broker (no direct import bypass): `doctor` (read-only; prints the
+  fleet-core 0.22.0 broker's structured report and exits with a distinct code — 0 clean, 3
+  tolerated-unknowns-present, 4 corrupt — never raising for a corrupt document) and `repair`
+  (requires the explicit `--strip-unknown` flag; performs no default action, since stripping
+  additive fields from shared fenced state is a deliberate rollback operation, not routine
+  maintenance). Both ship the operator path for the registry read-tolerance layer landed in
+  fleet-core 0.22.0, replacing the manual hand-editing recovery used on 2026-07-17.
+- Requires fleet-core >= 0.22.0.
+
 ## [0.112.0] - 2026-07-23
 
 ### Fixed - Adapter routes PostToolUseFailure distinctly from PostToolUse for parent-completed signal (#644)

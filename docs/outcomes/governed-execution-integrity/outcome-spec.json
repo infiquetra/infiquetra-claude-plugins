@@ -46,12 +46,13 @@
       "timeout_seconds": null,
       "heartbeat_seconds": null,
       "depends_on": [],
-      "leaf_saga_id": "",
+      "leaf_saga_id": "leaf-governed-execution-integrity-sub-616",
       "child_spec_ref": "",
       "github": {
         "repo": "infiquetra/infiquetra-claude-plugins",
         "issue": "infiquetra/infiquetra-claude-plugins#616",
-        "sub_issue": 616
+        "sub_issue": 616,
+        "pr": "https://github.com/infiquetra/infiquetra-claude-plugins/pull/643"
       },
       "worktree": {},
       "evidence": {},

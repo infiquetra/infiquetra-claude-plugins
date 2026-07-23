@@ -1,0 +1,85 @@
+{
+  "name": "issue-644-async-posttooluse-race",
+  "description": "Issue #644: stop PostToolUse-at-launch from destroying unclaimed reservations (KTD1-KTD4): broker record_parent_completed gains keyword-only spawn_failed and defers unclaimed-reservation cleanup to the failure signal or the 30s claim TTL, saga adapter derives spawn_failed from hook_event_name (PostToolUseFailure), release surfaces fleet-core 0.21.0 + saga 0.112.0. Fully serialized U1->U2->U3 under the operator cap of 3: refute-3 panels on the two contract-bearing units ride at the unit tier and would overlap a running unit otherwise. Execution hazard: the defect under repair is live in the driving session — child spawns may coin-flip lose their lease; retry is the correct response.",
+  "repo": "infiquetra/infiquetra-claude-plugins",
+  "units": [
+    {
+      "unit_id": "U1",
+      "label": "fleet-core broker: defer unclaimed-reservation cleanup to spawn_failed or TTL",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "worth_it_because": "concurrency-critical branch on the fleet-shared broker: a wrong condition either resurrects the race (children keep losing leases under armed hooks) or breaks the dual-signal release contract every claimed lease depends on, and the async ordering (reserve -> parent-completed -> claim -> child-terminal) must compose byte-compatibly with #615 batch recycle and #616 fence stamping.",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "U1: In plugins/fleet-core/scripts/fleet_commons/lease_broker.py at base 277f070d, add a keyword-only spawn_failed: bool = False parameter to record_parent_completed (:3895) and change the kill branch (:3913) so an unclaimed lease (agent_id is None) is completed only when spawn_failed is set; otherwise it falls into the existing stamp-and-keep else-branch (:3922-3923) with parent_completed_at stamped. Additionally (KTD4 / doc-review D1) extend the settle_batch release condition (:3803-3812) with one arm — an unclaimed slot with parent_completed_at set is released at settlement (an unclaimed slot whose parent call already returned can owe no child); mid-run stamped slots without the parent signal still survive settlement. Claimed-lease behavior, the admission-pop guard (:3924-3927 — _session_has_live_agents already counts the surviving reservation), _complete_foreground_lease, and the return contract (tuple of removed lease ids) change zero lines beyond the branch and the settlement arm. Tests per the plan's U1 scenarios in tests/test_fleet_lease_broker.py: R1 unclaimed unexpired foreground reservation survives a default call with parent_completed_at stamped + admission intact + returns (); R2 full async ordering reserve -> parent-completed -> claim (stamp preserved by claim's replace) -> child-terminal -> released, plus the stamped-batch-slot variant (survives parent-completed, child claims it, terminal recycles it); R3 spawn_failed=True keeps today's eager removal (update test_unclaimed_failed_parent_releases_reservation :528 to pass the flag) and pops the admission when no other live agents exist; R4 existing claimed-path dual-signal tests pass unchanged; session-scoping test :534 updated for the new semantics; R6 an expired stamped-unclaimed reservation is not counted live and does not block a fresh acquire_agent; R6/KTD4 settle_batch after a stamped slot's parent-completed with no claim releases the slot (registry drains) while a mid-run stamped slot with no parent signal survives settlement (wave semantics unchanged). Read the plan at docs/plans/2026-07-23-issue-644-async-posttooluse-race-plan.md (U1, R1-R6, KTD1/KTD4) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [],
+      "files": [
+        "plugins/fleet-core/scripts/fleet_commons/lease_broker.py",
+        "tests/test_fleet_lease_broker.py"
+      ],
+      "verify": {
+        "n": 3,
+        "pass_rule": "majority"
+      }
+    },
+    {
+      "unit_id": "U2",
+      "label": "saga adapter: derive spawn_failed from hook_event_name",
+      "tier": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "U2: In plugins/saga/scripts/lease_broker.py at base 277f070d (post-U1), make record_hook_parent (:379-394) derive spawn_failed from the payload hook_event_name — True exactly when it equals 'PostToolUseFailure', False otherwise — and forward it as the keyword-only spawn_failed argument to selected.record_parent_completed. No compatibility shim (KTD3: against an old broker the TypeError surfaces on an observational event and the lease releases by its 30s TTL). hooks/lease_lifecycle_hook.py and hooks/hooks.json change zero lines (both events already deliver the full payload). Tests per the plan's U2 scenarios in tests/test_saga_hooks.py: PostToolUse payload -> broker called with spawn_failed=False; PostToolUseFailure payload -> spawn_failed=True; confirm the tests/test_concurrency_conformance.py truth-set for record_hook_parent stays green (call-name set unchanged). Read the plan at docs/plans/2026-07-23-issue-644-async-posttooluse-race-plan.md (U2, R3, KTD2/KTD3) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U1"
+      ],
+      "files": [
+        "plugins/saga/scripts/lease_broker.py",
+        "tests/test_saga_hooks.py"
+      ],
+      "verify": {
+        "n": 3,
+        "pass_rule": "majority"
+      }
+    },
+    {
+      "unit_id": "U3",
+      "label": "release surfaces fleet-core 0.21.0 + saga 0.112.0, journal, drift-guard pins",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U3: Bump plugins/fleet-core/.claude-plugin/plugin.json to 0.21.0 and plugins/saga/.claude-plugin/plugin.json to 0.112.0, sync .claude-plugin/marketplace.json, write both CHANGELOG entries (unclaimed-reservation deferral to spawn_failed or claim TTL; adapter event-aware routing of PostToolUseFailure), update drift-guard version pins in-commit (tests/test_saga_plugin.py plus the tests/test_liveness_events.py and tests/test_team_execution_liveness.py pin patterns), add the DECISIONS entry {#async-parent-signal-644} mirroring KTD1-KTD4 and a LEARNINGS entry only if implementation surfaced a non-obvious mechanism beyond the already-recorded {#async-spawn-posttooluse-race-616-r8}. Verify python3 scripts/check_release_surface_parity.py reports parity and re-check sibling-PR version collisions at merge time. Read the plan at docs/plans/2026-07-23-issue-644-async-posttooluse-race-plan.md (U3, R7) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "summary"
+      ],
+      "depends_on": [
+        "U2"
+      ],
+      "files": [
+        "plugins/fleet-core/.claude-plugin/plugin.json",
+        "plugins/saga/.claude-plugin/plugin.json",
+        ".claude-plugin/marketplace.json",
+        "plugins/fleet-core/CHANGELOG.md",
+        "plugins/saga/CHANGELOG.md",
+        "tests/test_saga_plugin.py",
+        "docs/engineering-journal/DECISIONS.md"
+      ]
+    }
+  ]
+}

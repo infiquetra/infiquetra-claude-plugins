@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.112.0] - 2026-07-23
+
+### Fixed - Adapter routes PostToolUseFailure distinctly from PostToolUse for parent-completed signal (#644)
+
+- `record_hook_parent` (`plugins/saga/scripts/lease_broker.py`) now derives `spawn_failed` from the
+  hook payload's `hook_event_name` — `True` exactly when `hook_event_name == "PostToolUseFailure"`
+  — and forwards it as the new keyword-only `spawn_failed` argument to the fleet-core 0.21.0
+  broker's `record_parent_completed`. A genuine launch failure still cleans up its reservation
+  eagerly; an ordinary async `PostToolUse` launch-return no longer does, closing the #644 race.
+  `hooks/lease_lifecycle_hook.py` and `hooks/hooks.json` are unchanged — both events already
+  carried the full payload including `hook_event_name`.
+- No compatibility shim against an older fleet-core: against pre-0.21.0 the new keyword argument
+  raises `TypeError` on the observational `PostToolUse` path (retained-for-retry posture), so
+  version skew degrades to TTL-bounded release instead of signal-bounded release — soft, bounded,
+  and exactly what the #642 provenance check exists to catch.
+- Requires fleet-core 0.21.0.
+
 ## [0.111.0] - 2026-07-22
 
 ### Fixed - Worktree write-fence scoping — adapter forwards declared isolation (#616)

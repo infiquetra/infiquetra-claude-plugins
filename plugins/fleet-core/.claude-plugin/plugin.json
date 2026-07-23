@@ -1,6 +1,6 @@
 {
   "name": "fleet-core",
-  "version": "0.20.0",
+  "version": "0.21.0",
   "description": "Fleet-commons library plugin: shared primitives, lease and liveness decisions, bridge receipts, attestations, and the delegation audit store. Scripts-only - no skills, commands, or agents.",
   "author": {
     "name": "Infiquetra",

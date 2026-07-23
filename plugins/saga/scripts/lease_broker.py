@@ -383,9 +383,11 @@ def record_hook_parent(
         raise HookInputError("parent completion requires Agent or Task tool_name")
     env = os.environ if environment is None else environment
     selected = broker(env)
+    spawn_failed = payload.get("hook_event_name") == "PostToolUseFailure"
     released = selected.record_parent_completed(
         _required_text(payload, "session_id"),
         _required_text(payload, "tool_use_id"),
+        spawn_failed=spawn_failed,
     )
     batch_id = active_batch_id(payload, env)
     if batch_id:

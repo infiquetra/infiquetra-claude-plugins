@@ -3804,6 +3804,7 @@ class LeaseBroker:
                 lease.lease_id
                 for lease in selected
                 if (lease.agent_id is None and lease.tool_use_id is None)
+                or (lease.agent_id is None and lease.parent_completed_at is not None)
                 or (
                     lease.agent_id is not None
                     and lease.child_terminal_at is not None
@@ -3892,8 +3893,16 @@ class LeaseBroker:
             self._write_registry(registry)
             return True
 
-    def record_parent_completed(self, session_id: str, tool_use_id: str) -> tuple[str, ...]:
-        """Record a trusted parent result for exactly one runtime session and tool call."""
+    def record_parent_completed(
+        self, session_id: str, tool_use_id: str, *, spawn_failed: bool = False
+    ) -> tuple[str, ...]:
+        """Record a trusted parent result for exactly one runtime session and tool call.
+
+        An unclaimed reservation receiving a parent-completed signal is stamped and
+        kept claimable (async launch-return can outrace SubagentStart); only a genuine
+        spawn failure (``spawn_failed=True``, adapter maps ``PostToolUseFailure``) still
+        removes an unclaimed reservation eagerly.
+        """
 
         session = _bounded(session_id, "session_id")
         tool = _bounded(tool_use_id, "tool_use_id")
@@ -3910,7 +3919,9 @@ class LeaseBroker:
             removed: list[str] = []
             for lease in matches:
                 updated = replace(lease, parent_completed_at=lease.parent_completed_at or now_text)
-                if updated.agent_id is None or updated.child_terminal_at is not None:
+                if (
+                    updated.agent_id is None and spawn_failed
+                ) or updated.child_terminal_at is not None:
                     self._complete_foreground_lease(
                         registry,
                         updated,

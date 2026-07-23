@@ -525,17 +525,138 @@ def test_normal_reservation_requires_two_release_signals(broker: Any) -> None:
     assert broker.record_child_terminal("child-1") is False
 
 
+def _arm_admission(broker: Any, session: str = "session", limits: Any | None = None) -> Any:
+    effective = _limits() if limits is None else limits
+    broker.configure_session_admission(
+        session,
+        policy_sha256=effective.policy_sha256(),
+        session_limit=effective.max_concurrent,
+        aggregate_limit=effective.aggregate_max_concurrent,
+        mutation="read-write",
+    )
+    return effective
+
+
 def test_unclaimed_failed_parent_releases_reservation(broker: Any) -> None:
-    provisional = _agent(broker, tool="tool-failed")
-    assert broker.record_parent_completed("session", "tool-failed") == (provisional.lease_id,)
+    # R3: a genuine spawn failure (adapter maps PostToolUseFailure -> spawn_failed=True) keeps
+    # today's eager removal of the unclaimed reservation and pops the now-empty session admission.
+    limits = _arm_admission(broker)
+    provisional = _agent(broker, limits=limits, tool="tool-failed")
+    assert "session" in broker.inspect()["session_admissions"]
+    assert broker.record_parent_completed("session", "tool-failed", spawn_failed=True) == (
+        provisional.lease_id,
+    )
     assert broker.inspect()["leases"] == []
+    assert "session" not in broker.inspect()["session_admissions"]
 
 
 def test_parent_completion_is_scoped_to_its_session(broker: Any) -> None:
+    # Scoping still holds under the new semantics: a spawn-failure signal removes only the
+    # matching session's reservation and leaves the other session's slot untouched.
     first = _agent(broker, owner="one", session="one", tool="shared")
     second = _agent(broker, owner="two", session="two", tool="shared")
-    assert broker.record_parent_completed("one", "shared") == (first.lease_id,)
+    assert broker.record_parent_completed("one", "shared", spawn_failed=True) == (first.lease_id,)
     assert [item["lease_id"] for item in broker.inspect()["leases"]] == [second.lease_id]
+
+
+def test_unclaimed_parent_completed_stamps_and_survives(broker: Any) -> None:
+    """R1/KTD1: an async parent-completed signal that arrives before SubagentStart claims the
+    reservation stamps parent_completed_at and keeps the slot claimable; the session admission
+    survives and no lease id is returned."""
+    limits = _arm_admission(broker)
+    provisional = _agent(broker, limits=limits, tool="tool-async")
+    assert "session" in broker.inspect()["session_admissions"]
+    assert broker.record_parent_completed("session", "tool-async") == ()
+    leases = broker.inspect()["leases"]
+    assert [item["lease_id"] for item in leases] == [provisional.lease_id]
+    assert leases[0]["agent_id"] is None
+    assert leases[0]["parent_completed_at"] is not None
+    assert broker.inspect()["session_admissions"]["session"]["derived_state"] == "live"
+
+
+def test_async_ordering_stamped_reservation_claims_then_releases(broker: Any) -> None:
+    """R2: reserve -> parent-completed (stamped, survives) -> claim (stamp preserved by replace's
+    untouched parent_completed_at) -> child-terminal releases the foreground lease via the
+    dual signal already recorded."""
+    provisional = _agent(broker, tool="tool-async2")
+    assert broker.record_parent_completed("session", "tool-async2") == ()
+    claimed = broker.claim(
+        session_id="session",
+        agent_type="worker",
+        agent_id="async-child",
+        resource_ref={"logical_unit_id": "async-unit"},
+    )
+    assert claimed.lease_id == provisional.lease_id
+    assert claimed.parent_completed_at is not None
+    assert broker.record_child_terminal("async-child") is True
+    assert broker.inspect()["leases"] == []
+
+
+def test_stamped_batch_slot_survives_parent_completed_then_claim_recycles(broker: Any) -> None:
+    """R2/KTD4: a stamped workflow batch slot receiving parent-completed before its child claims
+    survives (stamped, unclaimed); the child then claims it, and child-terminal recycles the slot
+    through the dual-signal contract."""
+    _workflow_batch(broker, count=1)
+    stamped = broker.prepare_batch_call(
+        session_id="workflow", batch_id="wf-batch", agent_type="worker", tool_use_id="tool-b"
+    )
+    assert broker.record_parent_completed("workflow", "tool-b") == ()
+    surviving = broker.inspect()["leases"]
+    assert [item["lease_id"] for item in surviving] == [stamped.lease_id]
+    assert surviving[0]["agent_id"] is None
+    assert surviving[0]["parent_completed_at"] is not None
+    claimed = broker.claim(
+        session_id="workflow", agent_type="worker", agent_id="batch-child", batch_id="wf-batch"
+    )
+    assert claimed.lease_id == stamped.lease_id
+    assert claimed.parent_completed_at is not None
+    assert broker.record_child_terminal("batch-child") is True
+    recycled = broker.inspect()["leases"][0]
+    assert recycled["agent_id"] is None
+    assert recycled["tool_use_id"] is None
+    assert recycled["parent_completed_at"] is None
+
+
+def test_expired_stamped_unclaimed_reservation_is_not_live(
+    broker: Any, runtime: FakeRuntime
+) -> None:
+    """R6: an abandoned reservation (parent-completed stamped, child never claims) stops counting as
+    a live agent once its claim TTL lapses, and a fresh acquire_agent is not blocked by the stale
+    slot."""
+    limits = _arm_admission(broker)
+    _agent(broker, limits=limits, tool="tool-linger", ttl=B.DEFAULT_CLAIM_TTL_SECONDS)
+    assert broker.record_parent_completed("session", "tool-linger") == ()
+    runtime.advance(B.DEFAULT_CLAIM_TTL_SECONDS + 1)
+    stale = broker.inspect()["leases"][0]
+    assert stale["parent_completed_at"] is not None
+    assert stale["derived_state"] == "expired"
+    assert broker.inspect()["session_admissions"]["session"]["derived_state"] != "live"
+    fresh = _agent(broker, tool="tool-fresh", ttl=B.DEFAULT_CLAIM_TTL_SECONDS)
+    fresh_state = {item["lease_id"]: item["derived_state"] for item in broker.inspect()["leases"]}
+    assert fresh_state[fresh.lease_id] == "live"
+
+
+def test_settle_batch_releases_abandoned_stamped_slot(broker: Any) -> None:
+    """R6/KTD4: settle_batch releases an unclaimed slot whose parent call already returned
+    (stamped, no child) so the registry drains to zero leases at batch teardown."""
+    _workflow_batch(broker, count=1)
+    broker.prepare_batch_call(
+        session_id="workflow", batch_id="wf-batch", agent_type="worker", tool_use_id="abandon-tool"
+    )
+    assert broker.record_parent_completed("workflow", "abandon-tool") == ()
+    assert len(broker.settle_batch("wf-batch", owner_id="driver", session_id="workflow")) == 1
+    assert broker.inspect()["leases"] == []
+
+
+def test_settle_batch_keeps_mid_run_stamped_slot_without_parent_signal(broker: Any) -> None:
+    """R6/KTD4: a mid-run stamped slot still awaiting its child (no parent-completed signal) is not
+    released at settlement -- wave semantics unchanged."""
+    _workflow_batch(broker, count=1)
+    stamped = broker.prepare_batch_call(
+        session_id="workflow", batch_id="wf-batch", agent_type="worker", tool_use_id="live-tool"
+    )
+    assert broker.settle_batch("wf-batch", owner_id="driver", session_id="workflow") == ()
+    assert [item["lease_id"] for item in broker.inspect()["leases"]] == [stamped.lease_id]
 
 
 def test_batch_settlement_and_terminal_session_release_are_atomic(broker: Any) -> None:

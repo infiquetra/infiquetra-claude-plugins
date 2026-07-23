@@ -125,6 +125,34 @@ Two run segments, 9 agent seats total: first segment 4 agents (~400k subagent to
 resumed segment 5 live agents (~367k tokens, ~22 min) with U1 and its panel replayed from cache. Engine offer at Phase 1.5 was advisory-only second-opinion intent; not dispatched
 (refute-3 panels fill the adversarial role; backend operator-locked at plan time).
 
+## Post-merge (shipped 2026-07-23)
+
+- **Merged**: PR #650 → main `1648a21b` (18:40:06Z), CI 8/8 green; issue #617 closed
+  COMPLETED; branch `work/617-registry-schema-forward-compat` deleted local+remote; full
+  ship ceremony (commit → open_pr → request_review → merge → checkout_main → pull →
+  branch_delete → teardown) recorded on saga `issue-617`, ship receipt minted. The ceremony
+  initially minted a stray saga because `ship_ceremony._saga_short_id` derives `issue-617`
+  from kind+id while the thread had been minted `issue-issue-617`; consolidated to the
+  derived-canonical `issue-617` (follow-up defect candidate).
+- **#642 hand-repair (mandatory rollout step)**: `~/.claude/plugins/installed_plugins.json`
+  was stale for the fourth consecutive release (still 0.21.0/0.112.0); cache dirs populated
+  for fleet-core 0.22.0 + saga 0.113.0 at `1648a21b`, registry entries rewritten, and shim
+  provenance verified both rungs with `FLEET_COMMONS_DEBUG=1` (rung 2 repo walk-up → in-repo
+  0.22.0; rung 3 installed-plugins → cache 0.22.0).
+- **R10 live acceptance: PASS** — against the real registry under armed hooks: synthetic
+  unknown field injected → `doctor` exit 3 with exact extras inventory (`$` →
+  `r10_synthetic_probe`, 92 bytes) → `repair --strip-unknown` (timestamped backup, precise
+  strip) → `doctor` exit 0 → repaired file **byte-identical** to the pre-injection backup;
+  `root_sha256` stable throughout; fleet-lease hooks stayed functional across the whole
+  mutation window (pre-#617 this state bricked every hook fleet-wide).
+- **Outcome harvest**: evidence written under `leaf-governed-execution-integrity-sub-617`
+  at close sha `7be1a24a` (PR headRefOid; delta from reviewed sha `62c88cad` docs-only),
+  PR linked via `outcome.py link-pr`, sub-617 harvested `done` (outcome 5/9), harvest
+  commit `596c777c` pushed to `outcome/governed-execution-integrity`. Gotcha: harvest
+  silently skipped until the spec node's empty `leaf_saga_id` was backfilled from the
+  dispatch ledger record (see LEARNINGS).
+- **Board**: Operations card → Done; ship comment posted on #617.
+
 ## Follow-ups (not this PR)
 
 - Worktree-reservation-claim defect draft → file as an issue with the `wf_ea848fca-97c`

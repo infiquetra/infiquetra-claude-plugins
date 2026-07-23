@@ -4156,3 +4156,26 @@ execution mode (sync vs async) rather than the tool's nominal lifecycle.
 **Refs.** `plugins/fleet-core/scripts/fleet_commons/lease_broker.py:3895-3928`,
 `plugins/saga/scripts/lease_broker.py:379-394` (`record_hook_parent`); learning
 `{#broker-schema-forward-poisoning-616}`; issue #616 / PR #643.
+
+---
+
+### Outcome harvest silently skips a leaf whose spec node lacks `leaf_saga_id` {#harvest-leaf-saga-id-backfill-617}
+
+**Evidence.** sub-617 harvest, 2026-07-23: PR #650 merged, evidence written under
+`leaf-governed-execution-integrity-sub-617` at close sha `7be1a24a`, yet two `advance`
+ticks returned `harvested: []` with no drift or halt output. The dispatch ledger's commit
+record carried `"leaf_saga_id": "leaf-governed-execution-integrity-sub-617"`, but the
+committed spec node's `leaf_saga_id` was `""`. Backfilling the spec field made the next
+tick harvest immediately (`596c777c` on `outcome/governed-execution-integrity`).
+
+**Mechanism.** `closure_gate.evaluate` (`plugins/saga/scripts/closure_gate.py:220`) reads
+`node.leaf_saga_id` from the SPEC node — never from the dispatch ledger — to resolve
+`docs/evidence/<saga-id>/`. Under a dispatch-era intent with `reviews_required: "gate"`,
+a code leaf implies a required `code-review` check, so an empty id makes the gate
+unsatisfiable (`unresolvable-close-sha`) and `harvest` skips the node with no surfaced
+reason. The GitHub barrier (PR merged) passes; the failure is invisible in `advance`
+output.
+
+**Generalizable rule.** Before expecting a closure-gated leaf to harvest, verify the spec
+node's `leaf_saga_id` matches the dispatch ledger record — and treat a silent
+`harvested: []` on a merged PR as a closure-gate resolution failure, not a barrier miss.

@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.111.0] - 2026-07-22
+
+### Fixed - Worktree write-fence scoping — adapter forwards declared isolation (#616)
+
+- `reserve_hook_agent` reads `tool_input.isolation` via a new `_declared_isolation(payload)`
+  helper beside `_agent_type`, threaded into both the `acquire_agent` and `prepare_batch_call`
+  reserve paths so the fleet-core 0.20.0 broker's three-way claim-time fence policy has a real
+  pre-spawn isolation signal to act on. `claim_hook_agent` is unchanged — it still passes the
+  actual child cwd; the broker now decides whether to stamp it as `worktree_root`.
+- Hooks (`lease_lifecycle_hook.py`, `lease_mutation_hook.py`) change zero lines — event routing
+  and fail-closed postures are untouched by this leaf.
+- Requires fleet-core 0.20.0.
+
 ## [0.110.0] - 2026-07-22
 
 ### Added - Fleet-lease emergency kill-switch (#615)

@@ -90,6 +90,20 @@ def _agent_type(payload: Mapping[str, Any]) -> str:
     return "general-purpose"
 
 
+def _declared_isolation(payload: Mapping[str, Any]) -> str | None:
+    """Extract the parent's declared spawn isolation from ``tool_input`` (#616 KTD1/KTD2).
+
+    Only the exact string ``"worktree"`` is forwarded; any other declared value (e.g.
+    ``"remote"``) or its absence normalizes to ``None`` here, before the broker boundary, so
+    the adapter never forwards a speculative isolation value for fleet-core to reject.
+    """
+
+    tool_input = payload.get("tool_input")
+    if isinstance(tool_input, dict) and tool_input.get("isolation") == "worktree":
+        return "worktree"
+    return None
+
+
 def _canonical_cwd(payload: Mapping[str, Any]) -> Path:
     raw = _required_text(payload, "cwd")
     path = Path(raw)
@@ -308,6 +322,7 @@ def reserve_hook_agent(
                 tool_use_id=tool_use_id,
                 claim_ttl_seconds=claim_ttl,
                 parent_agent_id=parent_agent,
+                isolation=_declared_isolation(payload),
             )
         policy_sha256, session_limit, aggregate_limit, mutation = session_admission_snapshot(
             session_id,
@@ -326,6 +341,7 @@ def reserve_hook_agent(
             tool_use_id=tool_use_id,
             agent_type=_agent_type(payload),
             parent_agent_id=parent_agent,
+            isolation=_declared_isolation(payload),
         )
     except (authority.LeaseNotFoundError, authority.LeaseOwnershipError) as exc:
         if parent_agent is None:

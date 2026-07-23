@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import json
 import os
 import subprocess
@@ -124,6 +125,17 @@ def _stop_payload(cwd: Path, child: str) -> dict[str, Any]:
     }
 
 
+def _spawn_payload_with_isolation(
+    cwd: Path, tool: str, isolation: str | None, *, session: str = "session"
+) -> dict[str, Any]:
+    payload = _spawn_payload(cwd, tool, session=session)
+    tool_input = dict(payload["tool_input"])
+    if isolation is not None:
+        tool_input["isolation"] = isolation
+    payload["tool_input"] = tool_input
+    return payload
+
+
 def _mutation_payload(cwd: Path, *, child: str | None, tool: str = "Edit") -> dict[str, Any]:
     payload: dict[str, Any] = {
         "hook_event_name": "PreToolUse",
@@ -172,7 +184,9 @@ def test_reserve_before_call_and_cross_ordered_same_type_claims(tmp_path: Path) 
     by_child = {lease["agent_id"]: lease for lease in _leases(authority)}
     assert by_child["child-b"]["tool_use_id"] == "tool-1"
     assert by_child["child-a"]["tool_use_id"] == "tool-2"
-    assert by_child["child-b"]["resource_ref"]["worktree_root"] == str(tmp_path.resolve())
+    # #616 R1/KTD3: neither spawn declared isolation="worktree", so the PreToolUse-stamped
+    # claim is unfenced — no worktree_root on the resource_ref.
+    assert by_child["child-b"]["resource_ref"] == {"logical_unit_id": "tool-1"}
 
 
 def test_replayed_pretool_and_start_are_idempotent(tmp_path: Path) -> None:
@@ -338,11 +352,18 @@ def test_bound_child_mutation_passes_and_root_is_unchanged(tmp_path: Path, tool:
 
 @pytest.mark.parametrize("tool", ["Edit", "Bash"])
 def test_removed_bound_worktree_blocks_subsequent_mutation(tmp_path: Path, tool: str) -> None:
+    """#616 R2: only a spawn that declared isolation="worktree" stays fenced to its worktree."""
+
     authority = tmp_path / "authority"
     env = _environment(authority)
     worktree = tmp_path / "leased-worktree"
     worktree.mkdir()
-    _run_hook(LIFECYCLE_HOOK, _spawn_payload(worktree, "tool"), cwd=tmp_path, environment=env)
+    _run_hook(
+        LIFECYCLE_HOOK,
+        _spawn_payload_with_isolation(worktree, "tool", "worktree"),
+        cwd=tmp_path,
+        environment=env,
+    )
     started = _run_hook(
         LIFECYCLE_HOOK, _start_payload(worktree, "child"), cwd=tmp_path, environment=env
     )
@@ -788,3 +809,86 @@ def test_kill_switch_unrecognized_values_stay_armed(tmp_path: Path, value: str) 
     )
     assert result.returncode == 2
     assert "HALT" in result.stderr
+
+
+def test_declared_isolation_helper_normalizes_worktree_absent_and_remote() -> None:
+    """#616 U2/KTD2: only the exact declared string "worktree" is forwarded; absence or any
+
+    other declared mode (e.g. "remote") normalizes to None inside the adapter, before the
+    broker boundary (fleet-core's own ``_agent_isolation`` would reject "remote" outright).
+    """
+
+    scripts = SAGA / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    adapter = _load(scripts / "lease_broker.py", "saga_declared_isolation_unit_test")
+
+    assert adapter._declared_isolation({"tool_input": {"isolation": "worktree"}}) == "worktree"
+    assert adapter._declared_isolation({"tool_input": {}}) is None
+    assert adapter._declared_isolation({}) is None
+    assert adapter._declared_isolation({"tool_input": {"isolation": "remote"}}) is None
+    assert adapter._declared_isolation({"tool_input": {"isolation": ""}}) is None
+    assert adapter._declared_isolation({"tool_input": "not-a-dict"}) is None
+
+
+@pytest.mark.parametrize(
+    ("declared", "expected_isolation", "expects_worktree_root"),
+    [
+        ("worktree", "worktree", True),
+        (None, None, False),
+        ("remote", None, False),
+    ],
+)
+def test_reservation_forwards_normalized_isolation_through_claim(
+    tmp_path: Path,
+    declared: str | None,
+    expected_isolation: str | None,
+    expects_worktree_root: bool,
+) -> None:
+    """#616 R1/R2/KTD3, exercised at the adapter seam: the PreToolUse reservation carries the
+
+    normalized declared isolation onto the lease; SubagentStart claim (an unchanged 5-key
+    payload, no isolation field) preserves it, and the broker's claim-time fence policy stamps
+    ``worktree_root`` only for the declared-worktree case.
+    """
+
+    authority = tmp_path / "authority"
+    env = _environment(authority)
+    spawn = _run_hook(
+        LIFECYCLE_HOOK,
+        _spawn_payload_with_isolation(tmp_path, "tool-1", declared),
+        cwd=tmp_path,
+        environment=env,
+    )
+    assert spawn.returncode == 0
+    reserved = _leases(authority)
+    assert len(reserved) == 1
+    assert reserved[0]["isolation"] == expected_isolation
+
+    start = _run_hook(
+        LIFECYCLE_HOOK, _start_payload(tmp_path, "child-1"), cwd=tmp_path, environment=env
+    )
+    assert start.returncode == 0
+    claimed = _leases(authority)[0]
+    assert claimed["agent_id"] == "child-1"
+    assert claimed["isolation"] == expected_isolation
+    assert ("worktree_root" in claimed["resource_ref"]) is expects_worktree_root
+
+
+def test_subagent_start_claim_payload_contract_is_unchanged_by_isolation_threading() -> None:
+    """#616 U2 boundary: claim_hook_agent (SubagentStart) is untouched — the payload fixture
+
+    stays the exact 5-key contract (hook_event_name, session_id, cwd, agent_id, agent_type),
+    cwd stays required and canonicalized, and no isolation field is read from it.
+    """
+
+    scripts = SAGA / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    adapter = _load(scripts / "lease_broker.py", "saga_claim_contract_unit_test")
+
+    signature = inspect.signature(adapter.claim_hook_agent)
+    assert list(signature.parameters) == ["payload", "environment"]
+
+    source = inspect.getsource(adapter.claim_hook_agent)
+    assert "isolation" not in source

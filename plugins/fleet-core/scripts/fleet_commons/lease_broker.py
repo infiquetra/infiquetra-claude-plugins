@@ -156,6 +156,7 @@ _LEASE_KEYS = frozenset(
         "agent_id",
         "tool_use_id",
         "agent_type",
+        "isolation",
         "batch_id",
         "resource_ref",
         "policy_sha256",
@@ -272,6 +273,23 @@ def _optional_bounded(value: Any, name: str, *, maximum: int = _MAX_ID) -> str |
     if value is None:
         return None
     return _bounded(value, name, maximum=maximum)
+
+
+def _agent_isolation(value: Any, *, corrupt: bool = False) -> str | None:
+    """Normalize declared spawn isolation to the only broker-storable values (#616 KTD2).
+
+    Exactly ``"worktree"`` or ``None`` are storable; any other declared mode (e.g. ``"remote"``)
+    or malformed value is rejected at the boundary so the broker never learns a speculative
+    isolation. ``corrupt=True`` raises :class:`RegistryCorruptError` for on-disk registry reads;
+    the API boundary raises :class:`LeaseBrokerError`.
+    """
+
+    if value is None:
+        return None
+    if value == "worktree":
+        return "worktree"
+    error = RegistryCorruptError if corrupt else LeaseBrokerError
+    raise error("isolation must be 'worktree' or None")
 
 
 def _positive(value: Any, name: str) -> int:
@@ -820,6 +838,7 @@ class Lease:
     agent_id: str | None
     tool_use_id: str | None
     agent_type: str | None
+    isolation: str | None
     batch_id: str | None
     resource_ref: ResourceRef | None
     policy_sha256: str | None
@@ -843,7 +862,10 @@ class Lease:
 
     @classmethod
     def from_dict(cls, lease_id: str, data: Mapping[str, Any], broker_epoch: str) -> Lease:
-        parsed = _closed_mapping(dict(data), _LEASE_KEYS, f"leases.{lease_id}")
+        raw = dict(data)
+        if set(raw) == _LEASE_KEYS - {"isolation"}:
+            raw["isolation"] = None
+        parsed = _closed_mapping(raw, _LEASE_KEYS, f"leases.{lease_id}")
         pool = parsed["pool"]
         if pool not in ("agent", "worktree"):
             raise RegistryCorruptError(f"leases.{lease_id}.pool must be agent or worktree")
@@ -894,6 +916,7 @@ class Lease:
             agent_id=agent_id,
             tool_use_id=_optional_bounded(parsed["tool_use_id"], "tool_use_id"),
             agent_type=_optional_bounded(parsed["agent_type"], "agent_type"),
+            isolation=_agent_isolation(parsed["isolation"], corrupt=True),
             batch_id=_optional_bounded(parsed["batch_id"], "batch_id"),
             resource_ref=resource,
             policy_sha256=policy,
@@ -924,6 +947,7 @@ class Lease:
             "agent_id": self.agent_id,
             "tool_use_id": self.tool_use_id,
             "agent_type": self.agent_type,
+            "isolation": self.isolation,
             "batch_id": self.batch_id,
             "resource_ref": self.resource_ref,
             "policy_sha256": self.policy_sha256,
@@ -2079,6 +2103,7 @@ class LeaseBroker:
         now_text: str,
         monotonic: int,
         boot_id: str,
+        isolation: str | None = None,
     ) -> Lease:
         lease_id = str(self.providers.uuid4())
         sequence = registry.issue_sequence()
@@ -2092,6 +2117,7 @@ class LeaseBroker:
             agent_id=agent_id,
             tool_use_id=tool_use_id,
             agent_type=agent_type,
+            isolation=isolation,
             batch_id=batch_id,
             resource_ref=resource_ref,
             policy_sha256=policy_sha256,
@@ -2259,6 +2285,7 @@ class LeaseBroker:
         agent_id: str | None = None,
         tool_use_id: str | None = None,
         agent_type: str | None = None,
+        isolation: str | None = None,
         batch_id: str | None = None,
         parent_agent_id: str | None = None,
         on_conflict: OnConflict = "supersede",
@@ -2284,6 +2311,7 @@ class LeaseBroker:
             raise LeaseBrokerError("session_limit must not exceed aggregate_limit")
         if mutation not in ("read-write", "none"):
             raise LeaseBrokerError("mutation must be read-write or none")
+        parsed_isolation = _agent_isolation(isolation)
         ttl = _positive(ttl_seconds, "ttl_seconds")
         resource = None if resource_ref is None else canonical_resource_ref("agent", resource_ref)
         parsed_agent = _optional_bounded(agent_id, "agent_id")
@@ -2360,6 +2388,7 @@ class LeaseBroker:
                 agent_id=parsed_agent,
                 tool_use_id=parsed_tool,
                 agent_type=_optional_bounded(agent_type, "agent_type"),
+                isolation=parsed_isolation,
                 batch_id=_optional_bounded(batch_id, "batch_id"),
                 resource_ref=resource,
                 policy_sha256=digest,
@@ -2653,7 +2682,14 @@ class LeaseBroker:
             if resource is None:
                 logical_unit_id = selected.tool_use_id or f"{session}:{kind}:{child}"
                 derived: dict[str, str] = {"logical_unit_id": logical_unit_id}
-                if canonical_worktree is not None:
+                # KTD3 (#616): stamp worktree_root (the assert_write_target fence trigger) only
+                # where a worktree boundary genuinely exists. Two cases stamp: a reservation that
+                # declared isolation == "worktree", and an unstamped attested batch slot
+                # (Workflow-runtime child, tool_use_id is None) which carries no declared truth and
+                # keeps today's conservative cwd fence byte-for-byte (R3). A PreToolUse-stamped,
+                # non-worktree reservation is left unfenced — the deliberate #616 privilege change.
+                stamp_worktree = selected.isolation == "worktree" or selected.tool_use_id is None
+                if stamp_worktree and canonical_worktree is not None:
                     derived["worktree_root"] = canonical_worktree
                 resource = canonical_resource_ref("agent", derived)
             sequence = registry.issue_sequence()
@@ -2715,6 +2751,7 @@ class LeaseBroker:
         batch_id: str,
         agent_type: str,
         tool_use_id: str,
+        isolation: str | None = None,
         claim_ttl_seconds: int = DEFAULT_CLAIM_TTL_SECONDS,
         parent_agent_id: str | None = None,
     ) -> Lease:
@@ -2724,6 +2761,7 @@ class LeaseBroker:
         batch = _bounded(batch_id, "batch_id")
         kind = _bounded(agent_type, "agent_type")
         tool = _bounded(tool_use_id, "tool_use_id")
+        parsed_isolation = _agent_isolation(isolation)
         parent = _optional_bounded(parent_agent_id, "parent_agent_id")
         ttl = _positive(claim_ttl_seconds, "claim_ttl_seconds")
         with self._locked():
@@ -2773,6 +2811,7 @@ class LeaseBroker:
                 selected,
                 agent_type=kind,
                 tool_use_id=tool,
+                isolation=parsed_isolation,
                 renewed_at=now_text,
                 renewed_monotonic_ns=monotonic,
                 boot_id=boot_id,
@@ -3910,6 +3949,7 @@ class LeaseBroker:
             agent_id=None,
             tool_use_id=None,
             agent_type="*",
+            isolation=None,
             resource_ref=None,
             claimed_at=None,
             child_terminal_at=None,

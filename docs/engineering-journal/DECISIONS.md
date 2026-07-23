@@ -2,6 +2,62 @@
 
 ## 2026-07-22
 
+### Worktree write-fence is scoped to declared isolation, not spawn cwd {#worktree-fence-scoping-616}
+
+**Decision.** From the #616 plan (2026-07-22, operator-pinned D1). The fleet-lease write-fence
+pinned every claimed agent to its spawn working directory, refusing writes for any agent that
+legitimately edits a different repository even under a valid `read-write` lease — the fence
+conflated "where the agent was spawned" with "where the agent may write," correct only for
+`isolation: 'worktree'` spawns. Six load-bearing calls: (KTD1) isolation truth is
+reservation-carried, stamped at PreToolUse from `tool_input.isolation` — the PreToolUse payload is
+the only trusted pre-spawn surface that sees the Agent tool call's declared isolation
+(`SubagentStart` carries no isolation field; cwd heuristics have both false positives — developer
+worktrees, nested repos — and false negatives, and were rejected), mirroring how the reservation
+already carries `agent_type` from the same payload. (KTD2) `isolation` becomes a first-class
+nullable `Lease` field, not a `resource_ref` key — `_AGENT_RESOURCE_KEYS` stays closed at
+`{logical_unit_id, worktree_root}` so `canonical_resource_ref` validation is untouched and #626
+(external-executor settlement) extends a named field instead of colliding with a widened closed
+set; the adapter normalizes so only the exact string `worktree` is stored, any other declared
+value (e.g. `remote`) or absence stores `None`. (KTD3) claim-time fence policy is a three-way
+branch on reservation state, replacing the unconditional cwd stamp: `isolation == "worktree"`
+stamps `worktree_root` from the child cwd (fenced, unchanged containment check); a
+PreToolUse-stamped reservation with no worktree isolation claims with no `worktree_root`
+(unfenced — the deliberate privilege change this defect demands); an unstamped attested batch slot
+(`tool_use_id is None`, #615's Workflow-runtime children) keeps today's cwd stamp byte-for-byte, no
+declared truth exists to act on. (KTD4) no declared-write-roots surface ships — the Agent tool's
+`tool_input` has no write-roots parameter, so a narrower grant would require inventing an
+unpopulated side channel; non-isolated-means-unfenced is the issue's own proposed fallback, and a
+narrower shape can extend KTD2's first-class field later. (KTD5) registry compatibility reuses the
+established backfill-before-closed-mapping idiom (`SettlementRecord.from_dict`'s precedent) — a
+pre-#616 (0.19.0-shaped) `leases.*` dict with no `isolation` key backfills to `None` before
+`_closed_mapping` validation; no migration machinery, deliberately left to #617's schema-skew
+layer. (KTD6) the Workflow batch metadata schema (`workflow_lease_reservation.v1`, closed 16-key
+set) is untouched — batch-level isolation declaration for Workflow-runtime children is deferred
+because those slots are interchangeable at claim (any child claims any slot), so per-slot isolation
+cannot be matched to a specific child reliably; the conservative cwd fence (KTD3's third branch)
+stays the sound default, revisit alongside #626.
+
+**D1 — operator pin (P1, mirrors #615's D1).** KTD3's middle branch removes the write-fence
+entirely for non-isolated spawns. Alternatives: (i) unfenced — this plan's choice, the issue's own
+proposal; admission, `read-write` mutation mode, and hook verification all remain. (ii) fence to a
+declared write-root set — rejected as KTD4 scope creep, no carrier surface exists today. (iii) keep
+the cwd fence and require every cross-repo builder to be worktree-isolated — rejected, forces
+isolation overhead onto every cross-repo spawn and contradicts the issue's intent. Jeff pinned (i)
+explicitly before `/work` executed.
+
+**Rejected alternatives.** See KTD1 (cwd heuristics), KTD4 (declared-write-roots side channel),
+and D1 (options ii/iii) above; also see #615's `workflow-child-lease-binding-615` entry for the
+sibling seam this leaf deliberately left untouched (KTD6) rather than reworking together.
+
+**Revisit when.** #617 lands registry schema-skew hardening (this leaf deliberately used the
+minimal backfill idiom and left migration machinery alone); #626 needs a narrower grant than
+"unfenced" for external-executor settlement (extends KTD2's first-class field); or Workflow-runtime
+children ever carry a per-child parent tool-use id, making KTD6's per-slot isolation matching
+possible.
+
+**Refs.** Plan `docs/plans/2026-07-22-issue-616-worktree-write-fence-scoping-plan.md` (KTD1–KTD6,
+R1–R8, D1 operator fork); issue #616; [[workflow-child-lease-binding-615]].
+
 ### Workflow children claim attested unstamped batch slots — complete the protocol, never exempt {#workflow-child-lease-binding-615}
 
 **Decision.** From the #615 plan (2026-07-22, operator-pinned). Workflow-runtime children emit

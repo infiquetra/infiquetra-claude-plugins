@@ -106,3 +106,37 @@ verified here. Criterion 3 — the R8 live canary (10 consecutive async spawns u
 hooks, zero "found 0") — is post-merge and operator-gated; armed hooks still run the installed
 saga 0.111.0 + fleet-core 0.20.0 until rollout, so the race remains live in driving sessions
 until then.
+
+## Post-merge rollout + R8 acceptance (2026-07-23, operator "run the ship ceremony, merge, continue")
+
+**Ship.** PR #649 opened via ship_ceremony (title/body set, review requested), CI 8/8 green,
+zero sibling PRs (no version collisions), squash-merged to `main` as `e2f32190`; issue #644
+auto-closed (completed) at 15:16Z; branch deleted local+origin; primary tree back on `main`.
+
+**Rollout + #642 provenance.** `claude plugin update` materialized fleet-core 0.21.0 and saga
+0.112.0 into the cache and *reported* the update — but `installed_plugins.json` stayed pinned
+to 0.20.0/0.111.0, the #642 hazard now recurring **three-for-three releases**. Hand-repaired
+both records (backup: scratchpad `installed_plugins.json.bak-20260723-pre-644-rollout`,
+gitCommitSha set to `e2f32190`), then the gate: `FLEET_COMMONS_DEBUG=1` through the installed
+saga 0.112.0 shim from a neutral cwd resolved **rung 3 → fleet-core 0.21.0** — provenance
+PASS. Skew note for the in-session canary: armed hooks still invoke the saga **0.111.0**
+adapter path (resolved at session start), which calls the new 0.21.0 broker without
+`spawn_failed` → defaults `False` → stamp-and-survive. That is exactly the KTD3 reverse-skew
+soft posture, so the broker half of the fix is live immediately; the adapter half
+(PostToolUseFailure eager cleanup) arms on next session start.
+
+**R8 canary — PASS 10/10, zero "found 0".** Ten consecutive real async Agent spawns
+(general-purpose, Haiku) under the armed installed hooks, each performing a delegated Write +
+Bash readback into the session scratchpad (`r8-canary-1.txt` … `r8-canary-10.txt`). Every
+spawn bound its lease, completed both tool calls, and reported zero lease/fleet-lease
+refusals; all 10 files verified driver-side with correct content; broker registry drained to
+`leases: []` afterward. Under the 0.20.0 broker this path failed ~50% per spawn (3/3 refusals
+observed in this very session pre-fix), so 10/10 clean is decisive. Session admission was
+re-armed via `configure-session` before each spawn — spawn 2's initial refusal confirmed the
+*designed* pop-at-drain (admission released after spawn 1 completed cleanly), which is the
+per-burst admission contract, not the defect; the defect's signature (pop at launch-return
+killing the child's own lease) did not occur once. **D3 observation:** no spawn failed, so no
+`PostToolUseFailure` event was captured — D3 remains an open P3 observation; the design
+degrades safely to TTL expiry regardless.
+
+**Acceptance: all three criteria satisfied.** #644 closed with the R8 evidence recorded here.

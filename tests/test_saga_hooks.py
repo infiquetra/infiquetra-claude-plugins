@@ -925,3 +925,155 @@ def test_subagent_start_claim_payload_contract_is_unchanged_by_isolation_threadi
 
     source = inspect.getsource(adapter.claim_hook_agent)
     assert "isolation" not in source
+
+
+# ------------------------------------------------------- doctor / repair CLI seam (#617 U2)
+
+SAGA_LEASE_CLI = SAGA / "scripts" / "lease_broker.py"
+
+
+def _adapter(name: str) -> ModuleType:
+    scripts = SAGA / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    return _load(scripts / "lease_broker.py", name)
+
+
+def _run_lease_cli(
+    authority: Path, *args: str, cwd: Path, environment: dict[str, str]
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(SAGA_LEASE_CLI), *args],
+        cwd=cwd,
+        env=environment,
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+
+def test_saga_lease_cli_doctor_and_repair_parser_contract() -> None:
+    # #617 R7/R8: doctor is a bare verb; repair carries the explicit opt-in --strip-unknown flag.
+    adapter = _adapter("saga_lease_adapter_doctor_repair_parser_test")
+    parser = adapter._build_parser()
+
+    assert parser.parse_args(["doctor"]).command == "doctor"
+
+    default_repair = parser.parse_args(["repair"])
+    assert default_repair.command == "repair"
+    assert default_repair.strip_unknown is False
+    assert parser.parse_args(["repair", "--strip-unknown"]).strip_unknown is True
+
+
+def test_saga_lease_cli_doctor_routes_through_broker_and_maps_exit_codes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # #617 R7: the doctor verb calls the shim-resolved broker's doctor() (no direct import bypass)
+    # and maps its structured status to distinct exit codes — 0 clean / 3 unknowns / 4 corrupt.
+    adapter = _adapter("saga_lease_adapter_doctor_exit_test")
+
+    class _FakeBroker:
+        def __init__(self, status: str) -> None:
+            self.status = status
+            self.doctor_calls = 0
+
+        def doctor(self) -> dict[str, Any]:
+            self.doctor_calls += 1
+            return {"status": self.status, "extras": []}
+
+    for status, expected in (
+        ("valid", 0),
+        ("tolerated-unknowns", 3),
+        ("corrupt", 4),
+        # #617 review F3: an unmapped future status must fail closed to the corrupt code —
+        # a diagnostic verb never reports clean for a state it does not recognize.
+        ("unrecognized-future-status", 4),
+    ):
+        fake = _FakeBroker(status)
+        monkeypatch.setattr(adapter, "broker", lambda env=None, fake=fake: fake)
+        assert adapter.main(["doctor"]) == expected
+        assert fake.doctor_calls == 1
+
+
+def test_saga_lease_cli_repair_requires_explicit_strip_unknown_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # #617 R8/KTD4: repair performs no default action; without --strip-unknown it refuses (exit 2)
+    # and never touches the broker. With the flag it routes through the shim-resolved broker.
+    adapter = _adapter("saga_lease_adapter_repair_flag_test")
+
+    class _FakeBroker:
+        def __init__(self) -> None:
+            self.repair_calls = 0
+
+        def repair(self) -> dict[str, Any]:
+            self.repair_calls += 1
+            return {"status": "clean", "repaired": False}
+
+    fake = _FakeBroker()
+    monkeypatch.setattr(adapter, "broker", lambda env=None: fake)
+
+    with pytest.raises(SystemExit) as caught:
+        adapter.main(["repair"])
+    assert caught.value.code == 2
+    assert fake.repair_calls == 0
+
+    assert adapter.main(["repair", "--strip-unknown"]) == 0
+    assert fake.repair_calls == 1
+
+
+def test_saga_lease_cli_doctor_and_repair_end_to_end(tmp_path: Path) -> None:
+    # #617 R7/R8: end-to-end through the real shim-resolved broker — doctor flags injected unknown
+    # fields (exit 3), repair --strip-unknown down-migrates under backup (exit 0), and a follow-up
+    # doctor confirms the closed shape (exit 0). repair without the flag refuses without mutation.
+    authority = tmp_path / "authority"
+    env = _environment(authority)
+    assert (
+        _run_hook(
+            LIFECYCLE_HOOK, _spawn_payload(tmp_path, "tool-1"), cwd=tmp_path, environment=env
+        ).returncode
+        == 0
+    )
+    registry_path = _broker(authority).registry_path
+    lease_id = _leases(authority)[0]["lease_id"]
+
+    # Clean authority: doctor reports valid (exit 0).
+    clean = _run_lease_cli(authority, "doctor", cwd=tmp_path, environment=env)
+    assert clean.returncode == 0
+    assert json.loads(clean.stdout)["status"] == "valid"
+
+    # Inject additive unknown fields at the top level and inside the live lease.
+    raw = json.loads(registry_path.read_text(encoding="utf-8"))
+    raw["future_top"] = {"nested": True}
+    raw["leases"][lease_id]["future_lease"] = "L"
+    registry_path.write_text(json.dumps(raw), encoding="utf-8")
+    os.chmod(registry_path, 0o600)
+    injected_bytes = registry_path.read_bytes()
+
+    doctored = _run_lease_cli(authority, "doctor", cwd=tmp_path, environment=env)
+    assert doctored.returncode == 3
+    report = json.loads(doctored.stdout)
+    assert report["status"] == "tolerated-unknowns"
+    paths = {entry["path"] for entry in report["extras"]}
+    assert "$" in paths and f"$.leases.{lease_id}" in paths
+
+    # repair without the explicit flag refuses (exit 2) and leaves the document untouched.
+    refused = _run_lease_cli(authority, "repair", cwd=tmp_path, environment=env)
+    assert refused.returncode == 2
+    assert registry_path.read_bytes() == injected_bytes
+
+    # repair --strip-unknown down-migrates under a backup (exit 0).
+    repaired = _run_lease_cli(authority, "repair", "--strip-unknown", cwd=tmp_path, environment=env)
+    assert repaired.returncode == 0
+    repaired_report = json.loads(repaired.stdout)
+    assert repaired_report["status"] == "repaired"
+    backup = Path(repaired_report["backup"])
+    assert backup.read_bytes() == injected_bytes
+    stripped = json.loads(registry_path.read_text(encoding="utf-8"))
+    assert "future_top" not in stripped
+    assert "future_lease" not in stripped["leases"][lease_id]
+
+    # A follow-up doctor confirms the closed shape (exit 0).
+    final = _run_lease_cli(authority, "doctor", cwd=tmp_path, environment=env)
+    assert final.returncode == 0
+    assert json.loads(final.stdout)["status"] == "valid"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import multiprocessing
@@ -1598,21 +1599,28 @@ def test_symlinked_authority_nodes_are_rejected(
         _agent(broker)
 
 
-def test_unsafe_modes_and_unknown_schema_fail_closed(tmp_path: Path, runtime: FakeRuntime) -> None:
+def test_unsafe_mode_fails_closed_and_unknown_top_level_key_is_tolerated(
+    tmp_path: Path, runtime: FakeRuntime
+) -> None:
+    # A bad file mode still fails closed; an additive unknown TOP-LEVEL key is now tolerated and
+    # preserved rather than bricking the reader (#617 R1 — reverses the pre-#617 brick behavior).
     root = tmp_path / "authority"
     root.mkdir(mode=0o700)
     broker = B.LeaseBroker(root, providers=runtime.providers())
-    _agent(broker)
+    lease = _agent(broker, resource="unit-tolerated")
     os.chmod(broker.registry_path, 0o644)
     with pytest.raises(B.UnsafeAuthorityError, match="mode must be 0600"):
         broker.inspect()
     os.chmod(broker.registry_path, 0o600)
     raw = _raw_registry(broker)
-    raw["unexpected"] = True
+    raw["unexpected"] = {"future": True}
     broker.registry_path.write_text(json.dumps(raw), encoding="utf-8")
     os.chmod(broker.registry_path, 0o600)
-    with pytest.raises(B.RegistryCorruptError, match="unknown field"):
-        broker.inspect()
+
+    # Reads no longer raise, and a mutating write preserves the unknown key byte-faithfully.
+    assert broker.inspect()["leases"][0]["lease_id"] == lease.lease_id
+    assert broker.release(lease.lease_id, token=lease.token) is True
+    assert _raw_registry(broker)["unexpected"] == {"future": True}
 
 
 def _contention_worker(root: str, start: Any, output: Any, index: int) -> None:
@@ -2219,3 +2227,483 @@ def test_recycled_slot_re_stamp_honors_new_isolation(broker: Any, tmp_path: Path
         "logical_unit_id": "tool-wave2",
         "worktree_root": str(second_cwd),
     }
+
+
+# ---------------------------------------------------------------------------
+# #617 U1 — registry schema forward-compatibility (tolerate-and-preserve).
+# ---------------------------------------------------------------------------
+
+
+def _admission_kwargs() -> dict[str, Any]:
+    limits = _limits()
+    return {
+        "policy_sha256": limits.policy_sha256(),
+        "session_limit": limits.max_concurrent,
+        "aggregate_limit": limits.aggregate_max_concurrent,
+        "mutation": "read-write",
+    }
+
+
+def _rich_registry(broker: Any) -> dict[str, Any]:
+    """Populate every tolerance-scoped sub-map through real broker flows.
+
+    Returns handles for the live lease, the prepared settlement, and the shared resource digest so
+    tests can inject unknown keys at each scope and drive a real mutation over the whole document.
+    """
+
+    lease = _agent(broker, resource="u1")
+    broker.configure_session_admission("s2", **_admission_kwargs())
+    settlement = broker.prepare_agent_settlement(
+        lease.lease_id,
+        owner_id=lease.owner_id,
+        token=lease.token,
+        producer="saga",
+        run_id="run",
+        expected_output_sha256="b" * 64,
+        protected_write_intent_sha256="c" * 64,
+    )
+    broker.close_owner_admission(owner_id="closed-owner")
+    return {
+        "lease": lease,
+        "settlement": settlement,
+        "digest": B.resource_sha256(lease.resource_ref),
+    }
+
+
+def _persist_raw(broker: Any, raw: dict[str, Any]) -> None:
+    broker.registry_path.write_text(json.dumps(raw), encoding="utf-8")
+    os.chmod(broker.registry_path, 0o600)
+
+
+def test_unknown_keys_at_every_scope_survive_read_then_write(broker: Any) -> None:
+    # R1/R9: a schema-newer document with additive unknown keys at the top level and inside a lease,
+    # fence, admission, settlement outer record, and owner-close reads clean and round-trips intact
+    # through a real broker mutation (renew rewrites the whole document from typed dataclasses).
+    handles = _rich_registry(broker)
+    lease = handles["lease"]
+    digest = handles["digest"]
+    raw = _raw_registry(broker)
+    raw["future_top"] = {"nested": [1, 2, 3]}
+    raw["leases"][lease.lease_id]["future_lease"] = "L"
+    raw["resource_fences"][digest]["future_fence"] = "F"
+    raw["session_admissions"]["s2"]["future_admission"] = "A"
+    raw["settlements"][digest]["future_settlement"] = "S"
+    raw["closed_owner_admissions"]["closed-owner"]["future_owner_close"] = "O"
+    _persist_raw(broker, raw)
+
+    # Read tolerates every unknown key (no RegistryCorruptError).
+    assert broker.inspect()["leases"][0]["lease_id"] == lease.lease_id
+    # A mutation rewrites the entire document; every unknown key must be preserved byte-faithfully.
+    broker.renew(lease.lease_id, owner_id=lease.owner_id, token=lease.token)
+    after = _raw_registry(broker)
+    assert after["future_top"] == {"nested": [1, 2, 3]}
+    assert after["leases"][lease.lease_id]["future_lease"] == "L"
+    assert after["resource_fences"][digest]["future_fence"] == "F"
+    assert after["session_admissions"]["s2"]["future_admission"] == "A"
+    assert after["settlements"][digest]["future_settlement"] == "S"
+    assert after["closed_owner_admissions"]["closed-owner"]["future_owner_close"] == "O"
+
+
+def test_fence_extras_survive_settlement_commit(broker: Any) -> None:
+    # #617 review F1: commit closes the SAME logical fence in place (the CAS proves identity), so
+    # per-fence unknown keys preserved at read must survive prepare->commit (KTD2/R1) rather than
+    # being dropped by a rebuilt fence — the newer-writer data-loss hazard this change exists to
+    # prevent, on the one mutation path the renew round-trip test does not cover.
+    handles = _rich_registry(broker)
+    lease = handles["lease"]
+    digest = handles["digest"]
+    settlement = handles["settlement"]
+    raw = _raw_registry(broker)
+    raw["resource_fences"][digest]["future_fence"] = "NEWER_WRITER_STATE"
+    _persist_raw(broker, raw)
+
+    broker.commit_agent_settlement(
+        settlement.settlement_id,
+        owner_id=lease.owner_id,
+        token=lease.token,
+        write=lambda _lease: ["evidence"],
+    )
+    after = _raw_registry(broker)
+    assert after["resource_fences"][digest]["close_receipt"] is not None
+    assert after["resource_fences"][digest]["future_fence"] == "NEWER_WRITER_STATE"
+
+
+def test_archived_fence_reads_are_capped_and_untruncated(
+    broker: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # #617 review F2: archived sidecars parse outside Registry.from_dict, so the KTD5 cap is
+    # enforced per record there, reads reach EOF under a hard byte bound (no 64 KiB single-read
+    # truncation of legitimate near-cap content), and a flooded sidecar fails closed instead of
+    # buffering unbounded.
+    monkeypatch.setattr(B, "_MAX_CLOSED_FENCES", 2)
+    issued = []
+    for index in range(B._MAX_CLOSED_FENCES + 1):
+        lease = _agent(broker, resource=f"unit-{index}")
+        issued.append(lease)
+        assert broker.release(lease.lease_id, token=lease.token)
+    digest = B.resource_sha256(issued[0].resource_ref)
+    sidecar = broker.closed_fences_dir / f"{digest}.json"
+    assert sidecar.is_file()
+    payload = json.loads(sidecar.read_text(encoding="utf-8"))
+
+    def _persist_sidecar(doc: dict[str, Any]) -> None:
+        sidecar.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        os.chmod(sidecar, 0o600)
+
+    # Legitimate under-cap extras whose pretty-printed file exceeds one 64 KiB read (indentation
+    # inflates the list far past its compact size): the loop must reach EOF and preserve the key,
+    # not truncate into a corruption error.
+    payload["future_archive"] = ["x"] * 8000
+    _persist_sidecar(payload)
+    assert len(sidecar.read_bytes()) > 65536
+    projection = broker.inspect()["archived_resource_fences"]
+    assert projection[digest]["future_archive"] == ["x"] * 8000
+    assert broker.classify_token(issued[0].resource_ref, issued[0].token) == "expired"
+
+    # Above the per-record extras cap the parse fails closed.
+    payload["future_archive"] = "x" * (B._MAX_EXTRAS_BYTES + 1)
+    _persist_sidecar(payload)
+    with pytest.raises(B.RegistryCorruptError, match="bounded tolerance capacity"):
+        broker.inspect()
+
+    # A flooded record trips the byte bound rather than being buffered unbounded.
+    payload["future_archive"] = "x" * (B._MAX_ARCHIVED_FENCE_BYTES + 1)
+    _persist_sidecar(payload)
+    with pytest.raises(B.RegistryCorruptError, match="bounded archive record size"):
+        broker.inspect()
+
+
+def test_extras_survive_write_registry_double_round_trip(broker: Any) -> None:
+    # R6: _write_registry validates the document twice via Registry.from_dict before replacement;
+    # both passes must accept the preserved extras rather than fail closed.
+    handles = _rich_registry(broker)
+    raw = _raw_registry(broker)
+    raw["future_top"] = {"k": "v"}
+    parsed = B.Registry.from_dict(raw)
+    # Re-parsing the freshly serialized document (the write-path's double round-trip) is stable.
+    once = parsed.to_dict()
+    twice = B.Registry.from_dict(once).to_dict()
+    assert once == twice
+    assert twice["future_top"] == {"k": "v"}
+    assert twice["leases"][handles["lease"].lease_id] == raw["leases"][handles["lease"].lease_id]
+
+
+def test_extras_free_output_stays_byte_identical(broker: Any) -> None:
+    # R5: for an extras-free registry the new broker's serialized output is byte-identical to the
+    # on-disk document, and the synthetic ``extras`` dataclass field never leaks as a JSON key.
+    _rich_registry(broker)
+    on_disk = broker.registry_path.read_text(encoding="utf-8")
+    raw = json.loads(on_disk)
+    reserialized = json.dumps(B.Registry.from_dict(raw).to_dict(), indent=2, sort_keys=True) + "\n"
+    assert reserialized == on_disk
+    assert "extras" not in _all_keys(raw)
+
+
+def test_extras_free_output_matches_pre_617_golden(broker: Any) -> None:
+    # #617 review F4: R5 is a pre/post contract — the tolerant broker's extras-free serialization
+    # must be byte-identical to the pre-#617 broker's output for the same flows, not merely
+    # self-consistent. Golden = SHA-256 of the on-disk document the base (4eb2fe15) broker writes
+    # for the _rich_registry fixture under the deterministic FakeRuntime. A deliberate future
+    # format change is a breaking schema lane (KTD3) and must update this golden knowingly.
+    _rich_registry(broker)
+    on_disk = broker.registry_path.read_bytes()
+    assert (
+        hashlib.sha256(on_disk).hexdigest()
+        == "fb0bc764b14715c7df4b444f9d70c09ac5590c7f18b0934870daa96634755127"
+    )
+
+
+def test_unknown_key_inside_settlement_close_receipt_fails_closed(broker: Any) -> None:
+    # R4/KTD1: the settlement-close receipt is digest-covered (every byte participates in its
+    # receipt/record hash), so an unknown key there is indistinguishable from tampering and must
+    # still fail closed even though container maps now tolerate unknowns.
+    lease = _agent(broker, resource="closed-unit")
+    settlement = broker.prepare_agent_settlement(
+        lease.lease_id,
+        owner_id=lease.owner_id,
+        token=lease.token,
+        producer="saga",
+        run_id="run",
+        expected_output_sha256="b" * 64,
+        protected_write_intent_sha256="c" * 64,
+    )
+    broker.commit_agent_settlement(
+        settlement.settlement_id,
+        owner_id=lease.owner_id,
+        token=lease.token,
+        write=lambda _lease: ["evidence"],
+    )
+    digest = B.resource_sha256(lease.resource_ref)
+    raw = _raw_registry(broker)
+    assert raw["resource_fences"][digest]["close_receipt"] is not None
+    raw["resource_fences"][digest]["close_receipt"]["surprise"] = True
+    _persist_raw(broker, raw)
+    with pytest.raises(B.RegistryCorruptError, match="unknown field"):
+        broker.inspect()
+
+
+def test_schema_v2_string_still_fails_closed(broker: Any) -> None:
+    # R3: the schema-identity gate is unchanged; a future v2 is a deliberate breaking lane.
+    _agent(broker, resource="u1")
+    raw = _raw_registry(broker)
+    raw["schema"] = "fleet_lease_registry.v2"
+    with pytest.raises(B.RegistryCorruptError, match="registry.schema must be"):
+        B.Registry.from_dict(raw)
+
+
+def test_known_field_violations_are_unchanged_errors(broker: Any) -> None:
+    # R2: tolerance does not soften any known-field value/invariant check.
+    _rich_registry(broker)
+    base = _raw_registry(broker)
+    lease_id = next(iter(base["leases"]))
+    digest = next(iter(base["settlements"]))
+
+    bad_epoch = json.loads(json.dumps(base))
+    bad_epoch["broker_epoch"] = "not-a-uuid"
+    with pytest.raises(B.RegistryCorruptError, match="broker_epoch must be a UUID"):
+        B.Registry.from_dict(bad_epoch)
+
+    flooded = json.loads(json.dumps(base))
+    flooded["session_admissions"] = {f"s{i}": {} for i in range(B._MAX_SESSION_ADMISSIONS + 1)}
+    with pytest.raises(B.RegistryCorruptError, match="session_admissions exceeds"):
+        B.Registry.from_dict(flooded)
+
+    regressed = json.loads(json.dumps(base))
+    regressed["next_fencing_sequence"] = 1
+    with pytest.raises(B.RegistryCorruptError, match="next_fencing_sequence must exceed"):
+        B.Registry.from_dict(regressed)
+
+    unbound = json.loads(json.dumps(base))
+    unbound["settlements"][digest]["lease_id"] = str(uuid.UUID(int=999))
+    with pytest.raises(
+        B.RegistryCorruptError, match="does not bind the current live resource head"
+    ):
+        B.Registry.from_dict(unbound)
+
+    assert lease_id  # referenced for clarity that leases are populated
+
+
+def test_extras_above_size_cap_fail_closed_but_moderate_extras_tolerated(broker: Any) -> None:
+    # KTD5: preserved extras are bounded; a payload above the 64 KiB cap fails closed while a
+    # moderate additive field is tolerated.
+    _agent(broker, resource="u1")
+    base = _raw_registry(broker)
+
+    moderate = json.loads(json.dumps(base))
+    moderate["future_top"] = "x" * 1024
+    assert B.Registry.from_dict(moderate).to_dict()["future_top"] == "x" * 1024
+
+    flooded = json.loads(json.dumps(base))
+    flooded["future_top"] = "x" * (B._MAX_EXTRAS_BYTES + 1)
+    with pytest.raises(B.RegistryCorruptError, match="exceed the bounded tolerance capacity"):
+        B.Registry.from_dict(flooded)
+
+
+def test_extras_cap_sums_across_records_in_the_whole_document(broker: Any) -> None:
+    # KTD5: the cap is per-document, summed across every extras mapping — many mid-size extras that
+    # individually pass but jointly exceed the cap fail closed.
+    handles = _rich_registry(broker)
+    raw = _raw_registry(broker)
+    lease_id = handles["lease"].lease_id
+    digest = handles["digest"]
+    half = "y" * (B._MAX_EXTRAS_BYTES // 2 + 8)
+    raw["leases"][lease_id]["future_lease"] = half
+    raw["settlements"][digest]["future_settlement"] = half
+    with pytest.raises(B.RegistryCorruptError, match="exceed the bounded tolerance capacity"):
+        B.Registry.from_dict(raw)
+
+
+def test_four_legacy_registry_migration_arms_still_fire(broker: Any) -> None:
+    # R2 regression pins: the four bespoke Registry.from_dict migration arms keep firing on their
+    # exact historical shapes and are untouched by the tolerance layer (they act on known keys and
+    # match by exact set, so an additive unknown key does not divert them).
+    _agent(broker, resource="u1")
+    full = _raw_registry(broker)
+
+    # Arm 1 — pre-#358 authority without closed_owner_admissions backfills the empty map.
+    pre_358 = json.loads(json.dumps(full))
+    del pre_358["closed_owner_admissions"]
+    assert B.Registry.from_dict(pre_358).closed_owner_admissions == {}
+
+    # Arm 2 — pre-recovery-capability authority backfills the null digest.
+    pre_recovery = json.loads(json.dumps(full))
+    del pre_recovery["recovery_capability_sha256"]
+    assert B.Registry.from_dict(pre_recovery).recovery_capability_sha256 is None
+
+    # Arm 3 — exact pre-session-admissions/settlements shape backfills both empty maps.
+    pre_admissions = json.loads(json.dumps(full))
+    del pre_admissions["session_admissions"]
+    del pre_admissions["settlements"]
+    migrated = B.Registry.from_dict(pre_admissions)
+    assert migrated.session_admissions == {}
+    assert migrated.settlements == {}
+
+    # Arm 4 — settlements-only and session_admissions-only historical shapes each backfill.
+    pre_settlements = json.loads(json.dumps(full))
+    del pre_settlements["settlements"]
+    assert B.Registry.from_dict(pre_settlements).settlements == {}
+    pre_only_admissions = json.loads(json.dumps(full))
+    del pre_only_admissions["session_admissions"]
+    assert B.Registry.from_dict(pre_only_admissions).session_admissions == {}
+
+
+# ---------------------------------------------------------------- doctor / repair (#617 U2)
+
+
+def _inject_extras_at_every_scope(broker: Any) -> dict[str, Any]:
+    """Populate every tolerance scope, inject one unknown key at each, and persist the document."""
+
+    handles = _rich_registry(broker)
+    lease = handles["lease"]
+    digest = handles["digest"]
+    raw = _raw_registry(broker)
+    raw["future_top"] = {"nested": [1, 2, 3]}
+    raw["leases"][lease.lease_id]["future_lease"] = "L"
+    raw["resource_fences"][digest]["future_fence"] = "F"
+    raw["session_admissions"]["s2"]["future_admission"] = "A"
+    raw["settlements"][digest]["future_settlement"] = "S"
+    raw["closed_owner_admissions"]["closed-owner"]["future_owner_close"] = "O"
+    _persist_raw(broker, raw)
+    handles["raw"] = raw
+    return handles
+
+
+def test_doctor_on_clean_registry_reports_valid_without_mutation(broker: Any) -> None:
+    # R7: doctor on an extras-free registry reports ``valid`` and leaves the file bytes untouched.
+    _rich_registry(broker)
+    before = broker.registry_path.read_bytes()
+    report = broker.doctor()
+    assert report["status"] == "valid"
+    assert report["exists"] is True
+    assert report["invariants"] == "ok"
+    assert report["extras"] == []
+    assert report["extras_key_count"] == 0
+    assert report["extras_bytes"] == 0
+    # Read-only: no mutation, no rewrite.
+    assert broker.registry_path.read_bytes() == before
+
+
+def test_doctor_on_absent_registry_reports_valid_and_creates_nothing(broker: Any) -> None:
+    # doctor must never create the authority root while diagnosing a missing registry.
+    report = broker.doctor()
+    assert report["status"] == "valid"
+    assert report["exists"] is False
+    assert report["extras"] == []
+    assert not broker.registry_path.exists()
+    assert not broker.root.exists()
+
+
+def test_doctor_inventories_exact_extras_paths_without_mutation(broker: Any) -> None:
+    # R7: doctor on an extras-carrying registry lists the exact JSON path of every preserved
+    # unknown key and reports ``tolerated-unknowns`` while never mutating the document.
+    handles = _inject_extras_at_every_scope(broker)
+    lease_id = handles["lease"].lease_id
+    digest = handles["digest"]
+    before = broker.registry_path.read_bytes()
+
+    report = broker.doctor()
+    assert report["status"] == "tolerated-unknowns"
+    assert report["invariants"] == "ok"
+    assert report["extras_key_count"] == 6
+    inventory = {entry["path"]: entry["keys"] for entry in report["extras"]}
+    assert inventory == {
+        "$": ["future_top"],
+        f"$.leases.{lease_id}": ["future_lease"],
+        f"$.resource_fences.{digest}": ["future_fence"],
+        "$.session_admissions.s2": ["future_admission"],
+        f"$.settlements.{digest}": ["future_settlement"],
+        "$.closed_owner_admissions.closed-owner": ["future_owner_close"],
+    }
+    assert report["extras_bytes"] > 0
+    assert broker.registry_path.read_bytes() == before
+
+
+def test_doctor_on_corrupt_registry_reports_corrupt_and_never_raises(broker: Any) -> None:
+    # R7: a genuinely malformed document (bad known-field value) is reported as data, not raised,
+    # so the diagnostic never itself aborts.
+    _agent(broker, resource="u1")
+    raw = _raw_registry(broker)
+    raw["broker_epoch"] = "not-a-uuid"
+    _persist_raw(broker, raw)
+    report = broker.doctor()
+    assert report["status"] == "corrupt"
+    assert report["exists"] is True
+    assert report["invariants"] == "failed"
+    assert "broker_epoch" in report["error"]
+
+
+def test_repair_strips_extras_with_backup_and_strict_revalidation(broker: Any) -> None:
+    # R8: repair backs the original document up beside the registry, strips every preserved unknown
+    # key, strict-revalidates, and writes atomically at 0600. The backup holds the original bytes.
+    handles = _inject_extras_at_every_scope(broker)
+    lease_id = handles["lease"].lease_id
+    digest = handles["digest"]
+    original_bytes = broker.registry_path.read_bytes()
+
+    report = broker.repair()
+    assert report["status"] == "repaired"
+    assert report["repaired"] is True
+    assert {entry["path"] for entry in report["stripped"]} == {
+        "$",
+        f"$.leases.{lease_id}",
+        f"$.resource_fences.{digest}",
+        "$.session_admissions.s2",
+        f"$.settlements.{digest}",
+        "$.closed_owner_admissions.closed-owner",
+    }
+
+    # Backup exists beside the registry, carries the exact original bytes, and is 0600.
+    backup = Path(report["backup"])
+    assert backup.parent == broker.root
+    assert backup.read_bytes() == original_bytes
+    assert stat.S_IMODE(os.stat(backup).st_mode) == 0o600
+
+    # The rewritten registry is stripped, strict-validates, and stays 0600.
+    after = _raw_registry(broker)
+    assert "future_top" not in after
+    assert "future_lease" not in after["leases"][lease_id]
+    assert "future_fence" not in after["resource_fences"][digest]
+    assert "future_admission" not in after["session_admissions"]["s2"]
+    assert "future_settlement" not in after["settlements"][digest]
+    assert "future_owner_close" not in after["closed_owner_admissions"]["closed-owner"]
+    assert "extras" not in _all_keys(after)
+    assert stat.S_IMODE(os.stat(broker.registry_path).st_mode) == 0o600
+    # A follow-up doctor confirms the down-migration reached closed shape.
+    assert broker.doctor()["status"] == "valid"
+
+
+def test_repair_on_clean_registry_is_a_no_op_report(broker: Any) -> None:
+    # R8: repair on a document with nothing to strip makes no backup and no write.
+    _rich_registry(broker)
+    before = broker.registry_path.read_bytes()
+    siblings_before = sorted(p.name for p in broker.root.iterdir())
+
+    report = broker.repair()
+    assert report["status"] == "clean"
+    assert report["repaired"] is False
+    assert report["stripped"] == []
+    assert "nothing to strip" in report["message"]
+    assert broker.registry_path.read_bytes() == before
+    # No backup sibling was minted.
+    assert sorted(p.name for p in broker.root.iterdir()) == siblings_before
+
+
+def test_repair_refuses_document_corrupt_beyond_stripping_and_leaves_it_untouched(
+    broker: Any,
+) -> None:
+    # R8: a document corrupt beyond unknown-field stripping (bad known-field value) is refused with
+    # the registry untouched and no backup minted.
+    _agent(broker, resource="u1")
+    raw = _raw_registry(broker)
+    raw["broker_epoch"] = "not-a-uuid"
+    raw["future_top"] = "would-strip"
+    _persist_raw(broker, raw)
+    before = broker.registry_path.read_bytes()
+    siblings_before = sorted(p.name for p in broker.root.iterdir())
+
+    report = broker.repair()
+    assert report["status"] == "refused"
+    assert report["repaired"] is False
+    assert "broker_epoch" in report["reason"]
+    assert broker.registry_path.read_bytes() == before
+    assert sorted(p.name for p in broker.root.iterdir()) == siblings_before

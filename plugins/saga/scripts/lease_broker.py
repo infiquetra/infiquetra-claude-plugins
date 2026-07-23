@@ -471,6 +471,13 @@ def _build_parser() -> argparse.ArgumentParser:
     sweep = subparsers.add_parser("sweep")
     sweep.add_argument("--terminal-lease-id", action="append", default=[])
 
+    # #617 KTD4: doctor is read-only; repair performs no default action and requires the explicit
+    # ``--strip-unknown`` flag so a rollback down-migration on shared fenced state is never implicit.
+    subparsers.add_parser("doctor")
+
+    repair = subparsers.add_parser("repair")
+    repair.add_argument("--strip-unknown", action="store_true")
+
     reserve = subparsers.add_parser("reserve-batch")
     reserve.add_argument("--count", type=int, required=True)
     reserve.add_argument("--owner-id", required=True)
@@ -522,6 +529,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "root_sha256": selected.root_sha256,
                 }
             )
+        elif args.command == "doctor":
+            report = selected.doctor()
+            _json_print(report)
+            # Distinct exit codes for the operator/automation seam (#617 R7): 0 clean,
+            # 3 tolerated-unknowns present, 4 corrupt. doctor never raises for a corrupt document.
+            # An unmapped future status fails closed to the corrupt code — a diagnostic verb must
+            # never report clean for a state it does not recognize.
+            return {"valid": 0, "tolerated-unknowns": 3, "corrupt": 4}.get(report["status"], 4)
+        elif args.command == "repair":
+            if not args.strip_unknown:
+                _die(
+                    "repair requires the explicit --strip-unknown flag; it performs no default "
+                    "action (#617 R8/KTD4)"
+                )
+            _json_print(selected.repair())
         elif args.command == "clear-session":
             _json_print({"cleared": selected.clear_session_admission(args.session_id)})
         elif args.command == "sweep":

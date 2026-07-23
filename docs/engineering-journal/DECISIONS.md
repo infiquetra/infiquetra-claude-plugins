@@ -5596,3 +5596,62 @@ that patches a failing runtime; and closing #579 with a waiver.
 **Revisit when.** A networked active-dispatch authority makes cross-host mutation an accepted product
 contract or the runtime packages provide a signed, standardized installed-attestation API that can
 replace the current isolated readback evidence.
+
+---
+
+### Registry readers tolerate-and-preserve unknown additive fields; commitments stay closed {#registry-forward-compat-617}
+
+**Date:** 2026-07-23 · **Plan:**
+`docs/plans/2026-07-23-issue-617-registry-schema-forward-compat-plan.md`
+
+**Issue:** #617 · **Learnings:** `{#broker-schema-forward-poisoning-616}`
+
+**Decision.** The fleet-lease registry reader (`plugins/fleet-core/scripts/fleet_commons/lease_broker.py`)
+tolerates and preserves unknown additive fields in container mappings instead of failing closed with
+`RegistryCorruptError` on every unrecognized key, and ships `doctor`/`repair` as the shipped operator
+path for the manual recovery the 2026-07-17 and 2026-07-22 incidents required by hand.
+
+- **KTD1 — tolerance line = containers tolerant, commitments closed.** Unknown-key tolerance applies
+  to container mappings (registry top level, per-lease, per-fence, per-admission, per-settlement-outer
+  record, per-owner-close); digest-covered commitment records verified by `_record_sha256`
+  (settlement-close receipts, `FencingToken`) stay strictly closed, because container fields are
+  mutable schema-evolvable state while commitment records are hash-bound evidence where an unknown
+  byte is indistinguishable from tampering.
+- **KTD2 — extras passthrough rides a per-dataclass `extras` mapping.** Each tolerance-scoped
+  dataclass (and `Registry` itself) captures the unknown remainder at `from_dict` and merges it last
+  in `to_dict`. `to_dict` rebuilds the document from typed dataclasses, so passthrough that doesn't
+  ride the dataclass is silently dropped on the next write — the round-trip data-loss hazard this
+  decision exists to kill. `sort_keys=True` plus extras being disjoint from known keys by
+  construction keeps output deterministic and collision-free.
+- **KTD3 — no version stamp, no migration framework.** The schema string stays
+  `fleet_lease_registry.v1` and the fix writes zero new fields; any new written field would itself
+  brick every pre-#617 reader, the exact defect under repair. The four existing bespoke legacy
+  migration arms in `Registry.from_dict` are untouched. A future breaking change rides an explicit
+  v2 schema string, which fails closed by design.
+- **KTD4 — `doctor`/`repair` are explicit operator down-migration verbs, not auto-recovery.** They
+  land as saga adapter CLI verbs (`plugins/saga/scripts/lease_broker.py`, beside `inspect`/`sweep`)
+  delegating to fleet-core broker methods; `saga:fleet-doctor` stays strictly read-only.
+  Auto-repairing shared fenced state on read would itself be a tamper/corruption-masking vector — with
+  tolerance shipped, `repair`'s remaining job is deliberate rollback support (strip newer fields so an
+  older broker can read the file) plus a shipped triage path for the next "corrupt beyond tolerance"
+  incident. `repair` never runs implicitly and requires an explicit `--strip-unknown` flag.
+- **KTD5 — tolerance is bounded; corruption stays detectable.** Preserved unknown extras are capped
+  at 64 KiB serialized per document; above the cap the read fails closed with `RegistryCorruptError`.
+  An unbounded unknown-blob channel in a 0600 shared-state file would invite garbage-flood and
+  smuggling; the cap keeps the fail-closed posture against non-additive garbage while sitting far
+  above any plausible additive-field payload.
+- **Mid-run reload writer-swap hazard stays out of scope, documented not built.** The issue's proposed
+  fix 4 — harness-side detect-and-refuse of a mid-run plugin reload that swaps the active schema
+  writer underneath a running session — is harness territory, not adapter-CLI or broker territory.
+  This fix does not attempt it; the hazard is recorded here and in LEARNINGS
+  `{#broker-schema-forward-poisoning-616}` so a future harness-side change has the incident context,
+  rather than being silently reintroduced as an unstated assumption.
+
+**Rejected.** A `schema_minor` stamp (a new field is self-defeating against R5); writer-version
+stamping with migrate-on-open (machinery with no consumer while v1 stays additive-only); a
+minor-version string lane (`v1.x`) that changes the exact-matched `schema` value and bricks older
+readers identically to the defect under repair; auto-repair on read; and an unbounded extras channel.
+
+**Revisit when.** A genuinely breaking v2 schema is first needed (KTD3), at which point a real
+migration framework and writer-version stamping become worth their machinery; or the harness gains a
+mid-run plugin-reload detection surface that could consume the writer-swap hazard note directly.

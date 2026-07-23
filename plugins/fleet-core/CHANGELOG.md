@@ -5,6 +5,44 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.0] - 2026-07-23
+
+### Fixed - Registry reader forward-compatibility: tolerate-and-preserve unknown fields, doctor/repair verbs (#617)
+
+- `_closed_mapping` gains a tolerant sibling, `_tolerant_mapping`, used at every tolerance-scoped
+  container boundary — the registry top level and the per-lease, per-fence, per-admission, and
+  per-settlement-outer-record `from_dict`s. Known keys are still validated exactly as before
+  (value/type/invariant checks unchanged); unknown additive keys are captured into a per-dataclass
+  `extras` mapping instead of raising `RegistryCorruptError`, and `to_dict` merges `extras` back in
+  last so the read → mutate → write round-trip preserves them byte-faithfully, even after the
+  typed-dataclass rebuild. Fixes the 2026-07-17 (`recovery_capability_sha256`/`settlements`/
+  `close_receipt`) and 2026-07-22 (`Lease.isolation`) incident shapes: a schema-newer writer no
+  longer bricks every older reader fleet-wide.
+- Digest-covered commitment records (settlement-close receipts verified by `_record_sha256`,
+  including `FencingToken`) keep the strict closed vocabulary — unknown keys there still fail
+  closed, per the KTD1 audit pinned in code comments at each carve-out site, because every byte
+  participates in the hash commitment.
+- Preserved extras are capped at 64 KiB serialized per document (`_MAX_EXTRAS_BYTES`); above the
+  cap the read fails closed with `RegistryCorruptError` rather than becoming an unbounded
+  unknown-blob channel in a shared 0600 state file. Archived closed-fence sidecars, which parse
+  outside `Registry.from_dict`, enforce the same cap per record and bound the raw read at
+  `_MAX_ARCHIVED_FENCE_BYTES` (4x the cap, to EOF — no single-read truncation of legitimate
+  near-cap records), so the archive directory is not an uncapped side channel.
+- Settlement commit closes the CAS-verified live fence in place via `replace(head,
+  close_receipt=...)`, preserving per-fence extras through the close instead of rebuilding the
+  fence and silently dropping a newer writer's state.
+- Zero new registry fields are written: for an extras-free document, `to_dict` output is
+  byte-identical to pre-#617 serialization (same keys, same `sort_keys=True` ordering). The schema
+  string stays `fleet_lease_registry.v1`, and `schema != "fleet_lease_registry.v1"` still fails
+  closed unchanged. Shipping this fix cannot itself brick a pre-#617 reader.
+- New broker methods `doctor()` (read-only; reports `valid` | `tolerated-unknowns` | `corrupt`
+  plus a JSON-path extras inventory and invariant status; never mutates, never raises on a corrupt
+  document) and `repair()` (explicit down-migration: backs the registry up to a timestamped 0600
+  sibling, strips extras, strict-revalidates, writes atomically under the existing single
+  `_locked()` write path; refuses — leaving the registry untouched — if strict revalidation still
+  fails after stripping, or if there is nothing to strip). `repair` replaces the manual
+  hand-editing recovery used on 2026-07-17 with a shipped operator path.
+
 ## [0.21.0] - 2026-07-23
 
 ### Fixed - Unclaimed reservation survives async PostToolUse launch-return, defers to spawn_failed or claim TTL (#644)

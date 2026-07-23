@@ -92,6 +92,9 @@ def _agent(
     ttl: int = 300,
     tool: str | None = None,
     agent_type: str = "worker",
+    isolation: str | None = None,
+    agent_id: str | None = None,
+    on_conflict: str = "supersede",
 ) -> Any:
     effective = _limits() if limits is None else limits
     return broker.acquire_agent(
@@ -105,6 +108,9 @@ def _agent(
         resource_ref=None if resource is None else {"logical_unit_id": resource},
         tool_use_id=tool,
         agent_type=agent_type,
+        isolation=isolation,
+        agent_id=agent_id,
+        on_conflict=on_conflict,
     )
 
 
@@ -1815,3 +1821,219 @@ def test_expired_batch_member_is_not_resurrected_by_mutation_path(
     runtime.advance(B.DEFAULT_TTL_SECONDS + 1)
     with pytest.raises(B.LeaseExpiredError):
         broker.assert_write_target("stalled")
+
+
+# --- #616 worktree write-fence scoping: fence by declared isolation, not spawn cwd ---
+
+
+def test_stamped_non_isolated_claim_leaves_write_unfenced(broker: Any, tmp_path: Path) -> None:
+    """R1: a PreToolUse-stamped, non-worktree reservation claims with no worktree_root, so a
+    verified mutation outside the spawn cwd passes assert_write_target (the fence is removed)."""
+    cwd = tmp_path / "spawn-cwd"
+    cwd.mkdir()
+    reservation = _agent(broker, tool="tool-r1", isolation=None)
+    claimed = broker.claim(
+        session_id="session",
+        agent_type="worker",
+        agent_id="child-r1",
+        worktree_root=str(cwd),
+    )
+    assert claimed.lease_id == reservation.lease_id
+    assert claimed.isolation is None
+    assert claimed.resource_ref == {"logical_unit_id": "tool-r1"}
+    outside = tmp_path / "elsewhere" / "file.txt"
+    assert broker.assert_write_target("child-r1", outside).lease_id == claimed.lease_id
+
+
+def test_worktree_isolated_claim_stays_write_fenced(broker: Any, tmp_path: Path) -> None:
+    """R2: a reservation declaring isolation='worktree' claims with worktree_root stamped from the
+    child cwd; a write outside that root is still refused by the containment check."""
+    worktree = tmp_path / "isolated-wt"
+    worktree.mkdir()
+    reservation = _agent(broker, tool="tool-r2", isolation="worktree")
+    claimed = broker.claim(
+        session_id="session",
+        agent_type="worker",
+        agent_id="child-r2",
+        worktree_root=str(worktree),
+    )
+    assert claimed.lease_id == reservation.lease_id
+    assert claimed.isolation == "worktree"
+    assert claimed.resource_ref == {
+        "logical_unit_id": "tool-r2",
+        "worktree_root": str(worktree),
+    }
+    assert (
+        broker.assert_write_target("child-r2", worktree / "file.txt").lease_id == claimed.lease_id
+    )
+    with pytest.raises(B.MissingResourceError, match="outside leased worktree"):
+        broker.assert_write_target("child-r2", tmp_path / "elsewhere.txt")
+
+
+def test_unstamped_batch_slot_claim_stamps_worktree_root_byte_parity(
+    broker: Any, tmp_path: Path
+) -> None:
+    """R3: an attested-but-unstamped batch slot (tool_use_id is None) keeps today's conservative
+    cwd fence byte-for-byte — worktree_root stamped from the child cwd."""
+    cwd = tmp_path / "wf-cwd"
+    cwd.mkdir()
+    _workflow_batch(broker, count=1)
+    claimed = broker.claim(
+        session_id="workflow",
+        agent_type="worker",
+        agent_id="wf-child",
+        batch_id="wf-batch",
+        worktree_root=str(cwd),
+    )
+    assert claimed.isolation is None
+    assert claimed.resource_ref == {
+        "logical_unit_id": "workflow:worker:wf-child",
+        "worktree_root": str(cwd),
+    }
+
+
+def test_prepare_batch_call_records_isolation_and_claim_honors_it(
+    broker: Any, tmp_path: Path
+) -> None:
+    """R4: a direct Agent spawn during a live batch records the declared isolation on the slot and
+    claim honors it identically to the non-batch path."""
+    worktree = tmp_path / "batch-wt"
+    worktree.mkdir()
+    _workflow_batch(broker, count=2)
+
+    fenced_slot = broker.prepare_batch_call(
+        session_id="workflow",
+        batch_id="wf-batch",
+        agent_type="worker",
+        tool_use_id="tool-fenced",
+        isolation="worktree",
+    )
+    assert fenced_slot.isolation == "worktree"
+    fenced = broker.claim(
+        session_id="workflow",
+        agent_type="worker",
+        agent_id="child-fenced",
+        batch_id="wf-batch",
+        worktree_root=str(worktree),
+    )
+    assert fenced.resource_ref == {"logical_unit_id": "tool-fenced", "worktree_root": str(worktree)}
+
+    open_slot = broker.prepare_batch_call(
+        session_id="workflow",
+        batch_id="wf-batch",
+        agent_type="worker",
+        tool_use_id="tool-open",
+        isolation=None,
+    )
+    assert open_slot.isolation is None
+    unfenced = broker.claim(
+        session_id="workflow",
+        agent_type="worker",
+        agent_id="child-open",
+        batch_id="wf-batch",
+        worktree_root=str(tmp_path / "other-cwd"),
+    )
+    assert unfenced.resource_ref == {"logical_unit_id": "tool-open"}
+
+
+def test_registry_without_isolation_key_backfills_to_none(
+    broker: Any, tmp_path: Path, runtime: FakeRuntime
+) -> None:
+    """R5: a 0.19.0-shaped lease dict (no isolation key) loads with isolation=None; a written
+    0.20.0 registry serializes the field and re-loads cleanly."""
+    lease = _agent(broker, resource="reg-unit", tool="reg-tool")
+    raw = _raw_registry(broker)
+    record = raw["leases"][lease.lease_id]
+    assert "isolation" in record  # a 0.20.0 broker always serializes the field (fresh round-trip)
+    del record["isolation"]
+    broker.registry_path.write_text(json.dumps(raw), encoding="utf-8")
+    os.chmod(broker.registry_path, 0o600)
+
+    loaded = broker.inspect()["leases"][0]
+    assert loaded["lease_id"] == lease.lease_id
+    assert loaded["isolation"] is None
+    # A second broker over the same on-disk state re-reads the pre-#616 shape without error.
+    reopened = B.LeaseBroker(tmp_path / "authority", providers=runtime.providers())
+    reloaded = reopened.inspect()["leases"][0]
+    assert reloaded["lease_id"] == lease.lease_id
+    assert reloaded["isolation"] is None
+
+
+def test_batch_slot_recycle_resets_isolation(broker: Any, tmp_path: Path) -> None:
+    """R6: after a stamped, isolated batch child goes terminal the recycled slot resets isolation to
+    None, so a workflow child that re-claims it gets row-3 (unstamped) behavior, not the prior
+    spawn's declaration."""
+    worktree = tmp_path / "recycle-wt"
+    worktree.mkdir()
+    _workflow_batch(broker, count=1)
+    broker.prepare_batch_call(
+        session_id="workflow",
+        batch_id="wf-batch",
+        agent_type="worker",
+        tool_use_id="tool-recycle",
+        isolation="worktree",
+    )
+    broker.claim(
+        session_id="workflow",
+        agent_type="worker",
+        agent_id="child-first",
+        batch_id="wf-batch",
+        worktree_root=str(worktree),
+    )
+    assert broker.record_parent_completed("workflow", "tool-recycle") == ()
+    assert broker.record_child_terminal("child-first") is True
+
+    recycled = broker.inspect()["leases"][0]
+    assert recycled["agent_id"] is None
+    assert recycled["tool_use_id"] is None
+    assert recycled["isolation"] is None
+
+    second_cwd = tmp_path / "second-cwd"
+    second_cwd.mkdir()
+    reclaimed = broker.claim(
+        session_id="workflow",
+        agent_type="worker",
+        agent_id="child-second",
+        batch_id="wf-batch",
+        worktree_root=str(second_cwd),
+    )
+    assert reclaimed.isolation is None
+    assert reclaimed.resource_ref == {
+        "logical_unit_id": "workflow:worker:child-second",
+        "worktree_root": str(second_cwd),
+    }
+
+
+def test_supersede_replaces_isolation_declaration(broker: Any) -> None:
+    """A superseding reservation on the same resource digest wins its isolation declaration."""
+    generous = _limits(max_concurrent=4, readonly_max_concurrent=4, aggregate_max_concurrent=4)
+    first = _agent(broker, limits=generous, resource="shared", agent_id="a1", isolation="worktree")
+    assert first.isolation == "worktree"
+    second = _agent(
+        broker,
+        limits=generous,
+        resource="shared",
+        agent_id="a2",
+        isolation=None,
+        on_conflict="supersede",
+    )
+    assert second.isolation is None
+    lease_ids = {item["lease_id"] for item in broker.inspect()["leases"]}
+    assert first.lease_id not in lease_ids
+    assert second.lease_id in lease_ids
+
+
+def test_invalid_isolation_value_rejected_at_boundary(broker: Any) -> None:
+    """Only 'worktree'/None are storable; any other declared value is rejected at the broker
+    boundary so no speculative isolation ever reaches the registry."""
+    with pytest.raises(B.LeaseBrokerError, match="isolation must be"):
+        _agent(broker, tool="tool-bad", isolation="remote")
+    _workflow_batch(broker, count=1)
+    with pytest.raises(B.LeaseBrokerError, match="isolation must be"):
+        broker.prepare_batch_call(
+            session_id="workflow",
+            batch_id="wf-batch",
+            agent_type="worker",
+            tool_use_id="tool-bad-batch",
+            isolation="remote",
+        )

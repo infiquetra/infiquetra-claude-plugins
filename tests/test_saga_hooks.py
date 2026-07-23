@@ -981,7 +981,14 @@ def test_saga_lease_cli_doctor_routes_through_broker_and_maps_exit_codes(
             self.doctor_calls += 1
             return {"status": self.status, "extras": []}
 
-    for status, expected in (("valid", 0), ("tolerated-unknowns", 3), ("corrupt", 4)):
+    for status, expected in (
+        ("valid", 0),
+        ("tolerated-unknowns", 3),
+        ("corrupt", 4),
+        # #617 review F3: an unmapped future status must fail closed to the corrupt code —
+        # a diagnostic verb never reports clean for a state it does not recognize.
+        ("unrecognized-future-status", 4),
+    ):
         fake = _FakeBroker(status)
         monkeypatch.setattr(adapter, "broker", lambda env=None, fake=fake: fake)
         assert adapter.main(["doctor"]) == expected

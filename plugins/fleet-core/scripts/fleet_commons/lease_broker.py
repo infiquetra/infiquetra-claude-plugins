@@ -189,6 +189,11 @@ _MAX_SETTLEMENTS = 128
 # in the 0600 shared-state file. 64 KiB sits far above any plausible additive-field payload while
 # keeping the corruption line detectable.
 _MAX_EXTRAS_BYTES = 64 * 1024
+# Archived closed-fence sidecars are parsed outside Registry.from_dict, so the document-total
+# cap above cannot see them; each sidecar read is bounded on its own instead. 4x the extras cap
+# leaves room for the pretty-printed encoding plus the known fence fields while still failing
+# closed on a flooded record.
+_MAX_ARCHIVED_FENCE_BYTES = 4 * _MAX_EXTRAS_BYTES
 _CLOSED_OWNER_ADMISSION_KEYS = frozenset({"closed_at", "boot_id", "close_generation"})
 # Closed-owner records exist to fence spawn-versus-completion races during one run's teardown.
 # On overflow the lowest-generation record is evicted, which REOPENS admission for the evicted
@@ -1956,15 +1961,42 @@ class LeaseBroker:
             os.close(archive_fd)
             return None
         try:
-            payload = json.loads(os.read(fd, 65536).decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise RegistryCorruptError(f"closed fence is not valid UTF-8 JSON: {exc}") from exc
+            payload = self._read_bounded_archived_fence_payload(fd)
         finally:
             os.close(fd)
             os.close(archive_fd)
+        return self._validated_archived_fence(digest, payload)
+
+    @staticmethod
+    def _read_bounded_archived_fence_payload(fd: int) -> dict[str, Any]:
+        """Read one sidecar to EOF under a hard size bound (no single-read truncation)."""
+
+        chunks: list[bytes] = []
+        total = 0
+        while chunk := os.read(fd, 65536):
+            total += len(chunk)
+            if total > _MAX_ARCHIVED_FENCE_BYTES:
+                raise RegistryCorruptError("closed fence exceeds the bounded archive record size")
+            chunks.append(chunk)
+        try:
+            payload = json.loads(b"".join(chunks).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RegistryCorruptError(f"closed fence is not valid UTF-8 JSON: {exc}") from exc
         if not isinstance(payload, dict):
             raise RegistryCorruptError("closed fence must contain an object")
-        return ResourceFence.from_dict(digest, payload)
+        return payload
+
+    @staticmethod
+    def _validated_archived_fence(digest: str, payload: dict[str, Any]) -> ResourceFence:
+        # Sidecar parses bypass the document-total extras cap in Registry.from_dict, so the
+        # KTD5 bound is enforced per archived record here — otherwise the archive would be an
+        # uncapped extras channel (pre-#617 this path failed closed on any unknown key).
+        fence = ResourceFence.from_dict(digest, payload)
+        if _extras_serialized_size(fence.extras) > _MAX_EXTRAS_BYTES:
+            raise RegistryCorruptError(
+                "archived closed fence unknown fields exceed the bounded tolerance capacity"
+            )
+        return fence
 
     def _inspect_archived_fences(self, *, exclude: set[str]) -> dict[str, dict[str, Any]]:
         """Return at most the newest bounded set of validated archived authority heads."""
@@ -1988,19 +2020,10 @@ class LeaseBroker:
                     archive_fd, name, os.O_RDONLY, mode=0o600, kind="closed fence"
                 )
                 try:
-                    chunks: list[bytes] = []
-                    while chunk := os.read(fd, 65536):
-                        chunks.append(chunk)
-                    payload = json.loads(b"".join(chunks).decode("utf-8"))
-                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                    raise RegistryCorruptError(
-                        f"closed fence is not valid UTF-8 JSON: {exc}"
-                    ) from exc
+                    payload = self._read_bounded_archived_fence_payload(fd)
                 finally:
                     os.close(fd)
-                if not isinstance(payload, dict):
-                    raise RegistryCorruptError("closed fence must contain an object")
-                fence = ResourceFence.from_dict(digest, payload)
+                fence = self._validated_archived_fence(digest, payload)
                 newest.append((fence.fencing_sequence, digest, fence))
             newest.sort(reverse=True)
             return {
@@ -3627,13 +3650,10 @@ class LeaseBroker:
             or head.close_receipt is not None
         ):
             raise LeaseSupersededError("settlement close lost its exact resource-head CAS")
-        registry.resource_fences[digest] = ResourceFence(
-            resource_ref=settlement.resource_ref,
-            broker_epoch=settlement.token.broker_epoch,
-            fencing_sequence=settlement.token.fencing_sequence,
-            lease_id=settlement.lease_id,
-            close_receipt=close,
-        )
+        # In-place close of the CAS-verified live head: replace() keeps preserved unknown
+        # fields (#617 KTD2) — a rebuilt ResourceFence would silently drop a newer writer's
+        # per-fence extras at exactly the commit that archives the fence.
+        registry.resource_fences[digest] = replace(head, close_receipt=close)
         registry.leases.pop(settlement.lease_id, None)
         registry.settlements.pop(digest, None)
         _final_wall, _final_text, final_monotonic, final_boot_id = self._now()

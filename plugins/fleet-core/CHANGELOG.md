@@ -24,7 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   participates in the hash commitment.
 - Preserved extras are capped at 64 KiB serialized per document (`_MAX_EXTRAS_BYTES`); above the
   cap the read fails closed with `RegistryCorruptError` rather than becoming an unbounded
-  unknown-blob channel in a shared 0600 state file.
+  unknown-blob channel in a shared 0600 state file. Archived closed-fence sidecars, which parse
+  outside `Registry.from_dict`, enforce the same cap per record and bound the raw read at
+  `_MAX_ARCHIVED_FENCE_BYTES` (4x the cap, to EOF — no single-read truncation of legitimate
+  near-cap records), so the archive directory is not an uncapped side channel.
+- Settlement commit closes the CAS-verified live fence in place via `replace(head,
+  close_receipt=...)`, preserving per-fence extras through the close instead of rebuilding the
+  fence and silently dropping a newer writer's state.
 - Zero new registry fields are written: for an extras-free document, `to_dict` output is
   byte-identical to pre-#617 serialization (same keys, same `sort_keys=True` ordering). The schema
   string stays `fleet_lease_registry.v1`, and `schema != "fleet_lease_registry.v1"` still fails

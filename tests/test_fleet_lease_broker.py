@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import multiprocessing
@@ -2303,6 +2304,75 @@ def test_unknown_keys_at_every_scope_survive_read_then_write(broker: Any) -> Non
     assert after["closed_owner_admissions"]["closed-owner"]["future_owner_close"] == "O"
 
 
+def test_fence_extras_survive_settlement_commit(broker: Any) -> None:
+    # #617 review F1: commit closes the SAME logical fence in place (the CAS proves identity), so
+    # per-fence unknown keys preserved at read must survive prepare->commit (KTD2/R1) rather than
+    # being dropped by a rebuilt fence — the newer-writer data-loss hazard this change exists to
+    # prevent, on the one mutation path the renew round-trip test does not cover.
+    handles = _rich_registry(broker)
+    lease = handles["lease"]
+    digest = handles["digest"]
+    settlement = handles["settlement"]
+    raw = _raw_registry(broker)
+    raw["resource_fences"][digest]["future_fence"] = "NEWER_WRITER_STATE"
+    _persist_raw(broker, raw)
+
+    broker.commit_agent_settlement(
+        settlement.settlement_id,
+        owner_id=lease.owner_id,
+        token=lease.token,
+        write=lambda _lease: ["evidence"],
+    )
+    after = _raw_registry(broker)
+    assert after["resource_fences"][digest]["close_receipt"] is not None
+    assert after["resource_fences"][digest]["future_fence"] == "NEWER_WRITER_STATE"
+
+
+def test_archived_fence_reads_are_capped_and_untruncated(
+    broker: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # #617 review F2: archived sidecars parse outside Registry.from_dict, so the KTD5 cap is
+    # enforced per record there, reads reach EOF under a hard byte bound (no 64 KiB single-read
+    # truncation of legitimate near-cap content), and a flooded sidecar fails closed instead of
+    # buffering unbounded.
+    monkeypatch.setattr(B, "_MAX_CLOSED_FENCES", 2)
+    issued = []
+    for index in range(B._MAX_CLOSED_FENCES + 1):
+        lease = _agent(broker, resource=f"unit-{index}")
+        issued.append(lease)
+        assert broker.release(lease.lease_id, token=lease.token)
+    digest = B.resource_sha256(issued[0].resource_ref)
+    sidecar = broker.closed_fences_dir / f"{digest}.json"
+    assert sidecar.is_file()
+    payload = json.loads(sidecar.read_text(encoding="utf-8"))
+
+    def _persist_sidecar(doc: dict[str, Any]) -> None:
+        sidecar.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        os.chmod(sidecar, 0o600)
+
+    # Legitimate under-cap extras whose pretty-printed file exceeds one 64 KiB read (indentation
+    # inflates the list far past its compact size): the loop must reach EOF and preserve the key,
+    # not truncate into a corruption error.
+    payload["future_archive"] = ["x"] * 8000
+    _persist_sidecar(payload)
+    assert len(sidecar.read_bytes()) > 65536
+    projection = broker.inspect()["archived_resource_fences"]
+    assert projection[digest]["future_archive"] == ["x"] * 8000
+    assert broker.classify_token(issued[0].resource_ref, issued[0].token) == "expired"
+
+    # Above the per-record extras cap the parse fails closed.
+    payload["future_archive"] = "x" * (B._MAX_EXTRAS_BYTES + 1)
+    _persist_sidecar(payload)
+    with pytest.raises(B.RegistryCorruptError, match="bounded tolerance capacity"):
+        broker.inspect()
+
+    # A flooded record trips the byte bound rather than being buffered unbounded.
+    payload["future_archive"] = "x" * (B._MAX_ARCHIVED_FENCE_BYTES + 1)
+    _persist_sidecar(payload)
+    with pytest.raises(B.RegistryCorruptError, match="bounded archive record size"):
+        broker.inspect()
+
+
 def test_extras_survive_write_registry_double_round_trip(broker: Any) -> None:
     # R6: _write_registry validates the document twice via Registry.from_dict before replacement;
     # both passes must accept the preserved extras rather than fail closed.
@@ -2327,6 +2397,20 @@ def test_extras_free_output_stays_byte_identical(broker: Any) -> None:
     reserialized = json.dumps(B.Registry.from_dict(raw).to_dict(), indent=2, sort_keys=True) + "\n"
     assert reserialized == on_disk
     assert "extras" not in _all_keys(raw)
+
+
+def test_extras_free_output_matches_pre_617_golden(broker: Any) -> None:
+    # #617 review F4: R5 is a pre/post contract — the tolerant broker's extras-free serialization
+    # must be byte-identical to the pre-#617 broker's output for the same flows, not merely
+    # self-consistent. Golden = SHA-256 of the on-disk document the base (4eb2fe15) broker writes
+    # for the _rich_registry fixture under the deterministic FakeRuntime. A deliberate future
+    # format change is a breaking schema lane (KTD3) and must update this golden knowingly.
+    _rich_registry(broker)
+    on_disk = broker.registry_path.read_bytes()
+    assert (
+        hashlib.sha256(on_disk).hexdigest()
+        == "fb0bc764b14715c7df4b444f9d70c09ac5590c7f18b0934870daa96634755127"
+    )
 
 
 def test_unknown_key_inside_settlement_close_receipt_fails_closed(broker: Any) -> None:

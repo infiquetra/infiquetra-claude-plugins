@@ -7,7 +7,8 @@
 - `plugins/saga/scripts/lease_broker.py` gains two subcommands beside `inspect`/`sweep`, routed
   through the shim-resolved broker (no direct import bypass): `doctor` (read-only; prints the
   fleet-core 0.22.0 broker's structured report and exits with a distinct code — 0 clean, 3
-  tolerated-unknowns-present, 4 corrupt — never raising for a corrupt document) and `repair`
+  tolerated-unknowns-present, 4 corrupt; an unmapped future status fails closed to 4 rather than
+  defaulting to clean — never raising for a corrupt document) and `repair`
   (requires the explicit `--strip-unknown` flag; performs no default action, since stripping
   additive fields from shared fenced state is a deliberate rollback operation, not routine
   maintenance). Both ship the operator path for the registry read-tolerance layer landed in

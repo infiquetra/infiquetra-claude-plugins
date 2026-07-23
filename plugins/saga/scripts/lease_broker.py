@@ -534,7 +534,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             _json_print(report)
             # Distinct exit codes for the operator/automation seam (#617 R7): 0 clean,
             # 3 tolerated-unknowns present, 4 corrupt. doctor never raises for a corrupt document.
-            return {"valid": 0, "tolerated-unknowns": 3, "corrupt": 4}.get(report["status"], 0)
+            # An unmapped future status fails closed to the corrupt code — a diagnostic verb must
+            # never report clean for a state it does not recognize.
+            return {"valid": 0, "tolerated-unknowns": 3, "corrupt": 4}.get(report["status"], 4)
         elif args.command == "repair":
             if not args.strip_unknown:
                 _die(

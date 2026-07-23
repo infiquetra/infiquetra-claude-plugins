@@ -533,6 +533,39 @@ def test_hooks_json_arms_every_required_lifecycle_seam() -> None:
     )
 
 
+def test_record_hook_parent_forwards_spawn_failed_from_hook_event_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Issue #644 U2: PostToolUseFailure maps to spawn_failed=True, PostToolUse to False."""
+
+    scripts = SAGA / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    adapter = _load(scripts / "lease_broker.py", "saga_lease_adapter_spawn_failed_test")
+
+    calls: list[tuple[str, str, bool]] = []
+
+    class _FakeBroker:
+        def record_parent_completed(
+            self, session_id: str, tool_use_id: str, *, spawn_failed: bool = False
+        ) -> tuple[str, ...]:
+            calls.append((session_id, tool_use_id, spawn_failed))
+            return ()
+
+        def inspect(self) -> dict[str, Any]:
+            return {"leases": []}
+
+    monkeypatch.setattr(adapter, "broker", lambda env=None: _FakeBroker())
+
+    adapter.record_hook_parent(_parent_payload(tmp_path, "tool"))
+    adapter.record_hook_parent(_parent_payload(tmp_path, "tool", failure=True))
+
+    assert calls == [
+        ("session", "tool", False),
+        ("session", "tool", True),
+    ]
+
+
 @pytest.mark.parametrize("version", [1, 99])
 def test_saga_adapter_rejects_lease_protocol_skew(
     monkeypatch: pytest.MonkeyPatch, version: int

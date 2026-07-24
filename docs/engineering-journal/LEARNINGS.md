@@ -4179,3 +4179,27 @@ output.
 **Generalizable rule.** Before expecting a closure-gated leaf to harvest, verify the spec
 node's `leaf_saga_id` matches the dispatch ledger record — and treat a silent
 `harvested: []` on a merged PR as a closure-gate resolution failure, not a barrier miss.
+
+---
+
+### Lazy `import X` + per-test `_load(X)` = a stale monkeypatch target  {#sys-modules-stale-patch-620}
+
+**Evidence.** #620 board-sync tests (`tests/test_outcome_board_sync.py`): three new tests passed in
+isolation but failed in the full suite (`assert 6 == 1`, real resolver + writer ran instead of the
+fake). Fix commit `bd7bdee0` (`_live_bp()` helper) + the reconcile_controller counterpart in
+`c96ea511`.
+
+**Mechanism.** `reconcile_board` resolves its dependency with a lazy `import board_progression as _bp`
+at call time, which returns `sys.modules["board_progression"]`. Every test module loads scripts via a
+`_load()` that does `sys.modules[name] = module` — so the *last* test module collected wins that
+slot. A handle captured at collection time (`BP_MOD = _load("board_progression")`) is therefore stale
+by the time the test runs in a full suite, and `monkeypatch.setattr(BP_MOD, "resolve…", fake)` patches
+an object the code under test never imports. The fake silently doesn't apply; the real function runs
+and passes only by monorepo-walk-up accident. It passed in isolation because nothing else competed
+for the slot.
+
+**Generalizable rule.** When code under test resolves a collaborator via a lazy `import` (through
+`sys.modules`), patch the run-time-live `sys.modules[name]` — never a module handle captured at import
+time. A test that monkeypatches a collaborator and still passes when the patch is a no-op is a false-
+confidence test; prove the patch bites (assert a fabricated value the real collaborator could not
+produce, or assert the fake was called).

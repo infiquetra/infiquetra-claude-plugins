@@ -38,6 +38,45 @@ def _cert():
 
 
 # ---------------------------------------------------------------------------
+# mission-control resolution (#620)
+# ---------------------------------------------------------------------------
+
+MISSION_CONTROL_PLUGIN = "mission-control"
+MISSION_CONTROL_ENV_VAR = "MISSION_CONTROL_ROOT"
+#: BOTH must exist: a root serving only the CLI or only the schema cannot serve board-sync, so a
+#: half-usable install is a rung miss rather than a partial success (#620 KTD1).
+MISSION_CONTROL_MARKERS = ("scripts/sdlc_manager.py", "config/sdlc-schema.json")
+
+
+def resolve_mission_control_root() -> tuple[Path, int]:
+    """Resolve mission-control's install root; returns ``(root, rung)`` or raises ``RuntimeError``.
+
+    Replaces the pre-#620 ``repo_root / "plugins" / "mission-control"`` arithmetic, which only ever
+    resolved inside the plugins monorepo and made every board write fail from a consumer repo.
+
+    Both failure modes surface as ``RuntimeError`` so one ``except`` at the call site covers them
+    (#620 KTD6): the ladder exhausting its rungs, and a fleet-core too old to carry
+    ``plugin_resolution`` at all — the realistic post-release state while #642 leaves the install
+    registry stale.
+    """
+    import fleet_commons_shim  # noqa: PLC0415
+
+    try:
+        resolution = fleet_commons_shim.load("plugin_resolution")
+    except RuntimeError as exc:
+        raise RuntimeError(
+            f"board-sync: the resolved fleet-core cannot provide plugin_resolution ({exc}). "
+            "Fix: update the fleet-core plugin, or repair the stale install registry at "
+            "~/.claude/plugins/installed_plugins.json (see #642)."
+        ) from exc
+    return resolution.resolve_plugin_root(
+        MISSION_CONTROL_PLUGIN,
+        markers=MISSION_CONTROL_MARKERS,
+        env_var=MISSION_CONTROL_ENV_VAR,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Ledger helpers (owned here; re-exported by outcome_board_sync for its readers)
 # ---------------------------------------------------------------------------
 
@@ -120,6 +159,7 @@ def authorize_and_write(
     max_attempts: int = 3,
     payload: dict[str, Any] | None = None,
     extra: dict[str, Any] | None = None,
+    provenance: dict[str, Any] | None = None,
     write_once: Callable[[Path, str], bool] = _write_once,
 ) -> dict[str, Any]:
     """Authorize, idempotently write, and record ONE candidate board op.
@@ -132,11 +172,19 @@ def authorize_and_write(
     (``{status:"failed"}``, no key). A ledger fault after a committed write surfaces as
     ``{status:"error", may_reapply:True}`` rather than escaping.
 
-    ``extra`` is merged into every record (callers pass e.g. ``{"subplot_id": ...}`` so ``/outcome``
-    records keep their existing shape — zero behavior diff, #344 R2). Returns one record dict.
+    ``extra`` is merged into every RETURNED record (callers pass e.g. ``{"subplot_id": ...}`` so
+    ``/outcome`` records keep their existing shape — zero behavior diff, #344 R2).
+
+    ``provenance`` (#620) is merged into the returned record AND the PERSISTED ledger record on a
+    successful write, so a resolution is diagnosable by reading ``board-sync/*.json`` later rather
+    than re-derived (R7). Opt-in: only ``reconcile_board`` passes it (the mission-control root+rung it
+    resolved for the tick), so every other consumer's persisted record is byte-unchanged. Readers use
+    ``.get`` (``outcome_reconcile._read_ledger``), so the additive fields never disturb them.
     """
     cert = _cert()
+    prov: dict[str, Any] = dict(provenance or {})
     base: dict[str, Any] = dict(extra or {})
+    base.update(prov)
     base.update(op_kind=op_kind, repo=repo, number=number, target_state=target_state)
 
     # R1: the verdict MUST come from the certificate; never re-derived here (#344 KTD2).
@@ -192,6 +240,9 @@ def authorize_and_write(
                 "number": number,
                 "target_state": target_state,
                 "ts": now(),
+                # #620 R7: persist the tick's mission-control provenance so a stale resolution is
+                # diagnosable from the durable ledger. Empty for every consumer that passes none.
+                **prov,
             }
         )
         write_once(ledger_file, record_json)
@@ -301,8 +352,8 @@ def record_envelope_authorized_merge(
 
 
 def default_board_writer(
-    repo_root: Path,
     *,
+    mission_control_root: Path,
     project: str = "operations",
     runner: Callable[..., Any] | None = None,
 ) -> Callable[..., None]:
@@ -312,10 +363,15 @@ def default_board_writer(
     fake (or the ``--runner`` seam) instead; the nested ``gh`` child runs ONLY under a real
     ``--autonomous`` campaign. A non-zero exit raises so the consumer's bounded-retry / fail-loud
     path engages.
+
+    ``mission_control_root`` is an ALREADY-RESOLVED install root (``resolve_mission_control_root``),
+    not a repo root — pre-#620 this derived the path from ``repo_root``, which only held inside the
+    plugins monorepo. It is keyword-only on purpose: a caller left on the old positional convention
+    fails loudly at the seam instead of silently constructing a path that does not exist.
     """
     import subprocess  # noqa: PLC0415
 
-    sdlc = str(repo_root / "plugins" / "mission-control" / "scripts" / "sdlc_manager.py")
+    sdlc = str(Path(mission_control_root) / "scripts" / "sdlc_manager.py")
     run = runner if runner is not None else subprocess.run
 
     def _comment_exists(*, owner_repo: str, marker: str, issue_number: int) -> bool:
@@ -473,7 +529,14 @@ def main(argv: list[str] | None = None) -> int:
             Path(args.ledger_dir).resolve() if args.ledger_dir else _default_ledger_dir(repo_root)
         )
         payload = json.loads(args.payload) if args.payload else None
-        writer = default_board_writer(repo_root, project=args.project)
+        try:
+            mission_control_root, _rung = resolve_mission_control_root()
+        except RuntimeError as exc:
+            print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
+            return 1
+        writer = default_board_writer(
+            mission_control_root=mission_control_root, project=args.project
+        )
         record = authorize_and_write(
             args.op,
             args.repo,

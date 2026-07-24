@@ -251,6 +251,90 @@ def test_board_missing_script_is_unavailable(tmp_path: Path) -> None:
     assert "not found" in board["reason"]
 
 
+def test_default_sdlc_manager_resolves_via_ladder_from_a_consumer_repo(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """#620 S3: default_sdlc_manager resolves mission-control through the shared plugin ladder — so
+    /pulse finds the board from a repo that is NOT the plugins monorepo, where the old repo_root
+    arithmetic returned a path that never exists."""
+    import board_progression as _bp
+
+    mc_root = tmp_path / "resolved-mc"
+    (mc_root / "scripts").mkdir(parents=True)
+    (mc_root / "scripts" / "sdlc_manager.py").write_text("# stub\n")
+    monkeypatch.setattr(_bp, "resolve_mission_control_root", lambda: (mc_root, 3))
+    # repo_root points at a consumer repo with no plugins/ dir; the ladder ignores it.
+    resolved = pulse.default_sdlc_manager(tmp_path / "some-consumer-repo")
+    assert resolved == mc_root / "scripts" / "sdlc_manager.py"
+    assert resolved.is_file()
+
+
+def test_default_sdlc_manager_unresolvable_stays_soft_and_names_the_ladder(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The soft contract holds: an unresolvable mission-control yields a nonexistent path (so the
+    board renders 'unavailable', never raising) whose reason names the ladder."""
+    import board_progression as _bp
+
+    def boom() -> tuple[Path, int]:
+        raise RuntimeError("plugin-resolution: could not resolve a 'mission-control' root")
+
+    monkeypatch.setattr(_bp, "resolve_mission_control_root", boom)
+    resolved = pulse.default_sdlc_manager(tmp_path)
+    assert not resolved.is_file()
+    board = pulse.read_board_state(["operations"], sdlc_manager_path=resolved)
+    assert board["status"] == "unavailable"
+    assert "ladder" in board["reason"]
+
+
+def test_cli_sdlc_manager_override_skips_the_resolver(
+    monkeypatch: Any, tmp_path: Path, capsys: Any
+) -> None:
+    """The --sdlc-manager override keeps rung-1 precedence — driving the REAL pulse.main selection,
+    the resolver is not even consulted. (Not a reimplementation of the selection: main runs it.)"""
+    import board_progression as _bp
+
+    calls = {"resolver": 0}
+
+    def spy_resolve() -> tuple[Path, int]:
+        calls["resolver"] += 1
+        raise AssertionError("resolver must not run when --sdlc-manager is supplied")
+
+    monkeypatch.setattr(_bp, "resolve_mission_control_root", spy_resolve)
+    override = tmp_path / "override" / "sdlc_manager.py"
+    override.parent.mkdir(parents=True)
+    override.write_text("# stub\n")
+
+    # No --project → the board panel reads 'no data' without any subprocess; --json keeps it headless.
+    rc = pulse.main(["--json", "--repo-root", str(tmp_path), "--sdlc-manager", str(override)])
+    assert rc == 0
+    assert calls["resolver"] == 0  # override short-circuited before default_sdlc_manager/the ladder
+    json.loads(capsys.readouterr().out)  # emitted a valid snapshot, no crash
+
+
+def test_cli_without_override_consults_the_resolver(
+    monkeypatch: Any, tmp_path: Path, capsys: Any
+) -> None:
+    """The contrast: with NO --sdlc-manager, main falls through to default_sdlc_manager, which DOES
+    consult the resolver — proving the selection branch is real, not dead code."""
+    import board_progression as _bp
+
+    calls = {"resolver": 0}
+    mc = tmp_path / "mc"
+    (mc / "scripts").mkdir(parents=True)
+    (mc / "scripts" / "sdlc_manager.py").write_text("# stub\n")
+
+    def spy_resolve() -> tuple[Path, int]:
+        calls["resolver"] += 1
+        return (mc, 3)
+
+    monkeypatch.setattr(_bp, "resolve_mission_control_root", spy_resolve)
+    rc = pulse.main(["--json", "--repo-root", str(tmp_path)])
+    assert rc == 0
+    assert calls["resolver"] == 1  # the ladder WAS consulted when no override was given
+    json.loads(capsys.readouterr().out)
+
+
 # ===========================================================================
 # AC2 — run state reflects real tick transitions; ledger reflects appended facts
 # ===========================================================================

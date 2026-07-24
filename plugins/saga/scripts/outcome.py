@@ -796,7 +796,7 @@ class AdvanceResult:
 
 
 def _default_board_writer(
-    repo_root: Path,
+    mission_control_root: Path,
     *,
     project: str = "operations",
     runner: Callable[..., Any] | None = None,
@@ -805,11 +805,14 @@ def _default_board_writer(
 
     The production board_writer (the ``OpKind`` → ``sdlc_manager.py`` verb mapping) moved to
     ``board_progression`` so the skill consumers (`/work`, `/loop`) can reach it through the CLI.
-    Kept here so ``advance``'s call sites and any test references remain valid.
+    Kept here so ``advance``'s remaining call sites and test references remain valid. The first
+    argument is now an ALREADY-RESOLVED mission-control root (#620), not a repo root.
     """
     import board_progression as _m  # noqa: PLC0415
 
-    return _m.default_board_writer(repo_root, project=project, runner=runner)
+    return _m.default_board_writer(
+        mission_control_root=mission_control_root, project=project, runner=runner
+    )
 
 
 def advance(
@@ -1026,11 +1029,10 @@ def advance(
                 import outcome_github
                 import outcome_reconcile
 
-                _bw = (
-                    board_writer
-                    if board_writer is not None
-                    else _default_board_writer(repo_root, project=project)
-                )
+                # #620: reconcile_board owns the single per-tick mission-control resolution and
+                # builds the default writer from it when board_writer is None (production). A test
+                # may still inject its own writer here. Passing None through lets the resolver run.
+                _bw = board_writer
                 _br = (
                     board_reader
                     if board_reader is not None
@@ -2949,7 +2951,14 @@ def main(argv: list[str] | None = None) -> int:
                         file=sys.stderr,
                     )
                     return 1
-                writer = _default_board_writer(root, project=args.project)
+                import board_progression as _bp  # noqa: PLC0415
+
+                try:
+                    mc_root, _rung = _bp.resolve_mission_control_root()
+                except RuntimeError as exc:
+                    print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
+                    return 1
+                writer = _default_board_writer(mc_root, project=args.project)
                 resolved = outcome_reconcile.apply_resolution(
                     match, args.action, store=store, board_writer=writer
                 )

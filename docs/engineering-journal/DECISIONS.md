@@ -5655,3 +5655,63 @@ readers identically to the defect under repair; auto-repair on read; and an unbo
 **Revisit when.** A genuinely breaking v2 schema is first needed (KTD3), at which point a real
 migration framework and writer-version stamping become worth their machinery; or the harness gains a
 mid-run plugin-reload detection surface that could consume the writer-swap hazard note directly.
+
+---
+
+### Board-sync resolves mission-control via the plugin ladder, not monorepo paths (#620)  {#board-sync-plugin-resolution-620}
+
+**Decision.** Saga's `/outcome` board-sync located mission-control at
+`<repo_root>/plugins/mission-control/...` and read the schema at
+`Path(__file__).parents[2]/mission-control/config/sdlc-schema.json`. Both are correct only inside the
+plugins monorepo, so every board write failed from a consumer repo (the live incident:
+`campps-context-library`, 24 failed `board_synced` records in one tick). The version-less error path
+`.../infiquetra-plugins/saga/mission-control/config/...` was arithmetic, not a typo: the installed
+cache inserts a `<version>` segment, so `parents[2]` lands one directory short.
+
+- **KTD1 — the generic resolver lives in fleet-core's loaded `fleet_commons/` package, not the frozen
+  shim.** `plugin_resolution.resolve_plugin_root(name)` generalizes the shim's five-rung ladder to an
+  arbitrary sibling plugin, loaded through the existing `fleet_commons_shim.load(...)` seam. The
+  bootstrap shim stays byte-identical (its drift guard and `{#fleet-commons-mechanism-463}` both
+  hold); this is the additive-only 0.x growth that decision's "fourth consumer appears" anticipated.
+  *Rejected:* a second vendored `mission_control_shim.py` (doubles the byte-identity surface for
+  non-bootstrap code); parameterizing the frozen shim (violates the byte-freeze, forces a seven-copy
+  re-sync); a saga-local resolver (the next consumer re-implements the ladder — and mission-control,
+  the plugin being resolved, already vendors the shim).
+- **KTD2 — saga keeps reading `sdlc-schema.json` directly from the resolved root; it does not ask
+  mission-control for the phase map.** `sdlc_manager._resolve_sdlc_schema` resolves via the GitHub API
+  first and returns `{}` on total failure, so routing per-tick reconciles through it would swap a
+  local read for a network round-trip whose failure reads as success. *Known latent risk:* the
+  vendored schema is a month behind upstream (`2026-06-17` vs `2026-07-18`) with the read slice
+  (`phase_board_map`) currently identical — recorded, deferred, not solved.
+- **KTD3 — two distinct failure modes.** Root-unresolvable (no mission-control anywhere) withholds the
+  whole cohort with one loud `unavailable` record, reusing the existing `drift-hold` withholding
+  shape, with no retry — killing the N-ops × max_attempts storm without weakening fail-loud.
+  Root-resolved-but-schema-unreadable keeps the prior per-op `failed` status record while the
+  coalesced progress comment for the same leaf still posts. Collapsing the two would regress the
+  comment path. *Rejected:* withhold on any resolution failure (C3); silent skip (destroys fail-loud).
+- **KTD4 — rung order inherited unchanged** (env / walk-up / registry / cache-sibling). Preferring
+  cache-sibling for a CLI to dodge #642's registry staleness was rejected: it creates two disagreeing
+  ladders, the registry is authoritative for installed state, and the failure asymmetry runs the safe
+  way — a stale library skews behavior silently while a stale CLI fails loud on an unknown verb, which
+  makes the registry the *safer* first rung for mission-control. Mitigation is rung provenance in every
+  record (R7) plus the `MISSION_CONTROL_ROOT` escape hatch (R8), not a reordered ladder.
+- **KTD5 — `pulse.py` is in scope; `outcome_reconcile.py` gets its own test.** `/pulse` is the same
+  defect family (a one-call change, seam already cut) and excluding it would leave telemetry reporting
+  the board unavailable in exactly the repos where `/outcome` now works. The reconcile schema seam is
+  repaired implicitly by KTD2 but is covered explicitly, because implicit repair without a test is
+  indistinguishable from luck.
+- **KTD6 — a stale fleet-core degrades to the KTD3 terminal, never an uncaught exception.**
+  `fleet_commons_shim.load("plugin_resolution")` raises when the module is absent, and saga 0.114.0
+  requires a module first shipped in fleet-core 0.23.0 — so a stale install registry (#642,
+  four-for-four) resolves fleet-core 0.22.0 and would brick board-sync harder than the bug under
+  repair. The single per-tick resolution catches that `RuntimeError` and routes it into the
+  `unavailable` record, naming the #642 hand-repair. *Rejected:* a hard fleet-core floor that aborts
+  the tick (leaf state does not depend on board writes); vendoring `plugin_resolution` into saga
+  (re-opens the duplication KTD1 rejected).
+
+**Rejected (whole-design).** Fixing the paths without addressing the retry storm (C1); asking
+mission-control for a resolved phase map via a new CLI verb (B, network-first + `{}`-on-failure).
+
+**Revisit when.** A third consumer needs `resolve_plugin_root` (promote more bespoke path resolution
+onto it), or the vendored-vs-upstream `sdlc-schema.json` drift (KTD2) stops being inert — the
+`phase_board_map` slice diverging is the trigger for a non-networked drift check.

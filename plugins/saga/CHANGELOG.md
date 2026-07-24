@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.114.0] - 2026-07-24
+
+### Fixed - `/outcome` board-sync + `/pulse` resolve mission-control via the plugin ladder (#620)
+
+- Board-sync located mission-control at `<repo_root>/plugins/mission-control/scripts/sdlc_manager.py`
+  and read the schema at `Path(__file__).parents[2]/mission-control/config/sdlc-schema.json` — both
+  correct only inside the plugins monorepo, so every board write failed from a consumer repo (24
+  failed `board_synced` records in one live tick). All four sites — `board_progression.py`,
+  `outcome_board_sync.py`, `outcome.py`'s re-export, and `outcome_reconcile.py`'s schema seam — now
+  resolve through `fleet_commons.plugin_resolution.resolve_plugin_root` (fleet-core 0.23.0).
+- Resolution happens ONCE per reconcile tick and feeds both the CLI path and the schema read, so the
+  two can never name different installations. `/pulse`'s sibling `default_sdlc_manager` shares the
+  same resolver while keeping its soft-failure telemetry contract.
+- An unresolvable mission-control — including a fleet-core too old to carry `plugin_resolution`, the
+  realistic state while the install registry stays stale (#642) — withholds the whole cohort with a
+  single loud `unavailable` record instead of N ops × retries of the same terminal error, and never
+  retries. A resolved-but-unreadable schema keeps the prior per-op `failed`-status behavior while the
+  coalesced progress comment still posts. Every driven record carries the resolved root and rung.
+- Escape hatch: `MISSION_CONTROL_ROOT` forces a known-good install (rung 1), mirroring
+  `FLEET_COMMONS_ROOT`.
+
 ## [0.113.0] - 2026-07-23
 
 ### Added - `doctor` and `repair` adapter CLI verbs for registry forward-compatibility (#617)

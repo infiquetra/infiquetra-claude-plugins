@@ -51,6 +51,7 @@ ENG_MOD = _load("outcome")
 _load("outcome_report")
 _load("outcome_projection")
 CERT_MOD = _load("reversibility_certificate")
+BP_MOD = _load("board_progression")
 SYNC_MOD = _load("outcome_board_sync")
 
 
@@ -606,6 +607,154 @@ def test_default_board_writer_rejects_unknown_op_kind(tmp_path: Path) -> None:
     writer = ENG_MOD._default_board_writer(tmp_path, runner=lambda *a, **k: None)
     with pytest.raises(ValueError, match="no mission-control verb mapping"):
         writer(op_kind="merge", repo="x", number=1, payload={})
+
+
+# ---------------------------------------------------------------------------
+# #620: mission-control resolution — consumer-repo success, unavailable cohort,
+# stale-fleet-core degrade (KTD6/R11), provenance stamping (R7).
+# ---------------------------------------------------------------------------
+
+
+def _make_schema_root(base: Path) -> Path:
+    """A minimal resolved mission-control root carrying a real phase_board_map schema."""
+    (base / "config").mkdir(parents=True, exist_ok=True)
+    (base / "scripts").mkdir(parents=True, exist_ok=True)
+    (base / "scripts" / "sdlc_manager.py").write_text("# stub\n")
+    (base / "config" / "sdlc-schema.json").write_text(
+        json.dumps(
+            {
+                "saga_lifecycle": {
+                    "phase_board_map": {
+                        "review": {"operations": ["Ready"]},
+                        "work": {"operations": ["Active"]},
+                    }
+                }
+            }
+        )
+    )
+    return base
+
+
+def test_production_path_resolves_once_and_threads_root_to_schema_and_writer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R2/R3/R4: with board_writer=None (production), reconcile_board resolves the mission-control
+    root ONCE and uses it for BOTH the schema read and the writer — proven by driving a ready leaf
+    whose status comes from the resolved root's schema, from a simulated non-monorepo layout."""
+    mc_root = _make_schema_root(tmp_path / "cache" / "infiquetra-plugins" / "mission-control" / "2.10.1")
+    calls: list[dict[str, Any]] = []
+
+    def fake_resolve() -> tuple[Path, int]:
+        return (mc_root, 3)  # rung 3 = installed-plugins, the consumer-repo governing rung
+
+    def fake_writer_factory(*, mission_control_root: Path, project: str = "operations", runner: Any = None):
+        assert mission_control_root == mc_root  # the resolved root reaches the writer (R4)
+
+        def _w(*, op_kind: str, repo: str, number: int, payload: dict) -> None:
+            calls.append({"op_kind": op_kind, "number": number, "payload": payload})
+
+        return _w
+
+    monkeypatch.setattr(BP_MOD, "resolve_mission_control_root", fake_resolve)
+    monkeypatch.setattr(BP_MOD, "default_board_writer", fake_writer_factory)
+
+    store = _store(tmp_path)
+    spec = _spec([_leaf("leaf1", "infiquetra/x#42")])
+    result = SYNC_MOD.reconcile_board(spec, store, board_writer=None)  # production entry
+
+    sf = [r for r in result if r.get("op_kind") == "set-field-status"]
+    assert sf and sf[0]["status"] == "written"
+    assert sf[0]["target_state"] == "Ready"  # resolved from mc_root's schema, not a hardcoded literal
+    assert any(c["op_kind"] == "set-field-status" for c in calls)
+    # R7: provenance stamped from the SAME resolution that fed the schema.
+    assert sf[0]["board_sync_root"] == str(mc_root)
+    assert sf[0]["board_sync_rung"] == 3
+
+
+def test_unresolvable_root_withholds_the_whole_cohort_with_one_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R5/R6/KTD3: when mission-control cannot be resolved, a multi-leaf multi-op tick yields
+    EXACTLY ONE 'unavailable' record and drives nothing — not N ops × max_attempts retries."""
+
+    def boom() -> tuple[Path, int]:
+        raise RuntimeError("plugin-resolution: could not resolve a 'mission-control' root")
+
+    monkeypatch.setattr(BP_MOD, "resolve_mission_control_root", boom)
+
+    store = _store(tmp_path)
+    # Three ready leaves → six candidate ops pre-fix (status + comment each). Must collapse to one.
+    spec = _spec(
+        [
+            _leaf("leaf1", "infiquetra/x#1"),
+            _leaf("leaf2", "infiquetra/x#2"),
+            _leaf("leaf3", "infiquetra/x#3"),
+        ]
+    )
+    result = SYNC_MOD.reconcile_board(spec, store, board_writer=None)
+
+    assert len(result) == 1
+    assert result[0]["status"] == "unavailable"
+    assert "could not resolve" in result[0]["reason"]
+
+
+def test_stale_fleet_core_missing_plugin_resolution_degrades_not_crashes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R11/KTD6: a fleet-core too old to carry plugin_resolution (the #642-stale-registry case)
+    surfaces as a RuntimeError naming #642 — NOT an uncaught ImportError that kills the tick."""
+    import fleet_commons_shim
+
+    def raise_missing(module: str) -> Any:
+        raise RuntimeError(f"fleet-commons: module {module!r} not found (fleet-core resolved to 0.22.0)")
+
+    monkeypatch.setattr(fleet_commons_shim, "load", raise_missing)
+    with pytest.raises(RuntimeError) as excinfo:
+        BP_MOD.resolve_mission_control_root()
+    message = str(excinfo.value)
+    assert "plugin_resolution" in message
+    assert "#642" in message
+
+
+def test_reconcile_board_routes_stale_fleet_core_into_the_unavailable_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R11 end-to-end: the KTD6 RuntimeError becomes the single unavailable cohort record, so board
+    sync degrades instead of the whole advance tick dying on an import error."""
+
+    def boom() -> tuple[Path, int]:
+        raise RuntimeError(
+            "board-sync: the resolved fleet-core cannot provide plugin_resolution ... (see #642)."
+        )
+
+    monkeypatch.setattr(BP_MOD, "resolve_mission_control_root", boom)
+    store = _store(tmp_path)
+    spec = _spec([_leaf("leaf1", "infiquetra/x#42")])
+    result = SYNC_MOD.reconcile_board(spec, store, board_writer=None)
+    assert len(result) == 1
+    assert result[0]["status"] == "unavailable"
+    assert "#642" in result[0]["reason"]
+
+
+def test_injected_writer_never_triggers_root_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The test seam is preserved: an injected board_writer means the resolver is never called for
+    the writer, so a broken resolver cannot break a writer-injected (test) reconcile."""
+
+    def must_not_run() -> tuple[Path, int]:
+        raise AssertionError("resolve_mission_control_root must not be called when a writer is injected")
+
+    monkeypatch.setattr(BP_MOD, "resolve_mission_control_root", must_not_run)
+    store = _store(tmp_path)
+    spec = _spec([_leaf("leaf1", "infiquetra/x#42")])
+    writer = RecordingWriter()
+    # schema_path supplied so the ready leaf's status resolves without touching the resolver either.
+    schema = _make_schema_root(tmp_path / "mc") / "config" / "sdlc-schema.json"
+    result = SYNC_MOD.reconcile_board(
+        spec, store, board_writer=writer, schema_path=schema
+    )
+    assert any(r.get("op_kind") == "set-field-status" for r in result)
 
 
 # ---------------------------------------------------------------------------

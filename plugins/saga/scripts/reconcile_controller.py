@@ -420,7 +420,14 @@ def main(argv: list[str] | None = None) -> int:
             else bp._default_ledger_dir(repo_root)  # noqa: SLF001
         )
         payload = json.loads(args.payload) if args.payload else None
-        writer = bp.default_board_writer(repo_root, project=args.project)
+        try:
+            mission_control_root, _rung = bp.resolve_mission_control_root()
+        except RuntimeError as exc:
+            print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
+            return 1
+        writer = bp.default_board_writer(
+            mission_control_root=mission_control_root, project=args.project
+        )
         reader = None if args.no_drift_check else default_live_reader(project=args.project)
         record = reconcile_op(
             args.op,

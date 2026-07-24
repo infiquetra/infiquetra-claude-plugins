@@ -113,14 +113,25 @@ def _board_sync_dir(store: Any) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def _default_schema_path() -> Path:
-    """The default ``sdlc-schema.json`` location, derived from this module's own file path.
+def _default_schema_path(mission_control_root: Path | None = None) -> Path:
+    """The default ``sdlc-schema.json`` location, under mission-control's RESOLVED install root.
 
-    Module-file-relative, not ``repo_root``-relative (KTD3) — so ``reconcile_board``'s existing
-    test call sites (no ``schema_path`` passed, ``tmp_path`` stores) keep resolving correctly
-    without threading a repo root through the test seam.
+    Pre-#620 this was ``Path(__file__).resolve().parents[2] / "mission-control" / ...`` — chosen as
+    module-file-relative (#326 KTD3) so test call sites resolved without threading a repo root. That
+    is correct in the monorepo, where ``plugins/saga/scripts/`` puts ``parents[2]`` at ``plugins/``
+    and mission-control is a sibling, and silently wrong under the installed-cache layout
+    ``<plugin>/<version>/scripts/``, where ``parents[2]`` lands one level short at ``saga/`` and
+    yields a version-less path that cannot exist.
+
+    Pass an already-resolved ``mission_control_root`` to reuse a caller's single per-tick resolution
+    (#620 R4); omit it and this resolves on its own, which is what keeps ``outcome_reconcile``'s
+    no-argument call site and the existing ``schema_path``-free tests working unchanged.
     """
-    return Path(__file__).resolve().parents[2] / "mission-control" / "config" / "sdlc-schema.json"
+    if mission_control_root is None:
+        import board_progression as _bp  # noqa: PLC0415
+
+        mission_control_root, _rung = _bp.resolve_mission_control_root()
+    return Path(mission_control_root) / "config" / "sdlc-schema.json"
 
 
 def _resolve_status_map(schema_path: Path, project: str) -> dict[str, str]:
@@ -174,7 +185,8 @@ def reconcile_board(
     spec: Any,
     store: Any,
     *,
-    board_writer: Callable[..., None],
+    board_writer: Callable[..., None] | None = None,
+    mission_control_root: Path | None = None,
     now: Callable[[], float] = time.time,
     max_attempts: int = 3,
     project: str = "operations",
@@ -196,17 +208,32 @@ def reconcile_board(
     ``events_dir`` (KTD4). ``write_once`` is injected as ``outcome_store._write_once`` so the sticky
     ledger write keeps its exact atomicity and test-patchability (#344 R2 — zero behavior diff).
 
+    mission-control resolution (#620): the CLI root and the schema file are resolved ONCE per call
+    from the same ladder so they can never name different installations (R4). Two failure modes are
+    deliberately distinct (KTD3):
+
+    * **Root unresolvable** — mission-control cannot be found at all (a consumer repo with a stale
+      install registry, or a fleet-core too old to carry ``plugin_resolution``). The default writer
+      cannot be built, so every op is withheld and a single loud ``{"status": "unavailable"}``
+      record is returned, with no retry (R5/R6). A caller that injects its own ``board_writer``
+      (the test seam) never triggers this path.
+    * **Schema unreadable** — the root resolved but ``sdlc-schema.json`` cannot be read. Only the
+      status ops lose their target; each records a per-op ``failed`` while the coalesced progress
+      comment for the same leaf still posts (unchanged from #326).
+
     Args:
-        spec:         ``OutcomeSpec`` — the DAG of leaf nodes.
-        store:        ``outcome_store.Store`` — the per-outcome store handle.
-        board_writer: Injected callable ``(*, op_kind, repo, number, payload) -> None``.
-        now:          Time source (injectable for tests).
-        max_attempts: Retry cap per op (default 3 — bounded, not infinite).
-        project:      The target board's mission-control project slug.
-        schema_path:  Override for the SDLC schema location (module-file-relative, #326 KTD3).
-        hold_issues:  ``{(repo, number), ...}`` of issues with a detected board<->saga drift
-                      (#295 U5/KTD3) — every candidate op for a held issue is WITHHELD as
-                      ``{status:"drift-hold"}`` instead of driven.
+        spec:                 ``OutcomeSpec`` — the DAG of leaf nodes.
+        store:                ``outcome_store.Store`` — the per-outcome store handle.
+        board_writer:         Injected callable ``(*, op_kind, repo, number, payload) -> None``.
+                              ``None`` (production) builds the default writer from the resolved root.
+        mission_control_root: A pre-resolved root a caller may thread in to reuse one resolution.
+        now:                  Time source (injectable for tests).
+        max_attempts:         Retry cap per op (default 3 — bounded, not infinite).
+        project:              The target board's mission-control project slug.
+        schema_path:          Override for the SDLC schema location.
+        hold_issues:          ``{(repo, number), ...}`` of issues with a detected board<->saga drift
+                              (#295 U5/KTD3) — every candidate op for a held issue is WITHHELD as
+                              ``{status:"drift-hold"}`` instead of driven.
 
     Returns:
         A list of record dicts — one per candidate op.
@@ -216,6 +243,29 @@ def reconcile_board(
     engine = _engine()
     store_module = _store_mod()
     cert = _cert()
+
+    # --- One mission-control resolution per call, shared by writer + schema (#620 R4) ----------
+    resolved_root: Path | None = mission_control_root
+    resolved_rung: int | None = None
+    if board_writer is None:
+        # Production path: build the default writer from a freshly resolved root. A resolution
+        # failure here (ladder exhausted, or the KTD6 stale-fleet-core RuntimeError) is terminal for
+        # the whole cohort — the writer cannot be built, so nothing can be driven.
+        try:
+            if resolved_root is None:
+                resolved_root, resolved_rung = _bp.resolve_mission_control_root()
+            board_writer = _bp.default_board_writer(
+                mission_control_root=resolved_root, project=project
+            )
+        except RuntimeError as exc:
+            return [
+                {
+                    "status": "unavailable",
+                    "reason": str(exc),
+                    "resolved_root": None,
+                    "rung": None,
+                }
+            ]
 
     states: dict[str, str] = engine.derive_states(spec, store)
     ledger_dir = _board_sync_dir(store)
@@ -227,7 +277,10 @@ def reconcile_board(
     status_map_error: str | None = None
     if any(s in ("ready", "dispatched") for s in states.values()):
         try:
-            resolved_path = schema_path if schema_path is not None else _default_schema_path()
+            if schema_path is not None:
+                resolved_path = schema_path
+            else:
+                resolved_path = _default_schema_path(resolved_root)
             status_map = _resolve_status_map(resolved_path, project)
         except Exception as exc:  # noqa: BLE001
             status_map_error = str(exc)
@@ -317,5 +370,13 @@ def reconcile_board(
                     write_once=store_module._write_once,  # noqa: SLF001
                 )
             )
+
+    # R7 (#620): stamp the resolved mission-control provenance onto every driven record so a stale
+    # resolution is diagnosable after the fact rather than re-derived. Only when we resolved a root
+    # ourselves (production); an injected test writer carries no root and is left unstamped.
+    if resolved_root is not None:
+        for record in records:
+            record.setdefault("board_sync_root", str(resolved_root))
+            record.setdefault("board_sync_rung", resolved_rung)
 
     return records

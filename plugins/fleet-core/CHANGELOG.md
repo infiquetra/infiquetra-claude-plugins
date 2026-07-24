@@ -5,6 +5,25 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.23.0] - 2026-07-24
+
+### Added - generic plugin-root resolver `fleet_commons/plugin_resolution.py` (#620)
+
+- `resolve_plugin_root(name, *, markers, env_var, anchor)` generalizes the byte-frozen
+  `fleet_commons_shim` ladder — which only ever answers "where is fleet-core?" — to an arbitrary
+  sibling plugin, returning `(root, rung)` with rung provenance under `FLEET_COMMONS_DEBUG=1`.
+- Five rungs, identical in spirit to the shim: env override (raises on an explicit-but-invalid
+  value), repo walk-up (an ancestor holding both `.claude-plugin/marketplace.json` and
+  `plugins/<name>/`), `~/.claude/plugins/installed_plugins.json` by `<name>@` prefix with per-record
+  tolerance, cache-sibling highest-semver scan, then fail loud naming every rung.
+- `markers` is a SEQUENCE and every entry must exist for a candidate root to be valid, so a
+  half-usable install (CLI present but schema missing, or vice-versa) is a rung miss, not a partial
+  success. The default `anchor` is the module's own file, so callers never thread `__file__` and one
+  substrate gives one answer in mixed cache/monorepo layouts.
+- First consumer: saga's `/outcome` board-sync + `/pulse` (see saga 0.114.0). The bootstrap
+  `fleet_commons_shim.py` is byte-unchanged; this is the additive-only 0.x growth
+  `{#fleet-commons-mechanism-463}` anticipated when "a fourth consumer appears."
+
 ## [0.22.0] - 2026-07-23
 
 ### Fixed - Registry reader forward-compatibility: tolerate-and-preserve unknown fields, doctor/repair verbs (#617)

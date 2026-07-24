@@ -23,9 +23,7 @@ from types import ModuleType
 import pytest
 
 ROOT = Path(__file__).parent.parent
-MODULE_PATH = (
-    ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "plugin_resolution.py"
-)
+MODULE_PATH = ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "plugin_resolution.py"
 MC_MARKERS = ("scripts/sdlc_manager.py", "config/sdlc-schema.json")
 
 _LOAD_COUNTER = 0
@@ -141,9 +139,10 @@ def test_rung2_walk_up_finds_sibling_plugin_in_a_checkout(
     anchor = checkout / "plugins" / "saga" / "scripts" / "mod.py"
     anchor.parent.mkdir(parents=True)
     anchor.write_text("")
-    assert resolver.resolve_plugin_root(
-        "mission-control", markers=MC_MARKERS, anchor=anchor
-    ) == (root, 2)
+    assert resolver.resolve_plugin_root("mission-control", markers=MC_MARKERS, anchor=anchor) == (
+        root,
+        2,
+    )
 
 
 def test_rung2_requires_the_marketplace_manifest_not_just_a_plugins_dir(
@@ -170,9 +169,7 @@ def test_default_anchor_under_installed_cache_layout_misses_rung2(
     anchor.write_text("")
     registry_root = _make_mc_root(cache / "mission-control" / "2.10.1")
     _write_registry(tmp_path / "home", install_path=registry_root)
-    root, rung = resolver.resolve_plugin_root(
-        "mission-control", markers=MC_MARKERS, anchor=anchor
-    )
+    root, rung = resolver.resolve_plugin_root("mission-control", markers=MC_MARKERS, anchor=anchor)
     assert rung == 3
     assert root == registry_root
     # The version segment survives — the bug produced a path with it missing.
@@ -200,9 +197,7 @@ def test_rung3_ignores_other_plugins_sharing_a_prefix_boundary(
     other = _make_mc_root(tmp_path / "other")
     _write_registry(tmp_path / "home", install_path=other, key="mission-control-extras@ip")
     with pytest.raises(RuntimeError, match="could not resolve"):
-        resolver.resolve_plugin_root(
-            "mission-control", markers=MC_MARKERS, anchor=outside_anchor
-        )
+        resolver.resolve_plugin_root("mission-control", markers=MC_MARKERS, anchor=outside_anchor)
 
 
 def test_rung3_malformed_records_fall_through_without_crashing(
@@ -238,9 +233,7 @@ def test_rung3_unreadable_registry_is_a_miss_not_a_crash(
     registry_dir.mkdir(parents=True)
     (registry_dir / "installed_plugins.json").write_text("{not json")
     with pytest.raises(RuntimeError, match="could not resolve"):
-        resolver.resolve_plugin_root(
-            "mission-control", markers=MC_MARKERS, anchor=outside_anchor
-        )
+        resolver.resolve_plugin_root("mission-control", markers=MC_MARKERS, anchor=outside_anchor)
 
 
 # --- rung 4: cache-sibling ------------------------------------------------------------------
@@ -273,9 +266,7 @@ def test_partial_marker_match_is_rejected(
     _write_registry(tmp_path / "home", install_path=partial)
     assert (partial / "scripts" / "sdlc_manager.py").is_file()
     with pytest.raises(RuntimeError, match="could not resolve"):
-        resolver.resolve_plugin_root(
-            "mission-control", markers=MC_MARKERS, anchor=outside_anchor
-        )
+        resolver.resolve_plugin_root("mission-control", markers=MC_MARKERS, anchor=outside_anchor)
 
 
 def test_empty_markers_is_rejected(resolver: ModuleType, outside_anchor: Path) -> None:

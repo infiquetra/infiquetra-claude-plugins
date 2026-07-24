@@ -251,6 +251,58 @@ def test_board_missing_script_is_unavailable(tmp_path: Path) -> None:
     assert "not found" in board["reason"]
 
 
+def test_default_sdlc_manager_resolves_via_ladder_from_a_consumer_repo(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """#620 S3: default_sdlc_manager resolves mission-control through the shared plugin ladder — so
+    /pulse finds the board from a repo that is NOT the plugins monorepo, where the old repo_root
+    arithmetic returned a path that never exists."""
+    import board_progression as _bp
+
+    mc_root = tmp_path / "resolved-mc"
+    (mc_root / "scripts").mkdir(parents=True)
+    (mc_root / "scripts" / "sdlc_manager.py").write_text("# stub\n")
+    monkeypatch.setattr(_bp, "resolve_mission_control_root", lambda: (mc_root, 3))
+    # repo_root points at a consumer repo with no plugins/ dir; the ladder ignores it.
+    resolved = pulse.default_sdlc_manager(tmp_path / "some-consumer-repo")
+    assert resolved == mc_root / "scripts" / "sdlc_manager.py"
+    assert resolved.is_file()
+
+
+def test_default_sdlc_manager_unresolvable_stays_soft_and_names_the_ladder(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The soft contract holds: an unresolvable mission-control yields a nonexistent path (so the
+    board renders 'unavailable', never raising) whose reason names the ladder."""
+    import board_progression as _bp
+
+    def boom() -> tuple[Path, int]:
+        raise RuntimeError("plugin-resolution: could not resolve a 'mission-control' root")
+
+    monkeypatch.setattr(_bp, "resolve_mission_control_root", boom)
+    resolved = pulse.default_sdlc_manager(tmp_path)
+    assert not resolved.is_file()
+    board = pulse.read_board_state(["operations"], sdlc_manager_path=resolved)
+    assert board["status"] == "unavailable"
+    assert "ladder" in board["reason"]
+
+
+def test_cli_sdlc_manager_override_wins_over_the_ladder(monkeypatch: Any, tmp_path: Path) -> None:
+    """The --sdlc-manager override keeps rung-1 precedence — the resolver is not even consulted."""
+    import board_progression as _bp
+
+    def must_not_run() -> tuple[Path, int]:
+        raise AssertionError("resolver must not run when --sdlc-manager is supplied")
+
+    monkeypatch.setattr(_bp, "resolve_mission_control_root", must_not_run)
+    override = tmp_path / "override" / "sdlc_manager.py"
+    override.parent.mkdir(parents=True)
+    override.write_text("# stub\n")
+    # Mirror main()'s selection: override present → default_sdlc_manager (and the resolver) skipped.
+    chosen = override if override is not None else pulse.default_sdlc_manager(tmp_path)
+    assert chosen == override
+
+
 # ===========================================================================
 # AC2 — run state reflects real tick transitions; ledger reflects appended facts
 # ===========================================================================

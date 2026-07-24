@@ -641,13 +641,17 @@ def test_production_path_resolves_once_and_threads_root_to_schema_and_writer(
     """R2/R3/R4: with board_writer=None (production), reconcile_board resolves the mission-control
     root ONCE and uses it for BOTH the schema read and the writer — proven by driving a ready leaf
     whose status comes from the resolved root's schema, from a simulated non-monorepo layout."""
-    mc_root = _make_schema_root(tmp_path / "cache" / "infiquetra-plugins" / "mission-control" / "2.10.1")
+    mc_root = _make_schema_root(
+        tmp_path / "cache" / "infiquetra-plugins" / "mission-control" / "2.10.1"
+    )
     calls: list[dict[str, Any]] = []
 
     def fake_resolve() -> tuple[Path, int]:
         return (mc_root, 3)  # rung 3 = installed-plugins, the consumer-repo governing rung
 
-    def fake_writer_factory(*, mission_control_root: Path, project: str = "operations", runner: Any = None):
+    def fake_writer_factory(
+        *, mission_control_root: Path, project: str = "operations", runner: Any = None
+    ):
         assert mission_control_root == mc_root  # the resolved root reaches the writer (R4)
 
         def _w(*, op_kind: str, repo: str, number: int, payload: dict) -> None:
@@ -664,7 +668,9 @@ def test_production_path_resolves_once_and_threads_root_to_schema_and_writer(
 
     sf = [r for r in result if r.get("op_kind") == "set-field-status"]
     assert sf and sf[0]["status"] == "written"
-    assert sf[0]["target_state"] == "Ready"  # resolved from mc_root's schema, not a hardcoded literal
+    assert (
+        sf[0]["target_state"] == "Ready"
+    )  # resolved from mc_root's schema, not a hardcoded literal
     assert any(c["op_kind"] == "set-field-status" for c in calls)
     # R7: provenance stamped from the SAME resolution that fed the schema.
     assert sf[0]["board_sync_root"] == str(mc_root)
@@ -706,7 +712,9 @@ def test_stale_fleet_core_missing_plugin_resolution_degrades_not_crashes(
     import fleet_commons_shim
 
     def raise_missing(module: str) -> Any:
-        raise RuntimeError(f"fleet-commons: module {module!r} not found (fleet-core resolved to 0.22.0)")
+        raise RuntimeError(
+            f"fleet-commons: module {module!r} not found (fleet-core resolved to 0.22.0)"
+        )
 
     monkeypatch.setattr(fleet_commons_shim, "load", raise_missing)
     with pytest.raises(RuntimeError) as excinfo:
@@ -743,7 +751,9 @@ def test_injected_writer_never_triggers_root_resolution(
     the writer, so a broken resolver cannot break a writer-injected (test) reconcile."""
 
     def must_not_run() -> tuple[Path, int]:
-        raise AssertionError("resolve_mission_control_root must not be called when a writer is injected")
+        raise AssertionError(
+            "resolve_mission_control_root must not be called when a writer is injected"
+        )
 
     monkeypatch.setattr(BP_MOD, "resolve_mission_control_root", must_not_run)
     store = _store(tmp_path)
@@ -751,9 +761,7 @@ def test_injected_writer_never_triggers_root_resolution(
     writer = RecordingWriter()
     # schema_path supplied so the ready leaf's status resolves without touching the resolver either.
     schema = _make_schema_root(tmp_path / "mc") / "config" / "sdlc-schema.json"
-    result = SYNC_MOD.reconcile_board(
-        spec, store, board_writer=writer, schema_path=schema
-    )
+    result = SYNC_MOD.reconcile_board(spec, store, board_writer=writer, schema_path=schema)
     assert any(r.get("op_kind") == "set-field-status" for r in result)
 
 

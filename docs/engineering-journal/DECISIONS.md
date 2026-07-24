@@ -5715,3 +5715,73 @@ mission-control for a resolved phase map via a new CLI verb (B, network-first + 
 **Revisit when.** A third consumer needs `resolve_plugin_root` (promote more bespoke path resolution
 onto it), or the vendored-vs-upstream `sdlc-schema.json` drift (KTD2) stops being inert — the
 `phase_board_map` slice diverging is the trigger for a non-networked drift check.
+
+### Externally-executed leaf settlement is a verify-and-close: auto-settle is already wired, threshold stays 0 (#626)  {#outcome-settlement-halt-externally-executed-626}
+
+**Decision.** #626 reported two settlement-gate defects: board-sync breaking on `advance --autonomous`
+in consumer repos, and a leaf executed OUTSIDE the engine (`backend: cc-workflows-ultracode`) never
+settling — its dispatch position stays `open` forever and halts the whole outcome frontier on every
+later tick (the incident: leaf `sub-13`, blocked on an external Stripe dependency, settled
+`silent-no-op`, permanently froze the frontier because `DEFAULT_THRESHOLD_PERCENT = 0` breaches on any
+single casualty). Verified live at `03c2640c` (saga 0.114.0), ~1.5 of the 2 defects were already
+shipped by sibling leaves and the residual was already wired, so #626 ships **zero production code**:
+it is characterization tests + docs + an operator-gated live proof, not a build. The issue conflates
+two orthogonal failure modes that stay strictly separate — "the external executor finished but the
+engine never learned" (a bookkeeping gap → auto-settle `delivered`) versus "the unit is a genuine
+casualty" (a real block → the #618 waive). Fixing one does nothing for the other.
+
+- **KTD1 — `DEFAULT_THRESHOLD_PERCENT` stays `0`; genuine casualties exit via the #618 waive (Option
+  A, operator 2026-07-24).** A genuinely-blocked leaf halting the frontier and requiring an explicit
+  operator `waive` is honest, auditable behavior. The two *actual* problems are already solved: a
+  finished-but-unlearned Workflow leaf auto-settles `delivered` (direction a, already wired), and a real
+  casualty has a first-class human exit (`dispatch-waiver`, #618). What remains is a policy choice about
+  how loud a genuine block should be, and loud/explicit is the safe default. *Rejected:* flip the global
+  default to non-zero — `DEFAULT_THRESHOLD_PERCENT` governs *every* outcome-site manifest
+  (`dispatch_settlement.py:293,1470,1678`), so flipping it silently changes halt semantics for all
+  outcomes and could let real failures slip the gate everywhere. *Deferred:* a per-manifest threshold
+  knob (sound future ergonomics, no current evidence of waive-toil).
+- **KTD2 — #626 ships zero production code; it is verify-and-close.** Direction (a) auto-settle is
+  already built, backend-agnostic, and idempotent: every `advance` tick's `production_harvester`
+  (`outcome.py:2100-2209`) materializes a leaf's GitHub-canonical completion (stage 1) then reconciles
+  **every** dispatched subplot — with **no `site`/`backend` filter** (`outcome.py:2148-2206`) — into a
+  `settle_attempt(... DELIVERED)`. An externally-executed leaf's `open` position closes on the very tick
+  that materializes its merged-PR / closed-issue completion. Re-implementing an auto-settle we already
+  have is pure risk against a heavily-tested, load-bearing halt gate. *Rejected:* add a second,
+  redundant settle-on-harvest path "to be explicit" (duplicates the loop, invites double-settle races,
+  weakens the single-writer invariant).
+- **KTD3 — the new tests are characterization / regression-lock, not red-first.** Because the mechanism
+  already exists, a test asserting auto-settle **passes against current code**; the plan does **not**
+  manufacture a fake red state. Load-bearingness is proved honestly by the operator-gated R-live
+  stash/neuter probe (temporarily neuter the reconcile loop, confirm the characterization test goes red
+  and the frontier re-halts, restore) — a verification act, never a shipped change. *Rejected:* fabricate
+  a red state to satisfy the "a test must be able to fail" instinct.
+- **Test adjudication — one net-new guard, the rest referenced.** R1 (Defect-1 board-sync from a
+  non-monorepo cwd) is already covered at parity by #620's suite
+  (`test_production_path_resolves_once_and_threads_root_to_schema_and_writer`,
+  `test_advance_autonomous_drives_board_sync`), so U2 is a **reference, not a duplicate** — adding one
+  would be the churn the plan warns against. R2/R3/R4's mechanism and generic cases are covered by the
+  existing `team-execution` harvest-settle, idempotency, and fail-closed tests. The single genuinely
+  net-new guard (`test_workflow_executed_leaf_auto_settles_on_harvest_and_unblocks_frontier`) pins the
+  `cc-workflows-ultracode` (Workflow) site — the exact incident class — combined with the
+  dependent-frontier-unblock clause, which no existing test does. It runs the same code path today (no
+  site filter exists); its value is prospective (it fails the day a change re-adds a site filter that
+  re-strands Workflow leaves).
+- **D1 — no release-surface bump (#605-style zero-surface close).** #626 touches only repo-root `tests/`
+  and repo-root `docs/` — no change under `plugins/saga/`, no plugin behavior/schema/command/prompt/
+  user-facing-guidance change (the CLAUDE.md bump trigger), and the drift pins key on `plugin.json`
+  (untouched). The plan's U4 floated a `0.114.0 → 0.115.0` patch bump; adjudicated against the real diff
+  it is **not** required, matching the #605 harness/tests-only precedent. *Rejected:* a needless bump —
+  it re-invites the same-version sibling-PR collision this campaign has hit repeatedly, for zero shipped
+  plugin change; the durable record lives here (DECISIONS) + the work-session + the closed issue, not the
+  plugin CHANGELOG.
+
+**Rejected (whole-design).** Building a new auto-settle where one already exists (KTD2); flipping the
+global threshold default (KTD1); re-implementing Defect 1 (shipped #620) or a new waive verb (shipped
+#618); reconciling the #628 cross-runtime double-dispatch here (separate defect — the R-live observation
+only confirms auto-settle does not *paper over* a double-dispatched ledger).
+
+**Revisit when.** An operator is repeatedly waiving the *same class* of deferred casualty across ticks
+(the waive verb has become a recurring chore, not an exceptional acknowledgement) — the trigger to
+promote the per-manifest threshold knob KTD1 deferred. Or `required_checks` / `closure_gate` stops being
+inert, at which point evidence-gated (not barrier-gated) settle-on-harvest becomes a real, separate
+option.

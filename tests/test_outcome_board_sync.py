@@ -656,8 +656,10 @@ def test_production_path_resolves_once_and_threads_root_to_schema_and_writer(
         tmp_path / "cache" / "infiquetra-plugins" / "mission-control" / "2.10.1"
     )
     calls: list[dict[str, Any]] = []
+    resolve_count = {"n": 0}
 
     def fake_resolve() -> tuple[Path, int]:
+        resolve_count["n"] += 1  # R4: prove the tick resolves at most ONCE, not per-op/per-consumer
         return (mc_root, 3)  # rung 3 = installed-plugins, the consumer-repo governing rung
 
     def fake_writer_factory(
@@ -677,15 +679,27 @@ def test_production_path_resolves_once_and_threads_root_to_schema_and_writer(
     spec = _spec([_leaf("leaf1", "infiquetra/x#42")])
     result = SYNC_MOD.reconcile_board(spec, store, board_writer=None)  # production entry
 
+    # R4: exactly one resolution for the whole tick — a double-resolving implementation fails here.
+    assert resolve_count["n"] == 1
+
     sf = [r for r in result if r.get("op_kind") == "set-field-status"]
     assert sf and sf[0]["status"] == "written"
     assert (
         sf[0]["target_state"] == "Ready"
     )  # resolved from mc_root's schema, not a hardcoded literal
     assert any(c["op_kind"] == "set-field-status" for c in calls)
-    # R7: provenance stamped from the SAME resolution that fed the schema.
+    # R7: provenance on the returned record, from the SAME resolution that fed the schema.
     assert sf[0]["board_sync_root"] == str(mc_root)
     assert sf[0]["board_sync_rung"] == 3
+
+    # R7 (F3): provenance is PERSISTED to the durable board-sync ledger, not just the return value —
+    # so a stale resolution is diagnosable by reading the ledger later, never re-derived.
+    ledger_files = list((Path(store.root) / "board-sync").glob("*.json"))
+    persisted = [json.loads(p.read_text()) for p in ledger_files]
+    sf_persisted = [rec for rec in persisted if rec.get("op_kind") == "set-field-status"]
+    assert sf_persisted, "expected a persisted set-field-status ledger record"
+    assert sf_persisted[0]["board_sync_root"] == str(mc_root)
+    assert sf_persisted[0]["board_sync_rung"] == 3
 
 
 def test_unresolvable_root_withholds_the_whole_cohort_with_one_record(
@@ -723,8 +737,11 @@ def test_stale_fleet_core_missing_plugin_resolution_degrades_not_crashes(
     import fleet_commons_shim
 
     def raise_missing(module: str) -> Any:
+        # The real shim's message names the resolved fleet-core root AND version; the wrapper must
+        # preserve them via its `({exc})` interpolation (R11 — the reason must stay actionable).
         raise RuntimeError(
-            f"fleet-commons: module {module!r} not found (fleet-core resolved to 0.22.0)"
+            f"fleet-commons: module {module!r} not found at /cache/fleet-core/0.22.0 "
+            "(fleet-core resolved to /cache/fleet-core/0.22.0, version 0.22.0)."
         )
 
     monkeypatch.setattr(fleet_commons_shim, "load", raise_missing)
@@ -733,6 +750,10 @@ def test_stale_fleet_core_missing_plugin_resolution_degrades_not_crashes(
     message = str(excinfo.value)
     assert "plugin_resolution" in message
     assert "#642" in message
+    # R11: the wrapped reason still names the resolved fleet-core root + version, so a stale-registry
+    # operator knows exactly which install to hand-repair — not just that "something" is missing.
+    assert "0.22.0" in message
+    assert "/cache/fleet-core/0.22.0" in message
 
 
 def test_reconcile_board_routes_stale_fleet_core_into_the_unavailable_record(

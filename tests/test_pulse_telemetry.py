@@ -287,20 +287,52 @@ def test_default_sdlc_manager_unresolvable_stays_soft_and_names_the_ladder(
     assert "ladder" in board["reason"]
 
 
-def test_cli_sdlc_manager_override_wins_over_the_ladder(monkeypatch: Any, tmp_path: Path) -> None:
-    """The --sdlc-manager override keeps rung-1 precedence — the resolver is not even consulted."""
+def test_cli_sdlc_manager_override_skips_the_resolver(
+    monkeypatch: Any, tmp_path: Path, capsys: Any
+) -> None:
+    """The --sdlc-manager override keeps rung-1 precedence — driving the REAL pulse.main selection,
+    the resolver is not even consulted. (Not a reimplementation of the selection: main runs it.)"""
     import board_progression as _bp
 
-    def must_not_run() -> tuple[Path, int]:
+    calls = {"resolver": 0}
+
+    def spy_resolve() -> tuple[Path, int]:
+        calls["resolver"] += 1
         raise AssertionError("resolver must not run when --sdlc-manager is supplied")
 
-    monkeypatch.setattr(_bp, "resolve_mission_control_root", must_not_run)
+    monkeypatch.setattr(_bp, "resolve_mission_control_root", spy_resolve)
     override = tmp_path / "override" / "sdlc_manager.py"
     override.parent.mkdir(parents=True)
     override.write_text("# stub\n")
-    # Mirror main()'s selection: override present → default_sdlc_manager (and the resolver) skipped.
-    chosen = override if override is not None else pulse.default_sdlc_manager(tmp_path)
-    assert chosen == override
+
+    # No --project → the board panel reads 'no data' without any subprocess; --json keeps it headless.
+    rc = pulse.main(["--json", "--repo-root", str(tmp_path), "--sdlc-manager", str(override)])
+    assert rc == 0
+    assert calls["resolver"] == 0  # override short-circuited before default_sdlc_manager/the ladder
+    json.loads(capsys.readouterr().out)  # emitted a valid snapshot, no crash
+
+
+def test_cli_without_override_consults_the_resolver(
+    monkeypatch: Any, tmp_path: Path, capsys: Any
+) -> None:
+    """The contrast: with NO --sdlc-manager, main falls through to default_sdlc_manager, which DOES
+    consult the resolver — proving the selection branch is real, not dead code."""
+    import board_progression as _bp
+
+    calls = {"resolver": 0}
+    mc = tmp_path / "mc"
+    (mc / "scripts").mkdir(parents=True)
+    (mc / "scripts" / "sdlc_manager.py").write_text("# stub\n")
+
+    def spy_resolve() -> tuple[Path, int]:
+        calls["resolver"] += 1
+        return (mc, 3)
+
+    monkeypatch.setattr(_bp, "resolve_mission_control_root", spy_resolve)
+    rc = pulse.main(["--json", "--repo-root", str(tmp_path)])
+    assert rc == 0
+    assert calls["resolver"] == 1  # the ladder WAS consulted when no override was given
+    json.loads(capsys.readouterr().out)
 
 
 # ===========================================================================

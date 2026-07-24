@@ -258,18 +258,29 @@ def reconcile_board(
                 mission_control_root=resolved_root, project=project
             )
         except RuntimeError as exc:
+            # KTD3 mode 1 + F6: one loud cohort record, keyed with the SAME provenance field names
+            # the driven records use (board_sync_root/board_sync_rung), both null — there was no root.
             return [
                 {
                     "status": "unavailable",
                     "reason": str(exc),
-                    "resolved_root": None,
-                    "rung": None,
+                    "board_sync_root": None,
+                    "board_sync_rung": None,
                 }
             ]
 
     states: dict[str, str] = engine.derive_states(spec, store)
     ledger_dir = _board_sync_dir(store)
     records: list[dict[str, Any]] = []
+
+    # R7 (#620): the tick's mission-control provenance, threaded into each op so it lands on BOTH the
+    # returned record and the persisted ledger entry. Empty when a test injected its own writer and
+    # no root was resolved — those records stay unstamped, exactly as before.
+    provenance: dict[str, Any] = (
+        {"board_sync_root": str(resolved_root), "board_sync_rung": resolved_rung}
+        if resolved_root is not None
+        else {}
+    )
 
     # Lazy, at-most-once-per-call resolution (#326 KTD3) — skipped entirely when no leaf is in a
     # status-bearing state, so a done-only / no-schema-file test run never touches the schema.
@@ -367,16 +378,9 @@ def reconcile_board(
                     max_attempts=max_attempts,
                     payload=payload,
                     extra={"subplot_id": node.subplot_id},
+                    provenance=provenance,
                     write_once=store_module._write_once,  # noqa: SLF001
                 )
             )
-
-    # R7 (#620): stamp the resolved mission-control provenance onto every driven record so a stale
-    # resolution is diagnosable after the fact rather than re-derived. Only when we resolved a root
-    # ourselves (production); an injected test writer carries no root and is left unstamped.
-    if resolved_root is not None:
-        for record in records:
-            record.setdefault("board_sync_root", str(resolved_root))
-            record.setdefault("board_sync_rung", resolved_rung)
 
     return records

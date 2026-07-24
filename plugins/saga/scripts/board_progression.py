@@ -159,6 +159,7 @@ def authorize_and_write(
     max_attempts: int = 3,
     payload: dict[str, Any] | None = None,
     extra: dict[str, Any] | None = None,
+    provenance: dict[str, Any] | None = None,
     write_once: Callable[[Path, str], bool] = _write_once,
 ) -> dict[str, Any]:
     """Authorize, idempotently write, and record ONE candidate board op.
@@ -171,11 +172,19 @@ def authorize_and_write(
     (``{status:"failed"}``, no key). A ledger fault after a committed write surfaces as
     ``{status:"error", may_reapply:True}`` rather than escaping.
 
-    ``extra`` is merged into every record (callers pass e.g. ``{"subplot_id": ...}`` so ``/outcome``
-    records keep their existing shape — zero behavior diff, #344 R2). Returns one record dict.
+    ``extra`` is merged into every RETURNED record (callers pass e.g. ``{"subplot_id": ...}`` so
+    ``/outcome`` records keep their existing shape — zero behavior diff, #344 R2).
+
+    ``provenance`` (#620) is merged into the returned record AND the PERSISTED ledger record on a
+    successful write, so a resolution is diagnosable by reading ``board-sync/*.json`` later rather
+    than re-derived (R7). Opt-in: only ``reconcile_board`` passes it (the mission-control root+rung it
+    resolved for the tick), so every other consumer's persisted record is byte-unchanged. Readers use
+    ``.get`` (``outcome_reconcile._read_ledger``), so the additive fields never disturb them.
     """
     cert = _cert()
+    prov: dict[str, Any] = dict(provenance or {})
     base: dict[str, Any] = dict(extra or {})
+    base.update(prov)
     base.update(op_kind=op_kind, repo=repo, number=number, target_state=target_state)
 
     # R1: the verdict MUST come from the certificate; never re-derived here (#344 KTD2).
@@ -231,6 +240,9 @@ def authorize_and_write(
                 "number": number,
                 "target_state": target_state,
                 "ts": now(),
+                # #620 R7: persist the tick's mission-control provenance so a stale resolution is
+                # diagnosable from the durable ledger. Empty for every consumer that passes none.
+                **prov,
             }
         )
         write_once(ledger_file, record_json)

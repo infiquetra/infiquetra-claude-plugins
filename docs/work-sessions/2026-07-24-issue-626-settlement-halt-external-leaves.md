@@ -58,16 +58,31 @@ every-tick harvester re-settle is a genuine no-op.
   `test_outcome_harvest_negative_terminal_settles_fail_closed_and_enters_dlq` (SILENT_NOOP fail-closed),
   `test_waived_halt_dispatches_new_cohort_with_receipt` (#618 waive advances a genuine casualty).
 
-## Checks run
+## Checks run (Phase 3 gate — R6)
 
 - `tests/test_outcome_dispatcher.py -k workflow_executed_leaf_auto_settles` → 1 passed.
-- Relevant regression surface (dispatcher + dispatch_settlement + completion + board_sync + command) →
-  269 passed. `ruff check` + `ruff format --check` on the edited test file → clean.
-- Full suite + mypy + bandit + `check_release_surface_parity`: pending the Phase 3 / code-review gate.
+- Full suite `uv run pytest -q` → **5439 passed, 1 skipped, 0 failed** (the +1 over the 5438 baseline is
+  this test).
+- `ruff check .` clean; `ruff format --check .` → 439 files formatted; `mypy plugins/ scripts/ tests/
+  --ignore-missing-imports` → Success (269 files); `check_release_surface_parity` → all plugins in parity
+  (confirms D1 no-bump — nothing drifted); bandit delta zero by construction (no `plugins/` file changed).
+
+## Code-review gate (Phase 5.1 — programmatic)
+
+Reviewed `913be813` vs base `03c2640c`. **Verdict CLEAN — no P0/P1/P2.** Scope check CLEAN; built-vs-planned
+all DONE (R-live UNVERIFIABLE-by-diff, correctly deferred post-merge). Adversarial refutation confirmed:
+the U1 test is load-bearing (the DELIVERED settle is real production code `outcome.py:2148-2206`; both it
+and the `dispatched==["ship"]` assertion fail if a site filter is re-added), U2-as-reference is sound (R1
+covered by `test_production_path_resolves_once…` + `…advance_autonomous_drives_board_sync`), and D1 no-bump
+is correct. One **P3 advisory** (non-blocking, deferred): the test declares `backend: cc-workflows-ultracode`
+but does not assert the dispatched leaf retained it (a future degrade-logic change could silently reroute
+through `team-execution`); the site-agnostic settle is still exercised, and the backend is not on the
+settlement record (site is `"outcome"`), so a clean assertion would need the `AdvanceResult` degrade shape —
+optional future hardening, not a close blocker.
 
 ## Next step
 
-Run the full test gate, then the programmatic `/code-review` gate; on a clean gate, present the PR-open
-offer (gated on Jeff's go). **R-live** is the post-merge, operator-gated leg (KTD4): it needs an
-operator-named externally-executed subject (`sub-626` runs inline and cannot exercise the external-leaf
-path), following the #615 R9 / #620 R10 pattern — Jeff names the subject before that run.
+PR-ready. Awaiting Jeff's go to open the PR (push + `gh pr create`). Destination = merge (closing #626
+unblocks codex#45). **R-live** is the post-merge, operator-gated leg (KTD4): it needs an operator-named
+externally-executed subject (`sub-626` runs inline and cannot exercise the external-leaf path), following
+the #615 R9 / #620 R10 pattern — Jeff names the subject before that run.

@@ -60,6 +60,17 @@ SYNC_MOD = _load("outcome_board_sync")
 # ---------------------------------------------------------------------------
 
 
+def _live_bp() -> ModuleType:
+    """The board_progression object ``reconcile_board`` imports at call time.
+
+    ``reconcile_board`` does ``import board_progression as _bp`` (lazy, resolved through
+    ``sys.modules``), and every ``_load`` in the suite reassigns that slot — so a collection-time
+    handle goes stale in a full-suite run. Reading ``sys.modules`` at test-run time is
+    order-independent and always names the object the code under test will actually use.
+    """
+    return sys.modules["board_progression"]
+
+
 def _store(tmp_path: Path) -> Any:
     return STORE_MOD.Store(root=tmp_path / "store").ensure()
 
@@ -659,8 +670,8 @@ def test_production_path_resolves_once_and_threads_root_to_schema_and_writer(
 
         return _w
 
-    monkeypatch.setattr(BP_MOD, "resolve_mission_control_root", fake_resolve)
-    monkeypatch.setattr(BP_MOD, "default_board_writer", fake_writer_factory)
+    monkeypatch.setattr(_live_bp(), "resolve_mission_control_root", fake_resolve)
+    monkeypatch.setattr(_live_bp(), "default_board_writer", fake_writer_factory)
 
     store = _store(tmp_path)
     spec = _spec([_leaf("leaf1", "infiquetra/x#42")])
@@ -686,7 +697,7 @@ def test_unresolvable_root_withholds_the_whole_cohort_with_one_record(
     def boom() -> tuple[Path, int]:
         raise RuntimeError("plugin-resolution: could not resolve a 'mission-control' root")
 
-    monkeypatch.setattr(BP_MOD, "resolve_mission_control_root", boom)
+    monkeypatch.setattr(_live_bp(), "resolve_mission_control_root", boom)
 
     store = _store(tmp_path)
     # Three ready leaves → six candidate ops pre-fix (status + comment each). Must collapse to one.
@@ -718,7 +729,7 @@ def test_stale_fleet_core_missing_plugin_resolution_degrades_not_crashes(
 
     monkeypatch.setattr(fleet_commons_shim, "load", raise_missing)
     with pytest.raises(RuntimeError) as excinfo:
-        BP_MOD.resolve_mission_control_root()
+        _live_bp().resolve_mission_control_root()
     message = str(excinfo.value)
     assert "plugin_resolution" in message
     assert "#642" in message
@@ -735,7 +746,7 @@ def test_reconcile_board_routes_stale_fleet_core_into_the_unavailable_record(
             "board-sync: the resolved fleet-core cannot provide plugin_resolution ... (see #642)."
         )
 
-    monkeypatch.setattr(BP_MOD, "resolve_mission_control_root", boom)
+    monkeypatch.setattr(_live_bp(), "resolve_mission_control_root", boom)
     store = _store(tmp_path)
     spec = _spec([_leaf("leaf1", "infiquetra/x#42")])
     result = SYNC_MOD.reconcile_board(spec, store, board_writer=None)
@@ -755,7 +766,7 @@ def test_injected_writer_never_triggers_root_resolution(
             "resolve_mission_control_root must not be called when a writer is injected"
         )
 
-    monkeypatch.setattr(BP_MOD, "resolve_mission_control_root", must_not_run)
+    monkeypatch.setattr(_live_bp(), "resolve_mission_control_root", must_not_run)
     store = _store(tmp_path)
     spec = _spec([_leaf("leaf1", "infiquetra/x#42")])
     writer = RecordingWriter()

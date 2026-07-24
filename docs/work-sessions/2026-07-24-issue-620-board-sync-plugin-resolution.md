@@ -72,9 +72,38 @@ Three new U2 tests passed in isolation but failed in the full suite: `reconcile_
 so a collection-time module handle went stale and the monkeypatch missed. Fixed by patching the
 run-time-live `sys.modules` entry (`_live_bp()`), which is order-independent.
 
-## Next step
+## Post-merge (shipped 2026-07-24)
 
-Code-review gate (`/code-review` programmatic), then PR to merge. Destination merge, backend inline.
-Post-merge: #642 hand-repair (this ships fleet-core 0.23.0 + saga 0.114.0 — a new release, so the
-install registry will go stale five-for-five), R10 live acceptance from a non-monorepo repo, and the
-sub-620 harvest.
+**Merge.** Code-review gate ran a 3-lens opus adversarial panel (`saga:readonly-verifier` + worktree
+isolation): two lenses fully clean (one live-drove `reconcile_board` to verify KTD3), one with six
+P2/P3 findings (no P0/P1), all six repaired in `6c88cf52`. Full ceremony via `ship_ceremony.py`
+(commit → open_pr → request_review → merge → checkout_main → pull → branch_delete → teardown; receipt
+minted). PR #651 → main as `02ae029a`; issue #620 closed COMPLETED; branch deleted local + remote;
+CI 8/8 green.
+
+**Review repairs worth remembering.** The most valuable finding (F3) was a claim-vs-reality gap the
+green suite missed: R7 said provenance would be "diagnosable by reading the ledger," but the code
+stamped only the *ephemeral return value* — the durable `board-sync/*.json` files carried nothing
+(the ledger is deliberately minimal; even `subplot_id` isn't persisted there). Fixed with an opt-in
+`provenance` param on `authorize_and_write` that merges into both the returned record and the
+persisted `record_json`; only `reconcile_board` opts in, so other consumers' ledgers are byte-
+unchanged (readers use `.get()`). Also: the panel found a fifth resolution site the doc-review
+missed — `reconcile_controller.py:423` — whose only CLI test passed by monorepo walk-up accident;
+now pinned + a resolve-failure test added.
+
+**#642 hand-repair (fifth-for-five).** New versions shipped, no marketplace update ran, so the cache
+dirs for 0.114.0/0.23.0 did not exist — hand-repair was the whole rollout (rsync merged trees +
+rewrite both records at `02ae029a`). Verified from a non-repo cwd: `rung=3 root=.../fleet-core/0.23.0`
+and `plugin_resolution` loads from the repaired root. This mattered acutely: a stale record would
+resolve the old 0.22.0 without `plugin_resolution` and re-brick board-sync — the exact KTD6 case.
+
+**R10 resolution-level acceptance: PASS.** From the incident repo `campps-context-library` (no
+`plugins/` dir), the installed-cache production path resolved mission-control via rung 3 to
+`mission-control/2.10.1`, built the writer, and confirmed the resolved `sdlc_manager.py` exists.
+Deferred sub-leg: a live board-write against a disposable card (doc-review D4 forbids mutating a real
+card without an operator-named target).
+
+**Harvest.** Backfilled the spec's `leaf_saga_id` (the #617 gotcha — empty → silent skip) + linked
+PR #651, wrote evidence at close sha `c96ea511`, advanced → `harvested: ['sub-620']`. Outcome
+governed-execution-integrity now **6/9**; the same tick **dispatched sub-626** (its last dep cleared).
+Outcome branch pushed `f89bc3fc`. Board → Done; ship comment on #620; #642 fifth-recurrence comment.

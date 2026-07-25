@@ -25,6 +25,63 @@
 
 ---
 
+## 2026-07-22
+
+### A landed broker schema addition poisons every armed-hook Bash call fleet-wide until #617's read-tolerance ships {#broker-schema-forward-poisoning-616}
+
+**Context.** #616's worktree write-fence work (`Lease.isolation` field addition) ran under
+governed `cc-workflows-ultracode` choreography, verified by a refute-mandate panel. Pass 1
+refuted 3/3 on a TTL-expiry machinery fault (renewal-path gap, unrelated); a driver-side
+cooperative renewal loop fixed that, and pass 2 relaunched — then refuted 3/3 again, this time on
+a second, distinct fault.
+
+**Evidence.** Pass 2's driver re-reservation ran *after* U1's `Lease.isolation` diff had already
+landed in the repo broker, so the repo broker serialized the new `isolation` key into batch lease
+records written to the shared, machine-wide registry
+(`~/.local/state/infiquetra/fleet-leases/registry.json`). The *installed* hook broker (fleet-core
+0.19.0 — correctly current, not the separate #642 staleness hazard) hard-rejects unknown
+registry fields on read: `HALT — delegated mutation refused: leases.0305cda0…: unknown field(s):
+isolation`. Every hook-fenced Bash call on the machine then failed closed — verifier claims never
+bound, a slot lapsed at the 30 s claim TTL, and `renew_batch`'s all-or-nothing semantics refused
+the whole batch once one member expired. Full detail:
+`docs/work-sessions/2026-07-22-issue-616-worktree-write-fence-scoping.md` ("Pass 2 outcome").
+
+**Mechanism.** The registry has no schema-version negotiation: any process (repo broker or
+installed broker) that writes a new field makes every *other* process on the same machine reading
+an older broker code version reject the record outright, because `from_dict` validates against a
+closed key set with no unknown-field tolerance. A repo-code broker landing a schema change while
+governed choreography is still running against the shared machine-wide registry is therefore a
+fleet-wide self-inflicted outage, not a scoped one — it doesn't matter that the installed plugin
+was current; the repo diff being ahead of it is enough.
+
+**Fix (or queued).** Working mitigation used mid-session: pin the choreography's writes to the
+installed (older-schema) broker via `FLEET_COMMONS_ROOT` (the existing rung-1 override) so the
+shared registry stays old-schema through pre-merge verification. The durable fix is #617's
+accept-unknown-fields read-tolerance layer, which must land *before* any further broker schema
+field additions ship through governed choreography.
+
+**Validation.** Driver-side reproduction after the mitigation: `uv run pytest -q
+tests/test_fleet_lease_broker.py` 75 passed, ruff/format/mypy clean, broader suite green except
+the plan-anticipated U2 adapter seam — recorded as the producer-of-record evidence per the saga
+driver-adjudication pattern (unfenced driving session is not subject to the same hook fencing).
+
+**What surprised.** Two structurally different pass-1/pass-2 refute-3/3 votes looked identical
+from the panel's side (unproven-not-false on every quantitative claim) but had unrelated root
+causes — TTL-renewal-gap vs. schema-forward-poisoning. The panel's own verdict text ("unproven,
+not shown false") is the tell that the fault is verifier-tooling, not the diff; don't stop at the
+first plausible machinery explanation once one is fixed and the exact same refute pattern recurs.
+
+**Generalizable rule.** Any repo-code change to a fleet-lease broker's persisted schema is a
+live-fleet hazard the moment it lands, independent of merge state — governed choreography that
+writes through the shared machine-wide registry must either pin to the installed (unchanged)
+broker for the duration, or run after #617-class read-tolerance exists. Treat "landed a schema
+field" the same as "changed a shared production data format" — sequence it behind compatibility,
+not behind test-green.
+
+**Refs.** `docs/work-sessions/2026-07-22-issue-616-worktree-write-fence-scoping.md`; DECISIONS
+[[worktree-fence-scoping-616]]; issue #617 (registry schema-skew hardening, this leaf's declared
+non-goal); #642 (the separate stale-`installed_plugins.json` hazard, explicitly ruled out here).
+
 ## 2026-07-21
 
 ### Workflow children can never bind a fleet lease — the batch claim requires a PreToolUse stamp that internal spawns never produce {#installed-hook-skew-fail-close-637}
@@ -4070,3 +4127,158 @@ operator asked for.
 **Refs.** `plugins/mission-control/scripts/sdlc_manager.py:3529`,
 `docs/sdlc-issue-drafts/2026-07-21-harden-refuse-mode-lease-admission-pid-liveness.{md,json}`;
 issues infiquetra-claude-plugins#637, infiquetra-codex-plugins#45.
+
+---
+
+### Async Agent spawns turn PostToolUse into a lease kill switch {#async-spawn-posttooluse-race-616-r8}
+
+**Evidence.** R8 rollout canary for #616 (2026-07-23, work-session doc
+`2026-07-22-issue-616-worktree-write-fence-scoping.md` post-merge section): three consecutive
+real Agent spawns lost their lease ("expected exactly one fleet lease bound; found 0"); a
+100 ms registry watcher showed the healthy PreToolUse reservation and the session admission
+wiped in one write 101–156 ms after reservation — exactly when the async Agent tool call
+returned its launch metadata.
+
+**Mechanism.** PostToolUse[Agent|Task] → `record_hook_parent` → broker
+`record_parent_completed` (fleet-core 0.20.0 `lease_broker.py:3895`) removes any matching
+lease with `agent_id is None` as "spawn never happened" (:3913-3921) and pops the session
+admission when no live agents remain (:3924-3927). That contract assumes PostToolUse is a
+*completion* signal — true for synchronous spawns only. Background/async spawns return the
+tool result at launch, so the cleanup races SubagentStart's claim; when cleanup wins, the
+child runs unbound and all delegated mutations are refused. Same signature as the 3-of-8
+code-review verifier losses (claim won 5 races).
+
+**Generalizable rule.** Any lifecycle hook keyed on "tool call returned" must distinguish
+launch-return from completion-return before destroying state; a reservation younger than the
+spawn round-trip is not abandoned. Verify hook-event semantics against the harness's actual
+execution mode (sync vs async) rather than the tool's nominal lifecycle.
+
+**Refs.** `plugins/fleet-core/scripts/fleet_commons/lease_broker.py:3895-3928`,
+`plugins/saga/scripts/lease_broker.py:379-394` (`record_hook_parent`); learning
+`{#broker-schema-forward-poisoning-616}`; issue #616 / PR #643.
+
+---
+
+### Outcome harvest silently skips a leaf whose spec node lacks `leaf_saga_id` {#harvest-leaf-saga-id-backfill-617}
+
+**Evidence.** sub-617 harvest, 2026-07-23: PR #650 merged, evidence written under
+`leaf-governed-execution-integrity-sub-617` at close sha `7be1a24a`, yet two `advance`
+ticks returned `harvested: []` with no drift or halt output. The dispatch ledger's commit
+record carried `"leaf_saga_id": "leaf-governed-execution-integrity-sub-617"`, but the
+committed spec node's `leaf_saga_id` was `""`. Backfilling the spec field made the next
+tick harvest immediately (`596c777c` on `outcome/governed-execution-integrity`).
+
+**Mechanism.** `closure_gate.evaluate` (`plugins/saga/scripts/closure_gate.py:220`) reads
+`node.leaf_saga_id` from the SPEC node — never from the dispatch ledger — to resolve
+`docs/evidence/<saga-id>/`. Under a dispatch-era intent with `reviews_required: "gate"`,
+a code leaf implies a required `code-review` check, so an empty id makes the gate
+unsatisfiable (`unresolvable-close-sha`) and `harvest` skips the node with no surfaced
+reason. The GitHub barrier (PR merged) passes; the failure is invisible in `advance`
+output.
+
+**Generalizable rule.** Before expecting a closure-gated leaf to harvest, verify the spec
+node's `leaf_saga_id` matches the dispatch ledger record — and treat a silent
+`harvested: []` on a merged PR as a closure-gate resolution failure, not a barrier miss.
+
+---
+
+### Lazy `import X` + per-test `_load(X)` = a stale monkeypatch target  {#sys-modules-stale-patch-620}
+
+**Evidence.** #620 board-sync tests (`tests/test_outcome_board_sync.py`): three new tests passed in
+isolation but failed in the full suite (`assert 6 == 1`, real resolver + writer ran instead of the
+fake). Fix commit `bd7bdee0` (`_live_bp()` helper) + the reconcile_controller counterpart in
+`c96ea511`.
+
+**Mechanism.** `reconcile_board` resolves its dependency with a lazy `import board_progression as _bp`
+at call time, which returns `sys.modules["board_progression"]`. Every test module loads scripts via a
+`_load()` that does `sys.modules[name] = module` — so the *last* test module collected wins that
+slot. A handle captured at collection time (`BP_MOD = _load("board_progression")`) is therefore stale
+by the time the test runs in a full suite, and `monkeypatch.setattr(BP_MOD, "resolve…", fake)` patches
+an object the code under test never imports. The fake silently doesn't apply; the real function runs
+and passes only by monorepo-walk-up accident. It passed in isolation because nothing else competed
+for the slot.
+
+**Generalizable rule.** When code under test resolves a collaborator via a lazy `import` (through
+`sys.modules`), patch the run-time-live `sys.modules[name]` — never a module handle captured at import
+time. A test that monkeypatches a collaborator and still passes when the patch is a no-op is a false-
+confidence test; prove the patch bites (assert a fabricated value the real collaborator could not
+produce, or assert the fake was called).
+
+---
+
+### A validated value must travel to the thing it authorizes, or the gate guards a different value than the one that acts {#validated-value-must-travel-635}
+
+**Evidence.** Pre-PR code review of #635 at `6b0a8180`, artifact
+`docs/code-reviews/2026-07-25-issue-635-ceremony-ref-resolution-code-review.md`. `ship_ceremony.run()`
+called `resolve_ceremony_refs()` (`:1211`), validated the operator's
+`--operator-confirmed branch_delete:<target>` against the result, and handed the resolved head to the
+`branch_delete_targets_base` hazard probe. It then dispatched
+`_RUNNERS[upcoming](saga, repo_root=..., runner=...)` (`:1273`) — a uniform signature carrying neither
+the confirmed target nor the refs — and `_do_branch_delete` (`:940`) resolved again from scratch.
+Two independent review lenses reproduced the consequence end-to-end; the sharper run deleted
+`outcome/norns-next-horizon` local and origin **through the new code**, with the non-acknowledgeable
+hazard reporting clean.
+
+**Mechanism.** The consequence needs the resolver's own defining property. `resolve_ceremony_refs`
+degrades from rung 1 (the PR, via `gh pr view`) to rung 2 (the opened-resource manifest plus the base
+sidecar) on **any** non-zero `gh` exit — deliberately, so an operator finishing a ship offline is not
+stranded. That makes the function non-deterministic across calls in exactly the way a cache would not
+be: two invocations seconds apart, same inputs, can answer from different rungs and return different
+branches. So the confirmation check, the hazard scan, and the deletion were three computations that
+usually agree rather than one value used three times. One transient `gh` failure inside a single
+`run()` is enough to separate them, and every gate still reports pass because each gate genuinely did
+pass — against the value it saw.
+
+Note the shape of the original defect this was fixing: the deletion target and the manifest resource
+id were derived independently from the same wrong field. The fix collapsed that to one resolved value
+*inside* `_do_branch_delete`, and reintroduced the identical class of split *across the operator
+gate*. The blast radius moved up a level and became invisible to the unit that had been fixed.
+
+**Generalizable rule.** When a gate validates a value and a later step re-derives it, they are two
+values, not one — and a resolver that degrades between sources makes "usually equal" the strongest
+guarantee available. Pass the validated object through to the step it authorizes so identity is
+structural, and treat a uniform dispatch signature as a place values get silently dropped. Corollary
+for review scope: unit-scoped verify panels cannot see this class of defect at all. Five refute
+panels passed this change set; the defect lived in the seam between the unit that built the resolver
+and the unit that built the gate, and only a diff-wide pass surfaced it.
+
+---
+
+### A rolling tick field read as ceremony state produces a three-part silent failure {#ceremony-tick-field-as-state-635}
+
+**Evidence.** `ship_ceremony.py`'s `_do_branch_delete` (issue #635, grounded at `474fd3cc`): on a
+leaf-into-outcome PR whose last saga tick save happened while checked out on the base branch,
+`branch_delete` deleted the **base** branch, both locally and on `origin`, rather than the PR's head.
+The real incident (2026-07-20/21, `infiquetra/team-norns`, saga `issue-236`) deleted
+`outcome/norns-next-horizon` local and origin while the actual feature branch survived; recovery
+depended on the rollback manifest's recorded head SHA plus local object-store retention.
+
+**Mechanism.** `saga.py:566` stamps `"branch": git branch --show-current` on **every** `save` — the
+field means "whatever branch the last save happened on," not "the branch this ceremony opened." Three
+independent call sites each read that field (or the literal string `main`) as if it recorded ceremony
+identity, and the failure it produced had three parts, not one: (1) the deletion itself ran against
+the base branch, with the origin-side `git push --delete` swallowing failure under `check=False`; (2)
+the manifest close addressed `ceremony-branch:<base>` — an id that was never registered, so
+`_close_if_registered`'s by-design no-op on unknown ids (`:346-357`) hid the divergence with no error;
+(3) the real feature branch's `ceremony-branch:<head>` entry stayed `open` forever, because
+`_teardown_attempt_closes` (`:604`) auto-closes only `scratch` and `worktree` kinds, never `branch` —
+so every later teardown attempt raised `TeardownBlockedError` permanently. Only the first part is
+visible without reading the other two call sites; the manifest divergence and the permanent teardown
+block are consequences that don't surface until much later, at a point disconnected from the original
+mistargeted delete.
+
+**Generalizable rule.** A destructive target must resolve from write-once, ceremony-scoped evidence —
+a value written once, at the moment the fact becomes true, and never touched again — never from a
+field that is re-derived on every save. A field's docstring or origin ("this is `git
+branch --show-current`") is not evidence of what it means to a later reader; a rolling field answers
+"what is true right now," and a ceremony needs the answer to "what was true when this ceremony
+opened." When three call sites each independently derive the same fact from one ambient source, that
+is the signal to centralize into one resolver rather than trust that all three derivations will keep
+agreeing — the fix here (`resolve_ceremony_refs()`, `{#ceremony-ref-resolution-635}`) replaced five
+independent guesses with one PR-authoritative-then-sidecar ladder that raises rather than falling back
+to the rolling field.
+
+**Refs.** `plugins/saga/scripts/ship_ceremony.py` (`resolve_ceremony_refs`, `_do_branch_delete`,
+`_do_merge`), `plugins/saga/scripts/ship_undo.py` (`_undo_merge`, `_merge_entry_base`),
+`plugins/saga/scripts/ceremony_hazards.py` (`BRANCH_DELETE_TARGETS_BASE`); decision
+`{#ceremony-ref-resolution-635}`; issue #635.

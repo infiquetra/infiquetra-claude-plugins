@@ -82,8 +82,25 @@ def _fmt_num(value: float) -> str:
 
 
 def default_sdlc_manager(repo_root: Path) -> Path:
-    """The in-repo mission-control read script, resolved from the repo root."""
-    return repo_root / "plugins" / "mission-control" / "scripts" / "sdlc_manager.py"
+    """The mission-control read script, resolved through the plugin ladder (#620).
+
+    Pre-#620 this was ``repo_root / "plugins" / "mission-control" / ...``, which only ever resolved
+    inside the plugins monorepo — so ``/pulse`` reported the board as unavailable from every consumer
+    repo. It now shares board-sync's resolver, so ``repo_root`` is advisory (kept for call-site
+    compatibility; the ladder walks up from fleet-core's own location).
+
+    The soft-failure contract is preserved: an unresolvable mission-control returns a
+    deliberately-nonexistent path so ``read_board_state``'s ``is_file()`` check renders the
+    ``unavailable`` panel — ``/pulse`` telemetry never raises. The path string names the ladder so
+    the panel reason is actionable.
+    """
+    import board_progression as _bp  # noqa: PLC0415
+
+    try:
+        root, _rung = _bp.resolve_mission_control_root()
+    except RuntimeError:
+        return Path("mission-control(unresolved-via-plugin-ladder)") / "scripts" / "sdlc_manager.py"
+    return root / "scripts" / "sdlc_manager.py"
 
 
 def read_board_state(

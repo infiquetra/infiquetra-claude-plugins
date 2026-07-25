@@ -1,6 +1,160 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-07-23
+
+### Unclaimed parent-completed reservations stamp-and-survive instead of dying at async launch-return {#async-parent-signal-644}
+
+**Decision.** From the #644 plan (2026-07-23). With async Agent/Task spawns, the harness fires
+PostToolUse at launch-return (~100-156 ms after PreToolUse) — well before SubagentStart can claim
+the reservation. `record_parent_completed`'s unclaimed-reservation branch treated that early signal
+as "spawn never happened" and deleted the still-unclaimed lease (and popped the session admission
+riding the same write), a per-spawn coin-flip that made direct Agent/Task spawns fail roughly half
+the time under armed hooks ("expected exactly one fleet lease bound; found 0" — diagnosed live
+during the #616 R8 rollout, LEARNINGS `{#async-spawn-posttooluse-race-616-r8}`).
+
+KTD1 — **Fix locus: broker `record_parent_completed` unclaimed arm, stamp-and-survive.** The
+unclaimed-reservation branch completes (removes/recycles) the lease only when the caller passes
+`spawn_failed=True`; otherwise it falls into the existing stamp-and-keep else-branch, unchanged.
+One branch, zero registry schema change. The admission half needed no companion change —
+`_session_has_live_agents` already counts any unexpired agent-pool lease, claimed or not, so a
+surviving reservation keeps the admission slot alive on its own. Rejected: *payload
+launch-vs-completion sniffing* (depends on an unverified harness payload contract, and is
+unnecessary since the parent tool call genuinely did return — the early stamp is semantically
+correct); *age-based grace window* (introduces an arbitrary time constant when the existing 30 s
+claim TTL already bounds the linger, and only shrinks the race instead of eliminating it);
+*unconditional no-cleanup* (discards the one genuine-failure signal available —
+`PostToolUseFailure` — and would leave never-started spawns holding slots for the full TTL).
+
+KTD2 — **Event-aware routing lands adapter-side as a keyword-only broker parameter.**
+`record_parent_completed(session_id, tool_use_id, *, spawn_failed: bool = False)`; the saga
+adapter's `record_hook_parent` passes `spawn_failed = (payload hook_event_name ==
+"PostToolUseFailure")`. The adapter is the only layer that sees the raw hook event; the
+default-False keyword keeps every existing caller and the tuple-of-removed-lease-ids return
+contract byte-compatible, and the `tests/test_concurrency_conformance.py` truth-set (which records
+callable names only) stays frozen.
+
+KTD3 — **Version-skew posture: no compatibility shim.** The new adapter call passes `spawn_failed`
+unconditionally; against a pre-0.21.0 broker this raises `TypeError` on the observational
+`PostToolUse` path only (`PostToolUse` is already retained-for-retry there), degrading skew to
+TTL-bounded release instead of signal-bounded release — soft, bounded, and exactly the drift the
+#642 provenance preamble exists to catch. A try/except shim was rejected as silently masking the
+skew instead of surfacing it.
+
+KTD4 — **Batch stamped slots get the same deferral, plus one settlement arm.** The identical race
+applies to Workflow-runtime children (stamped batch slots carry `tool_use_id` from PreToolUse and
+were recycled by the same kill branch — prime suspect for the #616 pass-4 batch disappearance).
+The one branch change covers both shapes; the stamped-slot recycle at child terminal is untouched,
+preserving the #615 R9 contract. One companion change was required: `settle_batch` previously
+released only unclaimed-and-unstamped or claimed-and-dual-signal slots — the new surviving state
+(stamped-unclaimed, `parent_completed_at` set) matched neither arm and would have leaked an
+expired slot past settlement. Extended the release condition with one arm: `lease.agent_id is
+None and lease.parent_completed_at is not None` — an unclaimed slot whose parent call already
+returned can owe no child. Mid-run wave settlements are unaffected (a stamped slot still awaiting
+its child carries no parent signal yet).
+
+**Rejected alternatives.** See KTD1 (payload sniffing, age-based grace window, unconditional
+no-cleanup) and KTD3 (compatibility shim) above.
+
+**Revisit when.** #617 lands registry schema-skew hardening (this leaf shipped zero schema change
+by design and should not be the leaf that adds one); #645 (boot-id cohort split) or #646 (admission
+policy / lease-TTL redesign, `renew_batch` all-or-nothing) touch adjacent admission/TTL machinery
+this fix deliberately left alone; #647 (pre-existing unfenced edge) is explicitly out of scope
+here.
+
 ## 2026-07-22
+
+### Worktree write-fence is scoped to declared isolation, not spawn cwd {#worktree-fence-scoping-616}
+
+**Decision.** From the #616 plan (2026-07-22, operator-pinned D1). The fleet-lease write-fence
+pinned every claimed agent to its spawn working directory, refusing writes for any agent that
+legitimately edits a different repository even under a valid `read-write` lease — the fence
+conflated "where the agent was spawned" with "where the agent may write," correct only for
+`isolation: 'worktree'` spawns. Six load-bearing calls: (KTD1) isolation truth is
+reservation-carried, stamped at PreToolUse from `tool_input.isolation` — the PreToolUse payload is
+the only trusted pre-spawn surface that sees the Agent tool call's declared isolation
+(`SubagentStart` carries no isolation field; cwd heuristics have both false positives — developer
+worktrees, nested repos — and false negatives, and were rejected), mirroring how the reservation
+already carries `agent_type` from the same payload. (KTD2) `isolation` becomes a first-class
+nullable `Lease` field, not a `resource_ref` key — `_AGENT_RESOURCE_KEYS` stays closed at
+`{logical_unit_id, worktree_root}` so `canonical_resource_ref` validation is untouched and #626
+(external-executor settlement) extends a named field instead of colliding with a widened closed
+set; the adapter normalizes so only the exact string `worktree` is stored, any other declared
+value (e.g. `remote`) or absence stores `None`. (KTD3) claim-time fence policy is a three-way
+branch on reservation state, replacing the unconditional cwd stamp: `isolation == "worktree"`
+stamps `worktree_root` from the child cwd (fenced, unchanged containment check); a
+PreToolUse-stamped reservation with no worktree isolation claims with no `worktree_root`
+(unfenced — the deliberate privilege change this defect demands); an unstamped attested batch slot
+(`tool_use_id is None`, #615's Workflow-runtime children) keeps today's cwd stamp byte-for-byte, no
+declared truth exists to act on. (KTD4) no declared-write-roots surface ships — the Agent tool's
+`tool_input` has no write-roots parameter, so a narrower grant would require inventing an
+unpopulated side channel; non-isolated-means-unfenced is the issue's own proposed fallback, and a
+narrower shape can extend KTD2's first-class field later. (KTD5) registry compatibility reuses the
+established backfill-before-closed-mapping idiom (`SettlementRecord.from_dict`'s precedent) — a
+pre-#616 (0.19.0-shaped) `leases.*` dict with no `isolation` key backfills to `None` before
+`_closed_mapping` validation; no migration machinery, deliberately left to #617's schema-skew
+layer. (KTD6) the Workflow batch metadata schema (`workflow_lease_reservation.v1`, closed 16-key
+set) is untouched — batch-level isolation declaration for Workflow-runtime children is deferred
+because those slots are interchangeable at claim (any child claims any slot), so per-slot isolation
+cannot be matched to a specific child reliably; the conservative cwd fence (KTD3's third branch)
+stays the sound default, revisit alongside #626.
+
+**D1 — operator pin (P1, mirrors #615's D1).** KTD3's middle branch removes the write-fence
+entirely for non-isolated spawns. Alternatives: (i) unfenced — this plan's choice, the issue's own
+proposal; admission, `read-write` mutation mode, and hook verification all remain. (ii) fence to a
+declared write-root set — rejected as KTD4 scope creep, no carrier surface exists today. (iii) keep
+the cwd fence and require every cross-repo builder to be worktree-isolated — rejected, forces
+isolation overhead onto every cross-repo spawn and contradicts the issue's intent. Jeff pinned (i)
+explicitly before `/work` executed.
+
+**Rejected alternatives.** See KTD1 (cwd heuristics), KTD4 (declared-write-roots side channel),
+and D1 (options ii/iii) above; also see #615's `workflow-child-lease-binding-615` entry for the
+sibling seam this leaf deliberately left untouched (KTD6) rather than reworking together.
+
+**Revisit when.** #617 lands registry schema-skew hardening (this leaf deliberately used the
+minimal backfill idiom and left migration machinery alone); #626 needs a narrower grant than
+"unfenced" for external-executor settlement (extends KTD2's first-class field); or Workflow-runtime
+children ever carry a per-child parent tool-use id, making KTD6's per-slot isolation matching
+possible.
+
+**Refs.** Plan `docs/plans/2026-07-22-issue-616-worktree-write-fence-scoping-plan.md` (KTD1–KTD6,
+R1–R8, D1 operator fork); issue #616; [[workflow-child-lease-binding-615]].
+
+### Workflow children claim attested unstamped batch slots — complete the protocol, never exempt {#workflow-child-lease-binding-615}
+
+**Decision.** From the #615 plan (2026-07-22, operator-pinned). Workflow-runtime children emit
+lifecycle hook events (`SubagentStart`/`SubagentStop`) but never the tool-call events
+(`PreToolUse`/`PostToolUse` on `Agent|Task`) that stamp and release batch slots — so the #356
+driver protocol reserved and attested a wave the broker's `claim` could never bind (`attest`
+requires every slot unstamped; the claim filter required a stamp). Six load-bearing calls:
+(KTD1) complete the protocol at the broker's claim/terminal seam — no `agent_type` exemption, no
+adapter special-case; batch presence is a root-authorized signal, an agent-type string is not.
+(KTD2) stamped-first claim ordering `(unstamped-last, fencing_sequence, lease_id)` for strict
+additivity — unstamped binding activates only where the old filter raised `LeaseNotFoundError`;
+non-batch ordering byte-identical. (KTD3) an unstamped slot recycles on child-terminal alone (it
+provably has no parent tool call); stamped slots keep the dual-signal contract. (KTD4, D1
+resolution i) keep-alive rides lifecycle events AND `assert_write_target` — every verified
+delegated mutation renews the batch member and its live siblings in-lock, closing TTL event
+starvation under the emitted 30s/300s TTLs; a wedged child stops renewing and TTL reaps.
+(KTD5) the emergency kill-switch `INFIQUETRA_FLEET_LEASE_ENFORCEMENT=off` lives in the saga hook
+adapters, exact-string, fail-armed; the broker's invariants never learn a bypass. (KTD6) no
+protocol version bump — version skew degrades to today's fail-closed behavior, never unfenced.
+
+**Rejected alternatives.** Claim-time auto-provisioning keyed on `agent_type=workflow-subagent`
+(creates capacity at claim time, violating #356 "reservation precedes launch"; trusts an
+unverified runtime string); exempting Workflow children from enforcement (unfences the
+highest-mutation fleet class); adapter-side special-casing (leaves team-execution broken,
+touches the codex frozen seam for no reason); driver-side TTL renewal at task-notification
+seams and horizon-scale TTLs (D1 options ii/iii — cadence-dependent or reaping-weakening).
+
+**Revisit when.** #616 lands the worktree write-fence layer (both touch `lease_broker.py`;
+second lander rebases); the Workflow runtime ever exposes per-child parent tool-use ids (true
+flow-matched stamping would become possible); or R9 live canary exposes session-id mismatch for
+workflow children (mitigation: `INFIQUETRA_FLEET_BATCH_ID` export at launch).
+
+**Refs.** Plan `docs/plans/2026-07-22-issue-615-workflow-child-lease-binding-plan.md`
+(KTD1–KTD6, R1–R9); doc-review
+`docs/reviews/2026-07-22-issue-615-workflow-child-lease-binding-plan-doc-review.md` (D1
+operator fork); issue #615; [[fleet-ttl-lease-broker-356]]; [[settlement-waiver-618]].
 
 ### Settlement-gate deadlock is cleared by a snapshot-scoped operator waiver, not by reclassifying truth {#settlement-waiver-618}
 
@@ -5442,3 +5596,277 @@ that patches a failing runtime; and closing #579 with a waiver.
 **Revisit when.** A networked active-dispatch authority makes cross-host mutation an accepted product
 contract or the runtime packages provide a signed, standardized installed-attestation API that can
 replace the current isolated readback evidence.
+
+---
+
+### Registry readers tolerate-and-preserve unknown additive fields; commitments stay closed {#registry-forward-compat-617}
+
+**Date:** 2026-07-23 · **Plan:**
+`docs/plans/2026-07-23-issue-617-registry-schema-forward-compat-plan.md`
+
+**Issue:** #617 · **Learnings:** `{#broker-schema-forward-poisoning-616}`
+
+**Decision.** The fleet-lease registry reader (`plugins/fleet-core/scripts/fleet_commons/lease_broker.py`)
+tolerates and preserves unknown additive fields in container mappings instead of failing closed with
+`RegistryCorruptError` on every unrecognized key, and ships `doctor`/`repair` as the shipped operator
+path for the manual recovery the 2026-07-17 and 2026-07-22 incidents required by hand.
+
+- **KTD1 — tolerance line = containers tolerant, commitments closed.** Unknown-key tolerance applies
+  to container mappings (registry top level, per-lease, per-fence, per-admission, per-settlement-outer
+  record, per-owner-close); digest-covered commitment records verified by `_record_sha256`
+  (settlement-close receipts, `FencingToken`) stay strictly closed, because container fields are
+  mutable schema-evolvable state while commitment records are hash-bound evidence where an unknown
+  byte is indistinguishable from tampering.
+- **KTD2 — extras passthrough rides a per-dataclass `extras` mapping.** Each tolerance-scoped
+  dataclass (and `Registry` itself) captures the unknown remainder at `from_dict` and merges it last
+  in `to_dict`. `to_dict` rebuilds the document from typed dataclasses, so passthrough that doesn't
+  ride the dataclass is silently dropped on the next write — the round-trip data-loss hazard this
+  decision exists to kill. `sort_keys=True` plus extras being disjoint from known keys by
+  construction keeps output deterministic and collision-free.
+- **KTD3 — no version stamp, no migration framework.** The schema string stays
+  `fleet_lease_registry.v1` and the fix writes zero new fields; any new written field would itself
+  brick every pre-#617 reader, the exact defect under repair. The four existing bespoke legacy
+  migration arms in `Registry.from_dict` are untouched. A future breaking change rides an explicit
+  v2 schema string, which fails closed by design.
+- **KTD4 — `doctor`/`repair` are explicit operator down-migration verbs, not auto-recovery.** They
+  land as saga adapter CLI verbs (`plugins/saga/scripts/lease_broker.py`, beside `inspect`/`sweep`)
+  delegating to fleet-core broker methods; `saga:fleet-doctor` stays strictly read-only.
+  Auto-repairing shared fenced state on read would itself be a tamper/corruption-masking vector — with
+  tolerance shipped, `repair`'s remaining job is deliberate rollback support (strip newer fields so an
+  older broker can read the file) plus a shipped triage path for the next "corrupt beyond tolerance"
+  incident. `repair` never runs implicitly and requires an explicit `--strip-unknown` flag.
+- **KTD5 — tolerance is bounded; corruption stays detectable.** Preserved unknown extras are capped
+  at 64 KiB serialized per document; above the cap the read fails closed with `RegistryCorruptError`.
+  An unbounded unknown-blob channel in a 0600 shared-state file would invite garbage-flood and
+  smuggling; the cap keeps the fail-closed posture against non-additive garbage while sitting far
+  above any plausible additive-field payload.
+- **Mid-run reload writer-swap hazard stays out of scope, documented not built.** The issue's proposed
+  fix 4 — harness-side detect-and-refuse of a mid-run plugin reload that swaps the active schema
+  writer underneath a running session — is harness territory, not adapter-CLI or broker territory.
+  This fix does not attempt it; the hazard is recorded here and in LEARNINGS
+  `{#broker-schema-forward-poisoning-616}` so a future harness-side change has the incident context,
+  rather than being silently reintroduced as an unstated assumption.
+
+**Rejected.** A `schema_minor` stamp (a new field is self-defeating against R5); writer-version
+stamping with migrate-on-open (machinery with no consumer while v1 stays additive-only); a
+minor-version string lane (`v1.x`) that changes the exact-matched `schema` value and bricks older
+readers identically to the defect under repair; auto-repair on read; and an unbounded extras channel.
+
+**Revisit when.** A genuinely breaking v2 schema is first needed (KTD3), at which point a real
+migration framework and writer-version stamping become worth their machinery; or the harness gains a
+mid-run plugin-reload detection surface that could consume the writer-swap hazard note directly.
+
+---
+
+### Board-sync resolves mission-control via the plugin ladder, not monorepo paths (#620)  {#board-sync-plugin-resolution-620}
+
+**Decision.** Saga's `/outcome` board-sync located mission-control at
+`<repo_root>/plugins/mission-control/...` and read the schema at
+`Path(__file__).parents[2]/mission-control/config/sdlc-schema.json`. Both are correct only inside the
+plugins monorepo, so every board write failed from a consumer repo (the live incident:
+`campps-context-library`, 24 failed `board_synced` records in one tick). The version-less error path
+`.../infiquetra-plugins/saga/mission-control/config/...` was arithmetic, not a typo: the installed
+cache inserts a `<version>` segment, so `parents[2]` lands one directory short.
+
+- **KTD1 — the generic resolver lives in fleet-core's loaded `fleet_commons/` package, not the frozen
+  shim.** `plugin_resolution.resolve_plugin_root(name)` generalizes the shim's five-rung ladder to an
+  arbitrary sibling plugin, loaded through the existing `fleet_commons_shim.load(...)` seam. The
+  bootstrap shim stays byte-identical (its drift guard and `{#fleet-commons-mechanism-463}` both
+  hold); this is the additive-only 0.x growth that decision's "fourth consumer appears" anticipated.
+  *Rejected:* a second vendored `mission_control_shim.py` (doubles the byte-identity surface for
+  non-bootstrap code); parameterizing the frozen shim (violates the byte-freeze, forces a seven-copy
+  re-sync); a saga-local resolver (the next consumer re-implements the ladder — and mission-control,
+  the plugin being resolved, already vendors the shim).
+- **KTD2 — saga keeps reading `sdlc-schema.json` directly from the resolved root; it does not ask
+  mission-control for the phase map.** `sdlc_manager._resolve_sdlc_schema` resolves via the GitHub API
+  first and returns `{}` on total failure, so routing per-tick reconciles through it would swap a
+  local read for a network round-trip whose failure reads as success. *Known latent risk:* the
+  vendored schema is a month behind upstream (`2026-06-17` vs `2026-07-18`) with the read slice
+  (`phase_board_map`) currently identical — recorded, deferred, not solved.
+- **KTD3 — two distinct failure modes.** Root-unresolvable (no mission-control anywhere) withholds the
+  whole cohort with one loud `unavailable` record, reusing the existing `drift-hold` withholding
+  shape, with no retry — killing the N-ops × max_attempts storm without weakening fail-loud.
+  Root-resolved-but-schema-unreadable keeps the prior per-op `failed` status record while the
+  coalesced progress comment for the same leaf still posts. Collapsing the two would regress the
+  comment path. *Rejected:* withhold on any resolution failure (C3); silent skip (destroys fail-loud).
+- **KTD4 — rung order inherited unchanged** (env / walk-up / registry / cache-sibling). Preferring
+  cache-sibling for a CLI to dodge #642's registry staleness was rejected: it creates two disagreeing
+  ladders, the registry is authoritative for installed state, and the failure asymmetry runs the safe
+  way — a stale library skews behavior silently while a stale CLI fails loud on an unknown verb, which
+  makes the registry the *safer* first rung for mission-control. Mitigation is rung provenance in every
+  record (R7) plus the `MISSION_CONTROL_ROOT` escape hatch (R8), not a reordered ladder.
+- **KTD5 — `pulse.py` is in scope; `outcome_reconcile.py` gets its own test.** `/pulse` is the same
+  defect family (a one-call change, seam already cut) and excluding it would leave telemetry reporting
+  the board unavailable in exactly the repos where `/outcome` now works. The reconcile schema seam is
+  repaired implicitly by KTD2 but is covered explicitly, because implicit repair without a test is
+  indistinguishable from luck.
+- **KTD6 — a stale fleet-core degrades to the KTD3 terminal, never an uncaught exception.**
+  `fleet_commons_shim.load("plugin_resolution")` raises when the module is absent, and saga 0.114.0
+  requires a module first shipped in fleet-core 0.23.0 — so a stale install registry (#642,
+  four-for-four) resolves fleet-core 0.22.0 and would brick board-sync harder than the bug under
+  repair. The single per-tick resolution catches that `RuntimeError` and routes it into the
+  `unavailable` record, naming the #642 hand-repair. *Rejected:* a hard fleet-core floor that aborts
+  the tick (leaf state does not depend on board writes); vendoring `plugin_resolution` into saga
+  (re-opens the duplication KTD1 rejected).
+
+**Rejected (whole-design).** Fixing the paths without addressing the retry storm (C1); asking
+mission-control for a resolved phase map via a new CLI verb (B, network-first + `{}`-on-failure).
+
+**Revisit when.** A third consumer needs `resolve_plugin_root` (promote more bespoke path resolution
+onto it), or the vendored-vs-upstream `sdlc-schema.json` drift (KTD2) stops being inert — the
+`phase_board_map` slice diverging is the trigger for a non-networked drift check.
+
+### Externally-executed leaf settlement is a verify-and-close: auto-settle is already wired, threshold stays 0 (#626)  {#outcome-settlement-halt-externally-executed-626}
+
+**Decision.** #626 reported two settlement-gate defects: board-sync breaking on `advance --autonomous`
+in consumer repos, and a leaf executed OUTSIDE the engine (`backend: cc-workflows-ultracode`) never
+settling — its dispatch position stays `open` forever and halts the whole outcome frontier on every
+later tick (the incident: leaf `sub-13`, blocked on an external Stripe dependency, settled
+`silent-no-op`, permanently froze the frontier because `DEFAULT_THRESHOLD_PERCENT = 0` breaches on any
+single casualty). Verified live at `03c2640c` (saga 0.114.0), ~1.5 of the 2 defects were already
+shipped by sibling leaves and the residual was already wired, so #626 ships **zero production code**:
+it is characterization tests + docs + an operator-gated live proof, not a build. The issue conflates
+two orthogonal failure modes that stay strictly separate — "the external executor finished but the
+engine never learned" (a bookkeeping gap → auto-settle `delivered`) versus "the unit is a genuine
+casualty" (a real block → the #618 waive). Fixing one does nothing for the other.
+
+- **KTD1 — `DEFAULT_THRESHOLD_PERCENT` stays `0`; genuine casualties exit via the #618 waive (Option
+  A, operator 2026-07-24).** A genuinely-blocked leaf halting the frontier and requiring an explicit
+  operator `waive` is honest, auditable behavior. The two *actual* problems are already solved: a
+  finished-but-unlearned Workflow leaf auto-settles `delivered` (direction a, already wired), and a real
+  casualty has a first-class human exit (`dispatch-waiver`, #618). What remains is a policy choice about
+  how loud a genuine block should be, and loud/explicit is the safe default. *Rejected:* flip the global
+  default to non-zero — `DEFAULT_THRESHOLD_PERCENT` governs *every* outcome-site manifest
+  (`dispatch_settlement.py:293,1470,1678`), so flipping it silently changes halt semantics for all
+  outcomes and could let real failures slip the gate everywhere. *Deferred:* a per-manifest threshold
+  knob (sound future ergonomics, no current evidence of waive-toil).
+- **KTD2 — #626 ships zero production code; it is verify-and-close.** Direction (a) auto-settle is
+  already built, backend-agnostic, and idempotent: every `advance` tick's `production_harvester`
+  (`outcome.py:2100-2209`) materializes a leaf's GitHub-canonical completion (stage 1) then reconciles
+  **every** dispatched subplot — with **no `site`/`backend` filter** (`outcome.py:2148-2206`) — into a
+  `settle_attempt(... DELIVERED)`. An externally-executed leaf's `open` position closes on the very tick
+  that materializes its merged-PR / closed-issue completion. Re-implementing an auto-settle we already
+  have is pure risk against a heavily-tested, load-bearing halt gate. *Rejected:* add a second,
+  redundant settle-on-harvest path "to be explicit" (duplicates the loop, invites double-settle races,
+  weakens the single-writer invariant).
+- **KTD3 — the new tests are characterization / regression-lock, not red-first.** Because the mechanism
+  already exists, a test asserting auto-settle **passes against current code**; the plan does **not**
+  manufacture a fake red state. Load-bearingness is proved honestly by the operator-gated R-live
+  stash/neuter probe (temporarily neuter the reconcile loop, confirm the characterization test goes red
+  and the frontier re-halts, restore) — a verification act, never a shipped change. *Rejected:* fabricate
+  a red state to satisfy the "a test must be able to fail" instinct.
+- **Test adjudication — one net-new guard, the rest referenced.** R1 (Defect-1 board-sync from a
+  non-monorepo cwd) is already covered at parity by #620's suite
+  (`test_production_path_resolves_once_and_threads_root_to_schema_and_writer`,
+  `test_advance_autonomous_drives_board_sync`), so U2 is a **reference, not a duplicate** — adding one
+  would be the churn the plan warns against. R2/R3/R4's mechanism and generic cases are covered by the
+  existing `team-execution` harvest-settle, idempotency, and fail-closed tests. The single genuinely
+  net-new guard (`test_workflow_executed_leaf_auto_settles_on_harvest_and_unblocks_frontier`) pins the
+  `cc-workflows-ultracode` (Workflow) site — the exact incident class — combined with the
+  dependent-frontier-unblock clause, which no existing test does. It runs the same code path today (no
+  site filter exists); its value is prospective (it fails the day a change re-adds a site filter that
+  re-strands Workflow leaves).
+- **D1 — no release-surface bump (#605-style zero-surface close).** #626 touches only repo-root `tests/`
+  and repo-root `docs/` — no change under `plugins/saga/`, no plugin behavior/schema/command/prompt/
+  user-facing-guidance change (the CLAUDE.md bump trigger), and the drift pins key on `plugin.json`
+  (untouched). The plan's U4 floated a `0.114.0 → 0.115.0` patch bump; adjudicated against the real diff
+  it is **not** required, matching the #605 harness/tests-only precedent. *Rejected:* a needless bump —
+  it re-invites the same-version sibling-PR collision this campaign has hit repeatedly, for zero shipped
+  plugin change; the durable record lives here (DECISIONS) + the work-session + the closed issue, not the
+  plugin CHANGELOG.
+
+**Rejected (whole-design).** Building a new auto-settle where one already exists (KTD2); flipping the
+global threshold default (KTD1); re-implementing Defect 1 (shipped #620) or a new waive verb (shipped
+#618); reconciling the #628 cross-runtime double-dispatch here (separate defect — the R-live observation
+only confirms auto-settle does not *paper over* a double-dispatched ledger).
+
+**Revisit when.** An operator is repeatedly waiving the *same class* of deferred casualty across ticks
+(the waive verb has become a recurring chore, not an exceptional acknowledgement) — the trigger to
+promote the per-manifest threshold knob KTD1 deferred. Or `required_checks` / `closure_gate` stops being
+inert, at which point evidence-gated (not barrier-gated) settle-on-harvest becomes a real, separate
+option.
+
+## Ship ceremony resolves head/base from one resolver, never the rolling `branch` tick field (#635) {#ceremony-ref-resolution-635}
+
+**KTD1 — One resolver, every consumer.** `resolve_ceremony_refs()` is the single source for the PR's
+head and base; the destructive `branch_delete` target, its manifest-close id, `checkout_main`'s
+target, both `gh pr create --base` sites, and `_do_merge`'s SHA probes all consume it. The
+three-part `branch_delete` failure (base deleted, wrong manifest key closed silently by
+`_close_if_registered`'s by-design no-op on an unregistered id, the real branch's entry left open
+forever because `_teardown_attempt_closes` handles only `scratch`/`worktree` kinds) existed because
+the deletion target and the manifest key were derived independently from the same wrong field; one
+resolver makes that divergence unrepresentable. *Rejected:* patch each of the five call sites
+independently — this reproduces the exact failure mode being fixed, since two independently-derived
+values can silently agree wrongly.
+
+**KTD2 — Resolution ladder: PR-authoritative, then manifest+sidecar, then raise.** (1) `gh pr view
+--json headRefName,baseRefName` when the saga carries a PR ref; (2) the `ceremony-branch:` entry on
+`opened_resources.json` (written once at push time, never re-stamped) for head, plus a per-saga base
+sidecar; (3) raise. `saga["branch"]` is never a rung. *Rejected:* manifest-first — the manifest is
+local disk state written by this machine, and the PR is the shared, operator-visible truth; preferring
+local state over the PR record is how the ceremony reached this bug. *Rejected:* PR-only, no manifest
+rung — that would make a destructive path hard-depend on network reachability at exactly the moment
+an operator is finishing a ship.
+
+**KTD3 — The R2 hazard is scoped to rung 2, and the CHANGELOG says so exactly.** On rung 1 the head
+and base both come from one `gh pr view` record, and GitHub forbids a same-repo PR whose head equals
+its base — so `BRANCH_DELETE_TARGETS_BASE` is inert there by construction, correctly: rung 1 is
+authoritative and cannot yield a wrong target. The hazard's real job is rung 2, where the head comes
+from the opened-resource manifest and the base from the PR — two independent records that can agree
+wrongly, the exact shape of the `outcome/norns-next-horizon` incident. An earlier draft of this
+change described the probe as comparing "two derivation paths" in general; a verify panel traced the
+operands on rung 1 and showed both still originate in one PR query, so that framing was corrected
+before it shipped — see the Revisit-when clause below for what would change this.
+
+**KTD4 — Ceremony base lives in a per-saga sidecar, not a tick field.** Following
+`{#ceremony-sidecars-forward-only-undo-346}`: ceremony safety state is per-saga JSON, never a rolling
+saga field. A tick field rolls with whatever branch the last save happened on; a sidecar is written
+once, at the moment the fact becomes true, and stays ceremony-scoped for the ceremony's lifetime.
+
+**KTD5 — The default branch is resolved, never hardcoded.** `resolve_default_branch()` reads `git
+symbolic-ref refs/remotes/origin/HEAD`, falling back to `gh repo view --json defaultBranchRef`, and
+raises rather than defaulting to the literal `"main"` when both fail. *Rejected:* replacing one
+hardcoded `main` with another — this repo family already contains repos whose default branch is not
+the ceremony's base, so a second hardcode would move the bug rather than remove it.
+
+**KTD6 — `--operator-confirmed branch_delete:<target>` is required for `branch_delete`.** The bare
+form refuses with a message naming the resolved target, so the operator's confirming invocation
+carries a value they have actually seen — the typed-payload growth `{#ship-ceremony-operator-gate-526}`'s
+own "Revisit when" clause anticipated ("a transition is added whose confirmation needs an argument of
+its own"). The mismatch rule stays uniform: a qualified confirmation whose target does not match the
+resolved target refuses, exactly like a plain name mismatch. Every other transition keeps the bare
+grammar. *Migration:* `plugins/saga/skills/work/SKILL.md` and
+`plugins/saga/skills/work/references/pr-continuation-loop.md` both named the old bare-form invocation
+and are updated in this same change. *Behavior note, not a breaking change:* this moved
+`--operator-confirmed merge:x` with `merge` upcoming from the raw-string mismatch refusal to the
+"does not take a confirmation target" refusal, because the guard now compares the parsed transition
+name rather than the raw string — both refuse, only the diagnostic wording changed, and the path was
+CLI-unreachable before (argparse `choices=` rejected the colon form).
+
+**Defect F — `ship_undo._undo_merge` reverts on the recorded base, not the literal `main`.** Found by
+a refute panel after the initial fix landed E (recording the right squash sha) without touching the
+consumer: `_undo_merge` still hardcoded `git checkout main`, `git revert --no-edit <sha>` on whatever
+that checkout left `HEAD` on, and `git push origin main`, three times over. Fixing E alone moves the
+bug from "wrong sha recorded" to "right sha, wrong branch reverted" rather than removing it, so F is
+folded into this same decision rather than deferred. A rollback-manifest entry with no recorded base
+(every entry written before this ships) floors at the literal `main`
+(`ship_undo.LEGACY_MERGE_BASE`), not the resolved repo default — such an entry's `merge_sha` was read
+by a pre-#635 `_do_merge` that probed `refs/heads/main` verbatim, so `main` is provably where it came
+from. *Rejected:* fall back to `resolve_default_branch()` for a base-less legacy entry — an earlier
+draft of this requirement said exactly that, and a verify panel showed it sends the revert to a
+`trunk`-default repo's `trunk`, a branch the recorded sha was never read from. Provenance beats
+currency.
+
+**Rejected (whole-design).** Fixing `branch_delete` (A) without also fixing the merge SHA probe (E) —
+leaves the undo path fully able to revert an unrelated healthy commit on the default branch. Fixing E
+without F — moves the bug from mis-recorded evidence to mis-applied evidence; both are the same root
+defect and ship together. Extending the outcome store to carry ceremony refs
+(`{#ship-teardown-terminal-gate-347}`'s territory) — wrong ownership axis; ceremony refs are
+ceremony-scoped, not outcome-scoped.
+
+**Revisit when.** A transition other than `branch_delete` needs a typed confirmation payload —
+generalize `_parse_operator_confirmation` past a single `transition:target` shape rather than
+special-casing a second colon-qualified transition. Or the rung-2 topology stops being reachable in
+practice (e.g. the opened-resource manifest is retired) — at that point `BRANCH_DELETE_TARGETS_BASE`
+becomes dead code and should be removed rather than left as an inert backstop with no live rung to
+guard.

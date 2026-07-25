@@ -178,6 +178,43 @@ def test_partial_failure_no_blind_spot(tmp_path: Path) -> None:
     assert RECON.detect(spec, store, board_reader=board_reader2, issue_reader=issue_reader2) == []
 
 
+def test_s4_expected_status_resolves_through_the_plugin_resolver(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """#620 KTD5/S4: the recover branch's expected-Status recomputation resolves the schema through
+    the mission-control resolver (via `_default_schema_path`), NOT the pre-#620 monorepo arithmetic.
+    Point the resolver at a fabricated root and prove the recovered target_state comes from it."""
+    import board_progression as _bp
+
+    mc_root = tmp_path / "resolved-mc"
+    (mc_root / "config").mkdir(parents=True)
+    (mc_root / "scripts").mkdir(parents=True)
+    (mc_root / "scripts" / "sdlc_manager.py").write_text("# stub\n")
+    (mc_root / "config" / "sdlc-schema.json").write_text(
+        json.dumps(
+            {
+                "saga_lifecycle": {
+                    "phase_board_map": {
+                        "review": {"operations": ["FabricatedReady"]},
+                        "work": {"operations": ["FabricatedActive"]},
+                    }
+                }
+            }
+        )
+    )
+    monkeypatch.setattr(_bp, "resolve_mission_control_root", lambda: (mc_root, 3))
+
+    store = _store(tmp_path)
+    spec = _spec([_leaf("leaf1")])  # ready → expected status resolved from the schema above
+    _seed(store, op_kind="issue-progress-comment", target_state="ready")
+    board_reader, issue_reader = _readers(status="FabricatedReady", state="open")
+    out = RECON.detect(spec, store, board_reader=board_reader, issue_reader=issue_reader)
+    recovered = [r for r in out if r["kind"] == "recovered"]
+    assert len(recovered) == 1
+    # The status came from the RESOLVED root's schema — proving S4 no longer hardcodes the layout.
+    assert recovered[0]["target_state"] == "FabricatedReady"
+
+
 def test_external_close_surfaced(tmp_path: Path) -> None:
     """A not_planned external close is surfaced with its author — never silently adopted (R6, AE1)."""
     store = _store(tmp_path)

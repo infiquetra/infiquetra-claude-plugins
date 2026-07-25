@@ -5,6 +5,131 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.23.0] - 2026-07-24
+
+### Added - generic plugin-root resolver `fleet_commons/plugin_resolution.py` (#620)
+
+- `resolve_plugin_root(name, *, markers, env_var, anchor)` generalizes the byte-frozen
+  `fleet_commons_shim` ladder — which only ever answers "where is fleet-core?" — to an arbitrary
+  sibling plugin, returning `(root, rung)` with rung provenance under `FLEET_COMMONS_DEBUG=1`.
+- Five rungs, identical in spirit to the shim: env override (raises on an explicit-but-invalid
+  value), repo walk-up (an ancestor holding both `.claude-plugin/marketplace.json` and
+  `plugins/<name>/`), `~/.claude/plugins/installed_plugins.json` by `<name>@` prefix with per-record
+  tolerance, cache-sibling highest-semver scan, then fail loud naming every rung.
+- `markers` is a SEQUENCE and every entry must exist for a candidate root to be valid, so a
+  half-usable install (CLI present but schema missing, or vice-versa) is a rung miss, not a partial
+  success. The default `anchor` is the module's own file, so callers never thread `__file__` and one
+  substrate gives one answer in mixed cache/monorepo layouts.
+- First consumer: saga's `/outcome` board-sync + `/pulse` (see saga 0.114.0). The bootstrap
+  `fleet_commons_shim.py` is byte-unchanged; this is the additive-only 0.x growth
+  `{#fleet-commons-mechanism-463}` anticipated when "a fourth consumer appears."
+
+## [0.22.0] - 2026-07-23
+
+### Fixed - Registry reader forward-compatibility: tolerate-and-preserve unknown fields, doctor/repair verbs (#617)
+
+- `_closed_mapping` gains a tolerant sibling, `_tolerant_mapping`, used at every tolerance-scoped
+  container boundary — the registry top level and the per-lease, per-fence, per-admission, and
+  per-settlement-outer-record `from_dict`s. Known keys are still validated exactly as before
+  (value/type/invariant checks unchanged); unknown additive keys are captured into a per-dataclass
+  `extras` mapping instead of raising `RegistryCorruptError`, and `to_dict` merges `extras` back in
+  last so the read → mutate → write round-trip preserves them byte-faithfully, even after the
+  typed-dataclass rebuild. Fixes the 2026-07-17 (`recovery_capability_sha256`/`settlements`/
+  `close_receipt`) and 2026-07-22 (`Lease.isolation`) incident shapes: a schema-newer writer no
+  longer bricks every older reader fleet-wide.
+- Digest-covered commitment records (settlement-close receipts verified by `_record_sha256`,
+  including `FencingToken`) keep the strict closed vocabulary — unknown keys there still fail
+  closed, per the KTD1 audit pinned in code comments at each carve-out site, because every byte
+  participates in the hash commitment.
+- Preserved extras are capped at 64 KiB serialized per document (`_MAX_EXTRAS_BYTES`); above the
+  cap the read fails closed with `RegistryCorruptError` rather than becoming an unbounded
+  unknown-blob channel in a shared 0600 state file. Archived closed-fence sidecars, which parse
+  outside `Registry.from_dict`, enforce the same cap per record and bound the raw read at
+  `_MAX_ARCHIVED_FENCE_BYTES` (4x the cap, to EOF — no single-read truncation of legitimate
+  near-cap records), so the archive directory is not an uncapped side channel.
+- Settlement commit closes the CAS-verified live fence in place via `replace(head,
+  close_receipt=...)`, preserving per-fence extras through the close instead of rebuilding the
+  fence and silently dropping a newer writer's state.
+- Zero new registry fields are written: for an extras-free document, `to_dict` output is
+  byte-identical to pre-#617 serialization (same keys, same `sort_keys=True` ordering). The schema
+  string stays `fleet_lease_registry.v1`, and `schema != "fleet_lease_registry.v1"` still fails
+  closed unchanged. Shipping this fix cannot itself brick a pre-#617 reader.
+- New broker methods `doctor()` (read-only; reports `valid` | `tolerated-unknowns` | `corrupt`
+  plus a JSON-path extras inventory and invariant status; never mutates, never raises on a corrupt
+  document) and `repair()` (explicit down-migration: backs the registry up to a timestamped 0600
+  sibling, strips extras, strict-revalidates, writes atomically under the existing single
+  `_locked()` write path; refuses — leaving the registry untouched — if strict revalidation still
+  fails after stripping, or if there is nothing to strip). `repair` replaces the manual
+  hand-editing recovery used on 2026-07-17 with a shipped operator path.
+
+## [0.21.0] - 2026-07-23
+
+### Fixed - Unclaimed reservation survives async PostToolUse launch-return, defers to spawn_failed or claim TTL (#644)
+
+- `record_parent_completed` gains a keyword-only `spawn_failed: bool = False` parameter. The
+  unclaimed-reservation branch at the parent-completed kill site now completes (removes/recycles)
+  an unclaimed lease only when `spawn_failed=True`; otherwise the reservation falls through to the
+  existing stamp-and-keep path, surviving with `parent_completed_at` set, still claimable, with the
+  session admission left intact. Fixes the async-launch race where the harness fires PostToolUse at
+  spawn launch-return (~100-156 ms after PreToolUse, well before SubagentStart can claim), which
+  previously deleted the still-unclaimed reservation and made direct Agent/Task spawns fail
+  ~50% of the time under armed hooks ("expected exactly one fleet lease bound; found 0").
+- `settle_batch` gains one release arm for stamped batch slots: an unclaimed slot whose parent
+  signal already landed (`agent_id is None and parent_completed_at is not None`) is released at
+  settlement so the registry still drains to zero leases when a batch child's spawn never claims
+  its slot. Mid-run stamped slots awaiting their child (no parent signal yet) are unaffected.
+- All claimed-lease paths, the admission guard, and the `record_parent_completed` return contract
+  (tuple of removed lease ids) are unchanged — this is a single-branch change scoped to the
+  unclaimed arm. Zero registry schema change.
+- Abandoned reservations (parent-completed stamped, child never arrives) stop counting as live
+  once the existing 30-second claim TTL expires — no new grace-window clock introduced.
+
+## [0.20.0] - 2026-07-22
+
+### Fixed - Worktree write-fence scoped to declared isolation, not spawn cwd (#616)
+
+- `isolation` is now a first-class nullable `Lease` field (not a `resource_ref` key —
+  `_AGENT_RESOURCE_KEYS` stays closed at `{logical_unit_id, worktree_root}`), reservation-carried
+  from the PreToolUse payload's `tool_input.isolation` and forwarded through `acquire_agent` and
+  `prepare_batch_call`. The adapter normalizes: only the exact string `worktree` is stored, any
+  other declared value (e.g. `remote`) or absence stores `None`.
+- `claim` replaces the unconditional cwd stamp with a three-way branch on reservation state:
+  `isolation == "worktree"` stamps `worktree_root` from the child cwd (fenced, unchanged
+  containment check); a PreToolUse-stamped reservation with no worktree isolation claims with no
+  `worktree_root` (unfenced — admission, `read-write` mutation mode, and hook verification still
+  apply); an unstamped attested batch slot (`tool_use_id is None`, #615's Workflow-runtime
+  children) keeps today's cwd stamp byte-for-byte. `assert_write_target` changes zero lines — the
+  fence trigger stays "is `worktree_root` present."
+- Batch-slot recycle (`_complete_foreground_lease`) resets `isolation` to `None` alongside
+  `agent_id`/`tool_use_id`, so a recycled slot re-claimed by a workflow child gets the conservative
+  unstamped-slot behavior, never the prior occupant's declaration.
+- Registry compatibility uses the existing backfill-before-closed-mapping idiom: a pre-#616
+  (0.19.0-shaped) `leases.*` dict with no `isolation` key backfills to `None` before validation —
+  no migration machinery.
+- **Privilege-widening note (operator-pinned, D1):** a non-isolated `Agent|Task` spawn now writes
+  cross-repo with no cwd fence. This is inert unless the parent's spawn was PreToolUse-stamped
+  without `isolation: 'worktree'` — exactly the declared-intent case — and admission caps,
+  `read-write` mutation gating, and hook verification are all unchanged.
+
+## [0.19.0] - 2026-07-22
+
+### Fixed - Workflow children bind attested unstamped batch slots (#615)
+
+- `claim` accepts an attested-but-unstamped batch slot: Workflow-runtime children never emit a
+  `PreToolUse Agent|Task` event, so no slot is ever stamped for them — the old candidate filter
+  refused exactly the prelaunch state the driver `attest` step guarantees. Selection is
+  stamped-first (`(unstamped-last, fencing_sequence, lease_id)`), so existing stamped claims are
+  byte-identical and unstamped binding activates only where the old filter raised
+  `LeaseNotFoundError`. Non-batch claims are unchanged.
+- `record_child_terminal` recycles an unstamped batch slot on the child signal alone (it provably
+  has no parent tool call, so the dual-signal contract cannot complete); stamped slots keep the
+  dual-signal release unchanged.
+- Batch keep-alive: `claim` and `record_child_terminal` renew live sibling slots in-lock, and
+  `assert_write_target` opportunistically renews a mutating batch-member lease plus its live
+  siblings — renewal scales with real child activity, a wedged child stops renewing and TTL
+  reaps (fail-closed preserved; expired slots are never resurrected). Non-batch leases keep
+  today's mutation-verification behavior byte-identical.
+
 ## [0.18.0] - 2026-07-22
 
 ### Fixed - Pid-liveness at the refuse-mode admission gate (#637)

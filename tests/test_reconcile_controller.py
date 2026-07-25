@@ -439,15 +439,22 @@ def test_reconcile_driver_maps_intents_to_records(tmp_path: Path) -> None:
 
 
 def test_cli_reconcile_emits_record_json(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The CLI /work and /loop invoke drives a real reconcile_op with an injected-free default writer
-    path patched out, printing the record JSON and exiting 0 on a healthy gate."""
+    """The CLI /work and /loop invoke drives a real reconcile_op, printing the record JSON and
+    exiting 0 on a healthy gate. Post-#620 the CLI resolves mission-control BEFORE the gate, so the
+    resolver is pinned here rather than left to ride the monorepo walk-up (which would pass only by
+    accident and mask the resolve-failure branch)."""
+    import sys
+
+    monkeypatch.setattr(
+        sys.modules["board_progression"], "resolve_mission_control_root", lambda: (tmp_path, 1)
+    )
     rc = RC.main(
         [
             "reconcile",
             "--op",
-            "parent-issue-close",  # GATE → no writer/reader ever touched → fully offline
+            "parent-issue-close",  # GATE → reconcile_op withholds the write; still resolves first
             "--repo",
             "infiquetra/saga",
             "--number",
@@ -460,3 +467,37 @@ def test_cli_reconcile_emits_record_json(
     assert rc == 0
     printed = json.loads(capsys.readouterr().out.strip())
     assert printed["status"] == "gated" and printed["halt"] is True
+
+
+def test_cli_reconcile_unresolvable_mission_control_exits_nonzero(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#620: when mission-control cannot be resolved (a consumer repo with a stale/absent install),
+    the reconcile CLI fails loud — one error JSON on stderr and a non-zero exit — rather than
+    crashing on an uncaught exception or silently proceeding with a bad path."""
+    import sys
+
+    def boom() -> tuple[Path, int]:
+        raise RuntimeError("plugin-resolution: could not resolve a 'mission-control' root")
+
+    monkeypatch.setattr(sys.modules["board_progression"], "resolve_mission_control_root", boom)
+    rc = RC.main(
+        [
+            "reconcile",
+            "--op",
+            "set-field-status",
+            "--repo",
+            "infiquetra/saga",
+            "--number",
+            "450",
+            "--target-state",
+            "Done",
+            "--ledger-dir",
+            str(_ledger(tmp_path)),
+            "--no-drift-check",
+        ]
+    )
+    assert rc == 1
+    err = json.loads(capsys.readouterr().err.strip())
+    assert err["ok"] is False
+    assert "could not resolve" in err["error"]

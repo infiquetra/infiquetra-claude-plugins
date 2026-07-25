@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import json
 import os
 import subprocess
@@ -124,6 +125,17 @@ def _stop_payload(cwd: Path, child: str) -> dict[str, Any]:
     }
 
 
+def _spawn_payload_with_isolation(
+    cwd: Path, tool: str, isolation: str | None, *, session: str = "session"
+) -> dict[str, Any]:
+    payload = _spawn_payload(cwd, tool, session=session)
+    tool_input = dict(payload["tool_input"])
+    if isolation is not None:
+        tool_input["isolation"] = isolation
+    payload["tool_input"] = tool_input
+    return payload
+
+
 def _mutation_payload(cwd: Path, *, child: str | None, tool: str = "Edit") -> dict[str, Any]:
     payload: dict[str, Any] = {
         "hook_event_name": "PreToolUse",
@@ -172,7 +184,9 @@ def test_reserve_before_call_and_cross_ordered_same_type_claims(tmp_path: Path) 
     by_child = {lease["agent_id"]: lease for lease in _leases(authority)}
     assert by_child["child-b"]["tool_use_id"] == "tool-1"
     assert by_child["child-a"]["tool_use_id"] == "tool-2"
-    assert by_child["child-b"]["resource_ref"]["worktree_root"] == str(tmp_path.resolve())
+    # #616 R1/KTD3: neither spawn declared isolation="worktree", so the PreToolUse-stamped
+    # claim is unfenced — no worktree_root on the resource_ref.
+    assert by_child["child-b"]["resource_ref"] == {"logical_unit_id": "tool-1"}
 
 
 def test_replayed_pretool_and_start_are_idempotent(tmp_path: Path) -> None:
@@ -338,11 +352,18 @@ def test_bound_child_mutation_passes_and_root_is_unchanged(tmp_path: Path, tool:
 
 @pytest.mark.parametrize("tool", ["Edit", "Bash"])
 def test_removed_bound_worktree_blocks_subsequent_mutation(tmp_path: Path, tool: str) -> None:
+    """#616 R2: only a spawn that declared isolation="worktree" stays fenced to its worktree."""
+
     authority = tmp_path / "authority"
     env = _environment(authority)
     worktree = tmp_path / "leased-worktree"
     worktree.mkdir()
-    _run_hook(LIFECYCLE_HOOK, _spawn_payload(worktree, "tool"), cwd=tmp_path, environment=env)
+    _run_hook(
+        LIFECYCLE_HOOK,
+        _spawn_payload_with_isolation(worktree, "tool", "worktree"),
+        cwd=tmp_path,
+        environment=env,
+    )
     started = _run_hook(
         LIFECYCLE_HOOK, _start_payload(worktree, "child"), cwd=tmp_path, environment=env
     )
@@ -510,6 +531,39 @@ def test_hooks_json_arms_every_required_lifecycle_seam() -> None:
         "lease_lifecycle_hook.py" in command
         for command in _commands(events["PostToolUseFailure"], "Agent|Task")
     )
+
+
+def test_record_hook_parent_forwards_spawn_failed_from_hook_event_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Issue #644 U2: PostToolUseFailure maps to spawn_failed=True, PostToolUse to False."""
+
+    scripts = SAGA / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    adapter = _load(scripts / "lease_broker.py", "saga_lease_adapter_spawn_failed_test")
+
+    calls: list[tuple[str, str, bool]] = []
+
+    class _FakeBroker:
+        def record_parent_completed(
+            self, session_id: str, tool_use_id: str, *, spawn_failed: bool = False
+        ) -> tuple[str, ...]:
+            calls.append((session_id, tool_use_id, spawn_failed))
+            return ()
+
+        def inspect(self) -> dict[str, Any]:
+            return {"leases": []}
+
+    monkeypatch.setattr(adapter, "broker", lambda env=None: _FakeBroker())
+
+    adapter.record_hook_parent(_parent_payload(tmp_path, "tool"))
+    adapter.record_hook_parent(_parent_payload(tmp_path, "tool", failure=True))
+
+    assert calls == [
+        ("session", "tool", False),
+        ("session", "tool", True),
+    ]
 
 
 @pytest.mark.parametrize("version", [1, 99])
@@ -756,3 +810,270 @@ def test_hooks_json_arms_bounded_teardown_recovery_seams() -> None:
         if "team_teardown_hook.py" in hook["command"]
     ]
     assert session_start and session_start[0]["timeout"] == 15
+
+
+def test_kill_switch_off_bypasses_both_hooks_and_touches_no_state(tmp_path: Path) -> None:
+    """#615 R7: the exact value "off" disarms both hooks loudly and reads no broker state."""
+
+    authority = tmp_path / "state"
+    env = _environment(authority, INFIQUETRA_FLEET_LEASE_ENFORCEMENT="off")
+    mutation = _run_hook(
+        MUTATION_HOOK, _mutation_payload(tmp_path, child="ghost"), cwd=tmp_path, environment=env
+    )
+    assert mutation.returncode == 0
+    assert "INFIQUETRA_FLEET_LEASE_ENFORCEMENT=off" in mutation.stderr
+    assert "DISABLED" in mutation.stderr
+    lifecycle = _run_hook(
+        LIFECYCLE_HOOK, _spawn_payload(tmp_path, "tool-1"), cwd=tmp_path, environment=env
+    )
+    assert lifecycle.returncode == 0
+    assert "DISABLED" in lifecycle.stderr
+    assert not authority.exists()
+
+
+@pytest.mark.parametrize("value", ["", "On", "false", "OFF", "disable"])
+def test_kill_switch_unrecognized_values_stay_armed(tmp_path: Path, value: str) -> None:
+    """#615 R7 fail-safe direction: anything but the exact string "off" keeps enforcement."""
+
+    authority = tmp_path / "state"
+    env = _environment(authority, INFIQUETRA_FLEET_LEASE_ENFORCEMENT=value)
+    result = _run_hook(
+        MUTATION_HOOK, _mutation_payload(tmp_path, child="ghost"), cwd=tmp_path, environment=env
+    )
+    assert result.returncode == 2
+    assert "HALT" in result.stderr
+
+
+def test_declared_isolation_helper_normalizes_worktree_absent_and_remote() -> None:
+    """#616 U2/KTD2: only the exact declared string "worktree" is forwarded; absence or any
+
+    other declared mode (e.g. "remote") normalizes to None inside the adapter, before the
+    broker boundary (fleet-core's own ``_agent_isolation`` would reject "remote" outright).
+    """
+
+    scripts = SAGA / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    adapter = _load(scripts / "lease_broker.py", "saga_declared_isolation_unit_test")
+
+    assert adapter._declared_isolation({"tool_input": {"isolation": "worktree"}}) == "worktree"
+    assert adapter._declared_isolation({"tool_input": {}}) is None
+    assert adapter._declared_isolation({}) is None
+    assert adapter._declared_isolation({"tool_input": {"isolation": "remote"}}) is None
+    assert adapter._declared_isolation({"tool_input": {"isolation": ""}}) is None
+    assert adapter._declared_isolation({"tool_input": "not-a-dict"}) is None
+
+
+@pytest.mark.parametrize(
+    ("declared", "expected_isolation", "expects_worktree_root"),
+    [
+        ("worktree", "worktree", True),
+        (None, None, False),
+        ("remote", None, False),
+    ],
+)
+def test_reservation_forwards_normalized_isolation_through_claim(
+    tmp_path: Path,
+    declared: str | None,
+    expected_isolation: str | None,
+    expects_worktree_root: bool,
+) -> None:
+    """#616 R1/R2/KTD3, exercised at the adapter seam: the PreToolUse reservation carries the
+
+    normalized declared isolation onto the lease; SubagentStart claim (an unchanged 5-key
+    payload, no isolation field) preserves it, and the broker's claim-time fence policy stamps
+    ``worktree_root`` only for the declared-worktree case.
+    """
+
+    authority = tmp_path / "authority"
+    env = _environment(authority)
+    spawn = _run_hook(
+        LIFECYCLE_HOOK,
+        _spawn_payload_with_isolation(tmp_path, "tool-1", declared),
+        cwd=tmp_path,
+        environment=env,
+    )
+    assert spawn.returncode == 0
+    reserved = _leases(authority)
+    assert len(reserved) == 1
+    assert reserved[0]["isolation"] == expected_isolation
+
+    start = _run_hook(
+        LIFECYCLE_HOOK, _start_payload(tmp_path, "child-1"), cwd=tmp_path, environment=env
+    )
+    assert start.returncode == 0
+    claimed = _leases(authority)[0]
+    assert claimed["agent_id"] == "child-1"
+    assert claimed["isolation"] == expected_isolation
+    assert ("worktree_root" in claimed["resource_ref"]) is expects_worktree_root
+
+
+def test_subagent_start_claim_payload_contract_is_unchanged_by_isolation_threading() -> None:
+    """#616 U2 boundary: claim_hook_agent (SubagentStart) is untouched — the payload fixture
+
+    stays the exact 5-key contract (hook_event_name, session_id, cwd, agent_id, agent_type),
+    cwd stays required and canonicalized, and no isolation field is read from it.
+    """
+
+    scripts = SAGA / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    adapter = _load(scripts / "lease_broker.py", "saga_claim_contract_unit_test")
+
+    signature = inspect.signature(adapter.claim_hook_agent)
+    assert list(signature.parameters) == ["payload", "environment"]
+
+    source = inspect.getsource(adapter.claim_hook_agent)
+    assert "isolation" not in source
+
+
+# ------------------------------------------------------- doctor / repair CLI seam (#617 U2)
+
+SAGA_LEASE_CLI = SAGA / "scripts" / "lease_broker.py"
+
+
+def _adapter(name: str) -> ModuleType:
+    scripts = SAGA / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    return _load(scripts / "lease_broker.py", name)
+
+
+def _run_lease_cli(
+    authority: Path, *args: str, cwd: Path, environment: dict[str, str]
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(SAGA_LEASE_CLI), *args],
+        cwd=cwd,
+        env=environment,
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+
+def test_saga_lease_cli_doctor_and_repair_parser_contract() -> None:
+    # #617 R7/R8: doctor is a bare verb; repair carries the explicit opt-in --strip-unknown flag.
+    adapter = _adapter("saga_lease_adapter_doctor_repair_parser_test")
+    parser = adapter._build_parser()
+
+    assert parser.parse_args(["doctor"]).command == "doctor"
+
+    default_repair = parser.parse_args(["repair"])
+    assert default_repair.command == "repair"
+    assert default_repair.strip_unknown is False
+    assert parser.parse_args(["repair", "--strip-unknown"]).strip_unknown is True
+
+
+def test_saga_lease_cli_doctor_routes_through_broker_and_maps_exit_codes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # #617 R7: the doctor verb calls the shim-resolved broker's doctor() (no direct import bypass)
+    # and maps its structured status to distinct exit codes — 0 clean / 3 unknowns / 4 corrupt.
+    adapter = _adapter("saga_lease_adapter_doctor_exit_test")
+
+    class _FakeBroker:
+        def __init__(self, status: str) -> None:
+            self.status = status
+            self.doctor_calls = 0
+
+        def doctor(self) -> dict[str, Any]:
+            self.doctor_calls += 1
+            return {"status": self.status, "extras": []}
+
+    for status, expected in (
+        ("valid", 0),
+        ("tolerated-unknowns", 3),
+        ("corrupt", 4),
+        # #617 review F3: an unmapped future status must fail closed to the corrupt code —
+        # a diagnostic verb never reports clean for a state it does not recognize.
+        ("unrecognized-future-status", 4),
+    ):
+        fake = _FakeBroker(status)
+        monkeypatch.setattr(adapter, "broker", lambda env=None, fake=fake: fake)
+        assert adapter.main(["doctor"]) == expected
+        assert fake.doctor_calls == 1
+
+
+def test_saga_lease_cli_repair_requires_explicit_strip_unknown_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # #617 R8/KTD4: repair performs no default action; without --strip-unknown it refuses (exit 2)
+    # and never touches the broker. With the flag it routes through the shim-resolved broker.
+    adapter = _adapter("saga_lease_adapter_repair_flag_test")
+
+    class _FakeBroker:
+        def __init__(self) -> None:
+            self.repair_calls = 0
+
+        def repair(self) -> dict[str, Any]:
+            self.repair_calls += 1
+            return {"status": "clean", "repaired": False}
+
+    fake = _FakeBroker()
+    monkeypatch.setattr(adapter, "broker", lambda env=None: fake)
+
+    with pytest.raises(SystemExit) as caught:
+        adapter.main(["repair"])
+    assert caught.value.code == 2
+    assert fake.repair_calls == 0
+
+    assert adapter.main(["repair", "--strip-unknown"]) == 0
+    assert fake.repair_calls == 1
+
+
+def test_saga_lease_cli_doctor_and_repair_end_to_end(tmp_path: Path) -> None:
+    # #617 R7/R8: end-to-end through the real shim-resolved broker — doctor flags injected unknown
+    # fields (exit 3), repair --strip-unknown down-migrates under backup (exit 0), and a follow-up
+    # doctor confirms the closed shape (exit 0). repair without the flag refuses without mutation.
+    authority = tmp_path / "authority"
+    env = _environment(authority)
+    assert (
+        _run_hook(
+            LIFECYCLE_HOOK, _spawn_payload(tmp_path, "tool-1"), cwd=tmp_path, environment=env
+        ).returncode
+        == 0
+    )
+    registry_path = _broker(authority).registry_path
+    lease_id = _leases(authority)[0]["lease_id"]
+
+    # Clean authority: doctor reports valid (exit 0).
+    clean = _run_lease_cli(authority, "doctor", cwd=tmp_path, environment=env)
+    assert clean.returncode == 0
+    assert json.loads(clean.stdout)["status"] == "valid"
+
+    # Inject additive unknown fields at the top level and inside the live lease.
+    raw = json.loads(registry_path.read_text(encoding="utf-8"))
+    raw["future_top"] = {"nested": True}
+    raw["leases"][lease_id]["future_lease"] = "L"
+    registry_path.write_text(json.dumps(raw), encoding="utf-8")
+    os.chmod(registry_path, 0o600)
+    injected_bytes = registry_path.read_bytes()
+
+    doctored = _run_lease_cli(authority, "doctor", cwd=tmp_path, environment=env)
+    assert doctored.returncode == 3
+    report = json.loads(doctored.stdout)
+    assert report["status"] == "tolerated-unknowns"
+    paths = {entry["path"] for entry in report["extras"]}
+    assert "$" in paths and f"$.leases.{lease_id}" in paths
+
+    # repair without the explicit flag refuses (exit 2) and leaves the document untouched.
+    refused = _run_lease_cli(authority, "repair", cwd=tmp_path, environment=env)
+    assert refused.returncode == 2
+    assert registry_path.read_bytes() == injected_bytes
+
+    # repair --strip-unknown down-migrates under a backup (exit 0).
+    repaired = _run_lease_cli(authority, "repair", "--strip-unknown", cwd=tmp_path, environment=env)
+    assert repaired.returncode == 0
+    repaired_report = json.loads(repaired.stdout)
+    assert repaired_report["status"] == "repaired"
+    backup = Path(repaired_report["backup"])
+    assert backup.read_bytes() == injected_bytes
+    stripped = json.loads(registry_path.read_text(encoding="utf-8"))
+    assert "future_top" not in stripped
+    assert "future_lease" not in stripped["leases"][lease_id]
+
+    # A follow-up doctor confirms the closed shape (exit 0).
+    final = _run_lease_cli(authority, "doctor", cwd=tmp_path, environment=env)
+    assert final.returncode == 0
+    assert json.loads(final.stdout)["status"] == "valid"

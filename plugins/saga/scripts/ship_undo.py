@@ -10,14 +10,18 @@ Storage (KTD1): the manifest is a JSON sidecar at
 ``.claude/saga/sagas/<saga_id>/rollback_manifest.json`` — git-ignored, machine-local,
 written directly by this module (never through ``saga.py save``), one entry per
 successful ceremony transition:
-``{transition, tier, branch, head_sha, pr_number, merge_sha, pre_merge_main_sha,
+``{transition, tier, branch, base, head_sha, pr_number, merge_sha, pre_merge_main_sha,
 remote_created, undone}``. ``pre_merge_main_sha`` is audit-only forensic context —
 ``undo()`` reverts from ``merge_sha`` alone and never consumes it programmatically.
+``base`` is the opposite: it is the ceremony's merge target, recorded by
+``ship_ceremony._do_merge`` and consumed programmatically by ``_undo_merge`` (issue
+#635, R12) so the revert lands on the branch the merge actually landed on.
 
 ``undo()`` is forward-only (KTD4): a landed merge is undone with ``git revert
-<recorded squash SHA>`` on ``main`` (a new commit, never a rewrite), and a deleted
-branch is resurrected from its recorded head SHA. It never runs ``push --force`` or
-``reset`` on a shared ref. A recorded SHA that is unreachable (squash-discarded
+<recorded squash SHA>`` on the ceremony's recorded base branch (a new commit, never a
+rewrite), and a deleted branch is resurrected from its recorded head SHA. It never
+runs ``push --force`` or ``reset`` on a shared ref. A recorded SHA that is
+unreachable (squash-discarded
 commits GC'd on origin, absent locally) surfaces a named ``SHA_UNREACHABLE`` failure
 for that entry rather than fabricating state — the remaining (older) entries stay
 untouched so a fixed re-invoke can resume.
@@ -74,6 +78,16 @@ MANIFEST_NAME = "rollback_manifest.json"
 ALWAYS_OPERATOR_TRANSITIONS: frozenset[str] = frozenset({"merge", "branch_delete"})
 
 SHA_UNREACHABLE = "SHA_UNREACHABLE"
+
+# Undo target for a ``merge`` entry that predates base recording (issue #635, R12).
+# Reached exactly when the entry carries no ``base`` — nothing else is consulted, and
+# in particular the repo's current default branch is deliberately NOT resolved. Not a
+# guess: every such entry was written by a ``_do_merge`` that probed ``refs/heads/main``
+# literally, so ``main`` is the branch its recorded sha was actually read from —
+# reverting there is exactly the pre-#635 behavior, which is the compatibility contract
+# for old manifests. Entries written from now on always carry their own base, so this
+# floor never applies to them.
+LEGACY_MERGE_BASE = "main"
 
 # saga_id becomes a path component under .claude/saga/sagas/ — a traversal value
 # ("../..", absolute path) would read/write outside the sidecar directory. Single
@@ -157,6 +171,30 @@ def _run(
 def _current_branch(repo_root: Path, *, runner: Callable[..., Any] | None) -> str:
     result = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_root, runner=runner)
     return result.stdout.strip()
+
+
+def _merge_entry_base(entry: Mapping[str, Any]) -> str:
+    """The branch a ``merge`` entry's revert belongs on (issue #635, R12).
+
+    The recorded ``base`` — written by ``ship_ceremony._do_merge`` from
+    ``resolve_ceremony_refs`` (the PR's own ``baseRefName`` when that rung answers,
+    the ceremony base sidecar otherwise) — is authoritative: it is the branch the
+    squash actually landed on, and therefore the only branch where
+    ``git revert <merge_sha>`` reverts *this ceremony's* work.
+
+    An entry without one predates base recording, and its fallback is the *literal*
+    ``LEGACY_MERGE_BASE``, deliberately NOT the repository's current default branch. Such
+    an entry's ``merge_sha`` was read by a pre-#635 ``_do_merge`` that probed
+    ``refs/heads/main`` verbatim, so ``main`` is provably where that sha came from.
+    Resolving the default branch instead would send the revert wherever
+    ``refs/remotes/origin/HEAD`` happens to point today — on a repo whose default is not
+    ``main`` that is a branch the recorded sha was never read from, which is neither the
+    pre-#635 behavior nor a safe place to revert. Provenance beats currency here: the
+    compatibility contract is "revert where the sha actually came from"."""
+    recorded = str(entry.get("base") or "").strip()
+    if recorded:
+        return _require_option_safe(recorded, field="base", transition="merge")
+    return LEGACY_MERGE_BASE
 
 
 def _sha_reachable(sha: str, *, repo_root: Path, runner: Callable[..., Any] | None) -> bool:
@@ -244,6 +282,7 @@ def append_entry(
     transition: str,
     tier: str,
     branch: str | None = None,
+    base: str | None = None,
     head_sha: str | None = None,
     pr_number: int | str | None = None,
     merge_sha: str | None = None,
@@ -253,12 +292,19 @@ def append_entry(
     """Append one entry for a just-completed ceremony transition (R6). Read-append-
     rewrite, mirroring ``tier_session.py``'s sidecar pattern — small files, no
     concurrent writers (single-operator assumption, same as the rest of ``.claude/saga/``).
-    """
+
+    ``base`` is the ceremony's merge target (issue #635, R12). The ``merge`` transition
+    passes the value ``ship_ceremony._do_merge`` already resolved via
+    ``resolve_ceremony_refs``, so ``_undo_merge`` can target the right branch from the
+    manifest alone — no ``gh`` round trip at undo time, on a path that has to work when
+    the network does not.
+    ``None`` on every other transition, and on any entry written before #635."""
     entries = read_manifest(repo_root, saga_id)
     entry: dict[str, Any] = {
         "transition": transition,
         "tier": tier,
         "branch": branch,
+        "base": base,
         "head_sha": head_sha,
         "pr_number": pr_number,
         "merge_sha": merge_sha,
@@ -343,9 +389,20 @@ def _revert_already_applied(
 def _undo_merge(
     entry: Mapping[str, Any], *, repo_root: Path, runner: Callable[..., Any] | None
 ) -> None:
-    """Reverse of ``merge`` (KTD4): ``git revert <recorded squash SHA>`` on
-    ``main`` — a new commit, never a rewrite — then push. Refuses with a named
-    ``SHA_UNREACHABLE`` failure rather than fabricating a revert target.
+    """Reverse of ``merge`` (KTD4): ``git revert <recorded squash SHA>`` on the
+    **ceremony's recorded base** — a new commit, never a rewrite — then push. Refuses
+    with a named ``SHA_UNREACHABLE`` failure rather than fabricating a revert target.
+
+    The checkout and the push both name one resolved branch, and the revert runs on
+    the branch that checkout left HEAD on (issue #635, R12) — the revert's own argv
+    names only the sha. All three steps used to target the literal ``main``, which
+    made the undo of a
+    leaf-into-outcome ceremony destructive rather than merely wrong: once the outcome
+    branch itself has landed on the default branch, the leaf's squash sha *is* an
+    ancestor of ``main``, so ``git revert`` applies cleanly there and strips that leaf's
+    work off the default branch — no conflict, no refusal, nothing to notice. Recording
+    the right sha (``_do_merge``) and applying it to the right branch (here) are two
+    halves of one property; neither alone is enough.
 
     Resumable across the revert-lands-locally-but-push-rejected failure mode: if a
     prior (failed) attempt already created the revert commit locally,
@@ -357,14 +414,19 @@ def _undo_merge(
             "merge entry is missing merge_sha; cannot revert a merge that was never recorded"
         )
     _require_option_safe(str(merge_sha), field="merge_sha", transition="merge")
+    # Resolved before the reachability probe so an option-like recorded base refuses
+    # before this handler shells out at all (same contract as the branch/pr_number
+    # guards): the base becomes git argv below, and it selects the branch the revert
+    # in between lands on.
+    base = _merge_entry_base(entry)
     if not _sha_reachable(merge_sha, repo_root=repo_root, runner=runner):
         raise SHAUnreachableError(merge_sha, entry_transition="merge")
     current = _current_branch(repo_root, runner=runner)
-    if current != "main":
-        _run(["git", "checkout", "main"], cwd=repo_root, runner=runner)
+    if current != base:
+        _run(["git", "checkout", base], cwd=repo_root, runner=runner)
     if not _revert_already_applied(merge_sha, repo_root=repo_root, runner=runner):
         _run(["git", "revert", "--no-edit", merge_sha], cwd=repo_root, runner=runner)
-    _run(["git", "push", "origin", "main"], cwd=repo_root, runner=runner)
+    _run(["git", "push", "origin", base], cwd=repo_root, runner=runner)
 
 
 def _restore_pre_ceremony_checkout(

@@ -90,6 +90,20 @@ def _agent_type(payload: Mapping[str, Any]) -> str:
     return "general-purpose"
 
 
+def _declared_isolation(payload: Mapping[str, Any]) -> str | None:
+    """Extract the parent's declared spawn isolation from ``tool_input`` (#616 KTD1/KTD2).
+
+    Only the exact string ``"worktree"`` is forwarded; any other declared value (e.g.
+    ``"remote"``) or its absence normalizes to ``None`` here, before the broker boundary, so
+    the adapter never forwards a speculative isolation value for fleet-core to reject.
+    """
+
+    tool_input = payload.get("tool_input")
+    if isinstance(tool_input, dict) and tool_input.get("isolation") == "worktree":
+        return "worktree"
+    return None
+
+
 def _canonical_cwd(payload: Mapping[str, Any]) -> Path:
     raw = _required_text(payload, "cwd")
     path = Path(raw)
@@ -308,6 +322,7 @@ def reserve_hook_agent(
                 tool_use_id=tool_use_id,
                 claim_ttl_seconds=claim_ttl,
                 parent_agent_id=parent_agent,
+                isolation=_declared_isolation(payload),
             )
         policy_sha256, session_limit, aggregate_limit, mutation = session_admission_snapshot(
             session_id,
@@ -326,6 +341,7 @@ def reserve_hook_agent(
             tool_use_id=tool_use_id,
             agent_type=_agent_type(payload),
             parent_agent_id=parent_agent,
+            isolation=_declared_isolation(payload),
         )
     except (authority.LeaseNotFoundError, authority.LeaseOwnershipError) as exc:
         if parent_agent is None:
@@ -367,9 +383,11 @@ def record_hook_parent(
         raise HookInputError("parent completion requires Agent or Task tool_name")
     env = os.environ if environment is None else environment
     selected = broker(env)
+    spawn_failed = payload.get("hook_event_name") == "PostToolUseFailure"
     released = selected.record_parent_completed(
         _required_text(payload, "session_id"),
         _required_text(payload, "tool_use_id"),
+        spawn_failed=spawn_failed,
     )
     batch_id = active_batch_id(payload, env)
     if batch_id:
@@ -453,6 +471,13 @@ def _build_parser() -> argparse.ArgumentParser:
     sweep = subparsers.add_parser("sweep")
     sweep.add_argument("--terminal-lease-id", action="append", default=[])
 
+    # #617 KTD4: doctor is read-only; repair performs no default action and requires the explicit
+    # ``--strip-unknown`` flag so a rollback down-migration on shared fenced state is never implicit.
+    subparsers.add_parser("doctor")
+
+    repair = subparsers.add_parser("repair")
+    repair.add_argument("--strip-unknown", action="store_true")
+
     reserve = subparsers.add_parser("reserve-batch")
     reserve.add_argument("--count", type=int, required=True)
     reserve.add_argument("--owner-id", required=True)
@@ -504,6 +529,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "root_sha256": selected.root_sha256,
                 }
             )
+        elif args.command == "doctor":
+            report = selected.doctor()
+            _json_print(report)
+            # Distinct exit codes for the operator/automation seam (#617 R7): 0 clean,
+            # 3 tolerated-unknowns present, 4 corrupt. doctor never raises for a corrupt document.
+            # An unmapped future status fails closed to the corrupt code — a diagnostic verb must
+            # never report clean for a state it does not recognize.
+            return {"valid": 0, "tolerated-unknowns": 3, "corrupt": 4}.get(report["status"], 4)
+        elif args.command == "repair":
+            if not args.strip_unknown:
+                _die(
+                    "repair requires the explicit --strip-unknown flag; it performs no default "
+                    "action (#617 R8/KTD4)"
+                )
+            _json_print(selected.repair())
         elif args.command == "clear-session":
             _json_print({"cleared": selected.clear_session_admission(args.session_id)})
         elif args.command == "sweep":

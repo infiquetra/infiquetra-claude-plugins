@@ -33,6 +33,16 @@ issue's existing work-thread saga tick via ``saga.py save --ceremony-transition
 position is always recomputed from ``TRANSITIONS`` so there is nothing to drift out of
 sync with the name.
 
+Ceremony refs (issue #635) are resolved, never guessed: ``resolve_ceremony_refs``
+answers "what are this ceremony's head and base branches?" from the PR itself first,
+then from ceremony-scoped local evidence (the opened-resource manifest's
+``ceremony-branch:`` entry plus the per-saga base sidecar), then refuses. The saga's
+``branch`` tick field is not a rung at any point — ``saga.py`` re-stamps it from
+``git branch --show-current`` on every save, so it records "wherever the last tick
+happened", and a destructive path trusting it deletes the PR base on a
+leaf-into-outcome ceremony. ``resolve_default_branch`` likewise resolves the repo
+default rather than hardcoding ``"main"``.
+
 House testability pattern (mirrors ``outcome_store.py``): every function that shells
 out takes a ``runner`` callable, defaulted to ``subprocess.run`` resolved at call time
 (never bound as a default argument), so tests can monkeypatch ``ship_ceremony.subprocess.run``
@@ -44,11 +54,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess  # nosec B404
 import sys
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -98,6 +111,17 @@ class HazardRefusedError(ShipCeremonyError):
     were not acknowledged via ``--acknowledge-hazard <hazard-id>`` (or are not
     acknowledgeable at all, e.g. ``merge_not_landed``); refused before dispatch and
     before ``saga.py save`` (R1/R2/KTD2/KTD3)."""
+
+
+class CeremonyRefsError(ShipCeremonyError):
+    """The ceremony's head/base refs could not be resolved from ceremony-scoped
+    evidence (issue #635, KTD2/R7). Raised only after every rung of the ladder is
+    exhausted, and always names each source that was tried and what it lacked.
+    ``saga["branch"]`` is deliberately not a rung: it is re-stamped from
+    ``git branch --show-current`` on every ``saga.py save``, so it means "wherever the
+    last tick happened", never "the branch this ceremony opened". Degrading to it is
+    exactly the data-loss defect this resolver exists to remove, so exhausting the
+    ladder refuses instead of guessing."""
 
 
 class MergePreflightError(ShipCeremonyError):
@@ -358,6 +382,350 @@ def _close_if_registered(
 
 
 # --------------------------------------------------------------------------- #
+# Ceremony ref resolution (issue #635, U1) — the single answer to "what are this
+# ceremony's head and base refs?", consumed by every site that used to guess from
+# ``saga["branch"]`` or the literal string ``"main"`` (KTD1).
+#
+# The ladder (KTD2), in order:
+#   1. ``gh pr view <n> --json headRefName,baseRefName`` when the saga carries a PR
+#      ref — the ceremony's own externally durable record, immune to local drift and
+#      the same thing the operator sees.
+#   2. the ``ceremony-branch:`` entry on ``opened_resources.json`` (written once at
+#      push time by ``_register_branch`` and never re-stamped) for the head, plus the
+#      per-saga base sidecar for the base — a local answer that needs no network at
+#      exactly the moment an operator is finishing a ship.
+#   3. raise ``CeremonyRefsError`` naming every exhausted source.
+#
+# ``saga["branch"]`` is not a rung at any point (R7). Manifest-first was rejected:
+# preferring local state over the shared record is how the ceremony got here.
+#
+# The base sidecar is a per-saga JSON file beside ``merge_expectation.json`` and
+# ``rollback_manifest.json`` ({#ceremony-sidecars-forward-only-undo-346}, KTD4) — NOT
+# a saga tick field. A tick field rolls with the checkout, which IS the defect; a
+# sidecar is ceremony-scoped and stays put.
+# --------------------------------------------------------------------------- #
+
+
+SAGAS_DIR = ship_teardown.SAGAS_DIR
+CEREMONY_BASE_SIDECAR_NAME = "ceremony_base.json"
+
+# Same single-path-safe-segment shape ship_teardown / merge_watcher / ship_undo each
+# enforce on the saga id before it becomes a directory name (traversal guard).
+_SAGA_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
+# ``CeremonyRefs.source`` values — the rung that actually answered, recorded so a
+# consumer (and any future receipt/evidence surface) can say where a destructive
+# target came from rather than asserting it was "resolved".
+CEREMONY_REFS_SOURCE_PR = "pr_view"
+CEREMONY_REFS_SOURCE_MANIFEST = "manifest_sidecar"
+
+
+@dataclass(frozen=True)
+class CeremonyRefs:
+    """This ceremony's resolved refs. ``head`` is the PR head (the branch the
+    ceremony opened and may delete); ``base`` is the PR base (the branch the merge
+    lands on, checked out by ``checkout_main``, probed by ``_do_merge``); ``source``
+    is the ladder rung that answered."""
+
+    head: str
+    base: str
+    source: str
+
+    def __post_init__(self) -> None:
+        # Validate on construction, so an option-like ref cannot exist in a
+        # ``CeremonyRefs`` at all rather than being caught at whichever consumer
+        # happens to remember (issue #635 code-review). Both rungs and every direct
+        # construction go through here.
+        _require_ref_safe(self.head, field="head", source=self.source)
+        _require_ref_safe(self.base, field="base", source=self.source)
+
+
+def _require_ref_safe(value: str, *, field: str, source: str) -> str:
+    """A resolved ref becomes git argv — refuse one that would parse as an option.
+
+    Same contract and same refusal shape as ``ship_undo._require_option_safe`` (issue
+    #635 code-review): sidecar- and manifest-sourced strings are machine-local files an
+    operator can hand-edit or a torn write can corrupt, and a value opening with ``-``
+    stops being a ref. ``git checkout -f`` is the sharp case — it is accepted, it
+    silently discards every uncommitted change in the tree, and ``checkout_main`` is a
+    REVERSIBLE-tier transition that needs no operator confirmation to get there.
+
+    Enforced HERE, at the resolver, rather than at each of the eight ``git`` call sites
+    that consume a resolved ref: one chokepoint cannot be forgotten by the next site
+    added. Refused loud, never sanitized — a ref we cannot pass safely is a ref we do
+    not understand."""
+    if value.startswith("-"):
+        raise CeremonyRefsError(
+            f"resolved ceremony {field} {value!r} (source: {source}) begins with '-' and "
+            "cannot be passed to git safely; fix the ceremony sidecar or manifest by hand"
+        )
+    return value
+
+
+def _validate_saga_id(saga_id: str) -> str:
+    if not _SAGA_ID_RE.fullmatch(saga_id):
+        raise CeremonyRefsError(
+            f"invalid saga_id {saga_id!r}: must be a single path-safe segment "
+            "matching [A-Za-z0-9][A-Za-z0-9._-]* (e.g. issue-635)"
+        )
+    return saga_id
+
+
+def ceremony_base_path(repo_root: Path, saga_id: str) -> Path:
+    """Path to the per-saga ceremony-base sidecar (KTD4) — same directory as
+    ``merge_expectation.json`` / ``rollback_manifest.json`` / ``opened_resources.json``."""
+    return repo_root / SAGAS_DIR / _validate_saga_id(saga_id) / CEREMONY_BASE_SIDECAR_NAME
+
+
+def read_ceremony_base(repo_root: Path, saga_id: str) -> str:
+    """The recorded ceremony base branch, or ``""`` when no sidecar exists.
+
+    An absent sidecar is not an error here (a ceremony that predates this wiring
+    legitimately has none) — it simply means this rung cannot answer, and
+    ``resolve_ceremony_refs`` names it among the exhausted sources rather than
+    substituting a guess."""
+    path = ceremony_base_path(repo_root, saga_id)
+    if not path.exists():
+        return ""
+    with open(path, encoding="utf-8") as handle:
+        try:
+            data = json.load(handle)
+        except json.JSONDecodeError as exc:
+            raise CeremonyRefsError(
+                f"{CEREMONY_BASE_SIDECAR_NAME} at {path} is not valid JSON: {exc}"
+            ) from exc
+    if not isinstance(data, dict):
+        raise CeremonyRefsError(
+            f"{CEREMONY_BASE_SIDECAR_NAME} at {path} is not a JSON object: {data!r}"
+        )
+    return str(data.get("base") or "")
+
+
+def write_ceremony_base(
+    repo_root: Path,
+    saga_id: str,
+    base: str,
+    *,
+    recorded_by: str,
+    now: str | None = None,
+) -> Path:
+    """Record this ceremony's base branch to the per-saga sidecar (KTD4).
+
+    Rewritable rather than write-once: the base is re-recorded by whichever site
+    learns it authoritatively, and a later write with the same value must be a no-op
+    in effect. Atomic replace (the ``merge_watcher._write_sidecar`` idiom) so a crash
+    mid-write can never leave a torn base for a destructive path to read."""
+    if not base:
+        raise CeremonyRefsError(
+            f"refusing to record an empty ceremony base for saga {saga_id!r}; "
+            "an empty base would make the ladder's rung 2 answer with nothing"
+        )
+    # Refuse at the WRITE, not only at the read. ``start --base=-f`` is accepted by
+    # argparse and lands here before the ``gh pr create`` below, so this is the first
+    # point that can stop an option-like base from being persisted for a later,
+    # offline ceremony to read back and hand to ``git checkout`` (issue #635
+    # code-review). The read side validates too, via ``CeremonyRefs.__post_init__``.
+    _require_ref_safe(base, field="base", source="write_ceremony_base")
+    path = ceremony_base_path(repo_root, saga_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "base": base,
+        "recorded_at": now or datetime.now(UTC).isoformat(),
+        "recorded_by": recorded_by,
+    }
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+    return path
+
+
+def resolve_default_branch(repo_root: Path, runner: Callable[..., Any] | None = None) -> str:
+    """The repository's default branch, resolved — never the hardcoded literal
+    ``"main"`` (KTD5).
+
+    ``git symbolic-ref refs/remotes/origin/HEAD`` first (local, no network, and the
+    ref git itself maintains), then ``gh repo view --json defaultBranchRef``. Both
+    failing raises: replacing one hardcoded ``main`` with another hardcoded ``main``
+    moves the bug rather than fixing it, and this repo family already contains repos
+    whose default branch is not the ceremony's base."""
+    tried: list[str] = []
+
+    symbolic = _run(
+        ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
+        cwd=repo_root,
+        runner=runner,
+        check=False,
+    )
+    if getattr(symbolic, "returncode", 1) == 0:
+        value = (getattr(symbolic, "stdout", "") or "").strip()
+        prefix = "refs/remotes/origin/"
+        name = value[len(prefix) :] if value.startswith(prefix) else ""
+        if name:
+            return name
+        tried.append(f"git symbolic-ref refs/remotes/origin/HEAD (unparseable output {value!r})")
+    else:
+        tried.append(
+            "git symbolic-ref refs/remotes/origin/HEAD "
+            f"(exit {getattr(symbolic, 'returncode', 'unknown')}: "
+            f"{(getattr(symbolic, 'stderr', '') or '').strip()})"
+        )
+
+    repo_view = _run(
+        ["gh", "repo", "view", "--json", "defaultBranchRef"],
+        cwd=repo_root,
+        runner=runner,
+        check=False,
+    )
+    if getattr(repo_view, "returncode", 1) == 0:
+        raw = (getattr(repo_view, "stdout", "") or "").strip()
+        try:
+            payload = json.loads(raw) if raw else {}
+        except json.JSONDecodeError as exc:
+            tried.append(f"gh repo view --json defaultBranchRef (invalid JSON: {exc})")
+        else:
+            ref = payload.get("defaultBranchRef") if isinstance(payload, dict) else None
+            name = str((ref or {}).get("name") or "") if isinstance(ref, dict) else ""
+            if name:
+                return name
+            tried.append(
+                f"gh repo view --json defaultBranchRef (no defaultBranchRef.name in {raw!r})"
+            )
+    else:
+        tried.append(
+            "gh repo view --json defaultBranchRef "
+            f"(exit {getattr(repo_view, 'returncode', 'unknown')}: "
+            f"{(getattr(repo_view, 'stderr', '') or '').strip()})"
+        )
+
+    raise CeremonyRefsError(
+        "cannot resolve the repository default branch; refusing to assume 'main' "
+        "(KTD5 — a hardcoded default is the same class of guess this resolver removes). "
+        "Sources tried: " + "; ".join(tried)
+    )
+
+
+def _manifest_head_branch(repo_root: Path, saga_id: str) -> str:
+    """The head branch from the opened-resource manifest's ``ceremony-branch:`` entry
+    (rung 2's head source), or ``""`` when the manifest carries none.
+
+    ``_register_branch`` writes one such entry per pushed branch at push time. It is
+    idempotent per resource id, and re-registering a still-open entry DOES refresh its
+    ``opened_at`` (``ship_teardown.register``) — so "most recently opened" means most
+    recently registered, which for a re-push of the same branch is the same branch.
+    (An earlier wording here claimed the entry is "never re-stamped". That was false,
+    and the ladder's trust argument does not need it: what matters is that the entry is
+    keyed to a branch that was actually pushed, never re-derived from wherever HEAD
+    happens to be — which is exactly what ``saga["branch"]`` does wrong.)
+
+    When more than one exists (a ceremony that pushed under two names), still-open
+    entries win over closed ones and the most recently opened wins within that pool,
+    with the resource id as a stable tie-break — so the answer is deterministic rather
+    than dict-order dependent."""
+    entries = ship_teardown.read_manifest(repo_root, saga_id)
+    candidates = [
+        (resource_id, entry)
+        for resource_id, entry in entries.items()
+        if entry.get("kind") == "branch" and entry.get("ref")
+    ]
+    if not candidates:
+        return ""
+    still_open = [item for item in candidates if not item[1].get("closed_at")]
+    pool = still_open or candidates
+    pool.sort(key=lambda item: (str(item[1].get("opened_at") or ""), item[0]))
+    return str(pool[-1][1]["ref"])
+
+
+def resolve_ceremony_refs(
+    saga: Mapping[str, Any],
+    *,
+    repo_root: Path,
+    runner: Callable[..., Any] | None = None,
+) -> CeremonyRefs:
+    """Resolve this ceremony's head and base refs from ceremony-scoped evidence,
+    walking KTD2's ladder and refusing rather than guessing when it is exhausted.
+
+    Never reads ``saga["branch"]`` — not as a rung, not as a fallback, not as a
+    tie-break. That field is the defect (issue #635): it is re-stamped from
+    ``git branch --show-current`` on every save, so on a leaf-into-outcome ceremony
+    whose last tick happened after ``checkout_main`` it holds the PR **base**, and a
+    destructive path consuming it deletes the base branch."""
+    tried: list[str] = []
+
+    # Rung 1 — the PR itself.
+    pr_refs = saga.get("pr_refs") or []
+    if pr_refs:
+        pr_number = _pr_number(str(pr_refs[-1]))
+        view = _run(
+            ["gh", "pr", "view", pr_number, "--json", "headRefName,baseRefName"],
+            cwd=repo_root,
+            runner=runner,
+            check=False,
+        )
+        if getattr(view, "returncode", 1) == 0:
+            raw = (getattr(view, "stdout", "") or "").strip()
+            try:
+                payload = json.loads(raw) if raw else {}
+            except json.JSONDecodeError as exc:
+                tried.append(
+                    f"gh pr view {pr_number} --json headRefName,baseRefName (invalid JSON: {exc})"
+                )
+            else:
+                pr_head = str(payload.get("headRefName") or "") if isinstance(payload, dict) else ""
+                pr_base = str(payload.get("baseRefName") or "") if isinstance(payload, dict) else ""
+                if pr_head and pr_base:
+                    return CeremonyRefs(head=pr_head, base=pr_base, source=CEREMONY_REFS_SOURCE_PR)
+                tried.append(
+                    f"gh pr view {pr_number} --json headRefName,baseRefName "
+                    f"(incomplete payload {raw!r})"
+                )
+        else:
+            tried.append(
+                f"gh pr view {pr_number} --json headRefName,baseRefName "
+                f"(exit {getattr(view, 'returncode', 'unknown')}: "
+                f"{(getattr(view, 'stderr', '') or '').strip()})"
+            )
+    else:
+        tried.append("saga pr_refs (empty — no PR to ask; open_pr has not run)")
+
+    # Rung 2 — the local, never-re-stamped ceremony evidence.
+    saga_id = str(saga.get("saga_id") or "")
+    if not saga_id:
+        tried.append("opened_resources.json + ceremony_base.json (saga carries no saga_id)")
+        raise CeremonyRefsError(_refs_refusal(tried))
+
+    try:
+        head = _manifest_head_branch(repo_root, saga_id)
+    except ship_teardown.ShipTeardownError as exc:
+        head = ""
+        tried.append(f"opened_resources.json ceremony-branch: entry (unreadable: {exc})")
+    else:
+        if not head:
+            tried.append(
+                "opened_resources.json ceremony-branch: entry "
+                f"(no kind='branch' resource registered for saga {saga_id!r})"
+            )
+    base = read_ceremony_base(repo_root, saga_id)
+    if not base:
+        tried.append(
+            f"{CEREMONY_BASE_SIDECAR_NAME} sidecar "
+            f"(absent or empty at {ceremony_base_path(repo_root, saga_id)})"
+        )
+    if head and base:
+        return CeremonyRefs(head=head, base=base, source=CEREMONY_REFS_SOURCE_MANIFEST)
+
+    # Rung 3 — refuse. saga["branch"] is deliberately not consulted here (R7).
+    raise CeremonyRefsError(_refs_refusal(tried))
+
+
+def _refs_refusal(tried: Sequence[str]) -> str:
+    return (
+        "cannot resolve this ceremony's head/base refs from ceremony-scoped evidence; "
+        "refusing to fall back to the saga's rolling 'branch' field (issue #635, R7). "
+        "Sources tried: " + "; ".join(tried)
+    )
+
+
+# --------------------------------------------------------------------------- #
 # Transition runners — one function per TRANSITIONS entry. Each returns nothing on
 # success and raises TransitionFailedError on failure; the caller (``run``) is
 # responsible for not advancing recorded state past a failed transition.
@@ -450,6 +818,17 @@ def _do_open_pr(
         )
         return {"pr_number": pr_number, "branch": current_branch(repo_root, runner=runner)}
     branch = current_branch(repo_root, runner=runner)
+    # No PR exists yet — this ceremony has no recorded base (issue #635, R5). The
+    # explicit base is the dynamically resolved repo default branch, never the
+    # literal "main" (KTD5).
+    base = resolve_default_branch(repo_root, runner=runner)
+    # Persist it, exactly as ``start()`` does (issue #635 code-review). Without this
+    # the plain-run flow never writes a base sidecar, so rung 2 can never satisfy its
+    # both-or-nothing condition and ``checkout_main`` / ``merge`` / ``branch_delete``
+    # become hard-dependent on a reachable ``gh`` — the opposite of the ladder's stated
+    # reason for existing ("a local answer that needs no network at exactly the moment
+    # an operator is finishing a ship").
+    write_ceremony_base(repo_root, str(saga["saga_id"]), base, recorded_by="open_pr")
     body_lines: list[str] = []
     # Auto-close the tracked issue on merge via a ``Fixes #N`` line, so shipping never leaves a
     # fixed issue open — the manual close step is easy to forget (it was, on #477). Only added
@@ -463,7 +842,7 @@ def _do_open_pr(
         body_lines.append(f"Plan: {plan_path}")
     body = "\n\n".join(body_lines)
     result = _run(
-        ["gh", "pr", "create", "--head", branch, "--fill", "--body", body],
+        ["gh", "pr", "create", "--head", branch, "--base", base, "--fill", "--body", body],
         cwd=repo_root,
         runner=runner,
     )
@@ -505,17 +884,62 @@ def _do_request_review(
     still be a self-review request. Revisit only if a second human maintainer joins."""
 
 
+def _ls_remote_sha(ref: str, *, repo_root: Path, runner: Callable[..., Any] | None) -> str:
+    """The sha ``origin`` has for ``ref``, refusing loudly when it has none.
+
+    ``git ls-remote`` exits **0 with empty stdout** for a ref the remote does not
+    carry, so the bare ``.stdout.split()[0]`` this replaces raised ``IndexError`` —
+    a type ``main()`` does not catch, which surfaced as an uncaught traceback and
+    contradicted the module contract above (issue #635 code-review). Reachable now
+    that the probed ref is a resolved base rather than the always-present literal
+    ``refs/heads/main``: an outcome branch legitimately stops existing once its own
+    ceremony has landed."""
+    out = _run(["git", "ls-remote", "origin", ref], cwd=repo_root, runner=runner).stdout or ""
+    fields = out.split()
+    if not fields:
+        raise TransitionFailedError(
+            f"origin has no {ref!r}; cannot record a rollback sha for a base branch that "
+            "does not exist on the remote. Verify this ceremony's base is still present"
+        )
+    return fields[0]
+
+
 def _do_merge(
     saga: Mapping[str, Any], *, repo_root: Path, runner: Callable[..., Any] | None
 ) -> dict[str, Any]:
+    """Squash-merge the ceremony PR and record the rollback-manifest fields (R6) for
+    this transition.
+
+    Both SHA probes read the PR's **resolved base** ref, never the literal
+    ``refs/heads/main`` (issue #635, R6/KTD1). On a leaf-into-outcome PR the old
+    hardcoded probe recorded the *default branch's* tip as ``merge_sha`` — and that
+    sha is perfectly reachable, so ``ship_undo._undo_merge``'s ``SHA_UNREACHABLE``
+    guard never fires: ``git revert --no-edit <sha>`` succeeds against an unrelated
+    healthy commit on the default branch and gets pushed.
+
+    A safe undo needs BOTH halves, and this function is only the first: recording the
+    right sha (here, R6) and applying it to the right branch
+    (``ship_undo._undo_merge``, R12, which used to revert on the literal ``main``
+    whatever the ceremony's base was). The ``SHA_UNREACHABLE`` guard is an existence
+    probe and catches neither — a wrong-but-reachable sha and a right sha reverted on
+    the wrong branch both sail past it. That is why the resolved base is also returned
+    below: ``ship_undo.append_entry`` records it on the merge entry so the undo path
+    can target the same branch this merge landed on without a ``gh`` round trip.
+
+    The returned key stays ``pre_merge_main_sha`` deliberately (R6): it is a keyword
+    argument of ``ship_undo.append_entry``, it is referenced by name across the ceremony
+    and undo test suites, and ``ship_undo.py``'s module docstring records it as
+    audit-only forensic context that ``undo()`` never consumes programmatically —
+    renaming it changes a cross-module signature on the undo path for zero behavioral
+    gain. (No reference count is quoted here on purpose: any such number is stale the
+    moment a test is added, and R13 exists because counts previously quoted in this
+    docstring were wrong.)"""
     pr_number = _current_pr_number(saga, repo_root=repo_root, runner=runner)
-    pre_merge_main_sha = _run(
-        ["git", "ls-remote", "origin", "refs/heads/main"], cwd=repo_root, runner=runner
-    ).stdout.split()[0]
+    base = resolve_ceremony_refs(saga, repo_root=repo_root, runner=runner).base
+    base_ref = "refs/heads/" + base
+    pre_merge_main_sha = _ls_remote_sha(base_ref, repo_root=repo_root, runner=runner)
     _run(["gh", "pr", "merge", pr_number, "--squash"], cwd=repo_root, runner=runner)
-    merge_sha = _run(
-        ["git", "ls-remote", "origin", "refs/heads/main"], cwd=repo_root, runner=runner
-    ).stdout.split()[0]
+    merge_sha = _ls_remote_sha(base_ref, repo_root=repo_root, runner=runner)
     # Close-on-close (KTD9): the merge landed the PR, so the draft_pr manifest entry
     # this ceremony opened is now closed, evidenced by the squash-merge sha.
     _close_if_registered(
@@ -527,6 +951,7 @@ def _do_merge(
     return {
         "pr_number": pr_number,
         "branch": saga.get("branch"),
+        "base": base,
         "pre_merge_main_sha": pre_merge_main_sha,
         "merge_sha": merge_sha,
     }
@@ -535,7 +960,19 @@ def _do_merge(
 def _do_checkout_main(
     saga: Mapping[str, Any], *, repo_root: Path, runner: Callable[..., Any] | None
 ) -> dict[str, Any]:
-    _run(["git", "checkout", "main"], cwd=repo_root, runner=runner)
+    """Check out this ceremony's resolved BASE branch (issue #635, R4) — never the
+    literal ``"main"``.
+
+    The returned ``branch`` deliberately stays ``saga.get("branch")``, NOT the
+    resolved base — do not "fix" this. That value becomes the ``checkout_main``
+    rollback-manifest entry's ``branch``, consumed by
+    ``ship_undo._restore_pre_ceremony_checkout`` (``ship_undo.py``), whose contract is
+    restoring the operator's PRE-CEREMONY checkout (the saga's own branch), not the
+    branch this transition just checked out. Returning the resolved base instead would
+    make ``current == branch`` true immediately after this transition runs and turn
+    that undo step into a permanent silent no-op."""
+    base = resolve_ceremony_refs(saga, repo_root=repo_root, runner=runner).base
+    _run(["git", "checkout", base], cwd=repo_root, runner=runner)
     return {"branch": saga.get("branch")}
 
 
@@ -547,12 +984,55 @@ def _do_pull(
 
 
 def _do_branch_delete(
-    saga: Mapping[str, Any], *, repo_root: Path, runner: Callable[..., Any] | None
+    saga: Mapping[str, Any],
+    *,
+    repo_root: Path,
+    runner: Callable[..., Any] | None,
+    confirmed_refs: CeremonyRefs | None = None,
 ) -> dict[str, Any]:
-    branch = saga.get("branch") or ""
+    """Delete the ceremony's **head** branch, local and origin, and close its manifest
+    entry.
+
+    The target is resolved ONCE from ceremony-scoped evidence (issue #635, R1/R3/KTD1)
+    and that single value drives the ``git rev-parse``, the ``git branch -d``, the
+    ``git push origin --delete``, **and** ``_branch_resource_id()`` for the manifest
+    close. ``saga["branch"]`` is never consulted: it is re-stamped from
+    ``git branch --show-current`` on every ``saga.py save``, so on a leaf-into-outcome
+    ceremony whose last tick landed after ``checkout_main`` it holds the PR *base* —
+    which is how the live incident deleted ``outcome/norns-next-horizon`` local and
+    origin. Deriving the delete target and the manifest key independently from that
+    same wrong field is also why the teardown ledger silently diverged: the close
+    addressed ``ceremony-branch:<base>``, an id that was never registered, and
+    ``_close_if_registered`` no-ops on unknown ids by design. One resolved value makes
+    that divergence unrepresentable.
+
+    ``confirmed_refs`` is the ceremony's refs as ``run()`` already resolved and
+    validated them against the operator's ``branch_delete:<target>`` confirmation
+    (issue #635 code-review P0). Re-resolving here instead would reopen the very split
+    this function closed one level down: the resolver degrades from the PR to local
+    evidence on any non-zero ``gh`` exit, so a single transient failure between the
+    gate and this call answers from a different rung and can name a different branch —
+    leaving the operator's confirmation and the hazard scan bound to a value that never
+    reaches ``git``. Direct callers (tests, and any path that has not been through the
+    gate) may omit it and this resolves for itself.
+
+    Two floors below, both defense in depth. The empty/``main`` check is the older one.
+    The ``branch == refs.base`` check is the one that matters: it is the last thing
+    standing when no PR exists at all, because ``_probe_branch_delete_targets_base``
+    returns ``None`` without a PR number and the hazard therefore never runs. Comparing
+    the two refs we already hold costs nothing and needs no network."""
+    refs = confirmed_refs or resolve_ceremony_refs(saga, repo_root=repo_root, runner=runner)
+    branch = refs.head
     if not branch or branch == "main":
         raise TransitionFailedError(
-            f"refusing to delete branch {branch!r}; saga's recorded branch looks wrong"
+            f"refusing to delete branch {branch!r}; resolved ceremony head looks wrong "
+            f"(resolution source: {refs.source})"
+        )
+    if branch == refs.base:
+        raise TransitionFailedError(
+            f"refusing to delete branch {branch!r}: it is this ceremony's resolved BASE "
+            f"branch, the branch the merge landed on (resolution source: {refs.source}). "
+            "Deleting it is the issue #635 data-loss incident"
         )
     head_sha = _run(["git", "rev-parse", branch], cwd=repo_root, runner=runner).stdout.strip()
     _run(["git", "branch", "-d", branch], cwd=repo_root, runner=runner)
@@ -698,6 +1178,28 @@ def _pr_number(pr_ref: str) -> str:
     return pr_ref.rsplit("/", 1)[-1].lstrip("#")
 
 
+# Transitions whose operator confirmation must name a target as well as the transition
+# (issue #635, KTD6/R8). ``{#ship-ceremony-operator-gate-526}``'s own "Revisit when"
+# clause anticipated exactly this: "A transition is added whose confirmation needs an
+# argument of its own … then the flag grows into a typed confirmation payload rather
+# than a name match." ``branch_delete`` is that transition — the operator is authorizing
+# the deletion of a specific branch, so the confirmation carries the branch. Every other
+# transition keeps the bare grammar unchanged.
+CONFIRMATION_TARGET_TRANSITIONS: frozenset[str] = frozenset({"branch_delete"})
+
+
+def _parse_operator_confirmation(value: str) -> tuple[str, str | None]:
+    """Split ``--operator-confirmed`` into (transition, target).
+
+    ``"merge"`` -> ``("merge", None)``; ``"branch_delete:outcome/demo"`` ->
+    ``("branch_delete", "outcome/demo")``. Only the FIRST colon separates, so a branch
+    name containing a colon survives intact. A trailing colon with nothing after it
+    carries no target and reads as bare — it must refuse with the resolved target named,
+    not squeak through as a target of ``""``."""
+    name, _, target = value.partition(":")
+    return name, (target or None)
+
+
 def _current_pr_number(
     saga: Mapping[str, Any], *, repo_root: Path, runner: Callable[..., Any] | None
 ) -> str:
@@ -731,6 +1233,14 @@ def run(
     one naming a different transition, refuses before ``_RUNNERS[upcoming]`` is
     invoked and before any ``saga.py save``, so the ledger is provably unadvanced.
 
+    Issue #635 KTD6/R8: for the transitions in ``CONFIRMATION_TARGET_TRANSITIONS``
+    (``branch_delete``) the confirmation must also name the target —
+    ``branch_delete:<branch>`` — and that branch must equal the head
+    ``resolve_ceremony_refs()`` resolves. A bare ``branch_delete`` refuses with the
+    resolved target printed, so the operator's next invocation carries a value they
+    have actually seen. Every other transition keeps the bare grammar, and passing a
+    target to one of them refuses rather than being ignored.
+
     ``undo=True`` (KTD6) forks to ``ship_undo.undo()`` immediately after saga
     resolution — BEFORE the mismatch check and the always_operator gate above, so
     ``--operator-confirmed undo`` (KTD5) can never trip the forward-transition
@@ -755,22 +1265,83 @@ def run(
     if upcoming is None:
         return "already shipped — all ceremony transitions complete"
 
-    if operator_confirmed is not None and operator_confirmed != upcoming:
+    confirmed_transition: str | None = None
+    confirmed_target: str | None = None
+    if operator_confirmed is not None:
+        confirmed_transition, confirmed_target = _parse_operator_confirmation(operator_confirmed)
+
+    if confirmed_transition is not None and confirmed_transition != upcoming:
         # KTD4: the mismatch rule is uniform across tiers — refuse even when the
         # upcoming transition is itself reversible, so a mispredicted ledger
         # position always surfaces instead of confirmation silently "spilling"
-        # onto a step the caller did not name.
+        # onto a step the caller did not name. #635/KTD6 changed the operand, not the
+        # rule: this compares the parsed transition NAME rather than the raw string, so
+        # a qualified confirmation naming the wrong transition still refuses here with
+        # the identical message. One narrow output change follows from that and is
+        # deliberate: ``merge:x`` with ``merge`` upcoming used to hit this mismatch
+        # branch (whole-string compare) and now falls through to the "does not take a
+        # confirmation target" refusal below, which is the accurate diagnosis. Both
+        # refuse; only the wording moved. Unreachable from the CLI before this change
+        # (``choices=`` rejected the colon form outright), reachable via the Python API.
         raise OperatorConfirmationError(
             f"--operator-confirmed {operator_confirmed!r} does not match the upcoming "
             f"transition {upcoming!r}; confirmation must name the exact transition being run"
         )
-    if TRANSITION_TIERS[upcoming] == CeremonyTier.ALWAYS_OPERATOR and operator_confirmed is None:
-        raise OperatorConfirmationError(
-            f"transition {upcoming!r} is tier={CeremonyTier.ALWAYS_OPERATOR!r} and requires "
-            f"operator confirmation; re-run with --operator-confirmed {upcoming}"
-        )
 
-    hazards = ceremony_hazards.detect(saga, upcoming, repo_root, runner)
+    # KTD6/R8 (issue #635): ``branch_delete`` confirms a TARGET, not just a transition.
+    # Resolving here — before the hazard scan, before ``_RUNNERS[upcoming]`` dispatch and
+    # before the ``saga.py save`` — keeps every refusal below on the ledger-unadvanced
+    # side of the ceremony, and hands ``detect()`` the branch that would actually be
+    # deleted. That injection only makes the R2 hazard a genuine two-source comparison
+    # when the resolver answered on rung 2; on rung 1 head and base share one PR record
+    # and the hazard is inert by construction. ``_probe_branch_delete_targets_base``
+    # documents the rung split in full.
+    resolved_head: str | None = None
+    confirmed_refs: CeremonyRefs | None = None
+    if upcoming in CONFIRMATION_TARGET_TRANSITIONS:
+        refs = resolve_ceremony_refs(saga, repo_root=repo_root, runner=runner)
+        resolved_head = refs.head
+        confirmed_refs = refs
+        qualified = f"--operator-confirmed {upcoming}:{refs.head}"
+        provenance = f"head resolved from {refs.source}"
+        if confirmed_transition is None:
+            raise OperatorConfirmationError(
+                f"transition {upcoming!r} is tier={CeremonyTier.ALWAYS_OPERATOR!r} and requires "
+                f"operator confirmation naming the branch it will delete; re-run with "
+                f"{qualified} ({provenance})"
+            )
+        if confirmed_target is None:
+            raise OperatorConfirmationError(
+                f"--operator-confirmed {upcoming} must name the branch this transition will "
+                f"delete (issue #635, KTD6) — confirming a bare transition name authorizes a "
+                f"deletion target the operator never saw; re-run with {qualified} ({provenance})"
+            )
+        if confirmed_target != refs.head:
+            raise OperatorConfirmationError(
+                f"--operator-confirmed {upcoming}:{confirmed_target} names a branch that is not "
+                f"this ceremony's resolved head {refs.head!r} ({provenance}); re-run with "
+                f"{qualified}"
+            )
+    else:
+        if confirmed_target is not None:
+            raise OperatorConfirmationError(
+                f"transition {upcoming!r} does not take a confirmation target; pass a bare "
+                f"--operator-confirmed {upcoming}. Only "
+                f"{', '.join(sorted(CONFIRMATION_TARGET_TRANSITIONS))} confirms a named target "
+                "(issue #635, KTD6)"
+            )
+        if (
+            TRANSITION_TIERS[upcoming] == CeremonyTier.ALWAYS_OPERATOR
+            and confirmed_transition is None
+        ):
+            raise OperatorConfirmationError(
+                f"transition {upcoming!r} is tier={CeremonyTier.ALWAYS_OPERATOR!r} and requires "
+                f"operator confirmation; re-run with --operator-confirmed {upcoming}"
+            )
+
+    hazards = ceremony_hazards.detect(
+        saga, upcoming, repo_root, runner, resolved_head=resolved_head
+    )
     acknowledged_ids = set(acknowledge_hazard or ())
     unacknowledged = [
         h for h in hazards if not (h.acknowledgeable and h.hazard_id in acknowledged_ids)
@@ -791,7 +1362,19 @@ def run(
         except merge_watcher.MergeWatcherError as exc:
             raise MergePreflightError(str(exc)) from exc
 
-    extra = _RUNNERS[upcoming](saga, repo_root=repo_root, runner=runner) or {}
+    # The refs the gate above validated are HANDED to the runner rather than left for
+    # it to re-derive (issue #635 code-review P0). A second independent
+    # ``resolve_ceremony_refs()`` inside the runner is not a redundant-but-equal call:
+    # rung 1 degrades to rung 2 on any non-zero ``gh`` exit, so one transient failure
+    # between the two calls answers from a different rung and can name a different
+    # branch — the operator's confirmation and the hazard scan would then have been
+    # computed against a value the destructive step never sees. Passing the validated
+    # object makes "the branch the operator authorized" and "the branch git deletes"
+    # the same object by construction, and drops a redundant ``gh pr view`` besides.
+    runner_kwargs: dict[str, Any] = {}
+    if confirmed_refs is not None:
+        runner_kwargs["confirmed_refs"] = confirmed_refs
+    extra = _RUNNERS[upcoming](saga, repo_root=repo_root, runner=runner, **runner_kwargs) or {}
 
     ship_undo.append_entry(
         repo_root=repo_root,
@@ -799,6 +1382,9 @@ def run(
         transition=upcoming,
         tier=TRANSITION_TIERS[upcoming],
         branch=extra.get("branch"),
+        # Only ``_do_merge`` returns a base; recorded so ``ship_undo._undo_merge``
+        # reverts on the branch this ceremony merged into (issue #635, R12).
+        base=extra.get("base"),
         head_sha=extra.get("head_sha"),
         pr_number=extra.get("pr_number"),
         merge_sha=extra.get("merge_sha"),
@@ -821,7 +1407,7 @@ def run(
         repo_root=repo_root,
         runner=runner,
     )
-    confirmation_note = ", operator-confirmed" if operator_confirmed == upcoming else ""
+    confirmation_note = ", operator-confirmed" if confirmed_transition == upcoming else ""
     receipt_note = ""
     if extra.get("receipt_path"):
         receipt_note = f"; ship receipt minted at {extra['receipt_path']}"
@@ -835,6 +1421,7 @@ def start(
     *,
     repo_root: Path,
     issue_ref: str,
+    base: str | None = None,
     runner: Callable[..., Any] | None = None,
 ) -> str:
     """Front-loaded mode (R7/KTD4): push the branch and open a draft PR carrying the
@@ -847,6 +1434,13 @@ def start(
     finding: an unconditional ``start()`` call on an already-progressed saga would
     open a second PR AND regress ``ceremony_transition`` back to ``'commit'``,
     causing the next ``run`` to re-execute already-completed transitions.
+
+    ``base`` (issue #635, R5/KTD5): the draft PR's base branch, explicit or resolved
+    via ``resolve_default_branch`` when omitted — never the literal ``"main"``. The
+    resolved value is recorded to the per-saga ceremony-base sidecar (KTD4) so later
+    transitions (``checkout_main``, ``merge``, ``branch_delete``) can resolve this
+    ceremony's base from local evidence, without a ``gh pr view`` round trip, via
+    ``resolve_ceremony_refs``'s rung 2.
     """
     saga = resolve_saga(repo_root=repo_root, issue_ref=issue_ref, runner=runner)
     if saga.get("ceremony_transition") or saga.get("pr_refs"):
@@ -862,10 +1456,25 @@ def start(
     # here, the counterpart to _do_commit's registration on the plain run flow.
     _register_branch(saga, branch, repo_root=repo_root, opened_by="start")
 
+    resolved_base = base or resolve_default_branch(repo_root, runner=runner)
+    write_ceremony_base(repo_root, str(saga["saga_id"]), resolved_base, recorded_by="start")
+
     plan_path = saga.get("plan_path") or ""
     body = f"Plan: {plan_path}" if plan_path else ""
     _run(
-        ["gh", "pr", "create", "--draft", "--head", branch, "--fill", "--body", body],
+        [
+            "gh",
+            "pr",
+            "create",
+            "--draft",
+            "--head",
+            branch,
+            "--base",
+            resolved_base,
+            "--fill",
+            "--body",
+            body,
+        ],
         cwd=repo_root,
         runner=runner,
     )
@@ -972,6 +1581,27 @@ def uninstall(*, repo_root: Path, runner: Callable[..., Any] | None = None) -> s
 # --------------------------------------------------------------------------- #
 
 
+_OPERATOR_CONFIRMED_NAMES: tuple[str, ...] = (*TRANSITIONS, "undo")
+
+
+def _operator_confirmed_arg(value: str) -> str:
+    """argparse ``type`` for ``--operator-confirmed``.
+
+    Replaces the flag's former ``choices=`` (issue #635/KTD6): the value may now carry a
+    ``:<target>`` suffix, which ``choices`` cannot express. The palette check itself is
+    unchanged in strength and in shape — an off-palette transition name is still
+    argparse's error (usage + exit 2, "invalid choice"), never the gate's, and the
+    target's own validation stays in ``run()`` where the resolved head is known."""
+    name, _target = _parse_operator_confirmation(value)
+    if name not in _OPERATOR_CONFIRMED_NAMES:
+        raise argparse.ArgumentTypeError(
+            f"invalid choice: {name!r} (choose from "
+            + ", ".join(repr(choice) for choice in _OPERATOR_CONFIRMED_NAMES)
+            + "; branch_delete also requires a ':<branch>' target)"
+        )
+    return value
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -989,10 +1619,14 @@ def _build_parser() -> argparse.ArgumentParser:
     p_run.add_argument(
         "--operator-confirmed",
         default=None,
-        choices=(*TRANSITIONS, "undo"),
+        type=_operator_confirmed_arg,
+        metavar="TRANSITION[:TARGET]",
         help=(
             "name the always_operator-tier transition (merge, branch_delete) you are "
             "authorizing; required when the upcoming transition is always_operator-tier. "
+            "branch_delete additionally requires the branch it will delete "
+            "(--operator-confirmed branch_delete:<branch>, issue #635/KTD6); a bare "
+            "'branch_delete' refuses and prints the resolved target. "
             "Pass 'undo' (KTD5) when --undo's in-scope plan reverses merge/branch_delete."
         ),
     )
@@ -1003,7 +1637,8 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=ceremony_hazards.HAZARD_REGISTRY,
         help=(
             "repeatable; acknowledge a detected hazard by id to unblock its transition "
-            "(KTD3). Non-acknowledgeable hazards (e.g. merge_not_landed) ignore this."
+            "(KTD3). Non-acknowledgeable hazards (merge_not_landed, "
+            "branch_delete_targets_base) ignore this."
         ),
     )
     p_run.add_argument(
@@ -1017,6 +1652,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_start = sub.add_parser("start", help="front-loaded mode: push branch, open draft PR")
     p_start.add_argument("--issue-ref", required=True, help="owner/repo#N")
+    p_start.add_argument(
+        "--base",
+        default=None,
+        help=(
+            "explicit base branch for the draft PR; default: resolve_default_branch() "
+            "(issue #635, KTD5) — never the literal 'main'"
+        ),
+    )
 
     p_install = sub.add_parser("install", help="install the local 'git ship' alias")
     p_install.add_argument(
@@ -1046,7 +1689,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
         elif args.command == "start":
-            print(start(repo_root=repo_root, issue_ref=args.issue_ref))
+            print(start(repo_root=repo_root, issue_ref=args.issue_ref, base=args.base))
         elif args.command == "install":
             print(install(repo_root=repo_root, force=getattr(args, "force", False)))
         elif args.command == "uninstall":

@@ -227,7 +227,7 @@ def test_default_writer_skips_post_when_marked_comment_already_exists(tmp_path: 
             return _Ok(json.dumps([{"body": f"already posted {marker}"}]))
         return _Ok()
 
-    writer = BP.default_board_writer(tmp_path, runner=fake_run)
+    writer = BP.default_board_writer(mission_control_root=tmp_path, runner=fake_run)
     writer(
         op_kind="issue-progress-comment",
         repo="infiquetra/x",
@@ -269,7 +269,7 @@ def test_comment_crash_replay_skips_remote_duplicate_and_writes_local_ledger(
         "infiquetra/x",
         42,
         "done",
-        board_writer=BP.default_board_writer(tmp_path, runner=fake_run),
+        board_writer=BP.default_board_writer(mission_control_root=tmp_path, runner=fake_run),
         ledger_dir=ld,
         payload={"body": "visible progress"},
     )
@@ -308,12 +308,16 @@ def test_cli_authorized_op_written(tmp_path: Path, capsys: Any, monkeypatch: Any
     """CLI: an authorized op prints {"status":"written"} — concrete writer patched (no live gh)."""
     calls: list[tuple[str, str, int]] = []
 
-    def _fake_factory(repo_root: Path, *, project: str = "operations", runner: Any = None) -> Any:
+    def _fake_factory(
+        *, mission_control_root: Path, project: str = "operations", runner: Any = None
+    ) -> Any:
         def _w(*, op_kind: str, repo: str, number: int, payload: dict) -> None:
             calls.append((op_kind, repo, number))
 
         return _w
 
+    # Keep the CLI test hermetic: pin the mission-control resolution instead of walking the repo.
+    monkeypatch.setattr(BP, "resolve_mission_control_root", lambda: (tmp_path, 1))
     monkeypatch.setattr(BP, "default_board_writer", _fake_factory)
     rc = BP.main(
         [

@@ -390,3 +390,73 @@ class TestManifestDrivesHook:
             f"hook did not execute the manifest-defined step {canary_id!r}; "
             f"executed: {executed_step_ids}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Per-step timeout (issue #658)
+# ---------------------------------------------------------------------------
+
+
+class TestPerStepTimeout:
+    """The step budget lives in the manifest, not in the hook.
+
+    It was hardcoded at 300 s, which broke the hook's own SINGLE SOURCE property and
+    failed in the worst direction: the suite grew past the budget while still passing,
+    so the gate blocked every push in the repo reporting a timeout that reads exactly
+    like a real red at the call site.
+    """
+
+    @pytest.fixture
+    def hook(self) -> Any:
+        return _load_hook_module()
+
+    def test_step_without_a_declared_timeout_keeps_the_historical_default(
+        self, hook: Any, tmp_path: Path
+    ) -> None:
+        captured: dict[str, Any] = {}
+
+        def fake_run(cmd: list[str], **kwargs: Any) -> Any:
+            captured.update(kwargs)
+            return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+        with patch.object(hook.subprocess, "run", side_effect=fake_run):
+            passed, _ = hook._run_step({"id": "x", "command": ["true"]}, tmp_path)
+
+        assert passed
+        assert captured["timeout"] == hook._DEFAULT_STEP_TIMEOUT == 300
+
+    def test_step_may_declare_its_own_timeout(self, hook: Any, tmp_path: Path) -> None:
+        captured: dict[str, Any] = {}
+
+        def fake_run(cmd: list[str], **kwargs: Any) -> Any:
+            captured.update(kwargs)
+            return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+        with patch.object(hook.subprocess, "run", side_effect=fake_run):
+            hook._run_step({"id": "x", "command": ["true"], "timeout_seconds": 600}, tmp_path)
+
+        assert captured["timeout"] == 600
+
+    def test_timeout_message_reports_the_budget_that_was_actually_applied(
+        self, hook: Any, tmp_path: Path
+    ) -> None:
+        """A message hardcoding "300 s" while a step ran on a different budget sends the
+        operator to check the wrong number."""
+
+        def boom(cmd: list[str], **kwargs: Any) -> Any:
+            raise hook.subprocess.TimeoutExpired(cmd, kwargs.get("timeout"))
+
+        with patch.object(hook.subprocess, "run", side_effect=boom):
+            passed, message = hook._run_step(
+                {"id": "x", "command": ["true"], "timeout_seconds": 600}, tmp_path
+            )
+
+        assert not passed
+        assert "600" in message
+
+    def test_the_real_pytest_step_declares_a_budget_above_the_default(self) -> None:
+        """The suite measured 325 s green on an idle machine against the 300 s default,
+        so the real manifest must carry its own budget or the gate blocks every push."""
+        steps = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))["steps"]
+        pytest_step = next(s for s in steps if s["id"] == "pytest")
+        assert pytest_step["timeout_seconds"] > 300

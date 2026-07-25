@@ -11,8 +11,9 @@ failure hint to stderr, then exits 2 (blocking) to prevent the push.
 Properties:
   - SILENT ON PASS: no output when every step is green.
   - BLOCKING ON FAILURE: exits 2, which prevents the push.
-  - SINGLE SOURCE: adding or removing steps in gate-manifest.json is the
-    only change needed to update the gate — this script never diverges.
+  - SINGLE SOURCE: adding or removing steps in gate-manifest.json — or
+    retuning one via its optional ``timeout_seconds`` — is the only change
+    needed to update the gate; this script never diverges.
   - CROSS-REPO-SAFE: degrades silently when the manifest is absent (so the
     hook can be registered globally without breaking repos that lack one).
 
@@ -30,6 +31,10 @@ import sys
 from pathlib import Path
 
 _MANIFEST_REL = Path("tools") / "gate-manifest.json"
+
+# Fallback per-step budget when a manifest step declares no ``timeout_seconds``.
+# Steps that legitimately need longer say so in the manifest (issue #658).
+_DEFAULT_STEP_TIMEOUT = 300
 
 
 def _is_git_push_command(command: str) -> bool:
@@ -89,18 +94,26 @@ def _run_step(step: dict, cwd: Path) -> tuple[bool, str]:
     if not cmd:
         return True, ""
 
+    # Per-step budget, from the manifest, defaulting to the historical 300 s (issue
+    # #658). The timeout used to be hardcoded here, which broke the SINGLE SOURCE
+    # property above: tuning the gate meant editing the hook, not the manifest. It also
+    # failed the wrong way — the suite grew past 300 s while still passing, so the gate
+    # blocked every push in the repo reporting a timeout rather than a test failure,
+    # which reads identically to a real red at the call site.
+    timeout_seconds = step.get("timeout_seconds", _DEFAULT_STEP_TIMEOUT)
+
     try:
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
             cwd=str(cwd),
-            timeout=300,
+            timeout=timeout_seconds,
         )
     except FileNotFoundError:
         return False, f"command not found: {cmd[0]}"
     except subprocess.TimeoutExpired:
-        return False, "timed out after 300 s"
+        return False, f"timed out after {timeout_seconds} s"
     except Exception as exc:
         return False, str(exc)
 

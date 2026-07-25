@@ -1,0 +1,94 @@
+{
+  "name": "issue-617-registry-schema-forward-compat",
+  "description": "Issue #617: registry schema forward-compatibility (KTD1-KTD5): fleet-core reader tolerates and preserves unknown additive fields in container mappings (digest-covered commitment records stay closed, extras capped at 64 KiB, zero new written fields), doctor/repair operator verbs ship in the saga adapter CLI, release surfaces fleet-core 0.22.0 + saga 0.113.0. Fully serialized U1->U2->U3 under the operator cap of 3: refute-3 panels on the two contract-bearing units ride at the unit tier and would overlap a running unit otherwise.",
+  "repo": "infiquetra/infiquetra-claude-plugins",
+  "units": [
+    {
+      "unit_id": "U1",
+      "label": "fleet-core broker: tolerate-and-preserve unknown fields (containers open, commitments closed)",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "worth_it_because": "integrity-critical parser change on the fleet-shared registry: the tolerance line (KTD1) must open container mappings without weakening digest-covered commitment records (_record_sha256 receipts), the extras passthrough (KTD2) must survive the typed-dataclass rebuild or newer-writer state is silently destroyed, and R5 demands byte-identical output for extras-free documents — a wrong line either re-opens the fleet-wide bricking or converts tamper detection into tamper tolerance.",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "U1: In plugins/fleet-core/scripts/fleet_commons/lease_broker.py at base 4eb2fe15, implement the read-tolerance layer per KTD1/KTD2/KTD5: split _closed_mapping (:363-374) into the existing strict form (kept verbatim for digest-covered commitment records and value validation) and a tolerant form returning (known, extras) with known keys validated exactly as today; capture extras into a per-dataclass mapping on Registry, Lease, ResourceFence, SessionAdmission, SettlementRecord (outer record only), and OwnerAdmissionClose, and merge them last in each to_dict; enforce a 64 KiB serialized-size cap on total extras per document at Registry.from_dict (above cap -> RegistryCorruptError); audit and enumerate every mapping verified by _record_sha256 (:629-631, receipt checks :703-705 and :774-778) in code comments at the carve-out sites and keep them strictly closed — FencingToken defaults closed unless the audit proves it safe to open; the schema identity gate (:1279-1282), the four legacy migration arms (:1257-1277), bounded capacities, and all value/invariant checks change zero semantics; _write_registry (:1639-1670) round-trip validation must pass with extras present and extras-free output must stay byte-identical to today (R5). Tests per the plan's U1 scenarios in tests/test_fleet_lease_broker.py, including the R2/R3/R4/R5/KTD5 fail-closed pins and the legacy-arm regression pins. Read the plan at docs/plans/2026-07-23-issue-617-registry-schema-forward-compat-plan.md (U1, R1-R6, R9, KTD1/KTD2/KTD3/KTD5) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [],
+      "files": [
+        "plugins/fleet-core/scripts/fleet_commons/lease_broker.py",
+        "tests/test_fleet_lease_broker.py"
+      ],
+      "verify": {
+        "n": 3,
+        "pass_rule": "majority"
+      }
+    },
+    {
+      "unit_id": "U2",
+      "label": "doctor/repair verbs: fleet-core methods + saga adapter CLI",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "worth_it_because": "operator-escalated: repair() mutates the shared fenced registry (backup, strip, rewrite) — a wrong refusal predicate or a non-atomic write path corrupts machine-wide state the whole fleet fences on, and the verb pair is the shipped recovery story for the next incident; judgment tier bought explicitly at plan lock.",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "U2: At base 4eb2fe15 (post-U1), add broker methods doctor() (structured read-only report: valid | tolerated-unknowns | corrupt, extras inventory with JSON paths, invariant status; never mutates) and repair() (timestamped backup beside the registry, strip extras, strict revalidate, atomic 0600 temp+rename write; refuse when strict revalidation still fails; no-op with explicit report on a clean document) to plugins/fleet-core/scripts/fleet_commons/lease_broker.py reusing U1's tolerant parse machinery and the existing _locked() write discipline; add saga adapter CLI verbs doctor (exit codes 0 clean / 3 unknowns-present / 4 corrupt) and repair (requires explicit --strip-unknown flag, no default action) to plugins/saga/scripts/lease_broker.py beside inspect/sweep (:443-474), routing through the shim-resolved broker. Tests per the plan's U2 scenarios: broker-method tests in tests/test_fleet_lease_broker.py (doctor no-mutation byte-check, inventory paths, corrupt handling; repair backup + strip + strict-revalidate + 0600, refusal on unrepairable, clean no-op) and CLI-seam tests in tests/test_saga_hooks.py. Read the plan at docs/plans/2026-07-23-issue-617-registry-schema-forward-compat-plan.md (U2, R7/R8, KTD4) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U1"
+      ],
+      "files": [
+        "plugins/fleet-core/scripts/fleet_commons/lease_broker.py",
+        "plugins/saga/scripts/lease_broker.py",
+        "tests/test_fleet_lease_broker.py",
+        "tests/test_saga_hooks.py"
+      ],
+      "verify": {
+        "n": 3,
+        "pass_rule": "majority"
+      }
+    },
+    {
+      "unit_id": "U3",
+      "label": "release surfaces fleet-core 0.22.0 + saga 0.113.0, journal, drift-guard pins",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U3: Bump plugins/fleet-core/.claude-plugin/plugin.json to 0.22.0 and plugins/saga/.claude-plugin/plugin.json to 0.113.0, sync .claude-plugin/marketplace.json, write both CHANGELOG entries (reader-side unknown-field tolerance with preservation, commitment-record carve-out, extras cap, zero new written fields; doctor/repair operator verbs), update drift-guard version pins in-commit (tests/test_saga_plugin.py plus the tests/test_liveness_events.py and tests/test_team_execution_liveness.py pin patterns), add the DECISIONS entry {#registry-forward-compat-617} mirroring KTD1-KTD5 (including the mid-run reload writer-swap hazard note per issue proposed fix 4) and a LEARNINGS entry only if implementation surfaced a non-obvious mechanism beyond the already-recorded {#broker-schema-forward-poisoning-616}. Verify python3 scripts/check_release_surface_parity.py reports parity and re-check sibling-PR version collisions at merge time. Read the plan at docs/plans/2026-07-23-issue-617-registry-schema-forward-compat-plan.md (U3) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "summary"
+      ],
+      "depends_on": [
+        "U2"
+      ],
+      "files": [
+        "plugins/fleet-core/.claude-plugin/plugin.json",
+        "plugins/saga/.claude-plugin/plugin.json",
+        ".claude-plugin/marketplace.json",
+        "plugins/fleet-core/CHANGELOG.md",
+        "plugins/saga/CHANGELOG.md",
+        "tests/test_saga_plugin.py",
+        "tests/test_liveness_events.py",
+        "tests/test_team_execution_liveness.py",
+        "docs/engineering-journal/DECISIONS.md"
+      ]
+    }
+  ]
+}

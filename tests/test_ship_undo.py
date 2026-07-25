@@ -26,6 +26,11 @@ Oracles:
   ``SHA_UNREACHABLE`` failure and leaves the entry unmarked (KTD4).
 * scope — gating looks only at NOT-YET-UNDONE entries; an already-undone
   always_operator entry does not force operator confirmation on a later call.
+* base-targeted revert (issue #635, R12) — the merge revert's checkout and push both
+  name the ceremony's RECORDED base and the revert lands on it, never on the literal
+  ``main``; an entry written before base recording floors at the literal ``main``
+  (``SU.LEGACY_MERGE_BASE``), which is the pre-#635 behavior and is NOT the repo's
+  resolved default branch.
 """
 
 from __future__ import annotations
@@ -62,6 +67,10 @@ def _load_ship_ceremony() -> ModuleType:
     spec = importlib.util.spec_from_file_location("ship_ceremony", SHIP_CEREMONY_PATH)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    # Register before exec, matching ``_load_ship_undo`` above: ship_ceremony.py's
+    # ``@dataclass`` declarations resolve their (postponed, string) annotations through
+    # ``sys.modules[cls.__module__]``, which is None for an unregistered module.
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -279,6 +288,13 @@ class CeremonyFakeGh:
                     payload["mergedAt"] = pr["mergedAt"]
                 elif field == "headRefOid":
                     payload["headRefOid"] = self._head_ref_oid(branch)
+                elif field == "headRefName":
+                    # Issue #635: ship_ceremony's ceremony-ref resolver (rung 1) asks
+                    # for headRefName,baseRefName before the merge / branch_delete
+                    # transitions touch anything destructive.
+                    payload["headRefName"] = branch
+                elif field == "baseRefName":
+                    payload["baseRefName"] = pr["base"]
                 elif field == "statusCheckRollup":
                     payload["statusCheckRollup"] = pr["checks"]
                 elif field == "reviewDecision":
@@ -338,6 +354,18 @@ def ceremony_bare_repo(tmp_path: Path):
     # avoids the stale tracking config entirely; `_do_checkout_main` + `_do_pull`
     # (this test drives both, unlike this file's other fixtures) need it clean.
     _git(repo, "push", "origin", "HEAD:main")
+    # Issue #635/U3: a clone of a non-empty remote auto-configures
+    # `refs/remotes/origin/HEAD`; this fixture clones an EMPTY bare origin (the push
+    # to `main` happens after), so that symbolic ref is never set on its own — leaving
+    # `ship_ceremony.resolve_default_branch`'s rung 1 with nothing to answer and
+    # falling through to `gh repo view`, which `CeremonyFakeGh` does not implement.
+    # Set it explicitly, mirroring `test_ship_ceremony.py`'s `ceremony_repo` fixture.
+    _git(
+        repo,
+        "symbolic-ref",
+        "refs/remotes/origin/HEAD",
+        "refs/remotes/origin/main",
+    )
 
     branch = "feat/pf-throwaway-346"
     _git(repo, "checkout", "-b", branch)
@@ -370,11 +398,17 @@ def ceremony_bare_repo(tmp_path: Path):
     return repo, bare_origin, CeremonyFakeGh(repo=repo, bare_origin=bare_origin)
 
 
-def _confirm_for(transition: str) -> str | None:
-    """Operator confirmation for ``transition`` when its tier demands one (#526)."""
-    if SC.TRANSITION_TIERS[transition] == SC.CeremonyTier.ALWAYS_OPERATOR:
-        return transition
-    return None
+def _confirm_for(transition: str, *, target: str = "feat/pf-throwaway-346") -> str | None:
+    """Operator confirmation for ``transition`` when its tier demands one (#526).
+
+    Issue #635/KTD6: ``branch_delete`` confirms a named target as well as the
+    transition, so the qualified ``branch_delete:<head>`` form is what the gate accepts
+    there. Every other transition keeps the bare grammar."""
+    if SC.TRANSITION_TIERS[transition] != SC.CeremonyTier.ALWAYS_OPERATOR:
+        return None
+    if transition in SC.CONFIRMATION_TARGET_TRANSITIONS:
+        return f"{transition}:{target}"
+    return transition
 
 
 def test_manifest_written_per_transition(ceremony_bare_repo) -> None:
@@ -395,6 +429,12 @@ def test_manifest_written_per_transition(ceremony_bare_repo) -> None:
     entries = SU.read_manifest(repo, "issue-346")
     assert [e["transition"] for e in entries] == list(SC.TRANSITIONS)
     assert all(e["undone"] is False for e in entries)
+    # Issue #635 (R12): the merge entry carries the ceremony's RESOLVED base, written
+    # by ``ship_ceremony.run()`` from ``_do_merge``'s return value — that recording is
+    # what lets ``_undo_merge`` target the right branch with no gh round trip at undo
+    # time. This fake's PR is based on main, so main is the value under test here.
+    merge_entry = next(e for e in entries if e["transition"] == "merge")
+    assert merge_entry["base"] == "main"
 
 
 # --------------------------------------------------------------------------- #
@@ -986,3 +1026,245 @@ def test_manifest_write_is_atomic_no_tmp_left(tmp_path: Path) -> None:
     path = SU.manifest_path(tmp_path, "issue-346")
     assert path.exists()
     assert not path.with_suffix(path.suffix + ".tmp").exists()
+
+
+# --------------------------------------------------------------------------- #
+# Base-aware merge revert (issue #635, defect F / R12): the undo applies the
+# recorded squash sha to the branch the ceremony actually merged into. Recording
+# the right sha (ship_ceremony._do_merge, R6) is only half the property — these
+# oracles pin the other half.
+# --------------------------------------------------------------------------- #
+
+
+class RecordingRunner(FakeGh):
+    """``FakeGh`` plus a transcript of EVERY command it is handed, git included.
+
+    The base-targeting oracles below assert on argv, not only on resulting refs: a
+    revert that lands on the wrong branch can still leave plausible-looking refs, so
+    "which branch did the checkout/revert/push actually name" is the direct question."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list[list[str]] = []
+
+    def __call__(self, cmd, *, cwd, capture_output, text, timeout):  # noqa: ANN001
+        self.calls.append(list(cmd))
+        return super().__call__(
+            cmd, cwd=cwd, capture_output=capture_output, text=text, timeout=timeout
+        )
+
+
+OUTCOME_BRANCH = "outcome/demo"
+LEAF_BRANCH = "feat/leaf-635"
+
+
+def _make_leaf_into_outcome(repo: Path) -> tuple[str, str]:
+    """The #635 topology: ``main`` → ``outcome/demo`` → ``feat/leaf-635``, with the
+    leaf squash-merged into the OUTCOME branch — never into main. Returns
+    ``(leaf_head_sha, merge_sha)``; ``merge_sha`` is the squash commit on
+    ``outcome/demo``. Leaves HEAD on ``outcome/demo``."""
+    _git(repo, "checkout", "main")
+    _git(repo, "checkout", "-b", OUTCOME_BRANCH)
+    _git(repo, "push", "-u", "origin", OUTCOME_BRANCH)
+    _git(repo, "checkout", "-b", LEAF_BRANCH)
+    (repo / "change.txt").write_text("leaf work\n")
+    _git(repo, "add", "change.txt")
+    _git(repo, "commit", "-m", "leaf work")
+    head_sha = _rev_parse(repo, "HEAD")
+    _git(repo, "push", "-u", "origin", LEAF_BRANCH)
+    _git(repo, "checkout", OUTCOME_BRANCH)
+    _git(repo, "merge", "--squash", LEAF_BRANCH)
+    _git(repo, "commit", "-m", f"squash merge {LEAF_BRANCH}")
+    merge_sha = _rev_parse(repo, OUTCOME_BRANCH)
+    _git(repo, "push", "origin", OUTCOME_BRANCH)
+    return head_sha, merge_sha
+
+
+def _origin_sha(bare_origin: Path, ref: str) -> str:
+    result = _git(Path.cwd(), "ls-remote", str(bare_origin), f"refs/heads/{ref}")
+    return result.stdout.split()[0] if result.stdout.strip() else ""
+
+
+def _append_merge_entry(repo: Path, saga_id: str, merge_sha: str, base: str | None) -> None:
+    SU.append_entry(
+        repo_root=repo,
+        saga_id=saga_id,
+        transition="merge",
+        tier="always_operator",
+        branch=LEAF_BRANCH,
+        base=base,
+        merge_sha=merge_sha,
+        pr_number=7,
+    )
+
+
+def test_undo_merge_targets_recorded_base_not_main(bare_repo) -> None:  # noqa: ANN001
+    """Headline (R12): with ``outcome/demo`` recorded as the ceremony's base, the
+    checkout and the push both name ``outcome/demo`` and the revert runs there — and
+    no command in the whole transition names ``main`` at all."""
+    repo, _bare_origin = bare_repo
+    _head_sha, merge_sha = _make_leaf_into_outcome(repo)
+    # Where a real ceremony leaves HEAD by the time an undo runs (checkout_main).
+    _git(repo, "checkout", "main")
+
+    saga_id = "issue-635"
+    _append_merge_entry(repo, saga_id, merge_sha, OUTCOME_BRANCH)
+
+    runner = RecordingRunner()
+    SU.undo(_saga(saga_id), repo_root=repo, operator_confirmed="undo", runner=runner)
+
+    assert ["git", "checkout", OUTCOME_BRANCH] in runner.calls
+    assert ["git", "revert", "--no-edit", merge_sha] in runner.calls
+    assert ["git", "push", "origin", OUTCOME_BRANCH] in runner.calls
+    assert [call for call in runner.calls if "main" in call] == []
+    # A recorded base is authoritative: no default-branch probe, no gh round trip.
+    assert ["git", "symbolic-ref", "refs/remotes/origin/HEAD"] not in runner.calls
+    assert runner.gh_calls == []
+
+
+def test_undo_merge_does_not_touch_main_when_outcome_already_landed(bare_repo) -> None:  # noqa: ANN001
+    """The destructive hazard the refute panel found: once the outcome branch has
+    itself landed on ``main``, the leaf's squash sha is an ANCESTOR of main, so a
+    revert aimed at main applies cleanly and silently strips the leaf's work off the
+    default branch. Nothing refuses it — so the target, not the guard, is the fix."""
+    repo, bare_origin = bare_repo
+    _head_sha, merge_sha = _make_leaf_into_outcome(repo)
+    # The outcome branch lands on main (fast-forward, as an outcome PR's squash would).
+    _git(repo, "checkout", "main")
+    _git(repo, "merge", "--ff-only", OUTCOME_BRANCH)
+    _git(repo, "push", "origin", "main")
+    main_before = _rev_parse(repo, "main")
+    # Precondition that makes this destructive rather than merely wrong: the recorded
+    # sha IS reachable from main, so `git revert` there would succeed.
+    assert _git(repo, "merge-base", "--is-ancestor", merge_sha, "main", check=False).returncode == 0
+
+    saga_id = "issue-635"
+    _append_merge_entry(repo, saga_id, merge_sha, OUTCOME_BRANCH)
+
+    runner = RecordingRunner()
+    SU.undo(_saga(saga_id), repo_root=repo, operator_confirmed="undo", runner=runner)
+
+    # main is untouched, locally and on origin, and still carries the leaf's work.
+    assert _rev_parse(repo, "main") == main_before
+    assert _origin_sha(bare_origin, "main") == main_before
+    assert _git(repo, "show", "main:change.txt").stdout == "leaf work\n"
+    assert "Revert" not in _git(repo, "log", "--oneline", "main").stdout
+    # The revert landed where the merge did.
+    assert "Revert" in _git(repo, "log", "--oneline", OUTCOME_BRANCH).stdout
+    assert _origin_sha(bare_origin, OUTCOME_BRANCH) == _rev_parse(repo, OUTCOME_BRANCH)
+    assert [call for call in runner.calls if "main" in call] == []
+
+
+def test_undo_merge_without_recorded_base_floors_at_legacy_main(bare_repo) -> None:  # noqa: ANN001
+    """Backward compatibility (R12): a manifest written before #635 has no ``base``
+    key at all. Its ``merge_sha`` was read by a pre-#635 ``_do_merge`` that probed
+    ``refs/heads/main`` verbatim, so the revert must land on the *literal* ``main`` —
+    the pre-#635 behavior, argv for argv. Resolving the repo's current default branch
+    instead is refused by construction; see the sibling trunk-default regression."""
+    repo, bare_origin = bare_repo
+    branch = "feat/pf-throwaway-346"
+    _head_sha = _make_feature_branch(repo, branch)
+    _git(repo, "push", "-u", "origin", branch)
+    merge_sha = _squash_merge_to_main(repo, branch)
+    _git(repo, "push", "origin", "main")
+    # HEAD off the default branch so the checkout step actually runs and can be asserted.
+    _git(repo, "checkout", branch)
+
+    saga_id = "issue-346"
+    SU.append_entry(
+        repo_root=repo,
+        saga_id=saga_id,
+        transition="merge",
+        tier="always_operator",
+        branch=branch,
+        merge_sha=merge_sha,
+        pr_number=7,
+    )
+    # Model a genuinely pre-#635 manifest: the key is absent, not merely null.
+    entries = SU.read_manifest(repo, saga_id)
+    del entries[0]["base"]
+    SU._write_manifest(repo, saga_id, entries)  # noqa: SLF001 - test setup
+    assert "base" not in SU.read_manifest(repo, saga_id)[0]
+
+    runner = RecordingRunner()
+    SU.undo(_saga(saga_id), repo_root=repo, operator_confirmed="undo", runner=runner)
+
+    # The default branch is NOT consulted: provenance, not currency, picks the target.
+    assert ["git", "symbolic-ref", "refs/remotes/origin/HEAD"] not in runner.calls
+    # ...and the resulting mutations are exactly the pre-#635 ones.
+    assert ["git", "checkout", "main"] in runner.calls
+    assert ["git", "revert", "--no-edit", merge_sha] in runner.calls
+    assert ["git", "push", "origin", "main"] in runner.calls
+    assert not (repo / "change.txt").exists()
+    assert "Revert" in _git(repo, "log", "--oneline", "main").stdout
+    assert _origin_sha(bare_origin, "main") == _rev_parse(repo, "main")
+
+
+def test_undo_merge_on_main_based_ceremony_is_unchanged(bare_repo) -> None:  # noqa: ANN001
+    """The common case stays the common case: a ceremony whose recorded base IS the
+    default branch reverts on main exactly as before."""
+    repo, bare_origin = bare_repo
+    branch = "feat/pf-throwaway-346"
+    _head_sha = _make_feature_branch(repo, branch)
+    _git(repo, "push", "-u", "origin", branch)
+    merge_sha = _squash_merge_to_main(repo, branch)
+    _git(repo, "push", "origin", "main")
+    _git(repo, "checkout", branch)
+
+    saga_id = "issue-346"
+    SU.append_entry(
+        repo_root=repo,
+        saga_id=saga_id,
+        transition="merge",
+        tier="always_operator",
+        branch=branch,
+        base="main",
+        merge_sha=merge_sha,
+        pr_number=7,
+    )
+
+    runner = RecordingRunner()
+    SU.undo(_saga(saga_id), repo_root=repo, operator_confirmed="undo", runner=runner)
+
+    assert ["git", "checkout", "main"] in runner.calls
+    assert ["git", "revert", "--no-edit", merge_sha] in runner.calls
+    assert ["git", "push", "origin", "main"] in runner.calls
+    assert ["git", "symbolic-ref", "refs/remotes/origin/HEAD"] not in runner.calls
+    assert not (repo / "change.txt").exists()
+    assert "Revert" in _git(repo, "log", "--oneline", "main").stdout
+    assert _origin_sha(bare_origin, "main") == _rev_parse(repo, "main")
+
+
+def test_option_like_recorded_base_refused_before_shellout(bare_repo) -> None:  # noqa: ANN001
+    """The recorded base becomes git argv on the destructive path — a value opening
+    with '-' refuses loud, and provably before this handler shells out at all."""
+    repo, _bare_origin = bare_repo
+    _head_sha, merge_sha = _make_leaf_into_outcome(repo)
+
+    saga_id = "issue-635"
+    _append_merge_entry(repo, saga_id, merge_sha, "--exec=touch pwned")
+
+    with pytest.raises(SU.ShipUndoError, match="begins with '-'"):
+        SU.undo(_saga(saga_id), repo_root=repo, operator_confirmed="undo", runner=ExplodingRunner())
+
+
+def test_base_less_entry_ignores_a_non_main_default_branch(bare_repo) -> None:  # noqa: ANN001
+    """R12 regression. A base-less (pre-#635) entry must floor at the literal ``main``
+    even when the repository's default branch is something else.
+
+    Resolving ``refs/remotes/origin/HEAD`` here would send the revert to whatever the
+    default happens to be *today* — a branch the recorded sha was never read from. The
+    sha's provenance is ``refs/heads/main``, because that is the ref the pre-#635
+    ``_do_merge`` probed verbatim; provenance wins over currency."""
+    repo, _bare_origin = bare_repo
+    # Make the repo's default branch genuinely not 'main'.
+    _git(repo, "checkout", "-b", "trunk")
+    _git(repo, "push", "-u", "origin", "trunk")
+    _git(repo, "remote", "set-head", "origin", "trunk")
+    head = _git(repo, "symbolic-ref", "refs/remotes/origin/HEAD").stdout.strip()
+    assert head == "refs/remotes/origin/trunk"
+
+    assert SU._merge_entry_base({"transition": "merge"}) == "main"  # noqa: SLF001 - unit
+    assert SU.LEGACY_MERGE_BASE == "main"
+    # A recorded base still wins outright — the floor is only for entries without one.
+    assert SU._merge_entry_base({"transition": "merge", "base": "outcome/x"}) == "outcome/x"  # noqa: SLF001

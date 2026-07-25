@@ -227,6 +227,43 @@ def test_pretool_claim_collection_recycles_slot_and_renews_batch(tmp_path: Path)
     assert A.claim_hook_agent(_start(tmp_path, "child-2"), hook_env).agent_id == "child-2"
 
 
+def test_prepare_batch_call_route_forwards_declared_isolation(tmp_path: Path) -> None:
+    """#616 U2/R4: a direct Agent spawn during a live Workflow batch (the ``prepare_batch_call``
+
+    route) records its declared isolation on the claimed slot, and claim's fence policy honors
+    it identically to the non-batch ``acquire_agent`` path.
+    """
+
+    metadata = _metadata()
+    authority = tmp_path / "authority"
+    env = _environment(authority, metadata)
+    W.reserve(metadata, session_id="session", environment=env)
+    hook_env = {key: value for key, value in env.items() if key != A.BATCH_ID_ENV}
+
+    isolated_spawn = _spawn(tmp_path, "tool-worktree")
+    isolated_spawn["tool_input"] = {**isolated_spawn["tool_input"], "isolation": "worktree"}
+    prepared_isolated = A.reserve_hook_agent(isolated_spawn, hook_env)
+    assert prepared_isolated.isolation == "worktree"
+    claimed_isolated = A.claim_hook_agent(_start(tmp_path, "child-worktree"), hook_env)
+    assert claimed_isolated.isolation == "worktree"
+    assert claimed_isolated.resource_ref["worktree_root"] == str(tmp_path.resolve())
+
+    remote_spawn = _spawn(tmp_path, "tool-remote")
+    remote_spawn["tool_input"] = {**remote_spawn["tool_input"], "isolation": "remote"}
+    prepared_remote = A.reserve_hook_agent(remote_spawn, hook_env)
+    assert prepared_remote.isolation is None
+    claimed_remote = A.claim_hook_agent(_start(tmp_path, "child-remote"), hook_env)
+    assert claimed_remote.isolation is None
+    assert "worktree_root" not in claimed_remote.resource_ref
+
+    plain_spawn = _spawn(tmp_path, "tool-plain")
+    prepared_plain = A.reserve_hook_agent(plain_spawn, hook_env)
+    assert prepared_plain.isolation is None
+    claimed_plain = A.claim_hook_agent(_start(tmp_path, "child-plain"), hook_env)
+    assert claimed_plain.isolation is None
+    assert "worktree_root" not in claimed_plain.resource_ref
+
+
 def test_unused_reservations_and_confirmed_children_release_after_return(tmp_path: Path) -> None:
     metadata = _metadata()
     authority = tmp_path / "authority"
@@ -253,3 +290,47 @@ def test_contract_is_closed_and_rejects_filesystem_grant() -> None:
         W.validate_metadata({**metadata, "registry_path": "/tmp/authority"})
     with pytest.raises(W.WorkflowLeaseContractError, match="filesystem access must be false"):
         W.validate_metadata({**metadata, "generated_runtime_filesystem_access": True})
+
+
+def test_workflow_child_binds_without_pretool_stamp_and_waves_recycle(tmp_path: Path) -> None:
+    """#615: Workflow-runtime children never emit PreToolUse, so SubagentStart
+    must bind an attested-but-unstamped slot directly; child terminals alone
+    recycle the slots for later waves."""
+
+    metadata = _metadata()
+    authority = tmp_path / "authority"
+    env = _environment(authority, metadata)
+    receipt = W.reserve(metadata, session_id="session", environment=env)
+    assert W.attest(metadata, session_id="session", environment=env)["launch_authorized"] is True
+    hook_env = {key: value for key, value in env.items() if key != A.BATCH_ID_ENV}
+
+    width = metadata["reservation_width"]
+    for index in range(width):
+        claimed = A.claim_hook_agent(_start(tmp_path, f"wf-child-{index}"), hook_env)
+        assert claimed.batch_id == metadata["batch_id"]
+        assert claimed.tool_use_id is None
+        assert claimed.agent_id == f"wf-child-{index}"
+    with pytest.raises(B.LeaseNotFoundError):
+        A.claim_hook_agent(_start(tmp_path, "wf-child-extra"), hook_env)
+
+    target = tmp_path / "artifact.txt"
+    for index in range(width):
+        verified = A.verify_hook_mutation(
+            {"agent_id": f"wf-child-{index}", "tool_input": {"file_path": str(target)}},
+            hook_env,
+        )
+        assert verified is not None
+
+    for index in range(width):
+        assert A.record_hook_terminal(_start(tmp_path, f"wf-child-{index}"), hook_env) is True
+    snapshot = B.LeaseBroker(authority).inspect()["leases"]
+    assert len(snapshot) == width
+    assert all(lease["agent_id"] is None for lease in snapshot)
+    assert all(lease["tool_use_id"] is None for lease in snapshot)
+
+    second_wave = A.claim_hook_agent(_start(tmp_path, "wave2-child"), hook_env)
+    assert second_wave.agent_id == "wave2-child"
+    assert A.record_hook_terminal(_start(tmp_path, "wave2-child"), hook_env) is True
+    released = W.release(metadata, session_id="session", environment=env)
+    assert set(released) == set(receipt["lease_ids"])
+    assert B.LeaseBroker(authority).inspect()["leases"] == []

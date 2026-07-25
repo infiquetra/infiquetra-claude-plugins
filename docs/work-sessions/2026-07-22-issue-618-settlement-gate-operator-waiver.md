@@ -50,13 +50,28 @@
 - `bandit`: zero findings on the three touched scripts at both HEAD and the origin/main baseline.
 - `python3 scripts/check_release_surface_parity.py`: all plugins in parity.
 
-## Not done (deliberately)
+## Shipped (2026-07-22, operator go)
 
-- **R9 live acceptance** (waive the real
-  `outcome:ee6590d89de1aff1cadb5e8c621b8b8b:frontier:6be9782deb6268350d4b9b36` cohort and
-  advance sub-615) — held for its own explicit operator go; it mutates the live outcome ledger.
-- PR open / review request / merge — gated per the intent envelope (all ceremony gates = `gate`).
+- PR #640 opened at `0f7138a6`, CI caught one ruff-format drift in `tests/test_saga_plugin.py`
+  (the finding-7 comment repair shortened the pinned assertion below the wrap threshold) —
+  fixed in `4f830e1c`; pre-merge delta (`0f7138a6` + `4f830e1c` + `737e6c29`) adjudicated
+  clean in the code-review artifact. All checks green at `737e6c29`; merged via
+  `ship_ceremony` (operator-confirmed) as `82761c1e`; branch deleted; issue #618 auto-closed
+  completed; Operations board card → Done.
+- Leaf harvest: `link-pr` PR #640 to `sub-618`, `leaf_saga_id` set in the spec, `code-review`
+  evidence entry (verdict `clean`) at close SHA `737e6c29` under
+  `leaf-governed-execution-integrity-sub-618`; `advance` harvested sub-618 → **done** (2/9).
 
-## Next step
+## R9 live acceptance — PASSED (2026-07-22)
 
-Programmatic `/code-review` gate at the branch head, then PR-ready routing to the operator.
+Against the real halted cohort, on branch `outcome/governed-execution-integrity` (main merged
+in to pick up the shipped verb):
+
+1. Post-harvest `advance` still settlement-halted sub-615 on
+   `outcome:ee6590d89de1aff1cadb5e8c621b8b8b:frontier:6be9782deb6268350d4b9b36` — the defect
+   reproducing one final time on the shipped code.
+2. `outcome.py waive governed-execution-integrity --dispatch-id <that cohort> --answerer jeff`
+   → `appended: true`, roster_digest `7a2fa898…82f39a0`.
+3. Next `advance` → `dispatched: ["sub-615"]`, zero halts, and exactly one `settlement-waived`
+   receipt in the outcome ledger: key `settlement-waiver:sub-615:217cf0830d409451`, naming the
+   covered dispatch_id and full waiver provenance (`waived_by: jeff`, reason, roster digest).

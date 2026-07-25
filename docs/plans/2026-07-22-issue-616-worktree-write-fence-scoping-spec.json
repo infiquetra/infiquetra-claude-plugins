@@ -1,0 +1,105 @@
+{
+  "name": "issue-616-worktree-write-fence-scoping",
+  "description": "Issue #616: scope the fleet-lease write-fence by reservation-declared isolation instead of spawn cwd (KTD1-KTD3): first-class Lease.isolation field + three-way claim fence policy in the fleet-core broker, adapter extraction of tool_input.isolation on both reserve paths, frozen-seam/canary verification, release surfaces fleet-core 0.20.0 + saga 0.111.0. Fully serialized U1->U2->U3->U4 under the operator cap of 3: refute-3 panels on the two contract-bearing units ride at the unit tier and would overlap a running unit otherwise.",
+  "repo": "infiquetra/infiquetra-claude-plugins",
+  "units": [
+    {
+      "unit_id": "U1",
+      "label": "fleet-core broker: first-class isolation field + claim-time fence policy",
+      "tier": {
+        "model": "opus",
+        "effort": "high"
+      },
+      "worth_it_because": "privilege semantics on the fleet-shared broker: a wrong fence branch either removes the write-fence for worktree-isolated agents (privilege escape) or keeps cross-repo builders fail-closed (the defect #616 exists to fix), and the registry field addition must honor the closed-key schema without breaking 0.19.0 state.",
+      "cheaper_fallback": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "U1: In plugins/fleet-core/scripts/fleet_commons/lease_broker.py at base ab84003b, add a first-class nullable isolation field to the Lease dataclass (:812; _LEASE_KEYS/from_dict/to_dict :845-930 with the backfill-before-closed-mapping idiom from SettlementRecord :969-970; only 'worktree' or None storable, reject other values at the boundary), thread an optional isolation param through acquire_agent (:2246) and prepare_batch_call (:2711) (reserve_batch :2477 deliberately gains nothing — KTD6), replace claim's unconditional derived['worktree_root'] stamp (:2653-2658) with the KTD3 three-way branch (reservation isolation=='worktree' -> stamp child cwd; PreToolUse-stamped tool_use_id present without worktree isolation -> no worktree_root; unstamped attested batch slot -> stamp child cwd, byte-parity with today), and reset isolation to None in the batch-slot recycle in _complete_foreground_lease (:3892). assert_write_target changes zero lines; #615's claim-ordering/recycle/renewal seams are not reworked. Tests per the plan's U1 scenarios in tests/test_fleet_lease_broker.py (R1 unfenced cross-cwd write, R2 fenced isolated write, R3 batch-slot byte-parity, R4 stamped-slot isolation honor, R5 0.19.0 registry round-trip, R6 recycle reset, supersede isolation replacement, invalid-value rejection). Read the plan at docs/plans/2026-07-22-issue-616-worktree-write-fence-scoping-plan.md (U1, R1-R6, KTD1-KTD3/KTD5) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [],
+      "files": [
+        "plugins/fleet-core/scripts/fleet_commons/lease_broker.py",
+        "tests/test_fleet_lease_broker.py"
+      ],
+      "verify": {
+        "n": 3,
+        "pass_rule": "majority"
+      }
+    },
+    {
+      "unit_id": "U2",
+      "label": "saga adapter: extract and forward declared isolation on both reserve paths",
+      "tier": {
+        "model": "sonnet",
+        "effort": "high"
+      },
+      "prompt": "U2: In plugins/saga/scripts/lease_broker.py at base ab84003b (post-U1), add a _declared_isolation(payload) helper beside _agent_type (:80-90) that returns 'worktree' only when tool_input.isolation is exactly 'worktree' and None otherwise (KTD2 normalization — 'remote' or absence stores None), and thread it into the acquire_agent call (:317) and the prepare_batch_call route (:304) inside reserve_hook_agent. claim_hook_agent (:338-353) and both hook files (lease_lifecycle_hook.py, lease_mutation_hook.py) change zero lines. Tests per the plan's U2 scenarios (adapter coverage home tests/test_saga_hooks.py — the hook payload-contract fixtures live at :96-103; batch interplay tests/test_saga_workflow_emitter.py): worktree/absent/remote normalization, live-batch route forwarding, SubagentStart claim contract unchanged. Read the plan at docs/plans/2026-07-22-issue-616-worktree-write-fence-scoping-plan.md (U2, R1/R4, KTD1/KTD2) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "tests_added",
+        "summary"
+      ],
+      "depends_on": [
+        "U1"
+      ],
+      "files": [
+        "plugins/saga/scripts/lease_broker.py",
+        "tests/test_saga_hooks.py",
+        "tests/test_saga_workflow_emitter.py"
+      ],
+      "verify": {
+        "n": 3,
+        "pass_rule": "majority"
+      }
+    },
+    {
+      "unit_id": "U3",
+      "label": "verification-only: frozen-seam nil-impact + hermetic R9 canary rehearsal",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U3: Verification only — no code changes. (a) Confirm the codex byte-frozen outcome_compat seam is untouched by the Lease.isolation addition (the frozen seam consumes broker APIs, not registry bytes; enumerate any import/call into the changed surfaces and record nil-impact evidence). (b) Rehearse the #615 R9 scripted canary hermetically against the changed broker in an isolated INFIQUETRA_FLEET_STATE_DIR: width-1 workflow_lease_reservation.v1 metadata + workflow_emitter.py reserve/attest, then a simulated unstamped batch claim with a cwd, asserting worktree_root is stamped byte-identically to 0.19.0 behavior (plan R3) and settle/release leaves 0 leases. Record both results in the work-session doc draft (docs/work-sessions/). Return the evidence summary; do not modify plugin code, tests, or release surfaces. Read the plan at docs/plans/2026-07-22-issue-616-worktree-write-fence-scoping-plan.md (U3, R3) as your authoritative spec.",
+      "returns": [
+        "summary"
+      ],
+      "depends_on": [
+        "U2"
+      ],
+      "files": [
+        "docs/work-sessions"
+      ]
+    },
+    {
+      "unit_id": "U4",
+      "label": "release surfaces fleet-core 0.20.0 + saga 0.111.0, journal, drift-guard pins",
+      "tier": {
+        "model": "sonnet",
+        "effort": "medium"
+      },
+      "prompt": "U4: Bump plugins/fleet-core/.claude-plugin/plugin.json to 0.20.0 and plugins/saga/.claude-plugin/plugin.json to 0.111.0, sync .claude-plugin/marketplace.json, write both CHANGELOG entries (reservation-carried isolation truth; three-way claim fence policy with unchanged workflow-batch behavior; adapter normalization), update drift-guard version pins in-commit (tests/test_saga_plugin.py plus the tests/test_liveness_events.py:698 and tests/test_team_execution_liveness.py:179/:409 pin pattern from #615), add the DECISIONS entry {#worktree-fence-scoping-616} (KTD1-KTD6 + the D1 operator pin) and a LEARNINGS entry only if implementation surfaced a non-obvious mechanism. Verify python3 scripts/check_release_surface_parity.py reports parity and re-check sibling-PR version collisions at merge time. Read the plan at docs/plans/2026-07-22-issue-616-worktree-write-fence-scoping-plan.md (U4, R7) as your authoritative spec.",
+      "returns": [
+        "files_changed",
+        "summary"
+      ],
+      "depends_on": [
+        "U3"
+      ],
+      "files": [
+        "plugins/fleet-core/.claude-plugin/plugin.json",
+        "plugins/saga/.claude-plugin/plugin.json",
+        ".claude-plugin/marketplace.json",
+        "plugins/fleet-core/CHANGELOG.md",
+        "plugins/saga/CHANGELOG.md",
+        "tests/test_saga_plugin.py",
+        "docs/engineering-journal/DECISIONS.md",
+        "docs/engineering-journal/LEARNINGS.md"
+      ]
+    }
+  ]
+}

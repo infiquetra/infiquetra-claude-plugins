@@ -21,7 +21,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -156,6 +156,7 @@ _LEASE_KEYS = frozenset(
         "agent_id",
         "tool_use_id",
         "agent_type",
+        "isolation",
         "batch_id",
         "resource_ref",
         "policy_sha256",
@@ -182,6 +183,17 @@ _MAX_PATH = 4096
 _MAX_SESSION_ADMISSIONS = 64
 _MAX_CLOSED_FENCES = 128
 _MAX_SETTLEMENTS = 128
+# Tolerance is bounded (#617 KTD5): the total serialized size of preserved unknown ("extras")
+# fields across the whole document is capped. Above the cap the read fails closed with
+# ``RegistryCorruptError`` so tolerance never becomes an unbounded smuggling/garbage-flood channel
+# in the 0600 shared-state file. 64 KiB sits far above any plausible additive-field payload while
+# keeping the corruption line detectable.
+_MAX_EXTRAS_BYTES = 64 * 1024
+# Archived closed-fence sidecars are parsed outside Registry.from_dict, so the document-total
+# cap above cannot see them; each sidecar read is bounded on its own instead. 4x the extras cap
+# leaves room for the pretty-printed encoding plus the known fence fields while still failing
+# closed on a flooded record.
+_MAX_ARCHIVED_FENCE_BYTES = 4 * _MAX_EXTRAS_BYTES
 _CLOSED_OWNER_ADMISSION_KEYS = frozenset({"closed_at", "boot_id", "close_generation"})
 # Closed-owner records exist to fence spawn-versus-completion races during one run's teardown.
 # On overflow the lowest-generation record is evicted, which REOPENS admission for the evicted
@@ -274,6 +286,23 @@ def _optional_bounded(value: Any, name: str, *, maximum: int = _MAX_ID) -> str |
     return _bounded(value, name, maximum=maximum)
 
 
+def _agent_isolation(value: Any, *, corrupt: bool = False) -> str | None:
+    """Normalize declared spawn isolation to the only broker-storable values (#616 KTD2).
+
+    Exactly ``"worktree"`` or ``None`` are storable; any other declared mode (e.g. ``"remote"``)
+    or malformed value is rejected at the boundary so the broker never learns a speculative
+    isolation. ``corrupt=True`` raises :class:`RegistryCorruptError` for on-disk registry reads;
+    the API boundary raises :class:`LeaseBrokerError`.
+    """
+
+    if value is None:
+        return None
+    if value == "worktree":
+        return "worktree"
+    error = RegistryCorruptError if corrupt else LeaseBrokerError
+    raise error("isolation must be 'worktree' or None")
+
+
 def _positive(value: Any, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise RegistryCorruptError(f"{name} must be a positive integer")
@@ -343,6 +372,16 @@ def _safe_absolute_path(value: Any, name: str) -> str:
 
 
 def _closed_mapping(value: Any, keys: frozenset[str], name: str) -> dict[str, Any]:
+    """Strict-closed mapping: ANY unknown or missing key fails closed (#617 KTD1).
+
+    This is the fail-closed form retained verbatim for two classes of mapping where every byte is
+    semantics: digest-covered commitment records (verified by ``_record_sha256`` — see
+    ``validate_settlement_close`` / ``_validate_legacy_settlement_close`` and the ``FencingToken``
+    token shape) and hash-bound resource references (``resource_sha256`` over the canonical
+    ``resource_ref``). Container mappings that carry mutable state use ``_tolerant_mapping`` instead
+    so additive schema evolution is preserved rather than bricking older readers.
+    """
+
     if not isinstance(value, dict):
         raise RegistryCorruptError(f"{name} must be an object")
     unknown = sorted(set(value) - keys)
@@ -355,6 +394,36 @@ def _closed_mapping(value: Any, keys: frozenset[str], name: str) -> dict[str, An
             details.append(f"missing field(s): {', '.join(missing)}")
         raise RegistryCorruptError(f"{name}: {'; '.join(details)}")
     return value
+
+
+def _tolerant_mapping(
+    value: Any, keys: frozenset[str], name: str
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Tolerant-closed mapping: known keys validated as today, unknown keys captured as extras.
+
+    Returns ``(known, extras)`` where ``known`` holds exactly the recognized keys (every existing
+    value/type/invariant check downstream is unchanged) and ``extras`` holds the unknown remainder
+    for byte-faithful passthrough (#617 KTD1/KTD2). Missing required keys still fail closed with the
+    same error as the strict form; only *additive* unknown keys are tolerated. ``known`` and
+    ``extras`` are disjoint by construction, so a merge-last ``to_dict`` cannot collide.
+    """
+
+    if not isinstance(value, dict):
+        raise RegistryCorruptError(f"{name} must be an object")
+    missing = sorted(keys - set(value))
+    if missing:
+        raise RegistryCorruptError(f"{name}: missing field(s): {', '.join(missing)}")
+    known = {key: item for key, item in value.items() if key in keys}
+    extras = {key: item for key, item in value.items() if key not in keys}
+    return known, extras
+
+
+def _extras_serialized_size(extras: Mapping[str, Any]) -> int:
+    """Serialized UTF-8 byte size of one extras mapping (0 for the empty, no-extras case)."""
+
+    if not extras:
+        return 0
+    return len(_canonical_json(extras).encode("utf-8"))
 
 
 def canonical_resource_ref(pool: Pool, value: Mapping[str, Any]) -> ResourceRef:
@@ -373,6 +442,8 @@ def canonical_resource_ref(pool: Pool, value: Mapping[str, Any]) -> ResourceRef:
         if "worktree_root" in data:
             result["worktree_root"] = _safe_absolute_path(data["worktree_root"], "worktree_root")
         return result
+    # STRICT (digest-covered): the canonical resource_ref is hash-bound by ``resource_sha256``;
+    # an unknown key here would change the digest, so it stays strictly closed (#617 R4/KTD1).
     _closed_mapping(data, _WORKTREE_RESOURCE_KEYS, "worktree resource_ref")
     return {
         "repo_root": _safe_absolute_path(data["repo_root"], "repo_root"),
@@ -590,6 +661,11 @@ class FencingToken:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> FencingToken:
+        # STRICT / no extras (#617 R4/KTD1 audit verdict — default closed): the token is embedded
+        # in the ``_record_sha256`` commitment of every settlement-close receipt and in a
+        # SettlementRecord's ``settlement_sha256`` binding, and it drives the settlement live-head
+        # invariant. Its call sites additionally pin the exact ``{broker_epoch, fencing_sequence}``
+        # shape, so an unknown key here is treated as corruption, never tolerated.
         return cls(
             broker_epoch=_uuid_text(data.get("broker_epoch"), "token.broker_epoch"),
             fencing_sequence=_positive(data.get("fencing_sequence"), "token.fencing_sequence"),
@@ -616,6 +692,9 @@ def _record_sha256(value: Mapping[str, Any], *excluded: str) -> str:
 def validate_settlement_close(value: Mapping[str, Any]) -> dict[str, Any]:
     """Validate the exact broker-owned ``settlement_close.v1`` record."""
 
+    # STRICT (digest-covered): every byte of this record participates in the ``receipt_sha256`` /
+    # ``sha256`` commitments verified by ``_record_sha256`` below, so an unknown key is
+    # indistinguishable from tampering and must fail closed (#617 R4/KTD1).
     parsed = _closed_mapping(dict(value), _SETTLEMENT_CLOSE_KEYS, "settlement close")
     if parsed["schema"] != "settlement_close.v1":
         raise RegistryCorruptError("settlement close schema must be settlement_close.v1")
@@ -697,6 +776,8 @@ def _validate_legacy_settlement_close(value: Mapping[str, Any]) -> dict[str, Any
     and require the new binding fields, cannot mistake them for current settlement authority.
     """
 
+    # STRICT (digest-covered): like the current close record, every byte here participates in the
+    # ``receipt_sha256`` / ``sha256`` commitments verified by ``_record_sha256`` below (#617 R4/KTD1).
     parsed = _closed_mapping(dict(value), _LEGACY_SETTLEMENT_CLOSE_KEYS, "legacy settlement close")
     if parsed["schema"] != "settlement_close.v1":
         raise RegistryCorruptError("legacy settlement close schema must be settlement_close.v1")
@@ -820,6 +901,7 @@ class Lease:
     agent_id: str | None
     tool_use_id: str | None
     agent_type: str | None
+    isolation: str | None
     batch_id: str | None
     resource_ref: ResourceRef | None
     policy_sha256: str | None
@@ -836,6 +918,7 @@ class Lease:
     ttl_seconds: int
     broker_epoch: str
     fencing_sequence: int
+    extras: dict[str, Any] = field(default_factory=dict)
 
     @property
     def token(self) -> FencingToken:
@@ -843,7 +926,11 @@ class Lease:
 
     @classmethod
     def from_dict(cls, lease_id: str, data: Mapping[str, Any], broker_epoch: str) -> Lease:
-        parsed = _closed_mapping(dict(data), _LEASE_KEYS, f"leases.{lease_id}")
+        raw = dict(data)
+        if set(raw) == _LEASE_KEYS - {"isolation"}:
+            raw["isolation"] = None
+        # TOLERANT container (#617 KTD1): additive unknown per-lease keys are preserved via extras.
+        parsed, extras = _tolerant_mapping(raw, _LEASE_KEYS, f"leases.{lease_id}")
         pool = parsed["pool"]
         if pool not in ("agent", "worktree"):
             raise RegistryCorruptError(f"leases.{lease_id}.pool must be agent or worktree")
@@ -894,6 +981,7 @@ class Lease:
             agent_id=agent_id,
             tool_use_id=_optional_bounded(parsed["tool_use_id"], "tool_use_id"),
             agent_type=_optional_bounded(parsed["agent_type"], "agent_type"),
+            isolation=_agent_isolation(parsed["isolation"], corrupt=True),
             batch_id=_optional_bounded(parsed["batch_id"], "batch_id"),
             resource_ref=resource,
             policy_sha256=policy,
@@ -912,10 +1000,11 @@ class Lease:
             ttl_seconds=_positive(parsed["ttl_seconds"], "ttl_seconds"),
             broker_epoch=broker_epoch,
             fencing_sequence=_positive(parsed["fencing_sequence"], "fencing_sequence"),
+            extras=extras,
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "pool": self.pool,
             "owner_id": self.owner_id,
             "owner_pid": self.owner_pid,
@@ -924,6 +1013,7 @@ class Lease:
             "agent_id": self.agent_id,
             "tool_use_id": self.tool_use_id,
             "agent_type": self.agent_type,
+            "isolation": self.isolation,
             "batch_id": self.batch_id,
             "resource_ref": self.resource_ref,
             "policy_sha256": self.policy_sha256,
@@ -940,6 +1030,9 @@ class Lease:
             "ttl_seconds": self.ttl_seconds,
             "fencing_sequence": self.fencing_sequence,
         }
+        # Merge preserved additive fields last; extras are disjoint from known keys by construction.
+        result.update(self.extras)
+        return result
 
 
 @dataclass(frozen=True)
@@ -961,6 +1054,7 @@ class SettlementRecord:
     recovery_capability_sha256: str | None
     prepared_at: str
     updated_at: str
+    extras: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, digest: str, data: Mapping[str, Any]) -> SettlementRecord:
@@ -968,7 +1062,10 @@ class SettlementRecord:
         raw = dict(data)
         if set(raw) == _SETTLEMENT_KEYS - {"recovery_capability_sha256"}:
             raw["recovery_capability_sha256"] = None
-        parsed = _closed_mapping(raw, _SETTLEMENT_KEYS, f"settlements.{digest}")
+        # TOLERANT container, OUTER record only (#617 KTD1): additive unknown keys on the settlement
+        # record itself are preserved. The nested ``token`` and ``resource_ref`` remain strictly
+        # closed (digest-covered / binding-covered); only the outer record carries extras.
+        parsed, extras = _tolerant_mapping(raw, _SETTLEMENT_KEYS, f"settlements.{digest}")
         resource = canonical_resource_ref("agent", parsed["resource_ref"])
         if resource_sha256(resource) != digest:
             raise RegistryCorruptError("settlement digest does not match resource_ref")
@@ -1019,10 +1116,11 @@ class SettlementRecord:
             ),
             prepared_at=_parse_utc(parsed["prepared_at"], "settlement prepared_at"),
             updated_at=_parse_utc(parsed["updated_at"], "settlement updated_at"),
+            extras=extras,
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "settlement_id": self.settlement_id,
             "phase": self.phase,
             "lease_id": self.lease_id,
@@ -1041,6 +1139,9 @@ class SettlementRecord:
             "prepared_at": self.prepared_at,
             "updated_at": self.updated_at,
         }
+        # Merge preserved additive fields last; extras are disjoint from known keys by construction.
+        result.update(self.extras)
+        return result
 
     @property
     def settlement_sha256(self) -> str:
@@ -1059,6 +1160,7 @@ class ResourceFence:
     fencing_sequence: int
     lease_id: str
     close_receipt: dict[str, Any] | None = None
+    extras: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, digest: str, data: Mapping[str, Any]) -> ResourceFence:
@@ -1066,7 +1168,9 @@ class ResourceFence:
         raw = dict(data)
         if set(raw) == _LEGACY_FENCE_KEYS:
             raw["close_receipt"] = None
-        parsed = _closed_mapping(raw, _FENCE_KEYS, f"resource_fences.{digest}")
+        # TOLERANT container (#617 KTD1): additive unknown per-fence keys are preserved via extras.
+        # The nested ``close_receipt`` stays strictly closed (digest-covered settlement close).
+        parsed, extras = _tolerant_mapping(raw, _FENCE_KEYS, f"resource_fences.{digest}")
         resource_raw = parsed["resource_ref"]
         if not isinstance(resource_raw, dict):
             raise RegistryCorruptError("resource fence resource_ref must be an object")
@@ -1098,16 +1202,20 @@ class ResourceFence:
             fencing_sequence=_positive(parsed["fencing_sequence"], "fence.fencing_sequence"),
             lease_id=_bounded(parsed["lease_id"], "fence.lease_id"),
             close_receipt=close,
+            extras=extras,
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "resource_ref": self.resource_ref,
             "broker_epoch": self.broker_epoch,
             "fencing_sequence": self.fencing_sequence,
             "lease_id": self.lease_id,
             "close_receipt": self.close_receipt,
         }
+        # Merge preserved additive fields last; extras are disjoint from known keys by construction.
+        result.update(self.extras)
+        return result
 
 
 @dataclass(frozen=True)
@@ -1121,6 +1229,7 @@ class SessionAdmission:
     configured_monotonic_ns: int
     boot_id: str
     ttl_seconds: int
+    extras: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> SessionAdmission:
@@ -1138,7 +1247,8 @@ class SessionAdmission:
                 boot_id="legacy-session-admission",
                 ttl_seconds=1,
             )
-        parsed = _closed_mapping(raw, _SESSION_ADMISSION_KEYS, "session_admission")
+        # TOLERANT container (#617 KTD1): additive unknown per-admission keys preserved via extras.
+        parsed, extras = _tolerant_mapping(raw, _SESSION_ADMISSION_KEYS, "session_admission")
         session_limit = _positive(parsed["session_limit"], "session_limit")
         aggregate_limit = _positive(parsed["aggregate_limit"], "aggregate_limit")
         if session_limit > aggregate_limit:
@@ -1156,10 +1266,11 @@ class SessionAdmission:
             ),
             boot_id=_bounded(parsed["boot_id"], "session admission boot_id"),
             ttl_seconds=_positive(parsed["ttl_seconds"], "session admission ttl_seconds"),
+            extras=extras,
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "policy_sha256": self.policy_sha256,
             "session_limit": self.session_limit,
             "aggregate_limit": self.aggregate_limit,
@@ -1168,6 +1279,9 @@ class SessionAdmission:
             "boot_id": self.boot_id,
             "ttl_seconds": self.ttl_seconds,
         }
+        # Merge preserved additive fields last; extras are disjoint from known keys by construction.
+        result.update(self.extras)
+        return result
 
     @property
     def contract(self) -> tuple[str, int, int, MutationMode]:
@@ -1192,24 +1306,32 @@ class OwnerAdmissionClose:
     closed_at: str
     boot_id: str
     close_generation: int
+    extras: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> OwnerAdmissionClose:
-        parsed = _closed_mapping(dict(data), _CLOSED_OWNER_ADMISSION_KEYS, "closed_owner_admission")
+        # TOLERANT container (#617 KTD1): additive unknown per-owner-close keys preserved via extras.
+        parsed, extras = _tolerant_mapping(
+            dict(data), _CLOSED_OWNER_ADMISSION_KEYS, "closed_owner_admission"
+        )
         return cls(
             closed_at=_parse_utc(parsed["closed_at"], "closed_owner_admission closed_at"),
             boot_id=_bounded(parsed["boot_id"], "closed_owner_admission boot_id"),
             close_generation=_positive(
                 parsed["close_generation"], "closed_owner_admission close_generation"
             ),
+            extras=extras,
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "closed_at": self.closed_at,
             "boot_id": self.boot_id,
             "close_generation": self.close_generation,
         }
+        # Merge preserved additive fields last; extras are disjoint from known keys by construction.
+        result.update(self.extras)
+        return result
 
 
 @dataclass
@@ -1222,6 +1344,7 @@ class Registry:
     session_admissions: dict[str, SessionAdmission]
     settlements: dict[str, SettlementRecord]
     closed_owner_admissions: dict[str, OwnerAdmissionClose]
+    extras: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def fresh(cls, providers: Providers) -> Registry:
@@ -1251,7 +1374,11 @@ class Registry:
             raw["settlements"] = {}
         elif set(raw) == _TOP_KEYS - {"session_admissions"} and raw.get("schema") == SCHEMA:
             raw["session_admissions"] = {}
-        parsed = _closed_mapping(raw, _TOP_KEYS, "registry")
+        # TOLERANT container (#617 KTD1): the four legacy migration arms above stay strict (exact
+        # historical shapes only); the top-level parse now preserves any additive unknown keys via
+        # extras rather than bricking the whole document. The schema-identity gate below and every
+        # value/invariant check remain unchanged.
+        parsed, extras = _tolerant_mapping(raw, _TOP_KEYS, "registry")
         if parsed["schema"] != SCHEMA:
             raise RegistryCorruptError(
                 f"registry.schema must be {SCHEMA!r}; found {parsed['schema']!r}"
@@ -1324,6 +1451,19 @@ class Registry:
                 raise RegistryCorruptError(
                     "settlement does not bind the current live resource head"
                 )
+        # Bounded tolerance (#617 KTD5): sum the serialized size of every preserved extras mapping
+        # across the whole document; above the cap the read fails closed so tolerance never becomes
+        # an unbounded garbage/smuggling channel in the shared 0600 state file.
+        total_extras = _extras_serialized_size(extras)
+        total_extras += sum(_extras_serialized_size(f.extras) for f in fences.values())
+        total_extras += sum(_extras_serialized_size(item.extras) for item in leases.values())
+        total_extras += sum(_extras_serialized_size(a.extras) for a in admissions.values())
+        total_extras += sum(_extras_serialized_size(s.extras) for s in settlements.values())
+        total_extras += sum(_extras_serialized_size(c.extras) for c in closed_owners.values())
+        if total_extras > _MAX_EXTRAS_BYTES:
+            raise RegistryCorruptError(
+                "preserved unknown fields exceed the bounded tolerance capacity"
+            )
         return cls(
             epoch,
             recovery_capability,
@@ -1333,10 +1473,11 @@ class Registry:
             admissions,
             settlements,
             closed_owners,
+            extras,
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "schema": SCHEMA,
             "broker_epoch": self.broker_epoch,
             "recovery_capability_sha256": self.recovery_capability_sha256,
@@ -1355,11 +1496,90 @@ class Registry:
                 key: value.to_dict() for key, value in sorted(self.closed_owner_admissions.items())
             },
         }
+        # Merge preserved additive top-level fields last; extras are disjoint from known keys by
+        # construction. For an extras-free document this is a no-op, so output stays byte-identical
+        # to a pre-#617 broker under the shared ``sort_keys=True`` ordering (#617 R5).
+        result.update(self.extras)
+        return result
 
     def issue_sequence(self) -> int:
         sequence = self.next_fencing_sequence
         self.next_fencing_sequence += 1
         return sequence
+
+
+def _extras_inventory(registry: Registry) -> list[dict[str, Any]]:
+    """Enumerate every preserved unknown ("extras") field by its JSON path (#617 R7/KTD4).
+
+    Derived from the tolerant-parse result, so it lists exactly the additive keys the reader
+    preserved — never a digest-covered nested key (unknown keys there fail closed in ``from_dict``
+    and never reach here). Each entry is ``{"path", "keys"}`` with ``keys`` sorted for a stable,
+    diffable report.
+    """
+
+    entries: list[dict[str, Any]] = []
+
+    def add(path: str, extras: Mapping[str, Any]) -> None:
+        if extras:
+            entries.append({"path": path, "keys": sorted(extras)})
+
+    add("$", registry.extras)
+    for digest, fence in sorted(registry.resource_fences.items()):
+        add(f"$.resource_fences.{digest}", fence.extras)
+    for lease_id, lease in sorted(registry.leases.items()):
+        add(f"$.leases.{lease_id}", lease.extras)
+    for session, admission in sorted(registry.session_admissions.items()):
+        add(f"$.session_admissions.{session}", admission.extras)
+    for digest, settlement in sorted(registry.settlements.items()):
+        add(f"$.settlements.{digest}", settlement.extras)
+    for owner, close in sorted(registry.closed_owner_admissions.items()):
+        add(f"$.closed_owner_admissions.{owner}", close.extras)
+    return entries
+
+
+def _document_extras_bytes(registry: Registry) -> int:
+    """Total serialized size of every preserved extras mapping across the whole document."""
+
+    total = _extras_serialized_size(registry.extras)
+    total += sum(_extras_serialized_size(f.extras) for f in registry.resource_fences.values())
+    total += sum(_extras_serialized_size(item.extras) for item in registry.leases.values())
+    total += sum(_extras_serialized_size(a.extras) for a in registry.session_admissions.values())
+    total += sum(_extras_serialized_size(s.extras) for s in registry.settlements.values())
+    total += sum(
+        _extras_serialized_size(c.extras) for c in registry.closed_owner_admissions.values()
+    )
+    return total
+
+
+def _strip_extras(registry: Registry) -> Registry:
+    """Rebuild the authority with every preserved-unknown ``extras`` mapping cleared (#617 R8/KTD4).
+
+    Only the additive passthrough is removed; every known field (and its already-validated value)
+    is carried through unchanged, so the result serializes to the exact pre-#617 closed shape.
+    """
+
+    return Registry(
+        broker_epoch=registry.broker_epoch,
+        recovery_capability_sha256=registry.recovery_capability_sha256,
+        next_fencing_sequence=registry.next_fencing_sequence,
+        resource_fences={
+            digest: replace(fence, extras={}) for digest, fence in registry.resource_fences.items()
+        },
+        leases={lease_id: replace(lease, extras={}) for lease_id, lease in registry.leases.items()},
+        session_admissions={
+            session: replace(admission, extras={})
+            for session, admission in registry.session_admissions.items()
+        },
+        settlements={
+            digest: replace(settlement, extras={})
+            for digest, settlement in registry.settlements.items()
+        },
+        closed_owner_admissions={
+            owner: replace(close, extras={})
+            for owner, close in registry.closed_owner_admissions.items()
+        },
+        extras={},
+    )
 
 
 @dataclass(frozen=True)
@@ -1741,15 +1961,42 @@ class LeaseBroker:
             os.close(archive_fd)
             return None
         try:
-            payload = json.loads(os.read(fd, 65536).decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise RegistryCorruptError(f"closed fence is not valid UTF-8 JSON: {exc}") from exc
+            payload = self._read_bounded_archived_fence_payload(fd)
         finally:
             os.close(fd)
             os.close(archive_fd)
+        return self._validated_archived_fence(digest, payload)
+
+    @staticmethod
+    def _read_bounded_archived_fence_payload(fd: int) -> dict[str, Any]:
+        """Read one sidecar to EOF under a hard size bound (no single-read truncation)."""
+
+        chunks: list[bytes] = []
+        total = 0
+        while chunk := os.read(fd, 65536):
+            total += len(chunk)
+            if total > _MAX_ARCHIVED_FENCE_BYTES:
+                raise RegistryCorruptError("closed fence exceeds the bounded archive record size")
+            chunks.append(chunk)
+        try:
+            payload = json.loads(b"".join(chunks).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RegistryCorruptError(f"closed fence is not valid UTF-8 JSON: {exc}") from exc
         if not isinstance(payload, dict):
             raise RegistryCorruptError("closed fence must contain an object")
-        return ResourceFence.from_dict(digest, payload)
+        return payload
+
+    @staticmethod
+    def _validated_archived_fence(digest: str, payload: dict[str, Any]) -> ResourceFence:
+        # Sidecar parses bypass the document-total extras cap in Registry.from_dict, so the
+        # KTD5 bound is enforced per archived record here — otherwise the archive would be an
+        # uncapped extras channel (pre-#617 this path failed closed on any unknown key).
+        fence = ResourceFence.from_dict(digest, payload)
+        if _extras_serialized_size(fence.extras) > _MAX_EXTRAS_BYTES:
+            raise RegistryCorruptError(
+                "archived closed fence unknown fields exceed the bounded tolerance capacity"
+            )
+        return fence
 
     def _inspect_archived_fences(self, *, exclude: set[str]) -> dict[str, dict[str, Any]]:
         """Return at most the newest bounded set of validated archived authority heads."""
@@ -1773,19 +2020,10 @@ class LeaseBroker:
                     archive_fd, name, os.O_RDONLY, mode=0o600, kind="closed fence"
                 )
                 try:
-                    chunks: list[bytes] = []
-                    while chunk := os.read(fd, 65536):
-                        chunks.append(chunk)
-                    payload = json.loads(b"".join(chunks).decode("utf-8"))
-                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                    raise RegistryCorruptError(
-                        f"closed fence is not valid UTF-8 JSON: {exc}"
-                    ) from exc
+                    payload = self._read_bounded_archived_fence_payload(fd)
                 finally:
                     os.close(fd)
-                if not isinstance(payload, dict):
-                    raise RegistryCorruptError("closed fence must contain an object")
-                fence = ResourceFence.from_dict(digest, payload)
+                fence = self._validated_archived_fence(digest, payload)
                 newest.append((fence.fencing_sequence, digest, fence))
             newest.sort(reverse=True)
             return {
@@ -2079,6 +2317,7 @@ class LeaseBroker:
         now_text: str,
         monotonic: int,
         boot_id: str,
+        isolation: str | None = None,
     ) -> Lease:
         lease_id = str(self.providers.uuid4())
         sequence = registry.issue_sequence()
@@ -2092,6 +2331,7 @@ class LeaseBroker:
             agent_id=agent_id,
             tool_use_id=tool_use_id,
             agent_type=agent_type,
+            isolation=isolation,
             batch_id=batch_id,
             resource_ref=resource_ref,
             policy_sha256=policy_sha256,
@@ -2259,6 +2499,7 @@ class LeaseBroker:
         agent_id: str | None = None,
         tool_use_id: str | None = None,
         agent_type: str | None = None,
+        isolation: str | None = None,
         batch_id: str | None = None,
         parent_agent_id: str | None = None,
         on_conflict: OnConflict = "supersede",
@@ -2284,6 +2525,7 @@ class LeaseBroker:
             raise LeaseBrokerError("session_limit must not exceed aggregate_limit")
         if mutation not in ("read-write", "none"):
             raise LeaseBrokerError("mutation must be read-write or none")
+        parsed_isolation = _agent_isolation(isolation)
         ttl = _positive(ttl_seconds, "ttl_seconds")
         resource = None if resource_ref is None else canonical_resource_ref("agent", resource_ref)
         parsed_agent = _optional_bounded(agent_id, "agent_id")
@@ -2360,6 +2602,7 @@ class LeaseBroker:
                 agent_id=parsed_agent,
                 tool_use_id=parsed_tool,
                 agent_type=_optional_bounded(agent_type, "agent_type"),
+                isolation=parsed_isolation,
                 batch_id=_optional_bounded(batch_id, "batch_id"),
                 resource_ref=resource,
                 policy_sha256=digest,
@@ -2631,7 +2874,6 @@ class LeaseBroker:
                 and lease.agent_type in (kind, "*")
                 and lease.batch_id == batch
                 and lease.agent_id is None
-                and (batch is None or lease.tool_use_id is not None)
                 and not self._expired(lease, monotonic=monotonic, boot_id=boot_id)
             ]
             if not candidates:
@@ -2639,12 +2881,29 @@ class LeaseBroker:
                     f"no live provisional reservation for session={session!r}, "
                     f"agent_type={kind!r}, batch_id={batch!r}"
                 )
-            selected = min(candidates, key=lambda lease: (lease.fencing_sequence, lease.lease_id))
+            # Stamped-first keeps today's batch selection byte-identical whenever a stamp
+            # exists; an attested-but-unstamped slot (Workflow children — no PreToolUse
+            # event ever stamps one) is claimable only where the old filter raised.
+            selected = min(
+                candidates,
+                key=lambda lease: (
+                    batch is not None and lease.tool_use_id is None,
+                    lease.fencing_sequence,
+                    lease.lease_id,
+                ),
+            )
             self._require_owner_admission_open(registry, selected.owner_id)
             if resource is None:
                 logical_unit_id = selected.tool_use_id or f"{session}:{kind}:{child}"
                 derived: dict[str, str] = {"logical_unit_id": logical_unit_id}
-                if canonical_worktree is not None:
+                # KTD3 (#616): stamp worktree_root (the assert_write_target fence trigger) only
+                # where a worktree boundary genuinely exists. Two cases stamp: a reservation that
+                # declared isolation == "worktree", and an unstamped attested batch slot
+                # (Workflow-runtime child, tool_use_id is None) which carries no declared truth and
+                # keeps today's conservative cwd fence byte-for-byte (R3). A PreToolUse-stamped,
+                # non-worktree reservation is left unfenced — the deliberate #616 privilege change.
+                stamp_worktree = selected.isolation == "worktree" or selected.tool_use_id is None
+                if stamp_worktree and canonical_worktree is not None:
                     derived["worktree_root"] = canonical_worktree
                 resource = canonical_resource_ref("agent", derived)
             sequence = registry.issue_sequence()
@@ -2661,8 +2920,43 @@ class LeaseBroker:
             )
             registry.leases[selected.lease_id] = claimed
             self._make_resource_current(registry, claimed)
+            if batch is not None:
+                self._renew_live_batch_siblings(
+                    registry,
+                    batch,
+                    exclude_lease_id=claimed.lease_id,
+                    now_text=now_text,
+                    monotonic=monotonic,
+                    boot_id=boot_id,
+                )
             self._write_registry(registry)
             return claimed
+
+    def _renew_live_batch_siblings(
+        self,
+        registry: Registry,
+        batch_id: str,
+        *,
+        exclude_lease_id: str | None,
+        now_text: str,
+        monotonic: int,
+        boot_id: str,
+    ) -> None:
+        """Keep-alive: renew live slots of one batch in-lock; never resurrect expired ones."""
+
+        for lease in list(registry.leases.values()):
+            if (
+                lease.batch_id != batch_id
+                or lease.lease_id == exclude_lease_id
+                or self._expired(lease, monotonic=monotonic, boot_id=boot_id)
+            ):
+                continue
+            registry.leases[lease.lease_id] = replace(
+                lease,
+                renewed_at=now_text,
+                renewed_monotonic_ns=monotonic,
+                boot_id=boot_id,
+            )
 
     def prepare_batch_call(
         self,
@@ -2671,6 +2965,7 @@ class LeaseBroker:
         batch_id: str,
         agent_type: str,
         tool_use_id: str,
+        isolation: str | None = None,
         claim_ttl_seconds: int = DEFAULT_CLAIM_TTL_SECONDS,
         parent_agent_id: str | None = None,
     ) -> Lease:
@@ -2680,6 +2975,7 @@ class LeaseBroker:
         batch = _bounded(batch_id, "batch_id")
         kind = _bounded(agent_type, "agent_type")
         tool = _bounded(tool_use_id, "tool_use_id")
+        parsed_isolation = _agent_isolation(isolation)
         parent = _optional_bounded(parent_agent_id, "parent_agent_id")
         ttl = _positive(claim_ttl_seconds, "claim_ttl_seconds")
         with self._locked():
@@ -2729,6 +3025,7 @@ class LeaseBroker:
                 selected,
                 agent_type=kind,
                 tool_use_id=tool,
+                isolation=parsed_isolation,
                 renewed_at=now_text,
                 renewed_monotonic_ns=monotonic,
                 boot_id=boot_id,
@@ -3003,6 +3300,11 @@ class LeaseBroker:
         lease = self.verify_agent(agent_id)
         if lease.mutation != "read-write":
             raise LeaseOwnershipError("agent lease does not authorize mutation")
+        if lease.batch_id is not None:
+            # Workflow children emit no lifecycle events between waves, so every
+            # verified mutation opportunistically renews the batch (#615); a wedged
+            # child stops mutating and TTL reaps. Non-batch leases are untouched.
+            lease = self._renew_batch_member(lease)
         worktree_raw = (
             None if lease.resource_ref is None else lease.resource_ref.get("worktree_root")
         )
@@ -3037,6 +3339,38 @@ class LeaseBroker:
                     f"write target {normalized} is outside leased worktree {worktree} through a symlink"
                 ) from exc
         return lease
+
+    def _renew_batch_member(self, lease: Lease) -> Lease:
+        """Renew a mutating batch-member lease and its live siblings in-lock."""
+
+        with self._locked():
+            registry = cast(Registry, self._read_registry(create=True))
+            current = registry.leases.get(lease.lease_id)
+            _wall, now_text, monotonic, boot_id = self._now()
+            if (
+                current is None
+                or current.agent_id != lease.agent_id
+                or current.batch_id is None
+                or self._expired(current, monotonic=monotonic, boot_id=boot_id)
+            ):
+                return lease
+            updated = replace(
+                current,
+                renewed_at=now_text,
+                renewed_monotonic_ns=monotonic,
+                boot_id=boot_id,
+            )
+            registry.leases[current.lease_id] = updated
+            self._renew_live_batch_siblings(
+                registry,
+                current.batch_id,
+                exclude_lease_id=current.lease_id,
+                now_text=now_text,
+                monotonic=monotonic,
+                boot_id=boot_id,
+            )
+            self._write_registry(registry)
+            return updated
 
     def renew(
         self,
@@ -3316,13 +3650,10 @@ class LeaseBroker:
             or head.close_receipt is not None
         ):
             raise LeaseSupersededError("settlement close lost its exact resource-head CAS")
-        registry.resource_fences[digest] = ResourceFence(
-            resource_ref=settlement.resource_ref,
-            broker_epoch=settlement.token.broker_epoch,
-            fencing_sequence=settlement.token.fencing_sequence,
-            lease_id=settlement.lease_id,
-            close_receipt=close,
-        )
+        # In-place close of the CAS-verified live head: replace() keeps preserved unknown
+        # fields (#617 KTD2) — a rebuilt ResourceFence would silently drop a newer writer's
+        # per-fence extras at exactly the commit that archives the fence.
+        registry.resource_fences[digest] = replace(head, close_receipt=close)
         registry.leases.pop(settlement.lease_id, None)
         registry.settlements.pop(digest, None)
         _final_wall, _final_text, final_monotonic, final_boot_id = self._now()
@@ -3684,6 +4015,7 @@ class LeaseBroker:
                 lease.lease_id
                 for lease in selected
                 if (lease.agent_id is None and lease.tool_use_id is None)
+                or (lease.agent_id is None and lease.parent_completed_at is not None)
                 or (
                     lease.agent_id is not None
                     and lease.child_terminal_at is not None
@@ -3746,12 +4078,25 @@ class LeaseBroker:
             lease = matches[0]
             _wall, now_text, monotonic, boot_id = self._now()
             updated = replace(lease, child_terminal_at=lease.child_terminal_at or now_text)
-            if updated.parent_completed_at is not None:
+            # An unstamped batch slot provably has no parent tool call, so no
+            # parent-completion signal can ever arrive — the child signal alone
+            # recycles it. Stamped slots keep the dual-signal release contract.
+            unstamped_batch_slot = updated.batch_id is not None and updated.tool_use_id is None
+            if updated.parent_completed_at is not None or unstamped_batch_slot:
                 self._complete_foreground_lease(
                     registry, updated, now_text=now_text, monotonic=monotonic, boot_id=boot_id
                 )
             else:
                 registry.leases[lease.lease_id] = updated
+            if lease.batch_id is not None:
+                self._renew_live_batch_siblings(
+                    registry,
+                    lease.batch_id,
+                    exclude_lease_id=lease.lease_id,
+                    now_text=now_text,
+                    monotonic=monotonic,
+                    boot_id=boot_id,
+                )
             if not self._session_has_live_agents(
                 registry, lease.session_id, monotonic=monotonic, boot_id=boot_id
             ):
@@ -3759,8 +4104,16 @@ class LeaseBroker:
             self._write_registry(registry)
             return True
 
-    def record_parent_completed(self, session_id: str, tool_use_id: str) -> tuple[str, ...]:
-        """Record a trusted parent result for exactly one runtime session and tool call."""
+    def record_parent_completed(
+        self, session_id: str, tool_use_id: str, *, spawn_failed: bool = False
+    ) -> tuple[str, ...]:
+        """Record a trusted parent result for exactly one runtime session and tool call.
+
+        An unclaimed reservation receiving a parent-completed signal is stamped and
+        kept claimable (async launch-return can outrace SubagentStart); only a genuine
+        spawn failure (``spawn_failed=True``, adapter maps ``PostToolUseFailure``) still
+        removes an unclaimed reservation eagerly.
+        """
 
         session = _bounded(session_id, "session_id")
         tool = _bounded(tool_use_id, "tool_use_id")
@@ -3777,7 +4130,9 @@ class LeaseBroker:
             removed: list[str] = []
             for lease in matches:
                 updated = replace(lease, parent_completed_at=lease.parent_completed_at or now_text)
-                if updated.agent_id is None or updated.child_terminal_at is not None:
+                if (
+                    updated.agent_id is None and spawn_failed
+                ) or updated.child_terminal_at is not None:
                     self._complete_foreground_lease(
                         registry,
                         updated,
@@ -3816,6 +4171,7 @@ class LeaseBroker:
             agent_id=None,
             tool_use_id=None,
             agent_type="*",
+            isolation=None,
             resource_ref=None,
             claimed_at=None,
             child_terminal_at=None,
@@ -3993,6 +4349,132 @@ class LeaseBroker:
             reaped_worktree_leases=tuple(sorted(reaped)),
             retained=dict(sorted(retained.items())),
         )
+
+    def doctor(self) -> dict[str, Any]:
+        """Read-only forward-compatibility report over the persisted registry (#617 R7/KTD4).
+
+        Returns a structured verdict — ``valid`` | ``tolerated-unknowns`` | ``corrupt`` — with an
+        inventory of preserved unknown ("extras") fields keyed by JSON path plus the invariant
+        status. It never creates, locks for write, or mutates the authority (byte-faithful on a
+        clean file), and ``corrupt`` is reported as data — the tolerant parse's
+        ``RegistryCorruptError`` is caught, not raised — so an operator diagnostic never itself
+        aborts.
+        """
+
+        result: dict[str, Any] = {
+            "root_sha256": self.root_sha256,
+            "extras": [],
+            "extras_key_count": 0,
+            "extras_bytes": 0,
+        }
+        try:
+            registry = self._read_registry(create=False)
+        except RegistryCorruptError as exc:
+            result.update(status="corrupt", exists=True, invariants="failed", error=str(exc))
+            return result
+        if registry is None:
+            result.update(status="valid", exists=False, invariants="ok")
+            return result
+        inventory = _extras_inventory(registry)
+        result.update(
+            status="tolerated-unknowns" if inventory else "valid",
+            exists=True,
+            invariants="ok",
+            schema=SCHEMA,
+            broker_epoch=registry.broker_epoch,
+            extras=inventory,
+            extras_key_count=sum(len(entry["keys"]) for entry in inventory),
+            extras_bytes=_document_extras_bytes(registry),
+        )
+        return result
+
+    def _backup_registry(self) -> str:
+        """Copy the current registry to a timestamped 0600 sibling before repair rewrites it.
+
+        Called only under ``_locked()``; reads the exact on-disk bytes and writes them to a
+        ``registry.json.backup-<utc>.<mono>`` sibling with the same temp + rename + fsync + 0600
+        discipline every other write path uses (#617 R8).
+        """
+
+        authority_fd = cast(int, self._open_authority(create=False))
+        fd = self._open_existing_at(
+            authority_fd, REGISTRY_NAME, os.O_RDONLY, mode=0o600, kind="registry"
+        )
+        try:
+            chunks: list[bytes] = []
+            while chunk := os.read(fd, 65536):
+                chunks.append(chunk)
+        finally:
+            os.close(fd)
+        original = b"".join(chunks)
+        stamp = self.providers.wall_now().astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
+        backup_name = f"{REGISTRY_NAME}.backup-{stamp}.{self.providers.monotonic_ns()}"
+        temp = (
+            f".{backup_name}.{os.getpid()}.{threading.get_ident()}."
+            f"{self.providers.monotonic_ns()}.tmp"
+        )
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW
+        try:
+            wfd = os.open(temp, flags, 0o600, dir_fd=authority_fd)
+            try:
+                os.fchmod(wfd, 0o600)
+                remaining = memoryview(original)
+                while remaining:
+                    remaining = remaining[os.write(wfd, remaining) :]
+                os.fsync(wfd)
+            finally:
+                os.close(wfd)
+            os.replace(temp, backup_name, src_dir_fd=authority_fd, dst_dir_fd=authority_fd)
+            os.fsync(authority_fd)
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(temp, dir_fd=authority_fd)
+        return str(self.root / backup_name)
+
+    def repair(self) -> dict[str, Any]:
+        """Explicit operator down-migration: strip preserved unknown fields under backup (#617 R8/KTD4).
+
+        Never runs implicitly. Under the single authority ``_locked()`` write: parse tolerantly;
+        refuse (no mutation) if the document is corrupt beyond unknown-field stripping; no-op with
+        an explicit report when there is nothing to strip; otherwise back the original document up
+        beside the registry, rebuild the authority with every ``extras`` mapping cleared,
+        strict-revalidate, and write atomically (temp + rename, 0600). Refuses — leaving the
+        registry untouched — if strict revalidation after stripping still fails.
+        """
+
+        result: dict[str, Any] = {"root_sha256": self.root_sha256}
+        with self._locked():
+            try:
+                registry = self._read_registry(create=False)
+            except RegistryCorruptError as exc:
+                result.update(status="refused", repaired=False, reason=str(exc))
+                return result
+            if registry is None:
+                result.update(status="absent", repaired=False, message="no registry to repair")
+                return result
+            inventory = _extras_inventory(registry)
+            if not inventory:
+                result.update(
+                    status="clean", repaired=False, message="nothing to strip", stripped=[]
+                )
+                return result
+            stripped = _strip_extras(registry)
+            try:
+                revalidated = Registry.from_dict(stripped.to_dict())
+            except RegistryCorruptError as exc:
+                result.update(status="refused", repaired=False, reason=str(exc))
+                return result
+            if _extras_inventory(revalidated):
+                result.update(
+                    status="refused",
+                    repaired=False,
+                    reason="unknown fields survived stripping",
+                )
+                return result
+            backup_path = self._backup_registry()
+            self._write_registry(stripped)
+            result.update(status="repaired", repaired=True, backup=backup_path, stripped=inventory)
+            return result
 
 
 _RECOVERY_COORDINATOR_CAPABILITY = object()

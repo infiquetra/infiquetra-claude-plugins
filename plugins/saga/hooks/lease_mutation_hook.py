@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, NoReturn
@@ -11,6 +12,20 @@ from typing import Any, NoReturn
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 _PREFIX = "[saga/fleet-lease]"
+_KILL_SWITCH = "INFIQUETRA_FLEET_LEASE_ENFORCEMENT"
+
+
+def _enforcement_disabled() -> bool:
+    # Only the exact string "off" disarms; any other value or absence stays armed
+    # (fail-safe direction). Emergency use only — see CHANGELOG #615.
+    if os.environ.get(_KILL_SWITCH) != "off":
+        return False
+    print(
+        f"{_PREFIX} DISABLED — {_KILL_SWITCH}=off; fleet-lease enforcement bypassed "
+        "for this event (emergency kill-switch, #615).",
+        file=sys.stderr,
+    )
+    return True
 
 
 def _halt(message: str) -> NoReturn:
@@ -23,6 +38,8 @@ def _halt(message: str) -> NoReturn:
 
 
 def dispatch(payload: dict[str, Any]) -> None:
+    if _enforcement_disabled():
+        return
     # Trusted hook identity is the arm signal. Root calls intentionally avoid fleet I/O.
     agent_id = payload.get("agent_id")
     if not isinstance(agent_id, str) or not agent_id:

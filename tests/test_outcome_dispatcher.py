@@ -967,6 +967,123 @@ def test_outcome_harvest_reconciles_prior_completion_when_nothing_is_new(
     assert len(STORE.read_completion_events(store, "build")) == 1
 
 
+def test_workflow_executed_leaf_auto_settles_on_harvest_and_unblocks_frontier(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#626 R2/R3: a ``cc-workflows-ultracode`` (out-of-process Workflow) leaf runs OUTSIDE the engine,
+    so it never writes an in-process settle fact — its dispatch position stays ``open`` and, pre-fix,
+    halted the whole frontier forever (the incident: leaf ``sub-13`` stranded ``open``). This pins the
+    shipped, backend-agnostic behavior: when ``advance``'s harvester materializes the Workflow leaf's
+    canonical completion, the site-agnostic reconcile loop auto-settles the ``open`` position
+    ``DELIVERED`` and the previously-blocked dependent dispatches the SAME tick; a repeat tick is a
+    genuine no-op (write-once settle).
+
+    Regression-lock (KTD3): the reconcile loop carries no site/backend filter today, so this exercises
+    the same path as the existing ``team-execution`` harvest-settle test — its value is prospective. It
+    fails the day a change re-adds a site filter that special-cases Workflow leaves back out of
+    auto-settle (re-stranding them ``open``). Coherence — a still-running leaf stays ``open``, a
+    negative terminal fail-closes ``SILENT_NOOP``, a genuine casualty exits via the #618 waive — is
+    already covered by ``test_three_spawn_two_reap_one_open`` (test_dispatch_settlement),
+    ``test_outcome_harvest_negative_terminal_settles_fail_closed_and_enters_dlq``, and
+    ``test_waived_halt_dispatches_new_cohort_with_receipt`` respectively, and is not re-asserted here."""
+    OUTCOME.start(
+        repo,
+        "ship-x",
+        "Ship X",
+        nodes=[
+            {
+                "subplot_id": "build",
+                "title": "Build (Workflow leaf)",
+                "backend": "cc-workflows-ultracode",
+            },
+            {
+                "subplot_id": "ship",
+                "title": "Ship",
+                "backend": "inline",
+                "depends_on": ["build"],
+            },
+        ],
+    )
+    ledger = RUN_LEDGER.RunLedger(repo / "settlement" / "facts.jsonl")
+    dispatch_id, _units = SETTLEMENT.outcome_frontier_identity("ship-x", ["build"])
+    # cc-workflows-ultracode is HOST_DEPENDENT; make it available so the Workflow leaf dispatches
+    # hermetically (the dispatcher mints the leaf + open position — it never launches a real Workflow).
+    available = D.ALWAYS_AVAILABLE + ("cc-workflows-ultracode",)
+
+    # Tick 1 — dispatch the Workflow leaf. It leaves an OPEN position and, being external, never
+    # self-settles; ship is blocked behind it, so the frontier is halted (ship NOT dispatched).
+    tick1 = OUTCOME.advance(
+        repo,
+        "ship-x",
+        dispatcher=D.make_dispatcher(available=available),
+        settlement_ledger=ledger,
+        available=available,
+        now=lambda: 1_700_000_000.0,
+    )
+    assert tick1.dispatched == ["build"]  # ship halted behind build's unsettled open position
+
+    # A stateful stand-in for GitHub harvest: materialize build's canonical completion exactly once,
+    # then report nothing-new on later ticks (mirrors the real harvest's idempotency).
+    orchestrator = sys.modules.get("outcome_orchestrator") or _load("outcome_orchestrator")
+
+    def _harvest(_spec: Any, *, store: Any, **_kwargs: Any) -> list[str]:
+        if any(e.state == "done" for e in STORE.read_completion_events(store, "build")):
+            return []
+        STORE.write_completion_event(
+            store,
+            STORE.CompletionEvent(
+                subplot_id="build",
+                state="done",
+                idempotency_key="github-build",
+                payload={"canonical": True},
+            ),
+        )
+        return ["build"]
+
+    monkeypatch.setattr(orchestrator, "harvest", _harvest)
+
+    # Tick 2 — the harvester materializes build's completion, the site-agnostic reconcile loop
+    # auto-settles build's open position DELIVERED, and the previously-blocked ship dispatches.
+    tick2 = OUTCOME.advance(
+        repo,
+        "ship-x",
+        dispatcher=D.make_dispatcher(available=available),
+        harvester=OUTCOME.production_harvester(
+            repo, settlement_ledger=ledger, now=lambda: 1_700_000_002.0
+        ),
+        settlement_ledger=ledger,
+        available=available,
+        now=lambda: 1_700_000_002.0,
+    )
+    assert tick2.harvested == ["build"]
+    assert tick2.dispatched == ["ship"]  # frontier unblocked in the same tick (R2)
+    report = SETTLEMENT.settlement_report(ledger, dispatch_id)
+    assert report.entries[0].classification == SETTLEMENT.DELIVERED
+    assert report.entries[0].evidence_ref == "outcome-completion:done"
+
+    # Tick 3 — the harvester runs every tick; a re-settle of an already-DELIVERED position is
+    # write-once, so it appends nothing and dispatches nothing new (R3, the Workflow-leaf case).
+    tick3 = OUTCOME.advance(
+        repo,
+        "ship-x",
+        dispatcher=D.make_dispatcher(available=available),
+        harvester=OUTCOME.production_harvester(
+            repo, settlement_ledger=ledger, now=lambda: 1_700_000_004.0
+        ),
+        settlement_ledger=ledger,
+        available=available,
+        now=lambda: 1_700_000_004.0,
+    )
+    assert tick3.harvested == []
+    assert tick3.dispatched == []
+    build_settles = [
+        record
+        for record in RUN_LEDGER.read_facts(ledger)
+        if record.get("dispatch_id") == dispatch_id and record.get("event") == "settle"
+    ]
+    assert len(build_settles) == 1  # write-once: no double-settle across repeated harvester ticks
+
+
 def test_advance_halts_visibly_on_unavailable_backend_no_silent_substitute(repo: Path) -> None:
     OUTCOME.start(
         repo,

@@ -35,7 +35,8 @@
       "id": "pytest",
       "label": "pytest",
       "command": ["uv", "run", "python", "-m", "pytest", "-q", "--no-cov"],
-      "failure_hint": "Fix failing tests before pushing. The gate runs without coverage instrumentation so the suite fits the hook's 300-second step timeout; CI still runs the full coverage configuration."
+      "timeout_seconds": 600,
+      "failure_hint": "Fix failing tests before pushing. The gate runs without coverage instrumentation; CI still runs the full coverage configuration. This step declares its own timeout_seconds because the suite outgrew the 300-second default (issue #658) — measured 325 s green on an idle machine, so the default was blocking every push in the repo with a timeout that reads like a red."
     }
   ]
 }

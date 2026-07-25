@@ -98,6 +98,15 @@ exhausted.
     paths" without the rung qualification that makes it true, and `_manifest_head_branch` claimed
     manifest entries are "never re-stamped" when `ship_teardown.register` refreshes a still-open
     entry by design.
+- **Pre-push gate step timeouts move into the manifest (#658).** `pre_push_gate_hook.py` hardcoded a
+  300-second budget for every step, which broke its own SINGLE SOURCE property — retuning the gate
+  meant editing the hook rather than `tools/gate-manifest.json`. It also failed in the worst
+  direction: the suite grew past 300 s while still passing (measured 325 s green on an idle machine),
+  so the gate blocked **every** push in the repo while reporting a timeout that reads exactly like a
+  red at the call site. Steps may now declare `timeout_seconds`; the default stays 300 for every step
+  that does not, and the `pytest` step declares 600. The refusal message now names the budget that
+  was actually applied instead of a hardcoded 300. Carried in this release because it blocked
+  shipping #635 itself.
 - No `fleet-core` bump (`fleet_commons/` untouched) and no `mission-control` bump (no verb added).
 
 ## [0.114.0] - 2026-07-24

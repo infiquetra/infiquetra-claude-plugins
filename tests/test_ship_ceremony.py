@@ -851,6 +851,11 @@ class _RecordingRunner:
     no `git push`, no `git checkout`, and no `saga.py save`."""
 
     _MUTATING_GIT = ("branch", "push", "checkout", "merge", "commit", "reset", "revert")
+    # Every spelling of a branch deletion. `-d` alone let `git branch -D <b>` and
+    # `git branch --delete <b>` slip through the read-only skip below, which would make
+    # `mutating_calls() == []` vacuously true for the deletion command if production
+    # ever changed the flag — the oracle would stop failing exactly when it mattered.
+    _DELETE_FLAGS = ("-d", "-D", "--delete")
 
     def __init__(self, inner) -> None:  # noqa: ANN001
         self._inner = inner
@@ -865,7 +870,7 @@ class _RecordingRunner:
         for call in self.calls:
             if call[:1] == ["git"] and len(call) > 1 and call[1] in self._MUTATING_GIT:
                 # `git branch --show-current` / `git branch --list` only read.
-                if call[1] == "branch" and all(not a.startswith("-d") for a in call[2:]):
+                if call[1] == "branch" and not any(a in self._DELETE_FLAGS for a in call[2:]):
                     continue
                 found.append(call)
             elif "saga.py" in " ".join(call) and "save" in call:
@@ -1025,6 +1030,125 @@ def test_branch_delete_targets_base_fires_on_the_rung_2_incident_topology(
     assert _restore(repo)["ceremony_transition"] == "pull"
     assert _local_branch_exists(repo, BRANCH_345)
     assert _remote_branch_exists(fake_gh.bare_origin, BRANCH_345)
+
+
+class _GhRungFlapper:
+    """Wraps a runner and lets the resolver's rung-1 query succeed exactly ``allow``
+    times, failing every later one — so the gate resolves on rung 1 and any LATER
+    resolution is pushed down to rung 2.
+
+    This models one transient ``gh`` failure (token expiry mid-run, secondary rate
+    limit, a 5xx) inside a single ``run()``. It is the only fault shape that can make
+    two resolutions of the same ceremony disagree, because the resolver degrades
+    silently on any non-zero ``gh`` exit."""
+
+    def __init__(self, inner, *, allow: int) -> None:  # noqa: ANN001
+        self._inner = inner
+        self._allow = allow
+        self.calls: list[list[str]] = []
+        self.rung1_views = 0
+
+    def __call__(self, cmd, *, cwd, capture_output, text, timeout):  # noqa: ANN001
+        argv = list(cmd)
+        self.calls.append(argv)
+        if argv[:3] == ["gh", "pr", "view"] and "headRefName,baseRefName" in argv:
+            self.rung1_views += 1
+            if self.rung1_views > self._allow:
+                return subprocess.CompletedProcess(argv, 1, stdout="", stderr="gh: rate limited")
+        return self._inner(cmd, cwd=cwd, capture_output=capture_output, text=text, timeout=timeout)
+
+    def deleted_branches(self) -> list[str]:
+        return [c[-1] for c in self.calls if c[:3] == ["git", "branch", "-d"]] + [
+            c[-1] for c in self.calls if c[:4] == ["git", "push", "origin", "--delete"]
+        ]
+
+
+def test_branch_delete_deletes_the_branch_the_operator_confirmed_not_a_re_resolution(
+    ceremony_repo,
+) -> None:
+    """The confirmed target and the deleted branch are the SAME resolution.
+
+    `run()` resolves the refs, validates `--operator-confirmed branch_delete:<target>`
+    against them, and hands the resolved head to the hazard probe. If the runner then
+    re-resolves independently, all three of those checks are computed against a value
+    the destructive step never sees — and because the ladder degrades from the PR to
+    local evidence on any non-zero `gh` exit, ONE transient failure in that window
+    answers from a different rung and can name a different branch.
+
+    Topology: a well-formed PR (head `BRANCH_345`, base `outcome/...`) plus corrupt
+    local evidence naming the BASE as the head — the incident shape. `gh` answers the
+    gate, then fails. Pre-fix, `_do_branch_delete` re-resolved onto rung 2 and ran
+    `git branch -d outcome/...` / `git push origin --delete outcome/...` while
+    reporting `operator-confirmed`, reproducing the original data loss THROUGH the
+    fix. The hazard could not catch it: it had been evaluated against rung 1's head."""
+    repo, fake_gh = ceremony_repo
+    _advance_to(repo, fake_gh, "branch_delete")
+    saga_id = str(_restore(repo)["saga_id"])
+    outcome = "outcome/norns-next-horizon"
+    subprocess.run(  # noqa: S607 - fixture setup, fixed argv
+        ["git", "-C", str(repo), "branch", outcome], check=True, capture_output=True
+    )
+
+    fake_gh._prs[BRANCH_345]["base"] = outcome  # noqa: SLF001
+    SC.write_ceremony_base(repo, saga_id, outcome, recorded_by="test-toctou")
+    SC.ship_teardown.register(
+        repo,
+        saga_id,
+        SC._branch_resource_id(outcome),  # noqa: SLF001 - the corrupt record
+        kind="branch",
+        ref=outcome,
+        opened_by="test-toctou",
+        now="2999-01-01T00:00:00+00:00",
+    )
+
+    # Two rung-1 answers are consumed before dispatch: run()'s gate and the
+    # branch_delete_targets_base probe. Everything after that fails.
+    flapper = _GhRungFlapper(fake_gh, allow=2)
+    SC.run(
+        repo_root=repo,
+        issue_ref="org/repo#345",
+        operator_confirmed=f"branch_delete:{BRANCH_345}",
+        runner=flapper,
+    )
+
+    assert flapper.deleted_branches() == [BRANCH_345, BRANCH_345], (
+        "the deleted branch must be the one the operator confirmed, on both the local "
+        f"and the origin delete; got {flapper.deleted_branches()}"
+    )
+    assert outcome not in flapper.deleted_branches()
+    assert _local_branch_exists(repo, outcome), "the base branch must survive"
+    # The mechanism, not just the outcome: the runner consumed the gate's refs rather
+    # than resolving again, so the third rung-1 query never happened. If a future change
+    # reintroduces a second resolution this count moves and the test says so.
+    assert flapper.rung1_views == 2
+
+
+def test_branch_delete_refuses_when_the_resolved_head_is_the_resolved_base(
+    leaf_into_outcome_repo,
+) -> None:
+    """The independent floor, and the one that matters when no PR exists.
+
+    `_probe_branch_delete_targets_base` returns None without a PR number, so on a
+    ceremony with empty `pr_refs` the hazard never runs at all and rung 1 is skipped in
+    every resolution. If rung 2's head equals rung 2's base the base is deleted with
+    zero automated refusal. `refs.base` is already in hand here, so comparing costs
+    nothing and needs no network."""
+    repo, _bare_origin = leaf_into_outcome_repo
+    saga = dict(_restore_saga(repo, SAGA_ID_LEAF), pr_refs=[])
+    # Corrupt the manifest so rung 2's head resolves to the base, as the incident did.
+    SC.ship_teardown.register(
+        repo,
+        SAGA_ID_LEAF,
+        SC._branch_resource_id(OUTCOME_BASE),  # noqa: SLF001
+        kind="branch",
+        ref=OUTCOME_BASE,
+        opened_by="test-floor",
+        now="2999-01-01T00:00:00+00:00",
+    )
+    runner = GitPassthroughRunner()
+    with pytest.raises(SC.TransitionFailedError, match="resolved BASE branch"):
+        SC._do_branch_delete(saga, repo_root=repo, runner=runner)  # noqa: SLF001
+    assert _local_branch_exists(repo, OUTCOME_BASE)
 
 
 def test_qualified_target_on_a_transition_that_takes_none_refuses(ceremony_repo) -> None:
@@ -2655,6 +2779,80 @@ def test_open_pr_fresh_create_argv_contains_the_resolved_base(ceremony_repo) -> 
     assert "--base" in argv
     assert argv[argv.index("--base") + 1] == "main"
     assert fake_gh._prs[BRANCH_345]["base"] == "main"  # noqa: SLF001
+
+
+def test_open_pr_records_the_resolved_base_to_the_ceremony_sidecar(ceremony_repo) -> None:
+    """`_do_open_pr` PERSISTS the base it resolved, as `start()` does.
+
+    Without this the plain-run flow never writes a base sidecar, so the resolver's
+    rung 2 can never satisfy its both-or-nothing condition and `checkout_main`,
+    `merge`, and `branch_delete` all become hard-dependent on a reachable `gh` — the
+    opposite of the ladder's stated reason for existing. An operator finishing a ship
+    offline, or on an expired token, could not advance the ceremony at all."""
+    repo, fake_gh = ceremony_repo
+    saga_id = str(_restore(repo)["saga_id"])
+    assert not SC.ceremony_base_path(repo, saga_id).exists()
+
+    SC.run(repo_root=repo, issue_ref="org/repo#345", runner=fake_gh)  # commit
+    SC.run(repo_root=repo, issue_ref="org/repo#345", runner=fake_gh)  # open_pr
+
+    assert SC.read_ceremony_base(repo, saga_id) == "main"
+    recorded = json.loads(SC.ceremony_base_path(repo, saga_id).read_text(encoding="utf-8"))
+    assert recorded["recorded_by"] == "open_pr"
+
+
+def test_ceremony_refs_refuses_an_option_like_ref() -> None:
+    """A resolved ref becomes git argv, so one opening with `-` is refused at
+    construction rather than at whichever consumer remembers to check.
+
+    `git checkout -f` is the sharp case: it is accepted, it silently discards every
+    uncommitted change in the tree, and `checkout_main` is REVERSIBLE tier, so nothing
+    asks the operator first."""
+    assert SC.CeremonyRefs(head="feat/x", base="main", source="t").head == "feat/x"
+    for head, base in (("-f", "main"), ("feat/x", "-f"), ("--force", "main")):
+        with pytest.raises(SC.CeremonyRefsError, match="begins with '-'"):
+            SC.CeremonyRefs(head=head, base=base, source="t")
+
+
+def test_write_ceremony_base_refuses_an_option_like_base(tmp_path: Path) -> None:
+    """Refused at the WRITE too, not only at the read: `start --base=-f` is accepted by
+    argparse and lands here before the `gh pr create`, so this is the first point that
+    can stop the poison from being persisted for a later, offline ceremony to read."""
+    with pytest.raises(SC.CeremonyRefsError, match="begins with '-'"):
+        SC.write_ceremony_base(tmp_path, "issue-1", "-f", recorded_by="test")
+    assert not SC.ceremony_base_path(tmp_path, "issue-1").exists()
+
+
+def test_read_ceremony_base_refuses_a_malformed_or_non_object_sidecar(tmp_path: Path) -> None:
+    """The sidecar feeds a destructive read path — `_do_merge` probes this base and
+    `_undo_merge` reverts on it — so a truncated or hand-edited file must raise, never
+    read as an absent-but-fine rung."""
+    path = SC.ceremony_base_path(tmp_path, "issue-1")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"base": "main"', encoding="utf-8")  # torn write
+    with pytest.raises(SC.CeremonyRefsError, match="not valid JSON"):
+        SC.read_ceremony_base(tmp_path, "issue-1")
+    path.write_text('["main"]', encoding="utf-8")
+    with pytest.raises(SC.CeremonyRefsError, match="not a JSON object"):
+        SC.read_ceremony_base(tmp_path, "issue-1")
+
+
+def test_ls_remote_sha_refuses_when_origin_carries_no_such_ref(tmp_path: Path) -> None:
+    """`git ls-remote` exits 0 with EMPTY stdout for a ref the remote does not have, so
+    the bare `.stdout.split()[0]` this guards raised `IndexError` — a type `main()` does
+    not catch, surfacing as an uncaught traceback against the module's own contract.
+
+    Reachable now that the probed ref is a resolved base rather than the always-present
+    literal `refs/heads/main`: an outcome branch legitimately stops existing once its
+    own ceremony has landed."""
+
+    def empty(cmd, **kwargs):  # noqa: ANN001, ANN003
+        return subprocess.CompletedProcess(list(cmd), 0, stdout="", stderr="")
+
+    with pytest.raises(SC.TransitionFailedError, match="origin has no"):
+        SC._ls_remote_sha(  # noqa: SLF001
+            "refs/heads/outcome/gone", repo_root=tmp_path, runner=empty
+        )
 
 
 def test_open_pr_existing_draft_path_does_not_create_a_second_pr(ceremony_repo) -> None:

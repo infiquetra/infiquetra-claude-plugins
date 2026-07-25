@@ -4206,6 +4206,44 @@ produce, or assert the fake was called).
 
 ---
 
+### A validated value must travel to the thing it authorizes, or the gate guards a different value than the one that acts {#validated-value-must-travel-635}
+
+**Evidence.** Pre-PR code review of #635 at `6b0a8180`, artifact
+`docs/code-reviews/2026-07-25-issue-635-ceremony-ref-resolution-code-review.md`. `ship_ceremony.run()`
+called `resolve_ceremony_refs()` (`:1211`), validated the operator's
+`--operator-confirmed branch_delete:<target>` against the result, and handed the resolved head to the
+`branch_delete_targets_base` hazard probe. It then dispatched
+`_RUNNERS[upcoming](saga, repo_root=..., runner=...)` (`:1273`) — a uniform signature carrying neither
+the confirmed target nor the refs — and `_do_branch_delete` (`:940`) resolved again from scratch.
+Two independent review lenses reproduced the consequence end-to-end; the sharper run deleted
+`outcome/norns-next-horizon` local and origin **through the new code**, with the non-acknowledgeable
+hazard reporting clean.
+
+**Mechanism.** The consequence needs the resolver's own defining property. `resolve_ceremony_refs`
+degrades from rung 1 (the PR, via `gh pr view`) to rung 2 (the opened-resource manifest plus the base
+sidecar) on **any** non-zero `gh` exit — deliberately, so an operator finishing a ship offline is not
+stranded. That makes the function non-deterministic across calls in exactly the way a cache would not
+be: two invocations seconds apart, same inputs, can answer from different rungs and return different
+branches. So the confirmation check, the hazard scan, and the deletion were three computations that
+usually agree rather than one value used three times. One transient `gh` failure inside a single
+`run()` is enough to separate them, and every gate still reports pass because each gate genuinely did
+pass — against the value it saw.
+
+Note the shape of the original defect this was fixing: the deletion target and the manifest resource
+id were derived independently from the same wrong field. The fix collapsed that to one resolved value
+*inside* `_do_branch_delete`, and reintroduced the identical class of split *across the operator
+gate*. The blast radius moved up a level and became invisible to the unit that had been fixed.
+
+**Generalizable rule.** When a gate validates a value and a later step re-derives it, they are two
+values, not one — and a resolver that degrades between sources makes "usually equal" the strongest
+guarantee available. Pass the validated object through to the step it authorizes so identity is
+structural, and treat a uniform dispatch signature as a place values get silently dropped. Corollary
+for review scope: unit-scoped verify panels cannot see this class of defect at all. Five refute
+panels passed this change set; the defect lived in the seam between the unit that built the resolver
+and the unit that built the gate, and only a diff-wide pass surfaced it.
+
+---
+
 ### A rolling tick field read as ceremony state produces a three-part silent failure {#ceremony-tick-field-as-state-635}
 
 **Evidence.** `ship_ceremony.py`'s `_do_branch_delete` (issue #635, grounded at `474fd3cc`): on a

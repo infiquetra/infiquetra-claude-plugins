@@ -160,10 +160,19 @@ def _probe_stacked_pr(
     """Probes for an open PR based on the branch about to be deleted (branch_delete)
     or merged (merge) — R1 / U1 Behavior.
 
-    ``resolved_head`` is part of the uniform probe signature (issue #635/U4) and is
-    unused here: this probe asks about the saga's recorded branch, not about a
-    resolved deletion target."""
-    branch = str(saga.get("branch") or "")
+    ``resolved_head`` wins over the saga's recorded ``branch`` when the caller supplies
+    one (issue #635 code-review). The summary line above is the contract — "the branch
+    about to be deleted" — and on a leaf-into-outcome ceremony ``saga["branch"]`` is
+    not that branch: it is re-stamped from ``git branch --show-current`` on every tick
+    save, so after ``checkout_main`` it names the PR *base*. Probing the base asks the
+    wrong question in both directions: a child PR stacked on the real head goes
+    undetected and the branch is deleted out from under it, while every sibling leaf
+    still open against the base fires a spurious hazard — and this one IS
+    acknowledgeable, so spurious firings train the operator to wave it through.
+
+    ``merge`` passes no ``resolved_head`` (only ``branch_delete`` confirms a target),
+    so that transition keeps the recorded-branch operand it always had."""
+    branch = str(resolved_head or saga.get("branch") or "")
     if not branch:
         return None
     stacked = _run_gh_json(
@@ -337,8 +346,14 @@ def detect(
     ``resolved_head`` (issue #635/U4, optional and keyword-only so every existing
     call site is unchanged) is the branch the caller has resolved as this ceremony's
     deletion target. ``branch_delete_targets_base`` compares it against the PR's own
-    base so the check runs across two derivation paths; probes that do not consume a
-    deletion target ignore it.
+    base, and ``_probe_stacked_pr`` uses it as the branch to ask about.
+
+    That comparison spans two INDEPENDENT records only when the caller resolved on
+    rung 2 (manifest head vs PR base). When the caller resolved on rung 1, both
+    operands came from one ``gh pr view`` record and the comparison is inert by
+    construction — correctly, because rung 1 cannot produce a wrong target. Do not
+    restate this as "two derivation paths" without that qualification; it was written
+    that way once and was false.
     """
     probes = _PROBES_BY_TRANSITION.get(upcoming)
     if not probes:

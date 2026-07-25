@@ -213,6 +213,38 @@ def test_branch_delete_targets_base_is_not_acknowledgeable_by_construction() -> 
     assert hazard.acknowledgeable is False
 
 
+def test_stacked_pr_probe_asks_about_the_resolved_head_not_the_rolling_field() -> None:
+    """The probe's contract is "an open PR based on the branch about to be deleted", and
+    on a leaf-into-outcome ceremony the saga's rolling ``branch`` field is not that
+    branch — it is re-stamped on every tick save, so after ``checkout_main`` it names
+    the PR base.
+
+    Probing the base asks the wrong question in both directions: a child PR stacked on
+    the real head goes undetected and the branch is deleted out from under it, while
+    every sibling leaf still open against the base fires a spurious hazard — and this
+    hazard IS acknowledgeable, so spurious firings train the operator to wave it
+    through. ``merge`` passes no resolved head and keeps its old operand."""
+    runner = FakeRunner(pr_list=[], pr_view=_landed())
+    CH._probe_stacked_pr(  # noqa: SLF001
+        _saga(),
+        transition="branch_delete",
+        repo_root=ROOT,
+        runner=runner,
+        resolved_head="feat/the-real-head",
+    )
+    listed = [c for c in runner.calls if c[:2] == ["gh", "pr"] and "list" in c]
+    assert listed, "the probe must have issued its pr list query"
+    argv = listed[-1]
+    assert argv[argv.index("--base") + 1] == "feat/the-real-head"
+
+    runner_bare = FakeRunner(pr_list=[], pr_view=_landed())
+    CH._probe_stacked_pr(  # noqa: SLF001
+        _saga(), transition="merge", repo_root=ROOT, runner=runner_bare, resolved_head=None
+    )
+    argv_bare = [c for c in runner_bare.calls if c[:2] == ["gh", "pr"] and "list" in c][-1]
+    assert argv_bare[argv_bare.index("--base") + 1] == _saga()["branch"]
+
+
 def test_branch_delete_targets_base_silent_when_head_differs_from_base() -> None:
     runner = FakeRunner(pr_list=[], pr_view=_landed())
     assert CH.detect(_saga(), "branch_delete", ROOT, runner) == []
@@ -221,8 +253,13 @@ def test_branch_delete_targets_base_silent_when_head_differs_from_base() -> None
 def test_branch_delete_targets_base_uses_the_injected_resolved_head() -> None:
     """``run()`` resolves the deletion target through ``resolve_ceremony_refs`` and
     injects it, so the check compares the branch that will ACTUALLY be deleted against
-    the PR's authoritative base — a second derivation path, not a restatement of the
-    PR's own head."""
+    the PR's authoritative base.
+
+    The injected head here is supplied directly, which is the rung-2 shape: manifest
+    head vs PR base, two independent records. It is NOT evidence that the comparison
+    spans two records in general — when the resolver answers on rung 1 both operands
+    come from one ``gh pr view`` payload and the probe is inert by construction. See
+    ``_probe_branch_delete_targets_base``'s docstring for the rung split."""
     runner = FakeRunner(pr_list=[], pr_view=_landed())
     fired = CH.detect(
         _saga(), "branch_delete", ROOT, runner, resolved_head="outcome/norns-next-horizon"

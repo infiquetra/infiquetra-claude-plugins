@@ -65,6 +65,39 @@ exhausted.
   `choices=` rejected the colon form) and reachable only via the Python API.
 - Two documentation surfaces migrated to the qualified grammar: `plugins/saga/skills/work/SKILL.md`
   and `plugins/saga/skills/work/references/pr-continuation-loop.md`.
+- **Code-review repairs, same release.** The pre-PR review found that the fix had closed the
+  divergence *inside* `_do_branch_delete` and reopened the same class of split *across* the operator
+  gate, plus four smaller gaps:
+  - **The confirmed target is now the deleted target.** `run()` resolved the refs, validated
+    `--operator-confirmed branch_delete:<target>` against them, handed the resolved head to the
+    hazard probe — and then dispatched a runner signature carrying none of it, so
+    `_do_branch_delete` re-resolved from scratch. Because the ladder degrades from the PR to local
+    evidence on any non-zero `gh` exit, one transient failure in that window answers from a
+    different rung and can name a different branch, reproducing the original data loss *through the
+    fix* with the non-acknowledgeable hazard reporting clean. `run()` now hands the validated
+    `CeremonyRefs` to the runner; the authorization and the deletion are the same object by
+    construction, and a redundant `gh pr view` goes away with it.
+  - **An independent base floor.** `_do_branch_delete` bound `refs.base` and never used it; its only
+    floor was the literal `"main"`. It now refuses when the resolved head IS the resolved base. This
+    is the check that matters when no PR exists at all, because
+    `_probe_branch_delete_targets_base` returns `None` without a PR number and the hazard never runs.
+  - **Option-safe refs.** A resolved ref becomes git argv, and `git checkout -f` is accepted, silently
+    discards every uncommitted change in the tree, and sits on a REVERSIBLE-tier transition that asks
+    no one. `CeremonyRefs` now validates on construction and `write_ceremony_base` refuses at the
+    write, matching `ship_undo._require_option_safe`'s long-standing contract.
+  - **`_do_open_pr` persists the base it resolves**, as `start()` already did. Without it the
+    plain-run flow never wrote a sidecar, so rung 2 could never answer and the later transitions were
+    hard-dependent on a reachable `gh` — the opposite of the ladder's stated purpose.
+  - **`_probe_stacked_pr` asks about the resolved head**, not the rolling `branch` field. Its own
+    summary line says "the branch about to be deleted", and on this topology the rolling field is the
+    base — so a child PR stacked on the real head went undetected while sibling leaf PRs fired
+    spurious, acknowledgeable hazards.
+  - `git ls-remote` exits 0 with empty output for an absent ref, so `_do_merge`'s sha read raised a
+    bare `IndexError` that `main()` does not catch; it now refuses with a diagnosis.
+  - Two docstrings corrected under R13: `detect()` described the hazard as comparing "two derivation
+    paths" without the rung qualification that makes it true, and `_manifest_head_branch` claimed
+    manifest entries are "never re-stamped" when `ship_teardown.register` refreshes a still-open
+    entry by design.
 - No `fleet-core` bump (`fleet_commons/` untouched) and no `mission-control` bump (no verb added).
 
 ## [0.114.0] - 2026-07-24

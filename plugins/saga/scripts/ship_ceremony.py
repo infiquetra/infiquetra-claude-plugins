@@ -431,6 +431,36 @@ class CeremonyRefs:
     base: str
     source: str
 
+    def __post_init__(self) -> None:
+        # Validate on construction, so an option-like ref cannot exist in a
+        # ``CeremonyRefs`` at all rather than being caught at whichever consumer
+        # happens to remember (issue #635 code-review). Both rungs and every direct
+        # construction go through here.
+        _require_ref_safe(self.head, field="head", source=self.source)
+        _require_ref_safe(self.base, field="base", source=self.source)
+
+
+def _require_ref_safe(value: str, *, field: str, source: str) -> str:
+    """A resolved ref becomes git argv — refuse one that would parse as an option.
+
+    Same contract and same refusal shape as ``ship_undo._require_option_safe`` (issue
+    #635 code-review): sidecar- and manifest-sourced strings are machine-local files an
+    operator can hand-edit or a torn write can corrupt, and a value opening with ``-``
+    stops being a ref. ``git checkout -f`` is the sharp case — it is accepted, it
+    silently discards every uncommitted change in the tree, and ``checkout_main`` is a
+    REVERSIBLE-tier transition that needs no operator confirmation to get there.
+
+    Enforced HERE, at the resolver, rather than at each of the eight ``git`` call sites
+    that consume a resolved ref: one chokepoint cannot be forgotten by the next site
+    added. Refused loud, never sanitized — a ref we cannot pass safely is a ref we do
+    not understand."""
+    if value.startswith("-"):
+        raise CeremonyRefsError(
+            f"resolved ceremony {field} {value!r} (source: {source}) begins with '-' and "
+            "cannot be passed to git safely; fix the ceremony sidecar or manifest by hand"
+        )
+    return value
+
 
 def _validate_saga_id(saga_id: str) -> str:
     if not _SAGA_ID_RE.fullmatch(saga_id):
@@ -490,6 +520,12 @@ def write_ceremony_base(
             f"refusing to record an empty ceremony base for saga {saga_id!r}; "
             "an empty base would make the ladder's rung 2 answer with nothing"
         )
+    # Refuse at the WRITE, not only at the read. ``start --base=-f`` is accepted by
+    # argparse and lands here before the ``gh pr create`` below, so this is the first
+    # point that can stop an option-like base from being persisted for a later,
+    # offline ceremony to read back and hand to ``git checkout`` (issue #635
+    # code-review). The read side validates too, via ``CeremonyRefs.__post_init__``.
+    _require_ref_safe(base, field="base", source="write_ceremony_base")
     path = ceremony_base_path(repo_root, saga_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -572,11 +608,19 @@ def _manifest_head_branch(repo_root: Path, saga_id: str) -> str:
     """The head branch from the opened-resource manifest's ``ceremony-branch:`` entry
     (rung 2's head source), or ``""`` when the manifest carries none.
 
-    ``_register_branch`` writes exactly one such entry per pushed branch at push time
-    and never re-stamps it. When more than one exists (a ceremony that pushed under
-    two names), still-open entries win over closed ones and the most recently opened
-    wins within that pool, with the resource id as a stable tie-break — so the answer
-    is deterministic rather than dict-order dependent."""
+    ``_register_branch`` writes one such entry per pushed branch at push time. It is
+    idempotent per resource id, and re-registering a still-open entry DOES refresh its
+    ``opened_at`` (``ship_teardown.register``) — so "most recently opened" means most
+    recently registered, which for a re-push of the same branch is the same branch.
+    (An earlier wording here claimed the entry is "never re-stamped". That was false,
+    and the ladder's trust argument does not need it: what matters is that the entry is
+    keyed to a branch that was actually pushed, never re-derived from wherever HEAD
+    happens to be — which is exactly what ``saga["branch"]`` does wrong.)
+
+    When more than one exists (a ceremony that pushed under two names), still-open
+    entries win over closed ones and the most recently opened wins within that pool,
+    with the resource id as a stable tie-break — so the answer is deterministic rather
+    than dict-order dependent."""
     entries = ship_teardown.read_manifest(repo_root, saga_id)
     candidates = [
         (resource_id, entry)
@@ -778,6 +822,13 @@ def _do_open_pr(
     # explicit base is the dynamically resolved repo default branch, never the
     # literal "main" (KTD5).
     base = resolve_default_branch(repo_root, runner=runner)
+    # Persist it, exactly as ``start()`` does (issue #635 code-review). Without this
+    # the plain-run flow never writes a base sidecar, so rung 2 can never satisfy its
+    # both-or-nothing condition and ``checkout_main`` / ``merge`` / ``branch_delete``
+    # become hard-dependent on a reachable ``gh`` — the opposite of the ladder's stated
+    # reason for existing ("a local answer that needs no network at exactly the moment
+    # an operator is finishing a ship").
+    write_ceremony_base(repo_root, str(saga["saga_id"]), base, recorded_by="open_pr")
     body_lines: list[str] = []
     # Auto-close the tracked issue on merge via a ``Fixes #N`` line, so shipping never leaves a
     # fixed issue open — the manual close step is easy to forget (it was, on #477). Only added
@@ -833,6 +884,26 @@ def _do_request_review(
     still be a self-review request. Revisit only if a second human maintainer joins."""
 
 
+def _ls_remote_sha(ref: str, *, repo_root: Path, runner: Callable[..., Any] | None) -> str:
+    """The sha ``origin`` has for ``ref``, refusing loudly when it has none.
+
+    ``git ls-remote`` exits **0 with empty stdout** for a ref the remote does not
+    carry, so the bare ``.stdout.split()[0]`` this replaces raised ``IndexError`` —
+    a type ``main()`` does not catch, which surfaced as an uncaught traceback and
+    contradicted the module contract above (issue #635 code-review). Reachable now
+    that the probed ref is a resolved base rather than the always-present literal
+    ``refs/heads/main``: an outcome branch legitimately stops existing once its own
+    ceremony has landed."""
+    out = _run(["git", "ls-remote", "origin", ref], cwd=repo_root, runner=runner).stdout or ""
+    fields = out.split()
+    if not fields:
+        raise TransitionFailedError(
+            f"origin has no {ref!r}; cannot record a rollback sha for a base branch that "
+            "does not exist on the remote. Verify this ceremony's base is still present"
+        )
+    return fields[0]
+
+
 def _do_merge(
     saga: Mapping[str, Any], *, repo_root: Path, runner: Callable[..., Any] | None
 ) -> dict[str, Any]:
@@ -866,13 +937,9 @@ def _do_merge(
     pr_number = _current_pr_number(saga, repo_root=repo_root, runner=runner)
     base = resolve_ceremony_refs(saga, repo_root=repo_root, runner=runner).base
     base_ref = "refs/heads/" + base
-    pre_merge_main_sha = _run(
-        ["git", "ls-remote", "origin", base_ref], cwd=repo_root, runner=runner
-    ).stdout.split()[0]
+    pre_merge_main_sha = _ls_remote_sha(base_ref, repo_root=repo_root, runner=runner)
     _run(["gh", "pr", "merge", pr_number, "--squash"], cwd=repo_root, runner=runner)
-    merge_sha = _run(
-        ["git", "ls-remote", "origin", base_ref], cwd=repo_root, runner=runner
-    ).stdout.split()[0]
+    merge_sha = _ls_remote_sha(base_ref, repo_root=repo_root, runner=runner)
     # Close-on-close (KTD9): the merge landed the PR, so the draft_pr manifest entry
     # this ceremony opened is now closed, evidenced by the squash-merge sha.
     _close_if_registered(
@@ -917,7 +984,11 @@ def _do_pull(
 
 
 def _do_branch_delete(
-    saga: Mapping[str, Any], *, repo_root: Path, runner: Callable[..., Any] | None
+    saga: Mapping[str, Any],
+    *,
+    repo_root: Path,
+    runner: Callable[..., Any] | None,
+    confirmed_refs: CeremonyRefs | None = None,
 ) -> dict[str, Any]:
     """Delete the ceremony's **head** branch, local and origin, and close its manifest
     entry.
@@ -935,14 +1006,33 @@ def _do_branch_delete(
     ``_close_if_registered`` no-ops on unknown ids by design. One resolved value makes
     that divergence unrepresentable.
 
-    The empty/``main`` guard below stays as defense in depth — the resolver already
-    refuses to answer with an empty ref, but a destructive path keeps its own floor."""
-    refs = resolve_ceremony_refs(saga, repo_root=repo_root, runner=runner)
+    ``confirmed_refs`` is the ceremony's refs as ``run()`` already resolved and
+    validated them against the operator's ``branch_delete:<target>`` confirmation
+    (issue #635 code-review P0). Re-resolving here instead would reopen the very split
+    this function closed one level down: the resolver degrades from the PR to local
+    evidence on any non-zero ``gh`` exit, so a single transient failure between the
+    gate and this call answers from a different rung and can name a different branch —
+    leaving the operator's confirmation and the hazard scan bound to a value that never
+    reaches ``git``. Direct callers (tests, and any path that has not been through the
+    gate) may omit it and this resolves for itself.
+
+    Two floors below, both defense in depth. The empty/``main`` check is the older one.
+    The ``branch == refs.base`` check is the one that matters: it is the last thing
+    standing when no PR exists at all, because ``_probe_branch_delete_targets_base``
+    returns ``None`` without a PR number and the hazard therefore never runs. Comparing
+    the two refs we already hold costs nothing and needs no network."""
+    refs = confirmed_refs or resolve_ceremony_refs(saga, repo_root=repo_root, runner=runner)
     branch = refs.head
     if not branch or branch == "main":
         raise TransitionFailedError(
             f"refusing to delete branch {branch!r}; resolved ceremony head looks wrong "
             f"(resolution source: {refs.source})"
+        )
+    if branch == refs.base:
+        raise TransitionFailedError(
+            f"refusing to delete branch {branch!r}: it is this ceremony's resolved BASE "
+            f"branch, the branch the merge landed on (resolution source: {refs.source}). "
+            "Deleting it is the issue #635 data-loss incident"
         )
     head_sha = _run(["git", "rev-parse", branch], cwd=repo_root, runner=runner).stdout.strip()
     _run(["git", "branch", "-d", branch], cwd=repo_root, runner=runner)
@@ -1207,9 +1297,11 @@ def run(
     # and the hazard is inert by construction. ``_probe_branch_delete_targets_base``
     # documents the rung split in full.
     resolved_head: str | None = None
+    confirmed_refs: CeremonyRefs | None = None
     if upcoming in CONFIRMATION_TARGET_TRANSITIONS:
         refs = resolve_ceremony_refs(saga, repo_root=repo_root, runner=runner)
         resolved_head = refs.head
+        confirmed_refs = refs
         qualified = f"--operator-confirmed {upcoming}:{refs.head}"
         provenance = f"head resolved from {refs.source}"
         if confirmed_transition is None:
@@ -1270,7 +1362,19 @@ def run(
         except merge_watcher.MergeWatcherError as exc:
             raise MergePreflightError(str(exc)) from exc
 
-    extra = _RUNNERS[upcoming](saga, repo_root=repo_root, runner=runner) or {}
+    # The refs the gate above validated are HANDED to the runner rather than left for
+    # it to re-derive (issue #635 code-review P0). A second independent
+    # ``resolve_ceremony_refs()`` inside the runner is not a redundant-but-equal call:
+    # rung 1 degrades to rung 2 on any non-zero ``gh`` exit, so one transient failure
+    # between the two calls answers from a different rung and can name a different
+    # branch — the operator's confirmation and the hazard scan would then have been
+    # computed against a value the destructive step never sees. Passing the validated
+    # object makes "the branch the operator authorized" and "the branch git deletes"
+    # the same object by construction, and drops a redundant ``gh pr view`` besides.
+    runner_kwargs: dict[str, Any] = {}
+    if confirmed_refs is not None:
+        runner_kwargs["confirmed_refs"] = confirmed_refs
+    extra = _RUNNERS[upcoming](saga, repo_root=repo_root, runner=runner, **runner_kwargs) or {}
 
     ship_undo.append_entry(
         repo_root=repo_root,

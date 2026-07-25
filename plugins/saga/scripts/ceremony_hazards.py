@@ -17,6 +17,13 @@ function that shells out takes a ``runner`` callable, defaulted to
 ``subprocess.run`` resolved at call time (never bound as a default argument), so
 tests can pass a fake runner directly.
 
+Issue #635 (U4, R2) adds a third hazard on the same shape: ``branch_delete_targets_base``
+fires when the branch ``branch_delete`` is about to delete IS the PR's base branch. It is
+the independent second check behind the resolver — the live incident deleted
+``outcome/norns-next-horizon`` local and origin because the deletion target came from the
+saga's rolling ``branch`` field, and a refusal registered here lands before
+``ship_ceremony.run()`` dispatches its runner or saves the tick.
+
 Fail-loud contract: a probe that cannot complete (non-zero exit, unparseable JSON)
 raises ``HazardProbeError`` — ``detect()`` never swallows a probe failure into an
 empty (i.e. "clean") result. Reversible transitions are not gated at all (R1/R2/U1
@@ -58,9 +65,10 @@ class HazardProbeError(HazardError):
 
 @dataclass(frozen=True)
 class Hazard:
-    """A single detected hazard. ``acknowledgeable=False`` hazards (currently just
-    ``merge_not_landed``, KTD3) can never be bypassed via ``--acknowledge-hazard`` —
-    they resolve only by the underlying condition actually changing."""
+    """A single detected hazard. ``acknowledgeable=False`` hazards (``merge_not_landed``
+    and ``branch_delete_targets_base``, KTD3) can never be bypassed via
+    ``--acknowledge-hazard`` — they resolve only by the underlying condition actually
+    changing."""
 
     hazard_id: str
     transition: str
@@ -73,8 +81,9 @@ class Hazard:
 # ``run()``'s ``--acknowledge-hazard`` flag draws its ``choices`` from this tuple.
 STACKED_PR = "stacked_pr"
 MERGE_NOT_LANDED = "merge_not_landed"
+BRANCH_DELETE_TARGETS_BASE = "branch_delete_targets_base"
 
-HAZARD_REGISTRY: tuple[str, ...] = (STACKED_PR, MERGE_NOT_LANDED)
+HAZARD_REGISTRY: tuple[str, ...] = (STACKED_PR, MERGE_NOT_LANDED, BRANCH_DELETE_TARGETS_BASE)
 
 # Transitions this module gates at all (R1/R2/U1 Behavior: "Non-gated transitions
 # return [] without probing"). Any transition not in this set costs zero ``gh``
@@ -146,10 +155,24 @@ def _probe_stacked_pr(
     transition: str,
     repo_root: Path,
     runner: Callable[..., Any] | None,
+    resolved_head: str | None = None,
 ) -> Hazard | None:
     """Probes for an open PR based on the branch about to be deleted (branch_delete)
-    or merged (merge) — R1 / U1 Behavior."""
-    branch = str(saga.get("branch") or "")
+    or merged (merge) — R1 / U1 Behavior.
+
+    ``resolved_head`` wins over the saga's recorded ``branch`` when the caller supplies
+    one (issue #635 code-review). The summary line above is the contract — "the branch
+    about to be deleted" — and on a leaf-into-outcome ceremony ``saga["branch"]`` is
+    not that branch: it is re-stamped from ``git branch --show-current`` on every tick
+    save, so after ``checkout_main`` it names the PR *base*. Probing the base asks the
+    wrong question in both directions: a child PR stacked on the real head goes
+    undetected and the branch is deleted out from under it, while every sibling leaf
+    still open against the base fires a spurious hazard — and this one IS
+    acknowledgeable, so spurious firings train the operator to wave it through.
+
+    ``merge`` passes no ``resolved_head`` (only ``branch_delete`` confirms a target),
+    so that transition keeps the recorded-branch operand it always had."""
+    branch = str(resolved_head or saga.get("branch") or "")
     if not branch:
         return None
     stacked = _run_gh_json(
@@ -178,10 +201,14 @@ def _probe_merge_not_landed(
     transition: str,
     repo_root: Path,
     runner: Callable[..., Any] | None,
+    resolved_head: str | None = None,
 ) -> Hazard | None:
     """Probes the ceremony PR's live state before letting ``branch_delete`` run —
-    R2, the raw gh auto-merge/branch-delete flag reorder hazard. Not
-    acknowledgeable (KTD3): it resolves only by the merge actually landing."""
+    the raw gh auto-merge/branch-delete flag reorder hazard (issue #346, R2). Not
+    acknowledgeable (KTD3): it resolves only by the merge actually landing.
+
+    ``resolved_head`` is part of the uniform probe signature (issue #635/U4) and is
+    unused here: PR state, not the deletion target, is what this probe reads."""
     pr_number = _current_pr_number(saga)
     if pr_number is None:
         # No PR recorded yet — branch_delete this early is already going to fail
@@ -210,9 +237,88 @@ def _probe_merge_not_landed(
     )
 
 
+def _probe_branch_delete_targets_base(
+    saga: Mapping[str, Any],
+    *,
+    transition: str,
+    repo_root: Path,
+    runner: Callable[..., Any] | None,
+    resolved_head: str | None = None,
+) -> Hazard | None:
+    """Probes whether ``branch_delete``'s target IS the PR's base branch — issue #635,
+    R2. Not acknowledgeable (KTD3): there is no legitimate case for deleting the branch
+    the ceremony just merged into, so there is nothing an operator could acknowledge.
+
+    The base comes from the PR itself (``baseRefName`` — the shared, externally durable
+    record). The head is ``resolved_head`` when the caller supplies one:
+    ``ship_ceremony.run()`` passes the value ``resolve_ceremony_refs()`` produced, i.e.
+    the branch the runner will actually hand to ``git branch -d`` /
+    ``git push origin --delete``.
+
+    **Which rung this protects, stated precisely, because the honest answer is "not all
+    of them".** When the resolver answered on rung 1, ``resolved_head`` and ``base``
+    both came from the same ``gh pr view --json headRefName,baseRefName`` record, and
+    GitHub forbids a same-repo PR whose head IS its base — so on rung 1 the two operands
+    cannot be equal and this probe is structurally inert. That is fine: rung 1 is
+    authoritative and cannot produce a wrong target in the first place.
+
+    This probe exists for **rung 2**, where the head comes from the opened-resource
+    manifest's ``ceremony-branch:`` entry and the base from the PR — two genuinely
+    independent records that can agree wrongly. That is the ``outcome/norns-next-horizon``
+    incident shape: local ceremony evidence naming the base branch as the head, with a
+    destructive ``git branch -d`` downstream of it. See
+    ``tests/test_ship_ceremony.py::test_branch_delete_targets_base_fires_on_the_rung_2_incident_topology``
+    for the reachable case; the sibling tests that force ``head == base`` on the PR
+    record prove the refusal ORDERING, on a topology GitHub cannot actually produce.
+
+    With no ``resolved_head`` supplied it falls back to the PR's own ``headRefName``,
+    which keeps a standalone ``detect()`` call meaningful (a fork PR can legitimately
+    report head == base) without ever inventing a target.
+
+    An absent or empty ref name never matches: ``"" == ""`` must not read as "the target
+    is the base". A missing answer is a missing answer, not a hazard."""
+    pr_number = _current_pr_number(saga)
+    if pr_number is None:
+        # No PR recorded yet — nothing authoritative to compare against; branch_delete
+        # this early fails its own downstream checks.
+        return None
+    if not _PR_NUMBER_RE.fullmatch(pr_number):
+        raise HazardProbeError(
+            f"pr_refs entry yields pr_number {pr_number!r}, not a plain PR number; "
+            "refusing to probe with it"
+        )
+    pr = _run_gh_json(
+        ["pr", "view", pr_number, "--json", "headRefName,baseRefName"],
+        repo_root=repo_root,
+        runner=runner,
+    )
+    base = str(pr.get("baseRefName") or "")
+    head = str(resolved_head or pr.get("headRefName") or "")
+    if not head or not base or head != base:
+        return None
+    return Hazard(
+        hazard_id=BRANCH_DELETE_TARGETS_BASE,
+        transition=transition,
+        message=(
+            f"branch_delete would delete {head!r}, which is PR #{pr_number}'s base branch "
+            "— the branch this ceremony merged INTO"
+        ),
+        remedy=(
+            "do not delete the base; re-resolve this ceremony's head (the PR's headRefName "
+            "and the opened-resource manifest's ceremony-branch: entry are the only valid "
+            "sources) and re-run. Not acknowledgeable"
+        ),
+        acknowledgeable=False,
+    )
+
+
 # Per-transition probe pipelines, in registry order (KTD3 ordering contract).
 _PROBES_BY_TRANSITION: Mapping[str, tuple[Callable[..., Hazard | None], ...]] = {
-    "branch_delete": (_probe_stacked_pr, _probe_merge_not_landed),
+    "branch_delete": (
+        _probe_stacked_pr,
+        _probe_merge_not_landed,
+        _probe_branch_delete_targets_base,
+    ),
     "merge": (_probe_stacked_pr,),
 }
 
@@ -227,6 +333,8 @@ def detect(
     upcoming: str,
     repo_root: Path,
     runner: Callable[..., Any] | None = None,
+    *,
+    resolved_head: str | None = None,
 ) -> list[Hazard]:
     """Probe live ``gh`` state for hazards on the upcoming transition.
 
@@ -234,13 +342,31 @@ def detect(
     without issuing any ``gh`` call. Gated transitions run their probe pipeline in
     ``HAZARD_REGISTRY`` order; a probe that raises propagates immediately —
     ``detect()`` never catches a probe failure and reports it as "no hazards".
+
+    ``resolved_head`` (issue #635/U4, optional and keyword-only so every existing
+    call site is unchanged) is the branch the caller has resolved as this ceremony's
+    deletion target. ``branch_delete_targets_base`` compares it against the PR's own
+    base, and ``_probe_stacked_pr`` uses it as the branch to ask about.
+
+    That comparison spans two INDEPENDENT records only when the caller resolved on
+    rung 2 (manifest head vs PR base). When the caller resolved on rung 1, both
+    operands came from one ``gh pr view`` record and the comparison is inert by
+    construction — correctly, because rung 1 cannot produce a wrong target. Do not
+    restate this as "two derivation paths" without that qualification; it was written
+    that way once and was false.
     """
     probes = _PROBES_BY_TRANSITION.get(upcoming)
     if not probes:
         return []
     hazards: list[Hazard] = []
     for probe in probes:
-        hazard = probe(saga, transition=upcoming, repo_root=repo_root, runner=runner)
+        hazard = probe(
+            saga,
+            transition=upcoming,
+            repo_root=repo_root,
+            runner=runner,
+            resolved_head=resolved_head,
+        )
         if hazard is not None:
             hazards.append(hazard)
     return hazards

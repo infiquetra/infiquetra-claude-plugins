@@ -4203,3 +4203,82 @@ for the slot.
 time. A test that monkeypatches a collaborator and still passes when the patch is a no-op is a false-
 confidence test; prove the patch bites (assert a fabricated value the real collaborator could not
 produce, or assert the fake was called).
+
+---
+
+### A validated value must travel to the thing it authorizes, or the gate guards a different value than the one that acts {#validated-value-must-travel-635}
+
+**Evidence.** Pre-PR code review of #635 at `6b0a8180`, artifact
+`docs/code-reviews/2026-07-25-issue-635-ceremony-ref-resolution-code-review.md`. `ship_ceremony.run()`
+called `resolve_ceremony_refs()` (`:1211`), validated the operator's
+`--operator-confirmed branch_delete:<target>` against the result, and handed the resolved head to the
+`branch_delete_targets_base` hazard probe. It then dispatched
+`_RUNNERS[upcoming](saga, repo_root=..., runner=...)` (`:1273`) — a uniform signature carrying neither
+the confirmed target nor the refs — and `_do_branch_delete` (`:940`) resolved again from scratch.
+Two independent review lenses reproduced the consequence end-to-end; the sharper run deleted
+`outcome/norns-next-horizon` local and origin **through the new code**, with the non-acknowledgeable
+hazard reporting clean.
+
+**Mechanism.** The consequence needs the resolver's own defining property. `resolve_ceremony_refs`
+degrades from rung 1 (the PR, via `gh pr view`) to rung 2 (the opened-resource manifest plus the base
+sidecar) on **any** non-zero `gh` exit — deliberately, so an operator finishing a ship offline is not
+stranded. That makes the function non-deterministic across calls in exactly the way a cache would not
+be: two invocations seconds apart, same inputs, can answer from different rungs and return different
+branches. So the confirmation check, the hazard scan, and the deletion were three computations that
+usually agree rather than one value used three times. One transient `gh` failure inside a single
+`run()` is enough to separate them, and every gate still reports pass because each gate genuinely did
+pass — against the value it saw.
+
+Note the shape of the original defect this was fixing: the deletion target and the manifest resource
+id were derived independently from the same wrong field. The fix collapsed that to one resolved value
+*inside* `_do_branch_delete`, and reintroduced the identical class of split *across the operator
+gate*. The blast radius moved up a level and became invisible to the unit that had been fixed.
+
+**Generalizable rule.** When a gate validates a value and a later step re-derives it, they are two
+values, not one — and a resolver that degrades between sources makes "usually equal" the strongest
+guarantee available. Pass the validated object through to the step it authorizes so identity is
+structural, and treat a uniform dispatch signature as a place values get silently dropped. Corollary
+for review scope: unit-scoped verify panels cannot see this class of defect at all. Five refute
+panels passed this change set; the defect lived in the seam between the unit that built the resolver
+and the unit that built the gate, and only a diff-wide pass surfaced it.
+
+---
+
+### A rolling tick field read as ceremony state produces a three-part silent failure {#ceremony-tick-field-as-state-635}
+
+**Evidence.** `ship_ceremony.py`'s `_do_branch_delete` (issue #635, grounded at `474fd3cc`): on a
+leaf-into-outcome PR whose last saga tick save happened while checked out on the base branch,
+`branch_delete` deleted the **base** branch, both locally and on `origin`, rather than the PR's head.
+The real incident (2026-07-20/21, `infiquetra/team-norns`, saga `issue-236`) deleted
+`outcome/norns-next-horizon` local and origin while the actual feature branch survived; recovery
+depended on the rollback manifest's recorded head SHA plus local object-store retention.
+
+**Mechanism.** `saga.py:566` stamps `"branch": git branch --show-current` on **every** `save` — the
+field means "whatever branch the last save happened on," not "the branch this ceremony opened." Three
+independent call sites each read that field (or the literal string `main`) as if it recorded ceremony
+identity, and the failure it produced had three parts, not one: (1) the deletion itself ran against
+the base branch, with the origin-side `git push --delete` swallowing failure under `check=False`; (2)
+the manifest close addressed `ceremony-branch:<base>` — an id that was never registered, so
+`_close_if_registered`'s by-design no-op on unknown ids (`:346-357`) hid the divergence with no error;
+(3) the real feature branch's `ceremony-branch:<head>` entry stayed `open` forever, because
+`_teardown_attempt_closes` (`:604`) auto-closes only `scratch` and `worktree` kinds, never `branch` —
+so every later teardown attempt raised `TeardownBlockedError` permanently. Only the first part is
+visible without reading the other two call sites; the manifest divergence and the permanent teardown
+block are consequences that don't surface until much later, at a point disconnected from the original
+mistargeted delete.
+
+**Generalizable rule.** A destructive target must resolve from write-once, ceremony-scoped evidence —
+a value written once, at the moment the fact becomes true, and never touched again — never from a
+field that is re-derived on every save. A field's docstring or origin ("this is `git
+branch --show-current`") is not evidence of what it means to a later reader; a rolling field answers
+"what is true right now," and a ceremony needs the answer to "what was true when this ceremony
+opened." When three call sites each independently derive the same fact from one ambient source, that
+is the signal to centralize into one resolver rather than trust that all three derivations will keep
+agreeing — the fix here (`resolve_ceremony_refs()`, `{#ceremony-ref-resolution-635}`) replaced five
+independent guesses with one PR-authoritative-then-sidecar ladder that raises rather than falling back
+to the rolling field.
+
+**Refs.** `plugins/saga/scripts/ship_ceremony.py` (`resolve_ceremony_refs`, `_do_branch_delete`,
+`_do_merge`), `plugins/saga/scripts/ship_undo.py` (`_undo_merge`, `_merge_entry_base`),
+`plugins/saga/scripts/ceremony_hazards.py` (`BRANCH_DELETE_TARGETS_BASE`); decision
+`{#ceremony-ref-resolution-635}`; issue #635.

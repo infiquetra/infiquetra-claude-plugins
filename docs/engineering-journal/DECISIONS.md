@@ -5785,3 +5785,88 @@ only confirms auto-settle does not *paper over* a double-dispatched ledger).
 promote the per-manifest threshold knob KTD1 deferred. Or `required_checks` / `closure_gate` stops being
 inert, at which point evidence-gated (not barrier-gated) settle-on-harvest becomes a real, separate
 option.
+
+## Ship ceremony resolves head/base from one resolver, never the rolling `branch` tick field (#635) {#ceremony-ref-resolution-635}
+
+**KTD1 — One resolver, every consumer.** `resolve_ceremony_refs()` is the single source for the PR's
+head and base; the destructive `branch_delete` target, its manifest-close id, `checkout_main`'s
+target, both `gh pr create --base` sites, and `_do_merge`'s SHA probes all consume it. The
+three-part `branch_delete` failure (base deleted, wrong manifest key closed silently by
+`_close_if_registered`'s by-design no-op on an unregistered id, the real branch's entry left open
+forever because `_teardown_attempt_closes` handles only `scratch`/`worktree` kinds) existed because
+the deletion target and the manifest key were derived independently from the same wrong field; one
+resolver makes that divergence unrepresentable. *Rejected:* patch each of the five call sites
+independently — this reproduces the exact failure mode being fixed, since two independently-derived
+values can silently agree wrongly.
+
+**KTD2 — Resolution ladder: PR-authoritative, then manifest+sidecar, then raise.** (1) `gh pr view
+--json headRefName,baseRefName` when the saga carries a PR ref; (2) the `ceremony-branch:` entry on
+`opened_resources.json` (written once at push time, never re-stamped) for head, plus a per-saga base
+sidecar; (3) raise. `saga["branch"]` is never a rung. *Rejected:* manifest-first — the manifest is
+local disk state written by this machine, and the PR is the shared, operator-visible truth; preferring
+local state over the PR record is how the ceremony reached this bug. *Rejected:* PR-only, no manifest
+rung — that would make a destructive path hard-depend on network reachability at exactly the moment
+an operator is finishing a ship.
+
+**KTD3 — The R2 hazard is scoped to rung 2, and the CHANGELOG says so exactly.** On rung 1 the head
+and base both come from one `gh pr view` record, and GitHub forbids a same-repo PR whose head equals
+its base — so `BRANCH_DELETE_TARGETS_BASE` is inert there by construction, correctly: rung 1 is
+authoritative and cannot yield a wrong target. The hazard's real job is rung 2, where the head comes
+from the opened-resource manifest and the base from the PR — two independent records that can agree
+wrongly, the exact shape of the `outcome/norns-next-horizon` incident. An earlier draft of this
+change described the probe as comparing "two derivation paths" in general; a verify panel traced the
+operands on rung 1 and showed both still originate in one PR query, so that framing was corrected
+before it shipped — see the Revisit-when clause below for what would change this.
+
+**KTD4 — Ceremony base lives in a per-saga sidecar, not a tick field.** Following
+`{#ceremony-sidecars-forward-only-undo-346}`: ceremony safety state is per-saga JSON, never a rolling
+saga field. A tick field rolls with whatever branch the last save happened on; a sidecar is written
+once, at the moment the fact becomes true, and stays ceremony-scoped for the ceremony's lifetime.
+
+**KTD5 — The default branch is resolved, never hardcoded.** `resolve_default_branch()` reads `git
+symbolic-ref refs/remotes/origin/HEAD`, falling back to `gh repo view --json defaultBranchRef`, and
+raises rather than defaulting to the literal `"main"` when both fail. *Rejected:* replacing one
+hardcoded `main` with another — this repo family already contains repos whose default branch is not
+the ceremony's base, so a second hardcode would move the bug rather than remove it.
+
+**KTD6 — `--operator-confirmed branch_delete:<target>` is required for `branch_delete`.** The bare
+form refuses with a message naming the resolved target, so the operator's confirming invocation
+carries a value they have actually seen — the typed-payload growth `{#ship-ceremony-operator-gate-526}`'s
+own "Revisit when" clause anticipated ("a transition is added whose confirmation needs an argument of
+its own"). The mismatch rule stays uniform: a qualified confirmation whose target does not match the
+resolved target refuses, exactly like a plain name mismatch. Every other transition keeps the bare
+grammar. *Migration:* `plugins/saga/skills/work/SKILL.md` and
+`plugins/saga/skills/work/references/pr-continuation-loop.md` both named the old bare-form invocation
+and are updated in this same change. *Behavior note, not a breaking change:* this moved
+`--operator-confirmed merge:x` with `merge` upcoming from the raw-string mismatch refusal to the
+"does not take a confirmation target" refusal, because the guard now compares the parsed transition
+name rather than the raw string — both refuse, only the diagnostic wording changed, and the path was
+CLI-unreachable before (argparse `choices=` rejected the colon form).
+
+**Defect F — `ship_undo._undo_merge` reverts on the recorded base, not the literal `main`.** Found by
+a refute panel after the initial fix landed E (recording the right squash sha) without touching the
+consumer: `_undo_merge` still hardcoded `git checkout main`, `git revert --no-edit <sha>` on whatever
+that checkout left `HEAD` on, and `git push origin main`, three times over. Fixing E alone moves the
+bug from "wrong sha recorded" to "right sha, wrong branch reverted" rather than removing it, so F is
+folded into this same decision rather than deferred. A rollback-manifest entry with no recorded base
+(every entry written before this ships) floors at the literal `main`
+(`ship_undo.LEGACY_MERGE_BASE`), not the resolved repo default — such an entry's `merge_sha` was read
+by a pre-#635 `_do_merge` that probed `refs/heads/main` verbatim, so `main` is provably where it came
+from. *Rejected:* fall back to `resolve_default_branch()` for a base-less legacy entry — an earlier
+draft of this requirement said exactly that, and a verify panel showed it sends the revert to a
+`trunk`-default repo's `trunk`, a branch the recorded sha was never read from. Provenance beats
+currency.
+
+**Rejected (whole-design).** Fixing `branch_delete` (A) without also fixing the merge SHA probe (E) —
+leaves the undo path fully able to revert an unrelated healthy commit on the default branch. Fixing E
+without F — moves the bug from mis-recorded evidence to mis-applied evidence; both are the same root
+defect and ship together. Extending the outcome store to carry ceremony refs
+(`{#ship-teardown-terminal-gate-347}`'s territory) — wrong ownership axis; ceremony refs are
+ceremony-scoped, not outcome-scoped.
+
+**Revisit when.** A transition other than `branch_delete` needs a typed confirmation payload —
+generalize `_parse_operator_confirmation` past a single `transition:target` shape rather than
+special-casing a second colon-qualified transition. Or the rung-2 topology stops being reachable in
+practice (e.g. the opened-resource manifest is retired) — at that point `BRANCH_DELETE_TARGETS_BASE`
+becomes dead code and should be removed rather than left as an inert backstop with no live rung to
+guard.

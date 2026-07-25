@@ -1,5 +1,72 @@
 # Changelog
 
+## [0.115.0] - 2026-07-25
+
+### Fixed - ship ceremony resolves head and base from ceremony-scoped evidence, not the rolling `branch` tick field (#635)
+
+`ship_ceremony.py` treated `saga["branch"]` — a field re-stamped from `git branch --show-current` on
+every tick save (`saga.py:566`) — as if it recorded the ceremony's own branch. On a leaf-into-outcome
+PR whose last save happened on the base branch, that field names the base, and five call sites
+consumed it (or the literal string `main`) as ceremony state. All five are fixed by routing through
+one new resolver, `resolve_ceremony_refs()`: PR-authoritative (`gh pr view --json
+headRefName,baseRefName`) first, the `ceremony-branch:` opened-resource manifest entry plus a
+per-saga base sidecar second, and a raise — never a fallback to `saga["branch"]` — when both are
+exhausted.
+
+- **A — `branch_delete` no longer targets the base.** The deletion target, the `git rev-parse`
+  existence check, and the `ceremony-branch:<id>` manifest close all derive from the one resolved
+  head value, so the deletion target and the manifest key can never diverge again. Previously a
+  mistargeted delete both destroyed the base branch (local + origin) and silently no-op'd the real
+  manifest close (`_close_if_registered`'s by-design behavior on an unregistered id), leaving the
+  real branch's `ceremony-branch:` entry open forever — `_teardown_attempt_closes` closes only
+  `scratch` and `worktree` kinds, never `branch`, so teardown stayed permanently blocked.
+- **B — `checkout_main` checks out the resolved base**, not the literal `main`. Its return value is
+  unchanged (`saga.get("branch")`) — that value feeds the `checkout_main` rollback-manifest entry
+  consumed by `ship_undo._restore_pre_ceremony_checkout`, whose contract is to restore the
+  pre-ceremony checkout, not the branch just checked out.
+- **C, D — both `gh pr create` call sites** (`_do_open_pr` and `start()`) pass an explicit `--base`
+  from ceremony context, defaulting to the dynamically resolved repo default branch
+  (`resolve_default_branch()`: `git symbolic-ref refs/remotes/origin/HEAD`, falling back to
+  `gh repo view --json defaultBranchRef`) rather than the literal `main`.
+- **E — `_do_merge` probes the ceremony's resolved base** for both `pre_merge_main_sha` and
+  `merge_sha`, instead of `refs/heads/main`. The key name `pre_merge_main_sha` is kept as-is — it is
+  a keyword argument of `ship_undo.append_entry` referenced by the test suite, and the field is
+  audit-only forensic context that `undo()` never consumes programmatically. Before this fix, an
+  outcome-based ceremony recorded `main`'s unrelated, fully reachable tip as `merge_sha`; the undo
+  path's `SHA_UNREACHABLE` guard never fired on that value, so a bad revert was one `ship --undo`
+  away from landing on the default branch.
+- **F — `ship_undo._undo_merge` now applies the revert to the ceremony's recorded base**, not the
+  literal `main`, on all three commands it issues: the checkout, the revert (which runs on whatever
+  branch the checkout left `HEAD` on), and the push. `append_entry` records the resolved base on the
+  `merge` rollback-manifest entry at merge time, so undo needs no network call to recover it. A
+  rollback-manifest entry written before this ships (no recorded base) floors at the **literal**
+  `main` (`ship_undo.LEGACY_MERGE_BASE`) — deliberately not the repo's current resolved default
+  branch, since such an entry's `merge_sha` was read by the pre-#635 `_do_merge`, which probed
+  `refs/heads/main` verbatim. Provenance beats currency: resolving the current default for a legacy
+  entry could send the revert to a branch the sha was never read from.
+- **New hazard `BRANCH_DELETE_TARGETS_BASE`** (`ceremony_hazards.py`), `acknowledgeable=False`,
+  probed only for the `branch_delete` transition: fires when the resolved head equals the resolved
+  base, and refuses before the runner dispatches and before the saga tick save, so the ledger is
+  provably unadvanced on a refusal. The probe is a backstop on the resolver's fallible rung: on rung
+  1 the head and base come from one `gh pr view` record, and GitHub forbids a same-repo PR whose
+  head equals its base, so the check is inert there by construction, correctly — rung 1 is
+  authoritative. It guards rung 2, where the head comes from the opened-resource manifest and the
+  base from the PR — two independent records that can agree wrongly, the shape of the originating
+  `outcome/norns-next-horizon` incident.
+- **Confirmation grammar — `branch_delete` now requires a qualified target
+  (`--operator-confirmed branch_delete:<branch>`)**, naming the resolved head branch, instead of the
+  bare transition name. A bare `--operator-confirmed branch_delete` refuses with a message naming the
+  resolved target; a qualified target that does not match the resolved value also refuses. Every
+  other transition's bare confirmation grammar is unchanged. Behavior note: this also moved one
+  previously-uniform outcome — `--operator-confirmed merge:x` with `merge` upcoming used to hit the
+  raw-string mismatch refusal and now hits the "does not take a confirmation target" refusal, because
+  the guard now compares the parsed transition name rather than the raw string. Both paths still
+  refuse; only the wording changed. This was unreachable via the CLI before the change (`argparse`
+  `choices=` rejected the colon form) and reachable only via the Python API.
+- Two documentation surfaces migrated to the qualified grammar: `plugins/saga/skills/work/SKILL.md`
+  and `plugins/saga/skills/work/references/pr-continuation-loop.md`.
+- No `fleet-core` bump (`fleet_commons/` untouched) and no `mission-control` bump (no verb added).
+
 ## [0.114.0] - 2026-07-24
 
 ### Fixed - `/outcome` board-sync + `/pulse` resolve mission-control via the plugin ladder (#620)

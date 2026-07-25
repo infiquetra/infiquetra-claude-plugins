@@ -104,7 +104,13 @@ def _saga(**overrides: Any) -> dict[str, Any]:
 
 
 def test_hazard_registry_contains_canonical_ids() -> None:
-    assert CH.HAZARD_REGISTRY == (CH.STACKED_PR, CH.MERGE_NOT_LANDED)
+    # Issue #635/U4 appends BRANCH_DELETE_TARGETS_BASE to the registry (R2/KTD3); the
+    # first two ids and their order are unchanged.
+    assert CH.HAZARD_REGISTRY == (
+        CH.STACKED_PR,
+        CH.MERGE_NOT_LANDED,
+        CH.BRANCH_DELETE_TARGETS_BASE,
+    )
 
 
 def test_merge_not_landed_is_not_acknowledgeable_by_construction() -> None:
@@ -168,6 +174,89 @@ def test_merge_not_landed_treats_merged_state_without_timestamp_as_not_landed() 
 
 
 # --------------------------------------------------------------------------- #
+# Issue #635 / R2: branch_delete_targets_base — the deletion target IS the PR base
+# --------------------------------------------------------------------------- #
+
+
+def _landed(**overrides: Any) -> dict[str, Any]:
+    """A confirmably-merged ``pr view`` payload carrying both ref names, so the
+    merge_not_landed probe stays silent and only the R2 probe can speak."""
+    payload: dict[str, Any] = {
+        "state": "MERGED",
+        "mergedAt": "2026-07-25T00:00:00Z",
+        "headRefName": "work/635-ceremony-ref-resolution",
+        "baseRefName": "outcome/norns-next-horizon",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_branch_delete_targets_base_fires_when_head_equals_base() -> None:
+    """R2: the resolved head equalling the resolved base means branch_delete would
+    delete the branch the PR merged INTO — the live incident's shape."""
+    runner = FakeRunner(
+        pr_list=[],
+        pr_view=_landed(headRefName="outcome/norns-next-horizon"),
+    )
+    hazards = CH.detect(_saga(), "branch_delete", ROOT, runner)
+    assert [h.hazard_id for h in hazards] == [CH.BRANCH_DELETE_TARGETS_BASE]
+    assert hazards[0].transition == "branch_delete"
+    assert "outcome/norns-next-horizon" in hazards[0].message
+
+
+def test_branch_delete_targets_base_is_not_acknowledgeable_by_construction() -> None:
+    """KTD3: there is no legitimate case for deleting the PR base, so there is
+    nothing to acknowledge — the hazard is not acknowledgeable, matching
+    merge_not_landed."""
+    runner = FakeRunner(pr_list=[], pr_view=_landed(headRefName="outcome/norns-next-horizon"))
+    hazard = CH.detect(_saga(), "branch_delete", ROOT, runner)[0]
+    assert hazard.acknowledgeable is False
+
+
+def test_branch_delete_targets_base_silent_when_head_differs_from_base() -> None:
+    runner = FakeRunner(pr_list=[], pr_view=_landed())
+    assert CH.detect(_saga(), "branch_delete", ROOT, runner) == []
+
+
+def test_branch_delete_targets_base_uses_the_injected_resolved_head() -> None:
+    """``run()`` resolves the deletion target through ``resolve_ceremony_refs`` and
+    injects it, so the check compares the branch that will ACTUALLY be deleted against
+    the PR's authoritative base — a second derivation path, not a restatement of the
+    PR's own head."""
+    runner = FakeRunner(pr_list=[], pr_view=_landed())
+    fired = CH.detect(
+        _saga(), "branch_delete", ROOT, runner, resolved_head="outcome/norns-next-horizon"
+    )
+    assert [h.hazard_id for h in fired] == [CH.BRANCH_DELETE_TARGETS_BASE]
+    assert "outcome/norns-next-horizon" in fired[0].message
+    silent = CH.detect(
+        _saga(), "branch_delete", ROOT, runner, resolved_head="work/635-ceremony-ref-resolution"
+    )
+    assert silent == []
+
+
+def test_branch_delete_targets_base_ignores_a_payload_missing_ref_names() -> None:
+    """A ``pr view`` payload without headRefName/baseRefName must not read as
+    ``"" == ""`` and fire — an absent answer is not a match."""
+    runner = FakeRunner(pr_list=[], pr_view={"state": "MERGED", "mergedAt": "2026-07-25T00:00:00Z"})
+    assert CH.detect(_saga(), "branch_delete", ROOT, runner) == []
+
+
+def test_branch_delete_targets_base_is_not_probed_for_merge() -> None:
+    """Probed only for branch_delete: ``merge`` does not delete anything, so the
+    head==base topology raises no hazard there."""
+    runner = FakeRunner(pr_list=[], pr_view=_landed(headRefName="outcome/norns-next-horizon"))
+    assert CH.detect(_saga(), "merge", ROOT, runner) == []
+
+
+def test_branch_delete_targets_base_probe_failure_raises() -> None:
+    """Fail-loud: the R2 probe never degrades a failed ``gh`` call into "no hazard"."""
+    runner = FakeRunner(pr_list=[], pr_view_fails=True)
+    with pytest.raises(CH.HazardProbeError):
+        CH.detect(_saga(), "branch_delete", ROOT, runner)
+
+
+# --------------------------------------------------------------------------- #
 # Clean topology
 # --------------------------------------------------------------------------- #
 
@@ -221,13 +310,25 @@ def test_pr_view_probe_failure_raises() -> None:
 
 
 def test_hazard_ordering_is_registry_order() -> None:
+    # Issue #635/U4: the payload now also carries head == base, so ALL THREE hazards
+    # fire at once and the ordering assertion covers the whole registry rather than
+    # its first two entries.
     runner = FakeRunner(
         pr_list=[{"number": 202, "title": "child PR"}],
-        pr_view={"state": "OPEN", "mergedAt": None},
+        pr_view={
+            "state": "OPEN",
+            "mergedAt": None,
+            "headRefName": "outcome/demo",
+            "baseRefName": "outcome/demo",
+        },
     )
     hazards = CH.detect(_saga(), "branch_delete", ROOT, runner)
-    assert [h.hazard_id for h in hazards] == [CH.STACKED_PR, CH.MERGE_NOT_LANDED]
-    assert list(CH.HAZARD_REGISTRY) == [CH.STACKED_PR, CH.MERGE_NOT_LANDED]
+    assert [h.hazard_id for h in hazards] == [
+        CH.STACKED_PR,
+        CH.MERGE_NOT_LANDED,
+        CH.BRANCH_DELETE_TARGETS_BASE,
+    ]
+    assert [h.hazard_id for h in hazards] == list(CH.HAZARD_REGISTRY)
 
 
 def test_garbled_pr_ref_fails_loud_never_reaches_gh() -> None:

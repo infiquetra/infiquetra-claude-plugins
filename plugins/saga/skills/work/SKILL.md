@@ -749,7 +749,8 @@ On a clean gate (or recorded override):
    approved + clean + fresh, **offer to run the rest of the ceremony** — four separate
    `ship_ceremony.py run` invocations, one transition each (#526): `run --operator-confirmed merge`,
    a bare `run` for `checkout_main`, a bare `run` for `pull`, then
-   `run --operator-confirmed branch_delete` — each explicitly confirmed, never silent; merge is a
+   `run --operator-confirmed branch_delete:<target>` naming the resolved head branch (issue
+   #635/KTD6) — each explicitly confirmed, never silent; merge is a
    git op `/work` owns under confirmation, `ship_ceremony.py` is the mechanism, not a new authority.
    On merge, set `phase_status=complete` and route to `/qa` **advisorily**.
    See `references/pr-continuation-loop.md` under "Merge-watcher and hazards" for safety contracts.

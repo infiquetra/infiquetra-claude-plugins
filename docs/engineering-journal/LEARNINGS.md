@@ -4203,3 +4203,44 @@ for the slot.
 time. A test that monkeypatches a collaborator and still passes when the patch is a no-op is a false-
 confidence test; prove the patch bites (assert a fabricated value the real collaborator could not
 produce, or assert the fake was called).
+
+---
+
+### A rolling tick field read as ceremony state produces a three-part silent failure {#ceremony-tick-field-as-state-635}
+
+**Evidence.** `ship_ceremony.py`'s `_do_branch_delete` (issue #635, grounded at `474fd3cc`): on a
+leaf-into-outcome PR whose last saga tick save happened while checked out on the base branch,
+`branch_delete` deleted the **base** branch, both locally and on `origin`, rather than the PR's head.
+The real incident (2026-07-20/21, `infiquetra/team-norns`, saga `issue-236`) deleted
+`outcome/norns-next-horizon` local and origin while the actual feature branch survived; recovery
+depended on the rollback manifest's recorded head SHA plus local object-store retention.
+
+**Mechanism.** `saga.py:566` stamps `"branch": git branch --show-current` on **every** `save` — the
+field means "whatever branch the last save happened on," not "the branch this ceremony opened." Three
+independent call sites each read that field (or the literal string `main`) as if it recorded ceremony
+identity, and the failure it produced had three parts, not one: (1) the deletion itself ran against
+the base branch, with the origin-side `git push --delete` swallowing failure under `check=False`; (2)
+the manifest close addressed `ceremony-branch:<base>` — an id that was never registered, so
+`_close_if_registered`'s by-design no-op on unknown ids (`:346-357`) hid the divergence with no error;
+(3) the real feature branch's `ceremony-branch:<head>` entry stayed `open` forever, because
+`_teardown_attempt_closes` (`:604`) auto-closes only `scratch` and `worktree` kinds, never `branch` —
+so every later teardown attempt raised `TeardownBlockedError` permanently. Only the first part is
+visible without reading the other two call sites; the manifest divergence and the permanent teardown
+block are consequences that don't surface until much later, at a point disconnected from the original
+mistargeted delete.
+
+**Generalizable rule.** A destructive target must resolve from write-once, ceremony-scoped evidence —
+a value written once, at the moment the fact becomes true, and never touched again — never from a
+field that is re-derived on every save. A field's docstring or origin ("this is `git
+branch --show-current`") is not evidence of what it means to a later reader; a rolling field answers
+"what is true right now," and a ceremony needs the answer to "what was true when this ceremony
+opened." When three call sites each independently derive the same fact from one ambient source, that
+is the signal to centralize into one resolver rather than trust that all three derivations will keep
+agreeing — the fix here (`resolve_ceremony_refs()`, `{#ceremony-ref-resolution-635}`) replaced five
+independent guesses with one PR-authoritative-then-sidecar ladder that raises rather than falling back
+to the rolling field.
+
+**Refs.** `plugins/saga/scripts/ship_ceremony.py` (`resolve_ceremony_refs`, `_do_branch_delete`,
+`_do_merge`), `plugins/saga/scripts/ship_undo.py` (`_undo_merge`, `_merge_entry_base`),
+`plugins/saga/scripts/ceremony_hazards.py` (`BRANCH_DELETE_TARGETS_BASE`); decision
+`{#ceremony-ref-resolution-635}`; issue #635.

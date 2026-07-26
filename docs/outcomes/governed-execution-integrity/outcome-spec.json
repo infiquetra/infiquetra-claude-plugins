@@ -239,12 +239,13 @@
         "sub-615",
         "sub-626"
       ],
-      "leaf_saga_id": "",
+      "leaf_saga_id": "leaf-governed-execution-integrity-sub-45",
       "child_spec_ref": "",
       "github": {
         "repo": "infiquetra/infiquetra-codex-plugins",
         "issue": "infiquetra/infiquetra-codex-plugins#45",
-        "sub_issue": 45
+        "sub_issue": 45,
+        "pr": "https://github.com/infiquetra/infiquetra-codex-plugins/pull/53"
       },
       "worktree": {},
       "evidence": {},

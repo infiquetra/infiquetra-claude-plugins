@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.115.1] - 2026-07-26
+
+### Fixed - unmanaged sessions arm fleet-lease admission from policy defaults instead of being refused
+
+The `PreToolUse` hook on matcher `Agent|Task` is registered unconditionally for every
+session (`hooks/hooks.json`), but `session_admission_snapshot()` admitted only when the
+session already had a pinned snapshot or carried all four `INFIQUETRA_FLEET_*` variables.
+A session that never invoked a Saga command had neither, so **every** subagent spawn in
+**every** ordinary Claude Code session halted with "normal Agent/Task admission requires a
+configured resolved session snapshot" — and the only way forward was to run a Saga command
+the operator never wanted. The lease registry was healthy throughout (`doctor` reported
+`status: valid`, `leases: []`); the gate was simply fail-closed against sessions it was
+never meant to govern.
+
+`session_admission_snapshot()` now separates the two cases it had been conflating:
+
+- **No fleet environment at all** — the session was never Saga-managed, so it arms from
+  `admission_snapshot()`'s policy defaults (`session_limit=3`, `aggregate_limit=7`,
+  `mutation=read-write`) and admits. Enforcement stays on: the lease is still recorded and
+  the concurrency ceiling still applies.
+- **Some but not all fleet variables** — a preflight ran and did not finish. That is a real
+  fault and still halts, now naming the missing variables instead of giving generic advice.
+
+Fully-armed environments and pinned snapshots are unchanged.
+
+Tests were also made hermetic: they strip `INFIQUETRA_FLEET_*` from the inherited
+environment, so an operator's own fleet settings can no longer decide the assertion.
+
 ## [0.115.0] - 2026-07-25
 
 ### Fixed - ship ceremony resolves head and base from ceremony-scoped evidence, not the rolling `branch` tick field (#635)

@@ -26,6 +26,17 @@ POLICY_PATH = (
 )
 HOOKS_JSON = SAGA / "hooks" / "hooks.json"
 
+# Mirrors lease_broker._ADMISSION_ENV. Tests strip these from the inherited
+# environment so an operator's own fleet settings cannot decide the outcome.
+_ADMISSION_ENV = frozenset(
+    {
+        "INFIQUETRA_FLEET_SESSION_LIMIT",
+        "INFIQUETRA_FLEET_AGGREGATE_LIMIT",
+        "INFIQUETRA_FLEET_POLICY_SHA256",
+        "INFIQUETRA_FLEET_MUTATION",
+    }
+)
+
 
 def _load(path: Path, name: str) -> ModuleType:
     spec = importlib.util.spec_from_file_location(name, path)
@@ -281,18 +292,48 @@ def test_capacity_refusal_blocks_agent_tool_before_spawn(tmp_path: Path) -> None
     assert len(_leases(authority)) == 1
 
 
-def test_normal_agent_requires_pinned_resolved_session_admission(tmp_path: Path) -> None:
+def test_unmanaged_session_arms_normal_agent_admission_from_policy_defaults(
+    tmp_path: Path,
+) -> None:
+    """A session that never ran a Saga preflight is not Saga-managed, so it admits."""
+
     authority = tmp_path / "authority"
-    env = dict(os.environ)
+    env = {k: v for k, v in os.environ.items() if k not in _ADMISSION_ENV}
     env["INFIQUETRA_FLEET_STATE_DIR"] = str(authority)
-    missing = _run_hook(
+    admitted = _run_hook(
         LIFECYCLE_HOOK,
-        _spawn_payload(tmp_path, "tool-missing"),
+        _spawn_payload(tmp_path, "tool-unmanaged"),
         cwd=tmp_path,
         environment=env,
     )
-    assert missing.returncode == 2
-    assert "configured resolved session snapshot" in missing.stderr
+    assert admitted.returncode == 0
+    limits = P.AdmissionLimits()
+    assert _leases(authority)[0]["session_limit"] == limits.max_concurrent
+
+
+def test_partial_admission_environment_still_refuses_before_spawn(tmp_path: Path) -> None:
+    """A half-resolved environment means a preflight broke; that must not be papered over."""
+
+    authority = tmp_path / "authority"
+    env = {k: v for k, v in os.environ.items() if k not in _ADMISSION_ENV}
+    env["INFIQUETRA_FLEET_STATE_DIR"] = str(authority)
+    env["INFIQUETRA_FLEET_SESSION_LIMIT"] = "1"
+    refused = _run_hook(
+        LIFECYCLE_HOOK,
+        _spawn_payload(tmp_path, "tool-partial"),
+        cwd=tmp_path,
+        environment=env,
+    )
+    assert refused.returncode == 2
+    assert "incomplete Saga admission environment" in refused.stderr
+    assert "INFIQUETRA_FLEET_MUTATION" in refused.stderr
+    assert _leases(authority) == []
+
+
+def test_normal_agent_uses_pinned_resolved_session_admission(tmp_path: Path) -> None:
+    authority = tmp_path / "authority"
+    env = {k: v for k, v in os.environ.items() if k not in _ADMISSION_ENV}
+    env["INFIQUETRA_FLEET_STATE_DIR"] = str(authority)
 
     limits = P.AdmissionLimits()
     _broker(authority).configure_session_admission(

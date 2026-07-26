@@ -21,6 +21,27 @@ def _clear_ambient_saga_concurrency_override(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.delenv("SAGA_MAX_CONCURRENT", raising=False)
 
 
+# Same concern as above, for the fleet-lease admission surface. An operator who arms these
+# in their shell (or in ~/.claude/settings.json `env`) makes `session_admission_snapshot`
+# take its explicit-environment branch, which then disagrees with any snapshot a test
+# pinned itself — so admission tests would pass or fail based on the operator's own
+# machine. Tests that need these set them explicitly after this fixture runs.
+_FLEET_ADMISSION_ENV = (
+    "INFIQUETRA_FLEET_SESSION_LIMIT",
+    "INFIQUETRA_FLEET_AGGREGATE_LIMIT",
+    "INFIQUETRA_FLEET_POLICY_SHA256",
+    "INFIQUETRA_FLEET_MUTATION",
+)
+
+
+@pytest.fixture(autouse=True)
+def _clear_ambient_fleet_admission_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep lease-admission tests independent of the operator's armed fleet environment."""
+
+    for var in _FLEET_ADMISSION_ENV:
+        monkeypatch.delenv(var, raising=False)
+
+
 # --- #279 hard floor: GitHub-write test modules can never touch the live operations board ---
 _GH_WRITE_TEST_MODULES = {"test_mission_control", "test_outcome_board_sync", "test_ship_ceremony"}
 

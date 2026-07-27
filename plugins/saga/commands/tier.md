@@ -47,7 +47,11 @@ tier — a ceiling only clamps down (`{#tier-vocab-ordering}`), and an up-ladder
       python3 plugins/saga/scripts/execution_spec.py patch <spec.json> --already-run "<ids>" -o <spec.json>
       python3 plugins/saga/scripts/execution_spec.py validate <spec.json>
       python3 plugins/saga/scripts/execution_spec.py emit <spec.json> -o <topic>.workflow.js
+      python3 plugins/saga/scripts/spec_table.py <spec.json> --backend <backend>
       ```
+      Paste the table into your reply. A mid-run re-tier changes what the operator already
+      approved, so re-surface the same approval view they saw at `/plan` -- new tiers, new spend
+      against budget, and whether the backend still reaches every model in the patched spec.
 
 4. **Log, don't prompt (ceiling).** A ceiling clamp is logged (unit id, original -> clamped tier) and
    never re-prompts.

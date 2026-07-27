@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.118.0] - 2026-07-27
+
+### Added - `spec_table.py`: the execution-spec approval table, at every backend approval (#668)
+
+- New `scripts/spec_table.py` renders a spec as the artifact an operator actually approves:
+  summary (backend, unit count, spend vs budget, resolved concurrency), a per-unit table (tier,
+  `depends_on`, shape — fan-out/pilot/verify panel/engine/sandbox/escalation — and ordinal spend),
+  the dependency waves showing what genuinely runs in parallel, and **what the chosen backend can
+  and cannot enforce**.
+- The enforceability section is the reason this exists. `SANDBOX_ENFORCEABLE_BY_BACKEND` and
+  `TIER_ENFORCEABLE_BY_BACKEND` (`execution_spec.py:401-424`) say that `cc-workflows-ultracode`
+  and `inline` enforce read-only + disposable-worktree and reach every model, while
+  `team-execution` enforces **neither** axis and cannot reach `fable`. A spec whose verify panels
+  need a sandbox the backend cannot enforce HALTs at emit — the operator now sees that *before*
+  approving instead of after the run fails.
+- Read from those registries directly, never a second copy: a registry edit is the only way to
+  change what the table reports, and a test pins that coupling.
+- Unknown backends enforce nothing, matching the emitter's own R3/R4 stance that unknown is never
+  permissive.
+
+### Changed - approval is one artifact in one format, wherever the decision is made
+
+- `skills/plan/SKILL.md` Step 5 now renders the table instead of asking Claude to hand-build one.
+- `commands/tier.md` re-surfaces it after a mid-run patch — a re-tier changes what was already
+  approved.
+- `skills/work/SKILL.md` renders it before emitting and executing.
+- `skills/outcome/SKILL.md` renders it at leaf backend approval. `outcome.py` previously had 25
+  `json.dumps` calls and no table at all.
+
+
 ## [0.117.0] - 2026-07-27
 
 ### Removed - five never-fired guard modules (#666)

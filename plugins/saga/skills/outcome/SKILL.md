@@ -157,6 +157,20 @@ The execution backends a leaf can be dispatched to — inline / fork / subagent 
 cc-workflows-ultracode / `/goal` / manual — are wired in later units; the dispatch *seam* and the
 reconcile loop are the contract.
 
+**Surface the approval table at every backend approval.** When a leaf carries an
+`orchestration_ref` spec and the operator is being asked to approve its backend, render it — never
+paste the spec JSON:
+
+```bash
+python3 plugins/saga/scripts/spec_table.py <orchestration_ref_spec.json> --backend <backend>
+```
+
+Paste the output verbatim. This is the same view `/plan` shows at Step 5, deliberately: the
+operator approves one artifact in one format wherever the decision is made. The enforceability
+rows are the reason it exists — `cc-workflows-ultracode` enforces read-only and
+disposable-worktree and reaches every model, `team-execution` enforces neither axis and cannot
+reach `fable`, and neither fact is visible in the spec itself.
+
 ## Autonomous board-sync (`advance --autonomous`)
 
 By default `advance` performs **no** GitHub writes — it dispatches and derives status, nothing more. The

@@ -100,12 +100,28 @@ def test_every_required_poll_boundary_is_in_skill_reference_and_inventory() -> N
     assert "no always-on daemon" in combined
 
 
-def test_sendmessage_hook_is_registered_for_pre_post_and_failure() -> None:
+def test_no_hook_gates_sendmessage() -> None:
+    """No saga hook may gate ``SendMessage`` -- it hard-blocked the agent-teams primitive.
+
+    ``liveness_reping_hook.py`` extracted the recipient from ``tool_input`` keys
+    ``recipient``/``target_agent_id``/``target``.  The host tool's actual schema is
+    ``{to, message, summary}``, so extraction always failed, the hook raised, and
+    ``PreToolUse`` exited 2 -- blocking *every* ``SendMessage`` call rather than only the
+    staged-claim ones its own docstring promised to touch (the recipient parse ran before
+    the pending-claim lookup, so the "passes silently" path was unreachable).
+
+    This is a regression guard, not a conformance check: re-registering any blocking hook
+    on ``SendMessage`` re-breaks agent teams.  A future liveness binding must read ``to``
+    and must fail open.
+    """
     hooks = json.loads(_read(HOOKS))["hooks"]
-    for event in ("PreToolUse", "PostToolUse", "PostToolUseFailure"):
-        matching = [row for row in hooks[event] if row.get("matcher") == "SendMessage"]
-        assert len(matching) == 1
-        assert any("liveness_reping_hook.py" in hook["command"] for hook in matching[0]["hooks"])
+    for event, rows in hooks.items():
+        for row in rows:
+            matcher = row.get("matcher") or ""
+            assert "SendMessage" not in matcher, (
+                f"{event} registers a hook on SendMessage ({matcher!r}); "
+                "a PreToolUse failure there blocks all inter-agent messaging"
+            )
 
 
 def test_detection_has_no_destructive_action_owner() -> None:

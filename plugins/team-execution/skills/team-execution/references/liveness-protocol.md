@@ -57,15 +57,19 @@ the lock-current winner receives a durable `reping-intent`. Before SendMessage, 
 recipient/message tuple, then call `stage-send` with that digest and claim. Never place message text in
 the ledger or staged record.
 
-Saga's `liveness_reping_hook.py` joins the staged claim to the host tool-use ID:
+**The send-completion binding has been removed.** Saga previously carried a
+`liveness_reping_hook.py` on `SendMessage` Pre/Post/Failure to join the staged claim to the host
+tool-use ID. That hook read the recipient from `tool_input` keys `recipient`/`target_agent_id`/
+`target`; the host tool's schema is `{to, message, summary}`, so the parse always failed and the
+`PreToolUse` leg exited 2 — hard-blocking *every* `SendMessage` call, not just staged ones.
 
-- PostToolUse records `reping-sent`; only this starts a response window and counts an attempt.
-- A host-explicit `definitive-not-sent` records `reping-send-failed`. Ordinal 0 permits exactly one
-  predecessor-bound ordinal-1 claim; ordinal 1 becomes nonterminal `reping-delivery-blocked`.
-- Missing or ambiguous completion records only a local unresolved receipt. It creates no ledger send
-  result and is never retried, counted, timed, or exhausted.
-- A host-correlated response records `reping-ack` for explicitly covered generation IDs. `idle-ack`
-  closes notice delivery only.
+Consequence for this protocol: `stage-send` still records the claim, but nothing binds a send
+outcome afterward. A staged claim simply expires unresolved. No `reping-sent`, `reping-send-failed`,
+`reping-delivery-blocked`, or `reping-ack` fact is produced. Treat re-ping as best-effort
+notification with no delivery evidence.
+
+Any future re-binding must read `to`, and must fail **open** — a liveness observer that can block
+the messaging primitive it observes is not an observer.
 
 Three accepted, unacknowledged response windows must expire before Team receives
 `terminal_authority=team-reping-confirmed`. Failed, blocked, unresolved, or merely claimed sends do

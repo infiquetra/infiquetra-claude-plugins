@@ -15,7 +15,7 @@ Every consumer below resolves or invokes it through the production plugin bounda
 | Dependency unblock | `liveness_protocol.py poll` | current subject projection | coordinator may keep dependency blocked | never bypass a missing worker manifest |
 | B2 reviewer fan-out | Team SKILL Step B2 poll | all resident projections | coordinator halts fan-out on evidence defect | no destructive action |
 | Re-ping pre-call | `liveness_protocol.py claim-reping` then `stage-send` | atomic claim and request digest | SendMessage caller only | claim loser sends nothing |
-| SendMessage completion | `hooks/liveness_reping_hook.py` on Pre/Post/Failure | host tool-use ID and hash-only receipt | ledger fact only | ambiguous failure stays unresolved |
+| SendMessage completion | _(removed)_ — no hook may gate `SendMessage` | — | — | send outcome is unobserved; a re-ping claim stays staged and expires |
 | Confirmed Team stall | Saga poll decision | three accepted, expired, unacknowledged windows | issue #358 reclaimer | #357 never stops/releases/deletes |
 
 Required poll cadence is cooperative because the plugin host exposes no always-on daemon. If the

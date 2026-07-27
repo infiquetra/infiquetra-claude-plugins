@@ -4,6 +4,18 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [2.23.0] - 2026-07-27
+
+### Changed - empty-delivery check no longer shells out to a deleted saga helper (#666)
+
+- `references/external-engine-workers.md` step 5a previously instructed the chaperone to run
+  `check_empty_delivery.check_empty_delivery()` (or its CLI). That saga module is removed in #666 —
+  it had zero importers and was never invoked. The step now checks the working tree directly with
+  `git status --porcelain` / `git diff --stat`.
+- The HALT semantics are unchanged: a unit whose evidence claims delivery but changed zero paths
+  still gets a HALT verdict surfaced to the coordinator, and still never reaches the commit step.
+  `dispatch_settlement`'s `silent-no-op` classification remains the wired, proven detector.
+
 ## [2.22.0] - 2026-07-27
 
 ### Changed - re-ping send-completion binding removed with saga's SendMessage hook (#664)

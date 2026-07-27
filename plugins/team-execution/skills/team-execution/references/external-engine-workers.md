@@ -357,11 +357,10 @@ here.
    external engine wrote the worktree.
 5. **Test.** The chaperone runs its unit's tests, same as any resident worker at segment exit.
 5a. **Empty-delivery check (R7, KTD6).** Between Test and the chaperone-owned commit, the
-   chaperone runs `check_empty_delivery.check_empty_delivery()` (or its CLI,
-   `plugins/saga/scripts/check_empty_delivery.py --claims-delivery`) against the working tree. A
+   chaperone checks the working tree with `git status --porcelain` / `git diff --stat`. A
    unit whose evidence claims delivery but changed zero paths gets a HALT verdict — the chaperone
    surfaces that HALT to the coordinator exactly like any other blocked worker and never reaches
-   the commit step below. A proceed verdict authorizes continuing to Apply's commit; the helper
+   the commit step below. A proceed verdict authorizes continuing to Apply's commit; the check
    itself never commits and mints no new auto-commit machinery (none exists in this repo — `/optimize`
    deliberately shed its own). This is a distinct axis from `manifest_store.py`'s `missing-output`
    trip (`manifest_store.py:249-363`), which checks the returned-value axis, not file delivery.

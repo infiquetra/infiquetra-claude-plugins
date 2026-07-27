@@ -116,8 +116,11 @@ def test_docs_model_matches_command_surface() -> None:
     commands = set(model["commands"])
     aliases = set(model["aliases"])
 
-    assert model["command_surface"]["command_files"] == 25
-    assert model["command_surface"]["routable_commands"] == 24
+    # 24/23 after /undo was removed in #666 -- its ledger never held an entry, so the
+    # command could only ever report "nothing to undo". /ship --undo (ship_undo.py, 16 real
+    # rollback manifests) is the surviving, working undo path.
+    assert model["command_surface"]["command_files"] == 24
+    assert model["command_surface"]["routable_commands"] == 23
     assert wrappers == commands | aliases
     assert aliases == {"ceo-review"}
     assert model["aliases"]["ceo-review"]["aliases"] == "/founder-review"

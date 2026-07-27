@@ -53,7 +53,7 @@ Threat model — read before trusting a token:
   than picking one.
 * Gate records (#371) are **not consulted** in v1: this token is CLI-minted, not
   minted from an operator's gate answer. A future attended flow that mints tokens from
-  a live gate-record answer must classify with ``gate_record.is_operator_answerer``
+  a live gate answer must come from a real operator, not an absence resolution
   (carried-forward/absence provenance never mints) — that flow is the issuance
   companion issue, not this module.
 

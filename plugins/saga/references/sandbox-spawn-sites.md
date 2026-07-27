@@ -38,16 +38,6 @@ the parallel-layer thunk's inlined iterate-to-consensus loop — each emits `age
 unconditionally (KTD6). Resolver work-shape: `judgment` (verify/refute-class work — same shape as
 the four skill spawns above).
 
-Also in-scope, ad-hoc by design (issue #402): `plugins/saga/scripts/shadow_audit.py`'s
-replay-one-rung-down sampling hook. The script itself never spawns an Agent (a Python script
-cannot call the Agent tool) — it owns the sampling decision, tier computation, verdict recording,
-and report only. Whichever Claude-driven flow invokes it to actually replay a sampled unit one
-rung down MUST spawn that replay per the ad-hoc rule below (`subagent_type:
-saga:readonly-verifier` + `isolation: "worktree"`), since there is no fixed SKILL.md line to name
-here — the spawn site is wherever the operator (or a future `/work`/team-execution wiring)
-dispatches the replay. Resolver work-shape: `judgment` (the replay's output is compared against
-the original — a verify/refute-class comparison, same shape as the four skill spawns above).
-
 **Resolver work-shape column (#362 U5, R7):** each row above names the `tier_policy.json` registry
 key (or `role-tier:` alias, KTD7) that `fleet_commons.tier_resolver.resolve()` would use to tier
 this spawn site — a routing pointer, not a claim that the site dispatches a model today (the four

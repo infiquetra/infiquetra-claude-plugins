@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.117.0] - 2026-07-27
+
+### Removed - five never-fired guard modules (#666)
+
+Each had **zero production Python importers** and had **never written a runtime artifact** on any
+machine. Verified two ways per module: import-graph grep, and a filesystem search for the artifacts
+each claims to produce.
+
+- `scripts/gate_record.py` (926 lines) — durable operator-absence approval records. No
+  `record.json`, `resolution.json`, or `absence.jsonl` has ever existed. It was CLI-invoked from six
+  skills, but the CI gate with teeth (`lint_gate_absence_contract.py`) checks only the
+  `<!-- gate-record: ... -->` declaration marker in skill prose, never a `gate_record.py`
+  invocation. All six markers are retained; the lint still reports `VIOLATIONS: 0`. The six skills
+  now state the absence behavior as a rule instead of a CLI ceremony.
+- `scripts/undo_ledger.py` (370 lines) + `commands/undo.md` — the act-log-inverse path.
+  `references/adjustment-envelope.md` already documented why it could not work: the path was
+  prompt-mediated and *no production mutation site was ever mechanically wired to the ledger*. No
+  `undo-ledger.jsonl` was ever written, so `/undo` could only ever report an empty ledger.
+  `scripts/ship_undo.py` is the surviving, working rollback path (16 real `rollback_manifest.json`
+  files on disk).
+- `scripts/shadow_audit.py` (420 lines) — sampled tier-sufficiency replay. Zero `shadow-audit:`
+  entries in any evidence ledger.
+- `scripts/check_empty_delivery.py` (150 lines) — its job is already done by
+  `dispatch_settlement`'s `silent-no-op` classification, which has fired for real (2026-07-23,
+  issue-617 units U2/U3).
+- `scripts/reap_orphans.py` (419 lines) — zero importers; `fleet_doctor` denylists it by design.
+- `references/gate-record.md` and the five modules' test files.
+
+### Changed
+
+- Command surface: 25 command files → 24, 24 routable → 23. `/undo` is gone. This is the only
+  user-visible capability change.
+- `references/adjustment-envelope.md`, `references/sandbox-spawn-sites.md`,
+  `references/evidence-write-sites.md`, `references/envelope-token.md`, `skills/work/SKILL.md`, and
+  the six gate-declaring skills updated to match.
+
+
 ## [0.116.0] - 2026-07-27
 
 ### Removed - `liveness_reping_hook.py` hard-blocked every `SendMessage` call

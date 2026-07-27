@@ -21,6 +21,45 @@
 
 ## 2026-07-27
 
+### "Zero importers" understates wiring; "zero artifacts ever written" is the honest deadness test  {#zero-artifacts-beats-zero-importers}
+
+**Context.** Wave 1 of the simplification pass deleted five saga modules the audit had classified as
+dead on the strength of having no production Python importers.
+
+**Evidence.** The import count was misleading in both directions. `gate_record.py` showed 0
+importers but was CLI-invoked from **six** skills (`brainstorm`, `investigate`, `code-review`,
+`founder-review`, `ideate`, `loop`) — real executable steps, not prose. Conversely `reap_orphans.py`
+and `shadow_audit.py` had 0 importers *and* 0 call sites of any kind. The two facts that actually
+decided each verdict were: (a) does any consumer execute it, by import **or** CLI, and (b) has it
+ever produced the artifact it exists to produce? A filesystem sweep answered (b) definitively — no
+`record.json`, no `undo-ledger.jsonl`, no `shadow-audit:` ledger entry, on any machine, ever.
+
+**Mechanism.** In a skills-based plugin the integration seam is a documented CLI call inside a
+SKILL.md, which no import graph can see. So an import-graph audit systematically *under*-counts
+wiring. But a module can be fully wired and still dead, if the instruction is never followed — which
+is exactly what happened: six skills told Claude to run `gate_record.py`, and across months not one
+gate record was written. Wiring proves reachability; artifacts prove use.
+
+**Fix.** Deleted all five (#666, 4,242 lines) after verifying each on the artifact test, and
+separately confirming none was a writer a Tier C reader depends on — only `shadow_audit` wrote to
+shared substrate (`evidence_ledger`) under a `shadow-audit:` namespace that `closure_gate`'s
+explicit `required_checks` allowlist never requests.
+
+**What surprised.** Two of the deletions were *self-documented* as non-functional.
+`references/adjustment-envelope.md` said outright that the undo path was "prompt-mediated" and that
+"no production mutation site is mechanically wired to the ledger yet." The repo had already written
+down that `/undo` could not work, and the command stayed on the surface anyway. An honesty note in a
+reference doc is not a substitute for deleting the thing it is honest about.
+
+**Generalizable rule.** Before deleting, ask two questions, not one: *is anything wired to it* (grep
+imports **and** SKILL.md CLI invocations) and *has it ever produced its artifact* (search the
+filesystem for the file it writes). A module that passes wiring but fails artifacts is aspirational
+machinery — delete it. And when a doc admits a mechanism does not work, treat that as a deletion
+ticket, not a caveat.
+
+**Refs.** [[liveness-reping-hook-blocks-sendmessage]] — same pass, same shape: a test asserting
+wiring while the behavior was broken.
+
 ### A liveness hook pinned to a stale tool schema silently blocked every `SendMessage`  {#liveness-reping-hook-blocks-sendmessage}
 
 **Context.** A strategic simplification pass over the plugin fleet went looking for guards that cost

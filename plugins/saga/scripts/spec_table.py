@@ -207,6 +207,46 @@ def render(
             out.append(f"{i}. {names}{width}")
         out.append("")
 
+    # --- concurrent-writer safety (#671) ---
+    # Rendered for every backend, and above the enforceability section on purpose: a file
+    # collision is not something any backend can enforce its way out of. Concurrent agents share
+    # one working tree and Claude Code has no cross-agent file lock, so this is decided by how the
+    # work was split at planning time — which makes the approval gate the last place it is cheap
+    # to fix.
+    try:
+        conflicts = es.wave_file_conflicts(spec)
+    except es.SpecError:
+        conflicts = []  # dependency_layers already reported the cycle above; do not double-report
+    parallel_waves = [layer for layer in layers if len(layer) > 1]
+    if parallel_waves or conflicts:
+        out.append("### Concurrent-writer safety")
+        out.append("")
+        if conflicts:
+            out.append("| Wave | Units | Shared file |")
+            out.append("|---|---|---|")
+            for conflict in conflicts:
+                shared = ", ".join(f"`{f}`" for f in conflict.files)
+                out.append(
+                    f"| {conflict.wave} | `{conflict.left}` + `{conflict.right}` | {shared} |"
+                )
+            out.append("")
+            out.append(
+                "⛔ **`emit` will HALT.** These units are scheduled to run at the same time and "
+                "declare the same file. Nothing fences concurrent writes to one working tree, so "
+                "the later edit either fails on a stale match or silently drops the earlier one. "
+                "Add a `depends_on` to sequence them, or merge them into one unit — merging is "
+                "usually better, since one agent doing both edits also reuses the prompt cache."
+            )
+            out.append("")
+        else:
+            widest = max(len(layer) for layer in parallel_waves)
+            out.append(
+                f"{len(parallel_waves)} wave(s) run more than one unit at a time (widest: "
+                f"{widest}). No two concurrent units declare the same file, so no write can be "
+                f"lost to a race."
+            )
+            out.append("")
+
     # --- enforceability ---
     if backend:
         rows = enforcement_rows(spec, backend)

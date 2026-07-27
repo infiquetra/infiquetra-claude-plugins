@@ -1762,6 +1762,93 @@ def dependency_layers(spec: ExecutionSpec) -> list[list[str]]:
     return layers
 
 
+@dataclass(frozen=True)
+class WaveConflict:
+    """Two units scheduled to run concurrently that declare the same file (#671)."""
+
+    wave: int
+    """1-based index into ``dependency_layers`` — the parallel wave both units land in."""
+    left: str
+    right: str
+    files: tuple[str, ...]
+    """Every path both units declare, sorted."""
+
+    def describe(self) -> str:
+        shared = ", ".join(f"`{f}`" for f in self.files)
+        return f"wave {self.wave}: `{self.left}` and `{self.right}` both declare {shared}"
+
+
+def wave_file_conflicts(spec: ExecutionSpec) -> list[WaveConflict]:
+    """Units that would run in the same parallel wave while declaring the same file.
+
+    Concurrent agents share one working tree. Claude Code has no cross-agent file lock --
+    read-before-edit orders a single session's own writes and cannot see a second agent between
+    another agent's read and its write -- so two units editing one file race, and the loser's edit
+    is either rejected on a stale match or silently overwritten. Anthropic's agent-teams guidance
+    says the same thing and puts the burden on the operator: split the work so teammates do not
+    share files.
+
+    This is that split, checked mechanically instead of trusted. It reads the ``files`` every unit
+    already declares and compares EXACT paths across each dependency layer.
+
+    Three deliberate differences from ``segment_units()``, which solves the adjacent problem of
+    grouping units into resident workers on the team backend:
+
+    * every declared path participates, not just ``files[0]``;
+    * paths compare exactly, not by their ``plugins/<name>`` directory prefix -- two units in
+      different plugin directories that both touch ``tests/conftest.py`` collide, and a
+      directory-keyed comparison cannot see it;
+    * comparison is per-wave, so it holds for any two units that CAN run together, not only for
+      units that happen to be adjacent in declaration order.
+
+    Returns an empty list for a spec whose waves are all single-unit — which, measured across the
+    18 execution specs committed to ``docs/plans/`` at the time of writing, is 88 of 92 waves.
+    Pure: no I/O, no mutation. Raises ``SpecError`` only via ``dependency_layers`` (cycles and
+    dangling ids), which the caller is already required to handle.
+    """
+    layers = dependency_layers(spec)
+    by_id = {u.unit_id: u for u in spec.units}
+    conflicts: list[WaveConflict] = []
+    for index, layer in enumerate(layers, start=1):
+        if len(layer) < 2:
+            continue
+        for position, left in enumerate(layer):
+            for right in layer[position + 1 :]:
+                shared = set(by_id[left].files) & set(by_id[right].files)
+                if shared:
+                    conflicts.append(
+                        WaveConflict(
+                            wave=index,
+                            left=left,
+                            right=right,
+                            files=tuple(sorted(shared)),
+                        )
+                    )
+    return conflicts
+
+
+def assert_no_wave_file_conflicts(spec: ExecutionSpec) -> None:
+    """Raise ``SpecError`` naming every concurrent-writer collision in the spec.
+
+    HALT rather than degrade, matching how the emitter already treats an unenforceable sandbox
+    axis: a conflict is a planning error with a cheap fix (add a ``depends_on`` so the two units
+    sequence, or merge them into one unit), and it is far cheaper to fix at emit than to debug a
+    silently-dropped edit afterwards. Merging is usually the better repair — one agent doing both
+    edits keeps the file's context warm and reuses the prompt cache, where splitting pays to load
+    the same file into two agents and then risks losing one of their writes.
+    """
+    conflicts = wave_file_conflicts(spec)
+    if not conflicts:
+        return
+    detail = "; ".join(c.describe() for c in conflicts)
+    raise SpecError(
+        f"units scheduled to run concurrently declare the same file(s) — {detail}. "
+        f"Concurrent agents share one working tree and nothing fences their writes: add a "
+        f"depends_on so they sequence, or merge them into one unit (preferred — it also reuses "
+        f"the prompt cache)."
+    )
+
+
 def _concurrency_policy(spec: ExecutionSpec) -> ConcurrencyPolicy:
     return spec.concurrency or ConcurrencyPolicy()
 
@@ -3371,6 +3458,11 @@ def emit_workflow_script(
     )
     emission_registry = _load_emission_registry() if has_external_routes else None
     spec.validate(engine_registry=emission_registry)
+    # #671: two units in one wave declaring the same file race on a shared working tree, and
+    # nothing downstream catches it — workflow work units emit at the ambient default
+    # (workspace_isolation "ambient"); only verify panels are spawned isolated. Halt here, before
+    # any agent is rendered, rather than let the loser's edit disappear at run time.
+    assert_no_wave_file_conflicts(spec)
     settlement_metadata = workflow_settlement_metadata(spec, validate=False)
 
     # #365 U3: a session tier ceiling clamps every unit DOWN before rendering (the operator's live

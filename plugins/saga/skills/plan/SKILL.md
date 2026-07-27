@@ -500,6 +500,22 @@ to approve a backend without showing its enforceability rows: `cc-workflows-ultr
 read-only and disposable-worktree and reaches every model; `team-execution` enforces neither axis
 and cannot reach `fable`. That asymmetry is invisible in the spec itself.
 
+**Split the work so concurrent units never share a file (#671).** The table's
+*Concurrent-writer safety* section reports any two units that would run in the same wave while
+declaring the same path, and `emit` HALTs on one — no backend can enforce its way out of a
+collision, because concurrent agents share one working tree and Claude Code has no cross-agent file
+lock. Get this right while authoring the units, not at emit:
+
+- Different repositories, or disjoint files → safe to run in parallel.
+- Same file → **one unit**, not two. Merging beats sequencing: a single agent making both edits
+  keeps the file's context warm and reuses the prompt cache, where splitting pays to load the same
+  file into two agents and then risks losing one of their writes.
+- Only reach for `depends_on` when the two really are separate pieces of work that happen to touch
+  a shared path.
+
+Bias toward fewer, longer-lived units generally. Parallel width is not free — it costs cache
+reuse, and the fleet's own history is 88 of 92 waves running a single unit.
+
 The operator must explicitly confirm the tier assignments and the control-flow structure before
 `/work` runs it (R8 "approved"). A rejection means revising the spec and re-running validate +
 emit + table.

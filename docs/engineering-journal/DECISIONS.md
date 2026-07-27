@@ -2,6 +2,53 @@
 
 ## 2026-07-27
 
+### Concurrent writers are prevented by how the work is split, not by a runtime fence {#split-not-fence-671}
+
+**Decision.** Two units that land in the same dependency wave may not declare the same file.
+`wave_file_conflicts()` detects it, `assert_no_wave_file_conflicts()` HALTs both emitters before
+anything renders, and `spec_table.py` shows it at every backend approval. The preferred repair is
+**merge into one unit**, not `depends_on` — one agent making both edits keeps the file's context
+warm and reuses the prompt cache, where splitting pays to load the same file into two agents and
+then risks losing one of their writes.
+
+**Rationale.** Concurrent agents share one working tree, and Claude Code has no cross-agent file
+lock — read-before-edit orders a single session's own writes and cannot see another agent between
+a read and a write. Anthropic's agent-teams guidance says the same and assigns the split to the
+operator. Nothing in the fleet was doing that split.
+
+The obvious answer — "re-arm the fleet lease" — does not work, and finding out why is what
+produced this decision. `assert_write_target` performs a containment check only when the claim
+carries a `worktree_root`, and `lease_broker.py:2899` stamps one only for a reservation declaring
+`isolation == "worktree"` or a Workflow-runtime child with no `tool_use_id`. team-execution
+residents are Agent-tool spawns declaring no isolation, so they are stamped without one and the
+function returns at `:3312` having checked nothing. That is deliberate — the #616 privilege change,
+pinned by `test_stamped_non_isolated_claim_leaves_write_unfenced`, whose docstring says "the fence
+is removed". The lease was never the thing protecting this path, armed or disarmed, so its
+kill-switch is a red herring here.
+
+**Rejected alternatives.**
+
+- *Re-arm the fleet lease.* Would change nothing for the spawn kinds at risk, per the above. The
+  broker's remaining value for residents is admission, liveness, and mutation authority — never
+  file containment.
+- *A worktree per resident.* Structurally the strongest answer and still the right long-term
+  shape, but it inverts the cache economics this fleet is optimizing for: residents exist to stay
+  warm across a segment, and a per-resident worktree pays setup and disk to isolate work that
+  should mostly not have been parallel in the first place. Kept in reserve; revisit if parallel
+  width ever becomes load-bearing.
+- *A runtime path fence in `assert_write_target`.* Rebuilds a narrower version of exactly what
+  #616 removed for over-firing, keeps a hook on every `Write`/`Edit`/`Bash`, and catches the
+  collision at the moment of the write — after the wasted work, mid-run, as a HALT. Emit-time
+  detection costs nothing at run time and fails before any agent spawns.
+- *Auto-serialize the conflict instead of halting.* Silently inserting a dependency edge would
+  hide a planning error and change the operator's approved shape after they approved it. The
+  emitter's existing stance on an unenforceable sandbox axis is halt-not-downgrade; this matches.
+
+**Revisit when.** Parallel width stops being incidental — the measured corpus is 88 of 92 waves
+running a single unit, which is why splitting is cheap today. If a real workload needs wide
+same-area fan-out, the merge-preferred advice inverts and per-resident worktrees become the
+proportionate answer.
+
 ### Journal ordering is machine-checked on the diff, not instructed in prose {#journal-order-linted-659}
 
 **Decision.** `LEARNINGS.md` and `DECISIONS.md` ordering is enforced by

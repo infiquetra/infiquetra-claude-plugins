@@ -166,6 +166,47 @@ class TestPrePushGateHookDetection:
         assert hook._cd_target("cd /tmp/other-repo ; git push") == "/tmp/other-repo"
         assert hook._cd_target("git push origin main") is None
 
+    def test_operators_without_whitespace_still_gate(self, hook: Any) -> None:
+        """#670 review finding: a real push must never bypass the gate.
+
+        `shlex.split` only separates an operator with whitespace around it, so
+        `git push&&echo ok` tokenized as ['git', 'push&&echo', 'ok'] -- the subcommand read as
+        `push&&echo`, never matched `push`, and the push went through ungated. A false negative
+        on a safety gate is strictly worse than the over-firing this change fixes.
+        """
+        for command in (
+            "git push&&echo ok",
+            "git add -A&&git push",
+            "git commit -m x;git push",
+            "git push|cat",
+            "git push||echo fail",
+        ):
+            assert hook._push_target(command)[0], f"must gate: {command}"
+
+    def test_quoted_operator_text_still_does_not_gate(self, hook: Any) -> None:
+        """The operator-splitting fix must not undo the fault-(b) fix."""
+        assert not hook._push_target("git commit -m 'a && b push'")[0]
+
+    def test_git_dir_target_resolves_to_the_worktree(self, hook: Any, tmp_path: Path) -> None:
+        """#670 review finding: `--git-dir=<repo>/.git` resolved to no repo, so the gate skipped.
+
+        `--git-dir` names the git directory, not a working tree. Passing it as `cwd` to
+        `git rev-parse --show-toplevel` fails, `_find_repo_root` returns None, and main() exits 0
+        before reading the manifest -- the exact targeting form the fix claimed to support.
+        """
+        assert hook._as_worktree_dir("/tmp/repo/.git") == "/tmp/repo"
+        assert hook._as_worktree_dir("/tmp/repo") == "/tmp/repo"
+        assert hook._as_worktree_dir(None) is None
+
+        import subprocess as sp
+
+        repo = tmp_path / "r"
+        repo.mkdir()
+        sp.run(["git", "init", "-q"], cwd=repo, check=True)
+        assert hook._find_repo_root(str(repo / ".git")) is not None, (
+            "a --git-dir path must resolve to its worktree, not None"
+        )
+
     def test_unparseable_command_does_not_gate(self, hook: Any) -> None:
         """Unbalanced quotes yield no segments -- degrade to not gating, never guess."""
         assert not hook._push_target("git push 'unterminated")[0]

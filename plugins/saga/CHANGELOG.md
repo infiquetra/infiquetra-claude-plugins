@@ -29,6 +29,20 @@ Unknown options before the subcommand are skipped rather than guessed, and an un
 yields no segments — the gate stays off by default rather than firing on a guess. Not a weakening:
 a real push on a failing suite still blocks.
 
+**Two bypasses caught in review (#670) before merge**, both of which let a *real* push skip the
+gate — a false negative on a safety gate, strictly worse than the over-firing this change fixes:
+
+- **Shell operators without whitespace.** `shlex.split` only separates an operator that already
+  has whitespace around it, so `git push&&echo ok` tokenized as `['git', 'push&&echo', 'ok']` —
+  the subcommand read as `push&&echo`, never matched `push`, and the push went through ungated.
+  Same for `git add -A&&git push`, `git commit -m x;git push`, `git push|cat`, `git push||echo`.
+  Now uses `shlex.shlex(..., punctuation_chars=True)`, which splits operators while still keeping
+  a quoted commit message as one token — so the fault-(b) fix is preserved.
+- **`--git-dir` resolved to no repo.** `--git-dir` names the git directory, not a working tree.
+  Passing `<repo>/.git` as `cwd` to `git rev-parse --show-toplevel` fails, `_find_repo_root`
+  returned `None`, and `main()` exited 0 before reading the manifest — the exact targeting form
+  the fix claimed to support. `_as_worktree_dir` now resolves a `.git` path to its parent.
+
 
 ## [0.118.0] - 2026-07-27
 

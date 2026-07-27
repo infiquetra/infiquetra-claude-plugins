@@ -67,13 +67,24 @@ _SEGMENT_SEPARATORS = frozenset({"|", "||", "&&", ";", "&", "\n"})
 def _segments(command: str) -> list[list[str]]:
     """Split a shell command into token lists, one per pipeline/list segment.
 
-    Uses ``shlex`` so quoting is honored: the tokens of ``git commit -m 'git push now'``
-    carry the message as ONE token, which is what makes subcommand identification possible
-    at all. An unparseable command (unbalanced quotes) yields no segments, so the caller
-    degrades to not gating rather than guessing.
+    Quoting is honored, so the tokens of ``git commit -m 'git push now'`` carry the message as
+    ONE token -- that is what makes subcommand identification possible at all, and it is the fix
+    for #663 fault (b).
+
+    ``punctuation_chars=True`` is load-bearing and NOT interchangeable with ``shlex.split``.
+    Plain ``split`` only separates an operator that already has whitespace around it, so
+    ``git push&&echo ok`` tokenizes as ``['git', 'push&&echo', 'ok']`` -- the subcommand reads as
+    ``push&&echo``, never equals ``push``, and a **real push silently bypasses the gate**. That is
+    a false negative on a safety gate, strictly worse than the over-firing this change set out to
+    fix. Caught in review on #670 before merge.
+
+    An unparseable command (unbalanced quotes) yields no segments, so the caller degrades to not
+    gating rather than guessing.
     """
     try:
-        tokens = shlex.split(command, posix=True)
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        tokens = list(lexer)
     except ValueError:
         return []
     segments: list[list[str]] = []
@@ -181,6 +192,25 @@ def _cd_target(command: str) -> str | None:
     return None
 
 
+def _as_worktree_dir(target: str | None) -> str | None:
+    """Normalize a targeting path to something usable as a ``cwd``.
+
+    ``--git-dir`` names the **git directory**, not a working tree. Handing ``<repo>/.git`` to
+    ``git rev-parse --show-toplevel`` as ``cwd`` returns non-zero, `_find_repo_root` yields
+    ``None``, and ``main()`` exits 0 before ever reading the manifest -- so the very form the
+    targeting fix claimed to support silently skipped the gate. Caught in review on #670 before
+    merge.
+
+    A path whose basename is ``.git`` resolves to its parent; anything else is returned as-is.
+    """
+    if target is None:
+        return None
+    path = Path(target)
+    if path.name == ".git":
+        return str(path.parent or Path("."))
+    return target
+
+
 def _find_repo_root(cwd: str | None) -> Path | None:
     """Return the git repository root, or None if not inside a repo."""
     try:
@@ -188,7 +218,7 @@ def _find_repo_root(cwd: str | None) -> Path | None:
             ["git", "rev-parse", "--show-toplevel"],
             capture_output=True,
             text=True,
-            cwd=cwd,
+            cwd=_as_worktree_dir(cwd),
             timeout=5,
         )
         if result.returncode == 0:

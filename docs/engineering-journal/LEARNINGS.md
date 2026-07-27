@@ -21,6 +21,36 @@
 
 ## 2026-07-27
 
+### A guard can be disabled, unreachable, and emitting dead artifacts all at once — measure reachability, not presence  {#reachability-not-presence-671}
+
+**Context.** Retiring the fleet write fence, I expected to find one guard in one state: off. It was
+in three independent failure states simultaneously, each of which alone would have made it useless,
+and each of which was invisible from the call site.
+
+**Evidence.** (1) `fleet_commons/lease_broker.py:3297` — `assert_write_target` returns before any
+containment check when the lease carries no `worktree_root`, and `:2899` stamps one only for
+`isolation == "worktree"` spawns, which Agent-tool residents never declare. Pinned at
+`tests/test_fleet_lease_broker.py:1958`. (2) `INFIQUETRA_FLEET_LEASE_ENFORCEMENT=off`
+(`~/.claude/settings.json:11`) made `lease_mutation_hook.py:41` return before importing the broker,
+so the fence had not executed in normal operation at all. (3) Every emitted `.workflow.js` carried
+`const lease = {...}` that nothing read — verified across emitted scripts; a workflow script has no
+filesystem or Node API access, so the generated code *cannot* reach the broker.
+
+**Mechanism.** Each state was introduced by a locally reasonable change. #616 narrowed an
+over-firing fence and correctly exempted the boundary-less case; #615 added a kill switch for
+emergencies; the lease const was emitted for a driver that turned out to live outside the script.
+None of the three is visible from the hook registration, the skill prose, or the emitted artifact.
+Reading any one layer told a story of an armed guard. Only running the chain end-to-end — hook to
+adapter to broker to the branch it actually takes — showed nothing was there.
+
+**The trap in the middle.** The obvious first move on #671 was to re-arm the kill switch. That would
+have changed nothing (state 1 survives re-arming) while producing the *feeling* of a fix, plus the
+20ms-per-edit cost and a wedge risk. A disabled guard advertises the wrong remedy.
+
+**Generalizable rule.** Before repairing, re-arming, or deleting a guard, prove which branch it
+takes on the path you actually care about — run it, or point at the test that pins that branch.
+Presence in a registration, a config, or an emitted artifact is not evidence of reach.
+
 ### The lease broker never fenced the one spawn kind that needed it, and the kill-switch was a red herring  {#lease-never-fenced-residents-671}
 
 **Context.** I filed #671 claiming team-execution residents were unprotected *because* fleet-lease

@@ -2,6 +2,37 @@
 
 ## 2026-07-27
 
+### Delete the write fence now; treat batch renewal as the debt it leaves behind {#fence-carried-batch-renewal-671}
+
+**Decision.** Remove `lease_mutation_hook.py`, its `PreToolUse` registration, and
+`lease_broker.verify_hook_mutation` — the whole write-fence path — while leaving the rest of the
+lease system standing. Record, rather than repair, the fact that `assert_write_target` was doing a
+second undeclared job.
+
+**Rationale.** The fence was unreachable three ways over
+(LEARNINGS `{#reachability-not-presence-671}`), and #673 moved concurrent-writer prevention to emit
+time where it is cheap and total. Keeping an unreachable guard costs 20ms on every Bash and every
+edit, and costs every future reader the time to work out that it does nothing.
+
+**The debt.** `fleet_commons/lease_broker.py:3300-3307` gives `assert_write_target` a side effect:
+it opportunistically renews batch leases, because workflow children emit no lifecycle events between
+waves (#615). Deleting the fence deletes that heartbeat. It does not matter today — the hook was
+disarmed, so the heartbeat was already not firing, and `/work` SKILL.md:386 instructs the driver to
+`renew` cooperatively at collection boundaries. It would matter immediately on re-arming.
+
+**Rejected: rehome batch renewal first, then delete.** That inverts cost and benefit. Rehoming means
+choosing new renewal seams and validating a 300s TTL against real wave durations — real work, in
+service of a code path nobody is running. Doing it first would have blocked a clean deletion behind
+an open design question.
+
+**Rejected: re-arm the kill switch instead.** Would not have reduced collision risk by any amount;
+the fence exempts exactly the spawn kind at risk.
+
+**Revisit when:** anyone proposes re-arming `INFIQUETRA_FLEET_LEASE_ENFORCEMENT`, or the lease
+system's runtime admission is retired wholesale. Either way the gating measurement is the same:
+does a 300s TTL survive the longest real wave with renewal only at wave boundaries? Answer that
+before restoring enforcement, not after.
+
 ### Concurrent writers are prevented by how the work is split, not by a runtime fence {#split-not-fence-671}
 
 **Decision.** Two units that land in the same dependency wave may not declare the same file.

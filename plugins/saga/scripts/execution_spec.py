@@ -3489,14 +3489,6 @@ def emit_workflow_script(
         routing_calibration=routing_calibration,
     )
 
-    lease_metadata = workflow_lease_metadata(
-        spec,
-        validate=False,
-        environment=emission_environment,
-        run_max_concurrent=run_max_concurrent,
-        routing_context=routing_context,
-    )
-
     # #350 AC8: resolve and validate every layer/panel bound before emitting any workflow text.
     max_concurrent_agents(
         spec,
@@ -3543,14 +3535,10 @@ def emit_workflow_script(
             separators=(",", ":"),
         )
     )
-    lines.append(
-        "const lease = "
-        + json.dumps(
-            lease_metadata,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-    )
+    # No `const lease` is emitted (#671). The reservation contract is driver-owned: `/work` runs
+    # `execution_spec.py lease` + `workflow_emitter.py reserve|attest|renew|release` against a
+    # metadata file. A copy baked into the script could never be acted on -- workflow scripts have
+    # no filesystem or Node API access, so the generated code cannot reach the broker at all.
     lines.append("")
     if spec.repo:
         lines.append(f"const REPO = {_js_string(spec.repo)}")

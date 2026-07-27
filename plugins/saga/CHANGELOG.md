@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.122.0] - 2026-07-27
+
+### Removed - the write fence and the emitted lease contract, both unreachable (#671)
+
+0.121.0 moved concurrent-writer prevention to emit time. That left the runtime write fence with
+nothing to defend, and measurement showed it had never been defending it: `assert_write_target`
+performs a containment check only when the claim carries a `worktree_root`, and the #616 privilege
+change stamps one only for spawns declaring `isolation: "worktree"`. Agent-tool residents declare
+none, so the fence returned without a check. Separately,
+`INFIQUETRA_FLEET_LEASE_ENFORCEMENT=off` meant the hook exited before reaching the broker at all.
+
+- Deleted `hooks/lease_mutation_hook.py` and its `PreToolUse`
+  `Bash|Write|Edit|MultiEdit|NotebookEdit` registration. That is 20ms off every Bash and every file
+  edit. Saga's `PreToolUse` registrations go 6 -> 5; the five `lease_lifecycle_hook.py`
+  registrations are untouched.
+- Deleted `scripts/lease_broker.py::verify_hook_mutation`, the hook's only entry point and the only
+  caller of the saga-side `assert_write_target` wrapper.
+- `emit_workflow_script` no longer emits `const lease = {...}`. Nothing ever read it: a workflow
+  script has no filesystem or Node API access, so the generated code could not reach the broker
+  under any circumstance.
+
+Unchanged: `workflow_lease_metadata()`, the `execution_spec.py lease` CLI, and the driver-owned
+`/work` ceremony (`reserve|attest|renew|release`). The reservation contract still exists — only the
+inert copy inside the generated JavaScript is gone.
+
+**If you re-arm `INFIQUETRA_FLEET_LEASE_ENFORCEMENT`, read DECISIONS `{#fence-carried-batch-renewal-671}`
+first.** `assert_write_target` doubled as the only within-wave batch-renewal heartbeat.
+
 ## [0.121.0] - 2026-07-27
 
 ### Added - concurrent units declaring the same file halt at emit (#671)

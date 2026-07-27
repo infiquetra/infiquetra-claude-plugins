@@ -407,25 +407,6 @@ def record_hook_parent(
     return cast(tuple[str, ...], released)
 
 
-def verify_hook_mutation(
-    payload: Mapping[str, Any], environment: Mapping[str, str] | None = None
-) -> Any | None:
-    """Verify delegated mutation; root calls without trusted ``agent_id`` are unchanged."""
-
-    agent_id = _optional_text(payload, "agent_id")
-    if agent_id is None:
-        return None
-    target: str | None = None
-    tool_input = payload.get("tool_input")
-    if isinstance(tool_input, dict):
-        for key in ("file_path", "notebook_path", "path"):
-            value = tool_input.get(key)
-            if isinstance(value, str) and value:
-                target = value
-                break
-    return broker(environment).assert_write_target(agent_id, target)
-
-
 def _lease_payload(lease: Any) -> dict[str, Any]:
     return {
         "lease_id": lease.lease_id,

@@ -118,16 +118,24 @@ def test_exact_maximum_wave_width_and_stable_identity() -> None:
     assert first["policy_sha256"] == P.AdmissionLimits().policy_sha256()
 
 
-def test_emitted_script_exports_template_but_gets_no_filesystem_authority() -> None:
+def test_emitted_script_carries_no_lease_contract_and_no_filesystem_authority() -> None:
+    """#671: the reservation contract is driver-owned, so none of it is baked into the script.
+
+    It never could have been acted on -- a workflow script has no filesystem or Node API access,
+    so the generated code cannot reach the broker. The contract itself is unchanged and still
+    reaches ``/work`` through ``workflow_lease_metadata`` and the ``lease`` CLI.
+    """
+
     spec = _spec()
     script = ES.emit_workflow_script(spec, environment={})
-    template = ES.workflow_lease_metadata(spec, environment={})
-    assert "const lease = " + json.dumps(template, sort_keys=True, separators=(",", ":")) in script
-    assert template["batch_id"] is None
-    assert template["generated_runtime_filesystem_access"] is False
+    assert "const lease" not in script
     assert "lease_broker.py" not in script
     assert "workflow_emitter.py" not in script
     assert "registry.json" not in script
+
+    template = ES.workflow_lease_metadata(spec, environment={})
+    assert template["batch_id"] is None
+    assert template["generated_runtime_filesystem_access"] is False
 
 
 def test_lease_cli_exports_launch_ready_metadata(
@@ -313,13 +321,9 @@ def test_workflow_child_binds_without_pretool_stamp_and_waves_recycle(tmp_path: 
     with pytest.raises(B.LeaseNotFoundError):
         A.claim_hook_agent(_start(tmp_path, "wf-child-extra"), hook_env)
 
-    target = tmp_path / "artifact.txt"
-    for index in range(width):
-        verified = A.verify_hook_mutation(
-            {"agent_id": f"wf-child-{index}", "tool_input": {"file_path": str(target)}},
-            hook_env,
-        )
-        assert verified is not None
+    # The per-child `verify_hook_mutation` round that sat here went with the mutation hook (#671).
+    # It asserted a fence that was already a no-op for these children -- they are claimed with no
+    # `worktree_root`, so `assert_write_target` returned without a containment check.
 
     for index in range(width):
         assert A.record_hook_terminal(_start(tmp_path, f"wf-child-{index}"), hook_env) is True

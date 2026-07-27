@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import sys
 from datetime import date
 from pathlib import Path
@@ -142,17 +143,53 @@ def test_derived_on_read_never_writes(tmp_path: Path, monkeypatch: pytest.Monkey
     assert spec_path.read_text() == original_bytes
 
 
-def test_journal_append_is_pure_append(tmp_path: Path) -> None:
+def test_journal_write_opens_a_new_top_section(tmp_path: Path) -> None:
+    """A retro for a date with no section opens one ABOVE the current newest (#659).
+
+    The previous implementation used ``open("a")``, which filed the entry at the very bottom of
+    a newest-first file — under whatever stale date heading happened to sit there. That is the
+    drift #659 was raised for, so the direction is pinned here.
+    """
     journal = tmp_path / "LEARNINGS.md"
-    journal.write_text("# Learnings\n\nexisting content\n")
+    journal.write_text("# Learnings\n\n## 2026-07-11\n\n### Older thing {#older}\n\nbody\n")
     summary = SR.SpendSummary(rows=[])
 
-    SR.append_to_journal(summary, journal_path=journal, on=date(2026, 7, 12))
+    SR.write_to_journal(summary, journal_path=journal, on=date(2026, 7, 12))
 
     text = journal.read_text()
-    assert text.startswith("# Learnings\n\nexisting content\n")
-    assert "## 2026-07-12 Spend Retro" in text
+    assert text.startswith("# Learnings\n")
+    assert text.index("## 2026-07-12") < text.index("## 2026-07-11"), "new section must be on top"
+    assert text.index("### Spend Retro") < text.index("### Older thing")
+    assert "### Older thing {#older}\n\nbody" in text, "existing content must be untouched"
     assert "no data yet" in text
+
+
+def test_journal_write_reuses_a_same_day_section(tmp_path: Path) -> None:
+    """A second retro on the same day lands inside that day's section, not a duplicate heading."""
+    journal = tmp_path / "LEARNINGS.md"
+    journal.write_text("# Learnings\n\n## 2026-07-12\n\n### Earlier today {#earlier}\n\nbody\n")
+
+    SR.write_to_journal(SR.SpendSummary(rows=[]), journal_path=journal, on=date(2026, 7, 12))
+
+    text = journal.read_text()
+    assert text.count("## 2026-07-12") == 1, "must not open a duplicate date heading"
+    assert "### Earlier today {#earlier}\n\nbody" in text
+
+
+def test_journal_write_emits_an_entry_not_a_section(tmp_path: Path) -> None:
+    """`## <date> Spend Retro` was neither a date section nor an entry — it is now an entry."""
+    journal = tmp_path / "LEARNINGS.md"
+    journal.write_text("# Learnings\n\n## 2026-07-11\n\n### Older {#older}\n\nbody\n")
+
+    SR.write_to_journal(SR.SpendSummary(rows=[]), journal_path=journal, on=date(2026, 7, 12))
+
+    text = journal.read_text()
+    assert "## 2026-07-12 Spend Retro" not in text
+    assert "### Spend Retro {#spend-retro-2026-07-12}" in text
+    # Every `##` heading in the result is a bare date — the shape the journal lint enforces.
+    for line in text.splitlines():
+        if line.startswith("## "):
+            assert re.fullmatch(r"## \d{4}-\d{2}-\d{2}", line), f"non-date section: {line!r}"
 
 
 # ---------------------------------------------------------------------------

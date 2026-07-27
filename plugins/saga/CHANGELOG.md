@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.120.0] - 2026-07-27
+
+### Fixed - the journal's only mechanical writer appended to the bottom of a newest-first file (#659)
+
+`spend_retro.py`'s `append_to_journal` opened `LEARNINGS.md` with `open("a")`, so its section
+landed at the very end — under whatever stale date heading happened to sit there — in a file whose
+own header says "append new entries to the top, most-recent first". It also emitted
+`## <date> Spend Retro`, which is neither a date section (`## YYYY-MM-DD`) nor an entry (`###`),
+so no reader keyed on either shape would classify it correctly.
+
+The function has never run against a real journal (no `Spend Retro` section exists in this repo's
+history), so this fixed a latent writer rather than an active one — but it was the only mechanism
+capable of reintroducing the drift that #659 was raised for, so it goes with the cleanup.
+
+- Renamed to `write_to_journal` and reimplemented as a top-insert: the entry is spliced in above
+  the current newest section, reusing that section's heading when the dates match and opening a new
+  one when they do not. Existing content is still never edited.
+- `render_journal_section` now emits `### Spend Retro {#spend-retro-<date>}` — an entry, under a
+  date section, matching every other entry in the file.
+- Tests pin the direction (new section lands above the old one), same-day reuse (no duplicate
+  heading), and that every `##` heading in the output is a bare date.
+
 ## [0.119.0] - 2026-07-27
 
 ### Fixed - pre-push gate reasons about the git invocation, not the command text (#663)

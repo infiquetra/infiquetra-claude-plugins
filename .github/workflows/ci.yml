@@ -151,6 +151,19 @@ jobs:
           git fetch origin "$PR_BASE_SHA" --depth=1
           uv run python tools/release_surface_diff_guard.py --base-ref "$PR_BASE_SHA"
 
+      # #659: the structural half of this lint runs unconditionally in the `lint` job. This is
+      # the half that actually prevents recurrence — a journal entry ADDED by the branch must
+      # sit in the newest date section. The drift that motivated the lint was invisible
+      # structurally (headings stayed ordered; entries just accumulated under the oldest one),
+      # so only a diff-scoped check catches it, and only a PR has a base to diff against.
+      - name: Journal newest-first guard (new entries)
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch origin "$PR_BASE_SHA" --depth=1
+          uv run python scripts/lint_journal_order.py --base-ref "$PR_BASE_SHA"
+
   lint:
     name: Lint
     runs-on: ${{ fromJSON(vars.WORKFLOW_RUNNER_LABELS || '"ubuntu-latest"') }}
@@ -194,6 +207,13 @@ jobs:
       # plugins/saga/scripts/gate_absence_baseline.json — surfaced, shrink-only, drift fails.
       - name: Gate operator-absence contract lint
         run: uv run python plugins/saga/scripts/lint_gate_absence_contract.py
+
+      # #659: LEARNINGS.md and DECISIONS.md both declare newest-first and both had drifted —
+      # 16 and 20 entries stranded below the oldest heading, four duplicated date headings, five
+      # entries authored at `##` instead of `###`. Structural half: ordering, uniqueness, and
+      # heading level. The new-entry half is PR-scoped and lives in the validate job.
+      - name: Engineering-journal ordering lint
+        run: uv run python scripts/lint_journal_order.py
 
   type-check:
     name: Type Check

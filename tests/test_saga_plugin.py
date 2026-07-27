@@ -45,7 +45,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.121.0"  # wave file-conflict halt (#671)
+    assert plugin_json["version"] == "0.122.0"  # retire the unreachable lease fence (#671)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]
@@ -57,7 +57,9 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
 def test_fleet_lease_runtime_adapters_are_packaged() -> None:
     assert (PLUGIN_ROOT / "scripts" / "lease_broker.py").is_file()
     assert (PLUGIN_ROOT / "hooks" / "lease_lifecycle_hook.py").is_file()
-    assert (PLUGIN_ROOT / "hooks" / "lease_mutation_hook.py").is_file()
+    # No mutation hook since #671: its write fence was a no-op for every spawn without a declared
+    # worktree, and concurrent-writer collisions are now prevented at emit by wave_file_conflicts().
+    assert not (PLUGIN_ROOT / "hooks" / "lease_mutation_hook.py").exists()
 
 
 def test_work_skill_wires_driver_owned_workflow_settlement() -> None:

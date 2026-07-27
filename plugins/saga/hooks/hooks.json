@@ -101,15 +101,6 @@
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/delegation_tripwire_hook.py\""
           }
         ]
-      },
-      {
-        "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/lease_mutation_hook.py\""
-          }
-        ]
       }
     ],
     "SubagentStart": [

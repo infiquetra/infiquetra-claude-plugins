@@ -19,7 +19,6 @@ import pytest
 ROOT = Path(__file__).parent.parent
 SAGA = ROOT / "plugins" / "saga"
 LIFECYCLE_HOOK = SAGA / "hooks" / "lease_lifecycle_hook.py"
-MUTATION_HOOK = SAGA / "hooks" / "lease_mutation_hook.py"
 BROKER_PATH = ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "lease_broker.py"
 POLICY_PATH = (
     ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "concurrency_policy.py"
@@ -157,23 +156,6 @@ def _spawn_payload_with_isolation(
     if isolation is not None:
         tool_input["isolation"] = isolation
     payload["tool_input"] = tool_input
-    return payload
-
-
-def _mutation_payload(cwd: Path, *, child: str | None, tool: str = "Edit") -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "hook_event_name": "PreToolUse",
-        "session_id": "session",
-        "cwd": str(cwd),
-        "tool_name": tool,
-        "tool_input": (
-            {"command": "git status --short"}
-            if tool == "Bash"
-            else {"file_path": str(cwd / "example.txt")}
-        ),
-    }
-    if child is not None:
-        payload["agent_id"] = child
     return payload
 
 
@@ -416,117 +398,13 @@ def test_missing_reservation_at_subagent_start_arms_no_implicit_grant(tmp_path: 
     assert _leases(authority) == []
 
 
-@pytest.mark.parametrize("tool", ["Edit", "Bash", "Write", "MultiEdit", "NotebookEdit"])
-def test_bound_child_mutation_passes_and_root_is_unchanged(tmp_path: Path, tool: str) -> None:
-    authority = tmp_path / "authority"
-    env = _environment(authority)
-    root_authority = tmp_path / "root-unused"
-    root_result = _run_hook(
-        MUTATION_HOOK,
-        _mutation_payload(tmp_path, child=None, tool=tool),
-        cwd=tmp_path,
-        environment=_environment(root_authority),
-    )
-    assert root_result.returncode == 0
-    assert not root_authority.exists()
-
-    _run_hook(LIFECYCLE_HOOK, _spawn_payload(tmp_path, "tool"), cwd=tmp_path, environment=env)
-    _run_hook(LIFECYCLE_HOOK, _start_payload(tmp_path, "child"), cwd=tmp_path, environment=env)
-    child_result = _run_hook(
-        MUTATION_HOOK,
-        _mutation_payload(tmp_path, child="child", tool=tool),
-        cwd=tmp_path,
-        environment=env,
-    )
-    assert child_result.returncode == 0, child_result.stderr
-
-
-@pytest.mark.parametrize("tool", ["Edit", "Bash"])
-def test_removed_bound_worktree_blocks_subsequent_mutation(tmp_path: Path, tool: str) -> None:
-    """#616 R2: only a spawn that declared isolation="worktree" stays fenced to its worktree."""
-
-    authority = tmp_path / "authority"
-    env = _environment(authority)
-    worktree = tmp_path / "leased-worktree"
-    worktree.mkdir()
-    _run_hook(
-        LIFECYCLE_HOOK,
-        _spawn_payload_with_isolation(worktree, "tool", "worktree"),
-        cwd=tmp_path,
-        environment=env,
-    )
-    started = _run_hook(
-        LIFECYCLE_HOOK, _start_payload(worktree, "child"), cwd=tmp_path, environment=env
-    )
-    assert started.returncode == 0
-    worktree.rmdir()
-
-    blocked = _run_hook(
-        MUTATION_HOOK,
-        _mutation_payload(worktree, child="child", tool=tool),
-        cwd=tmp_path,
-        environment=env,
-    )
-    assert blocked.returncode == 2
-    assert "leased worktree is missing" in blocked.stderr
-
-
-def test_missing_expired_and_superseded_child_authority_block_mutation(tmp_path: Path) -> None:
-    authority = tmp_path / "authority"
-    env = _environment(authority)
-    missing = _run_hook(
-        MUTATION_HOOK,
-        _mutation_payload(tmp_path, child="missing"),
-        cwd=tmp_path,
-        environment=env,
-    )
-    assert missing.returncode == 2
-    assert "no fleet lease is bound" in missing.stderr
-
-    _run_hook(LIFECYCLE_HOOK, _spawn_payload(tmp_path, "tool"), cwd=tmp_path, environment=env)
-    _run_hook(LIFECYCLE_HOOK, _start_payload(tmp_path, "child"), cwd=tmp_path, environment=env)
-    raw = json.loads((authority / B.REGISTRY_NAME).read_text(encoding="utf-8"))
-    only = next(iter(raw["leases"].values()))
-    only["renewed_monotonic_ns"] = 0
-    (authority / B.REGISTRY_NAME).write_text(json.dumps(raw), encoding="utf-8")
-    os.chmod(authority / B.REGISTRY_NAME, 0o600)
-    expired = _run_hook(
-        MUTATION_HOOK,
-        _mutation_payload(tmp_path, child="child", tool="Bash"),
-        cwd=tmp_path,
-        environment=env,
-    )
-    assert expired.returncode == 2
-    assert "expired" in expired.stderr
-
-    # A fresh retry for the exact logical resource becomes the durable head.
-    existing = _broker(authority).inspect()["leases"][0]
-    limits = P.AdmissionLimits()
-    retry = _broker(authority).acquire_agent(
-        owner_id="retry-owner",
-        session_id="retry-session",
-        policy_sha256=limits.policy_sha256(),
-        session_limit=limits.max_concurrent,
-        aggregate_limit=limits.aggregate_max_concurrent,
-        mutation="read-write",
-        resource_ref=existing["resource_ref"],
-        agent_id="fresh-child",
-    )
-    stale = _run_hook(
-        MUTATION_HOOK,
-        _mutation_payload(tmp_path, child="child"),
-        cwd=tmp_path,
-        environment=env,
-    )
-    fresh = _run_hook(
-        MUTATION_HOOK,
-        _mutation_payload(tmp_path, child="fresh-child"),
-        cwd=tmp_path,
-        environment=env,
-    )
-    assert stale.returncode == 2
-    assert fresh.returncode == 0
-    assert _broker(authority).verify(retry.resource_ref, retry.token).agent_id == "fresh-child"
+# The three write-fence tests that lived here were removed with `lease_mutation_hook.py` (#671).
+# They asserted that a bound child could mutate, that a removed worktree blocked a later mutation,
+# and that missing/expired/superseded child authority refused one. All three exercised
+# `assert_write_target`, which the #616 privilege change had already reduced to a no-op for any
+# spawn without a declared worktree. The broker-level behavior they incidentally covered is still
+# pinned directly: supersede-becomes-head at `test_fleet_lease_broker.py:862`
+# (`test_retry_supersedes_at_full_capacity`) and the fence's own two branches at `:1958`/`:1990`.
 
 
 @pytest.mark.parametrize("first_signal", ["parent", "child"])
@@ -604,9 +482,12 @@ def test_hooks_json_arms_every_required_lifecycle_seam() -> None:
         "lease_lifecycle_hook.py" in command
         for command in _commands(events["PreToolUse"], "Agent|Task")
     )
-    assert any(
+    # No mutation fence on the write path since #671, and nothing should put one back without
+    # rehoming batch renewal first — see DECISIONS {#fence-carried-batch-renewal-671}.
+    assert not any(
         "lease_mutation_hook.py" in command
-        for command in _commands(events["PreToolUse"], "Bash|Write|Edit|MultiEdit|NotebookEdit")
+        for matcher in (None, "Bash|Write|Edit|MultiEdit|NotebookEdit")
+        for command in _commands(events["PreToolUse"], matcher)
     )
     assert any(
         "lease_lifecycle_hook.py" in command for command in _commands(events["SubagentStart"])
@@ -903,21 +784,20 @@ def test_hooks_json_arms_bounded_teardown_recovery_seams() -> None:
     assert session_start and session_start[0]["timeout"] == 15
 
 
-def test_kill_switch_off_bypasses_both_hooks_and_touches_no_state(tmp_path: Path) -> None:
-    """#615 R7: the exact value "off" disarms both hooks loudly and reads no broker state."""
+def test_kill_switch_off_disarms_the_lifecycle_hook_and_touches_no_state(tmp_path: Path) -> None:
+    """#615 R7: the exact value "off" disarms loudly and reads no broker state.
+
+    Covered one hook since #671 removed ``lease_mutation_hook.py``; the kill switch itself is
+    unchanged, and this is now the only hook it gates.
+    """
 
     authority = tmp_path / "state"
     env = _environment(authority, INFIQUETRA_FLEET_LEASE_ENFORCEMENT="off")
-    mutation = _run_hook(
-        MUTATION_HOOK, _mutation_payload(tmp_path, child="ghost"), cwd=tmp_path, environment=env
-    )
-    assert mutation.returncode == 0
-    assert "INFIQUETRA_FLEET_LEASE_ENFORCEMENT=off" in mutation.stderr
-    assert "DISABLED" in mutation.stderr
     lifecycle = _run_hook(
         LIFECYCLE_HOOK, _spawn_payload(tmp_path, "tool-1"), cwd=tmp_path, environment=env
     )
     assert lifecycle.returncode == 0
+    assert "INFIQUETRA_FLEET_LEASE_ENFORCEMENT=off" in lifecycle.stderr
     assert "DISABLED" in lifecycle.stderr
     assert not authority.exists()
 
@@ -928,9 +808,11 @@ def test_kill_switch_unrecognized_values_stay_armed(tmp_path: Path, value: str) 
 
     authority = tmp_path / "state"
     env = _environment(authority, INFIQUETRA_FLEET_LEASE_ENFORCEMENT=value)
-    result = _run_hook(
-        MUTATION_HOOK, _mutation_payload(tmp_path, child="ghost"), cwd=tmp_path, environment=env
-    )
+    # A delegated spawn whose named parent holds no lease is refused before the spawn -- the
+    # armed-path HALT this parametrization exists to prove.
+    ghost_parent = _spawn_payload(tmp_path, "tool-1")
+    ghost_parent["agent_id"] = "ghost"
+    result = _run_hook(LIFECYCLE_HOOK, ghost_parent, cwd=tmp_path, environment=env)
     assert result.returncode == 2
     assert "HALT" in result.stderr
 

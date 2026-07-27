@@ -9,11 +9,9 @@ run or hand-editing state**.
 One file, five writers. This is the load-bearing scope decision: quiesce, plan-declared pause
 points, the worker-raised andon-cord, and the coordinator strand-halt (#433) all write into the
 **same** envelope. A design that gives each writer its own file is out of scope. The
-reversible-mutation default (the undo ledger) is the adjacent concern that decides *when a pause
-is even needed*.
+reversible-mutation default is the adjacent concern that decides *when a pause is even needed*.
 
-Implemented by `plugins/saga/scripts/adjustment_envelope.py` (parser + poll + writers) and
-`plugins/saga/scripts/undo_ledger.py` (the reversible-mutation default). Polled by
+Implemented by `plugins/saga/scripts/adjustment_envelope.py` (parser + poll + writers). Polled by
 `plugins/saga/scripts/outcome.py` (`advance` tick boundary) and the `/work` segment boundary.
 
 ## File location
@@ -22,10 +20,9 @@ Per-run, in the run's private, git-ignored state:
 
 ```
 .saga/adjustment-envelope.json    # the polled control file
-.saga/undo-ledger.jsonl           # the reversible-mutation act log (inverse ops)
 ```
 
-Both are git-ignored (`.gitignore`) so no run log ever dirties `git status --porcelain`.
+Git-ignored (`.gitignore`) so no run log ever dirties `git status --porcelain`.
 
 ## Schema (version 1)
 
@@ -122,33 +119,24 @@ envelope; delivery to a coordinator polling a different root is not yet wired (f
 ## The reversible-mutation default (R6, R10, R11) — why pauses are rare
 
 Absent an explicit `pause_after`, **only irreversible actions pause by default**. Reversible
-mutations proceed under an act-log-inverse-notify path instead: the run performs the mutation, writes
-a proven inverse to `undo-ledger.jsonl`, and notifies the operator post-hoc. `/undo` replays the
-inverse.
+mutations proceed and the operator is notified post-hoc.
 
-Enforcement honesty (v1): the act-log-inverse path is **prompt-mediated** — the `/undo` command
-and the skills instruct runs to call `undo_ledger.record()` around reversible mutations, but no
-production mutation site (mission-control board/label/issue writes included) is mechanically
-wired to the ledger yet. The ledger, replay (`undo` CLI), and disposition classifier are real and
-tested; the producer wiring is tracked as follow-up. Until then an unrecorded reversible mutation
-simply has nothing for `/undo` to replay.
+**Removed in #666: the undo ledger.** `undo_ledger.py` and the `/undo` command previously claimed
+that reversible mutations wrote a proven inverse to `undo-ledger.jsonl` which `/undo` could replay.
+They never did. This document already recorded why, and the audit confirmed it: the path was
+*prompt-mediated* — the skills instructed runs to call `undo_ledger.record()`, but **no production
+mutation site was ever mechanically wired to the ledger**, and no `undo-ledger.jsonl` was ever
+written on any machine. `/undo` could only ever report an empty ledger, and
+`mutation_disposition()` — the reversible/irreversible classifier — had zero production callers, so
+the "only irreversibles pause" rule was never actually decided by it.
 
-Registered reversible operations (the v1 set — the fleet is **not** backfilled):
+What survives is the behavior, which is unchanged: reversible mutations proceed without pausing,
+irreversible ones pause. What is gone is the claim that a proceeded mutation is recoverable.
 
-| op type | forward | inverse |
-|---|---|---|
-| `board_move` | move board status | move back to prior status |
-| `label_change` | set labels | restore prior labels |
-| `issue_edit` | set an issue field | restore prior value |
-| `saga_branch` | create a branch | delete it |
-| `saga_pr` | open a PR | close it |
+**For real rollback, use `/ship --undo`** (`plugins/saga/scripts/ship_undo.py`), which is wired,
+tested, and has produced 16 real `rollback_manifest.json` files. It covers ceremony rollback —
+merge, branch, and PR state — which is where rollback was actually needed.
 
-`undo_ledger.mutation_disposition(op_type)` returns `"proceed-with-undo"` for a registered op and
-`"pause"` for any op with no registered inverse. This is what makes "only irreversibles pause by
-default" true rather than aspirational: without a working inverse, an operation is definitionally not
-reversible and falls back to the gated pause (R11). `undo_ledger` is deliberately **gh-free** (it
-computes and records inverses; the mutation-owning subsystem, e.g. mission-control, replays them), so
-it never crosses the gh write-ownership lane.
 
 ## Writer helpers (the producers)
 
@@ -158,12 +146,9 @@ adjustment_envelope.declare_pause_after(path, segment, resume_tier=...)  # plan 
 adjustment_envelope.raise_andon(path, writer="worker", scope=...)  # worker writer 3
 adjustment_envelope.raise_strand_halt(path, scope=..., reason=...)  # coordinator writer (#433 R6)
 adjustment_envelope.acknowledge_pause(path, segment)               # the explicit continue signal
-undo_ledger.record(ledger, op_type, target=..., before=..., after=...)  # reversible default
-undo_ledger.undo(ledger, state)                                    # the /undo replay path
 ```
 
-CLI: `python3 adjustment_envelope.py {show,quiesce,andon,continue}` and
-`python3 undo_ledger.py {show,ops}`.
+CLI: `python3 adjustment_envelope.py {show,quiesce,andon,continue}`.
 
 ## Threat model / self-attestation
 

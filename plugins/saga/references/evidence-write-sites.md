@@ -12,7 +12,7 @@ is the only acceptance authority. A file existing is never proof that its genera
 | Agy direct auto apply | trusted in-process admission; acquire before subprocess; periodic renew | broker commit applies verified patch and armed mirrors | embedded Agy close receipt plus audit seal mirror | superseded metadata only; expired or closed output quarantine | Agy supervisor / `agy-supervisor` |
 | Agy run bundle | none beyond the owning canonical path | unique-run terminal forensic files | none; noncanonical | preserved for diagnosis | Agy audit readers / `agy-supervisor` |
 | Ordinary `manifest_store` CLI/API | none | atomic evidence-only manifest write | none; noncanonical | not applicable | advisory manifest readers only |
-| Quarantine and orphan events | never acquires acceptance authority | reserved, bounded, write-once forensic publication | a close seal only mirrors an existing broker receipt | content-addressed payload or metadata-only event | `reap_orphans.py scan` / named owner |
+| Quarantine and orphan events | never acquires acceptance authority | reserved, bounded, write-once forensic publication | a close seal only mirrors an existing broker receipt | content-addressed payload or metadata-only event | named owner (the `reap_orphans.py scan` reader was removed in #666) |
 
 `attempt_id` is evidence metadata. The Saga and Team Execution resource identity is stable by
 `execution_id`; ordinary acquire cannot cross a canonical close. Recovery of prepared, committing,

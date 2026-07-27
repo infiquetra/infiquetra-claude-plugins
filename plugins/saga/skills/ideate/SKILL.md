@@ -39,15 +39,11 @@ chat only when no blocking tool exists or the call errors. In a channel session,
 choices in the reply text. Never silently skip a gate question. Ask one question at a time.
 
 <!-- gate-record: id=ideate-interaction absence=HALT transport=ask-user-question -->
-**Durable gate-record contract (#371).** Every known-set gate above is a durable approval record,
-not a widget call. BEFORE invoking `AskUserQuestion` (or any fallback), persist the record with
-`python3 plugins/saga/scripts/gate_record.py open --gate-id ideate-<decision>-<run-id>
---question "..." --option "..." --option "..." --absence-behavior HALT --transport ask-user-question
---opened-by saga:ideate`; after the answer, `satisfy --gate-id <same-id> --answer "<chosen option>"
---answerer operator`; on silence (timeout, widget error, dropped session), `resolve-absent
---gate-id <same-id> --reason "<what happened>"` — `HALT`: stop and wait, silence is never consent.
-Read the decision from the persisted record (`poll` → `status` / `answer`), never from the widget's
-raw return value. Full contract: `plugins/saga/references/gate-record.md`.
+**Operator-absence contract (#371).** Every known-set gate above declares what happens on
+silence, and the declaration above this line is the contract. `HALT` here: stop and wait. A timeout,
+a widget error, or a dropped session is never consent — do not proceed on a default and do not
+invent an answer. Ask one question at a time and read the decision from the operator's actual
+answer, never from a widget's raw return value.
 
 ## Engine Offer
 

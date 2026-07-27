@@ -10,7 +10,7 @@ Independence is the design (KTD1): this module reads the documented raw on-disk 
 #351/#355/#356/#357/#358 producers through its own strict readers and owns every join. It must
 never import the tolerant or mutating readers whose failure modes it audits — no
 ``outcome_worktrees``, ``outcome_store``, ``dispatch_settlement``, ``team_teardown``,
-``reap_orphans``, ``audit_store``, or broker mutation APIs (R2); the U4 conformance denylist makes
+``audit_store``, or broker mutation APIs (R2); the U4 conformance denylist makes
 that executable.
 
 Absence, corruption, and incompleteness are three different verdicts (KTD2): a corrupt file,

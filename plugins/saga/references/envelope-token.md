@@ -132,15 +132,15 @@ same objective, out of #449's scope.
 
 - **Minting is self-attested.** `issued_by` is a label. The trust boundary is the local
   filesystem — the same boundary as gate records, approvals, and every other store artifact
-  (`gate-record.md` "Honest bounds", the `outcome_gate_transport` stance). Over the
+  (the `outcome_gate_transport` stance). Over the
   self-attested posture record, the token adds: an expiry, an immediate revocation verb,
   binding to one exact envelope content + revision + outcome, and per-merge durable
   attribution. It cannot prove the biological identity of the minter, and it is not a
   defense against a hostile writer with store access.
 - **Gate records (#371) are not consulted in v1.** The token is CLI-minted. A future attended
   flow minting from a live gate-record answer must classify with
-  `gate_record.is_operator_answerer` — `carried-forward:` / `absence:` provenance never mints
-  (the #371 contract, restated in `gate-record.md` consumer item 4).
+  an operator-answerer check — `carried-forward:` / `absence:` provenance never mints
+  (the #371 contract).
 - **A crash between squash and the `merged` attribution record loses only that record.** The
   `authorized` record and GitHub's own merged-by audit survive; the gap is never backfilled,
   because post-hoc attribution would assert a pre-merge authorization nobody re-verified.

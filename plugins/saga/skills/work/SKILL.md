@@ -561,8 +561,9 @@ python3 plugins/saga/scripts/lease_broker.py clear-session \
   - A malformed/unknown directive **fails closed** — the run halts and names the offending directive
     rather than proceeding.
   - Absent any `pause_after`, only irreversible actions pause; reversible board/label/issue/branch/PR
-    mutations proceed under the `undo_ledger` act-log-inverse-notify path (`/undo` replays the inverse)
-    instead of pausing.
+    mutations proceed and are reported to the operator after the fact. They are **not** recoverable
+    by a saga command — the undo ledger and `/undo` were removed in #666 (never wired to any
+    producer, never wrote a record). For ceremony rollback use `/ship --undo`.
 
 ---
 

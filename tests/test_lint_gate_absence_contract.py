@@ -88,8 +88,13 @@ def test_default_ci_scan_passes_and_surfaces_pending_migrations() -> None:
     # The baseline debt is SURFACED (applied: false semantics), never silently skipped.
     assert "pending migration" in result.stdout
     assert "applied: false" in result.stdout
-    # The primitive definer is reported as excluded by rule, not silently dropped.
-    assert "plugins/saga/scripts/gate_record.py" in result.stdout
+    # gate_record.py was the primitive definer and appeared here as excluded-by-rule. It was
+    # removed in #666 (926 lines that never wrote a record.json in production); the lint's
+    # subject is the DECLARATION marker in skill prose, which is independent of any recording
+    # CLI, so the scan still passes with zero violations and every gate site still declares its
+    # absence behavior.
+    assert "VIOLATIONS: 0" in result.stdout
+    assert "gate_record.py" not in result.stdout
 
 
 # ---------------------------------------------------------------------------

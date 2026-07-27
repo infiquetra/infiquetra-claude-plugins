@@ -90,15 +90,11 @@ in your reply text instead, and use the **digest** path for expansions (see Phas
 `saga/skills/brainstorm/SKILL.md` (do not duplicate its wording here).
 
 <!-- gate-record: id=founder-review-interaction absence=HALT transport=ask-user-question -->
-**Durable gate-record contract (#371).** Every known-set gate above is a durable approval record,
-not a widget call. BEFORE invoking `AskUserQuestion` (or the channel-inline fallback), persist the
-record with `python3 plugins/saga/scripts/gate_record.py open --gate-id founder-review-<decision>-<run-id>
---question "..." --option "..." --option "..." --absence-behavior HALT --transport ask-user-question
---opened-by saga:founder-review`; after the answer, `satisfy --gate-id <same-id> --answer
-"<chosen option>" --answerer operator`; on silence (timeout, widget error, dropped session),
-`resolve-absent --gate-id <same-id> --reason "<what happened>"` — `HALT`: stop and wait, silence is
-never consent. Read the decision from the persisted record (`poll` → `status` / `answer`), never
-from the widget's raw return value. Full contract: `plugins/saga/references/gate-record.md`.
+**Operator-absence contract (#371).** Every known-set gate above declares what happens on
+silence, and the declaration above this line is the contract. `HALT` here: stop and wait. A timeout,
+a widget error, or a dropped session is never consent — do not proceed on a default and do not
+invent an answer. Ask one question at a time and read the decision from the operator's actual
+answer, never from a widget's raw return value.
 
 Use repo-relative paths in every generated document. Absolute paths break portability across machines
 and worktrees.

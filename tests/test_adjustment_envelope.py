@@ -35,7 +35,6 @@ def _load(name: str) -> ModuleType:
 
 
 AE = _load("adjustment_envelope")
-UL = _load("undo_ledger")
 M = _load("outcome")
 SPEC = _load("outcome_spec")
 STORE = _load("outcome_store")
@@ -215,8 +214,8 @@ def test_pause_after_absent_only_irreversibles_pause() -> None:
     # R6: absent an explicit pause_after, only IRREVERSIBLE actions pause by default;
     # reversible actions proceed under the act-log-notify path instead.
     assert AE.poll(AE.parse({"version": 1, "directives": []})).action == "proceed"
-    assert UL.mutation_disposition("board_move") == "proceed-with-undo"  # reversible: no pause
-    assert UL.mutation_disposition("destructive_delete") == "pause"  # irreversible: pauses
+    # The reversible/irreversible disposition split lived in undo_ledger, removed in #666:
+    # it never wrote a ledger entry in production. Only the envelope side is asserted now.
 
 
 def test_pause_context_model_change(tmp_path: Path) -> None:
@@ -340,18 +339,3 @@ def test_clear_cli_removes_envelope(tmp_path: Path) -> None:
     assert path.exists()
     assert AE._main(["--repo-root", str(tmp_path), "clear"]) == 0
     assert not path.exists()
-
-
-def test_undo_cli_replays_and_pops(tmp_path: Path) -> None:
-    ledger = UL.default_ledger_path(tmp_path)
-    ledger.parent.mkdir(parents=True, exist_ok=True)
-    notification = UL.record(
-        ledger,
-        "board_move",
-        target="repo#1",
-        before={"status": "In Progress"},
-        after={"status": "Done"},
-    )
-    assert notification
-    assert UL._main(["--repo-root", str(tmp_path), "undo", "--count", "1"]) == 0
-    assert UL.read_ledger(ledger) == []

@@ -42,6 +42,15 @@ gate — a false negative on a safety gate, strictly worse than the over-firing 
   Passing `<repo>/.git` as `cwd` to `git rev-parse --show-toplevel` fails, `_find_repo_root`
   returned `None`, and `main()` exited 0 before reading the manifest — the exact targeting form
   the fix claimed to support. `_as_worktree_dir` now resolves a `.git` path to its parent.
+- **Newline separators.** `\n` is ordinary whitespace to the lexer, so `git add -A\ngit push`
+  tokenized to one flat run whose subcommand read as `add` — a second-line push bypassed the
+  gate. Lines are now split before lexing.
+- **`env` option prefixes.** The prefix walk handled `env VAR=value` but not `env`'s own options,
+  so `env -i git push` and `env -u GIT_CONFIG git push` found no git invocation at all.
+  `_skip_env_prefix` now walks `-i` / `-u NAME` / `--unset=NAME` / `-S` / `-C` and assignments.
+
+The full behavior matrix — 14 forms that must gate, 8 that must not — is pinned in
+`tests/test_pre_push_gate.py` (32 tests).
 
 
 ## [0.118.0] - 2026-07-27

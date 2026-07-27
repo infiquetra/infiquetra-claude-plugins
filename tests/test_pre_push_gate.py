@@ -207,6 +207,26 @@ class TestPrePushGateHookDetection:
             "a --git-dir path must resolve to its worktree, not None"
         )
 
+    def test_newline_separated_push_still_gates(self, hook: Any) -> None:
+        """#670 round 2: a newline is a separator, and shlex will not do that for us.
+
+        `\n` is ordinary whitespace to the lexer, so `git add -A\ngit push` tokenized to one
+        flat run whose subcommand read as `add`. A second-line push bypassed the gate.
+        """
+        assert hook._push_target("git add -A\ngit push")[0]
+        assert hook._push_target("echo ok\ngit push")[0]
+
+    def test_env_option_prefix_still_finds_the_push(self, hook: Any) -> None:
+        """#670 round 2: the env walk must handle env's OPTIONS, not just assignments."""
+        for command in (
+            "env -i git push",
+            "env -u GIT_CONFIG git push",
+            "env --unset=GIT_CONFIG git push",
+            "env FOO=1 git push",
+            "GIT_AUTHOR_NAME=x git push",
+        ):
+            assert hook._push_target(command)[0], f"must gate: {command}"
+
     def test_unparseable_command_does_not_gate(self, hook: Any) -> None:
         """Unbalanced quotes yield no segments -- degrade to not gating, never guess."""
         assert not hook._push_target("git push 'unterminated")[0]

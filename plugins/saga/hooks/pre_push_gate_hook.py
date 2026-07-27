@@ -78,50 +78,85 @@ def _segments(command: str) -> list[list[str]]:
     a false negative on a safety gate, strictly worse than the over-firing this change set out to
     fix. Caught in review on #670 before merge.
 
+    Newlines are separators too, and shlex will NOT do that for us: ``\\n`` is ordinary
+    whitespace to the lexer, so ``git add -A\\ngit push`` tokenizes to one flat run and the
+    segment's subcommand reads as ``add`` -- a second-line push bypasses the gate. Lines are
+    therefore split before lexing. Caught in review on #670.
+
     An unparseable command (unbalanced quotes) yields no segments, so the caller degrades to not
     gating rather than guessing.
     """
-    try:
-        lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
-        lexer.whitespace_split = True
-        tokens = list(lexer)
-    except ValueError:
-        return []
     segments: list[list[str]] = []
-    current: list[str] = []
-    for token in tokens:
-        if token in _SEGMENT_SEPARATORS:
-            segments.append(current)
-            current = []
-        else:
-            current.append(token)
-    segments.append(current)
+    for line in command.splitlines():
+        if not line.strip():
+            continue
+        try:
+            lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
+            lexer.whitespace_split = True
+            tokens = list(lexer)
+        except ValueError:
+            return []
+        current: list[str] = []
+        for token in tokens:
+            if token in _SEGMENT_SEPARATORS:
+                segments.append(current)
+                current = []
+            else:
+                current.append(token)
+        segments.append(current)
     return [s for s in segments if s]
 
 
 def _git_invocations(command: str) -> list[list[str]]:
     """Every ``git`` invocation in the command, as its own token list.
 
-    A segment's git call is its FIRST token (``git push``) or the token right after an
-    ``env``-style prefix or a ``cd <path> &&`` that shlex already split into its own segment.
-    ``echo 'git push'`` yields nothing because ``git`` is inside a quoted token, not a
-    command head.
+    A segment's git call is its FIRST token (``git push``), or the token after an environment
+    prefix (``VAR=value git push``, ``env -i git push``). ``echo 'git push'`` yields nothing
+    because ``git`` is inside a quoted token, not a command head.
+
+    The ``env`` walk handles ``env``'s own OPTIONS, not just assignments: ``env -i git push`` and
+    ``env -u GIT_CONFIG git push`` are real pushes that the assignment-only walk skipped straight
+    past, finding no git invocation and letting the push through. Caught in review on #670.
     """
     found: list[list[str]] = []
     for segment in _segments(command):
-        head = 0
-        # Skip a leading `env VAR=value ...` or bare `VAR=value` assignments.
-        while head < len(segment) and (segment[head] == "env" or "=" in segment[head].split()[0]):
-            if segment[head] == "env":
-                head += 1
-                continue
-            if "=" in segment[head] and not segment[head].startswith("-"):
-                head += 1
-                continue
-            break
+        head = _skip_env_prefix(segment)
         if head < len(segment) and Path(segment[head]).name == "git":
             found.append(segment[head:])
     return found
+
+
+# ``env`` options that consume the following token. ``-u``/``--unset`` name a variable to drop.
+_ENV_OPTS_WITH_VALUE = frozenset({"-u", "--unset", "-S", "--split-string", "-C", "--chdir"})
+_ENV_FLAGS = frozenset({"-i", "--ignore-environment", "-", "-0", "--null", "-v", "--debug"})
+
+
+def _skip_env_prefix(segment: list[str]) -> int:
+    """Index of the real command head, past any ``VAR=value`` / ``env ...`` prefix."""
+    i = 0
+    while i < len(segment):
+        token = segment[i]
+        if token == "env":
+            i += 1
+            # Walk env's own options and assignments until the command word.
+            while i < len(segment):
+                opt = segment[i]
+                if opt in _ENV_OPTS_WITH_VALUE:
+                    i += 2
+                    continue
+                if opt in _ENV_FLAGS or opt.startswith("--unset="):
+                    i += 1
+                    continue
+                if "=" in opt and not opt.startswith("-"):
+                    i += 1
+                    continue
+                break
+            continue
+        if "=" in token and not token.startswith("-"):
+            i += 1
+            continue
+        break
+    return i
 
 
 def _git_subcommand(invocation: list[str]) -> tuple[str | None, str | None]:

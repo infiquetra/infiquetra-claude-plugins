@@ -25,8 +25,21 @@ never meant to govern.
 
 Fully-armed environments and pinned snapshots are unchanged.
 
-Tests were also made hermetic: they strip `INFIQUETRA_FLEET_*` from the inherited
-environment, so an operator's own fleet settings can no longer decide the assertion.
+The partial-environment guard runs **before** the pinned snapshot is trusted, not inside the
+`configured is None` branch. Gated on `configured is None` it was skipped for exactly the
+sessions that already had limits to ride on: a half-resolved environment was neither complete
+enough to trip the explicit-mismatch check nor empty enough to read as unmanaged, so a broken
+preflight proceeded on the earlier snapshot's limits instead of halting. Reproduced on a
+configured session with only `INFIQUETRA_FLEET_SESSION_LIMIT` set, which returned
+`ADMITTED (…, 3, 7, 'read-write')` rather than raising. The complete explicit-env mismatch
+check still runs after, unchanged.
+
+Tests were also made hermetic: they strip every `INFIQUETRA_FLEET_`-prefixed key from the
+inherited environment, so an operator's own fleet settings can no longer decide the assertion.
+The filter is by prefix rather than a list of names — an enumerated denylist holds only until
+the next fleet variable is added and stops protecting the tests at that moment, which is how
+`INFIQUETRA_FLEET_BATCH_ID=ghost` failed the unmanaged-session case with "workflow batch
+'ghost' has no available reserved slot" while all four admission names were already cleared.
 
 ## [0.115.0] - 2026-07-25
 

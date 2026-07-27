@@ -38,6 +38,19 @@ _ADMISSION_ENV = frozenset(
 )
 
 
+def _unmanaged_env() -> dict[str, str]:
+    """Inherit the environment with every fleet variable removed.
+
+    Filtering only `_ADMISSION_ENV` is not enough: these tests hand the result to a hook
+    *subprocess*, and any other `INFIQUETRA_FLEET_*` key rides along and changes the
+    verdict. `INFIQUETRA_FLEET_BATCH_ID=ghost` in the operator's shell failed the
+    unmanaged-session test with "workflow batch 'ghost' has no available reserved slot"
+    (#662 review P2). Filter by prefix so the next variable added cannot reopen this.
+    """
+
+    return {k: v for k, v in os.environ.items() if not k.startswith("INFIQUETRA_FLEET_")}
+
+
 def _load(path: Path, name: str) -> ModuleType:
     spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None
@@ -298,7 +311,7 @@ def test_unmanaged_session_arms_normal_agent_admission_from_policy_defaults(
     """A session that never ran a Saga preflight is not Saga-managed, so it admits."""
 
     authority = tmp_path / "authority"
-    env = {k: v for k, v in os.environ.items() if k not in _ADMISSION_ENV}
+    env = _unmanaged_env()
     env["INFIQUETRA_FLEET_STATE_DIR"] = str(authority)
     admitted = _run_hook(
         LIFECYCLE_HOOK,
@@ -315,7 +328,7 @@ def test_partial_admission_environment_still_refuses_before_spawn(tmp_path: Path
     """A half-resolved environment means a preflight broke; that must not be papered over."""
 
     authority = tmp_path / "authority"
-    env = {k: v for k, v in os.environ.items() if k not in _ADMISSION_ENV}
+    env = _unmanaged_env()
     env["INFIQUETRA_FLEET_STATE_DIR"] = str(authority)
     env["INFIQUETRA_FLEET_SESSION_LIMIT"] = "1"
     refused = _run_hook(
@@ -330,9 +343,46 @@ def test_partial_admission_environment_still_refuses_before_spawn(tmp_path: Path
     assert _leases(authority) == []
 
 
+def test_partial_admission_environment_refuses_even_with_a_pinned_snapshot(
+    tmp_path: Path,
+) -> None:
+    """A configured snapshot must not shelter a broken preflight (#662 review P1).
+
+    The partial-environment guard used to live inside the ``configured is None`` branch, so
+    a session that already had a pinned snapshot skipped it entirely: the half-resolved env
+    was neither complete enough to trip the mismatch check nor empty enough to be treated as
+    unmanaged, and the spawn proceeded on the earlier snapshot's limits. The guard runs
+    before ``configured`` is trusted, so this refuses like the unpinned case.
+    """
+
+    authority = tmp_path / "authority"
+    env = _unmanaged_env()
+    env["INFIQUETRA_FLEET_STATE_DIR"] = str(authority)
+
+    limits = P.AdmissionLimits()
+    _broker(authority).configure_session_admission(
+        "session",
+        policy_sha256=limits.policy_sha256(),
+        session_limit=3,
+        aggregate_limit=7,
+        mutation="read-write",
+    )
+
+    env["INFIQUETRA_FLEET_SESSION_LIMIT"] = "1"
+    refused = _run_hook(
+        LIFECYCLE_HOOK,
+        _spawn_payload(tmp_path, "tool-partial-pinned"),
+        cwd=tmp_path,
+        environment=env,
+    )
+    assert refused.returncode == 2
+    assert "incomplete Saga admission environment" in refused.stderr
+    assert _leases(authority) == []
+
+
 def test_normal_agent_uses_pinned_resolved_session_admission(tmp_path: Path) -> None:
     authority = tmp_path / "authority"
-    env = {k: v for k, v in os.environ.items() if k not in _ADMISSION_ENV}
+    env = _unmanaged_env()
     env["INFIQUETRA_FLEET_STATE_DIR"] = str(authority)
 
     limits = P.AdmissionLimits()

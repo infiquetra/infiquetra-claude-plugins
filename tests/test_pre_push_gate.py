@@ -125,18 +125,50 @@ class TestPrePushGateHookDetection:
         return _load_hook_module()
 
     def test_git_push_is_detected(self, hook: Any) -> None:
-        assert hook._is_git_push_command("git push origin main")
-        assert hook._is_git_push_command("git -C /some/path push --force-with-lease")
-        assert hook._is_git_push_command("git push")
+        assert hook._push_target("git push origin main")[0]
+        assert hook._push_target("git -C /some/path push --force-with-lease")[0]
+        assert hook._push_target("git push")[0]
+        # Compound: a real push anywhere in the command still gates.
+        assert hook._push_target("git add -A ; git push")[0]
+        # Global flags before the subcommand must not hide it.
+        assert hook._push_target("git --no-pager -c user.name=x push")[0]
 
     def test_non_push_is_not_detected(self, hook: Any) -> None:
-        assert not hook._is_git_push_command("git commit -m 'fix: something'")
-        assert not hook._is_git_push_command("git pull origin main")
-        assert not hook._is_git_push_command("echo 'git push'")
+        assert not hook._push_target("git commit -m 'fix: something'")[0]
+        assert not hook._push_target("git pull origin main")[0]
+        assert not hook._push_target("echo 'git push'")[0]
 
-    def test_git_dash_c_extraction(self, hook: Any) -> None:
-        assert hook._parse_git_dash_c("git -C /tmp/repo push") == "/tmp/repo"
-        assert hook._parse_git_dash_c("git push origin main") is None
+    def test_argument_text_containing_push_does_not_gate(self, hook: Any) -> None:
+        """#663 fault (b): the old regex matched the WORD push anywhere in the argument span.
+
+        Each of these ran the full ~5500-test suite on a read-only git command, and under CPU
+        contention could hit the gate's own step timeout -- turning a `git log` into a hard
+        failure. A token list distinguishes a subcommand from an argument.
+        """
+        for command in (
+            "git add docs/push-notes.md",
+            "git log --oneline --grep=push",
+            "git show HEAD:docs/how-to-push.md",
+            "git commit -m 'document the git push gate'",
+            "git checkout -b feature/push-gate-fix",
+        ):
+            assert not hook._push_target(command)[0], f"must not gate: {command}"
+
+    def test_repo_is_resolved_from_the_invocation(self, hook: Any) -> None:
+        """#663 fault (a): resolve the target repo from the invocation, not the session cwd."""
+        assert hook._push_target("git -C /tmp/repo push")[1] == "/tmp/repo"
+        assert hook._push_target("git --git-dir=/tmp/r/.git push")[1] == "/tmp/r/.git"
+        assert hook._push_target("git --work-tree /tmp/wt push")[1] == "/tmp/wt"
+        assert hook._push_target("git push origin main")[1] is None
+
+    def test_cd_prefix_targets_the_other_repo(self, hook: Any) -> None:
+        """The live failure: `cd <other-repo>` then push ran THIS repo's suite and blocked it."""
+        assert hook._cd_target("cd /tmp/other-repo ; git push") == "/tmp/other-repo"
+        assert hook._cd_target("git push origin main") is None
+
+    def test_unparseable_command_does_not_gate(self, hook: Any) -> None:
+        """Unbalanced quotes yield no segments -- degrade to not gating, never guess."""
+        assert not hook._push_target("git push 'unterminated")[0]
 
 
 class TestPrePushGateHookExitBehavior:

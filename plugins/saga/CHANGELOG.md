@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.119.0] - 2026-07-27
+
+### Fixed - pre-push gate reasons about the git invocation, not the command text (#663)
+
+`_is_git_push_command` matched `(?:^|[|;&])\s*git\b[^|;&]*\bpush\b` — the *word* anywhere in a
+git command's argument span — and `_parse_git_dash_c` recognized only the `git -C <path>` form.
+Two faults followed from that one design choice, both observed live.
+
+- **Fault (a), wrong-repo gating.** Any targeting form other than `git -C` fell back to the
+  session cwd, so a push aimed elsewhere ran the *session* repo's manifest and suite. The
+  missing-manifest cross-repo exit could not save it — the session repo has a manifest. Observed:
+  a push in another repo ran this repo's ~5500-test suite and blocked on 17 unrelated failures.
+- **Fault (b), spurious full-suite runs.** `git add docs/push-notes.md`,
+  `git log --grep=push`, `git show HEAD:docs/how-to-push.md`, and
+  `git commit -m "... push ..."` all ran the entire gate. A several-minute suite on a `git log`,
+  and under CPU contention the gate hit its own step timeout — turning a read-only git command
+  into a hard failure. This reproduced *during the fix*: a `python3 -c` diagnostic whose string
+  contained `&& git push` ran the full suite.
+
+Now: `shlex` tokenizes the command into segments (quoting honored, so a commit message is one
+token), `_git_invocations` finds real `git` command heads, and `_git_subcommand` walks git's
+global options — skipping an option's value where it takes one — to identify the **actual
+subcommand**. Only `push` gates. The target repo is resolved from the invocation
+(`-C` / `--git-dir` / `--work-tree`), then a leading `cd <path>`, and only then the session cwd.
+
+Unknown options before the subcommand are skipped rather than guessed, and an unparseable command
+yields no segments — the gate stays off by default rather than firing on a guess. Not a weakening:
+a real push on a failing suite still blocks.
+
+
 ## [0.118.0] - 2026-07-27
 
 ### Added - `spec_table.py`: the execution-spec approval table, at every backend approval (#668)

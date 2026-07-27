@@ -1,5 +1,6 @@
 """Shared pytest fixtures for Infiquetra plugin tests."""
 
+import os
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -19,6 +20,30 @@ def _clear_ambient_saga_concurrency_override(monkeypatch: pytest.MonkeyPatch) ->
     """Keep ordinary emitter tests independent of the operator's shell concurrency override."""
 
     monkeypatch.delenv("SAGA_MAX_CONCURRENT", raising=False)
+
+
+# Same concern as above, for the fleet-lease admission surface. An operator who arms these
+# in their shell (or in ~/.claude/settings.json `env`) makes `session_admission_snapshot`
+# take its explicit-environment branch, which then disagrees with any snapshot a test
+# pinned itself — so admission tests would pass or fail based on the operator's own
+# machine. Tests that need these set them explicitly after this fixture runs.
+#
+# The boundary is the PREFIX, not a list of names. An enumerated denylist only holds until
+# the next `INFIQUETRA_FLEET_*` variable is introduced, and it silently stops protecting
+# the tests at that moment: `INFIQUETRA_FLEET_BATCH_ID=ghost` failed the unmanaged-session
+# test with "workflow batch 'ghost' has no available reserved slot" while every name in the
+# old four-entry tuple was already being cleared (#662 review P2). This also covers
+# INFIQUETRA_FLEET_LEASE_ENFORCEMENT — an operator who disarms enforcement for their own
+# session must not silently disarm the tests that assert enforcement works.
+_FLEET_ENV_PREFIX = "INFIQUETRA_FLEET_"
+
+
+@pytest.fixture(autouse=True)
+def _clear_ambient_fleet_admission_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep lease-admission tests independent of the operator's armed fleet environment."""
+
+    for var in [k for k in os.environ if k.startswith(_FLEET_ENV_PREFIX)]:
+        monkeypatch.delenv(var, raising=False)
 
 
 # --- #279 hard floor: GitHub-write test modules can never touch the live operations board ---

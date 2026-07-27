@@ -18,6 +18,75 @@
 > **Generalizable rule.** The lesson stripped of this specific incident — what would I tell a future-me hitting a similar shape?
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
+
+## 2026-07-27
+
+### A fail-closed guard nested inside `configured is None` skipped exactly the sessions it protected  {#partial-admission-guard-placement-662}
+
+**Context.** #662 taught `session_admission_snapshot()` to admit sessions that never ran a Saga
+preflight, and added a guard so a *half-resolved* fleet environment still halts. The guard was
+written inside the `if configured is None:` branch, alongside the new default-arming path it was
+introduced with.
+
+**Evidence.** `plugins/saga/scripts/lease_broker.py:159-201` at `c9c5f7f4`. Direct repro: configure a
+session snapshot, then call `session_admission_snapshot("sess", {"INFIQUETRA_FLEET_STATE_DIR": tmp,
+"INFIQUETRA_FLEET_SESSION_LIMIT": "2"}, selected=broker)`. Pre-fix it returned
+`ADMITTED ('aaa…', 3, 7, 'read-write')`; the same partial env with no snapshot correctly raised
+`incomplete Saga admission environment (missing …)`. Regression test
+`test_partial_admission_environment_refuses_even_with_a_pinned_snapshot` fails red on the pre-fix
+tree with `assert 0 == 2`. Found by the `brokkr-asgard-eng-prod-ops` review bot, not by the suite.
+
+**Mechanism.** Three states, two branches. A partial environment is neither complete enough to trip
+the explicit-mismatch check at the bottom (`explicit` is False, so that check is skipped) nor empty
+enough to read as unmanaged. With the guard nested under `configured is None`, the partial case fell
+through both checks whenever a snapshot existed — and a session with a snapshot is precisely one with
+stale limits available to ride on. The guard's placement inverted its purpose: it protected the case
+that had nothing to lose and skipped the case that did.
+
+**Fix.** Hoisted the guard above the `configured` branch; the complete explicit-env mismatch check
+stays below it, unchanged.
+
+**Validation.** 5502 passed / 1 skipped, ruff + format + mypy clean.
+
+**What surprised.** The full suite was green across both defects. The tests asserted the guard fires
+for an unpinned session, and nothing asserted the pinned case — the coverage gap sat exactly where the
+branch structure created the hole.
+
+**Generalizable rule.** When a guard is added in the same change as a new branch, check whether it
+belongs to the branch or to the function. If a condition describes a *fault* rather than a *mode*, it
+belongs before the mode dispatch. And when a predicate has three states (all / some / none), name all
+three explicitly — a two-branch structure will silently swallow the middle one.
+
+### Enumerated env denylists stop protecting tests the moment a new variable is added  {#fleet-env-prefix-not-denylist-662}
+
+**Context.** An autouse fixture clears the operator's fleet variables so lease-admission tests do not
+depend on the developer's machine. It listed four names, then five.
+
+**Evidence.** `tests/conftest.py` and `tests/test_saga_hooks.py:301` at `c9c5f7f4`. Repro:
+`INFIQUETRA_FLEET_BATCH_ID=ghost uv run pytest
+tests/test_saga_hooks.py::test_unmanaged_session_arms_normal_agent_admission_from_policy_defaults`
+fails with `workflow batch 'ghost' has no available reserved slot` — while every name in the tuple
+was already being cleared. Confirmed locally; the same command passes with the variable unset.
+
+**Mechanism.** The tests hand the filtered environment to a hook *subprocess*, so anything not
+explicitly removed is inherited by the code under test. The denylist tracked the four admission
+variables, but the fleet surface grew others (`BATCH_ID`, `STATE_DIR`, `CLAIM_TTL_SECONDS`,
+`TTL_SECONDS`, `LEASE_ENFORCEMENT`) that also change hook verdicts. The list did not become wrong
+loudly — it just stopped covering the surface, and nothing failed until an operator happened to have
+one of the uncovered variables set.
+
+**Fix.** Filter by the `INFIQUETRA_FLEET_` prefix in both the fixture and the tests' own env
+construction, so a newly added variable is covered by default rather than by remembering to update a
+list.
+
+**Generalizable rule.** When isolating tests from an environment, deny by *namespace*, not by
+enumeration. An allowlist or a prefix filter fails safe as the surface grows; a name list fails open,
+silently, at the moment someone adds the next variable. The same shape applies to any drift guard
+keyed on a hand-maintained inventory.
+
+**Refs.** Both found by the `council/review` gate on PR #662 after CI was otherwise green — the
+8 GitHub Actions checks all passed on the head that carried both defects.
+
 >
 > The `{#slug}` HTML anchor on the entry title makes the entry linkable from `README.md` quick-nav and from cross-references. Keep slugs short and stable.
 >

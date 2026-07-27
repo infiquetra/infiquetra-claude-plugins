@@ -162,16 +162,27 @@ def session_admission_snapshot(
     *,
     selected: Any,
 ) -> tuple[str, int, int, str]:
-    """Load the pinned snapshot or explicitly arm it from a complete trusted environment."""
+    """Load the pinned snapshot, or arm it from a trusted environment or policy defaults."""
 
     configured = selected.get_session_admission(session_id)
+    present = set(environment) & _ADMISSION_ENV
     explicit = set(environment) >= _ADMISSION_ENV
+    # A partially-resolved environment means a preflight ran and did not finish. That is a
+    # real fault whether or not a snapshot already exists, so it is checked BEFORE we trust
+    # `configured` — gated on `configured is None` it would be skipped for exactly the
+    # sessions that already have limits to ride on, letting a broken preflight proceed
+    # under an earlier snapshot instead of halting (#662 review P1).
+    if present and not explicit:
+        missing = sorted(_ADMISSION_ENV - set(environment))
+        raise HookInputError(
+            "incomplete Saga admission environment "
+            f"(missing {', '.join(missing)}); "
+            "run the Saga or team-execution lease preflight before spawning"
+        )
     if configured is None:
-        if not explicit:
-            raise HookInputError(
-                "normal Agent/Task admission requires a configured resolved session snapshot; "
-                "run the Saga or team-execution lease preflight before spawning"
-            )
+        # A session with no fleet environment at all was never Saga-managed, so it arms
+        # from policy defaults rather than being refused a tool it never opted into
+        # (#615 follow-up).
         values = admission_snapshot(environment)
         configure_session_admission(
             session_id,

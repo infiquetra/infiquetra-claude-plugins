@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.116.0] - 2026-07-27
+
+### Removed - `liveness_reping_hook.py` hard-blocked every `SendMessage` call
+
+- Deleted `hooks/liveness_reping_hook.py` and its three `hooks.json` registrations
+  (`PreToolUse`, `PostToolUse`, `PostToolUseFailure` on `SendMessage`).
+- The hook read the recipient from `tool_input` keys `recipient`/`target_agent_id`/`target`.
+  The host `SendMessage` schema is `{to, message, summary}`, so extraction always returned
+  `None`, `_tool_values` raised, and the `PreToolUse` leg exited 2 — blocking **all**
+  inter-agent messaging, not just the staged-claim calls the docstring scoped it to. The
+  recipient parse ran at `_pre_tool_use` line 1, before the pending-claim lookup, so the
+  documented "ordinary calls pass silently" path was unreachable.
+- Agent teams could not exchange messages in any session with saga enabled.
+- `scripts/liveness_events.py` is retained: team-execution's `liveness_protocol.py` probes
+  for `scripts/liveness_events.py` to resolve the installed saga root, and `lease_protocol.py`
+  depends on that resolution for the #358 teardown CLI. Removing the ceremony wholesale is
+  deferred until that resolver is rehomed.
+- `tests/test_liveness_consumer_conformance.py::test_sendmessage_hook_is_registered_for_pre_post_and_failure`
+  is replaced by `test_no_hook_gates_sendmessage`, a regression guard asserting no saga hook
+  matches `SendMessage` on any event.
+
+**Operator action required:** update the installed saga plugin. The cached copy at
+`plugins/cache/infiquetra-plugins/saga/<version>/` still carries the blocking hook until reinstalled.
+
 ## [0.115.1] - 2026-07-26
 
 ### Fixed - unmanaged sessions arm fleet-lease admission from policy defaults instead of being refused

@@ -83,7 +83,7 @@
     {
       "name": "saga",
       "source": "./plugins/saga",
-      "version": "0.115.1",
+      "version": "0.116.0",
       "description": "Infiquetra lifecycle plugin: /outcome DAG orchestration with cross-runtime discovery/handoff, liveness facts, /pulse telemetry, trust-gated engine onboarding, and /fleet-doctor cross-source auditing.",
       "author": {
         "name": "Infiquetra",
@@ -108,7 +108,7 @@
     {
       "name": "team-execution",
       "source": "./plugins/team-execution",
-      "version": "2.21.0",
+      "version": "2.22.0",
       "description": "Two-phase plan execution with reviewer consensus, resident liveness polling, external advisory convergence diffs, validator gates, chaperone manifests, and guarded nonprod automation.",
       "author": {
         "name": "Infiquetra",

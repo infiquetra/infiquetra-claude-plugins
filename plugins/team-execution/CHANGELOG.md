@@ -4,6 +4,26 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [2.22.0] - 2026-07-27
+
+### Changed - re-ping send-completion binding removed with saga's SendMessage hook (#664)
+
+- `references/liveness-protocol.md` no longer documents a send-completion binding. Saga's
+  `liveness_reping_hook.py` — which joined a staged re-ping claim to the host tool-use ID on
+  `SendMessage` Pre/Post/Failure — has been removed because it hard-blocked **every**
+  `SendMessage` call: it read the recipient from `tool_input` keys
+  `recipient`/`target_agent_id`/`target`, but the host schema is `{to, message, summary}`, so
+  the parse always failed and the `PreToolUse` leg exited 2.
+- Protocol consequence: `stage-send` still records a claim, but nothing binds a send outcome
+  afterward, so a staged claim expires unresolved. No `reping-sent`, `reping-send-failed`,
+  `reping-delivery-blocked`, or `reping-ack` fact is produced. Treat re-ping as best-effort
+  notification with **no delivery evidence**.
+- Any future re-binding must read `to` and must fail **open** — an observer that can block the
+  primitive it observes is a single point of failure, not an observer.
+- No script change: `liveness_protocol.py` and `lease_protocol.py` are untouched, and saga's
+  `scripts/liveness_events.py` is retained because `_is_saga_root` probes for it to resolve the
+  installed saga root for the #358 teardown CLI.
+
 ## [2.21.0] - 2026-07-18
 
 ### Changed - non-skippable terminal teardown (#358)

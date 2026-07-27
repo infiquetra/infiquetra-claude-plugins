@@ -21,6 +21,59 @@
 
 ## 2026-07-27
 
+### A liveness hook pinned to a stale tool schema silently blocked every `SendMessage`  {#liveness-reping-hook-blocks-sendmessage}
+
+**Context.** A strategic simplification pass over the plugin fleet went looking for guards that cost
+more than they save. `hooks/liveness_reping_hook.py` (#357) bound Team re-ping claims to
+host-observed `SendMessage` outcomes, registered on `PreToolUse`/`PostToolUse`/`PostToolUseFailure`.
+Its docstring promised "ordinary SendMessage calls with no staged liveness claim pass silently."
+
+**Evidence.** `plugins/saga/hooks/liveness_reping_hook.py:108-126`. Direct repro against the
+**installed** plugin (saga 0.115.0, the copy that actually runs):
+
+```
+echo '{"tool_name":"SendMessage","tool_use_id":"t1","hook_event_name":"PreToolUse",
+       "tool_input":{"to":"researcher","message":"hi","summary":"s"}}' | python3 <hook>
+→ [saga/liveness-reping] HALT — SendMessage requires a recipient and message   (exit 2)
+```
+
+The live `SendMessage` schema is `{to, message, summary}` (confirmed from the host tool definition).
+`_tool_values` searched `("recipient", "target_agent_id", "target")` for the recipient — none exist —
+so line 124 raised `RePingHookError` and `main()`'s `_halt()` exited 2.
+
+**Mechanism.** Two compounding faults. First, the field-name list was written against a tool schema
+that later changed; nothing tied the hook's expected keys to the host's actual contract, so the drift
+was undetectable from inside the repo. Second — and this is what turned a dead binding into an
+outage — `_pre_tool_use` calls `_tool_values` at its *first* line (`:155`), before the pending-claim
+lookup at `:161`. The "passes silently" escape hatch sat behind the parse that always failed, so it
+was unreachable. Every `SendMessage` in every saga-enabled session was blocked, including calls with
+no staged claim and no relationship to liveness at all.
+
+**Fix.** Deleted the hook and its three `hooks.json` registrations (22 hook registrations → 19,
+7 `PreToolUse` → 6). `scripts/liveness_events.py` retained: team-execution's `liveness_protocol.py`
+probes for `scripts/liveness_events.py` to resolve the installed saga root (`_is_saga_root`,
+`SAGA_SCRIPT`), and `lease_protocol.py` rides that resolution to reach the #358 teardown CLI —
+deleting the module breaks team teardown, which is unrelated to re-ping.
+
+**Validation.** 5494 passed / 1 skipped; ruff check + `format --check` + mypy clean at CI scope.
+`test_sendmessage_hook_is_registered_for_pre_post_and_failure` replaced by `test_no_hook_gates_sendmessage`,
+which asserts *no* saga hook matches `SendMessage` on any event.
+
+**What surprised.** The full 5,494-test suite was green the entire time the feature was broken. The
+conformance test asserted the hook *was registered* — it encoded the wiring, never the behavior — so
+the suite actively defended the outage. Registration is not function.
+
+**Generalizable rule.** A hook that reads fields out of a host tool's `tool_input` is coupled to a
+contract the repo does not own and cannot see change. Two rules follow: (1) parse defensively and
+**fail open** — an observer that can block the primitive it observes is not an observer, it is a
+single point of failure; (2) test hooks by *executing* them against a realistic payload, not by
+asserting they appear in `hooks.json`. A wiring assertion passes forever after the wiring stops
+working.
+
+**Refs.** Wave 0 of `docs/plans/` simplification pass. Related: #663 (`pre_push_gate_hook` matches
+command text rather than the git invocation) — same shape, a hook guessing at structure it does not
+own.
+
 ### A fail-closed guard nested inside `configured is None` skipped exactly the sessions it protected  {#partial-admission-guard-placement-662}
 
 **Context.** #662 taught `session_admission_snapshot()` to admit sessions that never ran a Saga

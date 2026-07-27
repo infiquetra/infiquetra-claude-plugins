@@ -2,6 +2,47 @@
 
 ## 2026-07-27
 
+### Journal ordering is machine-checked on the diff, not instructed in prose {#journal-order-linted-659}
+
+**Decision.** `LEARNINGS.md` and `DECISIONS.md` ordering is enforced by
+`scripts/lint_journal_order.py` in CI, in two halves: a structural check (date headings strictly
+descending, unique, entries at `###`, none stranded above the first heading) that runs on every
+push, and a diff-scoped check (an entry added by this branch must sit in the newest date section)
+that runs on pull requests. `spend_retro.py` — the only mechanical writer — inserts at the top
+rather than `open("a")`, and emits an `###` entry rather than its previous `## <date> Spend Retro`
+heading, which was neither a valid date section nor an entry.
+
+**Rationale.** The prose instruction was already there, in each file's own header, and both files
+had drifted ~10% of their content anyway: 16 and 20 entries below the oldest heading, four
+duplicate date headings, five entries authored at the wrong level. The instruction sits at line 5
+of a 4,400-line file; the mistake gets made at line 4,400. Nothing mechanical caused the drift, so
+nothing mechanical was going to stop it either.
+
+The two halves are not redundant. The structural check would **not** have caught the
+`LEARNINGS.md` case — its headings were ordered and unique throughout, and entries simply piled up
+under the last one. A file can be structurally valid and semantically wrong when its ordering
+encodes edit history. Only the delta-scoped check sees that, which is why it exists despite
+needing a PR base ref to run.
+
+**Rejected alternatives.**
+
+- *Strengthen the header wording.* The rule was already stated plainly and unambiguously in both
+  files. Restating it more loudly is the intervention that already failed.
+- *One structural check only.* Simpler and runs everywhere, but blind to the exact drift that
+  motivated the work — it would have passed `LEARNINGS.md` on every one of the 16 bad commits.
+- *Full schema validation now.* #407 tracks validating each entry's internal shape
+  (Context / Evidence / Mechanism / Generalizable rule). Deliberately out of scope: it is a much
+  larger surface with a real false-positive risk against 350 historical entries, and it solves a
+  different problem. Ordering was the thing actually broken.
+- *Auto-fix instead of fail.* Re-filing needs a date, dates come from `git blame`, and blame
+  disagrees with the authored date on ~12% of known-good entries by ±1 day
+  (see [[blame-lag-vs-authored-date]]). A guard that silently relocates content on a signal that
+  noisy is worse than one that refuses and names the file.
+
+**Revisit when.** #407 lands a full entry-schema validator — at that point the structural half of
+this lint should fold into it rather than run as a second pass. The diff-scoped half stays
+regardless; schema validity says nothing about placement.
+
 ### An operator approves a rendered table, never a JSON blob — and the table names what the backend cannot enforce {#approval-table-not-json-668}
 
 **Decision.** Every backend-approval point renders `spec_table.py` and pastes it verbatim. Four
@@ -37,6 +78,223 @@ of choosing.
 **Revisit when.** A fourth backend joins, or `team-execution` gains real per-leaf tool restriction
 and per-teammate effort. At that point the asymmetry the table exists to expose may have closed,
 and the enforceability section could become noise rather than signal.
+
+## 2026-07-25
+
+### Ship ceremony resolves head/base from one resolver, never the rolling `branch` tick field (#635) {#ceremony-ref-resolution-635}
+
+**KTD1 — One resolver, every consumer.** `resolve_ceremony_refs()` is the single source for the PR's
+head and base; the destructive `branch_delete` target, its manifest-close id, `checkout_main`'s
+target, both `gh pr create --base` sites, and `_do_merge`'s SHA probes all consume it. The
+three-part `branch_delete` failure (base deleted, wrong manifest key closed silently by
+`_close_if_registered`'s by-design no-op on an unregistered id, the real branch's entry left open
+forever because `_teardown_attempt_closes` handles only `scratch`/`worktree` kinds) existed because
+the deletion target and the manifest key were derived independently from the same wrong field; one
+resolver makes that divergence unrepresentable. *Rejected:* patch each of the five call sites
+independently — this reproduces the exact failure mode being fixed, since two independently-derived
+values can silently agree wrongly.
+
+**KTD2 — Resolution ladder: PR-authoritative, then manifest+sidecar, then raise.** (1) `gh pr view
+--json headRefName,baseRefName` when the saga carries a PR ref; (2) the `ceremony-branch:` entry on
+`opened_resources.json` (written once at push time, never re-stamped) for head, plus a per-saga base
+sidecar; (3) raise. `saga["branch"]` is never a rung. *Rejected:* manifest-first — the manifest is
+local disk state written by this machine, and the PR is the shared, operator-visible truth; preferring
+local state over the PR record is how the ceremony reached this bug. *Rejected:* PR-only, no manifest
+rung — that would make a destructive path hard-depend on network reachability at exactly the moment
+an operator is finishing a ship.
+
+**KTD3 — The R2 hazard is scoped to rung 2, and the CHANGELOG says so exactly.** On rung 1 the head
+and base both come from one `gh pr view` record, and GitHub forbids a same-repo PR whose head equals
+its base — so `BRANCH_DELETE_TARGETS_BASE` is inert there by construction, correctly: rung 1 is
+authoritative and cannot yield a wrong target. The hazard's real job is rung 2, where the head comes
+from the opened-resource manifest and the base from the PR — two independent records that can agree
+wrongly, the exact shape of the `outcome/norns-next-horizon` incident. An earlier draft of this
+change described the probe as comparing "two derivation paths" in general; a verify panel traced the
+operands on rung 1 and showed both still originate in one PR query, so that framing was corrected
+before it shipped — see the Revisit-when clause below for what would change this.
+
+**KTD4 — Ceremony base lives in a per-saga sidecar, not a tick field.** Following
+`{#ceremony-sidecars-forward-only-undo-346}`: ceremony safety state is per-saga JSON, never a rolling
+saga field. A tick field rolls with whatever branch the last save happened on; a sidecar is written
+once, at the moment the fact becomes true, and stays ceremony-scoped for the ceremony's lifetime.
+
+**KTD5 — The default branch is resolved, never hardcoded.** `resolve_default_branch()` reads `git
+symbolic-ref refs/remotes/origin/HEAD`, falling back to `gh repo view --json defaultBranchRef`, and
+raises rather than defaulting to the literal `"main"` when both fail. *Rejected:* replacing one
+hardcoded `main` with another — this repo family already contains repos whose default branch is not
+the ceremony's base, so a second hardcode would move the bug rather than remove it.
+
+**KTD6 — `--operator-confirmed branch_delete:<target>` is required for `branch_delete`.** The bare
+form refuses with a message naming the resolved target, so the operator's confirming invocation
+carries a value they have actually seen — the typed-payload growth `{#ship-ceremony-operator-gate-526}`'s
+own "Revisit when" clause anticipated ("a transition is added whose confirmation needs an argument of
+its own"). The mismatch rule stays uniform: a qualified confirmation whose target does not match the
+resolved target refuses, exactly like a plain name mismatch. Every other transition keeps the bare
+grammar. *Migration:* `plugins/saga/skills/work/SKILL.md` and
+`plugins/saga/skills/work/references/pr-continuation-loop.md` both named the old bare-form invocation
+and are updated in this same change. *Behavior note, not a breaking change:* this moved
+`--operator-confirmed merge:x` with `merge` upcoming from the raw-string mismatch refusal to the
+"does not take a confirmation target" refusal, because the guard now compares the parsed transition
+name rather than the raw string — both refuse, only the diagnostic wording changed, and the path was
+CLI-unreachable before (argparse `choices=` rejected the colon form).
+
+**Defect F — `ship_undo._undo_merge` reverts on the recorded base, not the literal `main`.** Found by
+a refute panel after the initial fix landed E (recording the right squash sha) without touching the
+consumer: `_undo_merge` still hardcoded `git checkout main`, `git revert --no-edit <sha>` on whatever
+that checkout left `HEAD` on, and `git push origin main`, three times over. Fixing E alone moves the
+bug from "wrong sha recorded" to "right sha, wrong branch reverted" rather than removing it, so F is
+folded into this same decision rather than deferred. A rollback-manifest entry with no recorded base
+(every entry written before this ships) floors at the literal `main`
+(`ship_undo.LEGACY_MERGE_BASE`), not the resolved repo default — such an entry's `merge_sha` was read
+by a pre-#635 `_do_merge` that probed `refs/heads/main` verbatim, so `main` is provably where it came
+from. *Rejected:* fall back to `resolve_default_branch()` for a base-less legacy entry — an earlier
+draft of this requirement said exactly that, and a verify panel showed it sends the revert to a
+`trunk`-default repo's `trunk`, a branch the recorded sha was never read from. Provenance beats
+currency.
+
+**Rejected (whole-design).** Fixing `branch_delete` (A) without also fixing the merge SHA probe (E) —
+leaves the undo path fully able to revert an unrelated healthy commit on the default branch. Fixing E
+without F — moves the bug from mis-recorded evidence to mis-applied evidence; both are the same root
+defect and ship together. Extending the outcome store to carry ceremony refs
+(`{#ship-teardown-terminal-gate-347}`'s territory) — wrong ownership axis; ceremony refs are
+ceremony-scoped, not outcome-scoped.
+
+**Revisit when.** A transition other than `branch_delete` needs a typed confirmation payload —
+generalize `_parse_operator_confirmation` past a single `transition:target` shape rather than
+special-casing a second colon-qualified transition. Or the rung-2 topology stops being reachable in
+practice (e.g. the opened-resource manifest is retired) — at that point `BRANCH_DELETE_TARGETS_BASE`
+becomes dead code and should be removed rather than left as an inert backstop with no live rung to
+guard.
+
+## 2026-07-24
+
+### Board-sync resolves mission-control via the plugin ladder, not monorepo paths (#620)  {#board-sync-plugin-resolution-620}
+
+**Decision.** Saga's `/outcome` board-sync located mission-control at
+`<repo_root>/plugins/mission-control/...` and read the schema at
+`Path(__file__).parents[2]/mission-control/config/sdlc-schema.json`. Both are correct only inside the
+plugins monorepo, so every board write failed from a consumer repo (the live incident:
+`campps-context-library`, 24 failed `board_synced` records in one tick). The version-less error path
+`.../infiquetra-plugins/saga/mission-control/config/...` was arithmetic, not a typo: the installed
+cache inserts a `<version>` segment, so `parents[2]` lands one directory short.
+
+- **KTD1 — the generic resolver lives in fleet-core's loaded `fleet_commons/` package, not the frozen
+  shim.** `plugin_resolution.resolve_plugin_root(name)` generalizes the shim's five-rung ladder to an
+  arbitrary sibling plugin, loaded through the existing `fleet_commons_shim.load(...)` seam. The
+  bootstrap shim stays byte-identical (its drift guard and `{#fleet-commons-mechanism-463}` both
+  hold); this is the additive-only 0.x growth that decision's "fourth consumer appears" anticipated.
+  *Rejected:* a second vendored `mission_control_shim.py` (doubles the byte-identity surface for
+  non-bootstrap code); parameterizing the frozen shim (violates the byte-freeze, forces a seven-copy
+  re-sync); a saga-local resolver (the next consumer re-implements the ladder — and mission-control,
+  the plugin being resolved, already vendors the shim).
+- **KTD2 — saga keeps reading `sdlc-schema.json` directly from the resolved root; it does not ask
+  mission-control for the phase map.** `sdlc_manager._resolve_sdlc_schema` resolves via the GitHub API
+  first and returns `{}` on total failure, so routing per-tick reconciles through it would swap a
+  local read for a network round-trip whose failure reads as success. *Known latent risk:* the
+  vendored schema is a month behind upstream (`2026-06-17` vs `2026-07-18`) with the read slice
+  (`phase_board_map`) currently identical — recorded, deferred, not solved.
+- **KTD3 — two distinct failure modes.** Root-unresolvable (no mission-control anywhere) withholds the
+  whole cohort with one loud `unavailable` record, reusing the existing `drift-hold` withholding
+  shape, with no retry — killing the N-ops × max_attempts storm without weakening fail-loud.
+  Root-resolved-but-schema-unreadable keeps the prior per-op `failed` status record while the
+  coalesced progress comment for the same leaf still posts. Collapsing the two would regress the
+  comment path. *Rejected:* withhold on any resolution failure (C3); silent skip (destroys fail-loud).
+- **KTD4 — rung order inherited unchanged** (env / walk-up / registry / cache-sibling). Preferring
+  cache-sibling for a CLI to dodge #642's registry staleness was rejected: it creates two disagreeing
+  ladders, the registry is authoritative for installed state, and the failure asymmetry runs the safe
+  way — a stale library skews behavior silently while a stale CLI fails loud on an unknown verb, which
+  makes the registry the *safer* first rung for mission-control. Mitigation is rung provenance in every
+  record (R7) plus the `MISSION_CONTROL_ROOT` escape hatch (R8), not a reordered ladder.
+- **KTD5 — `pulse.py` is in scope; `outcome_reconcile.py` gets its own test.** `/pulse` is the same
+  defect family (a one-call change, seam already cut) and excluding it would leave telemetry reporting
+  the board unavailable in exactly the repos where `/outcome` now works. The reconcile schema seam is
+  repaired implicitly by KTD2 but is covered explicitly, because implicit repair without a test is
+  indistinguishable from luck.
+- **KTD6 — a stale fleet-core degrades to the KTD3 terminal, never an uncaught exception.**
+  `fleet_commons_shim.load("plugin_resolution")` raises when the module is absent, and saga 0.114.0
+  requires a module first shipped in fleet-core 0.23.0 — so a stale install registry (#642,
+  four-for-four) resolves fleet-core 0.22.0 and would brick board-sync harder than the bug under
+  repair. The single per-tick resolution catches that `RuntimeError` and routes it into the
+  `unavailable` record, naming the #642 hand-repair. *Rejected:* a hard fleet-core floor that aborts
+  the tick (leaf state does not depend on board writes); vendoring `plugin_resolution` into saga
+  (re-opens the duplication KTD1 rejected).
+
+**Rejected (whole-design).** Fixing the paths without addressing the retry storm (C1); asking
+mission-control for a resolved phase map via a new CLI verb (B, network-first + `{}`-on-failure).
+
+**Revisit when.** A third consumer needs `resolve_plugin_root` (promote more bespoke path resolution
+onto it), or the vendored-vs-upstream `sdlc-schema.json` drift (KTD2) stops being inert — the
+`phase_board_map` slice diverging is the trigger for a non-networked drift check.
+
+### Externally-executed leaf settlement is a verify-and-close: auto-settle is already wired, threshold stays 0 (#626)  {#outcome-settlement-halt-externally-executed-626}
+
+**Decision.** #626 reported two settlement-gate defects: board-sync breaking on `advance --autonomous`
+in consumer repos, and a leaf executed OUTSIDE the engine (`backend: cc-workflows-ultracode`) never
+settling — its dispatch position stays `open` forever and halts the whole outcome frontier on every
+later tick (the incident: leaf `sub-13`, blocked on an external Stripe dependency, settled
+`silent-no-op`, permanently froze the frontier because `DEFAULT_THRESHOLD_PERCENT = 0` breaches on any
+single casualty). Verified live at `03c2640c` (saga 0.114.0), ~1.5 of the 2 defects were already
+shipped by sibling leaves and the residual was already wired, so #626 ships **zero production code**:
+it is characterization tests + docs + an operator-gated live proof, not a build. The issue conflates
+two orthogonal failure modes that stay strictly separate — "the external executor finished but the
+engine never learned" (a bookkeeping gap → auto-settle `delivered`) versus "the unit is a genuine
+casualty" (a real block → the #618 waive). Fixing one does nothing for the other.
+
+- **KTD1 — `DEFAULT_THRESHOLD_PERCENT` stays `0`; genuine casualties exit via the #618 waive (Option
+  A, operator 2026-07-24).** A genuinely-blocked leaf halting the frontier and requiring an explicit
+  operator `waive` is honest, auditable behavior. The two *actual* problems are already solved: a
+  finished-but-unlearned Workflow leaf auto-settles `delivered` (direction a, already wired), and a real
+  casualty has a first-class human exit (`dispatch-waiver`, #618). What remains is a policy choice about
+  how loud a genuine block should be, and loud/explicit is the safe default. *Rejected:* flip the global
+  default to non-zero — `DEFAULT_THRESHOLD_PERCENT` governs *every* outcome-site manifest
+  (`dispatch_settlement.py:293,1470,1678`), so flipping it silently changes halt semantics for all
+  outcomes and could let real failures slip the gate everywhere. *Deferred:* a per-manifest threshold
+  knob (sound future ergonomics, no current evidence of waive-toil).
+- **KTD2 — #626 ships zero production code; it is verify-and-close.** Direction (a) auto-settle is
+  already built, backend-agnostic, and idempotent: every `advance` tick's `production_harvester`
+  (`outcome.py:2100-2209`) materializes a leaf's GitHub-canonical completion (stage 1) then reconciles
+  **every** dispatched subplot — with **no `site`/`backend` filter** (`outcome.py:2148-2206`) — into a
+  `settle_attempt(... DELIVERED)`. An externally-executed leaf's `open` position closes on the very tick
+  that materializes its merged-PR / closed-issue completion. Re-implementing an auto-settle we already
+  have is pure risk against a heavily-tested, load-bearing halt gate. *Rejected:* add a second,
+  redundant settle-on-harvest path "to be explicit" (duplicates the loop, invites double-settle races,
+  weakens the single-writer invariant).
+- **KTD3 — the new tests are characterization / regression-lock, not red-first.** Because the mechanism
+  already exists, a test asserting auto-settle **passes against current code**; the plan does **not**
+  manufacture a fake red state. Load-bearingness is proved honestly by the operator-gated R-live
+  stash/neuter probe (temporarily neuter the reconcile loop, confirm the characterization test goes red
+  and the frontier re-halts, restore) — a verification act, never a shipped change. *Rejected:* fabricate
+  a red state to satisfy the "a test must be able to fail" instinct.
+- **Test adjudication — one net-new guard, the rest referenced.** R1 (Defect-1 board-sync from a
+  non-monorepo cwd) is already covered at parity by #620's suite
+  (`test_production_path_resolves_once_and_threads_root_to_schema_and_writer`,
+  `test_advance_autonomous_drives_board_sync`), so U2 is a **reference, not a duplicate** — adding one
+  would be the churn the plan warns against. R2/R3/R4's mechanism and generic cases are covered by the
+  existing `team-execution` harvest-settle, idempotency, and fail-closed tests. The single genuinely
+  net-new guard (`test_workflow_executed_leaf_auto_settles_on_harvest_and_unblocks_frontier`) pins the
+  `cc-workflows-ultracode` (Workflow) site — the exact incident class — combined with the
+  dependent-frontier-unblock clause, which no existing test does. It runs the same code path today (no
+  site filter exists); its value is prospective (it fails the day a change re-adds a site filter that
+  re-strands Workflow leaves).
+- **D1 — no release-surface bump (#605-style zero-surface close).** #626 touches only repo-root `tests/`
+  and repo-root `docs/` — no change under `plugins/saga/`, no plugin behavior/schema/command/prompt/
+  user-facing-guidance change (the CLAUDE.md bump trigger), and the drift pins key on `plugin.json`
+  (untouched). The plan's U4 floated a `0.114.0 → 0.115.0` patch bump; adjudicated against the real diff
+  it is **not** required, matching the #605 harness/tests-only precedent. *Rejected:* a needless bump —
+  it re-invites the same-version sibling-PR collision this campaign has hit repeatedly, for zero shipped
+  plugin change; the durable record lives here (DECISIONS) + the work-session + the closed issue, not the
+  plugin CHANGELOG.
+
+**Rejected (whole-design).** Building a new auto-settle where one already exists (KTD2); flipping the
+global threshold default (KTD1); re-implementing Defect 1 (shipped #620) or a new waive verb (shipped
+#618); reconciling the #628 cross-runtime double-dispatch here (separate defect — the R-live observation
+only confirms auto-settle does not *paper over* a double-dispatched ledger).
+
+**Revisit when.** An operator is repeatedly waiving the *same class* of deferred casualty across ticks
+(the waive verb has become a recurring chore, not an exceptional acknowledgement) — the trigger to
+promote the per-manifest threshold knob KTD1 deferred. Or `required_checks` / `closure_gate` stops being
+inert, at which point evidence-gated (not barrier-gated) settle-on-harvest becomes a real, separate
+option.
 
 ## 2026-07-23
 
@@ -98,6 +356,66 @@ by design and should not be the leaf that adds one); #645 (boot-id cohort split)
 policy / lease-TTL redesign, `renew_batch` all-or-nothing) touch adjacent admission/TTL machinery
 this fix deliberately left alone; #647 (pre-existing unfenced edge) is explicitly out of scope
 here.
+
+### Registry readers tolerate-and-preserve unknown additive fields; commitments stay closed {#registry-forward-compat-617}
+
+**Date:** 2026-07-23 · **Plan:**
+`docs/plans/2026-07-23-issue-617-registry-schema-forward-compat-plan.md`
+
+**Issue:** #617 · **Learnings:** `{#broker-schema-forward-poisoning-616}`
+
+**Decision.** The fleet-lease registry reader (`plugins/fleet-core/scripts/fleet_commons/lease_broker.py`)
+tolerates and preserves unknown additive fields in container mappings instead of failing closed with
+`RegistryCorruptError` on every unrecognized key, and ships `doctor`/`repair` as the shipped operator
+path for the manual recovery the 2026-07-17 and 2026-07-22 incidents required by hand.
+
+- **KTD1 — tolerance line = containers tolerant, commitments closed.** Unknown-key tolerance applies
+  to container mappings (registry top level, per-lease, per-fence, per-admission, per-settlement-outer
+  record, per-owner-close); digest-covered commitment records verified by `_record_sha256`
+  (settlement-close receipts, `FencingToken`) stay strictly closed, because container fields are
+  mutable schema-evolvable state while commitment records are hash-bound evidence where an unknown
+  byte is indistinguishable from tampering.
+- **KTD2 — extras passthrough rides a per-dataclass `extras` mapping.** Each tolerance-scoped
+  dataclass (and `Registry` itself) captures the unknown remainder at `from_dict` and merges it last
+  in `to_dict`. `to_dict` rebuilds the document from typed dataclasses, so passthrough that doesn't
+  ride the dataclass is silently dropped on the next write — the round-trip data-loss hazard this
+  decision exists to kill. `sort_keys=True` plus extras being disjoint from known keys by
+  construction keeps output deterministic and collision-free.
+- **KTD3 — no version stamp, no migration framework.** The schema string stays
+  `fleet_lease_registry.v1` and the fix writes zero new fields; any new written field would itself
+  brick every pre-#617 reader, the exact defect under repair. The four existing bespoke legacy
+  migration arms in `Registry.from_dict` are untouched. A future breaking change rides an explicit
+  v2 schema string, which fails closed by design.
+- **KTD4 — `doctor`/`repair` are explicit operator down-migration verbs, not auto-recovery.** They
+  land as saga adapter CLI verbs (`plugins/saga/scripts/lease_broker.py`, beside `inspect`/`sweep`)
+  delegating to fleet-core broker methods; `saga:fleet-doctor` stays strictly read-only.
+  Auto-repairing shared fenced state on read would itself be a tamper/corruption-masking vector — with
+  tolerance shipped, `repair`'s remaining job is deliberate rollback support (strip newer fields so an
+  older broker can read the file) plus a shipped triage path for the next "corrupt beyond tolerance"
+  incident. `repair` never runs implicitly and requires an explicit `--strip-unknown` flag.
+- **KTD5 — tolerance is bounded; corruption stays detectable.** Preserved unknown extras are capped
+  at 64 KiB serialized per document; above the cap the read fails closed with `RegistryCorruptError`.
+  An unbounded unknown-blob channel in a 0600 shared-state file would invite garbage-flood and
+  smuggling; the cap keeps the fail-closed posture against non-additive garbage while sitting far
+  above any plausible additive-field payload.
+- **Mid-run reload writer-swap hazard stays out of scope, documented not built.** The issue's proposed
+  fix 4 — harness-side detect-and-refuse of a mid-run plugin reload that swaps the active schema
+  writer underneath a running session — is harness territory, not adapter-CLI or broker territory.
+  This fix does not attempt it; the hazard is recorded here and in LEARNINGS
+  `{#broker-schema-forward-poisoning-616}` so a future harness-side change has the incident context,
+  rather than being silently reintroduced as an unstated assumption.
+
+**Rejected.** A `schema_minor` stamp (a new field is self-defeating against R5); writer-version
+stamping with migrate-on-open (machinery with no consumer while v1 stays additive-only); a
+minor-version string lane (`v1.x`) that changes the exact-matched `schema` value and bricks older
+readers identically to the defect under repair; auto-repair on read; and an unbounded extras channel.
+
+**Revisit when.** A genuinely breaking v2 schema is first needed (KTD3), at which point a real
+migration framework and writer-version stamping become worth their machinery; or the harness gains a
+mid-run plugin-reload detection surface that could consume the writer-swap hazard note directly.
+
+---
+
 
 ## 2026-07-22
 
@@ -378,6 +696,448 @@ lease before deregistration, while legacy and unmanaged teardown remains green.
 
 **Refs.** Issue #356; `plugins/saga/scripts/outcome_worktrees.py`,
 `plugins/saga/scripts/outcome_decompose.py`, `plugins/saga/scripts/ship_teardown.py`.
+
+---
+
+## 2026-07-15
+
+### Concurrency policy has one nested ExecutionSpec block and one conservative product guard {#concurrency-policy-350}
+
+**Date:** 2026-07-15 · **Plan:**
+`docs/plans/2026-07-15-issue-350-concurrency-policy-plan.md` · **Issue:** #350
+
+**Decision.** Concurrency configuration lives only in an optional `ExecutionSpec.concurrency` block.
+Its resolved order is spec default, environment, all-read-only cohort lift, tier-weighted admission,
+engine lane, then explicit run override. Dependency layers and verify panels share one ordered
+chunking primitive, and the aggregate guard uses AC8's conservative layer-width times verifier-width
+product even where current panel sequencing makes that an upper bound.
+
+- **KTD1 - no duplicate top-level `max_concurrent`.** The nested policy is the serialized authority;
+  absent policy blocks retain the compatibility behavior of existing optional ExecutionSpec fields.
+- **KTD2 - the explicit run request is last.** Read-only lift applies before tier admission; a lane is
+  the most-specific automatic input, but it cannot silently defeat the operator's explicit run
+  override. A capability is resolved once with the repository overlay and calibration signals before
+  admission; the governor and emitted runtime selector consume that same exact engine key. The
+  authored capability remains provenance, not a second selector, because the runtime contract requires
+  capability XOR engine. Fallback, halt, or non-exact resolution fails emission. Every effective width
+  remains subject to the aggregate ceiling.
+- **KTD3 - tier admission reuses fleet-core `cost_weights.to_spend`.** Saga does not create a second
+  model/effort weight table.
+- **KTD4 - read-only lifting requires explicit evidence.** Every unit in the cohort must carry the
+  existing read-only mutation policy; absence or a mixed cohort uses the base width.
+- **KTD5 - aggregate width follows AC8's product.** The guard multiplies worker-chunk width by the
+  largest co-running verifier-chunk width (factor 1 without a panel) and fails above the fleet
+  ceiling; it does not replace the published acceptance contract with an inferred schedule.
+- **KTD6 - concurrency gets a sibling spawn-site inventory.** Sandbox and concurrency inventories
+  cross-link, but each retains its own source rows, parser, and failure contract.
+- **KTD7 - executable workflow source has one fail-closed naming boundary.** Unit identifiers use a
+  closed ASCII grammar and cannot claim JavaScript keywords, harness bindings, the supported
+  runtime-global namespace, generated panel/chunk symbols, or iterate-to-consensus loop locals.
+  Runtime globals are reserved independently of observed source syntax; an independent
+  ECMAScript/Node oracle checks bare, shorthand, call, and member references without treating
+  property names as globals, and compares the reservation boundary with Node `globalThis`.
+  Free-form comment text is rendered inert, while executable values remain JSON-encoded strings.
+  Fan-out framing has one private helper that snapshots a governor-derived chunk before invoking its
+  member renderer. Structural conformance requires exactly two inventoried helper call sites, direct
+  governor assignments and loop consumption, a helper-call expression directly in each governed loop
+  body, no mutation or alias escape of the governed collection before loop consumption, no mutation
+  or alias escape of the direct loop chunk before helper entry, the unchanged direct loop chunk as
+  the helper input, and no indirect helper loads. Raw parallel delimiters are rejected through direct
+  or directly aliased list sinks, including JavaScript trivia and unresolved formatted callees, and
+  at any static assignment site outside the helper so a local delimiter binding cannot hide the raw
+  emitter. The guard folds constant string concatenation but intentionally does not reconstruct
+  general Python alias dataflow or complete JavaScript grammar; centralizing the executable boundary
+  removes the need for that test-only mini-analyzer. The independent global oracle owns separate Node
+  and Workflow-host baselines, and every host-global identifier has a behavioral emission rejection
+  test.
+- **KTD8 - calibration is one immutable repository snapshot.** Capability emission reads the strict
+  hash-chained ledger once under its shared lock, constructs one verified `LedgerSnapshot`, and
+  derives Elo and provider-drift signals from exactly those records. Routing never composes signal
+  families from different concurrent ledger revisions.
+
+**Revisit when** `/optimize` explicitly adopts the shared governor, a runtime scheduler can expose
+measured overlap instead of emit-time bounds, or a new executable fan-out site is added.
+
+---
+
+### Dispatch settlement extends the run-fact ledger; the DLQ is a derived view {#dispatch-settlement-351}
+
+**Date:** 2026-07-15 · **Plan:**
+`docs/plans/2026-07-15-issue-351-dispatch-settlement-plan.md` · **Issue:** #351
+
+**Decision.** Dispatch manifests, pre-call spawn attempts, terminal settlements, and digest-bound
+late-delivery observations are append-only `run_fact.v1` records with `kind=dispatch-settlement`;
+they do not create another store beside the hash-chained run-fact ledger. Open positions, casualty
+reports, and retry-eligible dead letters are derived from a verified snapshot on every read.
+
+- **KTD1 - the facts are the manifest.** One aggregate manifest record plus per-attempt spawn and
+  settle records closes the atomicity gap a sidecar manifest or queue file would introduce.
+- **KTD2 - dispatch settlement does not overload `kind=reconciliation`.** That existing kind belongs
+  to external-engine finding adjudication; the event vocabularies remain distinct.
+- **KTD3 - stable identity is `(dispatch_id, unit_id, attempt)` and spawn means committed for
+  submission.** At-least-once retries increment the attempt but preserve the unit's idempotency key.
+  The coordinator appends immediately before the host call, so a crash or tool failure after append
+  stays visible. A late delivery appends evidence after a non-delivered settle instead of rewriting
+  history; the ledger never pretends exactly-once delivery.
+- **KTD4 - team-execution delivery is a valid worker-exit `saga.manifest.v1`.** `artifact_pointer.py`
+  is a post-work diff-transfer snapshot, not an acknowledgment, and receives no invented ACK role.
+- **KTD5 - site adapters normalize persisted evidence; one classifier decides.** Agent prose cannot
+  satisfy a delivery. A caller cannot establish trust with a Boolean, output list, reference, or
+  digest: the classifier loads the receipt under an explicit evidence root, validates its site
+  schema and unit/output binding, and computes the digest from the actual bytes. Team artifacts have
+  only closed `reviewer-result` and `validator-state` kinds; their deliverables are derived from
+  validated payloads and never copied from a caller-authored output list.
+- **KTD6 - an omitted casualty threshold means zero percent.** Permissive partial progress is an
+  explicit per-dispatch operator choice.
+- **KTD7 - stale worktrees are projected read-only.** `reconcile --leaks` may report a registry/on-disk
+  mismatch as an unsettled debit but does not append synthetic history or reap resources.
+- **KTD8 - workflow settlement is driver-materialized and invocation-bound.** Generated leaves keep
+  their no-filesystem boundary; emitted expected-unit metadata and validated host results let the
+  root driver write facts. The driver persists one invocation ID before submission, reuses it only
+  for crash resume, and mints a new one for a later execution of an unchanged spec.
+- **KTD9 - a pre-submit spawn is storage-durable.** The writer synchronizes the appended ledger bytes
+  and new directory entry before the runtime call can proceed; advisory locking alone is not the
+  crash boundary the contract promises.
+- **KTD10 - team-execution resolves Saga rather than copying it.** The independently packaged plugin
+  preflights an explicit root, source checkout, installed registry, or cache sibling before any Agent
+  call, then invokes the one canonical Saga engine through a coordinator-owned evidence adapter.
+
+**Revisit when** a new fan-out site is introduced, trusted host APIs expose stronger liveness or
+rate-limit receipts, or a consumer can prove stronger idempotency than the current at-least-once
+contract.
+
+---
+
+### Fleet leases reserve before spawn and fence every delegated mutation {#fleet-ttl-lease-broker-356}
+
+**Date:** 2026-07-15 · **Plan:**
+`docs/plans/2026-07-15-issue-356-ttl-lease-broker-plan.md` · **Issue:** #356
+
+**Decision.** One fleet-core registry, protected by one process lock, owns delegated-agent admission
+and outcome-worktree ownership in separate named pools. Provisional and workflow-batch leases reserve
+capacity before launch, trusted runtime identity binds the child after start, and every delegated
+file or Bash mutation verifies the current monotonic fencing token. Expiry is derived from renewal
+time plus TTL; Saga alone validates and reaps an expired outcome worktree.
+
+- **KTD1 - #350 owns resolution; fleet-core owns normalized limits.** Fleet-core holds the shared
+  default constants and admission record so Saga and team-execution cannot drift. Saga's #350
+  resolver alone interprets spec, environment, tier, lane, and run inputs; the broker records the
+  result, pins one exact snapshot per live session, rejects any mid-session upshift, and uses the
+  minimum aggregate ceiling asserted by all live leases. A pre-spawn pin has the normal five-minute
+  TTL, is visible through `inspect`, and is purged after abandonment so crashed preflight cannot
+  exhaust the bounded pin registry. Worktrees retain their independent cap-four pool.
+- **KTD2 - fleet-core owns the schema.** Saga and team-execution use thin adapters around one
+  fleet-commons implementation and one lock/sequence authority. The authority root is runtime-neutral:
+  explicit safe `INFIQUETRA_FLEET_STATE_DIR`, then safe absolute XDG state, then
+  `~/.local/state/infiquetra/fleet-leases`; it never defaults through Claude, Codex, or plugin-data
+  directories. Consumers compare a redacted canonical-root digest before admission.
+- **KTD3 - reservation precedes launch.** `Agent|Task` calls get provisional leases in `PreToolUse`;
+  `/work` reserves an emitted workflow wave atomically before `Workflow(...)`. `SubagentStart` binds
+  trusted `agent_id` after launch but never creates uncounted capacity.
+- **KTD4 - foreground release needs both sides of the lifecycle.** Because hooks run independently,
+  another hook may block `SubagentStop`, and `SubagentStart` does not expose its parent tool-use ID.
+  A foreground lease is removed only after its bound child records terminal intent and the exact
+  provisional parent call records completion; resident workers release after explicit stop
+  confirmation. Batch settlement and resident session teardown validate all signals and release under
+  the same broker lock. Cross-ordered same-type claims may delay release but cannot free a live child.
+- **KTD5 - fencing is looked up, not asserted.** Hooks use trusted `agent_id` to verify the broker's
+  current resource token. Retrying a logical unit atomically supersedes the old token, so a stale
+  process cannot write through file tools or Bash. A per-resource last-granted head survives lease
+  removal, allowing later consumers to derive current, expired, closed, or superseded without a
+  mutable status field. Closed heads beyond the bounded hot registry move to owner-only cold files
+  keyed by resource digest; exact closed/superseded classification survives compaction for both agent
+  and worktree pools.
+- **KTD6 - a durable worktree is outcome-owned, not coordinator-process-owned.** Same-boot monotonic
+  time derives expiry, but a short-lived coordinator PID ending is not abandonment proof for an active
+  child. Each active tick transfers the exact persisted token to its current coordinator before sweep;
+  a `dispatched` node vetoes destructive reap. Transfer and sweep share the authority lock, and Saga
+  persists registry/lease recovery state before physical Git creation. Terminal or otherwise inactive
+  resources still require dead-owner or explicit-terminal proof; failed reaps remain visible for retry.
+- **KTD7 - hook enforcement is cooperative runtime safety.** Missing, corrupt, or version-skewed
+  authority fails closed on armed delegated paths. A local operator able to disable or replace hooks
+  remains outside the security boundary.
+- **KTD8 - pre-spawn pins and closed heads have separate hot-path bounds.** A session admission pin
+  carries same-boot monotonic creation time and a 300-second orphan TTL; live leases keep their exact
+  pin, while abandoned pins expire, remain inspectable as derived state, and are swept before the
+  64-session cap is applied. The registry retains only 128 closed resource heads across both pools;
+  older exact heads move to owner-only, no-follow archive sidecars so closed and superseded remain
+  distinguishable without unbounded read-modify-write cost on the hot registry.
+- **KTD9 - grant and settlement are indivisible authority transitions.** Nested parent validation and
+  child grant occur under one broker lock, eliminating verify-then-acquire races. Registered engine
+  adapters enter a persisted, exact-token settlement window immediately after runner return; the
+  broker lock then spans disarm, integrity accounting, evidence shaping, and durable fact writes
+  before exact release. Advisory panels additionally hold one stable aggregate resource fence across
+  every member and enter exact-token settlement for both final reconciliation facts; a newer retry
+  either supersedes the stale panel before any append or waits for its settled facts. No accepted
+  output is written after its lease can be superseded. Direct renew and release require the exact
+  fencing token; owner teardown accepts only broker-recorded terminal evidence.
+
+**Revisit when** Claude exposes an atomic pre-spawn child identity, a durable host lease API replaces
+file-backed coordination, or team-execution gains a generic teardown contract under issue #358.
+
+---
+
+### Orphan evidence is rejected or quarantined under the fleet resource fence {#orphan-evidence-fencing-355}
+
+**Date:** 2026-07-15 · **Plan:**
+`docs/plans/2026-07-15-issue-355-orphan-runner-containment-plan.md` · **Issue:** #355
+
+**Decision.** Agy, Saga, and Team Execution evidence writers use #356's `LeaseBroker` as the sole
+mutation authority. Broker-owned prepare/commit/abort makes the atomic closed-registry replacement
+the only acceptance linearization point. A callback failure best-effort records `ambiguous`; an
+unwritable registry, signal, or process death leaves the last durable `prepared` or `committing`
+state, which retains authority and blocks ordinary retry. Output without the matching closed broker
+receipt is quarantine-only evidence and cannot satisfy a gate. `run-lease.json` remains forensic.
+
+- **KTD1 - the broker owns prepare, close, and retained ambiguity.** Protected writers run only from
+  the broker's committing phase. Sweep never reclaims prepared, committing, or ambiguous authority,
+  and #355 does not claim automatic or restart-safe producer replay. The low-level recovery
+  coordinator remains a test/experimental seam; #358 owns lifecycle recovery and teardown. A
+  lost-response retry returns the canonical close without replaying the write. This is cooperative
+  correctness for an owner-local plugin: same-effective-user processes and the operator are trusted,
+  while stale children, crashes, accidental corruption, and external-engine output are not.
+- **KTD2 - closed-head CAS is the only successor path.** Registered dispatch, documented Team
+  Execution claim, and adjudication share one execution-stable resource. Each successor names the
+  exact predecessor token and canonical receipt hash; a stale attempt cannot reacquire after a retry.
+  Exact lookup includes cold archive sidecars even when a head has left the bounded inspection
+  projection, so archive compaction cannot reopen ordinary acquisition or erase late-write proof.
+- **KTD3 - agy admission is resolver-owned and lease-bound.** Direct auto-apply accepts only a bounded
+  resource key read from an owner-private `0600` regular file. The raw key is rejected on argv and
+  immediately reduced to a repository-scoped digest; only that digest reaches durable resource,
+  bundle, receipt, quarantine, or audit records. An in-process resolver derives policy, capacity,
+  process, canonical Git identity, and a lease-independent output template, then binds the acquired
+  lease to the final output record.
+- **KTD4 - closed schemas make disposition evidence executable.** Broker-native UUID epochs,
+  provider process identities, tokens, resources, receipts, expected outputs, quarantine manifests,
+  events, candidates, reservations, and recovery intents use strict canonical schemas and digests.
+- **KTD5 - superseded rejects; expired or closed output quarantines.** A newer head always wins.
+  Rejected output never becomes live, and corrupt or contradictory authority yields an explicit
+  evidence-integrity error rather than a guessed disposition.
+- **KTD6 - quarantine is immutable, reserved, and aggregate-bounded.** Items are below 128 MiB;
+  committed plus staging storage is capped at 512 MiB and 256 entries under one owner-only lock.
+  Every capacity check and event publication first recovers staging under that lock. Dead-owner
+  staging is schema-, identity-, path-, byte-, and digest-verified before finalization or safely
+  discarded; referenced evidence is revalidated before its event is written. Committed evidence
+  receives at least 30 days retention and is never evicted by the acceptance path.
+- **KTD7 - proof and projection remain verifiable but non-destructive.** Mode-bound command receipts
+  prove the genuine agy version gate and fleet sweep, bind an immutable merge-base plus every
+  receipt-excluded candidate path, mode, and byte digest, require shipped proof/transcript roots, and
+  rerun the fixed checker. Orphan candidates are derived only from canonical hot or archived broker
+  heads, close seals, leases, and orphan events; event callers cannot assert disposition or
+  terminality. #356 owns worktree sweep, #357 owns advanced liveness, and #358 owns generic teardown.
+- **KTD8 - incompatible settlement is lease protocol 2.** Fleet-core, Saga, Team Execution, and Agy
+  live apply require version 2 before acquiring or dispatching. Agy validation, no-write, and
+  patch-only paths lazy-load the new containment modules so independent plugin installation order
+  does not break modes that do not use settlement. Ordinary manifest CLI and completeness output is
+  noncanonical-only; empty-artifact projection requires a matching bound output record and exact
+  trusted template, while optional/no-output contracts emit no candidate.
+
+**Explicit boundary.** This decision does not retrofit agy with an OS sandbox, environment secret
+broker, or hostile same-user filesystem defense. Those are separate runner-hardening capabilities;
+they are not required to fence stale evidence writes in an owner-local Claude Code plugin.
+
+**Revisit when** a transactional durable store can atomically cover broker and artifact bytes, a
+distributed fence replaces host-local coordination, or quarantine encryption becomes mandatory.
+
+---
+
+### Liveness is a shared score plus bounded confirmation, never sole teardown authority {#fleet-shared-liveness-357}
+
+**Date:** 2026-07-15 · **Plan:**
+`docs/plans/2026-07-15-issue-357-fleet-shared-liveness-engine-plan.md` · **Issue:** #357
+
+**Decision.** Fleet-core owns one pure liveness engine; Saga keeps coordinator-specific ledger and
+terminal adapters, and team-execution polls through Saga's canonical run-fact path. The engine fuses
+bounded phi-accrual suspicion, trusted baseline-relative path progress, and append-only idle-notice
+acknowledgment. Statistical suspicion requests a bounded reachability probe; it does not itself kill,
+release, retry, or delete.
+
+- **KTD1 - five intervals select adaptive scoring; sparse history keeps fixed behavior.** Outcome
+  absolute timeout and no-budget opt-out remain unchanged.
+- **KTD2 - phi 8 is a configurable suspicion threshold, not a magic terminal.** An armed trusted
+  transport may use exclusively attributed artifact progress or a host-correlated acknowledgment to
+  refute it and three receipt-proven, unacknowledged re-pings to confirm it. An Outcome backend
+  without that transport keeps its exact fixed-gap terminal and treats phi as advisory.
+- **KTD3 - a changed scoped digest proves activity, not resident progress.** Whole-tree change,
+  pointer epoch, mtime, and chat activity do not count. Even disjoint declared paths remain
+  `scoped-activity-unattributed` unless a trusted exclusive-provenance receipt binds the exact
+  subject, lease/fence, paths, digest interval, custody, and covered generations.
+- **KTD4 - an idle acknowledgment proves consumption, never output delivery.** The #351 complete
+  worker manifest remains the delivery ACK.
+- **KTD5 - notice/re-ping state is projected from append-only facts.** No mutable queue, status file,
+  sleep loop, or second heartbeat registry is introduced.
+- **KTD6 - detection and reclamation remain separate.** #357 scores and requests; #358 later owns
+  non-skippable stop/release/teardown, while #355/#356 own write and lease safety.
+
+**Revisit when** the host exposes a durable native worker heartbeat/notification receipt API, the
+fleet spans multiple boots/hosts, or observed cadence data justifies tuning the committed policy
+defaults through `/optimize`.
+
+---
+
+### Team execution closes admission before idempotent B8 teardown {#team-execution-teardown-358}
+
+**Date:** 2026-07-15 · **Plan:**
+`docs/plans/2026-07-15-issue-358-non-skippable-teardown-reclamation-plan.md` · **Issue:** #358
+
+**Decision.** Team-execution completion becomes a broker-fenced terminal transition. Step B8 first
+closes new admission for the exact run, then projects append-only teardown facts, executes only
+resource-specific trusted actions, and records completion only after a zero-open reconciliation.
+The #356 broker is live ownership, #351 run facts are history, and #357 confirmed liveness is input;
+there is no second reclamation ledger or reaper.
+
+- **KTD1 - closing admission prevents spawn-after-receipt.** Acquire, reserve, claim, and retry are
+  refused for a closed run while existing resources remain visible for reconciliation.
+- **KTD2 - B7 prepares; B8 completes.** A business result or report draft cannot use `complete`
+  until the B8 receipt proves zero open resources against the same closed broker generation.
+- **KTD3 - crash cleanup is eventual.** Observed terminals run B8 synchronously; `SIGKILL` and host
+  death wait for bounded SessionStart/explicit recovery plus TTL and dead-owner proof.
+- **KTD4 - actions are resource-specific.** Residents use trusted runtime stop receipts, owned
+  subprocesses require PID/start/boot identity, and outcome worktrees use only #356 sweep.
+- **KTD5 - CI plants its own leak.** Developer worktrees are attended evidence, never a destructive
+  test fixture or an implicit cleanup target.
+
+**Revisit when** the host provides a durable terminal finalizer, the broker becomes cross-host, or a
+native runtime can atomically stop and attest a resident without the current request/confirm pair.
+
+---
+
+### Fleet doctor correlates raw sources independently and never repairs {#fleet-doctor-independent-audit-353}
+
+**Date:** 2026-07-15 · **Plan:**
+`docs/plans/2026-07-15-issue-353-fleet-doctor-plan.md` · **Issue:** #353
+
+**Decision.** Fleet doctor is a Saga-local, point-in-time tripwire with a stdlib-only runtime
+observation layer. It strictly reads documented raw contracts and independently joins Git worktrees,
+outcome registries, broker ownership, run facts, teardown facts, manifests, and durable receipts. It
+never calls the tolerant projections or mutation APIs it audits.
+
+- **KTD1 - corruption cannot look absent.** Missing, malformed, unsafe, changed, capped, and unknown
+  evidence remain distinct; any incomplete proof exits 2 rather than clean.
+- **KTD2 - launch needs two signals.** A #351 spawn fact is pre-submission intent; unledgered requires
+  an independent broker, Outcome, audit-store, or bundle observation.
+- **KTD3 - managed worktrees only.** Stale detection is confined to canonical
+  `.saga-worktrees/<outcome>/<subplot>` resources; unrelated developer worktrees are out of scope.
+- **KTD4 - strict doctor complements tolerant delegation audit.** `/delegation-audit` remains its
+  focused advisory query; doctor treats corrupt/cross-source receipt evidence as a tripwire error.
+- **KTD5 - no repair authority.** Findings point to owners but cannot settle, retry, release, recover,
+  quarantine, kill, or reap.
+
+**Revisit when** contracts move to a single independently queryable database, the fleet spans hosts,
+or a separate scheduler/alert outcome explicitly consumes the report schema.
+
+---
+
+### Cross-runtime Outcome portability ends at canonical observation {#claude-cross-runtime-outcome-contract-579}
+
+**Date:** 2026-07-15
+
+**Plan:** `docs/plans/2026-07-15-claude-cross-runtime-outcome-contract-plan.md`
+
+**Parent:** #579; executable child: `infiquetra/infiquetra-claude-plugins#604`
+
+**Decision.** The Claude-side cross-runtime contract separates same-clone coordination from
+cross-clone reconstruction. A conforming runtime discovers an Outcome from a committed Git object,
+canonical GitHub repository identity, Outcome ID, and GitHub completion evidence. Runtimes in one
+clone may mutate only after validating a protected local handoff and consuming the #356 fleet-broker
+fence plus #351 dispatch settlement identity. A different clone can reconstruct the same canonical
+completion/candidate-frontier projection, but its transient dispatch state is unknown and it has no
+mutation authority.
+
+- **A public handoff is a reference, not a bearer token.** Acceptance reloads protected local
+  evidence and checks current repository/spec/fence/settlement/freshness/use state. Copied or unsigned
+  JSON cannot authorize dispatch.
+- **Committed blobs anchor compatibility.** Repository identity, commit/blob digest, spec schema and
+  revision, capability range, and working-tree equality are checked before cache, broker, fact,
+  dispatch, board, GitHub, or spec mutation.
+- **Portable status omits transient authority.** Git plus GitHub can prove completion and dependency
+  candidates across clones, not the absence of an in-flight dispatch. Cross-clone output is therefore
+  read-only and says transient state is unknown.
+- **Legacy bundle import is retired as authority transfer.** Replaying a bundled spec, completion
+  events, or dispatch ledger into another repository creates a competing truth path and must fail
+  with an actionable discovery/attach migration receipt.
+- **The producer and consumer release separately.** Claude publishes the runtime-neutral schemas and
+  golden fixtures; Codex consumes them in its own linked issue and PR.
+
+**Rejected.** Copying git-common-dir state between hosts; trusting a serialized handoff without its
+protected local record; adding a second lease/settlement/completion ledger; treating the newest ref or
+matching filesystem path as repository identity; allowing cross-clone advance because the canonical
+candidate frontier looks ready; and hiding the Codex port inside the Claude release.
+
+**Revisit when.** A networked, atomic, canonical active-dispatch authority is deliberately added to
+the Outcome model. At that point cross-host mutation can be designed against that authority; GitHub
+completion evidence alone is insufficient to prove no live dispatch exists elsewhere.
+
+---
+
+### Codex ports shared safety before protocol parity and retains native launch proof {#codex-lease-settlement-parity-579}
+
+**Date:** 2026-07-15
+
+**Plans:** `docs/plans/2026-07-15-codex-shared-runtime-substrate-plan.md`,
+`docs/plans/2026-07-15-codex-cross-runtime-outcome-parity-plan.md`
+
+**Parent:** #579; executable children: `infiquetra/infiquetra-codex-plugins#33` and
+`infiquetra/infiquetra-codex-plugins#34`
+
+**Decision.** Codex cross-runtime support ships as two independently reviewed proof ports. The first
+ports #351/#355/#356's runtime-neutral broker, resource guard, fencing, and dispatch settlement into
+Fleet Core plus the Saga adapter. The second consumes that substrate and ports the Outcome
+compatibility/discovery/handoff protocol. Both follow the Codex runbook's fresh manifest,
+classification, unit/cutover, isolated-install, fresh-session, and rollback gates.
+
+- **The fleet root is shared; protected runtime receipts are not.** Both runtimes resolve one safe
+  neutral fleet-state root and compare its redacted canonical digest. Codex protected launch receipts
+  remain in their current protected boundary and correlate by dispatch identity.
+- **Settlement cannot manufacture a Codex launch.** Codex retains `outcome.dispatch.v2`; only a
+  protected `ack_kind=launched` acknowledgement proves dispatch. `handed-off` remains non-launched,
+  and legacy facts remain unverified unless the existing migration contract proves them.
+- **A handoff authorizes one operation, not a frontier.** Protected same-clone acceptance may enter
+  one `advance-one` path, which then creates/observes the normal Codex dispatch intent and launch ack.
+- **The dirty primary Codex worktree is not an implementation surface.** Each port starts from a
+  fresh `origin/main` worktree and binds its exact target-repo plan/review bytes to the port manifest.
+
+**Rejected.** One oversized Codex parity issue that silently invents its missing substrate; a
+runtime-local broker under Claude/Codex/plugin-data homes; treating shared settlement or a handoff as
+Codex launch proof; copying protected receipts across clones; and bypassing the port classification
+because neutral Claude fixtures exist.
+
+**Revisit when.** Codex replaces `outcome.dispatch.v2` through a separately reviewed native migration,
+or the two proof ports become one already-shipped stable substrate whose compatibility adapter can be
+changed without cross-package release coupling.
+
+---
+
+### Cross-runtime acceptance measures overlap and closes without repair {#cross-runtime-acceptance-579}
+
+**Date:** 2026-07-15 · **Plan:**
+`docs/plans/2026-07-15-cross-runtime-outcome-acceptance-plan.md`
+
+**Issue:** `infiquetra/infiquetra-claude-plugins#605`
+
+**Decision.** Acceptance runs the exact merged and installed Claude/Codex releases in contained Git
+fixtures. A same-clone scenario shares one common dir and neutral broker root; a separate clone gets
+only committed spec plus deterministic GitHub evidence. Concurrent advance proof requires two OS
+processes, a deterministic barrier with monotonic overlap evidence, and a write-once fake backend.
+The harness reports failure but never fixes production behavior.
+
+- **Portable parity excludes transient state.** Different clones compare canonical completion and
+  candidate frontier; leases, handoffs, launches, and in-flight dispatch remain unknown.
+- **Shared settlement and runtime acknowledgement are separate assertions.** Exactly one settlement
+  and effect must exist, and Codex must also carry its native protected launched ack when it launches.
+- **Cleanup is independently observed.** Idempotent teardown runs twice, then #353 reads raw sources
+  and must report zero open positions before QA or outcome close.
+- **Evidence is revision-bound and privacy-safe.** The closed bundle records SHAs, versions, digests,
+  commands, timings, verdicts, counts, and artifact hashes, never raw credentials, caches,
+  transcripts, prompts, child output, or GitHub bodies.
+
+**Rejected.** Sequential calls described as concurrency; copied handoffs in the second clone;
+working-tree code described as a released input; equal transient state across clones; a test harness
+that patches a failing runtime; and closing #579 with a waiver.
+
+**Revisit when.** A networked active-dispatch authority makes cross-host mutation an accepted product
+contract or the runtime packages provide a signed, standardized installed-attestation API that can
+replace the current isolated readback evidence.
 
 ---
 
@@ -1450,8 +2210,6 @@ profiles or calibrate credit economics. Do not infer those changes from registry
 
 ---
 
-## 2026-07-10
-
 ### Issue #394 adds trigger-specific second opinions without changing gate authority {#work-review-second-opinion-394}
 
 **Context.** Issue #394 predates the shared engine-offer helper and typed reconciliation work now
@@ -2092,6 +2850,106 @@ mid-run spec patch, so an operator can steer tier without aborting and re-planni
   emit; the segment-boundary isolation is the not-yet-run filter. Unlike #369 mechanism 3, R7 has a
   real segment-shed boundary and an emit-time consumer, so it was not deferred.
 
+### Run-scoped spend budgets — price the tier lever with a guarded ordinal weight table (commit pending)  {#run-scoped-spend-budgets-366}
+
+Issue #366 gives the fleet's one model/effort lever a notion of *magnitude*: a shared ordinal
+cost-weight table, a run-scoped `spend_envelope`, an emit-time `cost_budget` HALT, and an effort-escrow
+ledger. Operator chose the **full DoD** (escrow ledger in the same PR, not deferred). Outcome leaf
+`sub-366` of `tier-effort-first-class`; the spend-*delta* classifier is the separate #367.
+
+- **KTD1 — `cost_weights.json` + its `cost_weights.py` loader live in `fleet_commons/`, beside
+  `models.json`, not in `saga/references/`.** The weight table must not drift from the `tier_palette`
+  ordering it prices; co-locating it with the ordering source and validating monotonicity at load
+  closes the `{#tier-vocab-ordering}` two-contracts gap. `execution_spec.py` loads it via
+  `fleet_commons_shim.load("cost_weights")`, symmetric with `tier_palette`. This overrides the issue's
+  *indicative* `plugins/saga/references/cost_weights.json` (the issue delegates the path to `/plan`).
+- **KTD2 — weights are hand-authored ordinal values (non-linear allowed), not `rank + rung`
+  arithmetic.** A hand-authored table lets `xhigh`/`opus`/`fable` be disproportionately expensive (a
+  real cost signal) while a load-time monotonicity guard keeps it honest. Weights stay ordinal/relative
+  — no dollar prices, stable across provider price changes.
+- **KTD3 — the `cost_budget` HALT mirrors `VERIFY_N_CAP` exactly** (`execution_spec.py:489-500`): same
+  fail-loud `SpecError`, both sides named, optional soft warn band. This is the correctness-critical
+  facet — a false-negative silently lets an over-budget run proceed, violating the `/outcome` campaign's
+  binding HALT-not-degrade rule — so its unit carries the adversarial verify gate at merge.
+- **KTD4 — `spend_envelope`/`cost_budget` live on `ExecutionSpec` (per-run), not `OutcomeSpec`.**
+  `OutcomeSpec` keeps its derived `cost_rollup` (R24 leaf-produced fact); a run-scoped budget on the
+  coordinator would fight the grounding-brief `/outcome` law ("cost ledger = leaf-produced fact"). This
+  resolves the DoD's "run/outcome spec" ambiguity toward the per-run spec.
+- **KTD5 — `SpendEnvelope` is a pure accumulator primitive** (crossing iff `cumulative + delta >
+  envelope` while `cumulative <= envelope`), tested in isolation. Its consumers are a new
+  `execution_spec.py spend` CLI verb (real read) and `/work`'s #364 between-rounds escalation (doc). No
+  autonomous runtime gate is built (#366: "not a new autonomous gate; the envelope is a CLI-set field").
+- **KTD6 — the effort-escrow ledger is a self-contained module** (`allocate`/`record_actual`/`refund`/
+  `request_escalation`, allocations in `to_spend()` units) with `effort-policy.yaml` real config it
+  loads via PyYAML. `/work` records actuals (producer); the refund/escalation compute and `/plan`
+  reading the policy are consumers. The escalation-request surfaces pre-execution, mirroring #364's
+  between-rounds gate.
+- **KTD7 — new test files are `test_cost_weights.py`, `test_spend_envelope.py`, `test_effort_ledger.py`;
+  `cost_budget` over/under-budget tests land in the EXISTING `tests/test_saga_execution_spec.py`.** The
+  issue names `tests/test_execution_spec.py`, which does not exist (same reconciliation #364 made). The
+  AC `-k` selectors become test-function-name fragments so every AC check resolves.
+- **KTD8 — the `cost_budget` sum accounts for call MULTIPLICITY, not one weight per unit (surfaced by
+  doc-review).** A fan-out unit runs its op `len(targets)` times and a verify panel adds `n` verifier
+  calls at the unit's tier (× iterations when it iterates to consensus), so `unit_spend = to_spend(tier)
+  × max(len(targets),1) + verify.n × to_spend(tier) × iterations`. A `pilot` is a separate declared unit
+  counted on its own row and is deliberately not re-added (double-count guard). A one-weight-per-unit sum
+  would undercount exactly the expensive fan-out/panel plans and false-negative the HALT — the
+  HALT-not-degrade violation U2 exists to prevent, which is why U2 carries the adversarial gate.
+- **Revisit when.** A second emitter (`team-execution`'s markdown path) needs budget parity and must
+  consume the shared `cost_weights.json`; or #367's spend-delta classifier lands and the ordinal weight
+  unit needs reconciling with its `spend_delta`/`adjacent_tier` ordering math.
+
+---
+
+### Spend-delta machinery — one three-way direction primitive built on the existing ordering (commit pending)  {#spend-delta-machinery-367}
+
+Issue #367 gives `/plan` and `/work` one shared primitive for tier-spend *direction*: a
+`spend_delta(old, new) -> {cheapen | escalate | lateral}` classifier, a `worth_it_because` +
+`cheaper_fallback` validate hard-block, a relative `adjacent_tier` lever, and a
+`.saga/spend-authority.json` silent/ask matrix. The **final leaf** `sub-367` of `tier-effort-first-class`
+— merging it completes the outcome (9/9). Backend inline; saga-only.
+
+- **KTD1 — `spend_delta` is per-axis ordering (three-way), not `to_spend` magnitude.** The `lateral`
+  bucket is for sideways axis trades (stronger model + weaker effort). `to_spend` (#366) is a total order
+  and injective over the 16 distinct cost cells, so a magnitude classifier could never yield `lateral`.
+  `to_spend` answers "how much?"; `spend_delta` answers "which way?" — different primitives.
+- **KTD2 — `spend_delta` generalizes `is_escalation`; the latter becomes `spend_delta(...)=="escalate"`.**
+  One primitive, no parallel two-way/three-way vocabulary. A grid guard test proves equivalence so #365's
+  `/tier` gate is behavior-preserved.
+- **KTD3 — `spend_delta` + `adjacent_tier` live in `execution_spec.py`, not fleet_commons.** They are
+  `Tier`-typed (the dataclass lives in saga) and sit beside `is_escalation`. `adjacent_tier("cheaper")`
+  reuses `tier_resolver.cheaper_fallback` (#362, via the shim) so the down-rung logic is not duplicated;
+  `dearer` uses `tier_palette.escalate`. This keeps #367 saga-only — no fleet-core bump (reuse, not
+  modify).
+- **KTD4 — `adjacent_tier` raises at ladder boundaries.** `cheaper_fallback`'s floor no-op (returns the
+  same tier) is converted to a raise; `dearer` raises at the ceiling. The issue's explicit "boundary
+  calls raise rather than silently clamping/wrapping."
+- **KTD5 — one shared `sonnet/high` baseline for both the worth-it hard-block and the spend-authority
+  default.** Both trigger on `is_escalation(SPEND_BASELINE, tier)` with `SPEND_BASELINE = sonnet/high`, so
+  the two levers cannot disagree about what "premium" means.
+- **KTD6 — `.saga/spend-authority.json` is a `silent_ceiling` tier, not a 16-cell map.** Modeled on a
+  signature-authority limit ("authorized silently up to tier X"); the resolver compares via
+  `is_escalation` (re-expressed on dict tiers, pinned to `is_escalation` by an exhaustive grid test).
+  Absent → `sonnet/high`; malformed → loud `SpendAuthorityError` (the #368 `tier_defaults.py` precedent).
+- **KTD7 — test placement:** `spend_delta`/`adjacent_tier` → new `tests/test_spend_delta.py`; the
+  worth-it hard-block → existing `tests/test_saga_execution_spec.py`; spend-authority →
+  `tests/test_spend_authority.py`. The issue's `tests/test_execution_spec.py` does not exist.
+- **KTD8 — the worth-it hard-block is `require_receipts`-gated, not unconditional (implementation-forced).**
+  The AC says "fails `validate()`", but the non-goal ("no retroactive backfill — new specs going forward")
+  forbids an unconditional check: `validate()` runs on every emit and every existing spec (75 emitter
+  tests break). Resolution: a `validate(require_receipts=True)` gate `/plan` sets at authoring; `emit()`
+  and existing specs use the default `validate()` unchanged. Interaction: `/tier`-patching (#365) up to a
+  premium tier is subject to the same authoring gate — a deliberate extension.
+- **KTD9 — `SPEND_BASELINE = sonnet/high`, not sonnet/medium.** The issue's premium set "(opus, fable,
+  xhigh in either axis)" — which omits `high` — is authoritative over the "sonnet/medium baseline"
+  phrasing; `is_escalation(sonnet/high, tier)` yields exactly that set and avoids retroactively flagging
+  common `sonnet/high` units.
+- **Revisit when.** The `ask` path needs an actual operator-prompt surface (single vs batched), or a
+  cross-repo authority registry is wanted beyond the single per-repo `.saga/spend-authority.json`.
+
+---
+
+
 ## 2026-07-05
 
 ### Effort becomes a first-class, validated, pluggably-honored field fleet-wide {#effort-first-class-363}
@@ -2450,6 +3308,52 @@ checkout (would motivate a `--branch` override), the default branch is renamed a
 [#ship-ceremony-open-pr-push-478] and [#ship-ceremony-request-review-noop-477] (this is the third
 ship-ceremony-adjacent defect surfaced by the fleet-execution campaign).
 
+### Dispatch-time tier resolver: one seam mapping (role-class, work-shape, overrides) to {model, effort} {#dispatch-time-tier-resolver}
+
+**Date.** 2026-07-05. **Plan.** `docs/plans/2026-07-05-dispatch-tier-resolver-plan.md` (#362, half of
+the effort/tier vocabulary work alongside #363 and #370).
+
+- **KTD1 — resolver + registry live in `fleet_commons`, not `saga/scripts`.** The vocabulary this
+  work builds on (`tier_palette.py`) already lives in `fleet-core`, and the resolver is consumed
+  cross-plugin (saga, team-execution, the workflow emitter) — `executor_profile_lint.py:89` already
+  proves the `fleet_commons_shim.load(...)` consumption pattern works. This overrides an earlier
+  Gate E draft that proposed `plugins/saga/scripts/tier_resolver.py`.
+- **KTD2 — build on `tier_palette.py`, do not create a competing vocabulary.** `cheaper_fallback`'s
+  ladder math uses the already-shipped `model_rank`/`effort_rank` (#463); #362 does not block on
+  #370's `escalate`/`downgrade`/`clamp` named operations. When #370 lands them, the resolver migrates
+  its inline rank math onto them as a later, mechanical swap.
+- **KTD3 — `cheaper_fallback` = weaken model first, then effort.** "Cheaper" means stepping down one
+  `MODELS` rung (strongest-first) before lowering effort, matching operator intuition ("drop to the
+  next cheaper model before turning down reasoning depth"). At the ladder floor (weakest model,
+  lowest effort) the fallback equals the resolved tier — a no-op floor, never an error.
+- **KTD4 — the expensive-tier gate is pure/testable, `/plan` doc/CLI-driven, runtime-injected.**
+  `fable`/`xhigh` tiers are gated behind an operator-confirm flag per the operator-choice framework;
+  the gate function itself stays pure and unit-testable, with the confirm prompt injected by the
+  caller (`/plan`), not baked into the resolver.
+- **KTD5 — `role-tier:` is backward-compatible.** All 25 team-execution agent frontmatters gain a
+  `role-tier:` value; the pre-existing bare `model:` literal is kept as a last-resort fallback, never
+  removed.
+- **KTD6 — dispatch-time resolution is this issue's scope; effort-as-first-class-citizen in the
+  plan/worker table schema is #363's.** #362 emits into a table shape that #363 parses; schema
+  alignment between the two is called out as a live comment on #363, not solved here.
+- **KTD7 — `role-tier` is a small agent-facing vocabulary mapping cleanly onto work-shape registry
+  keys, and the team-execution migration is tier-preserving by construction.** Verified against the
+  current fleet: all 10 `*-reviewer` agents were `opus`, all 8 `*-tester` agents were `sonnet`, and
+  all 7 `*-scanner`/`*-monitor`/`deploy-watcher` agents were `haiku`. Three `role-tier` values
+  preserve each group's existing tier — `adversarial-review` → opus/high (reviewers),
+  `contract-test` → sonnet/medium (testers), `mechanical-scan` → haiku/low
+  (scanners/monitors/deploy-watcher) — resolving through the registry's `judgment`, `mechanical`,
+  and `purely-mechanical` work-shape rows respectively (the sonnet-vs-haiku split already named at
+  `plugins/saga/skills/plan/SKILL.md:301`). The migration changes no agent's effective model; a
+  tier-preservation test asserts each of the 25 agents still resolves to its pre-migration model.
+  Intentional re-tiering is explicitly out of scope for #362.
+- **Revisit when.** #370 lands `escalate`/`downgrade`/`clamp` as named ladder operations (KTD2's
+  planned migration point), or #363 lands the effort-first-class plan/worker table schema and needs
+  the emission shape reconciled with what #362 renders (KTD6).
+
+---
+
+
 ## 2026-07-04
 
 ### `ship_ceremony.py` `request_review` becomes a no-op, not a resolved-login reviewer request (pending commit) {#ship-ceremony-request-review-noop-477}
@@ -2492,8 +3396,6 @@ single-maintainer repo with no near-term second reviewer.
 
 ---
 
-## 2026-07-05
-
 ### Release-surface single source: canonical CHANGELOG grammar + license/category stay marketplace-owned (#429, planning)  {#release-surface-single-source-429}
 
 **Decision.** Canonical `CHANGELOG.md` grammar (KTD1): file title exactly `# Changelog`, version
@@ -2530,8 +3432,6 @@ point a small explicit source file (not a `plugin.json` schema change) is the li
 issue converts from a guard-class fix into a generator.
 
 ---
-
-## 2026-07-04
 
 ### ship_ceremony.py: reversibility tiers stay local, ceremony state rides the work-thread saga, git-surface entry is an alias never a hook (#345, planning)  {#ship-ceremony-primitive-345}
 
@@ -3051,6 +3951,43 @@ codex write adapter ships (flips KTD4).
 
 ---
 
+### External-engine workers in team-execution: chaperone dispatch, not a second executor kind {#external-engine-chaperone-dispatch}
+
+**Date.** 2026-07-02. **Plan.** `docs/plans/2026-07-02-team-execution-external-engine-workers-plan.md`
+(#318, U12 follow-up from #283's ship-with-deferred). Fulfills the "team-execution gains an
+external-engine worker context-package slot" revisit trigger recorded in
+[External engines are never gatekeepers](#external-engines-never-gatekeepers).
+
+- **KTD1 — chaperone worker, not coordinator dispatch.** One resident Claude worker
+  (`worker-<engine>` / `worker-<capability>`) owns an engine's units end-to-end: resolve → wrapper
+  dispatch → verify → apply as sole-committer → test → manifest. There is no second executor kind
+  in wave scheduling — the engine is evidence the chaperone consumes (R23), never a participant in
+  residency, review, or git. *Rejected:* the coordinator dispatching inline (context bloat per
+  dispatch; a second driver-materialized manifest-writer mode; two executor kinds in wave
+  scheduling for what should be one).
+- **KTD2 — delegation intent drives chaperone tier, operator confirms.** `offload` defaults the
+  chaperone to `sonnet/medium` (a heavier chaperone erases the token savings that motivated the
+  delegation); `second-opinion` defaults it to `opus/high` (adversarial verification IS the
+  product; extra spend assumed). The two intents pull tier in opposite directions, so this is a
+  per-unit operator-confirmed recommendation in the `/plan` tier table, not a fixed policy.
+  *Rejected:* one fixed chaperone tier (wrong for one intent by construction).
+- **KTD5 — advisory validators are opt-in and structurally incapable of gating.** The
+  `external-second-opinion` validator is selected only via `.team-execution.json`'s
+  `external_second_opinion` key, never auto-selected by Phase A; its Gate Status can never resolve
+  to `hard-fail`/`blocked` for completion purposes (R13/R15), and Required-Evidence Absence does
+  not apply to it (it cannot be missing what it was never required to provide).
+- **Naming carve-out (KTD3).** An explicit-engine unit renders `worker-<engine-key>` (the bare
+  engine id, e.g. `worker-agy` — not `worker-agy/gemini-3.5-flash-high`); a capability-routed unit
+  renders `worker-<capability-key>` with Engine cell `cap:<key>` — the plan previews only what is
+  knowable at plan time, since the concrete engine for a capability route is resolved at run time.
+- **Revisit when.** The ideation-R14 sandbox profile ships and file-mutating external workers
+  become possible (issue #287) — this plan's evidence-only chaperone scope would need revisiting;
+  or `/retro` surfaces that the sonnet/medium offload default is still eating more than it saves.
+  Readiness record: `docs/reviews/2026-07-02-team-execution-external-engine-workers-plan-readiness.md`.
+
+---
+
+
 ## 2026-07-01
 
 ### Manifest carrier = git-common-dir `saga-manifests/` tree + typed `manifest_ref` pointer (#285 KTD1)  {#manifest-carrier-git-common-dir}
@@ -3250,6 +4187,43 @@ for schema/gate-semantics work on a future campaign.
 
 **Refs.** claude-api skill (cached 2026-06-24); plan KTD10; commit 766145a (U0).
 
+### External engines are never gatekeepers {#external-engines-never-gatekeepers}
+
+**Date.** 2026-07-01. **Plan.** `docs/plans/2026-07-01-external-engine-capability-routing-plan.md`
+(from `docs/brainstorms/2026-06-27-external-engine-capability-routing-requirements.md`, VECU seed S-4,
+#283). Saga gains a capability-aware registry + resolver + dispatch adapter for external LLM engines
+(Codex, Gemini via agy). This decision fixes the trust boundary the whole capability rides on.
+
+- **KTD — the binding rule.** Claude is verifier-of-record for every gated decision. An external
+  engine may occupy generator, advisory-reviewer, or non-gated-worker roles only; it never holds a
+  gated verdict that blocks a merge/deploy or persists as a gate. Enforced **structurally, not
+  asserted**: external output is an `AdvisoryEvidence` value with no verdict field, and
+  `engine_dispatch.satisfy_gate` raises unless a distinct Claude verification step has stamped it.
+- **Why this is a NEW decision, not a restatement.** The parroting note (`DECISIONS.md:276-290`) is
+  *evidence* (Antigravity parroted while Claude/Codex independently verified), not a standing rule;
+  the gated-vs-advisory consensus split (`operator-choice.md:82-95`) is the *mechanism* this rides on.
+  Neither previously bound external engines as non-gatekeepers — #283 establishes that rule.
+- **KTD — registry home = saga.** The registry (YAML data, R4) + resolver live in saga because every
+  seam they hook (the per-unit engine/capability field, `recommend_execution_backend`,
+  `saga.orchestration_downgrade`, the reviewer role) is already there. *Rejected:* a new
+  `external-engines` plugin (fragments the seams, adds an 8th marketplace plugin); folding into `agy`
+  (conflates one engine's containment wrapper with the router; agy is in-repo, codex external).
+- **KTD — `engine` is a parallel Unit field, not an extended tier.** `MODELS = (opus,sonnet,haiku)`
+  is load-bearing for Claude-agent dispatch; the resolver reads `Unit.engine`/`Unit.capability`
+  before `tier.model`. *Rejected:* widening the closed `MODELS` enum.
+- **KTD — capability tie-break = cost·speed (operator-confirmed).** When variants rate a capability
+  equally, the cheaper·faster variant wins (`cost_speed_rank`, registry order as final backstop).
+  *Rejected:* corroboration-strength (operator chose cost·speed); prompt-on-every-tie (breaks
+  autonomous dispatch, R20).
+- **Revisit when.** The ideation-R14 read-only-sandbox profile ships (external workers may then mutate
+  files, R23 second half); team-execution gains an external-engine worker context-package slot (then
+  R10/R12 team-execution dispatch, deferred here as U12); or the seed capability data drifts
+  materially (re-validated by use via `/retro`, R21, not a measurement loop). Readiness record:
+  `docs/reviews/2026-07-01-external-engine-capability-routing-plan-readiness.md`.
+
+---
+
+
 ## 2026-06-30
 
 ### PreCompact spore = a two-hook structured re-grounding at the compaction boundary (#281)  {#precompact-spore-two-hook}
@@ -3383,6 +4357,43 @@ sequencing only if release tooling gains a dormant/unadvertised plugin state wit
 **Revisit when.** Add a strictly scoped read-resolver partial-tolerance path only if a future GitHub GraphQL read genuinely cannot be expressed without nullable speculative branches. Revisit the sidecar state names if a broader prepared-draft state machine lands.
 
 **Refs.** Plan: `docs/plans/2026-06-28-create-prepared-partial-graphql-error-plan.md`; requirements: `docs/brainstorms/2026-06-27-create-prepared-partial-graphql-error-defect.md`; readiness review: `docs/reviews/2026-06-27-create-prepared-partial-graphql-error-readiness.md`; issue: `https://github.com/infiquetra/infiquetra-claude-plugins/issues/280`.
+
+---
+
+## 2026-06-27
+
+### Worker×Model cache scheduling — derive saga-side, reside team-side  {#worker-cache-scheduling}
+
+**Date.** 2026-06-27. **Plan.** `docs/plans/2026-06-27-worker-model-cache-scheduling-plan.md` (from
+`docs/brainstorms/2026-06-27-worker-model-cache-scheduling-requirements.md`, ideation S-1 build-first).
+
+Port VECU's worker residency split along infiquetra's existing seam: **saga derives** (segment +
+agent-id + tier), **team-execution resides** (named teammate + `SendMessage` reuse).
+
+- **KTD1 — derivation saga-side, residency runtime team-side.** `Unit.depends_on`/`tier` already live
+  in saga's `ExecutionSpec` (`execution_spec.py:176,:182`); `team_emitter.py:107` discards them.
+  Derivation goes where the data is; team-execution consumes the emitted ids. *Rejected:* VECU's
+  team-execution-side `worker_derivation.py` — right for VECU's primitive saga, wrong here.
+- **KTD2 — segment boundary = plugin directory.** Single monorepo; VECU's repo-change proxy never fires.
+- **KTD3 — stable agent id = segment/unit id**, replacing positional `worker-{i}` (residency needs a
+  durable `SendMessage` handle).
+- **KTD4 — behavioral residency is markdown protocol; the testable surface is the saga-side plumbing.**
+  Reuse/wave/review-loop live in skills prose validated by `/doc-review` + operator runs + headroom
+  telemetry; un-flatten + segmentation carry pytest. Consistent with the solo-operator measurement loop.
+- **KTD5 — R15a context-GC excluded** — no harness lever (Messages-API-only).
+
+**Revisit when.** Named-teammate residency proves insufficient (revisit warm-pool / crew-pairing); or a
+single team-execution run shows enough internal idle-poll to justify a formal within-run wave queue.
+
+**Refs.** Brainstorm requirements (origin); QUEUED [#ideate-brainstorm-do-less-bias](QUEUED.md#ideate-brainstorm-do-less-bias)
+(skill-bias catch from the same session); ideation S-1.
+
+**Doc-review addendum (2026-06-27).** A codex + agy adversarial pass + readiness review found 1 P0 + 4
+P1, all fixed in the plan: `Unit` carried no file-path data for segmentation (added `Unit.files`); emit
+cardinality was undefined (now **one row per segment**, KTD3); segment-level dependency derivation was
+missing (KTD4 — collapse the unit dep graph to segments); and segmentation must not mutate the shared
+`ExecutionSpec` (KTD5 — side mapping / copy). The "additive emitter" claim was corrected to
+schema-breaking. Review record: `docs/reviews/2026-06-27-worker-model-cache-scheduling-review.md`.
 
 ---
 
@@ -4642,259 +5653,6 @@ separate audited release plugin.
 
 ---
 
-## Worker×Model cache scheduling — derive saga-side, reside team-side  {#worker-cache-scheduling}
-
-**Date.** 2026-06-27. **Plan.** `docs/plans/2026-06-27-worker-model-cache-scheduling-plan.md` (from
-`docs/brainstorms/2026-06-27-worker-model-cache-scheduling-requirements.md`, ideation S-1 build-first).
-
-Port VECU's worker residency split along infiquetra's existing seam: **saga derives** (segment +
-agent-id + tier), **team-execution resides** (named teammate + `SendMessage` reuse).
-
-- **KTD1 — derivation saga-side, residency runtime team-side.** `Unit.depends_on`/`tier` already live
-  in saga's `ExecutionSpec` (`execution_spec.py:176,:182`); `team_emitter.py:107` discards them.
-  Derivation goes where the data is; team-execution consumes the emitted ids. *Rejected:* VECU's
-  team-execution-side `worker_derivation.py` — right for VECU's primitive saga, wrong here.
-- **KTD2 — segment boundary = plugin directory.** Single monorepo; VECU's repo-change proxy never fires.
-- **KTD3 — stable agent id = segment/unit id**, replacing positional `worker-{i}` (residency needs a
-  durable `SendMessage` handle).
-- **KTD4 — behavioral residency is markdown protocol; the testable surface is the saga-side plumbing.**
-  Reuse/wave/review-loop live in skills prose validated by `/doc-review` + operator runs + headroom
-  telemetry; un-flatten + segmentation carry pytest. Consistent with the solo-operator measurement loop.
-- **KTD5 — R15a context-GC excluded** — no harness lever (Messages-API-only).
-
-**Revisit when.** Named-teammate residency proves insufficient (revisit warm-pool / crew-pairing); or a
-single team-execution run shows enough internal idle-poll to justify a formal within-run wave queue.
-
-**Refs.** Brainstorm requirements (origin); QUEUED [#ideate-brainstorm-do-less-bias](QUEUED.md#ideate-brainstorm-do-less-bias)
-(skill-bias catch from the same session); ideation S-1.
-
-**Doc-review addendum (2026-06-27).** A codex + agy adversarial pass + readiness review found 1 P0 + 4
-P1, all fixed in the plan: `Unit` carried no file-path data for segmentation (added `Unit.files`); emit
-cardinality was undefined (now **one row per segment**, KTD3); segment-level dependency derivation was
-missing (KTD4 — collapse the unit dep graph to segments); and segmentation must not mutate the shared
-`ExecutionSpec` (KTD5 — side mapping / copy). The "additive emitter" claim was corrected to
-schema-breaking. Review record: `docs/reviews/2026-06-27-worker-model-cache-scheduling-review.md`.
-
----
-
-## External engines are never gatekeepers {#external-engines-never-gatekeepers}
-
-**Date.** 2026-07-01. **Plan.** `docs/plans/2026-07-01-external-engine-capability-routing-plan.md`
-(from `docs/brainstorms/2026-06-27-external-engine-capability-routing-requirements.md`, VECU seed S-4,
-#283). Saga gains a capability-aware registry + resolver + dispatch adapter for external LLM engines
-(Codex, Gemini via agy). This decision fixes the trust boundary the whole capability rides on.
-
-- **KTD — the binding rule.** Claude is verifier-of-record for every gated decision. An external
-  engine may occupy generator, advisory-reviewer, or non-gated-worker roles only; it never holds a
-  gated verdict that blocks a merge/deploy or persists as a gate. Enforced **structurally, not
-  asserted**: external output is an `AdvisoryEvidence` value with no verdict field, and
-  `engine_dispatch.satisfy_gate` raises unless a distinct Claude verification step has stamped it.
-- **Why this is a NEW decision, not a restatement.** The parroting note (`DECISIONS.md:276-290`) is
-  *evidence* (Antigravity parroted while Claude/Codex independently verified), not a standing rule;
-  the gated-vs-advisory consensus split (`operator-choice.md:82-95`) is the *mechanism* this rides on.
-  Neither previously bound external engines as non-gatekeepers — #283 establishes that rule.
-- **KTD — registry home = saga.** The registry (YAML data, R4) + resolver live in saga because every
-  seam they hook (the per-unit engine/capability field, `recommend_execution_backend`,
-  `saga.orchestration_downgrade`, the reviewer role) is already there. *Rejected:* a new
-  `external-engines` plugin (fragments the seams, adds an 8th marketplace plugin); folding into `agy`
-  (conflates one engine's containment wrapper with the router; agy is in-repo, codex external).
-- **KTD — `engine` is a parallel Unit field, not an extended tier.** `MODELS = (opus,sonnet,haiku)`
-  is load-bearing for Claude-agent dispatch; the resolver reads `Unit.engine`/`Unit.capability`
-  before `tier.model`. *Rejected:* widening the closed `MODELS` enum.
-- **KTD — capability tie-break = cost·speed (operator-confirmed).** When variants rate a capability
-  equally, the cheaper·faster variant wins (`cost_speed_rank`, registry order as final backstop).
-  *Rejected:* corroboration-strength (operator chose cost·speed); prompt-on-every-tie (breaks
-  autonomous dispatch, R20).
-- **Revisit when.** The ideation-R14 read-only-sandbox profile ships (external workers may then mutate
-  files, R23 second half); team-execution gains an external-engine worker context-package slot (then
-  R10/R12 team-execution dispatch, deferred here as U12); or the seed capability data drifts
-  materially (re-validated by use via `/retro`, R21, not a measurement loop). Readiness record:
-  `docs/reviews/2026-07-01-external-engine-capability-routing-plan-readiness.md`.
-
----
-
-## External-engine workers in team-execution: chaperone dispatch, not a second executor kind {#external-engine-chaperone-dispatch}
-
-**Date.** 2026-07-02. **Plan.** `docs/plans/2026-07-02-team-execution-external-engine-workers-plan.md`
-(#318, U12 follow-up from #283's ship-with-deferred). Fulfills the "team-execution gains an
-external-engine worker context-package slot" revisit trigger recorded in
-[External engines are never gatekeepers](#external-engines-never-gatekeepers).
-
-- **KTD1 — chaperone worker, not coordinator dispatch.** One resident Claude worker
-  (`worker-<engine>` / `worker-<capability>`) owns an engine's units end-to-end: resolve → wrapper
-  dispatch → verify → apply as sole-committer → test → manifest. There is no second executor kind
-  in wave scheduling — the engine is evidence the chaperone consumes (R23), never a participant in
-  residency, review, or git. *Rejected:* the coordinator dispatching inline (context bloat per
-  dispatch; a second driver-materialized manifest-writer mode; two executor kinds in wave
-  scheduling for what should be one).
-- **KTD2 — delegation intent drives chaperone tier, operator confirms.** `offload` defaults the
-  chaperone to `sonnet/medium` (a heavier chaperone erases the token savings that motivated the
-  delegation); `second-opinion` defaults it to `opus/high` (adversarial verification IS the
-  product; extra spend assumed). The two intents pull tier in opposite directions, so this is a
-  per-unit operator-confirmed recommendation in the `/plan` tier table, not a fixed policy.
-  *Rejected:* one fixed chaperone tier (wrong for one intent by construction).
-- **KTD5 — advisory validators are opt-in and structurally incapable of gating.** The
-  `external-second-opinion` validator is selected only via `.team-execution.json`'s
-  `external_second_opinion` key, never auto-selected by Phase A; its Gate Status can never resolve
-  to `hard-fail`/`blocked` for completion purposes (R13/R15), and Required-Evidence Absence does
-  not apply to it (it cannot be missing what it was never required to provide).
-- **Naming carve-out (KTD3).** An explicit-engine unit renders `worker-<engine-key>` (the bare
-  engine id, e.g. `worker-agy` — not `worker-agy/gemini-3.5-flash-high`); a capability-routed unit
-  renders `worker-<capability-key>` with Engine cell `cap:<key>` — the plan previews only what is
-  knowable at plan time, since the concrete engine for a capability route is resolved at run time.
-- **Revisit when.** The ideation-R14 sandbox profile ships and file-mutating external workers
-  become possible (issue #287) — this plan's evidence-only chaperone scope would need revisiting;
-  or `/retro` surfaces that the sonnet/medium offload default is still eating more than it saves.
-  Readiness record: `docs/reviews/2026-07-02-team-execution-external-engine-workers-plan-readiness.md`.
-
----
-
-## Dispatch-time tier resolver: one seam mapping (role-class, work-shape, overrides) to {model, effort} {#dispatch-time-tier-resolver}
-
-**Date.** 2026-07-05. **Plan.** `docs/plans/2026-07-05-dispatch-tier-resolver-plan.md` (#362, half of
-the effort/tier vocabulary work alongside #363 and #370).
-
-- **KTD1 — resolver + registry live in `fleet_commons`, not `saga/scripts`.** The vocabulary this
-  work builds on (`tier_palette.py`) already lives in `fleet-core`, and the resolver is consumed
-  cross-plugin (saga, team-execution, the workflow emitter) — `executor_profile_lint.py:89` already
-  proves the `fleet_commons_shim.load(...)` consumption pattern works. This overrides an earlier
-  Gate E draft that proposed `plugins/saga/scripts/tier_resolver.py`.
-- **KTD2 — build on `tier_palette.py`, do not create a competing vocabulary.** `cheaper_fallback`'s
-  ladder math uses the already-shipped `model_rank`/`effort_rank` (#463); #362 does not block on
-  #370's `escalate`/`downgrade`/`clamp` named operations. When #370 lands them, the resolver migrates
-  its inline rank math onto them as a later, mechanical swap.
-- **KTD3 — `cheaper_fallback` = weaken model first, then effort.** "Cheaper" means stepping down one
-  `MODELS` rung (strongest-first) before lowering effort, matching operator intuition ("drop to the
-  next cheaper model before turning down reasoning depth"). At the ladder floor (weakest model,
-  lowest effort) the fallback equals the resolved tier — a no-op floor, never an error.
-- **KTD4 — the expensive-tier gate is pure/testable, `/plan` doc/CLI-driven, runtime-injected.**
-  `fable`/`xhigh` tiers are gated behind an operator-confirm flag per the operator-choice framework;
-  the gate function itself stays pure and unit-testable, with the confirm prompt injected by the
-  caller (`/plan`), not baked into the resolver.
-- **KTD5 — `role-tier:` is backward-compatible.** All 25 team-execution agent frontmatters gain a
-  `role-tier:` value; the pre-existing bare `model:` literal is kept as a last-resort fallback, never
-  removed.
-- **KTD6 — dispatch-time resolution is this issue's scope; effort-as-first-class-citizen in the
-  plan/worker table schema is #363's.** #362 emits into a table shape that #363 parses; schema
-  alignment between the two is called out as a live comment on #363, not solved here.
-- **KTD7 — `role-tier` is a small agent-facing vocabulary mapping cleanly onto work-shape registry
-  keys, and the team-execution migration is tier-preserving by construction.** Verified against the
-  current fleet: all 10 `*-reviewer` agents were `opus`, all 8 `*-tester` agents were `sonnet`, and
-  all 7 `*-scanner`/`*-monitor`/`deploy-watcher` agents were `haiku`. Three `role-tier` values
-  preserve each group's existing tier — `adversarial-review` → opus/high (reviewers),
-  `contract-test` → sonnet/medium (testers), `mechanical-scan` → haiku/low
-  (scanners/monitors/deploy-watcher) — resolving through the registry's `judgment`, `mechanical`,
-  and `purely-mechanical` work-shape rows respectively (the sonnet-vs-haiku split already named at
-  `plugins/saga/skills/plan/SKILL.md:301`). The migration changes no agent's effective model; a
-  tier-preservation test asserts each of the 25 agents still resolves to its pre-migration model.
-  Intentional re-tiering is explicitly out of scope for #362.
-- **Revisit when.** #370 lands `escalate`/`downgrade`/`clamp` as named ladder operations (KTD2's
-  planned migration point), or #363 lands the effort-first-class plan/worker table schema and needs
-  the emission shape reconciled with what #362 renders (KTD6).
-
----
-
-### Run-scoped spend budgets — price the tier lever with a guarded ordinal weight table (commit pending)  {#run-scoped-spend-budgets-366}
-
-Issue #366 gives the fleet's one model/effort lever a notion of *magnitude*: a shared ordinal
-cost-weight table, a run-scoped `spend_envelope`, an emit-time `cost_budget` HALT, and an effort-escrow
-ledger. Operator chose the **full DoD** (escrow ledger in the same PR, not deferred). Outcome leaf
-`sub-366` of `tier-effort-first-class`; the spend-*delta* classifier is the separate #367.
-
-- **KTD1 — `cost_weights.json` + its `cost_weights.py` loader live in `fleet_commons/`, beside
-  `models.json`, not in `saga/references/`.** The weight table must not drift from the `tier_palette`
-  ordering it prices; co-locating it with the ordering source and validating monotonicity at load
-  closes the `{#tier-vocab-ordering}` two-contracts gap. `execution_spec.py` loads it via
-  `fleet_commons_shim.load("cost_weights")`, symmetric with `tier_palette`. This overrides the issue's
-  *indicative* `plugins/saga/references/cost_weights.json` (the issue delegates the path to `/plan`).
-- **KTD2 — weights are hand-authored ordinal values (non-linear allowed), not `rank + rung`
-  arithmetic.** A hand-authored table lets `xhigh`/`opus`/`fable` be disproportionately expensive (a
-  real cost signal) while a load-time monotonicity guard keeps it honest. Weights stay ordinal/relative
-  — no dollar prices, stable across provider price changes.
-- **KTD3 — the `cost_budget` HALT mirrors `VERIFY_N_CAP` exactly** (`execution_spec.py:489-500`): same
-  fail-loud `SpecError`, both sides named, optional soft warn band. This is the correctness-critical
-  facet — a false-negative silently lets an over-budget run proceed, violating the `/outcome` campaign's
-  binding HALT-not-degrade rule — so its unit carries the adversarial verify gate at merge.
-- **KTD4 — `spend_envelope`/`cost_budget` live on `ExecutionSpec` (per-run), not `OutcomeSpec`.**
-  `OutcomeSpec` keeps its derived `cost_rollup` (R24 leaf-produced fact); a run-scoped budget on the
-  coordinator would fight the grounding-brief `/outcome` law ("cost ledger = leaf-produced fact"). This
-  resolves the DoD's "run/outcome spec" ambiguity toward the per-run spec.
-- **KTD5 — `SpendEnvelope` is a pure accumulator primitive** (crossing iff `cumulative + delta >
-  envelope` while `cumulative <= envelope`), tested in isolation. Its consumers are a new
-  `execution_spec.py spend` CLI verb (real read) and `/work`'s #364 between-rounds escalation (doc). No
-  autonomous runtime gate is built (#366: "not a new autonomous gate; the envelope is a CLI-set field").
-- **KTD6 — the effort-escrow ledger is a self-contained module** (`allocate`/`record_actual`/`refund`/
-  `request_escalation`, allocations in `to_spend()` units) with `effort-policy.yaml` real config it
-  loads via PyYAML. `/work` records actuals (producer); the refund/escalation compute and `/plan`
-  reading the policy are consumers. The escalation-request surfaces pre-execution, mirroring #364's
-  between-rounds gate.
-- **KTD7 — new test files are `test_cost_weights.py`, `test_spend_envelope.py`, `test_effort_ledger.py`;
-  `cost_budget` over/under-budget tests land in the EXISTING `tests/test_saga_execution_spec.py`.** The
-  issue names `tests/test_execution_spec.py`, which does not exist (same reconciliation #364 made). The
-  AC `-k` selectors become test-function-name fragments so every AC check resolves.
-- **KTD8 — the `cost_budget` sum accounts for call MULTIPLICITY, not one weight per unit (surfaced by
-  doc-review).** A fan-out unit runs its op `len(targets)` times and a verify panel adds `n` verifier
-  calls at the unit's tier (× iterations when it iterates to consensus), so `unit_spend = to_spend(tier)
-  × max(len(targets),1) + verify.n × to_spend(tier) × iterations`. A `pilot` is a separate declared unit
-  counted on its own row and is deliberately not re-added (double-count guard). A one-weight-per-unit sum
-  would undercount exactly the expensive fan-out/panel plans and false-negative the HALT — the
-  HALT-not-degrade violation U2 exists to prevent, which is why U2 carries the adversarial gate.
-- **Revisit when.** A second emitter (`team-execution`'s markdown path) needs budget parity and must
-  consume the shared `cost_weights.json`; or #367's spend-delta classifier lands and the ordinal weight
-  unit needs reconciling with its `spend_delta`/`adjacent_tier` ordering math.
-
----
-
-### Spend-delta machinery — one three-way direction primitive built on the existing ordering (commit pending)  {#spend-delta-machinery-367}
-
-Issue #367 gives `/plan` and `/work` one shared primitive for tier-spend *direction*: a
-`spend_delta(old, new) -> {cheapen | escalate | lateral}` classifier, a `worth_it_because` +
-`cheaper_fallback` validate hard-block, a relative `adjacent_tier` lever, and a
-`.saga/spend-authority.json` silent/ask matrix. The **final leaf** `sub-367` of `tier-effort-first-class`
-— merging it completes the outcome (9/9). Backend inline; saga-only.
-
-- **KTD1 — `spend_delta` is per-axis ordering (three-way), not `to_spend` magnitude.** The `lateral`
-  bucket is for sideways axis trades (stronger model + weaker effort). `to_spend` (#366) is a total order
-  and injective over the 16 distinct cost cells, so a magnitude classifier could never yield `lateral`.
-  `to_spend` answers "how much?"; `spend_delta` answers "which way?" — different primitives.
-- **KTD2 — `spend_delta` generalizes `is_escalation`; the latter becomes `spend_delta(...)=="escalate"`.**
-  One primitive, no parallel two-way/three-way vocabulary. A grid guard test proves equivalence so #365's
-  `/tier` gate is behavior-preserved.
-- **KTD3 — `spend_delta` + `adjacent_tier` live in `execution_spec.py`, not fleet_commons.** They are
-  `Tier`-typed (the dataclass lives in saga) and sit beside `is_escalation`. `adjacent_tier("cheaper")`
-  reuses `tier_resolver.cheaper_fallback` (#362, via the shim) so the down-rung logic is not duplicated;
-  `dearer` uses `tier_palette.escalate`. This keeps #367 saga-only — no fleet-core bump (reuse, not
-  modify).
-- **KTD4 — `adjacent_tier` raises at ladder boundaries.** `cheaper_fallback`'s floor no-op (returns the
-  same tier) is converted to a raise; `dearer` raises at the ceiling. The issue's explicit "boundary
-  calls raise rather than silently clamping/wrapping."
-- **KTD5 — one shared `sonnet/high` baseline for both the worth-it hard-block and the spend-authority
-  default.** Both trigger on `is_escalation(SPEND_BASELINE, tier)` with `SPEND_BASELINE = sonnet/high`, so
-  the two levers cannot disagree about what "premium" means.
-- **KTD6 — `.saga/spend-authority.json` is a `silent_ceiling` tier, not a 16-cell map.** Modeled on a
-  signature-authority limit ("authorized silently up to tier X"); the resolver compares via
-  `is_escalation` (re-expressed on dict tiers, pinned to `is_escalation` by an exhaustive grid test).
-  Absent → `sonnet/high`; malformed → loud `SpendAuthorityError` (the #368 `tier_defaults.py` precedent).
-- **KTD7 — test placement:** `spend_delta`/`adjacent_tier` → new `tests/test_spend_delta.py`; the
-  worth-it hard-block → existing `tests/test_saga_execution_spec.py`; spend-authority →
-  `tests/test_spend_authority.py`. The issue's `tests/test_execution_spec.py` does not exist.
-- **KTD8 — the worth-it hard-block is `require_receipts`-gated, not unconditional (implementation-forced).**
-  The AC says "fails `validate()`", but the non-goal ("no retroactive backfill — new specs going forward")
-  forbids an unconditional check: `validate()` runs on every emit and every existing spec (75 emitter
-  tests break). Resolution: a `validate(require_receipts=True)` gate `/plan` sets at authoring; `emit()`
-  and existing specs use the default `validate()` unchanged. Interaction: `/tier`-patching (#365) up to a
-  premium tier is subject to the same authoring gate — a deliberate extension.
-- **KTD9 — `SPEND_BASELINE = sonnet/high`, not sonnet/medium.** The issue's premium set "(opus, fable,
-  xhigh in either axis)" — which omits `high` — is authoritative over the "sonnet/medium baseline"
-  phrasing; `is_escalation(sonnet/high, tier)` yields exactly that set and avoids retroactively flagging
-  common `sonnet/high` units.
-- **Revisit when.** The `ask` path needs an actual operator-prompt surface (single vs batched), or a
-  cross-repo authority registry is wanted beyond the single per-repo `.saga/spend-authority.json`.
-
----
-
-## 2026-07-06
-
 ### /outcome completion harvest — supply the missing PR-ref producer, don't touch the consumers  {#outcome-completion-harvest-writeback-495}
 
 Issue #495 (the first `/outcome` dogfood defect, found running `tier-effort-first-class` / objective
@@ -5196,715 +5954,3 @@ behavior is then never worse than pre-#520.
 than session+engine (e.g. per-unit), or when the marker family moves out of the repo tree.
 
 ---
-
-### Concurrency policy has one nested ExecutionSpec block and one conservative product guard {#concurrency-policy-350}
-
-**Date:** 2026-07-15 · **Plan:**
-`docs/plans/2026-07-15-issue-350-concurrency-policy-plan.md` · **Issue:** #350
-
-**Decision.** Concurrency configuration lives only in an optional `ExecutionSpec.concurrency` block.
-Its resolved order is spec default, environment, all-read-only cohort lift, tier-weighted admission,
-engine lane, then explicit run override. Dependency layers and verify panels share one ordered
-chunking primitive, and the aggregate guard uses AC8's conservative layer-width times verifier-width
-product even where current panel sequencing makes that an upper bound.
-
-- **KTD1 - no duplicate top-level `max_concurrent`.** The nested policy is the serialized authority;
-  absent policy blocks retain the compatibility behavior of existing optional ExecutionSpec fields.
-- **KTD2 - the explicit run request is last.** Read-only lift applies before tier admission; a lane is
-  the most-specific automatic input, but it cannot silently defeat the operator's explicit run
-  override. A capability is resolved once with the repository overlay and calibration signals before
-  admission; the governor and emitted runtime selector consume that same exact engine key. The
-  authored capability remains provenance, not a second selector, because the runtime contract requires
-  capability XOR engine. Fallback, halt, or non-exact resolution fails emission. Every effective width
-  remains subject to the aggregate ceiling.
-- **KTD3 - tier admission reuses fleet-core `cost_weights.to_spend`.** Saga does not create a second
-  model/effort weight table.
-- **KTD4 - read-only lifting requires explicit evidence.** Every unit in the cohort must carry the
-  existing read-only mutation policy; absence or a mixed cohort uses the base width.
-- **KTD5 - aggregate width follows AC8's product.** The guard multiplies worker-chunk width by the
-  largest co-running verifier-chunk width (factor 1 without a panel) and fails above the fleet
-  ceiling; it does not replace the published acceptance contract with an inferred schedule.
-- **KTD6 - concurrency gets a sibling spawn-site inventory.** Sandbox and concurrency inventories
-  cross-link, but each retains its own source rows, parser, and failure contract.
-- **KTD7 - executable workflow source has one fail-closed naming boundary.** Unit identifiers use a
-  closed ASCII grammar and cannot claim JavaScript keywords, harness bindings, the supported
-  runtime-global namespace, generated panel/chunk symbols, or iterate-to-consensus loop locals.
-  Runtime globals are reserved independently of observed source syntax; an independent
-  ECMAScript/Node oracle checks bare, shorthand, call, and member references without treating
-  property names as globals, and compares the reservation boundary with Node `globalThis`.
-  Free-form comment text is rendered inert, while executable values remain JSON-encoded strings.
-  Fan-out framing has one private helper that snapshots a governor-derived chunk before invoking its
-  member renderer. Structural conformance requires exactly two inventoried helper call sites, direct
-  governor assignments and loop consumption, a helper-call expression directly in each governed loop
-  body, no mutation or alias escape of the governed collection before loop consumption, no mutation
-  or alias escape of the direct loop chunk before helper entry, the unchanged direct loop chunk as
-  the helper input, and no indirect helper loads. Raw parallel delimiters are rejected through direct
-  or directly aliased list sinks, including JavaScript trivia and unresolved formatted callees, and
-  at any static assignment site outside the helper so a local delimiter binding cannot hide the raw
-  emitter. The guard folds constant string concatenation but intentionally does not reconstruct
-  general Python alias dataflow or complete JavaScript grammar; centralizing the executable boundary
-  removes the need for that test-only mini-analyzer. The independent global oracle owns separate Node
-  and Workflow-host baselines, and every host-global identifier has a behavioral emission rejection
-  test.
-- **KTD8 - calibration is one immutable repository snapshot.** Capability emission reads the strict
-  hash-chained ledger once under its shared lock, constructs one verified `LedgerSnapshot`, and
-  derives Elo and provider-drift signals from exactly those records. Routing never composes signal
-  families from different concurrent ledger revisions.
-
-**Revisit when** `/optimize` explicitly adopts the shared governor, a runtime scheduler can expose
-measured overlap instead of emit-time bounds, or a new executable fan-out site is added.
-
----
-
-### Dispatch settlement extends the run-fact ledger; the DLQ is a derived view {#dispatch-settlement-351}
-
-**Date:** 2026-07-15 · **Plan:**
-`docs/plans/2026-07-15-issue-351-dispatch-settlement-plan.md` · **Issue:** #351
-
-**Decision.** Dispatch manifests, pre-call spawn attempts, terminal settlements, and digest-bound
-late-delivery observations are append-only `run_fact.v1` records with `kind=dispatch-settlement`;
-they do not create another store beside the hash-chained run-fact ledger. Open positions, casualty
-reports, and retry-eligible dead letters are derived from a verified snapshot on every read.
-
-- **KTD1 - the facts are the manifest.** One aggregate manifest record plus per-attempt spawn and
-  settle records closes the atomicity gap a sidecar manifest or queue file would introduce.
-- **KTD2 - dispatch settlement does not overload `kind=reconciliation`.** That existing kind belongs
-  to external-engine finding adjudication; the event vocabularies remain distinct.
-- **KTD3 - stable identity is `(dispatch_id, unit_id, attempt)` and spawn means committed for
-  submission.** At-least-once retries increment the attempt but preserve the unit's idempotency key.
-  The coordinator appends immediately before the host call, so a crash or tool failure after append
-  stays visible. A late delivery appends evidence after a non-delivered settle instead of rewriting
-  history; the ledger never pretends exactly-once delivery.
-- **KTD4 - team-execution delivery is a valid worker-exit `saga.manifest.v1`.** `artifact_pointer.py`
-  is a post-work diff-transfer snapshot, not an acknowledgment, and receives no invented ACK role.
-- **KTD5 - site adapters normalize persisted evidence; one classifier decides.** Agent prose cannot
-  satisfy a delivery. A caller cannot establish trust with a Boolean, output list, reference, or
-  digest: the classifier loads the receipt under an explicit evidence root, validates its site
-  schema and unit/output binding, and computes the digest from the actual bytes. Team artifacts have
-  only closed `reviewer-result` and `validator-state` kinds; their deliverables are derived from
-  validated payloads and never copied from a caller-authored output list.
-- **KTD6 - an omitted casualty threshold means zero percent.** Permissive partial progress is an
-  explicit per-dispatch operator choice.
-- **KTD7 - stale worktrees are projected read-only.** `reconcile --leaks` may report a registry/on-disk
-  mismatch as an unsettled debit but does not append synthetic history or reap resources.
-- **KTD8 - workflow settlement is driver-materialized and invocation-bound.** Generated leaves keep
-  their no-filesystem boundary; emitted expected-unit metadata and validated host results let the
-  root driver write facts. The driver persists one invocation ID before submission, reuses it only
-  for crash resume, and mints a new one for a later execution of an unchanged spec.
-- **KTD9 - a pre-submit spawn is storage-durable.** The writer synchronizes the appended ledger bytes
-  and new directory entry before the runtime call can proceed; advisory locking alone is not the
-  crash boundary the contract promises.
-- **KTD10 - team-execution resolves Saga rather than copying it.** The independently packaged plugin
-  preflights an explicit root, source checkout, installed registry, or cache sibling before any Agent
-  call, then invokes the one canonical Saga engine through a coordinator-owned evidence adapter.
-
-**Revisit when** a new fan-out site is introduced, trusted host APIs expose stronger liveness or
-rate-limit receipts, or a consumer can prove stronger idempotency than the current at-least-once
-contract.
-
----
-
-### Fleet leases reserve before spawn and fence every delegated mutation {#fleet-ttl-lease-broker-356}
-
-**Date:** 2026-07-15 · **Plan:**
-`docs/plans/2026-07-15-issue-356-ttl-lease-broker-plan.md` · **Issue:** #356
-
-**Decision.** One fleet-core registry, protected by one process lock, owns delegated-agent admission
-and outcome-worktree ownership in separate named pools. Provisional and workflow-batch leases reserve
-capacity before launch, trusted runtime identity binds the child after start, and every delegated
-file or Bash mutation verifies the current monotonic fencing token. Expiry is derived from renewal
-time plus TTL; Saga alone validates and reaps an expired outcome worktree.
-
-- **KTD1 - #350 owns resolution; fleet-core owns normalized limits.** Fleet-core holds the shared
-  default constants and admission record so Saga and team-execution cannot drift. Saga's #350
-  resolver alone interprets spec, environment, tier, lane, and run inputs; the broker records the
-  result, pins one exact snapshot per live session, rejects any mid-session upshift, and uses the
-  minimum aggregate ceiling asserted by all live leases. A pre-spawn pin has the normal five-minute
-  TTL, is visible through `inspect`, and is purged after abandonment so crashed preflight cannot
-  exhaust the bounded pin registry. Worktrees retain their independent cap-four pool.
-- **KTD2 - fleet-core owns the schema.** Saga and team-execution use thin adapters around one
-  fleet-commons implementation and one lock/sequence authority. The authority root is runtime-neutral:
-  explicit safe `INFIQUETRA_FLEET_STATE_DIR`, then safe absolute XDG state, then
-  `~/.local/state/infiquetra/fleet-leases`; it never defaults through Claude, Codex, or plugin-data
-  directories. Consumers compare a redacted canonical-root digest before admission.
-- **KTD3 - reservation precedes launch.** `Agent|Task` calls get provisional leases in `PreToolUse`;
-  `/work` reserves an emitted workflow wave atomically before `Workflow(...)`. `SubagentStart` binds
-  trusted `agent_id` after launch but never creates uncounted capacity.
-- **KTD4 - foreground release needs both sides of the lifecycle.** Because hooks run independently,
-  another hook may block `SubagentStop`, and `SubagentStart` does not expose its parent tool-use ID.
-  A foreground lease is removed only after its bound child records terminal intent and the exact
-  provisional parent call records completion; resident workers release after explicit stop
-  confirmation. Batch settlement and resident session teardown validate all signals and release under
-  the same broker lock. Cross-ordered same-type claims may delay release but cannot free a live child.
-- **KTD5 - fencing is looked up, not asserted.** Hooks use trusted `agent_id` to verify the broker's
-  current resource token. Retrying a logical unit atomically supersedes the old token, so a stale
-  process cannot write through file tools or Bash. A per-resource last-granted head survives lease
-  removal, allowing later consumers to derive current, expired, closed, or superseded without a
-  mutable status field. Closed heads beyond the bounded hot registry move to owner-only cold files
-  keyed by resource digest; exact closed/superseded classification survives compaction for both agent
-  and worktree pools.
-- **KTD6 - a durable worktree is outcome-owned, not coordinator-process-owned.** Same-boot monotonic
-  time derives expiry, but a short-lived coordinator PID ending is not abandonment proof for an active
-  child. Each active tick transfers the exact persisted token to its current coordinator before sweep;
-  a `dispatched` node vetoes destructive reap. Transfer and sweep share the authority lock, and Saga
-  persists registry/lease recovery state before physical Git creation. Terminal or otherwise inactive
-  resources still require dead-owner or explicit-terminal proof; failed reaps remain visible for retry.
-- **KTD7 - hook enforcement is cooperative runtime safety.** Missing, corrupt, or version-skewed
-  authority fails closed on armed delegated paths. A local operator able to disable or replace hooks
-  remains outside the security boundary.
-- **KTD8 - pre-spawn pins and closed heads have separate hot-path bounds.** A session admission pin
-  carries same-boot monotonic creation time and a 300-second orphan TTL; live leases keep their exact
-  pin, while abandoned pins expire, remain inspectable as derived state, and are swept before the
-  64-session cap is applied. The registry retains only 128 closed resource heads across both pools;
-  older exact heads move to owner-only, no-follow archive sidecars so closed and superseded remain
-  distinguishable without unbounded read-modify-write cost on the hot registry.
-- **KTD9 - grant and settlement are indivisible authority transitions.** Nested parent validation and
-  child grant occur under one broker lock, eliminating verify-then-acquire races. Registered engine
-  adapters enter a persisted, exact-token settlement window immediately after runner return; the
-  broker lock then spans disarm, integrity accounting, evidence shaping, and durable fact writes
-  before exact release. Advisory panels additionally hold one stable aggregate resource fence across
-  every member and enter exact-token settlement for both final reconciliation facts; a newer retry
-  either supersedes the stale panel before any append or waits for its settled facts. No accepted
-  output is written after its lease can be superseded. Direct renew and release require the exact
-  fencing token; owner teardown accepts only broker-recorded terminal evidence.
-
-**Revisit when** Claude exposes an atomic pre-spawn child identity, a durable host lease API replaces
-file-backed coordination, or team-execution gains a generic teardown contract under issue #358.
-
----
-
-### Orphan evidence is rejected or quarantined under the fleet resource fence {#orphan-evidence-fencing-355}
-
-**Date:** 2026-07-15 · **Plan:**
-`docs/plans/2026-07-15-issue-355-orphan-runner-containment-plan.md` · **Issue:** #355
-
-**Decision.** Agy, Saga, and Team Execution evidence writers use #356's `LeaseBroker` as the sole
-mutation authority. Broker-owned prepare/commit/abort makes the atomic closed-registry replacement
-the only acceptance linearization point. A callback failure best-effort records `ambiguous`; an
-unwritable registry, signal, or process death leaves the last durable `prepared` or `committing`
-state, which retains authority and blocks ordinary retry. Output without the matching closed broker
-receipt is quarantine-only evidence and cannot satisfy a gate. `run-lease.json` remains forensic.
-
-- **KTD1 - the broker owns prepare, close, and retained ambiguity.** Protected writers run only from
-  the broker's committing phase. Sweep never reclaims prepared, committing, or ambiguous authority,
-  and #355 does not claim automatic or restart-safe producer replay. The low-level recovery
-  coordinator remains a test/experimental seam; #358 owns lifecycle recovery and teardown. A
-  lost-response retry returns the canonical close without replaying the write. This is cooperative
-  correctness for an owner-local plugin: same-effective-user processes and the operator are trusted,
-  while stale children, crashes, accidental corruption, and external-engine output are not.
-- **KTD2 - closed-head CAS is the only successor path.** Registered dispatch, documented Team
-  Execution claim, and adjudication share one execution-stable resource. Each successor names the
-  exact predecessor token and canonical receipt hash; a stale attempt cannot reacquire after a retry.
-  Exact lookup includes cold archive sidecars even when a head has left the bounded inspection
-  projection, so archive compaction cannot reopen ordinary acquisition or erase late-write proof.
-- **KTD3 - agy admission is resolver-owned and lease-bound.** Direct auto-apply accepts only a bounded
-  resource key read from an owner-private `0600` regular file. The raw key is rejected on argv and
-  immediately reduced to a repository-scoped digest; only that digest reaches durable resource,
-  bundle, receipt, quarantine, or audit records. An in-process resolver derives policy, capacity,
-  process, canonical Git identity, and a lease-independent output template, then binds the acquired
-  lease to the final output record.
-- **KTD4 - closed schemas make disposition evidence executable.** Broker-native UUID epochs,
-  provider process identities, tokens, resources, receipts, expected outputs, quarantine manifests,
-  events, candidates, reservations, and recovery intents use strict canonical schemas and digests.
-- **KTD5 - superseded rejects; expired or closed output quarantines.** A newer head always wins.
-  Rejected output never becomes live, and corrupt or contradictory authority yields an explicit
-  evidence-integrity error rather than a guessed disposition.
-- **KTD6 - quarantine is immutable, reserved, and aggregate-bounded.** Items are below 128 MiB;
-  committed plus staging storage is capped at 512 MiB and 256 entries under one owner-only lock.
-  Every capacity check and event publication first recovers staging under that lock. Dead-owner
-  staging is schema-, identity-, path-, byte-, and digest-verified before finalization or safely
-  discarded; referenced evidence is revalidated before its event is written. Committed evidence
-  receives at least 30 days retention and is never evicted by the acceptance path.
-- **KTD7 - proof and projection remain verifiable but non-destructive.** Mode-bound command receipts
-  prove the genuine agy version gate and fleet sweep, bind an immutable merge-base plus every
-  receipt-excluded candidate path, mode, and byte digest, require shipped proof/transcript roots, and
-  rerun the fixed checker. Orphan candidates are derived only from canonical hot or archived broker
-  heads, close seals, leases, and orphan events; event callers cannot assert disposition or
-  terminality. #356 owns worktree sweep, #357 owns advanced liveness, and #358 owns generic teardown.
-- **KTD8 - incompatible settlement is lease protocol 2.** Fleet-core, Saga, Team Execution, and Agy
-  live apply require version 2 before acquiring or dispatching. Agy validation, no-write, and
-  patch-only paths lazy-load the new containment modules so independent plugin installation order
-  does not break modes that do not use settlement. Ordinary manifest CLI and completeness output is
-  noncanonical-only; empty-artifact projection requires a matching bound output record and exact
-  trusted template, while optional/no-output contracts emit no candidate.
-
-**Explicit boundary.** This decision does not retrofit agy with an OS sandbox, environment secret
-broker, or hostile same-user filesystem defense. Those are separate runner-hardening capabilities;
-they are not required to fence stale evidence writes in an owner-local Claude Code plugin.
-
-**Revisit when** a transactional durable store can atomically cover broker and artifact bytes, a
-distributed fence replaces host-local coordination, or quarantine encryption becomes mandatory.
-
----
-
-### Liveness is a shared score plus bounded confirmation, never sole teardown authority {#fleet-shared-liveness-357}
-
-**Date:** 2026-07-15 · **Plan:**
-`docs/plans/2026-07-15-issue-357-fleet-shared-liveness-engine-plan.md` · **Issue:** #357
-
-**Decision.** Fleet-core owns one pure liveness engine; Saga keeps coordinator-specific ledger and
-terminal adapters, and team-execution polls through Saga's canonical run-fact path. The engine fuses
-bounded phi-accrual suspicion, trusted baseline-relative path progress, and append-only idle-notice
-acknowledgment. Statistical suspicion requests a bounded reachability probe; it does not itself kill,
-release, retry, or delete.
-
-- **KTD1 - five intervals select adaptive scoring; sparse history keeps fixed behavior.** Outcome
-  absolute timeout and no-budget opt-out remain unchanged.
-- **KTD2 - phi 8 is a configurable suspicion threshold, not a magic terminal.** An armed trusted
-  transport may use exclusively attributed artifact progress or a host-correlated acknowledgment to
-  refute it and three receipt-proven, unacknowledged re-pings to confirm it. An Outcome backend
-  without that transport keeps its exact fixed-gap terminal and treats phi as advisory.
-- **KTD3 - a changed scoped digest proves activity, not resident progress.** Whole-tree change,
-  pointer epoch, mtime, and chat activity do not count. Even disjoint declared paths remain
-  `scoped-activity-unattributed` unless a trusted exclusive-provenance receipt binds the exact
-  subject, lease/fence, paths, digest interval, custody, and covered generations.
-- **KTD4 - an idle acknowledgment proves consumption, never output delivery.** The #351 complete
-  worker manifest remains the delivery ACK.
-- **KTD5 - notice/re-ping state is projected from append-only facts.** No mutable queue, status file,
-  sleep loop, or second heartbeat registry is introduced.
-- **KTD6 - detection and reclamation remain separate.** #357 scores and requests; #358 later owns
-  non-skippable stop/release/teardown, while #355/#356 own write and lease safety.
-
-**Revisit when** the host exposes a durable native worker heartbeat/notification receipt API, the
-fleet spans multiple boots/hosts, or observed cadence data justifies tuning the committed policy
-defaults through `/optimize`.
-
----
-
-### Team execution closes admission before idempotent B8 teardown {#team-execution-teardown-358}
-
-**Date:** 2026-07-15 · **Plan:**
-`docs/plans/2026-07-15-issue-358-non-skippable-teardown-reclamation-plan.md` · **Issue:** #358
-
-**Decision.** Team-execution completion becomes a broker-fenced terminal transition. Step B8 first
-closes new admission for the exact run, then projects append-only teardown facts, executes only
-resource-specific trusted actions, and records completion only after a zero-open reconciliation.
-The #356 broker is live ownership, #351 run facts are history, and #357 confirmed liveness is input;
-there is no second reclamation ledger or reaper.
-
-- **KTD1 - closing admission prevents spawn-after-receipt.** Acquire, reserve, claim, and retry are
-  refused for a closed run while existing resources remain visible for reconciliation.
-- **KTD2 - B7 prepares; B8 completes.** A business result or report draft cannot use `complete`
-  until the B8 receipt proves zero open resources against the same closed broker generation.
-- **KTD3 - crash cleanup is eventual.** Observed terminals run B8 synchronously; `SIGKILL` and host
-  death wait for bounded SessionStart/explicit recovery plus TTL and dead-owner proof.
-- **KTD4 - actions are resource-specific.** Residents use trusted runtime stop receipts, owned
-  subprocesses require PID/start/boot identity, and outcome worktrees use only #356 sweep.
-- **KTD5 - CI plants its own leak.** Developer worktrees are attended evidence, never a destructive
-  test fixture or an implicit cleanup target.
-
-**Revisit when** the host provides a durable terminal finalizer, the broker becomes cross-host, or a
-native runtime can atomically stop and attest a resident without the current request/confirm pair.
-
----
-
-### Fleet doctor correlates raw sources independently and never repairs {#fleet-doctor-independent-audit-353}
-
-**Date:** 2026-07-15 · **Plan:**
-`docs/plans/2026-07-15-issue-353-fleet-doctor-plan.md` · **Issue:** #353
-
-**Decision.** Fleet doctor is a Saga-local, point-in-time tripwire with a stdlib-only runtime
-observation layer. It strictly reads documented raw contracts and independently joins Git worktrees,
-outcome registries, broker ownership, run facts, teardown facts, manifests, and durable receipts. It
-never calls the tolerant projections or mutation APIs it audits.
-
-- **KTD1 - corruption cannot look absent.** Missing, malformed, unsafe, changed, capped, and unknown
-  evidence remain distinct; any incomplete proof exits 2 rather than clean.
-- **KTD2 - launch needs two signals.** A #351 spawn fact is pre-submission intent; unledgered requires
-  an independent broker, Outcome, audit-store, or bundle observation.
-- **KTD3 - managed worktrees only.** Stale detection is confined to canonical
-  `.saga-worktrees/<outcome>/<subplot>` resources; unrelated developer worktrees are out of scope.
-- **KTD4 - strict doctor complements tolerant delegation audit.** `/delegation-audit` remains its
-  focused advisory query; doctor treats corrupt/cross-source receipt evidence as a tripwire error.
-- **KTD5 - no repair authority.** Findings point to owners but cannot settle, retry, release, recover,
-  quarantine, kill, or reap.
-
-**Revisit when** contracts move to a single independently queryable database, the fleet spans hosts,
-or a separate scheduler/alert outcome explicitly consumes the report schema.
-
----
-
-### Cross-runtime Outcome portability ends at canonical observation {#claude-cross-runtime-outcome-contract-579}
-
-**Date:** 2026-07-15
-
-**Plan:** `docs/plans/2026-07-15-claude-cross-runtime-outcome-contract-plan.md`
-
-**Parent:** #579; executable child: `infiquetra/infiquetra-claude-plugins#604`
-
-**Decision.** The Claude-side cross-runtime contract separates same-clone coordination from
-cross-clone reconstruction. A conforming runtime discovers an Outcome from a committed Git object,
-canonical GitHub repository identity, Outcome ID, and GitHub completion evidence. Runtimes in one
-clone may mutate only after validating a protected local handoff and consuming the #356 fleet-broker
-fence plus #351 dispatch settlement identity. A different clone can reconstruct the same canonical
-completion/candidate-frontier projection, but its transient dispatch state is unknown and it has no
-mutation authority.
-
-- **A public handoff is a reference, not a bearer token.** Acceptance reloads protected local
-  evidence and checks current repository/spec/fence/settlement/freshness/use state. Copied or unsigned
-  JSON cannot authorize dispatch.
-- **Committed blobs anchor compatibility.** Repository identity, commit/blob digest, spec schema and
-  revision, capability range, and working-tree equality are checked before cache, broker, fact,
-  dispatch, board, GitHub, or spec mutation.
-- **Portable status omits transient authority.** Git plus GitHub can prove completion and dependency
-  candidates across clones, not the absence of an in-flight dispatch. Cross-clone output is therefore
-  read-only and says transient state is unknown.
-- **Legacy bundle import is retired as authority transfer.** Replaying a bundled spec, completion
-  events, or dispatch ledger into another repository creates a competing truth path and must fail
-  with an actionable discovery/attach migration receipt.
-- **The producer and consumer release separately.** Claude publishes the runtime-neutral schemas and
-  golden fixtures; Codex consumes them in its own linked issue and PR.
-
-**Rejected.** Copying git-common-dir state between hosts; trusting a serialized handoff without its
-protected local record; adding a second lease/settlement/completion ledger; treating the newest ref or
-matching filesystem path as repository identity; allowing cross-clone advance because the canonical
-candidate frontier looks ready; and hiding the Codex port inside the Claude release.
-
-**Revisit when.** A networked, atomic, canonical active-dispatch authority is deliberately added to
-the Outcome model. At that point cross-host mutation can be designed against that authority; GitHub
-completion evidence alone is insufficient to prove no live dispatch exists elsewhere.
-
----
-
-### Codex ports shared safety before protocol parity and retains native launch proof {#codex-lease-settlement-parity-579}
-
-**Date:** 2026-07-15
-
-**Plans:** `docs/plans/2026-07-15-codex-shared-runtime-substrate-plan.md`,
-`docs/plans/2026-07-15-codex-cross-runtime-outcome-parity-plan.md`
-
-**Parent:** #579; executable children: `infiquetra/infiquetra-codex-plugins#33` and
-`infiquetra/infiquetra-codex-plugins#34`
-
-**Decision.** Codex cross-runtime support ships as two independently reviewed proof ports. The first
-ports #351/#355/#356's runtime-neutral broker, resource guard, fencing, and dispatch settlement into
-Fleet Core plus the Saga adapter. The second consumes that substrate and ports the Outcome
-compatibility/discovery/handoff protocol. Both follow the Codex runbook's fresh manifest,
-classification, unit/cutover, isolated-install, fresh-session, and rollback gates.
-
-- **The fleet root is shared; protected runtime receipts are not.** Both runtimes resolve one safe
-  neutral fleet-state root and compare its redacted canonical digest. Codex protected launch receipts
-  remain in their current protected boundary and correlate by dispatch identity.
-- **Settlement cannot manufacture a Codex launch.** Codex retains `outcome.dispatch.v2`; only a
-  protected `ack_kind=launched` acknowledgement proves dispatch. `handed-off` remains non-launched,
-  and legacy facts remain unverified unless the existing migration contract proves them.
-- **A handoff authorizes one operation, not a frontier.** Protected same-clone acceptance may enter
-  one `advance-one` path, which then creates/observes the normal Codex dispatch intent and launch ack.
-- **The dirty primary Codex worktree is not an implementation surface.** Each port starts from a
-  fresh `origin/main` worktree and binds its exact target-repo plan/review bytes to the port manifest.
-
-**Rejected.** One oversized Codex parity issue that silently invents its missing substrate; a
-runtime-local broker under Claude/Codex/plugin-data homes; treating shared settlement or a handoff as
-Codex launch proof; copying protected receipts across clones; and bypassing the port classification
-because neutral Claude fixtures exist.
-
-**Revisit when.** Codex replaces `outcome.dispatch.v2` through a separately reviewed native migration,
-or the two proof ports become one already-shipped stable substrate whose compatibility adapter can be
-changed without cross-package release coupling.
-
----
-
-### Cross-runtime acceptance measures overlap and closes without repair {#cross-runtime-acceptance-579}
-
-**Date:** 2026-07-15 · **Plan:**
-`docs/plans/2026-07-15-cross-runtime-outcome-acceptance-plan.md`
-
-**Issue:** `infiquetra/infiquetra-claude-plugins#605`
-
-**Decision.** Acceptance runs the exact merged and installed Claude/Codex releases in contained Git
-fixtures. A same-clone scenario shares one common dir and neutral broker root; a separate clone gets
-only committed spec plus deterministic GitHub evidence. Concurrent advance proof requires two OS
-processes, a deterministic barrier with monotonic overlap evidence, and a write-once fake backend.
-The harness reports failure but never fixes production behavior.
-
-- **Portable parity excludes transient state.** Different clones compare canonical completion and
-  candidate frontier; leases, handoffs, launches, and in-flight dispatch remain unknown.
-- **Shared settlement and runtime acknowledgement are separate assertions.** Exactly one settlement
-  and effect must exist, and Codex must also carry its native protected launched ack when it launches.
-- **Cleanup is independently observed.** Idempotent teardown runs twice, then #353 reads raw sources
-  and must report zero open positions before QA or outcome close.
-- **Evidence is revision-bound and privacy-safe.** The closed bundle records SHAs, versions, digests,
-  commands, timings, verdicts, counts, and artifact hashes, never raw credentials, caches,
-  transcripts, prompts, child output, or GitHub bodies.
-
-**Rejected.** Sequential calls described as concurrency; copied handoffs in the second clone;
-working-tree code described as a released input; equal transient state across clones; a test harness
-that patches a failing runtime; and closing #579 with a waiver.
-
-**Revisit when.** A networked active-dispatch authority makes cross-host mutation an accepted product
-contract or the runtime packages provide a signed, standardized installed-attestation API that can
-replace the current isolated readback evidence.
-
----
-
-### Registry readers tolerate-and-preserve unknown additive fields; commitments stay closed {#registry-forward-compat-617}
-
-**Date:** 2026-07-23 · **Plan:**
-`docs/plans/2026-07-23-issue-617-registry-schema-forward-compat-plan.md`
-
-**Issue:** #617 · **Learnings:** `{#broker-schema-forward-poisoning-616}`
-
-**Decision.** The fleet-lease registry reader (`plugins/fleet-core/scripts/fleet_commons/lease_broker.py`)
-tolerates and preserves unknown additive fields in container mappings instead of failing closed with
-`RegistryCorruptError` on every unrecognized key, and ships `doctor`/`repair` as the shipped operator
-path for the manual recovery the 2026-07-17 and 2026-07-22 incidents required by hand.
-
-- **KTD1 — tolerance line = containers tolerant, commitments closed.** Unknown-key tolerance applies
-  to container mappings (registry top level, per-lease, per-fence, per-admission, per-settlement-outer
-  record, per-owner-close); digest-covered commitment records verified by `_record_sha256`
-  (settlement-close receipts, `FencingToken`) stay strictly closed, because container fields are
-  mutable schema-evolvable state while commitment records are hash-bound evidence where an unknown
-  byte is indistinguishable from tampering.
-- **KTD2 — extras passthrough rides a per-dataclass `extras` mapping.** Each tolerance-scoped
-  dataclass (and `Registry` itself) captures the unknown remainder at `from_dict` and merges it last
-  in `to_dict`. `to_dict` rebuilds the document from typed dataclasses, so passthrough that doesn't
-  ride the dataclass is silently dropped on the next write — the round-trip data-loss hazard this
-  decision exists to kill. `sort_keys=True` plus extras being disjoint from known keys by
-  construction keeps output deterministic and collision-free.
-- **KTD3 — no version stamp, no migration framework.** The schema string stays
-  `fleet_lease_registry.v1` and the fix writes zero new fields; any new written field would itself
-  brick every pre-#617 reader, the exact defect under repair. The four existing bespoke legacy
-  migration arms in `Registry.from_dict` are untouched. A future breaking change rides an explicit
-  v2 schema string, which fails closed by design.
-- **KTD4 — `doctor`/`repair` are explicit operator down-migration verbs, not auto-recovery.** They
-  land as saga adapter CLI verbs (`plugins/saga/scripts/lease_broker.py`, beside `inspect`/`sweep`)
-  delegating to fleet-core broker methods; `saga:fleet-doctor` stays strictly read-only.
-  Auto-repairing shared fenced state on read would itself be a tamper/corruption-masking vector — with
-  tolerance shipped, `repair`'s remaining job is deliberate rollback support (strip newer fields so an
-  older broker can read the file) plus a shipped triage path for the next "corrupt beyond tolerance"
-  incident. `repair` never runs implicitly and requires an explicit `--strip-unknown` flag.
-- **KTD5 — tolerance is bounded; corruption stays detectable.** Preserved unknown extras are capped
-  at 64 KiB serialized per document; above the cap the read fails closed with `RegistryCorruptError`.
-  An unbounded unknown-blob channel in a 0600 shared-state file would invite garbage-flood and
-  smuggling; the cap keeps the fail-closed posture against non-additive garbage while sitting far
-  above any plausible additive-field payload.
-- **Mid-run reload writer-swap hazard stays out of scope, documented not built.** The issue's proposed
-  fix 4 — harness-side detect-and-refuse of a mid-run plugin reload that swaps the active schema
-  writer underneath a running session — is harness territory, not adapter-CLI or broker territory.
-  This fix does not attempt it; the hazard is recorded here and in LEARNINGS
-  `{#broker-schema-forward-poisoning-616}` so a future harness-side change has the incident context,
-  rather than being silently reintroduced as an unstated assumption.
-
-**Rejected.** A `schema_minor` stamp (a new field is self-defeating against R5); writer-version
-stamping with migrate-on-open (machinery with no consumer while v1 stays additive-only); a
-minor-version string lane (`v1.x`) that changes the exact-matched `schema` value and bricks older
-readers identically to the defect under repair; auto-repair on read; and an unbounded extras channel.
-
-**Revisit when.** A genuinely breaking v2 schema is first needed (KTD3), at which point a real
-migration framework and writer-version stamping become worth their machinery; or the harness gains a
-mid-run plugin-reload detection surface that could consume the writer-swap hazard note directly.
-
----
-
-### Board-sync resolves mission-control via the plugin ladder, not monorepo paths (#620)  {#board-sync-plugin-resolution-620}
-
-**Decision.** Saga's `/outcome` board-sync located mission-control at
-`<repo_root>/plugins/mission-control/...` and read the schema at
-`Path(__file__).parents[2]/mission-control/config/sdlc-schema.json`. Both are correct only inside the
-plugins monorepo, so every board write failed from a consumer repo (the live incident:
-`campps-context-library`, 24 failed `board_synced` records in one tick). The version-less error path
-`.../infiquetra-plugins/saga/mission-control/config/...` was arithmetic, not a typo: the installed
-cache inserts a `<version>` segment, so `parents[2]` lands one directory short.
-
-- **KTD1 — the generic resolver lives in fleet-core's loaded `fleet_commons/` package, not the frozen
-  shim.** `plugin_resolution.resolve_plugin_root(name)` generalizes the shim's five-rung ladder to an
-  arbitrary sibling plugin, loaded through the existing `fleet_commons_shim.load(...)` seam. The
-  bootstrap shim stays byte-identical (its drift guard and `{#fleet-commons-mechanism-463}` both
-  hold); this is the additive-only 0.x growth that decision's "fourth consumer appears" anticipated.
-  *Rejected:* a second vendored `mission_control_shim.py` (doubles the byte-identity surface for
-  non-bootstrap code); parameterizing the frozen shim (violates the byte-freeze, forces a seven-copy
-  re-sync); a saga-local resolver (the next consumer re-implements the ladder — and mission-control,
-  the plugin being resolved, already vendors the shim).
-- **KTD2 — saga keeps reading `sdlc-schema.json` directly from the resolved root; it does not ask
-  mission-control for the phase map.** `sdlc_manager._resolve_sdlc_schema` resolves via the GitHub API
-  first and returns `{}` on total failure, so routing per-tick reconciles through it would swap a
-  local read for a network round-trip whose failure reads as success. *Known latent risk:* the
-  vendored schema is a month behind upstream (`2026-06-17` vs `2026-07-18`) with the read slice
-  (`phase_board_map`) currently identical — recorded, deferred, not solved.
-- **KTD3 — two distinct failure modes.** Root-unresolvable (no mission-control anywhere) withholds the
-  whole cohort with one loud `unavailable` record, reusing the existing `drift-hold` withholding
-  shape, with no retry — killing the N-ops × max_attempts storm without weakening fail-loud.
-  Root-resolved-but-schema-unreadable keeps the prior per-op `failed` status record while the
-  coalesced progress comment for the same leaf still posts. Collapsing the two would regress the
-  comment path. *Rejected:* withhold on any resolution failure (C3); silent skip (destroys fail-loud).
-- **KTD4 — rung order inherited unchanged** (env / walk-up / registry / cache-sibling). Preferring
-  cache-sibling for a CLI to dodge #642's registry staleness was rejected: it creates two disagreeing
-  ladders, the registry is authoritative for installed state, and the failure asymmetry runs the safe
-  way — a stale library skews behavior silently while a stale CLI fails loud on an unknown verb, which
-  makes the registry the *safer* first rung for mission-control. Mitigation is rung provenance in every
-  record (R7) plus the `MISSION_CONTROL_ROOT` escape hatch (R8), not a reordered ladder.
-- **KTD5 — `pulse.py` is in scope; `outcome_reconcile.py` gets its own test.** `/pulse` is the same
-  defect family (a one-call change, seam already cut) and excluding it would leave telemetry reporting
-  the board unavailable in exactly the repos where `/outcome` now works. The reconcile schema seam is
-  repaired implicitly by KTD2 but is covered explicitly, because implicit repair without a test is
-  indistinguishable from luck.
-- **KTD6 — a stale fleet-core degrades to the KTD3 terminal, never an uncaught exception.**
-  `fleet_commons_shim.load("plugin_resolution")` raises when the module is absent, and saga 0.114.0
-  requires a module first shipped in fleet-core 0.23.0 — so a stale install registry (#642,
-  four-for-four) resolves fleet-core 0.22.0 and would brick board-sync harder than the bug under
-  repair. The single per-tick resolution catches that `RuntimeError` and routes it into the
-  `unavailable` record, naming the #642 hand-repair. *Rejected:* a hard fleet-core floor that aborts
-  the tick (leaf state does not depend on board writes); vendoring `plugin_resolution` into saga
-  (re-opens the duplication KTD1 rejected).
-
-**Rejected (whole-design).** Fixing the paths without addressing the retry storm (C1); asking
-mission-control for a resolved phase map via a new CLI verb (B, network-first + `{}`-on-failure).
-
-**Revisit when.** A third consumer needs `resolve_plugin_root` (promote more bespoke path resolution
-onto it), or the vendored-vs-upstream `sdlc-schema.json` drift (KTD2) stops being inert — the
-`phase_board_map` slice diverging is the trigger for a non-networked drift check.
-
-### Externally-executed leaf settlement is a verify-and-close: auto-settle is already wired, threshold stays 0 (#626)  {#outcome-settlement-halt-externally-executed-626}
-
-**Decision.** #626 reported two settlement-gate defects: board-sync breaking on `advance --autonomous`
-in consumer repos, and a leaf executed OUTSIDE the engine (`backend: cc-workflows-ultracode`) never
-settling — its dispatch position stays `open` forever and halts the whole outcome frontier on every
-later tick (the incident: leaf `sub-13`, blocked on an external Stripe dependency, settled
-`silent-no-op`, permanently froze the frontier because `DEFAULT_THRESHOLD_PERCENT = 0` breaches on any
-single casualty). Verified live at `03c2640c` (saga 0.114.0), ~1.5 of the 2 defects were already
-shipped by sibling leaves and the residual was already wired, so #626 ships **zero production code**:
-it is characterization tests + docs + an operator-gated live proof, not a build. The issue conflates
-two orthogonal failure modes that stay strictly separate — "the external executor finished but the
-engine never learned" (a bookkeeping gap → auto-settle `delivered`) versus "the unit is a genuine
-casualty" (a real block → the #618 waive). Fixing one does nothing for the other.
-
-- **KTD1 — `DEFAULT_THRESHOLD_PERCENT` stays `0`; genuine casualties exit via the #618 waive (Option
-  A, operator 2026-07-24).** A genuinely-blocked leaf halting the frontier and requiring an explicit
-  operator `waive` is honest, auditable behavior. The two *actual* problems are already solved: a
-  finished-but-unlearned Workflow leaf auto-settles `delivered` (direction a, already wired), and a real
-  casualty has a first-class human exit (`dispatch-waiver`, #618). What remains is a policy choice about
-  how loud a genuine block should be, and loud/explicit is the safe default. *Rejected:* flip the global
-  default to non-zero — `DEFAULT_THRESHOLD_PERCENT` governs *every* outcome-site manifest
-  (`dispatch_settlement.py:293,1470,1678`), so flipping it silently changes halt semantics for all
-  outcomes and could let real failures slip the gate everywhere. *Deferred:* a per-manifest threshold
-  knob (sound future ergonomics, no current evidence of waive-toil).
-- **KTD2 — #626 ships zero production code; it is verify-and-close.** Direction (a) auto-settle is
-  already built, backend-agnostic, and idempotent: every `advance` tick's `production_harvester`
-  (`outcome.py:2100-2209`) materializes a leaf's GitHub-canonical completion (stage 1) then reconciles
-  **every** dispatched subplot — with **no `site`/`backend` filter** (`outcome.py:2148-2206`) — into a
-  `settle_attempt(... DELIVERED)`. An externally-executed leaf's `open` position closes on the very tick
-  that materializes its merged-PR / closed-issue completion. Re-implementing an auto-settle we already
-  have is pure risk against a heavily-tested, load-bearing halt gate. *Rejected:* add a second,
-  redundant settle-on-harvest path "to be explicit" (duplicates the loop, invites double-settle races,
-  weakens the single-writer invariant).
-- **KTD3 — the new tests are characterization / regression-lock, not red-first.** Because the mechanism
-  already exists, a test asserting auto-settle **passes against current code**; the plan does **not**
-  manufacture a fake red state. Load-bearingness is proved honestly by the operator-gated R-live
-  stash/neuter probe (temporarily neuter the reconcile loop, confirm the characterization test goes red
-  and the frontier re-halts, restore) — a verification act, never a shipped change. *Rejected:* fabricate
-  a red state to satisfy the "a test must be able to fail" instinct.
-- **Test adjudication — one net-new guard, the rest referenced.** R1 (Defect-1 board-sync from a
-  non-monorepo cwd) is already covered at parity by #620's suite
-  (`test_production_path_resolves_once_and_threads_root_to_schema_and_writer`,
-  `test_advance_autonomous_drives_board_sync`), so U2 is a **reference, not a duplicate** — adding one
-  would be the churn the plan warns against. R2/R3/R4's mechanism and generic cases are covered by the
-  existing `team-execution` harvest-settle, idempotency, and fail-closed tests. The single genuinely
-  net-new guard (`test_workflow_executed_leaf_auto_settles_on_harvest_and_unblocks_frontier`) pins the
-  `cc-workflows-ultracode` (Workflow) site — the exact incident class — combined with the
-  dependent-frontier-unblock clause, which no existing test does. It runs the same code path today (no
-  site filter exists); its value is prospective (it fails the day a change re-adds a site filter that
-  re-strands Workflow leaves).
-- **D1 — no release-surface bump (#605-style zero-surface close).** #626 touches only repo-root `tests/`
-  and repo-root `docs/` — no change under `plugins/saga/`, no plugin behavior/schema/command/prompt/
-  user-facing-guidance change (the CLAUDE.md bump trigger), and the drift pins key on `plugin.json`
-  (untouched). The plan's U4 floated a `0.114.0 → 0.115.0` patch bump; adjudicated against the real diff
-  it is **not** required, matching the #605 harness/tests-only precedent. *Rejected:* a needless bump —
-  it re-invites the same-version sibling-PR collision this campaign has hit repeatedly, for zero shipped
-  plugin change; the durable record lives here (DECISIONS) + the work-session + the closed issue, not the
-  plugin CHANGELOG.
-
-**Rejected (whole-design).** Building a new auto-settle where one already exists (KTD2); flipping the
-global threshold default (KTD1); re-implementing Defect 1 (shipped #620) or a new waive verb (shipped
-#618); reconciling the #628 cross-runtime double-dispatch here (separate defect — the R-live observation
-only confirms auto-settle does not *paper over* a double-dispatched ledger).
-
-**Revisit when.** An operator is repeatedly waiving the *same class* of deferred casualty across ticks
-(the waive verb has become a recurring chore, not an exceptional acknowledgement) — the trigger to
-promote the per-manifest threshold knob KTD1 deferred. Or `required_checks` / `closure_gate` stops being
-inert, at which point evidence-gated (not barrier-gated) settle-on-harvest becomes a real, separate
-option.
-
-## Ship ceremony resolves head/base from one resolver, never the rolling `branch` tick field (#635) {#ceremony-ref-resolution-635}
-
-**KTD1 — One resolver, every consumer.** `resolve_ceremony_refs()` is the single source for the PR's
-head and base; the destructive `branch_delete` target, its manifest-close id, `checkout_main`'s
-target, both `gh pr create --base` sites, and `_do_merge`'s SHA probes all consume it. The
-three-part `branch_delete` failure (base deleted, wrong manifest key closed silently by
-`_close_if_registered`'s by-design no-op on an unregistered id, the real branch's entry left open
-forever because `_teardown_attempt_closes` handles only `scratch`/`worktree` kinds) existed because
-the deletion target and the manifest key were derived independently from the same wrong field; one
-resolver makes that divergence unrepresentable. *Rejected:* patch each of the five call sites
-independently — this reproduces the exact failure mode being fixed, since two independently-derived
-values can silently agree wrongly.
-
-**KTD2 — Resolution ladder: PR-authoritative, then manifest+sidecar, then raise.** (1) `gh pr view
---json headRefName,baseRefName` when the saga carries a PR ref; (2) the `ceremony-branch:` entry on
-`opened_resources.json` (written once at push time, never re-stamped) for head, plus a per-saga base
-sidecar; (3) raise. `saga["branch"]` is never a rung. *Rejected:* manifest-first — the manifest is
-local disk state written by this machine, and the PR is the shared, operator-visible truth; preferring
-local state over the PR record is how the ceremony reached this bug. *Rejected:* PR-only, no manifest
-rung — that would make a destructive path hard-depend on network reachability at exactly the moment
-an operator is finishing a ship.
-
-**KTD3 — The R2 hazard is scoped to rung 2, and the CHANGELOG says so exactly.** On rung 1 the head
-and base both come from one `gh pr view` record, and GitHub forbids a same-repo PR whose head equals
-its base — so `BRANCH_DELETE_TARGETS_BASE` is inert there by construction, correctly: rung 1 is
-authoritative and cannot yield a wrong target. The hazard's real job is rung 2, where the head comes
-from the opened-resource manifest and the base from the PR — two independent records that can agree
-wrongly, the exact shape of the `outcome/norns-next-horizon` incident. An earlier draft of this
-change described the probe as comparing "two derivation paths" in general; a verify panel traced the
-operands on rung 1 and showed both still originate in one PR query, so that framing was corrected
-before it shipped — see the Revisit-when clause below for what would change this.
-
-**KTD4 — Ceremony base lives in a per-saga sidecar, not a tick field.** Following
-`{#ceremony-sidecars-forward-only-undo-346}`: ceremony safety state is per-saga JSON, never a rolling
-saga field. A tick field rolls with whatever branch the last save happened on; a sidecar is written
-once, at the moment the fact becomes true, and stays ceremony-scoped for the ceremony's lifetime.
-
-**KTD5 — The default branch is resolved, never hardcoded.** `resolve_default_branch()` reads `git
-symbolic-ref refs/remotes/origin/HEAD`, falling back to `gh repo view --json defaultBranchRef`, and
-raises rather than defaulting to the literal `"main"` when both fail. *Rejected:* replacing one
-hardcoded `main` with another — this repo family already contains repos whose default branch is not
-the ceremony's base, so a second hardcode would move the bug rather than remove it.
-
-**KTD6 — `--operator-confirmed branch_delete:<target>` is required for `branch_delete`.** The bare
-form refuses with a message naming the resolved target, so the operator's confirming invocation
-carries a value they have actually seen — the typed-payload growth `{#ship-ceremony-operator-gate-526}`'s
-own "Revisit when" clause anticipated ("a transition is added whose confirmation needs an argument of
-its own"). The mismatch rule stays uniform: a qualified confirmation whose target does not match the
-resolved target refuses, exactly like a plain name mismatch. Every other transition keeps the bare
-grammar. *Migration:* `plugins/saga/skills/work/SKILL.md` and
-`plugins/saga/skills/work/references/pr-continuation-loop.md` both named the old bare-form invocation
-and are updated in this same change. *Behavior note, not a breaking change:* this moved
-`--operator-confirmed merge:x` with `merge` upcoming from the raw-string mismatch refusal to the
-"does not take a confirmation target" refusal, because the guard now compares the parsed transition
-name rather than the raw string — both refuse, only the diagnostic wording changed, and the path was
-CLI-unreachable before (argparse `choices=` rejected the colon form).
-
-**Defect F — `ship_undo._undo_merge` reverts on the recorded base, not the literal `main`.** Found by
-a refute panel after the initial fix landed E (recording the right squash sha) without touching the
-consumer: `_undo_merge` still hardcoded `git checkout main`, `git revert --no-edit <sha>` on whatever
-that checkout left `HEAD` on, and `git push origin main`, three times over. Fixing E alone moves the
-bug from "wrong sha recorded" to "right sha, wrong branch reverted" rather than removing it, so F is
-folded into this same decision rather than deferred. A rollback-manifest entry with no recorded base
-(every entry written before this ships) floors at the literal `main`
-(`ship_undo.LEGACY_MERGE_BASE`), not the resolved repo default — such an entry's `merge_sha` was read
-by a pre-#635 `_do_merge` that probed `refs/heads/main` verbatim, so `main` is provably where it came
-from. *Rejected:* fall back to `resolve_default_branch()` for a base-less legacy entry — an earlier
-draft of this requirement said exactly that, and a verify panel showed it sends the revert to a
-`trunk`-default repo's `trunk`, a branch the recorded sha was never read from. Provenance beats
-currency.
-
-**Rejected (whole-design).** Fixing `branch_delete` (A) without also fixing the merge SHA probe (E) —
-leaves the undo path fully able to revert an unrelated healthy commit on the default branch. Fixing E
-without F — moves the bug from mis-recorded evidence to mis-applied evidence; both are the same root
-defect and ship together. Extending the outcome store to carry ceremony refs
-(`{#ship-teardown-terminal-gate-347}`'s territory) — wrong ownership axis; ceremony refs are
-ceremony-scoped, not outcome-scoped.
-
-**Revisit when.** A transition other than `branch_delete` needs a typed confirmation payload —
-generalize `_parse_operator_confirmation` past a single `transition:target` shape rather than
-special-casing a second colon-qualified transition. Or the rung-2 topology stops being reachable in
-practice (e.g. the opened-resource manifest is retired) — at that point `BRANCH_DELETE_TARGETS_BASE`
-becomes dead code and should be removed rather than left as an inert backstop with no live rung to
-guard.

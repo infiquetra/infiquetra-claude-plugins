@@ -21,6 +21,79 @@
 
 ## 2026-07-27
 
+### Commit lag makes git-blame dates disagree with authored dates ~12% of the time, always by a day  {#blame-lag-vs-authored-date}
+
+**Context.** Re-filing the journal entries stranded below the oldest date heading (#659) needed a
+source of truth for each entry's real date. `git blame` was the obvious candidate: the commit that
+added an entry should match the `## YYYY-MM-DD` section it belongs under.
+
+**Evidence.** Before trusting it to move content automatically, I measured it against the parts of
+both journals that were known-good. Comparing every entry's blame date to its enclosing section
+date: `LEARNINGS.md` disagreed on 18 of 168 entries (10%), `DECISIONS.md` on 28 of 176 (15%).
+Nearly every disagreement was exactly ±1 day — `L536 section=2026-07-19 blame=2026-07-18`,
+`L307 section=2026-07-20 blame=2026-07-21`.
+
+**Mechanism.** Work done in the evening lands in a commit the next morning, and work done at the
+start of a session lands in a commit at the end of it. The journal records the day the *thinking*
+happened; blame records the day the *commit* happened. Neither is wrong, and they routinely differ
+by one. A rule of "blame date != section date means misfiled" would therefore have relocated ~46
+correctly-filed entries as collateral.
+
+**Fix.** Only act on a *large* delta. The genuinely misfiled entries sat under `## 2026-05-01` and
+blamed to July — off by two months, not a day. The re-filing scripts move an entry only when the
+delta exceeds 7 days (`LARGE_DELTA_DAYS`), which cleanly separates the two populations with no
+judgment call at the boundary. 16 entries moved in `LEARNINGS.md`, 20 in `DECISIONS.md`; zero
+false moves.
+
+**Validation.** Every move asserted content preservation before writing: identical `{#slug}` set,
+identical entry-title multiset, identical non-heading line multiset, and the only permitted new
+lines being date headings that did not previously exist. 211 and 210 slugs survived respectively.
+
+**What surprised.** I nearly skipped the calibration step as ceremony. It was the whole finding —
+without it the heuristic looks exact, and it is off on one entry in eight.
+
+**Generalizable rule.** Before using a derived timestamp (blame, mtime, ctime) as ground truth for
+"where does this belong", measure its disagreement rate against a population you already know is
+correct. A heuristic that is right 88% of the time is not a heuristic you can run unattended over
+350 items — but restricting it to the cases where signal and noise differ by an order of magnitude
+usually recovers it.
+
+**Refs.** [[journal-drift-is-a-delta-invariant]] — the same cleanup's other half. #659.
+
+### An append-ordered file's real invariant is about the diff, not the state  {#journal-drift-is-a-delta-invariant}
+
+**Context.** `LEARNINGS.md` and `DECISIONS.md` both say "append new entries to the top,
+most-recent first" in their own headers, and both had quietly stopped doing it.
+
+**Evidence.** 16 entries in `LEARNINGS.md` and 20 in `DECISIONS.md` — about 10% of each file —
+had accumulated below the oldest heading, filed under `## 2026-05-01` while dating from July.
+`DECISIONS.md` additionally had four duplicated date headings and five entries authored at `##`
+instead of `###`. Nothing mechanical produced this: no script writes to either file today, and
+`spend_retro.py` — the one module that *could* — has never run against them (zero `Spend Retro`
+sections exist). It was hand-authored drift, one locally-reasonable entry at a time.
+
+**Mechanism.** Reading a 4,400-line file and adding to it, "append" resolves to the end of the
+buffer unless you actively remember that this file inverts that. The header states the rule but
+sits 3,900 lines away from where the mistake gets made.
+
+**Fix.** `scripts/lint_journal_order.py`, wired into CI in two halves, plus `spend_retro.py`
+switched from `open("a")` to a top-insert so the latent mechanical writer cannot reintroduce it.
+
+**What surprised.** The structural half of the lint — headings descending, unique, correct level —
+**would not have caught the LEARNINGS.md drift at all**. Its headings were perfectly ordered and
+unique the whole time; entries were simply accumulating under the last one. The file was
+structurally valid and semantically wrong. Only the diff-scoped half ("an entry added by this
+branch must land in the newest section") catches it, and that half needs a base ref, so it only
+runs on pull requests.
+
+**Generalizable rule.** For a file whose ordering encodes *when things were added*, validity is a
+property of each change, not of the finished artifact — a correct-looking state can be reached by a
+long series of wrong appends. Lint the delta. Reach for the whole-file check only for the
+invariants that a single bad edit actually breaks (duplicates, inversions, wrong heading levels).
+
+**Refs.** [[blame-lag-vs-authored-date]] — how the strays were dated. #659, #407 (schema
+validation, still open and deliberately out of scope here).
+
 ### "Zero importers" understates wiring; "zero artifacts ever written" is the honest deadness test  {#zero-artifacts-beats-zero-importers}
 
 **Context.** Wave 1 of the simplification pass deleted five saga modules the audit had classified as
@@ -186,6 +259,165 @@ keyed on a hand-maintained inventory.
 
 ---
 
+## 2026-07-25
+
+### A validated value must travel to the thing it authorizes, or the gate guards a different value than the one that acts {#validated-value-must-travel-635}
+
+**Evidence.** Pre-PR code review of #635 at `6b0a8180`, artifact
+`docs/code-reviews/2026-07-25-issue-635-ceremony-ref-resolution-code-review.md`. `ship_ceremony.run()`
+called `resolve_ceremony_refs()` (`:1211`), validated the operator's
+`--operator-confirmed branch_delete:<target>` against the result, and handed the resolved head to the
+`branch_delete_targets_base` hazard probe. It then dispatched
+`_RUNNERS[upcoming](saga, repo_root=..., runner=...)` (`:1273`) — a uniform signature carrying neither
+the confirmed target nor the refs — and `_do_branch_delete` (`:940`) resolved again from scratch.
+Two independent review lenses reproduced the consequence end-to-end; the sharper run deleted
+`outcome/norns-next-horizon` local and origin **through the new code**, with the non-acknowledgeable
+hazard reporting clean.
+
+**Mechanism.** The consequence needs the resolver's own defining property. `resolve_ceremony_refs`
+degrades from rung 1 (the PR, via `gh pr view`) to rung 2 (the opened-resource manifest plus the base
+sidecar) on **any** non-zero `gh` exit — deliberately, so an operator finishing a ship offline is not
+stranded. That makes the function non-deterministic across calls in exactly the way a cache would not
+be: two invocations seconds apart, same inputs, can answer from different rungs and return different
+branches. So the confirmation check, the hazard scan, and the deletion were three computations that
+usually agree rather than one value used three times. One transient `gh` failure inside a single
+`run()` is enough to separate them, and every gate still reports pass because each gate genuinely did
+pass — against the value it saw.
+
+Note the shape of the original defect this was fixing: the deletion target and the manifest resource
+id were derived independently from the same wrong field. The fix collapsed that to one resolved value
+*inside* `_do_branch_delete`, and reintroduced the identical class of split *across the operator
+gate*. The blast radius moved up a level and became invisible to the unit that had been fixed.
+
+**Generalizable rule.** When a gate validates a value and a later step re-derives it, they are two
+values, not one — and a resolver that degrades between sources makes "usually equal" the strongest
+guarantee available. Pass the validated object through to the step it authorizes so identity is
+structural, and treat a uniform dispatch signature as a place values get silently dropped. Corollary
+for review scope: unit-scoped verify panels cannot see this class of defect at all. Five refute
+panels passed this change set; the defect lived in the seam between the unit that built the resolver
+and the unit that built the gate, and only a diff-wide pass surfaced it.
+
+---
+
+### A rolling tick field read as ceremony state produces a three-part silent failure {#ceremony-tick-field-as-state-635}
+
+**Evidence.** `ship_ceremony.py`'s `_do_branch_delete` (issue #635, grounded at `474fd3cc`): on a
+leaf-into-outcome PR whose last saga tick save happened while checked out on the base branch,
+`branch_delete` deleted the **base** branch, both locally and on `origin`, rather than the PR's head.
+The real incident (2026-07-20/21, `infiquetra/team-norns`, saga `issue-236`) deleted
+`outcome/norns-next-horizon` local and origin while the actual feature branch survived; recovery
+depended on the rollback manifest's recorded head SHA plus local object-store retention.
+
+**Mechanism.** `saga.py:566` stamps `"branch": git branch --show-current` on **every** `save` — the
+field means "whatever branch the last save happened on," not "the branch this ceremony opened." Three
+independent call sites each read that field (or the literal string `main`) as if it recorded ceremony
+identity, and the failure it produced had three parts, not one: (1) the deletion itself ran against
+the base branch, with the origin-side `git push --delete` swallowing failure under `check=False`; (2)
+the manifest close addressed `ceremony-branch:<base>` — an id that was never registered, so
+`_close_if_registered`'s by-design no-op on unknown ids (`:346-357`) hid the divergence with no error;
+(3) the real feature branch's `ceremony-branch:<head>` entry stayed `open` forever, because
+`_teardown_attempt_closes` (`:604`) auto-closes only `scratch` and `worktree` kinds, never `branch` —
+so every later teardown attempt raised `TeardownBlockedError` permanently. Only the first part is
+visible without reading the other two call sites; the manifest divergence and the permanent teardown
+block are consequences that don't surface until much later, at a point disconnected from the original
+mistargeted delete.
+
+**Generalizable rule.** A destructive target must resolve from write-once, ceremony-scoped evidence —
+a value written once, at the moment the fact becomes true, and never touched again — never from a
+field that is re-derived on every save. A field's docstring or origin ("this is `git
+branch --show-current`") is not evidence of what it means to a later reader; a rolling field answers
+"what is true right now," and a ceremony needs the answer to "what was true when this ceremony
+opened." When three call sites each independently derive the same fact from one ambient source, that
+is the signal to centralize into one resolver rather than trust that all three derivations will keep
+agreeing — the fix here (`resolve_ceremony_refs()`, `{#ceremony-ref-resolution-635}`) replaced five
+independent guesses with one PR-authoritative-then-sidecar ladder that raises rather than falling back
+to the rolling field.
+
+**Refs.** `plugins/saga/scripts/ship_ceremony.py` (`resolve_ceremony_refs`, `_do_branch_delete`,
+`_do_merge`), `plugins/saga/scripts/ship_undo.py` (`_undo_merge`, `_merge_entry_base`),
+`plugins/saga/scripts/ceremony_hazards.py` (`BRANCH_DELETE_TARGETS_BASE`); decision
+`{#ceremony-ref-resolution-635}`; issue #635.
+
+## 2026-07-24
+
+### Lazy `import X` + per-test `_load(X)` = a stale monkeypatch target  {#sys-modules-stale-patch-620}
+
+**Evidence.** #620 board-sync tests (`tests/test_outcome_board_sync.py`): three new tests passed in
+isolation but failed in the full suite (`assert 6 == 1`, real resolver + writer ran instead of the
+fake). Fix commit `bd7bdee0` (`_live_bp()` helper) + the reconcile_controller counterpart in
+`c96ea511`.
+
+**Mechanism.** `reconcile_board` resolves its dependency with a lazy `import board_progression as _bp`
+at call time, which returns `sys.modules["board_progression"]`. Every test module loads scripts via a
+`_load()` that does `sys.modules[name] = module` — so the *last* test module collected wins that
+slot. A handle captured at collection time (`BP_MOD = _load("board_progression")`) is therefore stale
+by the time the test runs in a full suite, and `monkeypatch.setattr(BP_MOD, "resolve…", fake)` patches
+an object the code under test never imports. The fake silently doesn't apply; the real function runs
+and passes only by monorepo-walk-up accident. It passed in isolation because nothing else competed
+for the slot.
+
+**Generalizable rule.** When code under test resolves a collaborator via a lazy `import` (through
+`sys.modules`), patch the run-time-live `sys.modules[name]` — never a module handle captured at import
+time. A test that monkeypatches a collaborator and still passes when the patch is a no-op is a false-
+confidence test; prove the patch bites (assert a fabricated value the real collaborator could not
+produce, or assert the fake was called).
+
+---
+
+## 2026-07-23
+
+### Async Agent spawns turn PostToolUse into a lease kill switch {#async-spawn-posttooluse-race-616-r8}
+
+**Evidence.** R8 rollout canary for #616 (2026-07-23, work-session doc
+`2026-07-22-issue-616-worktree-write-fence-scoping.md` post-merge section): three consecutive
+real Agent spawns lost their lease ("expected exactly one fleet lease bound; found 0"); a
+100 ms registry watcher showed the healthy PreToolUse reservation and the session admission
+wiped in one write 101–156 ms after reservation — exactly when the async Agent tool call
+returned its launch metadata.
+
+**Mechanism.** PostToolUse[Agent|Task] → `record_hook_parent` → broker
+`record_parent_completed` (fleet-core 0.20.0 `lease_broker.py:3895`) removes any matching
+lease with `agent_id is None` as "spawn never happened" (:3913-3921) and pops the session
+admission when no live agents remain (:3924-3927). That contract assumes PostToolUse is a
+*completion* signal — true for synchronous spawns only. Background/async spawns return the
+tool result at launch, so the cleanup races SubagentStart's claim; when cleanup wins, the
+child runs unbound and all delegated mutations are refused. Same signature as the 3-of-8
+code-review verifier losses (claim won 5 races).
+
+**Generalizable rule.** Any lifecycle hook keyed on "tool call returned" must distinguish
+launch-return from completion-return before destroying state; a reservation younger than the
+spawn round-trip is not abandoned. Verify hook-event semantics against the harness's actual
+execution mode (sync vs async) rather than the tool's nominal lifecycle.
+
+**Refs.** `plugins/fleet-core/scripts/fleet_commons/lease_broker.py:3895-3928`,
+`plugins/saga/scripts/lease_broker.py:379-394` (`record_hook_parent`); learning
+`{#broker-schema-forward-poisoning-616}`; issue #616 / PR #643.
+
+---
+
+### Outcome harvest silently skips a leaf whose spec node lacks `leaf_saga_id` {#harvest-leaf-saga-id-backfill-617}
+
+**Evidence.** sub-617 harvest, 2026-07-23: PR #650 merged, evidence written under
+`leaf-governed-execution-integrity-sub-617` at close sha `7be1a24a`, yet two `advance`
+ticks returned `harvested: []` with no drift or halt output. The dispatch ledger's commit
+record carried `"leaf_saga_id": "leaf-governed-execution-integrity-sub-617"`, but the
+committed spec node's `leaf_saga_id` was `""`. Backfilling the spec field made the next
+tick harvest immediately (`596c777c` on `outcome/governed-execution-integrity`).
+
+**Mechanism.** `closure_gate.evaluate` (`plugins/saga/scripts/closure_gate.py:220`) reads
+`node.leaf_saga_id` from the SPEC node — never from the dispatch ledger — to resolve
+`docs/evidence/<saga-id>/`. Under a dispatch-era intent with `reviews_required: "gate"`,
+a code leaf implies a required `code-review` check, so an empty id makes the gate
+unsatisfiable (`unresolvable-close-sha`) and `harvest` skips the node with no surfaced
+reason. The GitHub barrier (PR merged) passes; the failure is invisible in `advance`
+output.
+
+**Generalizable rule.** Before expecting a closure-gated leaf to harvest, verify the spec
+node's `leaf_saga_id` matches the dispatch ledger record — and treat a silent
+`harvested: []` on a merged PR as a closure-gate resolution failure, not a barrier miss.
+
+---
+
 ## 2026-07-22
 
 ### A landed broker schema addition poisons every armed-hook Bash call fleet-wide until #617's read-tolerance ships {#broker-schema-forward-poisoning-616}
@@ -301,6 +533,34 @@ session-start — so on-disk hook edits take effect immediately, restart or not.
 **Refs.** [[workflow-emitter-export-pins-627]], DECISIONS
 `{#refuse-liveness-and-loud-abort-637}`, ARCHIVE `{#installed-hook-skew-fail-close-637-v1}`,
 issue #616.
+
+### Prepared-issue sidecar project fields are provenance, not board writes {#prepared-sidecar-objective-inert-637}
+
+**Evidence.** Filing enhancement #637 (2026-07-21): `sdlc_manager.py issue prepare --from <ref>`
+recorded `project_fields.Objective` as the literal source-file path, and
+`issue create-prepared` filed the issue, added it to Operations, and set Status — but never
+touched Objective. codex#45 shipped the same path-shaped Objective in its sidecar with zero
+board effect. `_prepared_project_fields` (sdlc_manager.py:3529) documents this: "`create` does
+not yet read `project_fields`".
+
+**Mechanism.** The prepare step copies `source_artifact.ref` into the sidecar verbatim as
+provenance for a future consumer; create-prepared's mutation plan is issue create → board-add →
+set-status → mark-draft only. Custom project fields (Objective, Technical Risk, …) reach the
+board solely via an explicit
+`flow set-field --project <p> --repo <r> --number <n> --field Objective --option <slug>`
+after creation.
+
+**Generalizable rule.** A recorded field in a handoff artifact is not an applied field — check
+which pipeline stage actually consumes it before trusting the record. When filing prepared
+issues, follow create-prepared with an explicit `flow set-field` for every board field the
+operator asked for.
+
+**Refs.** `plugins/mission-control/scripts/sdlc_manager.py:3529`,
+`docs/sdlc-issue-drafts/2026-07-21-harden-refuse-mode-lease-admission-pid-liveness.{md,json}`;
+issues infiquetra-claude-plugins#637, infiquetra-codex-plugins#45.
+
+---
+
 
 ## 2026-07-20
 
@@ -901,6 +1161,81 @@ stay silent and contradictory evidence is classified as an integrity error.
 `references/evidence-write-sites.md`.
 
 ---
+
+### Parallel hooks require two independent release signals, and workflow batch identity cannot rely on hook environment inheritance {#parallel-hook-lease-lifecycle-356}
+
+**Evidence.** Issue #356's lease lifecycle wiring. Claude runs matching hooks independently;
+`SubagentStart` carries trusted child identity but no parent `tool_use_id`, while parent
+`PostToolUse`/`PostToolUseFailure` carries the tool id but not authoritative child termination.
+Also, environment exported by the `/work` driver is not a durable child-hook communication channel:
+the hook subprocess receives the Claude session id, but an explicit Workflow batch id is not
+guaranteed to persist into every later hook invocation.
+
+**Mechanism.** Releasing on either signal alone creates a live-child capacity hole. The broker
+therefore records `child_terminal_at` and `parent_completed_at` independently and removes a claimed
+foreground lease only after both exist. Workflow reservations are discovered from the canonical
+registry by trusted session when no explicit batch id is present; more than one live batch for the
+same session halts as ambiguous instead of selecting one. Cross-ordered claims may retain capacity
+until TTL, but they cannot release or authorize the wrong child.
+
+**Generalizable rule.** Treat hook callbacks as unordered, isolated observations, not one process or
+one inherited environment. Any lifecycle transition that destroys authority must require all
+independent trusted signals the host exposes, and any identity that must survive across callbacks
+belongs in the locked durable authority keyed by stable host identity. Ambiguity should retain
+authority and fail closed; it must never be resolved by oldest/latest guessing at release time.
+
+**Refs.** `plugins/saga/hooks/hooks.json`, `plugins/saga/scripts/lease_broker.py`,
+`plugins/fleet-core/scripts/fleet_commons/lease_broker.py`, and
+`plugins/saga/references/concurrency-spawn-sites.md`; decision
+`{#fleet-ttl-lease-broker-356}`.
+
+---
+
+### A durable resource cannot inherit the lifetime of the one-shot process that provisioned it {#durable-worktree-owner-transfer-356}
+
+**Evidence.** Issue #356 initially recorded the provisioning coordinator's PID/start identity on an
+outcome worktree lease. Outcome ticks are intentionally one-shot processes, while a dispatched child
+and its worktree persist across ticks. After TTL, the broker correctly proved that PID dead and the
+reaper could therefore delete a still-active child's real Git worktree.
+
+**Mechanism.** Process liveness answers whether one coordinator is alive, not whether an outcome-owned
+resource is abandoned. Reconciliation must first load durable child state, transfer the exact current
+fencing token to the new coordinator, and only then sweep. The broker lock spans both ownership
+transfer and the reaper callback, while `dispatched` is an independent destructive-action veto. Git
+provisioning similarly records registry and lease recovery authority before physical creation so a
+failed rollback cannot erase every route to later cleanup.
+
+**Generalizable rule.** Match authority lifetime to resource lifetime. For durable resources managed
+by ephemeral coordinators, persist an exact transferable token and require durable terminal/inactive
+state in addition to dead-process evidence before deletion. Persist recovery authority before the
+external side effect, and retain it whenever compensation is uncertain.
+
+**Refs.** `plugins/saga/scripts/outcome_worktrees.py`,
+`plugins/fleet-core/scripts/fleet_commons/lease_broker.py`, and
+`tests/test_outcome_worktrees.py`; decision `{#fleet-ttl-lease-broker-356}`.
+
+---
+
+### A lease boot identity fallback must be stable across cooperating processes {#restricted-boot-identity-356}
+
+**Evidence.** A restricted macOS runtime denied `sysctl kern.boottime`. The emergency fallback
+included the current PID and a fresh monotonic reading, so acquire and immediate renew calculated
+different boot identities and treated a new lease as reboot-expired.
+
+**Mechanism.** When `kern.boottime` is unavailable on Darwin, fleet-core reads the current
+`BOOT_TIME` record through libc's `utmpx` API. The record is shared across processes, changes on
+reboot, and remains independent of later wall-clock corrections. If every OS identity source is
+unavailable, the broker refuses authority instead of inventing process-local identity.
+
+**Generalizable rule.** A persisted authority marker cannot fall back to process-local or per-call
+identity. Exercise degraded platform probes through the full acquire-to-renew path, not only by
+asserting that the fallback returns a nonempty string.
+
+**Refs.** `plugins/fleet-core/scripts/fleet_commons/lease_broker.py` and
+`tests/test_fleet_lease_broker.py`; decision `{#fleet-ttl-lease-broker-356}`.
+
+---
+
 
 ## 2026-07-16
 
@@ -1564,6 +1899,50 @@ always raises) or leaves windows outside the loop uncovered (if it never raises)
 same review, which named this exact parity gap and filed the agy follow-up, at
 `{#unit-panels-vs-whole-diff-lenses-476}`.
 
+### A supervised subprocess's exit code alone cannot certify success — zero-byte output must be checked too {#agy-exit-zero-zero-bytes-false-success-523}
+
+**Evidence.** Issue #523, drill-468 S1/agy/attempt1 (`.claude/agy/runs/drill-468-s1-agy-190129`,
+`agy.log` lines ~97/~103/~130-131): a transient 503 on Antigravity's `loadCodeAssist` left the model
+table empty, `agy` logged "failed to construct executor: neither PlanModel nor RequestedModel
+specified" to its own `--log_path` file, then exited 0 having written zero bytes to the stdout/stderr
+streams the wrapper actually supervises. Before the fix, `run_agy_supervised`
+(`plugins/agy/scripts/agy_delegate.py:1017-1018`) mapped `return_code == 0` straight to
+`status="success"` with no output check, so the bundle's `result.json` recorded `status: success` and
+a `bridge_receipt.v1` with `bytes_produced: 0` — a schema-valid, self-consistent lie that
+engine_dispatch's #384 two-signal observer would corroborate as a proceeded-as-requested run.
+
+**Mechanism.** The supervise loop's own failure taxonomy (timeout, no-output watchdog, output-byte
+cap, die-clean signal) all fire on process *behavior observed during* the run — none of them fire
+when the process starts, does nothing, and exits cleanly before any watchdog has a chance to trip.
+Antigravity's own diagnostic (the executor-construction error) lands in a log file the wrapper never
+reads for status purposes; the only two signals the wrapper does read — exit code and captured
+stdout/stderr byte count — were exactly the two that, in combination, proved the run did nothing.
+Checking exit code alone treats "exited without crashing" as proof of work done, when it only proves
+the process didn't crash.
+
+**Generalizable rule.** For any supervised external-process wrapper that maps `return_code == 0` to a
+passing status, also gate on "did this run produce the output a passing run is expected to produce"
+— gate on the *deliverable* stream specifically (here: `stdout_bytes > 0`), not the union of every
+stream the process happens to write to. A first pass gated on `stdout_bytes + stderr_bytes == 0`
+(both streams zero) and shipped with that condition; a pre-merge review caught that it re-opened the
+false-success path for the nearest-neighbor variant where the process emits incidental stderr chatter
+(a warning/log line) alongside zero stdout — stderr is not the deliverable stream, so a single stray
+byte there should not rescue a no-output run from the no-output classification. Reuse an existing
+terminal failure status for the zero-output case rather than minting a new one; every consumer that
+already treats that status as non-passing (`_PASSING_STATUSES`, `_exit_code_for_status`, status-gated
+branches like `decide_non_apply_status`'s early return) then covers the new path for free, and the
+`shutdown` field (killed vs exited on its own) is enough to distinguish it from any pre-existing
+watchdog-triggered case sharing the same status.
+
+**Refs.** Fixed in `plugins/agy/scripts/agy_delegate.py` (#523), building on the terminal-bundle and
+atomic-write mechanisms from `{#unit-panels-vs-whole-diff-lenses-476}`'s sibling parity work (#517).
+Same "receipt schema-valid ≠ receipt honest" family as #384's two-signal observer design; sibling gap
+in the same batch: #520 (tripwire hardening). Pre-merge review hardening on PR #575 narrowed the
+condition from `stdout_bytes + stderr_bytes == 0` to `stdout_bytes == 0` (finding F1).
+
+---
+
+
 ## 2026-07-12
 
 ### A docstring's stated gating criterion can be silently absent from the implementation it describes  {#docstring-gate-drift-402}
@@ -1736,6 +2115,39 @@ with `lexists` for absence checks so broken symlinks surface instead of vanishin
 family as `{#names-only-baseline-blocks-conditional-workflows-346}` and #347's prunable-worktree
 P1 (healthy-fixture tests missing degraded-state reality).
 
+### A CLI default under `Path.home()` silently pollutes the real home directory on every existing subprocess-driven test run {#cli-home-default-pollutes-tests-396}
+
+**Evidence.** Issue #396 added `--audit-store` (default `~/.claude/delegation-audit`) to
+`agy_delegate.py`. Before isolating the existing subprocess-driven CLI tests
+(`tests/test_agy_delegate_contract.py`, `tests/test_agy_run_lease.py`,
+`tests/test_agy_apply_policy.py`), a single run of `tests/test_agy_delegate_contract.py` alone left
+two real directories under `~/.claude/delegation-audit/runs/` on the machine running this session
+(`cli-run/`, `flags-run/`) — confirmed and cleaned up before proceeding, not hypothetical.
+
+**Mechanism.** `main()` is the CLI's outermost entry point, so it is the one place that must resolve
+the real-world default when `--audit-store` is omitted (the issue's own explicit requirement). Every
+one of the repo's existing subprocess-driven tests for this CLI invoked `main()` via
+`subprocess.run([sys.executable, str(WRAPPER), ...])` without an `env=` override and without the new
+flag, so they all inherited the pytest process's real `HOME` and silently wrote into it. The
+underlying library functions (`create_validation_bundle`/`create_supervised_bundle`) default their
+new `audit_store_root` parameter to `None` (skip) — but that only protects a *direct* Python caller,
+not a subprocess-spawned CLI invocation, which always goes through `main()`'s eager default
+resolution.
+
+**Generalizable rule.** When a CLI flag's documented default resolves under `Path.home()` (or any
+other real, shared, persistent location outside `tmp_path`), grep every existing
+`subprocess.run([..., str(WRAPPER), ...])` call site for that CLI before shipping the default —
+each one either needs the new flag pointed at an isolated path, or the test needs an isolated `HOME`
+via `monkeypatch.setenv`. A function-level `None`-means-skip default is necessary but not
+sufficient: it protects direct unit-test callers, not subprocess-driven CLI tests, which is a
+different call path entirely.
+
+**Refs.** Fixed in `plugins/agy/scripts/agy_delegate.py` (#396) by isolating all 7 existing
+subprocess call sites across the three test files with an explicit `--audit-store <tmp_path>/audit-store`.
+
+---
+
+
 ## 2026-07-11
 
 ### A names-only check baseline turns conditional workflows into permanent merge blocks {#names-only-baseline-blocks-conditional-workflows-346}
@@ -1859,7 +2271,6 @@ Codex 0.1.2; issue #559.
 
 ---
 
-## 2026-07-10
 
 ### A field with no dataclass default is invisible to default-equality carry-forward {#save-kind-identity-carry-forward}
 
@@ -2263,6 +2674,19 @@ R2, KTD5.
 
 ---
 
+### Per-unit verify panels and a whole-diff review pass find disjoint defect classes — run both  {#unit-panels-vs-whole-diff-lenses-476}
+
+**Evidence.** #476's workflow ran 9 refute-panel verifiers (3 units × 3), all upheld with examined-SHA quoting — yet the post-workflow `/code-review` (6 lenses + 10 independent validators, artifact `docs/code-reviews/2026-07-07-feat-476-codex-first-party-bridge-code-review.md`) surfaced 10 confirmed findings the panels structurally could not see: U1's "runner lands in follow-on units" docs falsified by U2/U3 shipping the runner (P1 — no unit owned refreshing them); `_kill_process_tree`'s return discarded at every call site so `shutdown_incomplete` was dead vocabulary (each unit's own tests passed); the die-clean handler covering only U2's window while U3/U6 added spans outside it; and fleet-parity gaps (non-atomic `_write_json`, narrow `except OSError`, unbounded transcript reads) inherited byte-for-byte from the agy sibling the units were told to mirror.
+
+**Mechanism.** A refute-panel verifies a unit's OWN claims at that unit's commit — it is unit-scoped by design. Defects that live BETWEEN units (an earlier unit's statement invalidated by a later unit's code, a handler installed in one span but needed in another, a mirrored sibling's latent bug faithfully copied) have no owning unit, so no panel interrogates them. The serialized-plan failure shape is specific: scope-boundary prose ("X lands in U2/U3") is written true and becomes false in the same PR, and "mirror the sibling" instructions import the sibling's defects with full test coverage of the defective behavior.
+
+**Generalizable rule.** Panels upholding 9/9 is evidence the units are built-as-claimed, not that the diff is sound — always run a whole-diff review pass after a multi-unit workflow, and treat two prompts as standing risks: any "lands in a later unit" doc line (assign the LAST unit a doc-currency sweep) and any "mirror <sibling>" instruction (audit the sibling's known gaps; file the parity fix both ways).
+
+**Refs.** Fix round: all 10 findings fixed in-PR (this commit); agy parity follow-up filed for the shared patterns. Panel-side guardrails from Wave A remain in `{#verify-panels-blind-to-uncommitted-tree}`.
+
+---
+
+
 ## 2026-07-06
 
 ### Worktree-isolated verify panels are blind to uncommitted worker output — refute-N ran 0/3 vacuous on every panel {#verify-panels-blind-to-uncommitted-tree}
@@ -2333,6 +2757,80 @@ plausible diff-read is not evidence the seam holds.
 **Refs.** Extends [[serial-build-cross-cutting-caught-at-gate]] (both are "the gate catches what the build's own green misses"). DECISIONS `{#tier-vocab-ordering}`. PR #499.
 
 ---
+
+### A new module under `fleet-core/` needs fleet-core's OWN version bump, not just the consumer's  {#fleet-core-release-surface-own-bump}
+
+**Context.** #366 added `cost_weights.json` + `cost_weights.py` to `plugins/fleet-core/scripts/fleet_commons/` (consumed by saga's cost HALT). The saga release surface was bumped (0.68.0 → 0.69.0), and every local gate — pytest, ruff, mypy, `sync_marketplace.py --check`, `check_release_surface_parity.py` — passed. CI still failed the **Release Surface Parity** job.
+
+**Evidence.** PR #510, CI job "Release Surface Parity" → step `tools/release_surface_diff_guard.py --base-ref <merge-base>`: `non-doc files changed without a matching plugin.json + CHANGELOG.md bump for: fleet-core`. Fixed by bumping fleet-core 0.5.0 → 0.6.0 (`plugins/fleet-core/.claude-plugin/plugin.json` + CHANGELOG entry + marketplace sync), commit `689339f`.
+
+**Mechanism.** The parity steps check different things. `sync_marketplace.py --check` and `check_release_surface_parity.py` verify *internal consistency* (plugin.json == marketplace == CHANGELOG) — they pass as long as each plugin's three surfaces agree, even if none moved. Only the **diff-aware** guard (`release_surface_diff_guard.py`) enforces the actual rule: *for every plugin with non-doc changes in this diff, that plugin's own plugin.json AND CHANGELOG must have moved*. It reads committed `base..HEAD`, not the working tree. So a change that lands files in **plugin A** (fleet-core) but only bumps **plugin B** (saga) satisfies the consistency checks and the whole pytest suite, and is caught **only** by the diff-aware guard, **only** in CI (it is not a pytest test).
+
+**Fix.** When a change touches non-doc files under `plugins/<X>/`, bump `<X>`'s own release surface — even when `<X>` is a library plugin whose behavior only matters through a consumer. Run the guard locally before pushing, but note it reads **committed** state, so commit the bump first: `uv run python tools/release_surface_diff_guard.py --base-ref $(git merge-base origin/main HEAD)`.
+
+**Generalizable rule.** "Release surface synced" means *per touched plugin*, not *per feature*. A cross-plugin change (module in a library plugin, behavior in its consumer) needs a version bump on **every** plugin whose files changed. The internal-consistency checks won't catch a missing bump; only the diff-aware guard does, and only against committed state — so run it (committed) in the pre-push gate whenever a diff spans more than one `plugins/<X>/` tree.
+
+---
+
+### A new rule on a shared `validate()` collides with "no retroactive backfill" — gate it at the authoring boundary  {#new-validate-rule-authoring-gated}
+
+**Context.** #367 added a worth-it hard-block: a premium tier must carry a `worth_it_because` + `cheaper_fallback`. The issue's AC said "fails `validate()`"; its non-goal said "no retroactive backfill — applies to newly authored specs going forward." Implemented literally (unconditional in `Unit.validate`/`ExecutionSpec.validate`), it broke **75 existing emitter tests** and would break every premium spec authored before the rule.
+
+**Evidence.** `plugins/saga/scripts/execution_spec.py` `Unit.validate(require_receipts=...)` and `ExecutionSpec.validate(require_receipts=...)`; the 75 failures were all existing fixtures at `opus/high`/`fable/xhigh` re-run through `emit_workflow_script` → `spec.validate()`. Fixed by gating the new check on `require_receipts` (default off); `/plan` sets it at authoring (`execution_spec.py validate --require-receipts`), emit and existing specs use the default. PR #511.
+
+**Mechanism.** A shared `validate()` runs on *every* path that touches a spec — authoring, emit, re-validate after a `/tier` patch, and any test that builds a spec. An "always on" new rule is therefore *retroactive by construction*: it re-judges specs that were valid when written. "Applies going forward" can only mean *enforced at the authoring boundary*, not *on every structural validation*. The two are different call sites even though they share a method name.
+
+**Generalizable rule.** When you add a *content/policy* rule (not a *structural* invariant) to a validator that many code paths already call, gate it behind an opt-in flag the **authoring** path sets, and leave the default validation untouched — otherwise you retroactively invalidate everything the validator has ever blessed. A blast radius of dozens of unrelated test failures is the signal that a "new rule" was wired as an "always-on invariant." Structural invariants (a cycle, an off-palette tier, a duplicate id) are always-on; policy rules (must-justify, must-name-a-fallback) are authoring-gated.
+
+**Refs.** Same lifecycle-quality thread as `{#adversarial-gate-4-for-4}` — here the *test blast radius during `/work`*, not the adversarial gate, surfaced the design bug. Both the `sonnet/high` baseline (25 failures) and this `require_receipts` gating (75 failures) in #367 were caught by running the full suite, not by the plan reading cleanly.
+
+---
+
+### In a derived-on-read system, a stale-looking durable artifact is not a bug — and a stage that "never fires" is a starved consumer, not broken logic  {#outcome-derived-truth-vs-missing-producer}
+
+**Evidence.** Closing the `tier-effort-first-class` `/outcome` (objective #343). The committed
+`outcome-spec.json` read `node.state: pending` / `complete: None` for all 9 nodes, yet `outcome.py status`
+and `report.md` both derived **9/9 complete**. Initially misread the raw JSON as "stale/incomplete." It
+wasn't: `outcome.py:361` states `Node.state` is authoring-time-only and `derive_states` (`:398`) never
+reads it. Two real defects hid behind the same reconcile loop: **#495** (PR #514) — code-leaf harvest
+*silently never fired*; **#491** (PR #515) — `attend` emitted a dead `/resume` handoff.
+
+**Mechanism.** R17 makes GitHub the single source of truth: the committed spec stores *pointers* (PR/issue
+refs) and status is recomputed on every read by asking GitHub, so it can't drift. Consequence: the raw
+`node.state` scalar is vestigial and always reads its authored value; the truth lives only in the derived
+reads. For **#495**, `advance` harvesting nothing looked like broken harvest logic — but the barrier
+(`outcome_orchestrator.py:100-112`) and the auto-merge queue (`outcome_merge.py:170`) both correctly
+*require* `node.github["pr"]`; they are **consumers**. The bug was the absent **producer** — the
+record-only dispatch → native `/work` → squash-merge flow never wrote the merged PR back onto the
+coordinator node. Fixing the consumer (e.g. "a closed issue is good enough") would have reintroduced the
+exact false-positive the barrier exists to reject; the fix was to add the missing producer (`link-pr`).
+
+**Generalizable rule.** (1) In a derive-on-read system, verify the **derived read** (`status`/`report`),
+never a stored scalar the code tells you it ignores — "the JSON looks stale" and "the system is wrong" are
+different claims, and persisting the derived value back (to make the artifact self-describing) reintroduces
+the drift the design removed. (2) When a pipeline stage "never fires," first ask whether it's a
+**consumer starved of an input** (missing producer) before touching the stage's own logic — a HALT-on-
+missing-input that degrades safe is *invisible*, so silence reads as "works" when it means "never ran."
+
+**Refs.** Same adversarial-gate-earns-its-keep pattern as `{#adversarial-gate-4-for-4}`: on #491 the
+panel refuted 4 P2/P3 resolver edge cases (`sub_issue=0` → `issue-0` etc.), all fixed + re-verified before
+merge (commit `5a92695`). The two dogfood defects shared one primitive — #495's
+`outcome_github._parse_ref` extracts the `N` that #491's handoff resolver needs.
+
+---
+
+### A days-old plan draft's "verified absent" claim is its most perishable line — re-grep against HEAD before you decompose  {#draft-grounding-rots-reverify-at-decompose}
+
+**Evidence.** Re-triaging objective #336's 21 children (drafts dated 2026-07-03/04) against HEAD on 2026-07-06 found 5 stale absence claims: #387 "no `engine_dispatch` adapter table exists, grep confirms" (false — it ships codex/agy builders + `engine-registry.yaml` rows); #386 "nothing computes cost" (false — `run_ledger.py`/#401 records it at `engine_dispatch.py:215-217`); #390 "no `SUBSTITUTED` disposition" (false — enum at `provenance_manifest.py:59`); #393 assumes no durable ledger (#401 shipped 2026-07-05, the day *after* the draft); #392's own JSON already marked 3/4 facets superseded by shipped #318/#319.
+
+**Mechanism.** A Gate-E draft's grounding is a point-in-time snapshot. Between authoring and execution the substrate moved (multiple ships in 3 days). The single most perishable claim in any draft is "X is absent / grep confirms none" — because the thing that was absent is frequently exactly what someone ships next. Planning from the stale claim produces greenfield work that reimplements shipped substrate, or a scope that fights an existing primitive.
+
+**Generalizable rule.** Before `/plan`-ing or decomposing a multi-issue objective authored more than a day ago, re-verify each draft's *absence* claims against current HEAD (re-grep, do not trust the draft's grep), and persist the correction onto the artifact the planner consumes (the issue), so the stale draft self-corrects at plan time. "Verified absent (2026-07-03)" is a timestamp, not a fact.
+
+**Refs.** Discipline recorded in `{#outcome-dag-decompose-stale-objective-336}`. Same "durable state belongs where it is consumed" thread as `{#outcome-derived-truth-vs-missing-producer}` — the fix was scope-note comments on the issues, not a side doc, because `/plan` reads the issue.
+
+---
+
 
 ## 2026-07-05
 
@@ -4029,417 +4527,3 @@ Always validate immediately: `python3 -m json.tool .claude-plugin/marketplace.js
 **Refs.** Same lesson cached in `~/.claude/projects/.../memory/marketplace_editing_guard.md` for runtime convenience; this file is the durable project record.
 
 ---
-
-### A new module under `fleet-core/` needs fleet-core's OWN version bump, not just the consumer's  {#fleet-core-release-surface-own-bump}
-
-**Context.** #366 added `cost_weights.json` + `cost_weights.py` to `plugins/fleet-core/scripts/fleet_commons/` (consumed by saga's cost HALT). The saga release surface was bumped (0.68.0 → 0.69.0), and every local gate — pytest, ruff, mypy, `sync_marketplace.py --check`, `check_release_surface_parity.py` — passed. CI still failed the **Release Surface Parity** job.
-
-**Evidence.** PR #510, CI job "Release Surface Parity" → step `tools/release_surface_diff_guard.py --base-ref <merge-base>`: `non-doc files changed without a matching plugin.json + CHANGELOG.md bump for: fleet-core`. Fixed by bumping fleet-core 0.5.0 → 0.6.0 (`plugins/fleet-core/.claude-plugin/plugin.json` + CHANGELOG entry + marketplace sync), commit `689339f`.
-
-**Mechanism.** The parity steps check different things. `sync_marketplace.py --check` and `check_release_surface_parity.py` verify *internal consistency* (plugin.json == marketplace == CHANGELOG) — they pass as long as each plugin's three surfaces agree, even if none moved. Only the **diff-aware** guard (`release_surface_diff_guard.py`) enforces the actual rule: *for every plugin with non-doc changes in this diff, that plugin's own plugin.json AND CHANGELOG must have moved*. It reads committed `base..HEAD`, not the working tree. So a change that lands files in **plugin A** (fleet-core) but only bumps **plugin B** (saga) satisfies the consistency checks and the whole pytest suite, and is caught **only** by the diff-aware guard, **only** in CI (it is not a pytest test).
-
-**Fix.** When a change touches non-doc files under `plugins/<X>/`, bump `<X>`'s own release surface — even when `<X>` is a library plugin whose behavior only matters through a consumer. Run the guard locally before pushing, but note it reads **committed** state, so commit the bump first: `uv run python tools/release_surface_diff_guard.py --base-ref $(git merge-base origin/main HEAD)`.
-
-**Generalizable rule.** "Release surface synced" means *per touched plugin*, not *per feature*. A cross-plugin change (module in a library plugin, behavior in its consumer) needs a version bump on **every** plugin whose files changed. The internal-consistency checks won't catch a missing bump; only the diff-aware guard does, and only against committed state — so run it (committed) in the pre-push gate whenever a diff spans more than one `plugins/<X>/` tree.
-
----
-
-### A new rule on a shared `validate()` collides with "no retroactive backfill" — gate it at the authoring boundary  {#new-validate-rule-authoring-gated}
-
-**Context.** #367 added a worth-it hard-block: a premium tier must carry a `worth_it_because` + `cheaper_fallback`. The issue's AC said "fails `validate()`"; its non-goal said "no retroactive backfill — applies to newly authored specs going forward." Implemented literally (unconditional in `Unit.validate`/`ExecutionSpec.validate`), it broke **75 existing emitter tests** and would break every premium spec authored before the rule.
-
-**Evidence.** `plugins/saga/scripts/execution_spec.py` `Unit.validate(require_receipts=...)` and `ExecutionSpec.validate(require_receipts=...)`; the 75 failures were all existing fixtures at `opus/high`/`fable/xhigh` re-run through `emit_workflow_script` → `spec.validate()`. Fixed by gating the new check on `require_receipts` (default off); `/plan` sets it at authoring (`execution_spec.py validate --require-receipts`), emit and existing specs use the default. PR #511.
-
-**Mechanism.** A shared `validate()` runs on *every* path that touches a spec — authoring, emit, re-validate after a `/tier` patch, and any test that builds a spec. An "always on" new rule is therefore *retroactive by construction*: it re-judges specs that were valid when written. "Applies going forward" can only mean *enforced at the authoring boundary*, not *on every structural validation*. The two are different call sites even though they share a method name.
-
-**Generalizable rule.** When you add a *content/policy* rule (not a *structural* invariant) to a validator that many code paths already call, gate it behind an opt-in flag the **authoring** path sets, and leave the default validation untouched — otherwise you retroactively invalidate everything the validator has ever blessed. A blast radius of dozens of unrelated test failures is the signal that a "new rule" was wired as an "always-on invariant." Structural invariants (a cycle, an off-palette tier, a duplicate id) are always-on; policy rules (must-justify, must-name-a-fallback) are authoring-gated.
-
-**Refs.** Same lifecycle-quality thread as `{#adversarial-gate-4-for-4}` — here the *test blast radius during `/work`*, not the adversarial gate, surfaced the design bug. Both the `sonnet/high` baseline (25 failures) and this `require_receipts` gating (75 failures) in #367 were caught by running the full suite, not by the plan reading cleanly.
-
----
-
-### In a derived-on-read system, a stale-looking durable artifact is not a bug — and a stage that "never fires" is a starved consumer, not broken logic  {#outcome-derived-truth-vs-missing-producer}
-
-**Evidence.** Closing the `tier-effort-first-class` `/outcome` (objective #343). The committed
-`outcome-spec.json` read `node.state: pending` / `complete: None` for all 9 nodes, yet `outcome.py status`
-and `report.md` both derived **9/9 complete**. Initially misread the raw JSON as "stale/incomplete." It
-wasn't: `outcome.py:361` states `Node.state` is authoring-time-only and `derive_states` (`:398`) never
-reads it. Two real defects hid behind the same reconcile loop: **#495** (PR #514) — code-leaf harvest
-*silently never fired*; **#491** (PR #515) — `attend` emitted a dead `/resume` handoff.
-
-**Mechanism.** R17 makes GitHub the single source of truth: the committed spec stores *pointers* (PR/issue
-refs) and status is recomputed on every read by asking GitHub, so it can't drift. Consequence: the raw
-`node.state` scalar is vestigial and always reads its authored value; the truth lives only in the derived
-reads. For **#495**, `advance` harvesting nothing looked like broken harvest logic — but the barrier
-(`outcome_orchestrator.py:100-112`) and the auto-merge queue (`outcome_merge.py:170`) both correctly
-*require* `node.github["pr"]`; they are **consumers**. The bug was the absent **producer** — the
-record-only dispatch → native `/work` → squash-merge flow never wrote the merged PR back onto the
-coordinator node. Fixing the consumer (e.g. "a closed issue is good enough") would have reintroduced the
-exact false-positive the barrier exists to reject; the fix was to add the missing producer (`link-pr`).
-
-**Generalizable rule.** (1) In a derive-on-read system, verify the **derived read** (`status`/`report`),
-never a stored scalar the code tells you it ignores — "the JSON looks stale" and "the system is wrong" are
-different claims, and persisting the derived value back (to make the artifact self-describing) reintroduces
-the drift the design removed. (2) When a pipeline stage "never fires," first ask whether it's a
-**consumer starved of an input** (missing producer) before touching the stage's own logic — a HALT-on-
-missing-input that degrades safe is *invisible*, so silence reads as "works" when it means "never ran."
-
-**Refs.** Same adversarial-gate-earns-its-keep pattern as `{#adversarial-gate-4-for-4}`: on #491 the
-panel refuted 4 P2/P3 resolver edge cases (`sub_issue=0` → `issue-0` etc.), all fixed + re-verified before
-merge (commit `5a92695`). The two dogfood defects shared one primitive — #495's
-`outcome_github._parse_ref` extracts the `N` that #491's handoff resolver needs.
-
----
-
-### A days-old plan draft's "verified absent" claim is its most perishable line — re-grep against HEAD before you decompose  {#draft-grounding-rots-reverify-at-decompose}
-
-**Evidence.** Re-triaging objective #336's 21 children (drafts dated 2026-07-03/04) against HEAD on 2026-07-06 found 5 stale absence claims: #387 "no `engine_dispatch` adapter table exists, grep confirms" (false — it ships codex/agy builders + `engine-registry.yaml` rows); #386 "nothing computes cost" (false — `run_ledger.py`/#401 records it at `engine_dispatch.py:215-217`); #390 "no `SUBSTITUTED` disposition" (false — enum at `provenance_manifest.py:59`); #393 assumes no durable ledger (#401 shipped 2026-07-05, the day *after* the draft); #392's own JSON already marked 3/4 facets superseded by shipped #318/#319.
-
-**Mechanism.** A Gate-E draft's grounding is a point-in-time snapshot. Between authoring and execution the substrate moved (multiple ships in 3 days). The single most perishable claim in any draft is "X is absent / grep confirms none" — because the thing that was absent is frequently exactly what someone ships next. Planning from the stale claim produces greenfield work that reimplements shipped substrate, or a scope that fights an existing primitive.
-
-**Generalizable rule.** Before `/plan`-ing or decomposing a multi-issue objective authored more than a day ago, re-verify each draft's *absence* claims against current HEAD (re-grep, do not trust the draft's grep), and persist the correction onto the artifact the planner consumes (the issue), so the stale draft self-corrects at plan time. "Verified absent (2026-07-03)" is a timestamp, not a fact.
-
-**Refs.** Discipline recorded in `{#outcome-dag-decompose-stale-objective-336}`. Same "durable state belongs where it is consumed" thread as `{#outcome-derived-truth-vs-missing-producer}` — the fix was scope-note comments on the issues, not a side doc, because `/plan` reads the issue.
-
----
-
-### Per-unit verify panels and a whole-diff review pass find disjoint defect classes — run both  {#unit-panels-vs-whole-diff-lenses-476}
-
-**Evidence.** #476's workflow ran 9 refute-panel verifiers (3 units × 3), all upheld with examined-SHA quoting — yet the post-workflow `/code-review` (6 lenses + 10 independent validators, artifact `docs/code-reviews/2026-07-07-feat-476-codex-first-party-bridge-code-review.md`) surfaced 10 confirmed findings the panels structurally could not see: U1's "runner lands in follow-on units" docs falsified by U2/U3 shipping the runner (P1 — no unit owned refreshing them); `_kill_process_tree`'s return discarded at every call site so `shutdown_incomplete` was dead vocabulary (each unit's own tests passed); the die-clean handler covering only U2's window while U3/U6 added spans outside it; and fleet-parity gaps (non-atomic `_write_json`, narrow `except OSError`, unbounded transcript reads) inherited byte-for-byte from the agy sibling the units were told to mirror.
-
-**Mechanism.** A refute-panel verifies a unit's OWN claims at that unit's commit — it is unit-scoped by design. Defects that live BETWEEN units (an earlier unit's statement invalidated by a later unit's code, a handler installed in one span but needed in another, a mirrored sibling's latent bug faithfully copied) have no owning unit, so no panel interrogates them. The serialized-plan failure shape is specific: scope-boundary prose ("X lands in U2/U3") is written true and becomes false in the same PR, and "mirror the sibling" instructions import the sibling's defects with full test coverage of the defective behavior.
-
-**Generalizable rule.** Panels upholding 9/9 is evidence the units are built-as-claimed, not that the diff is sound — always run a whole-diff review pass after a multi-unit workflow, and treat two prompts as standing risks: any "lands in a later unit" doc line (assign the LAST unit a doc-currency sweep) and any "mirror <sibling>" instruction (audit the sibling's known gaps; file the parity fix both ways).
-
-**Refs.** Fix round: all 10 findings fixed in-PR (this commit); agy parity follow-up filed for the shared patterns. Panel-side guardrails from Wave A remain in `{#verify-panels-blind-to-uncommitted-tree}`.
-
----
-
-### A CLI default under `Path.home()` silently pollutes the real home directory on every existing subprocess-driven test run {#cli-home-default-pollutes-tests-396}
-
-**Evidence.** Issue #396 added `--audit-store` (default `~/.claude/delegation-audit`) to
-`agy_delegate.py`. Before isolating the existing subprocess-driven CLI tests
-(`tests/test_agy_delegate_contract.py`, `tests/test_agy_run_lease.py`,
-`tests/test_agy_apply_policy.py`), a single run of `tests/test_agy_delegate_contract.py` alone left
-two real directories under `~/.claude/delegation-audit/runs/` on the machine running this session
-(`cli-run/`, `flags-run/`) — confirmed and cleaned up before proceeding, not hypothetical.
-
-**Mechanism.** `main()` is the CLI's outermost entry point, so it is the one place that must resolve
-the real-world default when `--audit-store` is omitted (the issue's own explicit requirement). Every
-one of the repo's existing subprocess-driven tests for this CLI invoked `main()` via
-`subprocess.run([sys.executable, str(WRAPPER), ...])` without an `env=` override and without the new
-flag, so they all inherited the pytest process's real `HOME` and silently wrote into it. The
-underlying library functions (`create_validation_bundle`/`create_supervised_bundle`) default their
-new `audit_store_root` parameter to `None` (skip) — but that only protects a *direct* Python caller,
-not a subprocess-spawned CLI invocation, which always goes through `main()`'s eager default
-resolution.
-
-**Generalizable rule.** When a CLI flag's documented default resolves under `Path.home()` (or any
-other real, shared, persistent location outside `tmp_path`), grep every existing
-`subprocess.run([..., str(WRAPPER), ...])` call site for that CLI before shipping the default —
-each one either needs the new flag pointed at an isolated path, or the test needs an isolated `HOME`
-via `monkeypatch.setenv`. A function-level `None`-means-skip default is necessary but not
-sufficient: it protects direct unit-test callers, not subprocess-driven CLI tests, which is a
-different call path entirely.
-
-**Refs.** Fixed in `plugins/agy/scripts/agy_delegate.py` (#396) by isolating all 7 existing
-subprocess call sites across the three test files with an explicit `--audit-store <tmp_path>/audit-store`.
-
----
-
-### A supervised subprocess's exit code alone cannot certify success — zero-byte output must be checked too {#agy-exit-zero-zero-bytes-false-success-523}
-
-**Evidence.** Issue #523, drill-468 S1/agy/attempt1 (`.claude/agy/runs/drill-468-s1-agy-190129`,
-`agy.log` lines ~97/~103/~130-131): a transient 503 on Antigravity's `loadCodeAssist` left the model
-table empty, `agy` logged "failed to construct executor: neither PlanModel nor RequestedModel
-specified" to its own `--log_path` file, then exited 0 having written zero bytes to the stdout/stderr
-streams the wrapper actually supervises. Before the fix, `run_agy_supervised`
-(`plugins/agy/scripts/agy_delegate.py:1017-1018`) mapped `return_code == 0` straight to
-`status="success"` with no output check, so the bundle's `result.json` recorded `status: success` and
-a `bridge_receipt.v1` with `bytes_produced: 0` — a schema-valid, self-consistent lie that
-engine_dispatch's #384 two-signal observer would corroborate as a proceeded-as-requested run.
-
-**Mechanism.** The supervise loop's own failure taxonomy (timeout, no-output watchdog, output-byte
-cap, die-clean signal) all fire on process *behavior observed during* the run — none of them fire
-when the process starts, does nothing, and exits cleanly before any watchdog has a chance to trip.
-Antigravity's own diagnostic (the executor-construction error) lands in a log file the wrapper never
-reads for status purposes; the only two signals the wrapper does read — exit code and captured
-stdout/stderr byte count — were exactly the two that, in combination, proved the run did nothing.
-Checking exit code alone treats "exited without crashing" as proof of work done, when it only proves
-the process didn't crash.
-
-**Generalizable rule.** For any supervised external-process wrapper that maps `return_code == 0` to a
-passing status, also gate on "did this run produce the output a passing run is expected to produce"
-— gate on the *deliverable* stream specifically (here: `stdout_bytes > 0`), not the union of every
-stream the process happens to write to. A first pass gated on `stdout_bytes + stderr_bytes == 0`
-(both streams zero) and shipped with that condition; a pre-merge review caught that it re-opened the
-false-success path for the nearest-neighbor variant where the process emits incidental stderr chatter
-(a warning/log line) alongside zero stdout — stderr is not the deliverable stream, so a single stray
-byte there should not rescue a no-output run from the no-output classification. Reuse an existing
-terminal failure status for the zero-output case rather than minting a new one; every consumer that
-already treats that status as non-passing (`_PASSING_STATUSES`, `_exit_code_for_status`, status-gated
-branches like `decide_non_apply_status`'s early return) then covers the new path for free, and the
-`shutdown` field (killed vs exited on its own) is enough to distinguish it from any pre-existing
-watchdog-triggered case sharing the same status.
-
-**Refs.** Fixed in `plugins/agy/scripts/agy_delegate.py` (#523), building on the terminal-bundle and
-atomic-write mechanisms from `{#unit-panels-vs-whole-diff-lenses-476}`'s sibling parity work (#517).
-Same "receipt schema-valid ≠ receipt honest" family as #384's two-signal observer design; sibling gap
-in the same batch: #520 (tripwire hardening). Pre-merge review hardening on PR #575 narrowed the
-condition from `stdout_bytes + stderr_bytes == 0` to `stdout_bytes == 0` (finding F1).
-
----
-
-### Parallel hooks require two independent release signals, and workflow batch identity cannot rely on hook environment inheritance {#parallel-hook-lease-lifecycle-356}
-
-**Evidence.** Issue #356's lease lifecycle wiring. Claude runs matching hooks independently;
-`SubagentStart` carries trusted child identity but no parent `tool_use_id`, while parent
-`PostToolUse`/`PostToolUseFailure` carries the tool id but not authoritative child termination.
-Also, environment exported by the `/work` driver is not a durable child-hook communication channel:
-the hook subprocess receives the Claude session id, but an explicit Workflow batch id is not
-guaranteed to persist into every later hook invocation.
-
-**Mechanism.** Releasing on either signal alone creates a live-child capacity hole. The broker
-therefore records `child_terminal_at` and `parent_completed_at` independently and removes a claimed
-foreground lease only after both exist. Workflow reservations are discovered from the canonical
-registry by trusted session when no explicit batch id is present; more than one live batch for the
-same session halts as ambiguous instead of selecting one. Cross-ordered claims may retain capacity
-until TTL, but they cannot release or authorize the wrong child.
-
-**Generalizable rule.** Treat hook callbacks as unordered, isolated observations, not one process or
-one inherited environment. Any lifecycle transition that destroys authority must require all
-independent trusted signals the host exposes, and any identity that must survive across callbacks
-belongs in the locked durable authority keyed by stable host identity. Ambiguity should retain
-authority and fail closed; it must never be resolved by oldest/latest guessing at release time.
-
-**Refs.** `plugins/saga/hooks/hooks.json`, `plugins/saga/scripts/lease_broker.py`,
-`plugins/fleet-core/scripts/fleet_commons/lease_broker.py`, and
-`plugins/saga/references/concurrency-spawn-sites.md`; decision
-`{#fleet-ttl-lease-broker-356}`.
-
----
-
-### A durable resource cannot inherit the lifetime of the one-shot process that provisioned it {#durable-worktree-owner-transfer-356}
-
-**Evidence.** Issue #356 initially recorded the provisioning coordinator's PID/start identity on an
-outcome worktree lease. Outcome ticks are intentionally one-shot processes, while a dispatched child
-and its worktree persist across ticks. After TTL, the broker correctly proved that PID dead and the
-reaper could therefore delete a still-active child's real Git worktree.
-
-**Mechanism.** Process liveness answers whether one coordinator is alive, not whether an outcome-owned
-resource is abandoned. Reconciliation must first load durable child state, transfer the exact current
-fencing token to the new coordinator, and only then sweep. The broker lock spans both ownership
-transfer and the reaper callback, while `dispatched` is an independent destructive-action veto. Git
-provisioning similarly records registry and lease recovery authority before physical creation so a
-failed rollback cannot erase every route to later cleanup.
-
-**Generalizable rule.** Match authority lifetime to resource lifetime. For durable resources managed
-by ephemeral coordinators, persist an exact transferable token and require durable terminal/inactive
-state in addition to dead-process evidence before deletion. Persist recovery authority before the
-external side effect, and retain it whenever compensation is uncertain.
-
-**Refs.** `plugins/saga/scripts/outcome_worktrees.py`,
-`plugins/fleet-core/scripts/fleet_commons/lease_broker.py`, and
-`tests/test_outcome_worktrees.py`; decision `{#fleet-ttl-lease-broker-356}`.
-
----
-
-### A lease boot identity fallback must be stable across cooperating processes {#restricted-boot-identity-356}
-
-**Evidence.** A restricted macOS runtime denied `sysctl kern.boottime`. The emergency fallback
-included the current PID and a fresh monotonic reading, so acquire and immediate renew calculated
-different boot identities and treated a new lease as reboot-expired.
-
-**Mechanism.** When `kern.boottime` is unavailable on Darwin, fleet-core reads the current
-`BOOT_TIME` record through libc's `utmpx` API. The record is shared across processes, changes on
-reboot, and remains independent of later wall-clock corrections. If every OS identity source is
-unavailable, the broker refuses authority instead of inventing process-local identity.
-
-**Generalizable rule.** A persisted authority marker cannot fall back to process-local or per-call
-identity. Exercise degraded platform probes through the full acquire-to-renew path, not only by
-asserting that the fallback returns a nonempty string.
-
-**Refs.** `plugins/fleet-core/scripts/fleet_commons/lease_broker.py` and
-`tests/test_fleet_lease_broker.py`; decision `{#fleet-ttl-lease-broker-356}`.
-
----
-
-### Prepared-issue sidecar project fields are provenance, not board writes {#prepared-sidecar-objective-inert-637}
-
-**Evidence.** Filing enhancement #637 (2026-07-21): `sdlc_manager.py issue prepare --from <ref>`
-recorded `project_fields.Objective` as the literal source-file path, and
-`issue create-prepared` filed the issue, added it to Operations, and set Status — but never
-touched Objective. codex#45 shipped the same path-shaped Objective in its sidecar with zero
-board effect. `_prepared_project_fields` (sdlc_manager.py:3529) documents this: "`create` does
-not yet read `project_fields`".
-
-**Mechanism.** The prepare step copies `source_artifact.ref` into the sidecar verbatim as
-provenance for a future consumer; create-prepared's mutation plan is issue create → board-add →
-set-status → mark-draft only. Custom project fields (Objective, Technical Risk, …) reach the
-board solely via an explicit
-`flow set-field --project <p> --repo <r> --number <n> --field Objective --option <slug>`
-after creation.
-
-**Generalizable rule.** A recorded field in a handoff artifact is not an applied field — check
-which pipeline stage actually consumes it before trusting the record. When filing prepared
-issues, follow create-prepared with an explicit `flow set-field` for every board field the
-operator asked for.
-
-**Refs.** `plugins/mission-control/scripts/sdlc_manager.py:3529`,
-`docs/sdlc-issue-drafts/2026-07-21-harden-refuse-mode-lease-admission-pid-liveness.{md,json}`;
-issues infiquetra-claude-plugins#637, infiquetra-codex-plugins#45.
-
----
-
-### Async Agent spawns turn PostToolUse into a lease kill switch {#async-spawn-posttooluse-race-616-r8}
-
-**Evidence.** R8 rollout canary for #616 (2026-07-23, work-session doc
-`2026-07-22-issue-616-worktree-write-fence-scoping.md` post-merge section): three consecutive
-real Agent spawns lost their lease ("expected exactly one fleet lease bound; found 0"); a
-100 ms registry watcher showed the healthy PreToolUse reservation and the session admission
-wiped in one write 101–156 ms after reservation — exactly when the async Agent tool call
-returned its launch metadata.
-
-**Mechanism.** PostToolUse[Agent|Task] → `record_hook_parent` → broker
-`record_parent_completed` (fleet-core 0.20.0 `lease_broker.py:3895`) removes any matching
-lease with `agent_id is None` as "spawn never happened" (:3913-3921) and pops the session
-admission when no live agents remain (:3924-3927). That contract assumes PostToolUse is a
-*completion* signal — true for synchronous spawns only. Background/async spawns return the
-tool result at launch, so the cleanup races SubagentStart's claim; when cleanup wins, the
-child runs unbound and all delegated mutations are refused. Same signature as the 3-of-8
-code-review verifier losses (claim won 5 races).
-
-**Generalizable rule.** Any lifecycle hook keyed on "tool call returned" must distinguish
-launch-return from completion-return before destroying state; a reservation younger than the
-spawn round-trip is not abandoned. Verify hook-event semantics against the harness's actual
-execution mode (sync vs async) rather than the tool's nominal lifecycle.
-
-**Refs.** `plugins/fleet-core/scripts/fleet_commons/lease_broker.py:3895-3928`,
-`plugins/saga/scripts/lease_broker.py:379-394` (`record_hook_parent`); learning
-`{#broker-schema-forward-poisoning-616}`; issue #616 / PR #643.
-
----
-
-### Outcome harvest silently skips a leaf whose spec node lacks `leaf_saga_id` {#harvest-leaf-saga-id-backfill-617}
-
-**Evidence.** sub-617 harvest, 2026-07-23: PR #650 merged, evidence written under
-`leaf-governed-execution-integrity-sub-617` at close sha `7be1a24a`, yet two `advance`
-ticks returned `harvested: []` with no drift or halt output. The dispatch ledger's commit
-record carried `"leaf_saga_id": "leaf-governed-execution-integrity-sub-617"`, but the
-committed spec node's `leaf_saga_id` was `""`. Backfilling the spec field made the next
-tick harvest immediately (`596c777c` on `outcome/governed-execution-integrity`).
-
-**Mechanism.** `closure_gate.evaluate` (`plugins/saga/scripts/closure_gate.py:220`) reads
-`node.leaf_saga_id` from the SPEC node — never from the dispatch ledger — to resolve
-`docs/evidence/<saga-id>/`. Under a dispatch-era intent with `reviews_required: "gate"`,
-a code leaf implies a required `code-review` check, so an empty id makes the gate
-unsatisfiable (`unresolvable-close-sha`) and `harvest` skips the node with no surfaced
-reason. The GitHub barrier (PR merged) passes; the failure is invisible in `advance`
-output.
-
-**Generalizable rule.** Before expecting a closure-gated leaf to harvest, verify the spec
-node's `leaf_saga_id` matches the dispatch ledger record — and treat a silent
-`harvested: []` on a merged PR as a closure-gate resolution failure, not a barrier miss.
-
----
-
-### Lazy `import X` + per-test `_load(X)` = a stale monkeypatch target  {#sys-modules-stale-patch-620}
-
-**Evidence.** #620 board-sync tests (`tests/test_outcome_board_sync.py`): three new tests passed in
-isolation but failed in the full suite (`assert 6 == 1`, real resolver + writer ran instead of the
-fake). Fix commit `bd7bdee0` (`_live_bp()` helper) + the reconcile_controller counterpart in
-`c96ea511`.
-
-**Mechanism.** `reconcile_board` resolves its dependency with a lazy `import board_progression as _bp`
-at call time, which returns `sys.modules["board_progression"]`. Every test module loads scripts via a
-`_load()` that does `sys.modules[name] = module` — so the *last* test module collected wins that
-slot. A handle captured at collection time (`BP_MOD = _load("board_progression")`) is therefore stale
-by the time the test runs in a full suite, and `monkeypatch.setattr(BP_MOD, "resolve…", fake)` patches
-an object the code under test never imports. The fake silently doesn't apply; the real function runs
-and passes only by monorepo-walk-up accident. It passed in isolation because nothing else competed
-for the slot.
-
-**Generalizable rule.** When code under test resolves a collaborator via a lazy `import` (through
-`sys.modules`), patch the run-time-live `sys.modules[name]` — never a module handle captured at import
-time. A test that monkeypatches a collaborator and still passes when the patch is a no-op is a false-
-confidence test; prove the patch bites (assert a fabricated value the real collaborator could not
-produce, or assert the fake was called).
-
----
-
-### A validated value must travel to the thing it authorizes, or the gate guards a different value than the one that acts {#validated-value-must-travel-635}
-
-**Evidence.** Pre-PR code review of #635 at `6b0a8180`, artifact
-`docs/code-reviews/2026-07-25-issue-635-ceremony-ref-resolution-code-review.md`. `ship_ceremony.run()`
-called `resolve_ceremony_refs()` (`:1211`), validated the operator's
-`--operator-confirmed branch_delete:<target>` against the result, and handed the resolved head to the
-`branch_delete_targets_base` hazard probe. It then dispatched
-`_RUNNERS[upcoming](saga, repo_root=..., runner=...)` (`:1273`) — a uniform signature carrying neither
-the confirmed target nor the refs — and `_do_branch_delete` (`:940`) resolved again from scratch.
-Two independent review lenses reproduced the consequence end-to-end; the sharper run deleted
-`outcome/norns-next-horizon` local and origin **through the new code**, with the non-acknowledgeable
-hazard reporting clean.
-
-**Mechanism.** The consequence needs the resolver's own defining property. `resolve_ceremony_refs`
-degrades from rung 1 (the PR, via `gh pr view`) to rung 2 (the opened-resource manifest plus the base
-sidecar) on **any** non-zero `gh` exit — deliberately, so an operator finishing a ship offline is not
-stranded. That makes the function non-deterministic across calls in exactly the way a cache would not
-be: two invocations seconds apart, same inputs, can answer from different rungs and return different
-branches. So the confirmation check, the hazard scan, and the deletion were three computations that
-usually agree rather than one value used three times. One transient `gh` failure inside a single
-`run()` is enough to separate them, and every gate still reports pass because each gate genuinely did
-pass — against the value it saw.
-
-Note the shape of the original defect this was fixing: the deletion target and the manifest resource
-id were derived independently from the same wrong field. The fix collapsed that to one resolved value
-*inside* `_do_branch_delete`, and reintroduced the identical class of split *across the operator
-gate*. The blast radius moved up a level and became invisible to the unit that had been fixed.
-
-**Generalizable rule.** When a gate validates a value and a later step re-derives it, they are two
-values, not one — and a resolver that degrades between sources makes "usually equal" the strongest
-guarantee available. Pass the validated object through to the step it authorizes so identity is
-structural, and treat a uniform dispatch signature as a place values get silently dropped. Corollary
-for review scope: unit-scoped verify panels cannot see this class of defect at all. Five refute
-panels passed this change set; the defect lived in the seam between the unit that built the resolver
-and the unit that built the gate, and only a diff-wide pass surfaced it.
-
----
-
-### A rolling tick field read as ceremony state produces a three-part silent failure {#ceremony-tick-field-as-state-635}
-
-**Evidence.** `ship_ceremony.py`'s `_do_branch_delete` (issue #635, grounded at `474fd3cc`): on a
-leaf-into-outcome PR whose last saga tick save happened while checked out on the base branch,
-`branch_delete` deleted the **base** branch, both locally and on `origin`, rather than the PR's head.
-The real incident (2026-07-20/21, `infiquetra/team-norns`, saga `issue-236`) deleted
-`outcome/norns-next-horizon` local and origin while the actual feature branch survived; recovery
-depended on the rollback manifest's recorded head SHA plus local object-store retention.
-
-**Mechanism.** `saga.py:566` stamps `"branch": git branch --show-current` on **every** `save` — the
-field means "whatever branch the last save happened on," not "the branch this ceremony opened." Three
-independent call sites each read that field (or the literal string `main`) as if it recorded ceremony
-identity, and the failure it produced had three parts, not one: (1) the deletion itself ran against
-the base branch, with the origin-side `git push --delete` swallowing failure under `check=False`; (2)
-the manifest close addressed `ceremony-branch:<base>` — an id that was never registered, so
-`_close_if_registered`'s by-design no-op on unknown ids (`:346-357`) hid the divergence with no error;
-(3) the real feature branch's `ceremony-branch:<head>` entry stayed `open` forever, because
-`_teardown_attempt_closes` (`:604`) auto-closes only `scratch` and `worktree` kinds, never `branch` —
-so every later teardown attempt raised `TeardownBlockedError` permanently. Only the first part is
-visible without reading the other two call sites; the manifest divergence and the permanent teardown
-block are consequences that don't surface until much later, at a point disconnected from the original
-mistargeted delete.
-
-**Generalizable rule.** A destructive target must resolve from write-once, ceremony-scoped evidence —
-a value written once, at the moment the fact becomes true, and never touched again — never from a
-field that is re-derived on every save. A field's docstring or origin ("this is `git
-branch --show-current`") is not evidence of what it means to a later reader; a rolling field answers
-"what is true right now," and a ceremony needs the answer to "what was true when this ceremony
-opened." When three call sites each independently derive the same fact from one ambient source, that
-is the signal to centralize into one resolver rather than trust that all three derivations will keep
-agreeing — the fix here (`resolve_ceremony_refs()`, `{#ceremony-ref-resolution-635}`) replaced five
-independent guesses with one PR-authoritative-then-sidecar ladder that raises rather than falling back
-to the rolling field.
-
-**Refs.** `plugins/saga/scripts/ship_ceremony.py` (`resolve_ceremony_refs`, `_do_branch_delete`,
-`_do_merge`), `plugins/saga/scripts/ship_undo.py` (`_undo_merge`, `_merge_entry_base`),
-`plugins/saga/scripts/ceremony_hazards.py` (`BRANCH_DELETE_TARGETS_BASE`); decision
-`{#ceremony-ref-resolution-635}`; issue #635.

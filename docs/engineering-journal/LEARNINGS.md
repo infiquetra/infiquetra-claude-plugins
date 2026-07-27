@@ -21,6 +21,81 @@
 
 ## 2026-07-27
 
+### The lease broker never fenced the one spawn kind that needed it, and the kill-switch was a red herring  {#lease-never-fenced-residents-671}
+
+**Context.** I filed #671 claiming team-execution residents were unprotected *because* fleet-lease
+enforcement was switched off, and recommended re-arming or replacing the fence before deleting the
+broker. Both premises were wrong.
+
+**Evidence.** `assert_write_target` (`lease_broker.py:3308`) reads `worktree_root` off the lease
+and returns immediately when it is absent — no path containment check runs below that line. The
+stamp is decided at `:2899` by `stamp_worktree = selected.isolation == "worktree" or
+selected.tool_use_id is None`, whose own comment ends "**A PreToolUse-stamped, non-worktree
+reservation is left unfenced — the deliberate #616 privilege change.**" team-execution residents
+are Agent-tool spawns (so they carry a `tool_use_id`) that declare no isolation anywhere in the
+plugin (`grep -rn "isolation" plugins/team-execution/` returns one unrelated hit), and its own docs
+call them "same-cwd resident teammates". Both branches are pinned as tests;
+`test_stamped_non_isolated_claim_leaves_write_unfenced` says in its docstring that the fence is
+removed. Both green on `main` at `fe3bf9f3`.
+
+**Mechanism.** #616 was titled "lease claim write-fences agents to their spawn cwd, blocking
+legitimate work" — the fence was over-firing, so it was narrowed to apply only where a real
+worktree boundary exists. Correct fix. It also, quietly, made the broker a non-answer for the one
+spawn kind that has no boundary. The kill-switch therefore cannot be the explanation for residents
+being unfenced: they were unfenced armed *or* disarmed.
+
+**Fix.** Prevent the collision by splitting the work instead of fencing the write —
+`wave_file_conflicts()` plus a halt in both emitters, and a *Concurrent-writer safety* section in
+the approval table. See [[split-not-fence-671]].
+
+**Validation.** 15 new tests, including a sentinel that all 18 committed specs stay conflict-free;
+517 existing emitter/spec tests unchanged.
+
+**What surprised.** Twice. First, that a safety mechanism can be fully armed and still be a no-op
+for the case it appears to cover. Second, how thoroughly the codebase had already documented this —
+the carve-out is stated in a code comment, named in an issue title, and asserted in a test whose
+name contains the word "unfenced". I wrote #671 from reading the *call site* and assuming the
+callee did what its name says.
+
+**Generalizable rule.** Before recommending that a guard be re-enabled, execute or read the path
+that decides whether it *applies*, not just the path that runs when it does. A conditional fence
+whose predicate excludes your case is indistinguishable from no fence at all — and the fastest way
+to find that out is to look for a test whose name describes the exemption.
+
+**Refs.** [[split-not-fence-671]], [[zero-artifacts-beats-zero-importers]]. #671, #616.
+
+### Parallel width in this fleet is incidental, which makes conflict-avoidance cheap  {#parallel-width-is-incidental}
+
+**Context.** Deciding whether to prevent concurrent-writer collisions by isolating agents into
+worktrees (expensive, structural) or by splitting the work so they never collide (cheap, requires
+declarations to be accurate). The choice turns on facts, so I measured before choosing.
+
+**Evidence.** Over the 18 execution specs committed to `docs/plans/`: **97 units, all 97 declaring
+`files` (100%), 92 waves, and only 4 waves running more than one unit.** Zero same-wave pairs share
+a declared file. All 4 multi-unit waves consist of units keyed to the same `plugins/saga`
+directory — precisely the pairs `segment_units()` merges into one resident on the team backend, and
+precisely the pairs the workflow backend runs as separate concurrent agents, because
+`workflow_emitter` never calls `segment_units`.
+
+**Mechanism.** Plans decompose into sequential units far more often than parallel ones, because
+work in one repo tends to be causally chained. The concurrency machinery was built for a
+parallelism that is not actually happening.
+
+**Fix / consequence.** Splitting is viable — 100% `files` coverage means the declarations can be
+trusted, which was the open question. And the workflow backend is *strictly worse* than the team
+backend on the only 4 occasions it mattered: identical work runs as 2 concurrent agents instead of
+1 warm resident, losing the cache reuse for no gain.
+
+**What surprised.** I expected the `files` declarations to be patchy, and had planned to recommend
+worktree isolation if they were. They were complete.
+
+**Generalizable rule.** When choosing between a structural fix and a cheaper fix that depends on
+data quality, measure the data quality first — it is usually a single afternoon and it frequently
+inverts the recommendation. And measure the thing you would actually gate on ("do concurrent units
+share a file") rather than its proxy ("is there parallelism at all").
+
+**Refs.** [[split-not-fence-671]], [[lease-never-fenced-residents-671]]. #671.
+
 ### Commit lag makes git-blame dates disagree with authored dates ~12% of the time, always by a day  {#blame-lag-vs-authored-date}
 
 **Context.** Re-filing the journal entries stranded below the oldest date heading (#659) needed a

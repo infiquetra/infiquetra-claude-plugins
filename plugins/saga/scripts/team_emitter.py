@@ -227,6 +227,12 @@ def emit_team_structure(
                 f"per-leaf tool restriction). Route this unit to inline or cc-workflows, or drop "
                 f"the restrictive sandbox. Halt-not-downgrade (R4)."
             )
+    # #671: same halt the workflow emitter applies, and it matters MORE here — team-execution
+    # residents are same-cwd by construction, run bypassPermissions with no per-leaf tool
+    # restriction (KTD3), and are the one spawn kind the fleet lease never write-fenced (the
+    # deliberate #616 carve-out: a PreToolUse-stamped, non-worktree reservation claims with no
+    # worktree_root, so assert_write_target returns without a containment check).
+    mod.assert_no_wave_file_conflicts(spec)
     segments = mod.segment_units(spec)
 
     # #365 U3: a session tier ceiling clamps each POST-MERGE segment tier DOWN, BEFORE the #369

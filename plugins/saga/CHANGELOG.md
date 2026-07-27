@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.121.0] - 2026-07-27
+
+### Added - concurrent units declaring the same file halt at emit (#671)
+
+Two units scheduled into the same dependency wave that declare the same path race on a shared
+working tree. Nothing caught it: workflow work units emit at the ambient default
+(`workspace_isolation` `"ambient"` — only verify panels are spawned isolated, KTD6), team-execution
+residents are same-cwd by construction, and the fleet lease never fenced either. The lease's
+`assert_write_target` only performs a containment check when the claim carries a `worktree_root`,
+and a PreToolUse-stamped, non-worktree reservation is stamped without one — the deliberate #616
+privilege change, pinned by `test_stamped_non_isolated_claim_leaves_write_unfenced`.
+
+- `wave_file_conflicts(spec)` — pure; returns every same-wave unit pair sharing a declared path.
+- `assert_no_wave_file_conflicts(spec)` — raises `SpecError` naming each pair, the shared paths,
+  and the repair. Called from `emit_workflow_script` and `team_emitter` before anything renders.
+- `spec_table.py` gains a **Concurrent-writer safety** section, so the collision is visible at the
+  approval gate rather than discovered at emit. A clean parallel wave says so explicitly — silence
+  would not distinguish "checked and safe" from "not checked".
+- `/plan` Step 5 now states the splitting rule: same file means one unit, not two sequenced ones.
+  Merging reuses the prompt cache; splitting pays to load the same file twice and risks a lost write.
+
+Three deliberate differences from `segment_units()`, which groups units into resident workers on
+the team backend and is the closest existing logic: every declared path participates (not just
+`files[0]`), paths compare exactly (not by `plugins/<name>` prefix, so two units in different
+directories both touching `tests/conftest.py` are caught), and comparison is per-wave rather than
+over contiguous declaration runs.
+
+Measured before shipping: across the 18 specs in `docs/plans/` — 97 units, all declaring `files`,
+92 waves — only 4 waves run more than one unit and **zero** same-wave pairs share a file. The check
+is prophylactic against today's corpus, and a regression test pins that it stays quiet on it.
 ## [0.120.0] - 2026-07-27
 
 ### Fixed - the journal's only mechanical writer appended to the bottom of a newest-first file (#659)

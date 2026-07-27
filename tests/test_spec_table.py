@@ -210,3 +210,49 @@ def test_cli_rejects_an_unknown_backend(tmp_path: Path) -> None:
     )
     with pytest.raises(SystemExit):
         ST.main([str(path), "--backend", "not-a-backend"])
+
+
+# ---------------------------------------------------------------------------
+# Concurrent-writer safety (#671)
+# ---------------------------------------------------------------------------
+
+
+def test_conflicting_units_render_a_halt_warning() -> None:
+    """The operator sees the collision at the approval gate, not as a surprise at emit."""
+    table = ST.render(
+        _spec(_unit("U1", files=["auth.py"]), _unit("U2", files=["auth.py"])),
+        backend="cc-workflows-ultracode",
+    )
+    assert "### Concurrent-writer safety" in table
+    assert "`U1` + `U2`" in table
+    assert "`auth.py`" in table
+    assert "will HALT" in table
+    assert "merge them into one unit" in table, "the render must name the preferred repair"
+
+
+def test_a_clean_parallel_wave_says_so_explicitly() -> None:
+    """Silence would be ambiguous — an operator cannot tell 'checked and safe' from 'not checked'."""
+    table = ST.render(_spec(_unit("U1", files=["a.py"]), _unit("U2", files=["b.py"])))
+    assert "### Concurrent-writer safety" in table
+    assert "no write can be lost to a race" in table
+    assert "HALT" not in table
+
+
+def test_a_fully_sequential_spec_omits_the_section() -> None:
+    """Nothing runs concurrently, so there is no concurrency question to answer."""
+    table = ST.render(
+        _spec(_unit("U1", files=["a.py"]), _unit("U2", files=["a.py"], depends_on=["U1"]))
+    )
+    assert "### Concurrent-writer safety" not in table
+
+
+def test_a_dependency_cycle_does_not_double_report() -> None:
+    """`dependency_layers` already raised for the cycle; the conflict section must not re-raise."""
+    table = ST.render(
+        _spec(
+            _unit("U1", files=["a.py"], depends_on=["U2"]),
+            _unit("U2", files=["a.py"], depends_on=["U1"]),
+        )
+    )
+    assert "Cannot compute" in table
+    assert "### Concurrent-writer safety" not in table

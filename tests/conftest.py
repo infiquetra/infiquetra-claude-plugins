@@ -31,6 +31,9 @@ _FLEET_ADMISSION_ENV = (
     "INFIQUETRA_FLEET_AGGREGATE_LIMIT",
     "INFIQUETRA_FLEET_POLICY_SHA256",
     "INFIQUETRA_FLEET_MUTATION",
+    # The kill switch belongs here too: an operator who disarms enforcement for their own
+    # session must not silently disarm the tests that assert enforcement works.
+    "INFIQUETRA_FLEET_LEASE_ENFORCEMENT",
 )
 
 

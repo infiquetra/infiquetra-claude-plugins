@@ -125,18 +125,111 @@ class TestPrePushGateHookDetection:
         return _load_hook_module()
 
     def test_git_push_is_detected(self, hook: Any) -> None:
-        assert hook._is_git_push_command("git push origin main")
-        assert hook._is_git_push_command("git -C /some/path push --force-with-lease")
-        assert hook._is_git_push_command("git push")
+        assert hook._push_target("git push origin main")[0]
+        assert hook._push_target("git -C /some/path push --force-with-lease")[0]
+        assert hook._push_target("git push")[0]
+        # Compound: a real push anywhere in the command still gates.
+        assert hook._push_target("git add -A ; git push")[0]
+        # Global flags before the subcommand must not hide it.
+        assert hook._push_target("git --no-pager -c user.name=x push")[0]
 
     def test_non_push_is_not_detected(self, hook: Any) -> None:
-        assert not hook._is_git_push_command("git commit -m 'fix: something'")
-        assert not hook._is_git_push_command("git pull origin main")
-        assert not hook._is_git_push_command("echo 'git push'")
+        assert not hook._push_target("git commit -m 'fix: something'")[0]
+        assert not hook._push_target("git pull origin main")[0]
+        assert not hook._push_target("echo 'git push'")[0]
 
-    def test_git_dash_c_extraction(self, hook: Any) -> None:
-        assert hook._parse_git_dash_c("git -C /tmp/repo push") == "/tmp/repo"
-        assert hook._parse_git_dash_c("git push origin main") is None
+    def test_argument_text_containing_push_does_not_gate(self, hook: Any) -> None:
+        """#663 fault (b): the old regex matched the WORD push anywhere in the argument span.
+
+        Each of these ran the full ~5500-test suite on a read-only git command, and under CPU
+        contention could hit the gate's own step timeout -- turning a `git log` into a hard
+        failure. A token list distinguishes a subcommand from an argument.
+        """
+        for command in (
+            "git add docs/push-notes.md",
+            "git log --oneline --grep=push",
+            "git show HEAD:docs/how-to-push.md",
+            "git commit -m 'document the git push gate'",
+            "git checkout -b feature/push-gate-fix",
+        ):
+            assert not hook._push_target(command)[0], f"must not gate: {command}"
+
+    def test_repo_is_resolved_from_the_invocation(self, hook: Any) -> None:
+        """#663 fault (a): resolve the target repo from the invocation, not the session cwd."""
+        assert hook._push_target("git -C /tmp/repo push")[1] == "/tmp/repo"
+        assert hook._push_target("git --git-dir=/tmp/r/.git push")[1] == "/tmp/r/.git"
+        assert hook._push_target("git --work-tree /tmp/wt push")[1] == "/tmp/wt"
+        assert hook._push_target("git push origin main")[1] is None
+
+    def test_cd_prefix_targets_the_other_repo(self, hook: Any) -> None:
+        """The live failure: `cd <other-repo>` then push ran THIS repo's suite and blocked it."""
+        assert hook._cd_target("cd /tmp/other-repo ; git push") == "/tmp/other-repo"
+        assert hook._cd_target("git push origin main") is None
+
+    def test_operators_without_whitespace_still_gate(self, hook: Any) -> None:
+        """#670 review finding: a real push must never bypass the gate.
+
+        `shlex.split` only separates an operator with whitespace around it, so
+        `git push&&echo ok` tokenized as ['git', 'push&&echo', 'ok'] -- the subcommand read as
+        `push&&echo`, never matched `push`, and the push went through ungated. A false negative
+        on a safety gate is strictly worse than the over-firing this change fixes.
+        """
+        for command in (
+            "git push&&echo ok",
+            "git add -A&&git push",
+            "git commit -m x;git push",
+            "git push|cat",
+            "git push||echo fail",
+        ):
+            assert hook._push_target(command)[0], f"must gate: {command}"
+
+    def test_quoted_operator_text_still_does_not_gate(self, hook: Any) -> None:
+        """The operator-splitting fix must not undo the fault-(b) fix."""
+        assert not hook._push_target("git commit -m 'a && b push'")[0]
+
+    def test_git_dir_target_resolves_to_the_worktree(self, hook: Any, tmp_path: Path) -> None:
+        """#670 review finding: `--git-dir=<repo>/.git` resolved to no repo, so the gate skipped.
+
+        `--git-dir` names the git directory, not a working tree. Passing it as `cwd` to
+        `git rev-parse --show-toplevel` fails, `_find_repo_root` returns None, and main() exits 0
+        before reading the manifest -- the exact targeting form the fix claimed to support.
+        """
+        assert hook._as_worktree_dir("/tmp/repo/.git") == "/tmp/repo"
+        assert hook._as_worktree_dir("/tmp/repo") == "/tmp/repo"
+        assert hook._as_worktree_dir(None) is None
+
+        import subprocess as sp
+
+        repo = tmp_path / "r"
+        repo.mkdir()
+        sp.run(["git", "init", "-q"], cwd=repo, check=True)
+        assert hook._find_repo_root(str(repo / ".git")) is not None, (
+            "a --git-dir path must resolve to its worktree, not None"
+        )
+
+    def test_newline_separated_push_still_gates(self, hook: Any) -> None:
+        """#670 round 2: a newline is a separator, and shlex will not do that for us.
+
+        `\n` is ordinary whitespace to the lexer, so `git add -A\ngit push` tokenized to one
+        flat run whose subcommand read as `add`. A second-line push bypassed the gate.
+        """
+        assert hook._push_target("git add -A\ngit push")[0]
+        assert hook._push_target("echo ok\ngit push")[0]
+
+    def test_env_option_prefix_still_finds_the_push(self, hook: Any) -> None:
+        """#670 round 2: the env walk must handle env's OPTIONS, not just assignments."""
+        for command in (
+            "env -i git push",
+            "env -u GIT_CONFIG git push",
+            "env --unset=GIT_CONFIG git push",
+            "env FOO=1 git push",
+            "GIT_AUTHOR_NAME=x git push",
+        ):
+            assert hook._push_target(command)[0], f"must gate: {command}"
+
+    def test_unparseable_command_does_not_gate(self, hook: Any) -> None:
+        """Unbalanced quotes yield no segments -- degrade to not gating, never guess."""
+        assert not hook._push_target("git push 'unterminated")[0]
 
 
 class TestPrePushGateHookExitBehavior:

@@ -1,5 +1,58 @@
 # Changelog
 
+## [0.119.0] - 2026-07-27
+
+### Fixed - pre-push gate reasons about the git invocation, not the command text (#663)
+
+`_is_git_push_command` matched `(?:^|[|;&])\s*git\b[^|;&]*\bpush\b` — the *word* anywhere in a
+git command's argument span — and `_parse_git_dash_c` recognized only the `git -C <path>` form.
+Two faults followed from that one design choice, both observed live.
+
+- **Fault (a), wrong-repo gating.** Any targeting form other than `git -C` fell back to the
+  session cwd, so a push aimed elsewhere ran the *session* repo's manifest and suite. The
+  missing-manifest cross-repo exit could not save it — the session repo has a manifest. Observed:
+  a push in another repo ran this repo's ~5500-test suite and blocked on 17 unrelated failures.
+- **Fault (b), spurious full-suite runs.** `git add docs/push-notes.md`,
+  `git log --grep=push`, `git show HEAD:docs/how-to-push.md`, and
+  `git commit -m "... push ..."` all ran the entire gate. A several-minute suite on a `git log`,
+  and under CPU contention the gate hit its own step timeout — turning a read-only git command
+  into a hard failure. This reproduced *during the fix*: a `python3 -c` diagnostic whose string
+  contained `&& git push` ran the full suite.
+
+Now: `shlex` tokenizes the command into segments (quoting honored, so a commit message is one
+token), `_git_invocations` finds real `git` command heads, and `_git_subcommand` walks git's
+global options — skipping an option's value where it takes one — to identify the **actual
+subcommand**. Only `push` gates. The target repo is resolved from the invocation
+(`-C` / `--git-dir` / `--work-tree`), then a leading `cd <path>`, and only then the session cwd.
+
+Unknown options before the subcommand are skipped rather than guessed, and an unparseable command
+yields no segments — the gate stays off by default rather than firing on a guess. Not a weakening:
+a real push on a failing suite still blocks.
+
+**Two bypasses caught in review (#670) before merge**, both of which let a *real* push skip the
+gate — a false negative on a safety gate, strictly worse than the over-firing this change fixes:
+
+- **Shell operators without whitespace.** `shlex.split` only separates an operator that already
+  has whitespace around it, so `git push&&echo ok` tokenized as `['git', 'push&&echo', 'ok']` —
+  the subcommand read as `push&&echo`, never matched `push`, and the push went through ungated.
+  Same for `git add -A&&git push`, `git commit -m x;git push`, `git push|cat`, `git push||echo`.
+  Now uses `shlex.shlex(..., punctuation_chars=True)`, which splits operators while still keeping
+  a quoted commit message as one token — so the fault-(b) fix is preserved.
+- **`--git-dir` resolved to no repo.** `--git-dir` names the git directory, not a working tree.
+  Passing `<repo>/.git` as `cwd` to `git rev-parse --show-toplevel` fails, `_find_repo_root`
+  returned `None`, and `main()` exited 0 before reading the manifest — the exact targeting form
+  the fix claimed to support. `_as_worktree_dir` now resolves a `.git` path to its parent.
+- **Newline separators.** `\n` is ordinary whitespace to the lexer, so `git add -A\ngit push`
+  tokenized to one flat run whose subcommand read as `add` — a second-line push bypassed the
+  gate. Lines are now split before lexing.
+- **`env` option prefixes.** The prefix walk handled `env VAR=value` but not `env`'s own options,
+  so `env -i git push` and `env -u GIT_CONFIG git push` found no git invocation at all.
+  `_skip_env_prefix` now walks `-i` / `-u NAME` / `--unset=NAME` / `-S` / `-C` and assignments.
+
+The full behavior matrix — 14 forms that must gate, 8 that must not — is pinned in
+`tests/test_pre_push_gate.py` (32 tests).
+
+
 ## [0.118.0] - 2026-07-27
 
 ### Added - `spec_table.py`: the execution-spec approval table, at every backend approval (#668)

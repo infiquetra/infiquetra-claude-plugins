@@ -298,6 +298,7 @@ test -n "$CLAUDE_CODE_SESSION_ID" || { echo "HALT — CLAUDE_CODE_SESSION_ID is 
 export WORKFLOW_INVOCATION_ID="${WORKFLOW_INVOCATION_ID:-$(uuidgen | tr '[:upper:]' '[:lower:]')}"
 export WORKFLOW_LEASE_METADATA=".saga/workflow-lease-${WORKFLOW_INVOCATION_ID}.json"
 mkdir -p .saga
+python3 plugins/saga/scripts/spec_table.py <orchestration_ref_spec.json> --backend <backend>
 python3 plugins/saga/scripts/execution_spec.py emit <orchestration_ref_spec.json> \
   -o docs/plans/<topic>.workflow.js
 python3 plugins/saga/scripts/execution_spec.py lease <orchestration_ref_spec.json> \

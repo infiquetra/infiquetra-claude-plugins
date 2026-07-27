@@ -1,5 +1,43 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-07-27
+
+### An operator approves a rendered table, never a JSON blob — and the table names what the backend cannot enforce {#approval-table-not-json-668}
+
+**Decision.** Every backend-approval point renders `spec_table.py` and pastes it verbatim. Four
+sites: `/plan` Step 5 (primary), `/tier` after a mid-run patch, `/work` before emit, `/outcome` at
+leaf dispatch. Hand-building an equivalent table, or pasting spec JSON instead, is out.
+
+**Rationale.** Approval was structurally unsound in two ways. First, format: `outcome.py` had 25
+`json.dumps` calls and zero table rendering, and `/plan` Step 5 asked Claude to "surface the
+per-unit tier table" with no renderer to produce it — so the table was improvised per run or
+skipped. Second, and worse, **content**: `SANDBOX_ENFORCEABLE_BY_BACKEND` and
+`TIER_ENFORCEABLE_BY_BACKEND` (`execution_spec.py:401-424`) encode that `cc-workflows-ultracode`
+and `inline` enforce read-only + disposable-worktree and reach all four models, while
+`team-execution` enforces **neither** sandbox axis and cannot reach `fable`. A spec whose verify
+panels need a sandbox the backend cannot enforce HALTs at emit. None of that was visible to the
+operator without reading the emitter's source, so approvals were being given on incomplete
+information — the *less* governed backend looked identical to the more governed one at the moment
+of choosing.
+
+**Rejected alternatives.**
+- *Add a `table` subcommand to `execution_spec.py`.* Rejected: that file is already 4,144 lines and
+  this pass exists to stop it growing. A 250-line renderer with its own tests is easier to change
+  and to delete.
+- *Let each skill format its own table.* Rejected: four hand-maintained copies is the exact
+  drift shape the emitter already fought and consolidated (`_verifier_agent_opts`,
+  `_emit_panel_reconciliation`).
+- *Mirror the enforceability matrices into the renderer.* Rejected for the same reason
+  `outcome_spec.py`'s hand-copied `Sandbox` block is a known liability. The renderer reads the live
+  registries, and `test_enforceability_reads_the_live_registry_not_a_copy` pins it.
+- *Print JSON with a `--pretty` flag.* Rejected: pretty JSON is still JSON. The problem was never
+  whitespace, it was that the decision-relevant facts are **derived** (dependency waves, spend
+  against budget, enforceability) and appear nowhere in the document being printed.
+
+**Revisit when.** A fourth backend joins, or `team-execution` gains real per-leaf tool restriction
+and per-teammate effort. At that point the asymmetry the table exists to expose may have closed,
+and the enforceability section could become noise rather than signal.
+
 ## 2026-07-23
 
 ### Unclaimed parent-completed reservations stamp-and-survive instead of dying at async launch-return {#async-parent-signal-644}

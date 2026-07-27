@@ -483,9 +483,26 @@ python3 plugins/saga/scripts/execution_spec.py emit docs/plans/<name>-spec.json 
   -o docs/plans/<name>.workflow.js
 ```
 
-Surface the emitted `.workflow.js` and the per-unit tier table for operator confirmation (R8 "approved").
-The operator must explicitly confirm the tier assignments and the control-flow structure before `/work`
-runs it. A rejection at this step means revising the spec and re-running validate + emit.
+**Then render the approval table — this is the artifact the operator approves, not the JSON:**
+
+```bash
+python3 plugins/saga/scripts/spec_table.py docs/plans/<name>-spec.json --backend <backend>
+```
+
+Paste that table into your reply verbatim. It reports every unit's tier, the dependency waves
+(what actually runs in parallel), spend against budget, and — the decision-relevant part — **what
+the chosen backend can and cannot enforce**. A spec declaring a restrictive sandbox axis the
+backend cannot enforce will HALT at emit rather than silently downgrade, and the table says so
+*before* the operator approves rather than after the run fails.
+
+Do **not** hand-build this table, and do **not** dump the spec JSON instead. Never ask an operator
+to approve a backend without showing its enforceability rows: `cc-workflows-ultracode` enforces
+read-only and disposable-worktree and reaches every model; `team-execution` enforces neither axis
+and cannot reach `fable`. That asymmetry is invisible in the spec itself.
+
+The operator must explicitly confirm the tier assignments and the control-flow structure before
+`/work` runs it (R8 "approved"). A rejection means revising the spec and re-running validate +
+emit + table.
 
 **Spec naming convention:** `docs/plans/<YYYY-MM-DD>-<topic>-spec.json` beside the plan doc. The
 `.workflow.js` shares the same stem: `docs/plans/<YYYY-MM-DD>-<topic>.workflow.js`.

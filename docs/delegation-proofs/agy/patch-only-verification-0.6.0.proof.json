@@ -1,0 +1,14 @@
+{
+  "schema": "delegation-proof.v1",
+  "plugin": "agy",
+  "version": "0.6.0",
+  "run_id": "agy-0-6-0-proof",
+  "bridge_command": "python3 /Users/jefcox/workspace/infiquetra/infiquetra-claude-plugins/plugins/agy/scripts/agy_delegate.py --repo-root . --run-id agy-0-6-0-proof --envelope /tmp/proof-env.json --launch-agy --audit-store ../audit",
+  "external_tool_calls": [
+    "/Users/jefcox/.local/bin/agy --model 'Gemini 3.1 Pro (High)' --print-timeout 300s --log-file <bundle>/agy.log --sandbox --print '<bounded patch-only NOTES.md edit>'"
+  ],
+  "actor": "agy:Gemini 3.1 Pro (High):agy-0-6-0-proof",
+  "transcript": "agy/patch-only-verification-0.6.0.transcript.jsonl",
+  "transcript_sha256": "1adbaa49538e97be672b44094072f0a3528207c4922f2239396cc5ceb4090504",
+  "note": "Genuine patch-only agy delegation proving the 0.6.0 contract: real agy (run-lease.json real_agy_verdict=real, resolved_agy=/Users/jefcox/.local/bin/agy) edited NOTES.md inside the disposable clone, the declared required verification command ran in that clone and passed (checks.json passed=true, return_code=0), the run terminated patch_ready, and the live tree was left unmodified. The verification execution is the #675 fix -- before 0.6.0 a patch-only run recorded passed=null with no commands."
+}

@@ -23,16 +23,16 @@ python3 plugins/agy/scripts/agy_delegate.py
 
 ## Write Modes
 
+No mode writes the live tree. Every run happens in a disposable, remotes-stripped clone and hands
+back a patch for the caller to apply, matching the codex plugin's contract.
+
 - `no-write`: reviewer default. The wrapper runs `agy` in foreground print mode with `--sandbox`.
-- `patch-only`: derives and preserves `diff.patch`; it never applies to the live tree.
-- `auto-if-clean`: applies only when the live repo is clean, the write-set is explicit, real `agy`
-  provenance is proven, changed paths are in scope, required verification passes, and `git apply`
-  produces only expected changes. A launched run also requires the trusted outer key in an
-  owner-private `0600` regular file passed as `--lease-resource-key-file`. The wrapper reads it
-  before launch, immediately retains only a repository-scoped digest, and never accepts the raw key
-  on argv or from the envelope, environment, task text, or bundle. Live apply and armed mirrors run
-  only inside broker commit. Superseded,
-  expired, or post-close output never reaches the live tree.
+- `patch-only`: coder default. Derives and preserves `diff.patch`, scores changed paths against the
+  declared write-set, and runs any declared verification commands inside the clone.
+
+Verification is terminal only when `verification.required` is set: a required command that fails
+yields `checks_failed`, while an unrequired one is recorded in `checks.json` and leaves the run
+`patch_ready`.
 
 ## Packaged Surfaces
 
@@ -53,7 +53,6 @@ agy/
 │           └── delegation-contract.md
 ├── scripts/
 │   ├── agy_delegate.py
-│   ├── agy_lease_admission.py
 │   └── audit_harness_transcript.py
 ├── README.md
 └── CHANGELOG.md
@@ -65,3 +64,7 @@ The v0.1.0 release gate ran one packaged `agy-reviewer` no-write flow and one pa
 `agy-coder` `auto-if-clean` write flow in scratch repos. The transcript audit proved both agents
 invoked `plugins/agy/scripts/agy_delegate.py`, launched real `agy`, and avoided Claude file-edit
 tools. The coder proof applied `target.txt` through the wrapper gate.
+
+That gate ran against the v0.1.0 contract. `auto-if-clean` was retired in 0.6.0 (#671), so the
+coder half is not reproducible as written — `docs/harness-proof.md` is kept as the dated record of
+what was proven at the time, not as a runnable procedure.

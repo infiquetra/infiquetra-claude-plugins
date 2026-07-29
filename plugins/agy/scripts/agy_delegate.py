@@ -5,19 +5,15 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import hashlib
-import importlib
 import json
 import os
 import selectors
 import shutil
 import signal
-import stat
 import subprocess
 import sys
 import time
 import uuid
-from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -27,42 +23,26 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import fleet_commons_shim  # noqa: E402
 
-
-class _LazyModule:
-    """Resolve optional live-apply dependencies only when that path is selected."""
-
-    def __init__(self, loader: Callable[[], Any]) -> None:
-        self._loader = loader
-        self._module: Any | None = None
-
-    def __getattr__(self, name: str) -> Any:
-        if self._module is None:
-            self._module = self._loader()
-        return getattr(self._module, name)
-
-
-agy_lease_admission = _LazyModule(lambda: importlib.import_module("agy_lease_admission"))
-
 _bridge_receipt = fleet_commons_shim.load("bridge_receipt")
 _output_attestation = fleet_commons_shim.load("output_attestation")
 _audit_store = fleet_commons_shim.load("audit_store")
-_orphan_evidence = _LazyModule(lambda: fleet_commons_shim.load("orphan_evidence"))
 
 SCHEMA = "agy.delegation.v1"
 
 ROLES = frozenset({"coder", "reviewer"})
-MODES = frozenset({"no-write", "patch-only", "auto-if-clean"})
+# A delegation never writes the live tree (#671): every mode runs in a disposable clone and hands
+# back a patch, matching codex's contract. Live apply (`auto-if-clean`) and the lease broker that
+# fenced it are retired -- write collisions are prevented by assigning work units that do not cross
+# files, not by a runtime fence around an external CLI.
+MODES = frozenset({"no-write", "patch-only"})
 REVIEW_LENSES = frozenset({"adversarial", "quality", "scope-gap", "security-ops"})
 EVIDENCE_LEVELS = frozenset({"minimal", "summary", "full"})
-APPLY_POLICIES = frozenset({"preserve-patch", "apply-if-clean"})
-RUN_SCOPES = frozenset({"clone", "live", "none"})
-LEASE_RENEWAL_INTERVAL_SECONDS = 30
+APPLY_POLICIES = frozenset({"preserve-patch"})
+RUN_SCOPES = frozenset({"clone", "none"})
 STATUSES = frozenset(
     {
         "success",
         "patch_ready",
-        "applied",
-        "acceptance_pending",
         "plan_gap",
         "test_conflict",
         "path_missing",
@@ -151,14 +131,12 @@ class Envelope:
                 raise EnvelopeError(_enum_error("review_lens", review_lens, REVIEW_LENSES))
 
         write_set = _write_set(value.get("write_set", []))
-        if mode == "auto-if-clean" and not write_set:
-            raise EnvelopeError("auto-if-clean requires a non-empty write_set")
 
         apply_policy = _enum_field(
             value,
             "apply_policy",
             APPLY_POLICIES,
-            default="apply-if-clean" if mode == "auto-if-clean" else "preserve-patch",
+            default="preserve-patch",
         )
         evidence = _enum_field(value, "evidence", EVIDENCE_LEVELS, default="summary")
         verification = VerificationPolicy.from_mapping(value.get("verification"))
@@ -291,34 +269,6 @@ def _write_private_bytes(path: Path, content: bytes) -> None:
 
 def _write_private_text(path: Path, content: str) -> None:
     _write_private_bytes(path, content.encode("utf-8"))
-
-
-def _read_private_resource_key(path: Path) -> str:
-    """Read a raw resource key only from an owner-private, non-symlink regular file."""
-
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-    try:
-        fd = os.open(path, flags)
-    except OSError as exc:
-        raise EnvelopeError(f"could not open private lease resource key file: {exc}") from exc
-    try:
-        metadata = os.fstat(fd)
-        if not stat.S_ISREG(metadata.st_mode):
-            raise EnvelopeError("lease resource key file must be a regular file")
-        if metadata.st_uid != os.geteuid() or stat.S_IMODE(metadata.st_mode) & 0o077:
-            raise EnvelopeError(
-                "lease resource key file must be owned by the current user and unreadable "
-                "by group or other users"
-            )
-        payload = os.read(fd, agy_lease_admission.MAX_RESOURCE_KEY_BYTES + 1)
-    finally:
-        os.close(fd)
-    if len(payload) > agy_lease_admission.MAX_RESOURCE_KEY_BYTES:
-        raise EnvelopeError("lease resource key file exceeds the maximum key size")
-    try:
-        return payload.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise EnvelopeError("lease resource key file must contain UTF-8 text") from exc
 
 
 class DieCleanInterrupt(BaseException):
@@ -537,26 +487,6 @@ def _finalize_failed_bundle(bundle_path: Path, *, run_id: str, status: str, erro
     return render_bundle_failed_projection(bundle_path)
 
 
-def _finalize_cleanup_failed_bundle(bundle_path: Path, *, run_id: str, error: str) -> str:
-    """Replace a provisional result when exact pre-settlement cleanup could not be proven."""
-
-    payload = {
-        "schema": "agy.result.v1",
-        "run_id": run_id,
-        "bundle_path": str(bundle_path),
-        "status": parse_status("bundle_failed"),
-        "terminal": True,
-        "retain_authority": True,
-        "error": error,
-    }
-    projection = render_bundle_failed_projection(bundle_path)
-    with contextlib.suppress(OSError):
-        if bundle_path.exists():
-            _write_json(bundle_path / "result.json", payload)
-            _write_private_text(bundle_path / "projection.md", projection)
-    return projection
-
-
 def create_supervised_bundle(
     envelope: Envelope,
     *,
@@ -567,7 +497,6 @@ def create_supervised_bundle(
     agy_bin: str | None = None,
     now: datetime | None = None,
     audit_store_root: Path | None = None,
-    lease_admission: Any | None = None,
 ) -> BundleResult:
     repo_root = repo_root.resolve()
     timestamp = now or datetime.now(UTC)
@@ -575,15 +504,13 @@ def create_supervised_bundle(
     _validate_run_id(resolved_run_id)
     bundle_path = repo_root / ".claude" / "agy" / "runs" / resolved_run_id
     # Bundle-span die-clean handlers (#517): a caller's SIGTERM can arrive during clone setup,
-    # verification-command execution, patch apply, or bundle writes — windows OUTSIDE
+    # verification-command execution, or bundle writes — windows OUTSIDE
     # run_agy_supervised (which installs its own handler for the launch window and restores
     # these afterward). At default disposition the interpreter dies without unwinding: no
     # terminal result.json is ever written. ValueError = non-main-thread caller; proceed
     # uncovered rather than fail.
     prior_handlers: dict[int, Any] = {}
-    settlement_prepared = False
     primary_failure: str | None = None
-    cleanup_result: BundleResult | None = None
     try:
         for signum in (signal.SIGTERM, signal.SIGINT):
             prior_handlers[signum] = signal.signal(signum, _bundle_die_clean_handler)
@@ -591,33 +518,7 @@ def create_supervised_bundle(
         prior_handlers = {}
 
     try:
-        if envelope.mode == "auto-if-clean":
-            if lease_admission is None:
-                raise EnvelopeError(
-                    "launched auto-if-clean requires trusted in-process lease admission"
-                )
-            _orphan_evidence.validate_record(lease_admission.to_dict())
-            expected_output = _orphan_evidence.validate_record(lease_admission.expected_output)
-            if (
-                lease_admission.lease.resource_ref != lease_admission.resource_ref
-                or expected_output["run_id"] != resolved_run_id
-                or expected_output["lease_id"] != lease_admission.lease.lease_id
-                or expected_output["token"] != lease_admission.lease.token.to_dict()
-                or expected_output["resource_ref"] != lease_admission.resource_ref
-            ):
-                raise EnvelopeError("trusted agy lease admission binding does not match this run")
         _create_private_bundle_dir(bundle_path)
-        if lease_admission is not None:
-            # Startup and publication share the same locked recovery algorithm. An unsafe audit
-            # root remains a later strict-mirror failure with a terminal bundle, not a pre-bundle
-            # crash that loses the operator's evidence.
-            with contextlib.suppress(_orphan_evidence.OrphanEvidenceError):
-                _orphan_evidence.recover_quarantine(
-                    _orphan_evidence.QuarantineStore.for_root(
-                        audit_store_root or _audit_store.DEFAULT_AUDIT_STORE_ROOT,
-                        providers=lease_admission.broker.providers,
-                    )
-                )
         clone_path = bundle_path / "worktree"
         envelope_payload = envelope.to_jsonable()
         prompt = render_prompt(envelope, repo_root=clone_path)
@@ -629,8 +530,8 @@ def create_supervised_bundle(
         stderr_path = bundle_path / "stderr.log"
         _write_private_bytes(stdout_path, b"")
         _write_private_bytes(stderr_path, b"")
-        # agy receives only this path, never the raw lease resource key. Pre-creating the file
-        # keeps the black-box logger from selecting a group/world-readable mode.
+        # Pre-creating the file keeps the black-box logger from selecting a group/world-readable
+        # mode.
         _write_private_bytes(bundle_path / "agy.log", b"")
         checks_path = bundle_path / "checks.json"
         git_proof_path = bundle_path / "git-proof.json"
@@ -646,66 +547,6 @@ def create_supervised_bundle(
             "working_directory": str(clone_path),
         }
         _write_json(bundle_path / "command.json", command_payload)
-
-        if envelope.mode == "auto-if-clean" and not live_preflight["clean"]:
-            run_result = _not_started_run_result(
-                status=parse_status("checks_failed"),
-                stdout_path=stdout_path,
-                stderr_path=stderr_path,
-                error="live repo is dirty before auto-if-clean launch",
-            )
-            primary_failure = run_result.error
-            _write_json(
-                checks_path,
-                {
-                    "required": envelope.verification.required,
-                    "commands": [],
-                    "passed": False,
-                    "skipped_reason": "live repo dirty before launch",
-                },
-            )
-            _write_git_proof(
-                git_proof_path,
-                repo_root=repo_root,
-                clone_result=None,
-                live_preflight=live_preflight,
-                changed_paths=[],
-                diff_patch_path=diff_patch_path,
-                checks_path=checks_path,
-                post_apply=None,
-            )
-            dirty_result_payload = _result_payload(
-                envelope=envelope,
-                run_id=resolved_run_id,
-                bundle_path=bundle_path,
-                run_result=run_result,
-                stdout_path=stdout_path,
-                stderr_path=stderr_path,
-                summary="auto-if-clean refused to launch because the live repository was dirty.",
-                changed_paths=[],
-                diff_patch_path=diff_patch_path,
-                checks_path=checks_path,
-                clone_path=clone_path,
-            )
-            dirty_projection = render_projection(dirty_result_payload)
-            _write_json(
-                bundle_path / "run-lease.json",
-                _run_lease_payload(
-                    run_id=resolved_run_id,
-                    envelope=envelope,
-                    run_result=run_result,
-                    repo_root=clone_path,
-                ),
-            )
-            _write_json(bundle_path / "result.json", dirty_result_payload)
-            _write_private_text(bundle_path / "projection.md", dirty_projection)
-            _mirror_to_audit_store(audit_store_root, resolved_run_id, dirty_result_payload)
-            return BundleResult(
-                status=parse_status("checks_failed"),
-                run_id=resolved_run_id,
-                bundle_path=bundle_path,
-                projection=dirty_projection,
-            )
 
         clone_result = setup_disposable_clone(repo_root=repo_root, clone_path=clone_path)
         if not clone_result.success:
@@ -733,7 +574,6 @@ def create_supervised_bundle(
                 changed_paths=[],
                 diff_patch_path=diff_patch_path,
                 checks_path=checks_path,
-                post_apply=None,
             )
             clone_failure_payload = _result_payload(
                 envelope=envelope,
@@ -776,15 +616,6 @@ def create_supervised_bundle(
             stdout_path=stdout_path,
             stderr_path=stderr_path,
             agy_bin=agy_bin,
-            renew_callback=(
-                None
-                if lease_admission is None
-                else lambda: lease_admission.broker.renew(
-                    lease_admission.lease.lease_id,
-                    owner_id=lease_admission.owner_id,
-                    token=lease_admission.lease.token,
-                )
-            ),
         )
         blocked_status = _blocked_status_from_logs(stdout_path, stderr_path)
         if run_result.status == "success" and blocked_status is not None:
@@ -800,8 +631,6 @@ def create_supervised_bundle(
             "commands": [],
             "passed": None,
         }
-        post_apply: dict[str, Any] | None = None
-        settlement_close: dict[str, Any] | None = None
         result_payload: dict[str, Any] | None = None
         projection: str | None = None
         write_disposition = "forensic-only"
@@ -812,7 +641,6 @@ def create_supervised_bundle(
             *,
             disposition: str,
             strict_mirror: bool,
-            canonical_settlement_close: dict[str, Any] | None = None,
         ) -> tuple[dict[str, Any], str]:
             _write_json(checks_path, checks_payload)
             _write_git_proof(
@@ -823,7 +651,6 @@ def create_supervised_bundle(
                 changed_paths=diff_evidence.changed_paths,
                 diff_patch_path=diff_evidence.diff_patch_path,
                 checks_path=checks_path,
-                post_apply=post_apply,
             )
             command_payload.update(
                 {
@@ -850,8 +677,6 @@ def create_supervised_bundle(
                 clone_path=clone_path,
             )
             terminal_result["write_disposition"] = disposition
-            if canonical_settlement_close is not None:
-                terminal_result["settlement_close"] = canonical_settlement_close
             lease_payload = _run_lease_payload(
                 run_id=resolved_run_id,
                 envelope=envelope,
@@ -889,137 +714,23 @@ def create_supervised_bundle(
                 checks_payload["skipped_reason"] = "changed paths outside write_set"
                 checks_payload["out_of_scope_paths"] = out_of_scope
             else:
-                final_status = decide_non_apply_status(
-                    envelope=envelope,
-                    run_result=run_result,
-                    changed_paths=diff_evidence.changed_paths,
-                )
-
-        if final_status is None:
-            if envelope.apply_policy != "apply-if-clean":
-                final_status = parse_status("patch_ready")
-                checks_payload["skipped_reason"] = "apply_policy is preserve-patch"
-            else:
-                checks_payload = run_verification_commands(
-                    envelope,
-                    clone_path=clone_path,
-                    renew_callback=(
-                        None
-                        if lease_admission is None
-                        else lambda: lease_admission.broker.renew(
-                            lease_admission.lease.lease_id,
-                            owner_id=lease_admission.owner_id,
-                            token=lease_admission.lease.token,
-                        )
-                    ),
-                )
-                if not checks_payload["passed"]:
+                # Verification runs in the disposable clone for any mode that can produce a diff
+                # (#671). It used to be reachable only from the retired apply-if-clean branch, so
+                # commands declared on a patch-only run were silently never executed -- checks.json
+                # recorded `passed: null, commands: []` even for `required: true`.
+                if envelope.mode == "patch-only":
+                    checks_payload = run_verification_commands(envelope, clone_path=clone_path)
+                if checks_payload["passed"] is False and envelope.verification.required:
                     final_status = parse_status("checks_failed")
                 else:
-                    if lease_admission is None:
-                        raise EnvelopeError("live apply is missing trusted lease admission")
-                    write_intent = hashlib.sha256(
-                        diff_evidence.diff_patch_path.read_bytes()
-                        + json.dumps(sorted(envelope.write_set), separators=(",", ":")).encode()
-                    ).hexdigest()
-                    try:
-                        settlement = lease_admission.broker.prepare_agent_settlement(
-                            lease_admission.lease.lease_id,
-                            token=lease_admission.lease.token,
-                            owner_id=lease_admission.owner_id,
-                            producer="agy",
-                            run_id=resolved_run_id,
-                            expected_output_sha256=lease_admission.expected_output[
-                                "expected_output_sha256"
-                            ],
-                            protected_write_intent_sha256=write_intent,
-                        )
-                    except Exception:
-                        state = lease_admission.broker.classify_token(
-                            lease_admission.resource_ref,
-                            lease_admission.lease.token,
-                        )
-                        if state not in {"superseded", "expired", "closed"}:
-                            raise
-                        evidence_store = _orphan_evidence.QuarantineStore.for_root(
-                            audit_store_root,
-                            providers=lease_admission.broker.providers,
-                        )
-                        disposition, event, payload_ref = _orphan_evidence.contain_refused_write(
-                            lease_admission.broker,
-                            evidence_store,
-                            lease_admission.lease,
-                            diff_evidence.diff_patch_path.read_bytes(),
-                            producer="agy",
-                            run_id=resolved_run_id,
-                            expected_output_sha256=lease_admission.expected_output[
-                                "expected_output_sha256"
-                            ],
-                            evidence_refs=(
-                                diff_evidence.diff_patch_path.relative_to(bundle_path).as_posix(),
-                            ),
-                        )
-                        write_disposition = disposition
-                        checks_payload["settlement_refusal"] = event
-                        if payload_ref is not None:
-                            checks_payload["quarantine_ref"] = payload_ref.relative_to(
-                                evidence_store.root
-                            ).as_posix()
-                        final_status = parse_status("checks_failed")
-                    else:
-                        settlement_prepared = True
-
-                        def guarded_apply(_lease: Any) -> list[str]:
-                            nonlocal post_apply, result_payload, projection, run_result
-                            post_apply = apply_patch_to_live_repo(
-                                repo_root=repo_root,
-                                patch_path=diff_evidence.diff_patch_path,
-                                expected_write_set=envelope.write_set,
-                            )
-                            if not post_apply["applied"] or not post_apply["only_expected_changes"]:
-                                raise EnvelopeError("broker-guarded live apply failed")
-                            pending_run = _override_run_status(
-                                run_result, status=parse_status("acceptance_pending")
-                            )
-                            result_payload, projection = persist_terminal(
-                                pending_run,
-                                disposition="acceptance-pending",
-                                strict_mirror=True,
-                            )
-                            return [
-                                diff_evidence.diff_patch_path.relative_to(bundle_path).as_posix(),
-                                "live-repository",
-                                _audit_store.Store.for_root(audit_store_root)
-                                .result_path(resolved_run_id)
-                                .as_posix(),
-                            ]
-
-                        settlement_close = lease_admission.broker.commit_agent_settlement(
-                            settlement.settlement_id,
-                            owner_id=lease_admission.owner_id,
-                            token=lease_admission.lease.token,
-                            write=guarded_apply,
-                        )
-                        final_status = parse_status("applied")
-                        write_disposition = "accepted"
-                        result_payload = None
-                        projection = None
+                    final_status = decide_non_apply_status(
+                        run_result=run_result,
+                        changed_paths=diff_evidence.changed_paths,
+                    )
 
         if final_status != run_result.status:
             run_result = _override_run_status(run_result, status=final_status)
-        if settlement_close is not None:
-            result_payload, projection = persist_terminal(
-                run_result,
-                disposition="accepted",
-                strict_mirror=True,
-                canonical_settlement_close=settlement_close,
-            )
-            evidence_store = _orphan_evidence.QuarantineStore.for_root(
-                audit_store_root,
-                providers=lease_admission.broker.providers if lease_admission is not None else None,
-            )
-            _orphan_evidence.write_close_seal(evidence_store, settlement_close)
-        elif result_payload is None or projection is None:
+        if result_payload is None or projection is None:
             result_payload, projection = persist_terminal(
                 run_result,
                 disposition=write_disposition,
@@ -1071,34 +782,12 @@ def create_supervised_bundle(
             projection=projection,
         )
     finally:
-        if lease_admission is not None and not settlement_prepared:
-            try:
-                agy_lease_admission.cleanup_unsettled_admission(lease_admission)
-            except agy_lease_admission.AgyLeaseAdmissionError as cleanup_exc:
-                combined_error = (
-                    f"{primary_failure}; cleanup also failed: {cleanup_exc}"
-                    if primary_failure is not None
-                    else f"pre-settlement cleanup failed: {cleanup_exc}"
-                )
-                projection = _finalize_cleanup_failed_bundle(
-                    bundle_path,
-                    run_id=resolved_run_id,
-                    error=combined_error,
-                )
-                cleanup_result = BundleResult(
-                    status=parse_status("bundle_failed"),
-                    run_id=resolved_run_id,
-                    bundle_path=bundle_path,
-                    projection=projection,
-                )
         # Restore the caller's signal disposition (#517). agy's disposable clone lives inside
         # the bundle itself (bundle_path / "worktree"), unlike codex's — there is no separate
         # teardown step to run here.
         for restore_signum, handler in prior_handlers.items():
             with contextlib.suppress(ValueError):
                 signal.signal(restore_signum, handler)
-        if cleanup_result is not None:
-            return cleanup_result  # noqa: B012 - cleanup failure intentionally overrides provisional success.
 
     return BundleResult(
         # Source status from result_payload, not run_result.status directly: the
@@ -1121,7 +810,6 @@ def run_agy_supervised(
     stdout_path: Path,
     stderr_path: Path,
     agy_bin: str | None = None,
-    renew_callback: Callable[[], Any] | None = None,
 ) -> SupervisedRunResult:
     """Launch and supervise one ``agy`` invocation (#517).
 
@@ -1166,7 +854,6 @@ def run_agy_supervised(
     shutdown = "exited"
     process_id: int | None = None
     return_code: int | None = None
-    renewal_error: str | None = None
 
     # Launch-window die-clean handler (#517): a caller's Bash-tool timeout SIGTERMs the delegate
     # before its own wall-clock timeout can fire. Unlike the bundle-span handler installed in
@@ -1229,7 +916,6 @@ def run_agy_supervised(
 
             start_monotonic = time.monotonic()
             last_output_monotonic = start_monotonic
-            last_renewal_monotonic = start_monotonic
 
             while process.poll() is None:
                 if _DIE_CLEAN_SIGNAL is not None:
@@ -1257,18 +943,6 @@ def run_agy_supervised(
                     break
 
                 now_monotonic = time.monotonic()
-                if (
-                    renew_callback is not None
-                    and now_monotonic - last_renewal_monotonic >= LEASE_RENEWAL_INTERVAL_SECONDS
-                ):
-                    try:
-                        renew_callback()
-                    except Exception as exc:  # noqa: BLE001 - any renewal refusal fences apply.
-                        renewal_error = f"{type(exc).__name__}: {exc}"
-                        timeout_class = "lease_renewal"
-                        shutdown = _terminate_process(process)
-                        break
-                    last_renewal_monotonic = now_monotonic
                 if now_monotonic - start_monotonic >= envelope.timeout_seconds:
                     timeout_class = "timeout"
                     shutdown = _terminate_process(process)
@@ -1326,9 +1000,6 @@ def run_agy_supervised(
         error = (
             f"cumulative output exceeded MAX_OUTPUT_BYTES ({MAX_OUTPUT_BYTES}); agy process killed"
         )
-    elif timeout_class == "lease_renewal":
-        status = parse_status("error")
-        error = f"lease renewal failed; live apply fenced: {renewal_error}"
     elif timeout_class == "timeout":
         status = parse_status("timeout")
     elif timeout_class == "no_output":
@@ -1457,41 +1128,47 @@ def derive_diff_evidence(*, clone_path: Path, base_sha: str, bundle_path: Path) 
 
 def decide_non_apply_status(
     *,
-    envelope: Envelope,
     run_result: SupervisedRunResult,
     changed_paths: list[str],
-) -> str | None:
+) -> str:
+    """Resolve the terminal status of a run that never touches the live tree.
+
+    Every mode is non-apply since #671, so a successful run is ``patch_ready`` when the delegate
+    changed something in the disposable clone and ``success`` when it did not.
+    """
+
     if run_result.status != "success":
         return parse_status(run_result.status)
-    if envelope.mode == "no-write":
-        return parse_status("patch_ready") if changed_paths else parse_status("success")
-    if envelope.mode == "patch-only":
-        return parse_status("patch_ready") if changed_paths else parse_status("success")
-    if not changed_paths:
-        return parse_status("success")
-    return None
+    return parse_status("patch_ready") if changed_paths else parse_status("success")
 
 
 def run_verification_commands(
     envelope: Envelope,
     *,
     clone_path: Path,
-    renew_callback: Callable[[], Any] | None = None,
 ) -> dict[str, Any]:
-    if not envelope.verification.required or not envelope.verification.commands:
+    """Run the envelope's verification commands inside the disposable clone.
+
+    ``passed`` is tri-state on purpose (#671): ``None`` means the commands never ran, which is not
+    a failure — only a declared command that actually ran and failed sets ``False``. The caller
+    escalates to ``checks_failed`` solely when ``verification.required`` is set, so unrequired
+    commands stay advisory and are still recorded in ``checks.json``.
+    """
+
+    if not envelope.verification.commands:
         return {
             "required": envelope.verification.required,
             "commands": [],
-            "passed": False,
-            "skipped_reason": "auto-if-clean requires explicit required verification commands",
+            "passed": None,
+            "skipped_reason": "no verification commands declared",
         }
     if envelope.verification.run_scope != "clone":
         return {
             "required": envelope.verification.required,
             "run_scope": envelope.verification.run_scope,
             "commands": [],
-            "passed": False,
-            "skipped_reason": "auto-if-clean verification must run in clone scope",
+            "passed": None,
+            "skipped_reason": "verification must run in clone scope",
         }
 
     command_results: list[dict[str, Any]] = []
@@ -1499,7 +1176,6 @@ def run_verification_commands(
     for command in envelope.verification.commands:
         started_at = datetime.now(UTC)
         timed_out = False
-        renewal_error: str | None = None
         process = subprocess.Popen(  # nosec B602 - trusted operator/orchestrator command.
             command,
             shell=True,
@@ -1509,7 +1185,6 @@ def run_verification_commands(
             text=True,
         )
         deadline = time.monotonic() + envelope.timeout_seconds
-        last_renewal = time.monotonic()
         try:
             while True:
                 remaining = deadline - time.monotonic()
@@ -1521,19 +1196,7 @@ def run_verification_commands(
                     stdout, stderr = process.communicate(timeout=min(1.0, remaining))
                     break
                 except subprocess.TimeoutExpired:
-                    now_monotonic = time.monotonic()
-                    if (
-                        renew_callback is None
-                        or now_monotonic - last_renewal < LEASE_RENEWAL_INTERVAL_SECONDS
-                    ):
-                        continue
-                    try:
-                        renew_callback()
-                    except Exception as exc:  # noqa: BLE001 - any refusal fences live apply.
-                        renewal_error = f"{type(exc).__name__}: {exc}"
-                        _terminate_process(process)
-                        break
-                    last_renewal = now_monotonic
+                    continue
             if process.poll() is None:
                 _terminate_process(process)
             stdout, stderr = process.communicate()
@@ -1543,7 +1206,7 @@ def run_verification_commands(
                 _terminate_process(process)
             raise
         ended_at = datetime.now(UTC)
-        command_passed = return_code == 0 and not timed_out and renewal_error is None
+        command_passed = return_code == 0 and not timed_out
         passed = passed and command_passed
         command_results.append(
             {
@@ -1552,7 +1215,6 @@ def run_verification_commands(
                 "shell": True,
                 "timeout_seconds": envelope.timeout_seconds,
                 "timed_out": timed_out,
-                "lease_renewal_error": renewal_error,
                 "return_code": return_code,
                 "passed": command_passed,
                 "started_at": started_at.isoformat(),
@@ -1567,26 +1229,6 @@ def run_verification_commands(
         "run_scope": envelope.verification.run_scope,
         "passed": passed,
         "commands": command_results,
-    }
-
-
-def apply_patch_to_live_repo(
-    *,
-    repo_root: Path,
-    patch_path: Path,
-    expected_write_set: list[str],
-) -> dict[str, Any]:
-    apply_result = _run_git(["apply", str(patch_path)], cwd=repo_root)
-    live_changed_paths = _live_changed_paths(repo_root)
-    out_of_scope = _paths_outside_write_set(live_changed_paths, expected_write_set)
-    return {
-        "applied": apply_result.returncode == 0,
-        "return_code": apply_result.returncode,
-        "stdout": apply_result.stdout,
-        "stderr": apply_result.stderr,
-        "live_changed_paths": live_changed_paths,
-        "out_of_scope_paths": out_of_scope,
-        "only_expected_changes": apply_result.returncode == 0 and not out_of_scope,
     }
 
 
@@ -1714,18 +1356,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--review-lens", choices=sorted(REVIEW_LENSES))
     parser.add_argument("--write-set", action="append", default=[])
     parser.add_argument("--apply-policy", choices=sorted(APPLY_POLICIES))
-    parser.add_argument(
-        "--lease-resource-key-file",
-        type=Path,
-        help=(
-            "Owner-private file containing the trusted outer resource key required for launched "
-            "auto-if-clean. The raw key is read in process and only its digest is retained."
-        ),
-    )
-    parser.add_argument(
-        "--lease-resource-key",
-        help=argparse.SUPPRESS,
-    )
     parser.add_argument("--evidence", choices=sorted(EVIDENCE_LEVELS), default="summary")
     parser.add_argument("--verification-command", action="append", default=[])
     parser.add_argument(
@@ -1769,27 +1399,6 @@ def main(argv: list[str] | None = None) -> int:
         validation_only = args.validation_only or args.dry_run or not args.launch_agy
         resolved_run_id = args.run_id or _new_run_id(datetime.now(UTC))
         _validate_run_id(resolved_run_id)
-        lease_admission = None
-        if args.lease_resource_key:
-            raise EnvelopeError(
-                "raw --lease-resource-key argv is forbidden; use --lease-resource-key-file"
-            )
-        if not validation_only and envelope.mode == "auto-if-clean":
-            if args.lease_resource_key_file is None:
-                raise EnvelopeError(
-                    "--lease-resource-key-file is required for launched auto-if-clean"
-                )
-            resource_key = _read_private_resource_key(args.lease_resource_key_file)
-            lease_admission = agy_lease_admission.resolve_direct_agy_admission(
-                args.repo_root,
-                resource_key,
-                resolved_run_id,
-            )
-            del resource_key
-        elif args.lease_resource_key_file is not None:
-            raise EnvelopeError(
-                "--lease-resource-key-file is accepted only for launched auto-if-clean"
-            )
         if validation_only:
             result = create_validation_bundle(
                 envelope,
@@ -1808,7 +1417,6 @@ def main(argv: list[str] | None = None) -> int:
                 wrapper_argv=wrapper_argv,
                 agy_bin=args.agy_bin,
                 audit_store_root=audit_store_root,
-                lease_admission=lease_admission,
             )
     except (EnvelopeError, ValueError, RuntimeError) as exc:
         print(f"agy delegation envelope error: {exc}", file=sys.stderr)
@@ -2186,7 +1794,6 @@ def _write_git_proof(
     changed_paths: list[str],
     diff_patch_path: Path,
     checks_path: Path,
-    post_apply: dict[str, Any] | None,
 ) -> None:
     clone_state = _clone_git_state(clone_result)
     _write_json(
@@ -2207,7 +1814,6 @@ def _write_git_proof(
             "changed_paths": changed_paths,
             "diff_patch": str(diff_patch_path),
             "checks_path": str(checks_path),
-            "post_apply": post_apply,
         },
     )
 
@@ -2258,8 +1864,6 @@ def _sanitize_argv(argv: list[str], *, prompt_replacement: str | None = None) ->
             "--token",
             "--api-key",
             "--password",
-            "--lease-resource-key",
-            "--lease-resource-key-file",
         }:
             sanitized.append(token)
             redact_next = True
@@ -2270,8 +1874,6 @@ def _sanitize_argv(argv: list[str], *, prompt_replacement: str | None = None) ->
                 "token=",
                 "api_key=",
                 "password=",
-                "lease-resource-key=",
-                "lease-resource-key-file=",
             )
         ):
             sanitized.append("<redacted>")

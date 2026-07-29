@@ -423,6 +423,7 @@ def test_real_proofs_directory_excludes_examples_and_sweeps_clean() -> None:
     assert [proof.data["run_id"] for proof in proofs] == [
         "cmux-bypass-0.5.1-20260719",
         "issue-355-genuine-20260717",
+        "agy-0-6-0-proof",
     ]
     assert all("examples" not in proof.path.parts for proof in proofs)
     findings = cdp.sweep(_manifest(), proofs, base_dir=REAL_PROOFS_DIR)

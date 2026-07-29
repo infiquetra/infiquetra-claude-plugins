@@ -19,6 +19,51 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-07-29
+
+### A policy reachable only from a branch you never take is indistinguishable from one that works — read the receipts, not the code  {#dead-policy-branch-671}
+
+**Context.** Scoping the removal of agy's `auto-if-clean` mode, the plan was to delete the mode and
+everything hanging off it. agy's `verification` policy — orchestrator-supplied test commands, with
+a `required` flag — hung off it. Deleting it looked like tidy dead-code removal, since nothing else
+called it.
+
+**Evidence.** Four real run bundles from 2026-06-30 (`.claude/agy/runs/20260630T*`) declared
+verification commands in their `envelope.json` — three with `"required": true`, naming real pytest
+paths. Every one of their `checks.json` files reads `{"passed": null, "commands": []}`. The
+commands never executed and nothing reported that they hadn't.
+
+**Mechanism.** `run_verification_commands` was called from exactly one place:
+`agy_delegate.py:899-903`, inside `if envelope.apply_policy != "apply-if-clean": ... else:`. The
+`else` was the only caller. Since coder delegations default to `patch-only`/`preserve-patch`, every
+real run took the first branch, set `patch_ready`, and wrote `skipped_reason: "apply_policy is
+preserve-patch"` — a message that reads like a deliberate policy decision rather than a capability
+that cannot be reached. The envelope schema happily accepted and validated `required: true`, so the
+declaration looked accepted at every layer that a caller could observe.
+
+**What surprised.** The static read said "dead code, safe to delete." The runtime artifacts said
+"a capability being actively reached for, silently." Both were true of the same lines. Usage
+evidence and reachability evidence answered different questions, and only one of them was the
+question that mattered.
+
+**Fix.** Verification moved out of the retired branch and now runs in the disposable clone for
+`patch-only`. `passed` became tri-state so that "never ran" (`null`) is distinguishable from
+"ran and failed" (`false`); `required` decides whether a failure is terminal. agy 0.6.0, #671.
+
+**Validation.** `tests/test_agy_apply_policy.py` — `test_patch_only_runs_declared_verification_in_the_clone`
+asserts the command observed the delegate's clone-side edit, proving it ran in the clone and not
+against the untouched live tree; plus required-failure, advisory-failure, none-declared, and
+no-write cases.
+
+**Generalizable rule.** Before deleting a policy block as dead, check whether anyone has been
+*declaring* it, not just whether anything *calls* it. A validated-but-unreachable input is worse
+than an unsupported one: the caller gets no error, so they believe the guarantee they asked for is
+in force. When a skip is genuinely unreachable rather than chosen, say so in the artifact — a
+`skipped_reason` that reads as a decision hides the defect.
+
+**Refs.** DECISIONS `{#external-agents-like-native-671}`, LEARNINGS `{#reachability-not-presence-671}`
+(the inverse shape — a guard that was present, called, and useless), issue #671.
+
 ## 2026-07-27
 
 ### A guard can be disabled, unreachable, and emitting dead artifacts all at once — measure reachability, not presence  {#reachability-not-presence-671}

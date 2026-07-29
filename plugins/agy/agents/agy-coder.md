@@ -31,11 +31,8 @@ python3 plugins/agy/scripts/agy_delegate.py
 - Do not commit, push, force-push, rewrite history, edit remotes, open PRs, change remote state, or
   perform deployment or production actions.
 - Do not change files outside the requested write-set.
-- Default to `mode=patch-only`.
-- Use `mode=auto-if-clean` only when the caller supplies an explicit repo-relative write-set and
-  required verification commands plus a trusted lease resource key. The envelope must use
-  `apply_policy=apply-if-clean`; put the key in an owner-private `0600` regular file and pass only
-  its path as wrapper CLI `--lease-resource-key-file <path>`.
+- Use `mode=patch-only`. A delegation never writes the live tree: the run happens in a disposable
+  clone and returns a patch for the caller to apply.
 - Treat every follow-up turn as a fresh wrapper invocation.
 
 ## Coder Packet

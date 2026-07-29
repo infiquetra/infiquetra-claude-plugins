@@ -2,6 +2,43 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-29
+
+### Removed - live apply and its lease-broker fence (#671)
+
+- `mode=auto-if-clean` and `apply_policy=apply-if-clean` are gone. Every delegation now runs in a
+  disposable clone and returns a patch for the caller to apply, matching the codex plugin's
+  contract. An envelope naming the retired mode is rejected as an invalid `mode` value before any
+  bundle is created.
+- `plugins/agy/scripts/agy_lease_admission.py` is deleted. With it go the `agy.lease-admission.v1`
+  record, session admission, exact-lease acquisition and successor chaining, in-supervision lease
+  renewal, settlement prepare/commit, and orphan quarantine containment. agy no longer imports
+  `lease_broker` or `orphan_evidence` at all.
+- CLI flags `--lease-resource-key-file` and `--lease-resource-key` are removed, along with the
+  owner-private key reader and its argv redaction rules.
+- Statuses `applied` and `acceptance_pending` are removed from `agy.result.v1`, and
+  `git-proof.json` no longer carries `post_apply`. Bundle artifacts are otherwise unchanged —
+  `run-lease.json` is the subprocess supervision record (run id, pid, timeouts, shutdown) and is
+  unaffected.
+- Rationale: the fence defended an external CLI more heavily than a native agent, for a collision
+  that is better prevented by assigning work units that do not cross files. Recorded in
+  `docs/engineering-journal/DECISIONS.md`.
+
+### Changed - declared verification commands now actually run
+
+- Verification is no longer reachable only from the retired apply path. Declared commands execute
+  inside the disposable clone on a `patch-only` run, after the delegate's changes. Previously a
+  `patch-only` run recorded `passed: null, commands: []` in `checks.json` even when the envelope
+  set `verification.required: true` — the commands were silently skipped.
+- **This changes terminal status on a path already in use.** A required command that fails now
+  yields `checks_failed` where the run previously reported `patch_ready`. An unrequired command
+  that fails is recorded in `checks.json` and leaves the run `patch_ready`.
+- `checks.json` `passed` is tri-state: `null` means the commands never ran (none declared, or
+  `run_scope` is not `clone`), which is not a failure.
+- `no-write` runs skip verification — the clone is unchanged, so the result would prove nothing.
+- `verification.run_scope` accepts `clone` or `none`; `live` is removed with the live-apply path.
+- `checks.json` command entries no longer carry `lease_renewal_error`.
+
 ## [0.5.1] - 2026-07-19
 
 ### Fixed - external CLI children bypass terminal workspace wrappers

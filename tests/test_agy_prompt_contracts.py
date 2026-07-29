@@ -69,11 +69,8 @@ def test_coder_prompt_requires_strong_packet_and_write_gate() -> None:
             "PATH_MISSING:",
             "Verification commands",
             "run report",
-            "Default to `mode=patch-only`",
-            "Use `mode=auto-if-clean` only",
-            "explicit repo-relative write-set",
-            "required verification commands",
-            "`apply_policy=apply-if-clean`",
+            "Use `mode=patch-only`",
+            "never writes the live tree",
         ),
     )
 
@@ -101,7 +98,7 @@ def test_delegate_command_documents_wrapper_syntax_not_raw_agy() -> None:
         text,
         (
             "role=<coder|reviewer>",
-            "mode=<no-write|patch-only|auto-if-clean>",
+            "mode=<no-write|patch-only>",
             "evidence=<minimal|summary|full>",
             "write-set=<repo-relative-path>",
             "verification=<command>",
@@ -129,10 +126,6 @@ def test_skill_and_reference_share_evidence_and_write_gate_contract() -> None:
                 "solving",
                 "contract breach",
                 "mode=patch-only",
-                "mode=auto-if-clean",
-                "explicit repo-relative write-set",
-                "apply_policy=apply-if-clean",
-                "required verification commands",
                 "role=reviewer",
                 "mode=no-write",
                 "review_lens=adversarial",
@@ -144,6 +137,34 @@ def test_skill_and_reference_share_evidence_and_write_gate_contract() -> None:
                 WRAPPER_PATH,
             ),
         )
+
+
+def test_prompts_do_not_offer_the_retired_live_apply_mode() -> None:
+    """`auto-if-clean` was retired in 0.6.0 (#671).
+
+    Naming it is allowed — the contract reference and README explain the retirement — but no
+    surface may present it as a mode a caller can select.
+    """
+
+    surfaces = (
+        "agents/agy-coder.md",
+        "agents/agy-reviewer.md",
+        "commands/delegate.md",
+        "skills/agy-delegate/SKILL.md",
+        "skills/agy-delegate/references/delegation-contract.md",
+    )
+    banned = (
+        "mode=<no-write|patch-only|auto-if-clean>",
+        "use `mode=auto-if-clean`",
+        "`no-write`, `patch-only`, or `auto-if-clean`",
+        "apply_policy=apply-if-clean",
+        "--lease-resource-key-file",
+    )
+
+    for relative_path in surfaces:
+        lowered = _read(relative_path).lower()
+        for fragment in banned:
+            assert fragment.lower() not in lowered, f"{relative_path} offers {fragment!r}"
 
 
 def test_prompts_do_not_advertise_local_solving_affordances() -> None:

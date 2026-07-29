@@ -2,6 +2,11 @@
 
 Status: passed live run on 2026-06-30
 
+> **Historical record.** This documents what was proven on 2026-06-30 against the then-current
+> contract. The coder flow below uses `--mode auto-if-clean --apply-policy apply-if-clean`, which
+> was retired in 0.6.0 (#671) along with the lease broker that fenced it; a delegation no longer
+> writes the live tree. The commands are preserved as run, not corrected — do not copy them.
+
 This document records the release-gate proof for packaged `agy-coder` and `agy-reviewer`
 teammates. Static tests are not enough for this plugin: the gate requires Claude Code transcripts
 showing that the packaged agents invoked `plugins/agy/scripts/agy_delegate.py` and did not solve

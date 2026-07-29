@@ -45,11 +45,13 @@ def _valid_payload(**overrides: object) -> dict[str, object]:
         "write_set": ["plugins/agy/scripts/agy_delegate.py"],
         "apply_policy": "preserve-patch",
         "evidence": "summary",
-        "verification": {
-            "commands": ["PYTHONPATH=. python3 -m pytest -q tests/test_agy_delegate_contract.py"],
-            "required": True,
-            "run_scope": "clone",
-        },
+        # No verification by default (#671). Declared commands now actually execute inside the
+        # disposable clone; before, they were reachable only from the retired apply-if-clean
+        # branch and silently never ran. A required command naming this repo's test paths cannot
+        # pass in a bare fixture clone, so leaving one here would make every caller of this helper
+        # assert `checks_failed`. Verification behaviour has its own coverage in
+        # tests/test_agy_apply_policy.py.
+        "verification": {"commands": [], "required": False, "run_scope": "clone"},
         "timeout_seconds": 900,
         "no_output_seconds": 180,
         "provenance_required": True,
@@ -505,6 +507,9 @@ def test_run_agy_supervised_oserror_on_launch_emits_no_receipt(
 
 
 def test_cli_rejects_invalid_envelope_without_bundle(tmp_path: Path) -> None:
+    # `auto-if-clean` is the retired live-apply mode (#671). Rejecting it here does double duty:
+    # it proves an invalid envelope never reaches bundle creation, and it fails loudly if the mode
+    # is ever re-added without the rest of this contract being reconsidered.
     envelope_path = tmp_path / "envelope.json"
     envelope_path.write_text(
         json.dumps(_valid_payload(mode="auto-if-clean", write_set=[])),
@@ -530,7 +535,7 @@ def test_cli_rejects_invalid_envelope_without_bundle(tmp_path: Path) -> None:
     )
 
     assert completed.returncode == 2
-    assert "auto-if-clean requires a non-empty write_set" in completed.stderr
+    assert "mode has invalid value 'auto-if-clean'" in completed.stderr
     assert not (tmp_path / ".claude").exists()
 
 

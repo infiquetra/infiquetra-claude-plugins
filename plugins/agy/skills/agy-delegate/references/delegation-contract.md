@@ -32,41 +32,51 @@ Field rules:
 
 - `schema` must be `agy.delegation.v1`.
 - `role` must be `coder` or `reviewer`.
-- `mode` must be `no-write`, `patch-only`, or `auto-if-clean`.
+- `mode` must be `no-write` or `patch-only`.
 - `task` and `model` must be non-empty strings.
 - `review_lens` may be `null`, `adversarial`, `quality`, `scope-gap`, or `security-ops`.
 - `write_set` must contain repo-relative paths only. Absolute paths and `..` are invalid.
-- `apply_policy` must be `preserve-patch` or `apply-if-clean`.
+- `apply_policy` must be `preserve-patch`.
 - `evidence` must be `minimal`, `summary`, or `full`.
 - `verification.commands` must be a list of non-empty strings supplied by the orchestrator or
   operator, not by the delegate. When `verification.required` is `true`, at least one command is
-  required. `verification.run_scope` must be `clone`, `live`, or `none`.
+  required. `verification.run_scope` must be `clone` or `none`.
 - `timeout_seconds` and `no_output_seconds` must be positive integers, and `no_output_seconds`
   must not exceed `timeout_seconds`.
 - `provenance_required` must be a boolean.
 
 ## Modes
 
-The wrapper is the only supported execution path for every mode.
+The wrapper is the only supported execution path for every mode. **No mode writes the live tree.**
+Every run happens in a disposable, remotes-stripped clone and returns a patch for the caller to
+apply — the same contract the codex plugin has always had.
 
-- `no-write`: review or analysis only. No live-tree mutation is allowed.
+- `no-write`: review or analysis only. No mutation is expected; a changed path in the clone is
+  reported as `out_of_scope_mutation`.
 - `patch-only`: preserve a derived patch in the evidence bundle without applying it.
-- `auto-if-clean`: apply only when the wrapper proves a clean compatible tree, explicit write-set,
-  in-scope changes, orchestrator-supplied verification success, and real Antigravity provenance.
 
-Reviewer delegation defaults to `no-write`. Coder delegation defaults to `mode=patch-only` and
-`apply_policy=preserve-patch` unless the caller supplies an explicit repo-relative write-set and
-requests `mode=auto-if-clean` with `apply_policy=apply-if-clean` and required verification commands.
+Reviewer delegation defaults to `no-write`. Coder delegation defaults to `mode=patch-only`.
+`apply_policy` is always `preserve-patch`.
 
-`auto-if-clean` with an empty `write_set` or without a trusted outer
-`--lease-resource-key-file <path>` is rejected before subprocess launch. The referenced key file
-must be an owner-private `0600` regular file. The raw key is read only in process, immediately
-reduced to a repository-scoped digest, and is neither an argv value nor an envelope, environment,
-task, or bundle field.
-After strict Git-root resolution, the wrapper derives immutable `agy.lease-admission.v1` in process,
-configures admission, and acquires the exact lease before clone or external launch. It renews during
-supervision and applies verified output only inside broker prepare/commit. Superseded output is
-metadata-only; expired or canonically closed output is quarantined and never applied.
+The live-apply mode `auto-if-clean` was retired in 0.6.0 (#671) along with the lease-broker
+admission, renewal, and settlement machinery that fenced it. Concurrent-write safety is a planning
+concern: assign work units that do not cross files, or sequence the writes. An envelope requesting
+`auto-if-clean` is now rejected as an invalid `mode` value before any bundle is created.
+
+## Verification
+
+Declared verification commands run inside the disposable clone on a `patch-only` run, after the
+delegate's changes and before the patch is reported. `no-write` runs skip them — the clone is
+unchanged, so the result would prove nothing.
+
+`verification.required` decides whether a failure is terminal:
+
+- required and failing → `checks_failed`
+- unrequired and failing → recorded in `checks.json`, run stays `patch_ready`
+- none declared, or `run_scope` is not `clone` → `passed` is `null` with a `skipped_reason`
+
+Before 0.6.0 these commands were reachable only from the retired apply path, so a `patch-only` run
+recorded `passed: null, commands: []` even when it declared `required: true`.
 
 ## Bridge-Agent Contract
 
@@ -143,7 +153,6 @@ Wrapper result statuses are snake_case:
 
 - `success`
 - `patch_ready`
-- `applied`
 - `plan_gap`
 - `test_conflict`
 - `path_missing`

@@ -11,12 +11,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import agy_lease_admission
-
 SCRIPT_DIR = Path(__file__).resolve().parent
 AGY_DELEGATE = SCRIPT_DIR / "agy_delegate.py"
 BUNDLE_RE = re.compile(r"(?:Bundle:\s*|\"bundle_path\":\s*\")(?P<path>[^\n\"\\]+)")
-PASS_STATUSES = frozenset({"success", "patch_ready", "applied"})
+# No `applied` since #671: a delegation never writes the live tree, so the only passing terminal
+# states are a clean run and a preserved patch. The broker-owned canonical close this used to
+# validate for `applied` no longer exists.
+PASS_STATUSES = frozenset({"success", "patch_ready"})
 
 
 def _load_delegate() -> Any:
@@ -39,7 +40,7 @@ def audit_transcript(path: Path) -> dict[str, Any]:
     ]
     agy_results = [payload for payload in result_payloads if payload.get("agy_launched") is True]
     passing_results = bool(result_statuses) and all(
-        _is_passing_result(payload) for payload in result_payloads
+        payload.get("status") in PASS_STATUSES for payload in result_payloads
     )
 
     passed = (
@@ -60,24 +61,6 @@ def audit_transcript(path: Path) -> dict[str, Any]:
         "result_statuses": result_statuses,
         "agy_result_count": len(agy_results),
     }
-
-
-def _is_passing_result(payload: dict[str, Any]) -> bool:
-    """Applied work is passing only after its broker-owned canonical close is durable."""
-
-    status = payload.get("status")
-    if status not in PASS_STATUSES:
-        return False
-    if status != "applied":
-        return True
-    close = payload.get("settlement_close")
-    if payload.get("write_disposition") != "accepted" or not isinstance(close, dict):
-        return False
-    try:
-        normalized = agy_lease_admission._broker_module.validate_settlement_close(close)
-    except Exception:  # noqa: BLE001 - an invalid close is not audit proof.
-        return False
-    return normalized["producer"] == "agy" and normalized["run_id"] == payload.get("run_id")
 
 
 def _extract_bundle_paths(path: Path) -> list[Path]:

@@ -1,5 +1,48 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-07-29
+
+### External agents get the same trust posture as native agents; write collisions are a planning problem {#external-agents-like-native-671}
+
+**Decision.** Retire agy's `auto-if-clean` live-apply mode and the lease-broker admission that
+fenced it, so agy matches codex: run in a disposable clone, hand back a patch, never write the live
+tree. Do not replace the fence with a lighter runtime guard. Prevent concurrent-write collisions by
+assigning work units that do not cross files, and by sequencing writes where they must overlap.
+
+**Rationale.** The fence existed because agy was an *external* CLI, and external tools felt like
+they needed containment a native subagent does not get. But a native Claude agent with Edit/Write
+gets no lease, no fencing token, and no settlement protocol — it gets a well-scoped task. Holding
+agy to a stricter standard bought a 4,731-line broker dependency, an unguarded `raise` on the live
+path, and a second concurrency model competing with `concurrency_governor.py`'s emit-time clamp.
+The asymmetry was the bug.
+
+**Evidence it cost more than it bought.** `auto-if-clean` has **zero recorded uses**: all 15 agy run
+bundles across the workspace (11 in this repo, 3 in `team-freya`, 1 in `campps-e2e-canary`) are
+`no-write` or `patch-only`. codex has never had the capability at all — `codex_delegate.py:59` is a
+one-element `APPLY_POLICIES` frozenset, deferred at KTD5 — and has needed no broker as a result.
+
+**Rejected: keep the broker for agy alone.** The measured shape made this look cheap — agy touched
+only 10 of the broker's 37 public methods. But 4 of those 10 (`configure_session_admission`,
+`acquire_agent`, `acquire_successor`, `clear_session_admission`) *are* the admission machinery,
+because agy's evidence binding needs a fencing token and the only way to get one is to acquire a
+lease. There was no clean seam between "concurrency" and "provenance" to cut along; keeping agy
+meant keeping the whole module for a mode nobody runs.
+
+**Rejected: delete the mode and its verification step together.** Verification was reachable only
+from the apply branch, so deleting the branch would have silently deleted a capability actually
+being reached for (LEARNINGS `{#dead-policy-branch-671}`). Rewired instead.
+
+**Accepted cost.** A caller who wants the patch applied applies it. That is what all 14 readable
+recorded runs already did.
+
+**Revisit when:** the deliberate native-agent-parity design pass happens — the open question is
+whether agy and codex should be *invocable* like a native agent rather than through an envelope
+wrapper at all. That is a design exercise, not a retrofit, and it should not start by re-adding a
+fence.
+
+**Refs.** LEARNINGS `{#dead-policy-branch-671}`, DECISIONS `{#fence-carried-batch-renewal-671}`,
+issue #671, agy 0.6.0.
+
 ## 2026-07-27
 
 ### Delete the write fence now; treat batch renewal as the debt it leaves behind {#fence-carried-batch-renewal-671}

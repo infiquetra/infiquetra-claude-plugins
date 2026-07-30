@@ -1,6 +1,6 @@
 # Outcome: objective: Stand up the external-engine offload lane
 
-**Outcome ID:** `external-engine-offload` · **Revision:** 2 · **Progress:** 18/20 (90%)
+**Outcome ID:** `external-engine-offload` · **Revision:** 2 · **Progress:** 20/20 (100%)
 
 ## Topology
 
@@ -22,8 +22,8 @@ flowchart TD
     sub-455["sub-455: done"]
     sub-390["sub-390: done"]
     sub-391["sub-391: done"]
-    sub-393["sub-393: dispatched"]
-    sub-394["sub-394: dispatched"]
+    sub-393["sub-393: done"]
+    sub-394["sub-394: done"]
     sub-468["sub-468: done"]
     sub-476["sub-476: done"]
 ```
@@ -52,8 +52,8 @@ flowchart TD
 | `sub-455` | done | PR https://github.com/infiquetra/infiquetra-claude-plugins/pull/550, issue infiquetra/infiquetra-claude-plugins#455 | no data yet |
 | `sub-390` | done | issue infiquetra/infiquetra-claude-plugins#390 | no data yet |
 | `sub-391` | done | PR https://github.com/infiquetra/infiquetra-claude-plugins/pull/548, issue infiquetra/infiquetra-claude-plugins#391 | no data yet |
-| `sub-393` | dispatched | issue infiquetra/infiquetra-claude-plugins#393 | no data yet |
-| `sub-394` | dispatched | issue infiquetra/infiquetra-claude-plugins#394 | no data yet |
+| `sub-393` | done | issue infiquetra/infiquetra-claude-plugins#393 | no data yet |
+| `sub-394` | done | issue infiquetra/infiquetra-claude-plugins#394 | no data yet |
 | `sub-468` | done | issue infiquetra/infiquetra-claude-plugins#468 | no data yet |
 | `sub-476` | done | issue infiquetra/infiquetra-claude-plugins#476 | no data yet |
 

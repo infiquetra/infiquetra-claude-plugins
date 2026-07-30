@@ -1,0 +1,65 @@
+{
+  "approval_state": "needs_operator_approval",
+  "created_at": "2026-07-30T11:38:30.194621+00:00",
+  "created_issue_number": 682,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/682",
+  "draft_path": "docs/sdlc-issue-drafts/2026-07-30-enhancement-saga-u5-delete-the-lease-lifecycle-h.md",
+  "handoff_maturity": "plan-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Objective": "defects-claude-plugins"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-07-30-enhancement-saga-u5-delete-the-lease-lifecycle-h.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "### Objective\nDelete saga's two remaining lease files outright \u2014 the lease lifecycle hook and the thin saga wrapper\naround the fleet broker \u2014 and remove the hook's registration from the plugin manifest in the same\ncommit.\n\nUnit **U5** of seven under parent issue #677 (retire the fleet lease broker). Plan:\n`docs/plans/2026-07-30-issue-677-lease-broker-retirement-plan.md`. Board objective:\n`defects-claude-plugins`.\n\n### Intent\nTwo whole-file deletions, unblocked once U1 through U4 have landed and no saga module imports the\nwrapper any more:\n\n- `plugins/saga/hooks/lease_lifecycle_hook.py` (92 lines)\n- `plugins/saga/scripts/lease_broker.py` (574 lines)\n\n**The hook's registration must be removed in the same commit as the file.** A dangling registration is\na startup error, not a dead entry. Confirm the manifest surface by *reading* it, not by grepping\nPython \u2014 the registration lives in the plugin's hook manifest, not in the module.\n\nVerify there is no remaining `import lease_broker` anywhere in saga before deleting the wrapper.\n\n**Depends on:** U1, U2, U3, U4. All four must be merged first.\n\n### Out-of-scope / non-goals\n- Do not delete anything under `plugins/fleet-core/` \u2014 that is U7. T",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "docs/plans/2026-07-30-issue-677-lease-broker-retirement-plan.md",
+    "ref": "docs/plans/2026-07-30-issue-677-lease-broker-retirement-plan.md",
+    "title": "Retire the fleet lease broker \u2014 implementation unit U5",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "title": "enhancement(saga): U5 delete the lease lifecycle hook and the saga lease_broker wrapper",
+  "updated_at": "2026-07-30T11:38:40.764633+00:00"
+}

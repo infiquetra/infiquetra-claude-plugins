@@ -1,0 +1,69 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-07-14T04:00:26.304975+00:00",
+  "created_at": "2026-07-14T04:00:45.568389+00:00",
+  "created_issue_number": 579,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/579",
+  "draft_path": "docs/sdlc-issue-drafts/2026-07-14-cross-runtime-outcome-coordination-shared-author-2.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "improve-claude-plugins",
+    "Technical Risk": "high"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "high",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-07-14-cross-runtime-outcome-coordination-shared-author-2.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "### Objective\n\nAllow one Saga Outcome to be discovered, reconciled, advanced, and attended safely from Claude Company and Codex without either runtime creating a competing source of truth.\n\n### Intent\n\nDefine and ship a cross-runtime Outcome coordination contract. The committed outcome branch and GitHub completion evidence remain canonical. Same-clone runtimes share the git-common-dir coordination store; different clones or hosts reconstruct from the committed specification plus GitHub. Runtime-local Claude and Codex directories may hold caches, transcripts, or protected launch receipts, but never canonical Outcome status. Discovery by Outcome ID, version compatibility, lease and idempotency behavior, and explicit handoff receipts must prevent duplicate dispatch when both runtimes operate on the same Outcome.\n\n### Out-of-scope / non-goals\n\n- Making `~/.claude-company` or `~/.codex` a second canonical Outcome store.\n- Copying mutable coordination caches between hosts.\n- Giving either runtime authority to overwrite GitHub completion evidence.\n- Replacing repository worktrees, GitHub issues, or Operations board state.\n- Changing Outcome business semantics unrelated to cross-runtime co",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/Users/jefcox/workspace/infiquetra/team-mimir/.codex/context/cross-runtime-outcome-capability-source.md",
+    "ref": "/Users/jefcox/workspace/infiquetra/team-mimir/.codex/context/cross-runtime-outcome-capability-source.md",
+    "title": "cross-runtime-outcome-capability-source",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "Cross-runtime Outcome coordination: shared authority, discovery, resume, and lease-safe handoff",
+  "updated_at": "2026-07-14T04:01:01.732123+00:00"
+}

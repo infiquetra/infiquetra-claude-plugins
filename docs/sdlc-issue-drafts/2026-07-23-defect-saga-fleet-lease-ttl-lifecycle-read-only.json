@@ -1,0 +1,68 @@
+{
+  "approval_state": "needs_operator_approval",
+  "created_at": "2026-07-23T12:07:00.658292+00:00",
+  "created_issue_number": 646,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/646",
+  "draft_path": "docs/sdlc-issue-drafts/2026-07-23-defect-saga-fleet-lease-ttl-lifecycle-read-only.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/issue-bodies/ttl-lifecycle.md",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-07-23-defect-saga-fleet-lease-ttl-lifecycle-read-only.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "## Problem\n\nThree related lease-TTL lifecycle defects, all reproduced across the five governed passes of\nthe #616 execution (work-session doc, findings 1 and 4):\n\n1. **Execution-TTL starvation on read-only stretches.** `execution_ttl_seconds: 300` with\n   mutation-only renewal means any unit whose tail is a long pytest run outlives its lease;\n   expiry is fail-closed and unrecoverable for later spawns in the batch.\n2. **30 s claim TTL loses to workflow-resume latency.** Unclaimed reserved slots lapse in\n   30 s; a workflow resume replays cached agents before its first live spawn claims, so entire\n   batches expire before first claim. Both values are hard-coded by the emitter in\n   `_lease_reservation_metadata` (`plugins/saga/scripts/execution_spec.py` ~:3331).\n3. **`renew_batch` is all-or-nothing and therefore structurally unusable with serialized\n   units.** Any one expired member raises `LeaseExpiredError` and nothing renews; serialized\n   units always leave unclaimed slots to lapse, so the driver renewal loop never succeeded in\n   any pass.\n\n## Working mitigations (proven in pass 5, all driver-side hacks)\n\nHand-editing `claim_ttl_seconds` 30->1800 in the driver-authored reservat",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/issue-bodies/ttl-lifecycle.md",
+    "ref": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/issue-bodies/ttl-lifecycle.md",
+    "title": "governed canary workflow with a long read-only unit survives without a driver keeper",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "defect(saga,fleet): lease TTL lifecycle \u2014 read-only starvation, 30s claim TTL vs resume latency, renew_batch all-or-nothing",
+  "updated_at": "2026-07-23T12:07:09.344908+00:00"
+}

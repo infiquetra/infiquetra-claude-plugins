@@ -1,0 +1,67 @@
+{
+  "approval_state": null,
+  "created_at": "2026-07-27T00:56:44.872344+00:00",
+  "created_issue_number": 67,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-codex-plugins/issues/67",
+  "draft_path": "docs/sdlc-issue-drafts/2026-07-27-defect-infiquetra-codex-plugins-asgard-work-2.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": "implement",
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-codex-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "defects-codex-plugins"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-codex-plugins",
+  "risk": "high",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-07-27-defect-infiquetra-codex-plugins-asgard-work-2.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ntitle: \"defect(portability,tests): frozen-source port oracles skip silently in the one run that is authoritative\"\nrepo: infiquetra-codex-plugins\ntype: defect\nteam: asgard\nproject: operations\nstatus: Shaping\nlabels: defect, hermes-task, needs-plan\nrisk: high\nmode: implement\nhandoff_maturity: requirements-ready\n---\n\n# defect(portability,tests): frozen-source port oracles skip silently in the one run that is authoritative\n\n### Objective\n\nStop every cross-repo port oracle from disappearing from the authoritative full-suite gate. Today the\nstrongest tests in the port-contract suite \u2014 the ones that re-derive a port's frozen inventory from\nthe upstream Claude checkout \u2014 skip without comment in exactly the run this CI-free repository treats\nas proof, and a green `0 failed` is reported over them.\n\n### Intent\n\nTwo port-contract modules resolve the upstream Claude checkout the same way:\n\n```\ntests/test_lease_registry_forward_compat_port_contract.py:61-62\ntests/test_codex_627_seam_refreeze_port_contract.py:64-65\n    SOURCE_REPO_ENV     = \"CODEX_PORT_SOURCE_REPO\"\n    DEFAULT_SOURCE_REPO = ROOT.parent / \"infiquetra-claude-plugins\"\n```\n\n`_source_repo()` returns the configured path if `CODEX_P",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/codex-defect-silent-oracle-skip.md",
+    "ref": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/codex-defect-silent-oracle-skip.md",
+    "title": "defect(portability,tests): frozen-source port oracles skip silently in the one run that is authoritative",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "defect(portability,tests): frozen-source port oracles skip silently in the one run that is authoritative",
+  "updated_at": "2026-07-27T00:56:55.059491+00:00"
+}

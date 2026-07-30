@@ -1,0 +1,82 @@
+{
+  "approval_state": null,
+  "created_at": "2026-07-24T23:39:08.582733+00:00",
+  "created_issue_number": 657,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/657",
+  "draft_path": "docs/sdlc-issue-drafts/2026-07-24-defect-saga-workflow-available-is-a-silent-no-op.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/issue-wfavail.md",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "'Acceptance criteria' is not executable (card_validator requires each criterion to name a runnable check -- a `code span` or a ``` fenced block -- with its expected result)",
+      "'Verification' has no fenced code block (card_validator requires at least one ``` block)",
+      "'Files expected to change' has no path-like line (card_validator requires at least one `dir/file` style entry)",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-07-24-defect-saga-workflow-available-is-a-silent-no-op.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "## Summary\n\n`outcome.py advance --workflow-available` is a **silent no-op** unless `--host-capable` is also\npassed. The operator gets an unexplained availability HALT while having passed the exact flag the\nCLI help says enables the backend.\n\n## Evidence\n\n`plugins/saga/scripts/outcome_dispatcher.py:451` (in `resolve_available`, defined at `:438`):\n\n```python\navail = set(ALWAYS_AVAILABLE)\nif host_capable:\n    avail |= {\"fork\", \"subagent\", \"goal\"}\nif host_capable and workflow_available:      # <-- :451, requires BOTH\n    avail.add(\"cc-workflows-ultracode\")\n```\n\nThe operator-facing help at `plugins/saga/scripts/outcome.py:2438-2440` reads as standalone, with\nno mention of the coupling:\n\n```python\n\"--workflow-available\",\naction=\"store_true\",\nhelp=\"this host can run cc-workflows-ultracode (the Workflow tool is present)\",\n```\n\nNote the function **docstring** does state the coupling (\"`workflow_available` *additionally*\nenables `cc-workflows-ultracode`\"). The defect is that the coupling is documented only where the\noperator never looks \u2014 the CLI surface contradicts it by omission.\n\n## Reproduction\n\nObserved during the #626 R-live acceptance run (2026-07-24), on a host where both the Agent ",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/issue-wfavail.md",
+    "ref": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/issue-wfavail.md",
+    "title": "issue-wfavail",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "defect(saga): --workflow-available is a silent no-op without --host-capable",
+  "updated_at": "2026-07-24T23:39:17.601140+00:00"
+}

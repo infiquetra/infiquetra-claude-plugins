@@ -1,0 +1,68 @@
+{
+  "approval_state": "needs_operator_approval",
+  "created_at": "2026-07-24T19:19:32.206542+00:00",
+  "created_issue_number": 654,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/654",
+  "draft_path": "docs/sdlc-issue-drafts/2026-07-24-enhancement-fleet-core-revisit-tier-ladder-max-e.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/tier-review-source.md",
+    "Technical Risk": "low"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "low",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-07-24-enhancement-fleet-core-revisit-tier-ladder-max-e.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "# Revisit the fleet tier ladder against Claude Opus 5\n\n### Objective\n\nRe-establish that the fleet's model tier ladder still reflects reality now that Claude Opus 5 has\nreplaced Opus 4.8, and close the `max` effort-rung gap between the harness and the palette \u2014 or\nrecord a reasoned decision to decline each.\n\n### Intent\n\nClaude Opus 5 replaced Opus 4.8 as the model this fleet runs on. The plugin code needed **zero**\nchanges, verified live on 2026-07-24: there are no versioned model identifiers anywhere under\n`plugins/` (0 hits for `claude-opus-4-*` / `opus 4.8` across `.py`/`.md`/`.json`), because the whole\nvocabulary is tier *aliases* (`fable`/`opus`/`sonnet`/`haiku`) that the harness resolves at\ndispatch. `scripts/lint_agent_tiers.py` + `tests/test_agent_tier_lint.py` already enforce that every\nagent frontmatter `model:` is a palette member.\n\nWhat the release moves is a **decision premise** and a **vocabulary gap**. Neither is urgent and\nneither blocks current work \u2014 but both need facts that were not available when this was filed, so\nthey belong in an issue rather than in an ad-hoc session edit.\n\n**1. `{#manifest-fable-xhigh-tiering}` premise has gone stale.**\n`docs/engineering-jou",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/tier-review-source.md",
+    "ref": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/tier-review-source.md",
+    "title": "Revisit the fleet tier ladder against Claude Opus 5",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "enhancement(fleet-core): revisit tier ladder + max effort rung against Claude Opus 5",
+  "updated_at": "2026-07-24T19:19:41.018320+00:00"
+}

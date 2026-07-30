@@ -1,0 +1,73 @@
+{
+  "approval_state": null,
+  "created_at": "2026-07-24T23:41:21.183166+00:00",
+  "created_issue_number": 659,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/659",
+  "draft_path": "docs/sdlc-issue-drafts/2026-07-24-context-update-journal-learnings-md-append-direc.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "context-update",
+  "labels": [
+    "context-update",
+    "documentation",
+    "hermes-not-actionable"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create context-update in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "context-update",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/issue-journaldrift.md",
+    "Technical Risk": "low"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Asgard mode",
+      "Missing Asgard constraints",
+      "Missing Asgard risk",
+      "Missing Asgard mode metadata"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "low",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-07-24-context-update-journal-learnings-md-append-direc.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "## Summary\n\n`docs/engineering-journal/LEARNINGS.md` states one append convention in its header and practices\nthe opposite in its most recent ~400 lines. A reader who trusts the header reads the wrong end of\nthe file and misses the newest material entirely.\n\n## Evidence\n\nMeasured on `origin/main` at `474fd3cc`:\n\n| Fact | Value |\n|---|---|\n| Total lines | 4205 |\n| Dated `## YYYY-MM-DD` headings | 44 |\n| Last dated heading | `## 2026-05-01`, line 3805 |\n| `###` entries appended *after* that heading | 16 (\u2248400 lines, ~10 % of the file) |\n\nThe header (lines 5-6) says:\n\n> **Append new entries to the top.** Most-recent first.\n\nAnd the dated sections do descend correctly \u2014 `## 2026-07-22` at line 28, `## 2026-07-21` at 85,\n`## 2026-07-20` at 144, on down to `## 2026-05-01` at 3805. That part works.\n\nThe problem is everything *after* line 3805. Sixteen entries live there with no date heading of\ntheir own, and several are unambiguously recent \u2014 `{#async-spawn-posttooluse-race-616-r8}` and\n`{#harvest-leaf-saga-id-backfill-617}` both document work done 2026-07-23, and\n`{#prepared-sidecar-objective-inert-637}` is from the same week. They are filed under a heading\nthat says 2026-05-01.\n\n## Why i",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/issue-journaldrift.md",
+    "ref": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/issue-journaldrift.md",
+    "title": "issue-journaldrift",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "context-update(journal): LEARNINGS.md append direction contradicts its own stated convention",
+  "updated_at": "2026-07-24T23:41:29.729738+00:00"
+}

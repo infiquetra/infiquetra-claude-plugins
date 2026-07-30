@@ -1,0 +1,82 @@
+{
+  "approval_state": null,
+  "created_at": "2026-07-20T05:11:09.052563+00:00",
+  "created_issue_number": 624,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/624",
+  "draft_path": "docs/sdlc-issue-drafts/2026-07-20-pa-1-upstream-hardening-outcome-cli-help-dead-pr.md",
+  "handoff_maturity": "plan-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "plan-ready",
+    "Objective": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/pa1-issue-source.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "'Acceptance criteria' is not executable (card_validator requires each criterion to name a runnable check -- a `code span` or a ``` fenced block -- with its expected result)",
+      "'Verification' has no fenced code block (card_validator requires at least one ``` block)",
+      "'Files expected to change' has no path-like line (card_validator requires at least one `dir/file` style entry)",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text",
+      "Missing author-visible risk metadata"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": null,
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-07-20-pa-1-upstream-hardening-outcome-cli-help-dead-pr.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "# PA-1 upstream hardening: outcome CLI help/dead-print + handoff-store and audit-store permissions\n\nPre-acceptance production unit PA-1 of the cross-runtime-acceptance plan\n(`docs/plans/2026-07-15-cross-runtime-outcome-acceptance-plan.md`, section \"Pre-acceptance\nproduction units\"), discharging the upstream-first routings from the codex #34 code-review and QA\ngates before the acceptance harness pins its inputs (plan KTD7). Supports acceptance leaf #605 /\nobjective #579 but is a standalone production PR, not part of the acceptance PR (plan KTD4).\n\n## Scope \u2014 four fixes at baseline `cf15a09f`\n\n1. **Stale `export`/`import` help strings** (`plugins/saga/scripts/outcome.py:2281/:2284`): still\n   describe the retired `outcome-bundle/1` flow; reword to live semantics (`export` is a\n   deprecated read-only alias of `discover`; `import` always refuses with migration guidance).\n2. **Unreachable success-print in the import arm** (`outcome.py:2624-2627`): `import_bundle`\n   unconditionally raises; remove the dead success path and give the arm the same\n   `CompatibilityHaltError -> refusal-receipt JSON + exit 3` shape as the export arm.\n3. **Handoff-store directory created at default umask** (`",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/pa1-issue-source.md",
+    "ref": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/pa1-issue-source.md",
+    "title": "PA-1 upstream hardening: outcome CLI help/dead-print + handoff-store and audit-store permissions",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "PA-1 upstream hardening: outcome CLI help/dead-print + handoff-store and audit-store permissions",
+  "updated_at": "2026-07-20T05:11:27.238492+00:00"
+}

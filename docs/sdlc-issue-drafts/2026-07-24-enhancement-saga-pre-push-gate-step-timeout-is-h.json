@@ -1,0 +1,82 @@
+{
+  "approval_state": null,
+  "created_at": "2026-07-24T23:40:33.537947+00:00",
+  "created_issue_number": 658,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/658",
+  "draft_path": "docs/sdlc-issue-drafts/2026-07-24-enhancement-saga-pre-push-gate-step-timeout-is-h.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/issue-gatetimeout.md",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "'Acceptance criteria' is not executable (card_validator requires each criterion to name a runnable check -- a `code span` or a ``` fenced block -- with its expected result)",
+      "'Verification' has no fenced code block (card_validator requires at least one ``` block)",
+      "'Files expected to change' has no path-like line (card_validator requires at least one `dir/file` style entry)",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-07-24-enhancement-saga-pre-push-gate-step-timeout-is-h.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "## Summary\n\nThe pre-push gate runs every manifest step under a hard-coded 300-second timeout with no\nconfiguration and no environment override. The repo's own test step measured **264 s** on\n2026-07-24 \u2014 roughly 12 % headroom \u2014 and has already produced one false FAIL under CPU contention.\n\n## Evidence\n\n`plugins/saga/hooks/pre_push_gate_hook.py:93-103` \u2014 the timeout is a literal in the generic\nstep runner, so it applies uniformly to every step in `tools/gate-manifest.json`:\n\n```python\nresult = subprocess.run(\n    cmd,\n    capture_output=True,\n    text=True,\n    cwd=str(cwd),\n    timeout=300,            # <-- :98, hard-coded, no override\n)\nexcept subprocess.TimeoutExpired:\n    return False, \"timed out after 300 s\"\n```\n\nMeasured on 2026-07-24 in this repo, running the gate's exact pytest command\n(`uv run python -m pytest -q --no-cov`):\n\n```\n5439 passed, 1 skipped in 264.22s\n```\n\n264 s against a 300 s cap. The other five steps (ruff format, ruff lint, mypy, and the remaining\nmanifest entries) are far below the cap and are not at risk.\n\n## Observed failure\n\nDuring the #626 evidence push, the gate reported `FAIL: pytest / timed out after 300 s`. The suite\nwas not broken and nothing was w",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/issue-gatetimeout.md",
+    "ref": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/issue-gatetimeout.md",
+    "title": "issue-gatetimeout",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "enhancement(saga): pre-push gate step timeout is hard-coded at 300s with no headroom or override",
+  "updated_at": "2026-07-24T23:40:42.143073+00:00"
+}

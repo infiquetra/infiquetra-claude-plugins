@@ -1,0 +1,68 @@
+{
+  "approval_state": "needs_operator_approval",
+  "created_at": "2026-07-24T12:21:44.671557+00:00",
+  "created_issue_number": 652,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/652",
+  "draft_path": "docs/sdlc-issue-drafts/2026-07-24-defect-saga-board-sync-clis-resolve-mission-cont-2.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/eager-resolve-before-gate-body.md",
+    "Technical Risk": "low"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "low",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-07-24-defect-saga-board-sync-clis-resolve-mission-cont-2.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "## Problem\n\nSince #620, the two certificate-gated board-sync CLIs resolve the mission-control root\n**eagerly** \u2014 `resolve_mission_control_root()` \u2014 and `return 1` on `RuntimeError`, **before** the\ncertificate gate is ever evaluated. The gate lives *inside* `authorize_and_write` /\n`reconcile_and_correct` and returns `{\"status\": \"gated\"}` with no write, never touching the\nwriter, so for a gated op the resolved root is unused work.\n\nNet effect: in an environment where mission-control is unresolvable \u2014 a consumer repo with no\ninstall, or the KTD6 stale-fleet-core case #620 itself guards for \u2014 an op that would be **GATED**\n(the certificate deliberately withholding the write pending operator confirmation) now aborts at\nresolution with **exit 1** instead of returning `gated` (exit 0). The CLI exit-code contract flips\nfor the gated-op-in-unresolvable-environment case.\n\n## Impact\n\nLow, bounded, fail-loud \u2014 no data loss, no wrong-target write. The observable regression is\ntwofold: (a) exit code `0 \u2192 1` for a gated op in an unresolvable environment, which can surprise a\ncaller/script that treats `gated` (exit 0) as a non-fatal, expected outcome; (b) the surfaced\nerror is \"mission-control unre",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/eager-resolve-before-gate-body.md",
+    "ref": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/eager-resolve-before-gate-body.md",
+    "title": "eager-resolve-before-gate-body",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "defect(saga): board-sync CLIs resolve mission-control before the certificate gate \u2014 an unresolvable install turns a GATED op into a hard error (exit 1)",
+  "updated_at": "2026-07-24T12:21:53.885844+00:00"
+}

@@ -1,0 +1,65 @@
+{
+  "approval_state": "needs_operator_approval",
+  "created_at": "2026-07-30T11:37:49.818227+00:00",
+  "created_issue_number": 679,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/679",
+  "draft_path": "docs/sdlc-issue-drafts/2026-07-30-enhancement-saga-u2-re-key-teardown-dispositions.md",
+  "handoff_maturity": "plan-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Objective": "defects-claude-plugins"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "high",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-07-30-enhancement-saga-u2-re-key-teardown-dispositions.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "### Objective\nStrip the fleet lease broker out of saga's non-skippable teardown contract in\n`plugins/saga/scripts/team_teardown.py`, while preserving the disposition vocabulary teardown's\nevidence refs are built from.\n\nUnit **U2** of seven under parent issue #677 (retire the fleet lease broker). Plan:\n`docs/plans/2026-07-30-issue-677-lease-broker-retirement-plan.md`. Board objective:\n`defects-claude-plugins`.\n\n### Intent\nThis unit does **not** need to preserve worktree reclamation, because teardown never performed any.\nAll three production call sites construct `production_adapters(broker)` with no `worktree_reaper`, so\nthe sweep's reap branch is unreachable in production and every worktree is already left `retained`.\nWhat must survive is the **disposition reporting**, not a removal capability that was never wired.\n\nThe file has **13 broker-touching sites**: 11 direct broker-method calls at `:532`, `:806`, `:931`,\n`:1036`, `:1072`, `:1105`, `:1214`, `:1228`, `:1260`, `:1311`, `:1403`, plus 2 invocations of the\n`_current_head(broker, \u2026)` helper (defined `:1063`) at `:1253` and `:1270`. The methods are `inspect`\n\u00d72, `close_owner_admission` \u00d72, `inspect_owner_admission`, `release` \u00d74, ",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "docs/plans/2026-07-30-issue-677-lease-broker-retirement-plan.md",
+    "ref": "docs/plans/2026-07-30-issue-677-lease-broker-retirement-plan.md",
+    "title": "Retire the fleet lease broker \u2014 implementation unit U2",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "title": "enhancement(saga): U2 re-key teardown dispositions on worktree path, drop the broker",
+  "updated_at": "2026-07-30T11:38:00.525567+00:00"
+}

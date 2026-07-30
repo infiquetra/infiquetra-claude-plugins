@@ -1,0 +1,65 @@
+{
+  "approval_state": "needs_operator_approval",
+  "created_at": "2026-07-30T11:38:56.808646+00:00",
+  "created_issue_number": 684,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/684",
+  "draft_path": "docs/sdlc-issue-drafts/2026-07-30-enhancement-fleet-core-u7-delete-the-lease-broke.md",
+  "handoff_maturity": "plan-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Objective": "defects-claude-plugins"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "high",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-07-30-enhancement-fleet-core-u7-delete-the-lease-broke.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "### Objective\nDelete the fleet lease broker and its orphan-evidence companion \u2014 10,203 lines across four files \u2014\nadd a guard test that prevents the broker being reintroduced, and move all three plugins' release\nsurfaces in one pull request.\n\nUnit **U7** of seven under parent issue #677 (retire the fleet lease broker). This is the payload unit\nand the last to land. Plan: `docs/plans/2026-07-30-issue-677-lease-broker-retirement-plan.md`. Board\nobjective: `defects-claude-plugins`.\n\n### Intent\n**The deletions** \u2014 10,203 lines out:\n\n| File | Lines |\n|---|---|\n| `plugins/fleet-core/scripts/fleet_commons/lease_broker.py` | 4,731 |\n| `plugins/fleet-core/scripts/fleet_commons/orphan_evidence.py` | 1,578 |\n| `tests/test_fleet_lease_broker.py` | 2,709 |\n| `tests/test_orphan_fencing.py` | 1,185 |\n\n**The re-add guard is this unit's real product**, and it must scan **resolved module paths, not only\nthe repository tree.** Defect #642 was `fleet_commons_shim` rung 3 trusting a stale\n`installed_plugins.json` and resurrecting an old broker out of a plugin cache. A guard that only greps\n`plugins/` would not have caught that, which is the whole reason the guard exists.\n\n**The release surfaces**, all m",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "docs/plans/2026-07-30-issue-677-lease-broker-retirement-plan.md",
+    "ref": "docs/plans/2026-07-30-issue-677-lease-broker-retirement-plan.md",
+    "title": "Retire the fleet lease broker \u2014 implementation unit U7",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "title": "enhancement(fleet-core): U7 delete the lease broker and orphan evidence, add the re-add guard",
+  "updated_at": "2026-07-30T11:39:08.327889+00:00"
+}

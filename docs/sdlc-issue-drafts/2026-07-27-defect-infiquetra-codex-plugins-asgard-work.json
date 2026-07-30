@@ -1,0 +1,67 @@
+{
+  "approval_state": null,
+  "created_at": "2026-07-27T00:55:33.394894+00:00",
+  "created_issue_number": 66,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-codex-plugins/issues/66",
+  "draft_path": "docs/sdlc-issue-drafts/2026-07-27-defect-infiquetra-codex-plugins-asgard-work.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": "implement",
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-codex-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "defects-codex-plugins"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-codex-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-07-27-defect-infiquetra-codex-plugins-asgard-work.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ntitle: \"defect(tests): test_outcome_cross_runtime lacks the _pin_script_modules repair \u2014 one test fails only in full-suite order\"\nrepo: infiquetra-codex-plugins\ntype: defect\nteam: asgard\nproject: operations\nstatus: Shaping\nlabels: defect, hermes-task, needs-plan\nrisk: medium\nmode: implement\nhandoff_maturity: requirements-ready\n---\n\n# defect(tests): test_outcome_cross_runtime lacks the _pin_script_modules repair \u2014 one test fails only in full-suite order\n\n### Objective\n\nMake `tests/test_outcome_cross_runtime.py` order-independent by giving it the same per-test module\nre-pinning every sibling `test_outcome_*` module already has, so the authoritative full-suite gate in\nthis CI-free repository reports a true `0 failed`.\n\n### Intent\n\n`tests/test_outcome_cross_runtime.py::TestAttachedAdvance::test_frontier_change_halts_rather_than_broadening`\n**fails inside the full suite and passes when run alone**, in a clean detached worktree at the\npristine pre-`#54` commit `d0982fe`. It is not introduced by any recent port; it was measured as the\nsingle failure in the `#54` baseline run (`1 failed, 2309 passed, 4 skipped`) and reproduced again in\nthe post-merge run.\n\nThis is the codex#45 P1 #3 de",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/codex-defect-order-dependence.md",
+    "ref": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/codex-defect-order-dependence.md",
+    "title": "defect(tests): test_outcome_cross_runtime lacks the _pin_script_modules repair \u2014 one test fails only in full-suite order",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "defect(tests): test_outcome_cross_runtime lacks the _pin_script_modules repair \u2014 one test fails only in full-suite order",
+  "updated_at": "2026-07-27T00:55:46.578586+00:00"
+}

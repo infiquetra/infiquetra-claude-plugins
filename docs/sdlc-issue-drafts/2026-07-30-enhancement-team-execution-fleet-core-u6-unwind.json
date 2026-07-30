@@ -1,0 +1,65 @@
+{
+  "approval_state": "needs_operator_approval",
+  "created_at": "2026-07-30T11:38:43.376517+00:00",
+  "created_issue_number": 683,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/683",
+  "draft_path": "docs/sdlc-issue-drafts/2026-07-30-enhancement-team-execution-fleet-core-u6-unwind.md",
+  "handoff_maturity": "plan-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Objective": "defects-claude-plugins"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "high",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-07-30-enhancement-team-execution-fleet-core-u6-unwind.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "### Objective\nRemove the fleet lease broker from the `team-execution` plugin, and decouple the liveness engine from\nthe lease concept by renaming the `lease_ttl_seconds` observation field to `ttl_seconds` across every\nproducer and consumer of the serialized event schema \u2014 **all five files in one commit**.\n\nUnit **U6** of seven under parent issue #677 (retire the fleet lease broker). Plan:\n`docs/plans/2026-07-30-issue-677-lease-broker-retirement-plan.md`. Board objective:\n`defects-claude-plugins`.\n\n### Intent\nTwo pieces of work in one unit, because the rename cannot be split.\n\n**Piece one \u2014 the team-execution consumers.** `lease_protocol.py` (234 lines, loads at `:19`) is a\ncandidate for whole-file deletion; confirm whether anything in it survives the lease concept.\n`liveness_protocol.py` (798 lines, ~9 sites at `:242`, `:257`, `:258`, `:462`, and the wire producer at\n`:291`) takes `lease_broker: Any | None = None` as an injected dependency at `:242` and constructs a\ndefault at `:258` \u2014 **remove the parameter rather than defaulting it to `None` forever.**\n\n**Piece two \u2014 the rename, and why it is dangerous.** `lease_ttl_seconds` is not a local field. It is\nparsed off the wire, serial",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "docs/plans/2026-07-30-issue-677-lease-broker-retirement-plan.md",
+    "ref": "docs/plans/2026-07-30-issue-677-lease-broker-retirement-plan.md",
+    "title": "Retire the fleet lease broker \u2014 implementation unit U6",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "title": "enhancement(team-execution,fleet-core): U6 unwind lease_protocol and rename lease_ttl_seconds",
+  "updated_at": "2026-07-30T11:38:54.057677+00:00"
+}

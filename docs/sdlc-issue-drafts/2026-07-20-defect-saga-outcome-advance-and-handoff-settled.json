@@ -1,0 +1,85 @@
+{
+  "approval_state": null,
+  "created_at": "2026-07-20T15:29:20.846037+00:00",
+  "created_issue_number": 628,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/628",
+  "draft_path": "docs/sdlc-issue-drafts/2026-07-20-defect-saga-outcome-advance-and-handoff-settled.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/v2-blindness-defect.md",
+    "Technical Risk": "high"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "'Acceptance criteria' is not executable (card_validator requires each criterion to name a runnable check -- a `code span` or a ``` fenced block -- with its expected result)",
+      "'Verification' has no fenced code block (card_validator requires at least one ``` block)",
+      "'Files expected to change' has no path-like line (card_validator requires at least one `dir/file` style entry)",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Inputs inventory' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Failure modes / pre-mortem' contains only placeholder text",
+      "'Stop conditions' contains only placeholder text",
+      "'Verification' contains only placeholder text"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "high",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-07-20-defect-saga-outcome-advance-and-handoff-settled.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "# defect(saga): outcome advance and handoff settled-guard are blind to codex-native outcome.dispatch.v2 records \u2014 cross-runtime double dispatch\n\n## Objective\n\nMake the Claude runtime's local dispatch derivation aware of the codex-native\n`outcome.dispatch.v2` ledger vocabulary so that a native intent blocks re-dispatch as in-flight\nand a protected `ack_kind=launched` acknowledgement counts as settlement \u2014 restoring the\ncross-runtime \"exactly one dispatch side effect\" invariant (R5/R6 of the cross-runtime\nacceptance plan) on a shared clone.\n\n## Where this comes from\n\nU4 (`u4-race`) of the cross-runtime Outcome acceptance harness (#605, outcome\nlease-safe-runtime-continuity), run against the pinned runtimes Claude `794b4da6` (saga\n0.105.0) and Codex `f3e1af75` (saga 0.78.0+codex.20260720120109). Harness commit `24501ba` on\nbranch `work/605-cross-runtime-acceptance`; scenario facts are recorded in the acceptance\nevidence bundle and `docs/work-sessions/2026-07-20-issue-605-acceptance-progress.md`.\n\nTwo scenarios fail against production truth:\n\n- **race-codex-first**: codex `advance` writes its native v2 intent; the launched runner\n  produces the write-once backend effect and a receipt-v",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/v2-blindness-defect.md",
+    "ref": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/v2-blindness-defect.md",
+    "title": "defect(saga): outcome advance and handoff settled-guard are blind to codex-native outcome.dispatch.v2 records \u2014 cross-runtime double dispatch",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "defect(saga): outcome advance and handoff settled-guard are blind to codex-native outcome.dispatch.v2 records \u2014 cross-runtime double dispatch",
+  "updated_at": "2026-07-20T15:29:39.501264+00:00"
+}

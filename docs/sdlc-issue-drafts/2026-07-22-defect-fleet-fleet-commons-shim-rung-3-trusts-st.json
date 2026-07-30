@@ -1,0 +1,82 @@
+{
+  "approval_state": null,
+  "created_at": "2026-07-22T23:01:36.811286+00:00",
+  "created_issue_number": 642,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/642",
+  "draft_path": "docs/sdlc-issue-drafts/2026-07-22-defect-fleet-fleet-commons-shim-rung-3-trusts-st.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/shim-skew-defect-source.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "'Acceptance criteria' is not executable (card_validator requires each criterion to name a runnable check -- a `code span` or a ``` fenced block -- with its expected result)",
+      "'Verification' has no fenced code block (card_validator requires at least one ``` block)",
+      "'Files expected to change' has no path-like line (card_validator requires at least one `dir/file` style entry)",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text",
+      "Missing author-visible risk metadata"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": null,
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-07-22-defect-fleet-fleet-commons-shim-rung-3-trusts-st.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "# defect(fleet): fleet_commons_shim rung 3 trusts a stale installed_plugins.json, silently resurrecting an old fleet-core broker\n\n## Summary\n\n`fleet_commons_shim` resolves the fleet-core root through a four-rung ladder in which rung 3 \u2014\n`~/.claude/plugins/installed_plugins.json` \u2014 outranks the cache-sibling highest-semver scan\n(rung 4). The Claude Code harness no longer keeps that registry current: `/plugin marketplace\nupdate` downloads new plugin versions into `~/.claude/plugins/cache/` and `/reload-plugins`\nhot-reloads hooks, but **neither rewrites the install records**, and `claude plugin update`\nreports \"already at the latest version\" without touching the file either. The result: after any\nsaga/fleet-core release, every consumer that resolves through the shim silently loads the OLD\nfleet-core broker even though the new one is on disk in the cache.\n\n## Evidence (live incident, 2026-07-22)\n\nHit while running the #615 R9 armed-hooks acceptance canary in session\n`a2c17e16-6a69-4ff8-a9f6-dc347823861a`:\n\n- saga 0.110.0 hooks (freshly reloaded) resolved fleet-core **0.17.0** via rung 3, because the\n  registry records were still pinned to the pre-#641 install paths.\n- Symptom: workflow",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/shim-skew-defect-source.md",
+    "ref": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/shim-skew-defect-source.md",
+    "title": "defect(fleet): fleet_commons_shim rung 3 trusts a stale installed_plugins.json, silently resurrecting an old fleet-core broker",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "defect(fleet): fleet_commons_shim rung 3 trusts stale installed_plugins.json, silently resurrecting an old fleet-core broker",
+  "updated_at": "2026-07-22T23:01:46.805800+00:00"
+}

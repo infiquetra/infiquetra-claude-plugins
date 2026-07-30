@@ -1,0 +1,65 @@
+{
+  "approval_state": "needs_operator_approval",
+  "created_at": "2026-07-30T11:37:36.341412+00:00",
+  "created_issue_number": 678,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/678",
+  "draft_path": "docs/sdlc-issue-drafts/2026-07-30-enhancement-saga-u1-unwind-lease-settlement-and.md",
+  "handoff_maturity": "plan-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Objective": "defects-claude-plugins"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-07-30-enhancement-saga-u1-unwind-lease-settlement-and.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "### Objective\nRemove the fleet lease broker from saga's dispatch-settlement and successor-handoff path, so\n`plugins/saga/scripts/outcome_compat.py` records settlement outcomes without a fencing token.\n\nUnit **U1** of seven under parent issue #677 (retire the fleet lease broker). Plan:\n`docs/plans/2026-07-30-issue-677-lease-broker-retirement-plan.md`. Board objective:\n`defects-claude-plugins`.\n\n### Intent\nSettlement exists to give dispatched work at-least-once accounting. It did that by verifying a\nresource-ref/token pair issued by the broker. With the broker gone, that pair does not exist, so the\nverification has nothing to check.\n\nDelete the lease verification from the six call sites and let settlement record outcomes directly.\nThe calls are `verify`, `prepare_agent_settlement`, `commit_agent_settlement`, `inspect_resource_head`,\n`acquire_successor`, `verify` \u2014 at `:1328`, `:1393`, `:1413`, `:1545`, `:1643`, `:1664`.\n\nWhere a function's only job was to thread a token through, delete the function rather than leaving a\npass-through wrapper behind.\n\nU1 through U4 are file-disjoint and may run in parallel. This unit blocks U5.\n\n### Out-of-scope / non-goals\n- Do not touch `plugins/saga",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "docs/plans/2026-07-30-issue-677-lease-broker-retirement-plan.md",
+    "ref": "docs/plans/2026-07-30-issue-677-lease-broker-retirement-plan.md",
+    "title": "Retire the fleet lease broker \u2014 implementation unit U1",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "title": "enhancement(saga): U1 unwind lease settlement and successor handoff in outcome_compat",
+  "updated_at": "2026-07-30T11:37:47.070179+00:00"
+}

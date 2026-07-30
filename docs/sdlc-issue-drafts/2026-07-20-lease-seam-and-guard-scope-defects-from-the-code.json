@@ -1,0 +1,82 @@
+{
+  "approval_state": null,
+  "created_at": "2026-07-20T13:57:05.285327+00:00",
+  "created_issue_number": 627,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/627",
+  "draft_path": "docs/sdlc-issue-drafts/2026-07-20-lease-seam-and-guard-scope-defects-from-the-code.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/upstream-issue-draft.md",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "'Acceptance criteria' is not executable (card_validator requires each criterion to name a runnable check -- a `code span` or a ``` fenced block -- with its expected result)",
+      "'Verification' has no fenced code block (card_validator requires at least one ``` block)",
+      "'Files expected to change' has no path-like line (card_validator requires at least one `dir/file` style entry)",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-07-20-lease-seam-and-guard-scope-defects-from-the-code.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "# DRAFT \u2014 upstream Claude issue (infiquetra/infiquetra-claude-plugins), filed from PA-2 review per KTD7 upstream-first\n\nTitle: defect(saga/fleet-core): lease seam overclaims exclusion; dispatch hot path lacks a DispatcherError arm; ancestor guards disarmed by resolve() scope\n\nLabels: defect, hermes-task\nBody:\n\n## Where this comes from\n\nProgrammatic code review of infiquetra-codex-plugins PR for issue #43 (PA-2 of the\ncross-runtime-acceptance plan, outcome lease-safe-runtime-continuity). Three validated findings,\none defect discovered during the remediation, and one advisory footnote indict code that is\nshared with or byte-identical to this repo at origin/main `794b4da6` (saga 0.105.0 /\nfleet-core 0.16.0). Per the upstream-first discipline (acceptance plan KTD7,\nprecedent: codex-parity review routing), the root causes are filed here; the codex copies stay\nbyte-faithful until this repo ships the fix and the port re-freezes.\n\n## Finding 1 \u2014 lease admission is supersede-on-acquire, not exclusion (validated P1 in the codex review)\n\n`LeaseBroker.acquire_agent` calls `_drop_superseded_resource_lease` (fleet-core\n`fleet_commons/lease_broker.py:2274` codex-side; same code this repo ported f",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/upstream-issue-draft.md",
+    "ref": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/upstream-issue-draft.md",
+    "title": "DRAFT \u2014 upstream Claude issue (infiquetra/infiquetra-claude-plugins), filed from PA-2 review per KTD7 upstream-first",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "Lease seam and guard-scope defects from the codex PA-2 review: supersede-on-acquire overclaim, missing DispatcherError arm, resolve-scope guard bypass, reducer-invisible halt records",
+  "updated_at": "2026-07-20T13:57:25.059112+00:00"
+}

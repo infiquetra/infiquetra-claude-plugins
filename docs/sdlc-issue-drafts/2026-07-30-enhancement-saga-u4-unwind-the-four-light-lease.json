@@ -1,0 +1,65 @@
+{
+  "approval_state": "needs_operator_approval",
+  "created_at": "2026-07-30T11:38:16.383507+00:00",
+  "created_issue_number": 681,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/681",
+  "draft_path": "docs/sdlc-issue-drafts/2026-07-30-enhancement-saga-u4-unwind-the-four-light-lease.md",
+  "handoff_maturity": "plan-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Objective": "defects-claude-plugins"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-07-30-enhancement-saga-u4-unwind-the-four-light-lease.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "### Objective\nRemove the fleet lease broker from saga's four remaining light consumers \u2014 `outcome.py`,\n`second_opinion.py`, `outcome_dispatcher.py`, and `workflow_emitter.py` \u2014 and re-narrow the exception\nhandler in the emitter that currently catches two lease exception types that are about to stop\nexisting.\n\nUnit **U4** of seven under parent issue #677 (retire the fleet lease broker). Plan:\n`docs/plans/2026-07-30-issue-677-lease-broker-retirement-plan.md`. Board objective:\n`defects-claude-plugins`.\n\n### Intent\nThese four files are grouped because none needs restructuring \u2014 the work is mostly deleting a broker\nconstruction and an `acquire_agent` call.\n\n- `plugins/saga/scripts/outcome.py` \u2014 2 sites: `:1853` broker construction, `:2810` `acquire_agent`.\n- `plugins/saga/scripts/second_opinion.py` \u2014 ~3 sites.\n- `plugins/saga/scripts/outcome_dispatcher.py` \u2014 ~3 sites; loads at `:88`, `:259`, `:281`.\n- `plugins/saga/scripts/workflow_emitter.py` \u2014 sites at `:117`, `:151`, `:186` broker construction,\n  **`:187` the live `renew_batch`**, `:198`, `:254`, `:255`.\n\n`workflow_emitter.py` is the exception to \"mostly deleting\". It holds the live `renew_batch` call at\n`:187`, and it catches `lease",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "docs/plans/2026-07-30-issue-677-lease-broker-retirement-plan.md",
+    "ref": "docs/plans/2026-07-30-issue-677-lease-broker-retirement-plan.md",
+    "title": "Retire the fleet lease broker \u2014 implementation unit U4",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "title": "enhancement(saga): U4 unwind the four light lease consumers and the emitted contract",
+  "updated_at": "2026-07-30T11:38:27.653796+00:00"
+}

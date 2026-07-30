@@ -1,0 +1,68 @@
+{
+  "approval_state": "needs_operator_approval",
+  "created_at": "2026-07-23T12:06:49.035261+00:00",
+  "created_issue_number": 645,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/645",
+  "draft_path": "docs/sdlc-issue-drafts/2026-07-23-defect-fleet-macos-boot-identity-splits-into-inc-2.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/issue-bodies/boot-id-split.md",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-07-23-defect-fleet-macos-boot-identity-splits-into-inc-2.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "## Problem\n\nmacOS boot identity is derived preferentially from `sysctl -n kern.boottime`\n(`darwin:<sha256>`), falling back to a utmpx BOOT_TIME read (`darwin-utmpx:<sec>:<usec>`)\n(`fleet_commons/lease_broker.py:487-515` at fleet-core 0.20.0). The two formats can never\ncompare equal \u2014 and on the same boot of jeff-mac-studio the underlying seconds even differ by\none (sysctl `1784373991` vs utmpx `1784373992`). Any process whose `sysctl` subprocess fails\n(PATH without /usr/sbin, sandbox, or fork pressure against the 2 s timeout) silently lands in\nthe other cohort.\n\n## Impact\n\n`_admission_expired` and `_expired_static` treat any boot_id mismatch as a stale boot, so a\nsingle utmpx-cohort process purges every sysctl-cohort lease and admission on its next locked\nwrite (and vice versa) \u2014 silent, machine-wide, and indistinguishable from TTL expiry in the\naftermath. Not confirmed as the trigger of a specific observed fault yet (the 2026-07-23 canary\nwipes were the async PostToolUse race), but it is a live structural hazard for every\nintermittent \"state vanished\" report.\n\n## Acceptance sketch\n\n- One canonical boot identity per boot regardless of derivation path (e.g. always prefer one\n  sourc",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/issue-bodies/boot-id-split.md",
+    "ref": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/issue-bodies/boot-id-split.md",
+    "title": "live: both derivations on the same host resolve one canonical identity",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "defect(fleet): macOS boot identity splits into incomparable sysctl/utmpx cohorts that silently purge each other's leases",
+  "updated_at": "2026-07-23T12:06:58.138307+00:00"
+}

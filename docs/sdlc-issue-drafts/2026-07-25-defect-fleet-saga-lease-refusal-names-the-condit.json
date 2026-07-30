@@ -1,0 +1,82 @@
+{
+  "approval_state": null,
+  "created_at": "2026-07-25T23:22:14.283268+00:00",
+  "created_issue_number": 661,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/661",
+  "draft_path": "docs/sdlc-issue-drafts/2026-07-25-defect-fleet-saga-lease-refusal-names-the-condit.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/lease-refusal-remedy-defect.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "'Acceptance criteria' is not executable (card_validator requires each criterion to name a runnable check -- a `code span` or a ``` fenced block -- with its expected result)",
+      "'Verification' has no fenced code block (card_validator requires at least one ``` block)",
+      "'Files expected to change' has no path-like line (card_validator requires at least one `dir/file` style entry)",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text",
+      "Missing author-visible risk metadata"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": null,
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-07-25-defect-fleet-saga-lease-refusal-names-the-condit.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "# defect(fleet,saga): lease refusal names the condition but never the remedy \u2014 operators patch installed hooks instead\n\n## Objective\n\nMake the fleet-lease refusal self-remedying at the point of failure. Today the message tells an\noperator what is missing and gives them no supported way forward, and the observed consequence is\nthat operators reach for an unsupported workaround that silently evaporates at the next release.\n\n## The defect\n\nWhen a subagent tries to claim a lease with no matching provisional reservation,\n`fleet_commons/lease_broker.py:2880` raises:\n\n```\nno live provisional reservation for session=<id>, agent_type=<kind>, batch_id=<batch>\n```\n\nBoth operator-facing surfaces in `plugins/saga/hooks/lease_lifecycle_hook.py` pass that string\nthrough and add nothing actionable:\n\n- `_halt()` (line 31, `PreToolUse`) prints\n  `[saga/fleet-lease] HALT \u2014 agent reservation refused before spawn: <message>` and exits 2.\n- `_warn_child()` (line 35, `SubagentStart`) wraps it as\n  `[saga/fleet-lease] No live fleet lease was bound: <message>. All delegated mutation tools will\n  fail closed; return control to the parent.`\n\nNeither surface states any of the three things the operator needs:\n",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/lease-refusal-remedy-defect.md",
+    "ref": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/lease-refusal-remedy-defect.md",
+    "title": "defect(fleet,saga): lease refusal names the condition but never the remedy \u2014 operators patch installed hooks instead",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "defect(fleet,saga): lease refusal names the condition but never the remedy \u2014 operators patch installed hooks instead",
+  "updated_at": "2026-07-25T23:22:22.804065+00:00"
+}

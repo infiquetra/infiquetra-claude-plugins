@@ -1,0 +1,65 @@
+{
+  "approval_state": "needs_operator_approval",
+  "created_at": "2026-07-30T11:38:03.358306+00:00",
+  "created_issue_number": 680,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/680",
+  "draft_path": "docs/sdlc-issue-drafts/2026-07-30-enhancement-saga-u3-unwind-lease-from-dispatch-a.md",
+  "handoff_maturity": "plan-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Objective": "defects-claude-plugins"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "high",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-07-30-enhancement-saga-u3-unwind-lease-from-dispatch-a.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "### Objective\nRemove the fleet lease broker from saga's engine dispatch and per-leaf worktree routing \u2014\n`plugins/saga/scripts/engine_dispatch.py` and `plugins/saga/scripts/outcome_worktrees.py` \u2014 and ship a\ndocumented operator-facing reclamation path to replace the one automatic worktree reaper that\nactually runs in production.\n\nUnit **U3** of seven under parent issue #677 (retire the fleet lease broker). This is the largest unit\nby call-site count and the one where the real reclamation loss lands. Plan:\n`docs/plans/2026-07-30-issue-677-lease-broker-retirement-plan.md`. Board objective:\n`defects-claude-plugins`.\n\n### Intent\nThese are the two files where broker use is genuinely threaded through the logic rather than\nlocalized: `engine_dispatch.py` (2,586 lines, ~23 sites; loads at `:799`, `:1043`, `:1960`, `:2453`)\nand `outcome_worktrees.py` (980 lines, ~16 sites; imports at `:47`).\n\n**The loader looks degradation-tolerant and is not.** `engine_dispatch.py:800-804` converts a graceful\n`None` into a raised `DispatchError`, and `_require_lease_protocol()` at `:805` additionally pins\n`_REQUIRED_LEASE_PROTOCOL_VERSION`. There is no existing no-lease path to fall back into. Each of the\nf",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "docs/plans/2026-07-30-issue-677-lease-broker-retirement-plan.md",
+    "ref": "docs/plans/2026-07-30-issue-677-lease-broker-retirement-plan.md",
+    "title": "Retire the fleet lease broker \u2014 implementation unit U3",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "title": "enhancement(saga): U3 unwind lease from dispatch and per-leaf worktree routing",
+  "updated_at": "2026-07-30T11:38:13.653583+00:00"
+}

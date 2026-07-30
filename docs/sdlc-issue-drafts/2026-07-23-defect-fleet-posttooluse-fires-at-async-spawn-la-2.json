@@ -1,0 +1,68 @@
+{
+  "approval_state": "needs_operator_approval",
+  "created_at": "2026-07-23T12:06:36.515177+00:00",
+  "created_issue_number": 644,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/644",
+  "draft_path": "docs/sdlc-issue-drafts/2026-07-23-defect-fleet-posttooluse-fires-at-async-spawn-la-2.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/issue-bodies/async-race.md",
+    "Technical Risk": "high"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "high",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-07-23-defect-fleet-posttooluse-fires-at-async-spawn-la-2.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "## Problem\n\nWith the harness launching Agent/Task subagents asynchronously (tool result returns at launch,\nnot completion), the PostToolUse[Agent|Task] lifecycle hook destroys the child's lease before\nthe child can claim it, roughly half the time. Three consecutive live spawns failed during the\n#616 R8 rollout canary (2026-07-23); a 100 ms registry watcher showed the healthy PreToolUse\nreservation and the session admission wiped in a single write 101-156 ms after reservation \u2014\nexactly when the async Agent call returned its launch metadata.\n\n## Mechanism (pinned, line-anchored at fleet-core 0.20.0)\n\nPostToolUse -> `record_hook_parent` (saga adapter `lease_broker.py:379-394`) -> broker\n`record_parent_completed` (`fleet_commons/lease_broker.py:3895`):\n- a matching lease with `agent_id is None` (reservation not yet claimed) is treated as\n  \"spawn never happened\" and removed via `_complete_foreground_lease` (:3913-3921);\n- if the session then has no live agents, its admission is popped in the same write\n  (:3924-3927).\n\nThe contract assumes PostToolUse is a completion signal. For async spawns it is a launch\nsignal, so the cleanup races SubagentStart's claim; when cleanup wins the child ",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/issue-bodies/async-race.md",
+    "ref": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/issue-bodies/async-race.md",
+    "title": "live: N consecutive async Agent spawns under armed hooks all bind and mutate",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "defect(fleet): PostToolUse fires at async-spawn launch and releases the unclaimed reservation + session admission (race with SubagentStart claim)",
+  "updated_at": "2026-07-23T12:06:46.636057+00:00"
+}

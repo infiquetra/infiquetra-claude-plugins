@@ -1,0 +1,68 @@
+{
+  "approval_state": "needs_operator_approval",
+  "created_at": "2026-07-23T12:07:23.990036+00:00",
+  "created_issue_number": 648,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/648",
+  "draft_path": "docs/sdlc-issue-drafts/2026-07-23-enhancement-saga-verifier-lease-health-as-refute-2.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/issue-bodies/panel-validity.md",
+    "Technical Risk": "low"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "low",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-07-23-enhancement-saga-verifier-lease-health-as-refute-2.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "## Problem\n\nA refute-mandate verify panel whose verifiers lose their fleet lease (Bash fenced) can only\nrefute quantitative claims \u2014 it cannot execute tests \u2014 so machinery casualties read as\n\"refuted 3/3\" and kill the unit even when the work is correct. During #616 this happened on\nfour consecutive passes for U1 (four distinct lease-machinery faults), forcing an operator\nadjudication; during the #643 code review 3 of 8 sandboxed subagents hit the same fence\nmid-run.\n\n## Proposal\n\nMake verifier lease health a precondition of panel validity in the emitter/panel contract:\n\n- Each verifier reports whether its execution tooling (Bash) was live for the claims it judged.\n- A refute verdict produced without working tooling for a quantitative claim counts as\n  \"unverifiable\", not \"refuted\"; the panel goes under-strength instead of failing the unit.\n- Under-strength handling: re-spawn the casualty (bounded retries) or surface an explicit\n  operator gate, never a silent gate failure.\n\n## Evidence\n\n- `docs/work-sessions/2026-07-22-issue-616-worktree-write-fence-scoping.md` (durable machinery\n  finding 2; operator decision A record)\n\n### Files expected to change\n\n- `plugins/saga/scripts/executi",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/issue-bodies/panel-validity.md",
+    "ref": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/issue-bodies/panel-validity.md",
+    "title": "rehearsal: a panel with one fenced verifier goes under-strength instead of failing the unit",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "enhancement(saga): verifier lease health as refute-panel validity precondition (under-strength instead of false refute)",
+  "updated_at": "2026-07-23T12:07:32.710237+00:00"
+}

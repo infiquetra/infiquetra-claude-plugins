@@ -1,0 +1,68 @@
+{
+  "approval_state": "needs_operator_approval",
+  "created_at": "2026-07-23T12:07:11.767972+00:00",
+  "created_issue_number": 647,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/647",
+  "draft_path": "docs/sdlc-issue-drafts/2026-07-23-defect-fleet-worktree-declared-reservation-claim.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/issue-bodies/unfenced-edge.md",
+    "Technical Risk": "low"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "low",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-07-23-defect-fleet-worktree-declared-reservation-claim.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "## Problem\n\nA reservation declared `isolation='worktree'` that is later claimed with no `worktree_root`\nyields an **unfenced** lease: the claim's fence branch stamps only when a root is available, so\nthe declared-isolation intent silently degrades to no write fence (fleet-core 0.20.0\n`fleet_commons/lease_broker.py:2692` fall-through).\n\nConfirmed **pre-existing** by the #643 code review (finding 2, deferred advisory): the 0.19.0\nbaseline had the identical fall-through with no isolation gate, and the shipped saga adapter\npath cannot reach it (`_canonical_cwd` raises rather than returning None). Risk is confined to\nfuture direct broker callers or alternative adapters.\n\n## Acceptance sketch\n\n- A claim for a `isolation='worktree'` reservation with no resolvable worktree_root fails loud\n  (LeaseBrokerError) instead of granting an unfenced lease.\n- Regression test pinning the refusal.\n\n## Evidence\n\n- `docs/code-reviews/2026-07-23-issue-616-worktree-write-fence-scoping-code-review.md`\n  (finding 2, CONFIRMED / pre-existing)\n\n### Files expected to change\n\n- `plugins/fleet-core/scripts/fleet_commons/lease_broker.py` \u2014 claim fence branch (:2691-2700)\n- Release surfaces: plugin.json, marketpla",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/issue-bodies/unfenced-edge.md",
+    "ref": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/a2c17e16-6a69-4ff8-a9f6-dc347823861a/scratchpad/issue-bodies/unfenced-edge.md",
+    "title": "unfenced-edge",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "defect(fleet): worktree-declared reservation claimed without worktree_root yields an unfenced lease",
+  "updated_at": "2026-07-23T12:07:21.500010+00:00"
+}

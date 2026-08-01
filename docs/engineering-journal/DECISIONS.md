@@ -1,5 +1,23 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-08-01
+
+### Claude Code forwards profile influence through Hermes; it does not implement profile authority {#hermes-profile-evolution-01}
+
+**Decision.** The `hermes-profile-evolution` plugin has one mutation-related action: invoke the
+canonical `hermes profile-request` command with a closed version-1 JSON envelope on standard input.
+It carries no profile credentials, target mutation code, Kanban writer, ledger, model/provider
+override, or caller-selected host. Before accepting a proposal it requires a compatible canonical
+health response. Its Claude Code `PreToolUse` hook blocks recognizable direct file-tool edits when
+the Team Mimir ownership classifier reports profile-owned, mixed, unknown, or prohibited custody.
+
+**Rationale.** The harness can suggest behavior but cannot stand in for a profile's native session,
+decision, or exact mutation evidence. Standard-input transport preserves option-shaped text,
+newlines, and shell metacharacters without turning proposal content into a command.
+
+**Boundary.** The blocking hook covers Claude Code file-edit tools only. It does not claim to
+intercept Bash or an external editor; those paths must classify ownership before writing.
+
 ## 2026-07-29
 
 ### External agents get the same trust posture as native agents; write collisions are a planning problem {#external-agents-like-native-671}

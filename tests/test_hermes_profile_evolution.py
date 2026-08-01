@@ -120,7 +120,9 @@ def test_all_mutating_actions_use_healthy_canonical_doctor_and_standard_input(
     )
     assert calls[0] == (["doctor", "--target", "brokkr"], None)
     assert calls[1][0][0] == action
-    assert b"$(not-run)" in calls[1][1]
+    payload = calls[1][1]
+    assert payload is not None
+    assert b"$(not-run)" in payload
     if action == "reply":
         assert calls[1][0] == ["reply", "--message", "--message; $(not-run)"]
 

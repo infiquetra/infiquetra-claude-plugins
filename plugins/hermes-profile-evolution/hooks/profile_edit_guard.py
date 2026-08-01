@@ -66,7 +66,12 @@ def _validate_report(report: object) -> dict[str, Any]:
     if not isinstance(report, dict) or set(report) != CLASSIFIER_RESPONSE_KEYS:
         raise RuntimeError("ownership classifier returned an incompatible response")
     category, disposition = report.get("category"), report.get("disposition")
-    if report.get("schema_version") != 1 or DISPOSITION_BY_CATEGORY.get(category) != disposition:
+    if (
+        not isinstance(category, str)
+        or not isinstance(disposition, str)
+        or report.get("schema_version") != 1
+        or DISPOSITION_BY_CATEGORY.get(category) != disposition
+    ):
         raise RuntimeError("ownership classifier returned an incompatible response")
     if (
         not isinstance(report.get("owner"), str)
@@ -81,7 +86,12 @@ def _validate_report(report: object) -> dict[str, Any]:
     for verdict in paths:
         if not isinstance(verdict, dict) or set(verdict) != PATH_RESPONSE_KEYS:
             raise RuntimeError("ownership classifier returned an incompatible response")
-        if DISPOSITION_BY_CATEGORY.get(verdict.get("category")) != verdict.get("disposition"):
+        category, disposition = verdict.get("category"), verdict.get("disposition")
+        if (
+            not isinstance(category, str)
+            or not isinstance(disposition, str)
+            or DISPOSITION_BY_CATEGORY.get(category) != disposition
+        ):
             raise RuntimeError("ownership classifier returned an incompatible response")
         if not all(
             isinstance(verdict.get(field), str) and verdict[field]

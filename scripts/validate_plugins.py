@@ -9,6 +9,10 @@ that referenced scripts exist and are executable.
 import sys
 from pathlib import Path
 
+from changelog_heading_lint import lint_fleet
+from check_release_surface_parity import check_parity
+from sync_marketplace import run as sync_marketplace
+
 # Color codes
 RED = "\033[0;31m"
 GREEN = "\033[0;32m"
@@ -63,6 +67,25 @@ def validate_plugin_file(plugin_path: Path, scripts_dir: Path) -> tuple[bool, li
     return len(errors) == 0, errors
 
 
+def validate_release_surfaces(repo_root: Path) -> list[str]:
+    """Reuse the authoritative marketplace, parity, and changelog checks."""
+    errors: list[str] = []
+    if sync_marketplace(
+        True, None, repo_root / ".claude-plugin/marketplace.json", repo_root / "plugins"
+    ):
+        errors.append("Marketplace is out of sync with plugin manifests")
+    drifted = check_parity(repo_root / ".claude-plugin/marketplace.json", repo_root / "plugins")
+    if drifted:
+        errors.append("Release surfaces are out of parity: " + ", ".join(drifted))
+    invalid_changelogs = lint_fleet(repo_root / "plugins")
+    if invalid_changelogs:
+        errors.append(
+            "Changelog grammar is invalid: "
+            + ", ".join(sorted(path.parent.name for path in invalid_changelogs))
+        )
+    return errors
+
+
 def main():
     """Main entry point."""
     print(f"\n{BOLD}🔍 Infiquetra Plugin Validator{RESET}")
@@ -81,10 +104,9 @@ def main():
     plugin_files = list(plugins_dir.glob("*.md"))
 
     if not plugin_files:
-        print(f"{YELLOW}⚠️  No plugin files found in {plugins_dir}{RESET}")
-        sys.exit(0)
-
-    print(f"{BLUE}Found {len(plugin_files)} plugin files to validate{RESET}\n")
+        print(f"{YELLOW}⚠️  No legacy plugin files found in {plugins_dir}{RESET}")
+    else:
+        print(f"{BLUE}Found {len(plugin_files)} plugin files to validate{RESET}\n")
 
     # Validate each plugin
     all_valid = True
@@ -101,6 +123,10 @@ def main():
 
             for error in errors:
                 print(f"  {RED}• {error}{RESET}")
+
+    for error in validate_release_surfaces(repo_root):
+        print(f"{RED}✗ {error}{RESET}")
+        all_valid = False
 
     # Summary
     print(f"\n{'═' * 45}")

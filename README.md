@@ -8,6 +8,7 @@ Claude Code plugins for Infiquetra development workflows.
 |--------|-------------|----------|
 | [deploy](plugins/deploy/) | Tag-promotion deploy, status, rollback, hotfix, and release-note workflows | Operations |
 | [home-lab-ops](plugins/home-lab-ops/) | Proxmox VE cluster ops, Ansible pre-flight, Ceph, monitoring guard, and vault helper | Infrastructure |
+| [hermes-profile-evolution](plugins/hermes-profile-evolution/) | Target-addressed Hermes profile-evolution suggestions with a supported direct-edit guard | Development |
 | [mission-control](plugins/mission-control/) | SDLC workflow manager: boards, prepared issues, project fields, labels, metrics, milestones | Development |
 | [redis-channel](plugins/redis-channel/) | Claude Code channel bridging sessions to external systems over Redis Streams | Development |
 | [saga](plugins/saga/) | Engineering lifecycle: Think, Plan & execute, Hand off, Review, and Improve & route | Development |

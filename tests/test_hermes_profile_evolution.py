@@ -13,7 +13,23 @@ import pytest
 
 ROOT = Path(__file__).parent.parent
 PLUGIN = ROOT / "plugins/hermes-profile-evolution"
-MIMIR_ROOT = ROOT.parent / "team-mimir"
+MIMIR_ROOT = Path("/verified/team-mimir")
+CANONICAL_README_REPORT = {
+    "category": "ordinary_repository",
+    "disposition": "normal_merge",
+    "owner": "mimir-engineer",
+    "paths": [
+        {
+            "category": "ordinary_repository",
+            "disposition": "normal_merge",
+            "owner": "mimir-engineer",
+            "path": "README.md",
+            "reason": "repository instruction or documentation surface",
+        }
+    ],
+    "reason": "all paths classify as ordinary_repository",
+    "schema_version": 1,
+}
 
 
 def _load(name: str, path: Path):
@@ -56,6 +72,21 @@ def _report(disposition: str, category: str) -> dict[str, object]:
             }
         ],
     }
+
+
+def _write_classifier_fixture(root: Path, report: dict[str, object]) -> None:
+    """Create the minimum verified Team Mimir surface for the hook contract."""
+    (root / "profiles").mkdir(parents=True)
+    classifier = root / "scripts/classify_profile_change.py"
+    classifier.parent.mkdir()
+    classifier.write_text(
+        "import json\n"
+        "import sys\n"
+        f"expected = {['--root', str(root), '--schema-version', '1', 'README.md']!r}\n"
+        "if sys.argv[1:] != expected:\n"
+        "    raise SystemExit(1)\n"
+        f"print(json.dumps({report!r}))\n"
+    )
 
 
 def test_envelope_matches_closed_digest_and_keeps_shell_text_as_data() -> None:
@@ -269,12 +300,15 @@ def test_guard_rejects_malformed_response_and_paths_outside_root(
 
 def test_guard_resolves_configured_root_and_runs_actual_classifier(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    monkeypatch.setenv("HERMES_TEAM_MIMIR_ROOT", str(MIMIR_ROOT))
+    mimir_root = tmp_path / "team-mimir"
+    _write_classifier_fixture(mimir_root, CANONICAL_README_REPORT)
+    monkeypatch.setenv("HERMES_TEAM_MIMIR_ROOT", str(mimir_root))
     root = guard.resolve_team_mimir_root(str(ROOT / "tests"))
     report = guard.classify("README.md", root)
-    assert report["disposition"] == "normal_merge"
-    assert guard.normalize_path(str(MIMIR_ROOT / "README.md"), root) == "README.md"
+    assert report == CANONICAL_README_REPORT
+    assert guard.normalize_path(str(mimir_root / "README.md"), root) == "README.md"
 
 
 def test_installed_command_routes_all_actions_through_plugin_root() -> None:

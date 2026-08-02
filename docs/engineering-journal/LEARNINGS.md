@@ -19,6 +19,22 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-08-02
+
+### Adapter validation must reproduce producer boundaries, including whitespace semantics  {#hermes-profile-request-producer-boundaries}
+
+**Context.** The Claude Hermes profile-evolution adapter used a different reply limit from the native Hermes producer and treated whitespace-only messages as nonempty.
+
+**Evidence.** The Hermes conformance fixture defines `reply_message` as at least one non-whitespace character and at most 16,384 characters. The adapter regression tests exercise whitespace-only input, the inclusive 16,384-character doctor/reply flow, and the 16,385-character pre-execution rejection.
+
+**Mechanism.** A host adapter can look safe while subtly changing the producer contract when it duplicates validation instead of matching both the predicate and inclusive boundary.
+
+**Fix.** `profile_request.py` now rejects `message.strip()` values that are empty and accepts messages through 16,384 characters while retaining type and secret checks.
+
+**Validation.** Focused adapter tests pin all three reply boundaries before Hermes command execution where rejection is required.
+
+**Generalizable rule.** When an adapter validates producer input locally, test the minimum, whitespace-only, exact maximum, and one-character-over cases through the adapter seam.
+
 ## 2026-07-29
 
 ### A policy reachable only from a branch you never take is indistinguishable from one that works — read the receipts, not the code  {#dead-policy-branch-671}

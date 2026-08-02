@@ -158,6 +158,48 @@ def test_all_mutating_actions_use_healthy_canonical_doctor_and_standard_input(
         assert calls[1][0] == ["reply", "--message", "--message; $(not-run)"]
 
 
+def test_reply_rejects_whitespace_only_message_without_command_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[list[str], bytes | None]] = []
+    monkeypatch.setattr(request, "_run", _runner(calls))
+
+    with pytest.raises(request.RequestError, match="reply is empty"):
+        request.invoke(
+            "reply", request.build_envelope("brokkr", "A safe request"), message=" \t\n "
+        )
+
+    assert calls == []
+
+
+def test_reply_accepts_16384_characters_through_doctor_and_reply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[list[str], bytes | None]] = []
+    monkeypatch.setattr(request, "_run", _runner(calls))
+    message = "x" * 16384
+
+    assert request.invoke(
+        "reply", request.build_envelope("brokkr", "A safe request"), message=message
+    )
+    assert calls[0] == (["doctor", "--target", "brokkr"], None)
+    assert calls[1][0] == ["reply", "--message", message]
+
+
+def test_reply_rejects_16385_characters_without_command_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[list[str], bytes | None]] = []
+    monkeypatch.setattr(request, "_run", _runner(calls))
+
+    with pytest.raises(request.RequestError, match="reply is empty"):
+        request.invoke(
+            "reply", request.build_envelope("brokkr", "A safe request"), message="x" * 16385
+        )
+
+    assert calls == []
+
+
 @pytest.mark.parametrize(
     "health",
     [

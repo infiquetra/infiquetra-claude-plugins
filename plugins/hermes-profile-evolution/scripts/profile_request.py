@@ -243,8 +243,8 @@ def invoke(action: str, envelope: dict[str, Any], *, message: str | None = None)
     if action == "reply":
         if (
             not isinstance(message, str)
-            or not message
-            or len(message) > 8192
+            or not message.strip()
+            or len(message) > 16384
             or SECRET_LITERAL_RE.search(message)
         ):
             raise RequestError("reply is empty, too large, or contains secret-bearing material")

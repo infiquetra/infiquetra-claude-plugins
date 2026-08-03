@@ -1,0 +1,82 @@
+{
+  "approval_state": null,
+  "created_at": "2026-08-03T19:55:12.717080+00:00",
+  "created_issue_number": 695,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/695",
+  "draft_path": "docs/sdlc-issue-drafts/2026-08-03-coverage-report-and-saga-runtime-artifacts-fall.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": "actionable",
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/69f09efc-465e-4e84-9258-fcca4901722b/scratchpad/cards/05-gitignore-partial-coverage.md",
+    "Technical Risk": "low"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "'Acceptance criteria' is not executable (card_validator requires each criterion to name a runnable check -- a `code span` or a ``` fenced block -- with its expected result)",
+      "'Verification' has no fenced code block (card_validator requires at least one ``` block)",
+      "'Files expected to change' has no path-like line (card_validator requires at least one `dir/file` style entry)",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "low",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-08-03-coverage-report-and-saga-runtime-artifacts-fall.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\nmode: actionable\nrisk: low\n---\n\n## Objective\n\nClose two partial `.gitignore` coverages so machine-local test and workflow artifacts cannot be\nswept into a commit by a blanket `git add -A`.\n\n## Intent\n\nBoth gaps are partial coverage rather than outright absence, which is why neither was noticed: the\nignore file mentions each area, just not the specific artifact that actually appears.\n\n**Coverage reports.** `.gitignore:30` ignores `.coverage`, the binary data file. It does not ignore\n`coverage.xml`, the report `pytest --cov-report=xml` writes. Same tool, two artifacts, one covered.\nThe repository's own quality-check instructions run coverage, so the untracked 1.4 MB file appears\nin `git status` after any normal test run.\n\n**Saga runtime state.** `.saga/` is ignored selectively \u2014 five named paths, not the directory:\n\n- `.saga/engine-prefs.json` (line 63)\n- `.saga/engine-overlay.json` (line 65)\n- `.saga/adjustment-envelope.json` (line 68)\n- `.saga/undo-ledger.jsonl` (line 69)\n- `.saga/gates/` (line 70)\n\n(`.saga-worktrees/` at line 61 is a sibling directory, not part of `.saga/`.)\n\nEverything else the saga runtime writes there falls through: `workflow-lease-*.json`,\n`workflow-eviden",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/69f09efc-465e-4e84-9258-fcca4901722b/scratchpad/cards/05-gitignore-partial-coverage.md",
+    "ref": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/69f09efc-465e-4e84-9258-fcca4901722b/scratchpad/cards/05-gitignore-partial-coverage.md",
+    "title": "05-gitignore-partial-coverage",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "Coverage report and saga runtime artifacts fall through partial gitignore coverage",
+  "updated_at": "2026-08-03T19:55:25.668159+00:00"
+}

@@ -166,28 +166,41 @@ four entries verbatim into the newest date section (`a40eac2c`).
 
 ## Deliberately not done
 
-- **`orchestration_ref` overloading in the `/work` skill.** Phase 1.5 *reads* that field to locate
-  the spec for re-emit, then the post-launch step *overwrites* it with the workflow run id. Measured
-  across `.claude/saga/state.json`: 12 sagas hold a run id there, 4 hold a spec path. A resume finds
-  the field present (so it clears the "ref missing" halt) but pointing at nothing. This session left
-  the spec path in place and recorded the workflow handle in `--notes` instead — a stated divergence
-  from the skill's literal instruction. Needs a defect card.
-- **Workflow lease TTL.** The lease minted for this run declares `execution_ttl_seconds: 300` against
-  a 32-minute run, and the skill tells the driver never to poll — so there is no boundary at which
-  it could be renewed. The slots were swept ~5 minutes in; teardown's `release` returned an empty
-  list, which reads like success. Nothing leaked, but the mid-run oversubscription guarantee did not
-  hold. See LEARNINGS `{#workflow-lease-ttl-outlives-no-poll-contract}`. Needs a defect card.
-- **`.gitignore` gap.** Two partial coverages, not two absences. `.coverage` (the binary data file) is
-  ignored at line 30 but `coverage.xml` (the report `pytest --cov-report=xml` writes) is not — same
-  tool, two artifacts, one covered. And `.saga/` is ignored *selectively*, six named paths rather than
-  the directory, so the workflow lease files, `workflow-evidence-*/` directories, lease-keeper logs
-  and invocation-id pointers the runtime writes all fall through. A blanket `git add -A` would sweep
-  machine-local workflow artifacts into a commit.
-- **The advisory accumulator never resets across a run.** `__advisories` is a module-level array in
-  the emitted harness that only ever grows. Bounded in practice — 50 items × 180 chars per panel
-  round — and unreachable by any committed panel, so it is a P3. Pre-existing.
-- **A strict-majority floor is still satisfiable by a panel that lost its refuters.** At odd `n ≥ 5`,
-  enough verifiers can go missing to flip the outcome while the surviving count still clears
+All five are now filed as defect cards on the Operations board under the `defects-claude-plugins`
+objective. Each figure below was re-measured at filing time; where it differs from what this document
+originally recorded, the re-measured value is the one shown.
+
+- **#693 — `orchestration_ref` overloading in the `/work` skill.** The skill *reads* that field at
+  `SKILL.md:290` to locate the spec JSON and passes it as a path to three scripts (lines 301, 302,
+  304), then the post-launch step at line 395 *overwrites* it with the workflow run id. Re-measured
+  across `.claude/saga/state.json` at filing: 93 sagas, 15 holding a run-id-shaped ref, 7 holding a
+  spec path, 71 empty. A resume finds the field present, which clears the "ref missing" halt at lines
+  402/410 because that halt tests only presence — then hands a workflow id to a script expecting a
+  filename. This session left the spec path in place and recorded the workflow handle in `--notes`
+  instead, a stated divergence from the skill's literal instruction.
+- **#694 — Workflow lease TTL.** The lease minted for this run declares `execution_ttl_seconds: 300`
+  (`plugins/saga/scripts/execution_spec.py:3582`) against a 32-minute run. The slots were swept
+  ~5 minutes in; teardown's `release` returned an empty list, which is indistinguishable from a clean
+  release. Nothing leaked, but for the remaining 27 minutes the lease was not providing the
+  concurrency guarantee it was minted for. A `renew` path does exist
+  (`plugins/saga/scripts/lease_broker.py:437`), but nothing invokes it during a run: the skill's only
+  documented mid-run checkpoint is the phase/segment boundary (`SKILL.md:552`, explicitly "not a new
+  poll loop"), and a single background workflow call has no phase boundary inside it. See LEARNINGS
+  `{#workflow-lease-ttl-outlives-no-poll-contract}`.
+- **#695 — `.gitignore` gap.** Two partial coverages, not two absences. `.coverage` (the binary data
+  file) is ignored at line 30 but `coverage.xml` (the report `pytest --cov-report=xml` writes) is not
+  — same tool, two artifacts, one covered. And `.saga/` is ignored *selectively*, by **five** named
+  paths rather than as a directory (`engine-prefs.json`, `engine-overlay.json`,
+  `adjustment-envelope.json`, `undo-ledger.jsonl`, `gates/`; the `.saga-worktrees/` entry at line 61
+  is a sibling directory, not part of `.saga/`). Everything else the runtime writes there — lease
+  files, `workflow-evidence-*/` directories, lease-keeper logs, invocation-id pointers — falls
+  through, 61 untracked entries on this machine. A blanket `git add -A` would sweep machine-local
+  workflow artifacts into a commit.
+- **#691 — The advisory accumulator never resets across a run.** `__advisories` is a module-level
+  array in the emitted harness that only ever grows. Bounded in practice — 50 items × 180 chars per
+  panel round — and unreachable by any committed panel, so it is a P3. Pre-existing.
+- **#692 — A strict-majority floor is still satisfiable by a panel that lost its refuters.** At odd
+  `n ≥ 5`, enough verifiers can go missing to flip the outcome while the surviving count still clears
   `n // 2 + 1`. Closing this means demanding full strength from every panel, which is a policy
   decision that would change behavior for all 36 committed `n=3` panels — not a fix to slip into a
   merge. Pre-existing, P3.
@@ -196,6 +209,8 @@ four entries verbatim into the newest date section (`a40eac2c`).
 
 - Commits `793c7c9b` → `db3893e8` → `cda95fb6` → `a40eac2c` on `feat/686-verify-panel-severity-axis`
 - Pull request #689, merged as `f0ca9a47`; issue #686 closed 2026-08-03T11:59:26Z
+- Follow-up defect cards #691, #692, #693, #694, #695 — Operations board, objective
+  `defects-claude-plugins`
 - LEARNINGS `{#workflow-lease-ttl-outlives-no-poll-contract}`,
   `{#verdict-contract-has-three-prompt-surfaces}`, `{#worktree-copies-poison-recursive-grep}`,
   `{#regenerate-diff-fails-on-hand-patched-artifacts}`,

@@ -1,0 +1,82 @@
+{
+  "approval_state": null,
+  "created_at": "2026-08-03T19:54:05.340966+00:00",
+  "created_issue_number": 691,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/691",
+  "draft_path": "docs/sdlc-issue-drafts/2026-08-03-emitted-harness-advisory-accumulator-never-reset.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": "actionable",
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/69f09efc-465e-4e84-9258-fcca4901722b/scratchpad/cards/01-advisory-accumulator-reset.md",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "'Acceptance criteria' is not executable (card_validator requires each criterion to name a runnable check -- a `code span` or a ``` fenced block -- with its expected result)",
+      "'Verification' has no fenced code block (card_validator requires at least one ``` block)",
+      "'Files expected to change' has no path-like line (card_validator requires at least one `dir/file` style entry)",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-08-03-emitted-harness-advisory-accumulator-never-reset.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\nmode: actionable\nrisk: medium\n---\n\n## Objective\n\nReset the emitted harness's advisory accumulator at each panel boundary so advisories reported by\none unit's verify panel cannot be attributed to a later unit's panel.\n\n## Intent\n\n`plugins/saga/scripts/execution_spec.py` emits a JavaScript harness that a Claude Code workflow\nruns. Inside that harness, `__advisories` is declared once at module scope and only ever appended\nto. `__logAdvisory()` pushes every rendered advisory item onto it, and `__halt()` attaches the whole\narray to the thrown error as `error.advisory_corrections`.\n\nNothing clears it between units. In a multi-unit run the array a consumer reads at unit 5 still\ncontains everything units 1 through 4 reported. A driver that reads `advisory_corrections` off a\nhalt in order to decide what to correct will act on advice about units that already settled\nsuccessfully.\n\nSeverity is P3 and this is pre-existing, not introduced by #686. It is bounded in practice \u2014 the\nrender path caps each panel round at 50 items of 180 characters \u2014 so this is misattribution and\nslow growth, never a flipped gate verdict. No panel committed in this repository reaches it today\nbecause all 36 are si",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/69f09efc-465e-4e84-9258-fcca4901722b/scratchpad/cards/01-advisory-accumulator-reset.md",
+    "ref": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/69f09efc-465e-4e84-9258-fcca4901722b/scratchpad/cards/01-advisory-accumulator-reset.md",
+    "title": "01-advisory-accumulator-reset",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "Emitted harness advisory accumulator never resets between units",
+  "updated_at": "2026-08-03T19:54:17.871349+00:00"
+}

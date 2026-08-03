@@ -1,0 +1,82 @@
+{
+  "approval_state": null,
+  "created_at": "2026-08-03T19:54:26.925203+00:00",
+  "created_issue_number": 692,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/692",
+  "draft_path": "docs/sdlc-issue-drafts/2026-08-03-verify-panel-quorum-floor-is-still-satisfiable-a.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": "actionable",
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/69f09efc-465e-4e84-9258-fcca4901722b/scratchpad/cards/02-quorum-floor-odd-n.md",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "'Acceptance criteria' is not executable (card_validator requires each criterion to name a runnable check -- a `code span` or a ``` fenced block -- with its expected result)",
+      "'Verification' has no fenced code block (card_validator requires at least one ``` block)",
+      "'Files expected to change' has no path-like line (card_validator requires at least one `dir/file` style entry)",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-08-03-verify-panel-quorum-floor-is-still-satisfiable-a.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\nmode: actionable\nrisk: medium\n---\n\n## Objective\n\nDecide and implement what a verify panel should do when enough verifiers go missing that the\nsurviving reporters could not have produced the refutation the panel would otherwise have reached,\neven though the survivor count still clears the strict-majority quorum floor.\n\n## Intent\n\nIssue #686 fixed the even-`n` case: the emit-time quorum floor was `ceil(n/2)` while the runtime\ndisagreement threshold is `ceil(k/2)` over surviving reporters `k`. Those agree at odd `n` and\ndiffer by one at even `n`, so a panel that lost exactly half its verifiers still cleared its floor,\nand because the lost verdicts were the refuting ones a HALT silently became a PASS. The floor is now\n`n // 2 + 1`, validated over 238 executed scenarios.\n\nThat fix does not close the odd case. At odd `n >= 5` a panel can lose verifiers, still clear\n`n // 2 + 1`, and reach the opposite verdict from the one full strength would have produced. With\n`n = 5` and floor 3, two verifiers going missing leaves 3 reporters. If both missing verdicts were\nrefutations, full strength would be 2 refutations plus a possible third, while the surviving 3\nreport clean and the panel passe",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/69f09efc-465e-4e84-9258-fcca4901722b/scratchpad/cards/02-quorum-floor-odd-n.md",
+    "ref": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/69f09efc-465e-4e84-9258-fcca4901722b/scratchpad/cards/02-quorum-floor-odd-n.md",
+    "title": "02-quorum-floor-odd-n",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "Verify panel quorum floor is still satisfiable after refuting verifiers go missing at odd n",
+  "updated_at": "2026-08-03T19:54:39.239214+00:00"
+}

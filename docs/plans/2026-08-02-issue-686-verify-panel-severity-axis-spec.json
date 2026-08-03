@@ -1,0 +1,36 @@
+{
+  "name": "issue-686-verify-panel-severity-axis",
+  "description": "Split the refute-N verifier verdict into a gating and a non-gating bucket in the emitter",
+  "repo": "/Users/jefcox/workspace/infiquetra/infiquetra-claude-plugins",
+  "units": [
+    {
+      "unit_id": "U1",
+      "label": "split-verdict-contract-in-emitter",
+      "tier": { "model": "opus", "effort": "high" },
+      "worth_it_because": "A wrong edit here silently disarms a merge-blocking gate rather than failing loudly, and the unit must hold eight emitter sites plus two test modules in one coherent contract.",
+      "cheaper_fallback": { "model": "sonnet", "effort": "high" },
+      "prompt": "U1: Split the refute-N verifier verdict into a gating bucket (refuted_deliverable) and a non-gating bucket (advisory_corrections) in plugins/saga/scripts/execution_spec.py, and pin every change in tests/test_workflow_emitter.py and tests/test_saga_execution_spec.py. Read the plan at docs/plans/2026-08-02-issue-686-verify-panel-severity-axis-plan.md as your authoritative spec; work its `### U1.` numbered site list 1-8 in order. TWO THINGS A NAIVE READING DROPS. (a) SITE 4, the `__logAdvisory` call at execution_spec.py:2762 -- sites 7 and 8 only declare and return the accumulator, so without site 4 `advisory_corrections` is `[]` on every run and R4 fails silently. Its position matters: it must go immediately after the `refuted` const and BEFORE the missing-verifier block, because `_emit_panel_reconciliation` returns early on the #364 climb path. (b) SITE 1 is a RENAME, not an addition: the key `refuted` disappears from both `properties` and `required`; `upheld` survives. Port all three prompt passages VERBATIM from the sources the plan names -- do not paraphrase any of them.",
+      "returns": ["status", "files_changed", "checks_run", "notes"],
+      "depends_on": [],
+      "escalation": "HALT if the split cannot be made without weakening the missing-verifier hard-fail or the quorum floor -- re-scope rather than trading one control for another."
+    },
+    {
+      "unit_id": "U2",
+      "label": "update-doc-and-release-surfaces",
+      "tier": { "model": "sonnet", "effort": "medium" },
+      "prompt": "U2: Update plugins/saga/references/execution-spec.md to describe the two-bucket verify contract and the new workflow return shape, bump the saga plugin version across plugins/saga/.claude-plugin/plugin.json, .claude-plugin/marketplace.json and plugins/saga/CHANGELOG.md, and record the plan's KTD1-KTD8 in docs/engineering-journal/DECISIONS.md. Read the plan at docs/plans/2026-08-02-issue-686-verify-panel-severity-axis-plan.md as your authoritative spec; its `### U2.` section names the exact doc lines to change.",
+      "returns": ["status", "files_changed", "checks_run", "notes"],
+      "depends_on": ["U1"],
+      "escalation": "HALT if the drift-guard tests disagree with the version you wrote -- the metadata must tell the same story as the diff."
+    },
+    {
+      "unit_id": "U3",
+      "label": "clear-downstream-divergence",
+      "tier": { "model": "sonnet", "effort": "low" },
+      "prompt": "U3: Re-emit the committed spec in ~/workspace/infiquetra/infiquetra-codex-plugins with the fixed emitter and confirm the regenerated GATE MECHANICS match its hand-patched harness. Read the plan at docs/plans/2026-08-02-issue-686-verify-panel-severity-axis-plan.md as your authoritative spec; its `### U3.` section carries the exact commands and the pass/fail conditions -- run them as written. AN EMPTY DIFF IS NOT THE PASS CONDITION: the committed harness carries hand-authored mid-run prompt corrections that appear in ZERO of the committed spec's unit prompts, so at least one unit-prompt line differs permanently and is NOT a defect. The pass condition is the four behavioral checks in the plan. Read both downstream files from `origin/main` via `git show` after `git fetch`, never from the working tree. This unit is READ-ONLY: mutate nothing in that repository and commit nothing.",
+      "returns": ["status", "files_changed", "checks_run", "notes"],
+      "depends_on": ["U1"],
+      "escalation": "HALT and report as a U1 defect ONLY on a behavioral mismatch -- a count mismatch in the plan's checks 2-4, or a non-unit-prompt line in the residual diff. Do NOT halt on unit-prompt differences; those are expected and permanent. Never patch the downstream file."
+    }
+  ]
+}

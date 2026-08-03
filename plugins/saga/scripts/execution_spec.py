@@ -350,9 +350,16 @@ _WORKFLOW_RESERVED_IDENTIFIERS = (
     frozenset(
         {
             "REPO",
+            "__ADVISORY_ITEM_CAP",
+            "__ADVISORY_ITEM_CHARS",
+            "__advisories",
+            "__advisoryRounds",
             "__gate",
+            "__halt",
             "__is429",
+            "__logAdvisory",
             "__pulledCords",
+            "__renderAdvisory",
             "__retry",
             "__retryAfterMs",
             "__retryBackoffMs",
@@ -531,7 +538,7 @@ _JS_GATE_HELPER = r"""function __gate(result, opts) {
   }
 
   if (opts.expectsOutput && isEmptyOrAbsent(result)) {
-    throw new Error(
+    throw __halt(
       `missing-output: Unit ${unitId} expected structured output but received none or empty.`
     );
   }
@@ -554,7 +561,7 @@ _JS_GATE_HELPER = r"""function __gate(result, opts) {
       try {
         JSON.parse(s);
       } catch (e) {
-        throw new Error(
+        throw __halt(
           `malformed-output: Unit ${unitId} output is a structurally truncated JSON: ${e.message}`
         );
       }
@@ -586,7 +593,7 @@ _JS_GATE_HELPER = r"""function __gate(result, opts) {
     }
     if (producedCount < targetCount) {
       const shortfall = targetCount - producedCount;
-      throw new Error(
+      throw __halt(
         `missing-output: Unit ${unitId} produced fewer items than expected. ` +
         `Expected ${targetCount}, produced ${producedCount}. Shortfall: ${shortfall}.`
       );
@@ -596,7 +603,7 @@ _JS_GATE_HELPER = r"""function __gate(result, opts) {
   if (opts.returns && opts.returns.length > 0) {
     const parsed = parseResult(result);
     if (parsed === null || parsed === undefined || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      throw new Error(
+      throw __halt(
         `missing-output: Unit ${unitId} result is not a structured dictionary. ` +
         `Missing required keys: ${opts.returns.join(', ')}.`
       );
@@ -605,7 +612,7 @@ _JS_GATE_HELPER = r"""function __gate(result, opts) {
       k => !(k in parsed) || parsed[k] === null || parsed[k] === undefined
     );
     if (missing.length > 0) {
-      throw new Error(
+      throw __halt(
         `missing-output: Unit ${unitId} output is missing required keys: ${missing.join(', ')}.`
       );
     }
@@ -682,7 +689,89 @@ async function __retry(thunk, opts) {
 }"""
 
 
-_JS_VERIFIER_PROMPT_HELPER = r"""function __verifierPrompt(basePrompt, unitResult) {
+# #686 R4 / plan KTD3: the workflow-level NON-GATING correction accumulator. Structurally the
+# twin of `__pulledCords` -- one module-level global, one registration site in
+# _WORKFLOW_RESERVED_IDENTIFIERS, no per-panel-shape asymmetry (a per-unit binding would need
+# registering in BOTH _WORKFLOW_ITERATE_LOCAL_IDENTIFIERS and _unit_reserved_symbols' suffixes,
+# each covering only one panel shape). `__logAdvisory` both LOGS during the run and accumulates
+# for the final return, which is R4's "reach the driving session" in its two required halves.
+_JS_ADVISORY_HELPER = r"""const __advisories = []
+const __advisoryRounds = new Map()
+const __ADVISORY_ITEM_CAP = 50
+const __ADVISORY_ITEM_CHARS = 180
+function __renderAdvisory(a) {
+  var s
+  try {
+    if (a === null || a === undefined) s = "(empty advisory entry)"
+    else if (typeof a === "string") s = a
+    else s = String(a.claim || a.id || JSON.stringify(a))
+  } catch (e) {
+    s = "(unrenderable advisory entry)"
+  }
+  // Two passes over two distinct hazards. First: C0, DEL, C1 (NEL included) and the
+  // line/paragraph separators -- these forge a second log line. Second: the bidi marks,
+  // embeddings, overrides and isolates plus the BOM -- these leave the byte sequence intact
+  // but reorder what a human READS in a terminal or log viewer (the Trojan-Source pattern).
+  // Advisory text is model-authored by a verifier that read a diff it did not write, so both
+  // classes are reachable from repo content.
+  var t = s
+    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ")
+    .replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]+/g, " ")
+    .slice(0, __ADVISORY_ITEM_CHARS)
+  // .slice() cuts on UTF-16 code units, so an astral character (any emoji) straddling the cap
+  // leaves a lone high surrogate behind. This string is now STORED and returned, not just
+  // logged, so ill-formed UTF-16 would cross the harness return boundary -- a consumer that
+  // re-encodes it substitutes U+FFFD or raises. Drop the orphan half.
+  var tail = t.charCodeAt(t.length - 1)
+  if (tail >= 0xd800 && tail <= 0xdbff) t = t.slice(0, -1)
+  return t
+}
+function __halt(message) {
+  var e = new Error(message)
+  e.advisory_corrections = __advisories
+  return e
+}
+function __logAdvisory(unitId, reported, refuted) {
+  // Counted on EVERY call, before the empty-items early return below -- a panel round that
+  // produced no advisories is still a round. Deriving the ordinal from stored entries instead
+  // would silently renumber: an iterate_to_consensus unit whose first round was clean would
+  // label its second round "round 1", and a driver told to read the last entry would act on
+  // advice about a discarded intermediate result. A Map, not an object, so a unit id like
+  // `constructor` cannot collide with a prototype member.
+  var round = (__advisoryRounds.get(unitId) || 0) + 1
+  __advisoryRounds.set(unitId, round)
+  var items = []
+  try {
+    for (var i = 0; i < reported.length; i++) {
+      var adv = Array.isArray(reported[i].advisory_corrections) ? reported[i].advisory_corrections : []
+      for (var j = 0; j < adv.length; j++) items.push(__renderAdvisory(adv[j]))
+    }
+  } catch (e) {
+    // Through __renderAdvisory, not around it: this marker embeds a model-reachable
+    // message and is the one path that would otherwise reach log() unscrubbed.
+    items.push(__renderAdvisory("(advisory harvest failed: " + String(e && e.message) + ")"))
+  }
+  if (items.length === 0) return items
+  var dropped = 0
+  if (items.length > __ADVISORY_ITEM_CAP) {
+    dropped = items.length - __ADVISORY_ITEM_CAP
+    items = items.slice(0, __ADVISORY_ITEM_CAP)
+  }
+  __advisories.push({ unit: unitId, round: round, corrections: items, dropped: dropped })
+  try {
+    log(`verify panel over ${unitId} (round ${round}): deliverable ${refuted ? "REFUTED" : "UPHELD"} with ${items.length + dropped} advisory correction(s) (narrative/rationale only, non-gating): ` +
+        items.join(" | ") + (dropped > 0 ? ` [+${dropped} suppressed]` : ""))
+  } catch (e) {
+    /* the non-gating accumulator must never be able to halt a run */
+  }
+  return items
+}"""
+
+
+_JS_VERIFIER_PROMPT_HELPER = r"""function __verifierPrompt(basePrompt, unitResult, passRule) {
+  var gatingBar = (passRule === "unanimous")
+    ? "EVERY reporting verifier"
+    : "a majority of the panel";
   var rendered;
   try {
     rendered = JSON.stringify(unitResult, null, 2);
@@ -704,10 +793,42 @@ ${repoLine}
   <path>. For named untracked output files, read the primary checkout path directly; never mutate
   the primary checkout.
 - Return examined_sha as the SHA you actually materialized or inspected. If you cannot see enough
-  evidence to judge, return a refuted entry explaining the visibility gap; do not emit prose-only
-  "nothing to verify" output.
+  evidence to judge, return a refuted_deliverable entry explaining the visibility gap; do not emit
+  prose-only "nothing to verify" output.
 
-UNIT RESULT INPUT (authoritative structured evidence):
+VERDICT CONTRACT — two separate buckets. Read this before you write anything.
+
+The unit result you are given contains BOTH a deliverable and a narrative. Sort every disagreement
+you find into exactly one of these. Getting the bucket right matters more than finding a lot.
+
+\`refuted_deliverable\` — GATING. A finding belongs here only if the unit's actual WORK is wrong:
+- A changed file is wrong, incomplete, or breaks something.
+- Required behavior is missing, or behavior the unit was told to preserve was destroyed.
+- A test is missing, wrong, asserts nothing, or does not test what it claims.
+- A claim in \`checks_run\` is FALSE — the command does not actually pass, or was not actually run,
+  or its reported result does not reproduce. Re-run the commands and check.
+- The unit says \`status: "done"\` but the work is not done.
+- You could not see enough to judge (visibility gap).
+A non-empty \`refuted_deliverable\` from ${gatingBar} KILLS the unit and HALTS the whole
+workflow. Put a finding here only if you would defend stopping the run over it.
+
+\`advisory_corrections\` — NON-GATING. A finding belongs here if the WORK is right but the unit's
+own account of it is wrong or misleading:
+- Its explanation of WHY something happened is factually incorrect.
+- It misattributes a change to the wrong function, file, or line.
+- It mischaracterizes a mechanism, or states a rationale that does not hold.
+- Its advice to a downstream unit rests on a wrong premise.
+These are recorded and handed to the driver. They do NOT stop the run. Report them fully and
+precisely — a wrong premise passed downstream causes real damage later, so this bucket is
+genuinely valuable, not a consolation prize.
+
+The test: if the unit's code, tests, and check results are all sound, then NOTHING goes in
+\`refuted_deliverable\`, no matter how wrong its prose is. Prose errors are advisory. Full stop.
+
+Both keys are REQUIRED and must be arrays. Use \`[]\` for an empty bucket — never omit either one.
+
+UNIT RESULT INPUT (structured evidence — the \`notes\` field is the unit's NARRATIVE, judge it
+under \`advisory_corrections\`; the changed files, tests, and \`checks_run\` are the DELIVERABLE):
 ${rendered}`;
 }"""
 
@@ -2500,7 +2621,9 @@ def _verifier_prompt(unit: Unit) -> str:
         f"REFUTE-N VERIFIER over unit {unit.unit_id} ({unit.label}). You are an adversarial "
         f"skeptic: attempt to REFUTE the unit's result, do NOT re-do its work. Read the unit's "
         f"output and the evidence it cites; for each claimed finding decide REFUTED (with a "
-        f"concrete reason) or UPHELD. Emit a structured verdict {{refuted: [...], upheld: [...], "
+        f"concrete reason) or UPHELD, and sort every refutation into the gating bucket or the "
+        f"advisory bucket per the VERDICT CONTRACT below. Emit a structured verdict "
+        f"{{refuted_deliverable: [...], advisory_corrections: [...], upheld: [...], "
         f"verifier_identity: ..., fallback_depth: ..., examined_sha: ...}}.",
         # U6/R8/KTD7: attributed verify-spawn. The emitter STAMPS the agent identity it knows
         # ({READONLY_VERIFIER_AGENT_TYPE}) and a fallback_depth of 0 -- a workflow agent() call
@@ -2583,18 +2706,25 @@ def _verifier_schema() -> dict[str, object]:
     ``minLength: 1`` on the #390 U6 attribution strings matches the predicate's
     ``.length > 0`` checks, so any verdict the schema admits is counted as a reporter. Flat
     typed object only: the API rejects top-level combinators (see ``_return_schema``).
+
+    #686 severity axis: the single ``refuted`` bucket is RENAMED to ``refuted_deliverable``
+    (gating) and joined by ``advisory_corrections`` (non-gating). Both are required arrays --
+    hard cutover, no legacy-``refuted`` shim (plan KTD2): a tolerant reader would map a legacy
+    prose refutation onto the gating bucket and reintroduce the exact bug being fixed.
     """
     return {
         "type": "object",
         "properties": {
-            "refuted": {"type": "array"},
+            "refuted_deliverable": {"type": "array"},
+            "advisory_corrections": {"type": "array"},
             "upheld": {"type": "array"},
             "verifier_identity": {"type": "string", "minLength": 1},
             "fallback_depth": {},
             "examined_sha": {"type": "string", "minLength": 1},
         },
         "required": [
-            "refuted",
+            "refuted_deliverable",
+            "advisory_corrections",
             "upheld",
             "verifier_identity",
             "fallback_depth",
@@ -2652,7 +2782,15 @@ def _emit_panel_reconciliation(
     panel = unit.verify
     assert panel is not None
     n = panel.n
-    floor = (n + 1) // 2  # plan KTD3: quorum floor, baked as a literal per panel
+    # Quorum floor, baked as a literal per panel (plan KTD3). STRICT majority of the DECLARED
+    # panel size -- `n // 2 + 1`, not `ceil(n / 2)`. At even n those differ by one, and the
+    # emit-time floor is compared against a runtime majority threshold recomputed over the
+    # SURVIVING reporters (`ceil(k / 2)`). With `ceil(n / 2)` the two disagree at even n, so a
+    # panel that lost exactly half its verifiers -- to a crash, a timeout, a prose verdict, or
+    # any schema-invalid shape -- still met the floor while the refuters it lost were the ones
+    # that would have carried the majority. That is a silent HALT->PASS flip. `n // 2 + 1` is a
+    # no-op at every odd n (1, 3, 5, 7 -> 1, 2, 3, 4), so no committed panel changes behavior.
+    floor = n // 2 + 1
     verifier_prompt = _verifier_prompt(unit)
     verifier_opts = _verifier_agent_opts(unit)
 
@@ -2675,7 +2813,10 @@ def _emit_panel_reconciliation(
 
     def _emit_verifier_member(_index: int) -> None:
         lines.append(f"{indent}  () => {_retry_open()}")
-        lines.append(f"{indent}    __verifierPrompt({_js_string(verifier_prompt)}, {result_var}),")
+        lines.append(
+            f"{indent}    __verifierPrompt({_js_string(verifier_prompt)}, {result_var}, "
+            f"{_js_string(panel.pass_rule)}),"
+        )
         lines.append(
             f"{indent}    {{ "
             + ", ".join(verifier_opts)
@@ -2697,15 +2838,18 @@ def _emit_panel_reconciliation(
         lines.append(f"{indent}{verdicts_var}.push({joined_chunks})")
     # R1/R5: record which verifiers reported vs. runtime-missing; R3: recompute the pass-rule
     # threshold over the reporters, not the declared n (plan KTD1/KTD3). A verdict that is
-    # non-null but lacks a usable `.refuted` array is a runtime failure too (a verifier that
-    # returned a malformed/partial response is not distinguishable from one that returned a
-    # legitimate non-refuting verdict unless shape is checked here -- completeness_gate.py's
-    # classify() only gates the unit's own result, never verifier verdicts, so this is the only
-    # place malformed verdicts get caught).
+    # non-null but lacks a usable `.refuted_deliverable` OR `.advisory_corrections` array is a
+    # runtime failure too (a verifier that returned a malformed/partial response is not
+    # distinguishable from one that returned a legitimate non-refuting verdict unless shape is
+    # checked here -- completeness_gate.py's classify() only gates the unit's own result, never
+    # verifier verdicts, so this is the only place malformed verdicts get caught). #686 R6/KTD2:
+    # requiring BOTH buckets is what makes a legacy single-`refuted` verdict a runtime failure
+    # that counts toward the missing-verifier floor instead of being silently read as gating.
     valid_verdict_var = f"{name_prefix}valid_verifier_verdict"
     lines.append(
         f'{indent}const {valid_verdict_var} = (v) => v != null && typeof v === "object" && '
-        f"Array.isArray(v.refuted) && Array.isArray(v.upheld) && "
+        f"Array.isArray(v.refuted_deliverable) && Array.isArray(v.advisory_corrections) && "
+        f"Array.isArray(v.upheld) && "
         f'typeof v.verifier_identity === "string" && v.verifier_identity.length > 0 && '
         f'Object.prototype.hasOwnProperty.call(v, "fallback_depth") && '
         f'typeof v.examined_sha === "string" && v.examined_sha.length > 0'
@@ -2745,9 +2889,13 @@ def _emit_panel_reconciliation(
         f"{indent}const {missing_idx_var} = {reconciled_verdicts_var}.map((v, i) => "
         f"(!{valid_verdict_var}(v) ? i + 1 : null)).filter((i) => i != null)"
     )
+    # #686 R2: the gate counts a verifier as refuting ONLY when its GATING bucket is non-empty.
+    # `advisory_corrections` is deliberately absent from this arithmetic -- a panel that found
+    # nothing but wrong prose upholds the unit (plan KTD5: this is the single gate site, so the
+    # one-shot panel, the iterate-to-consensus loop, and the #364 climb all change together).
     lines.append(
         f"{indent}const {refute_count_var} = {reported_var}.filter((v) => "
-        f"v.refuted.length > 0).length"
+        f"v.refuted_deliverable.length > 0).length"
     )
     if panel.pass_rule == "majority":
         lines.append(
@@ -2760,6 +2908,16 @@ def _emit_panel_reconciliation(
             f"Math.max(1, {reported_var}.length)  // unanimous over reporters"
         )
     lines.append(f"{indent}const {refuted_var} = {refute_count_var} >= {threshold_var}")
+    # #686 R4 / plan U1 site 4: harvest the NON-GATING bucket into the workflow-level
+    # `__advisories` accumulator and log it. POSITION IS LOAD-BEARING -- this must sit here,
+    # after the refuted const and BEFORE the missing-verifier block, because the #364 unattended
+    # climb path returns early from this function at the `if (<refuted>) {` line below. A call
+    # appended after that point would silently never emit for climb units, leaving advisories
+    # absent on exactly that path and nowhere else. Emitting here covers all three panel shapes
+    # (one-shot, iterate-to-consensus, climb) with a single insertion.
+    lines.append(
+        f"{indent}__logAdvisory({_js_string(unit.unit_id)}, {reported_var}, {refuted_var})"
+    )
     # R4/R5: annotate missing verifiers and hard-fail below the baked quorum floor before any
     # accept/disagree decision can be computed over too little evidence.
     lines.append(f"{indent}if ({missing_idx_var}.length > 0) {{")
@@ -2776,14 +2934,14 @@ def _emit_panel_reconciliation(
     lines.append(f"{indent}}}")
     lines.append(f"{indent}if ({reported_var}.length < {floor}) {{")
     lines.append(
-        f"{indent}  throw new Error(`verifier-under-strength: Unit {unit.unit_id} reported "
+        f"{indent}  throw __halt(`verifier-under-strength: Unit {unit.unit_id} reported "
         f"${{{reported_var}.length}}/{n} verifiers (quorum floor {floor}; "
         f"missing #${{{missing_idx_var}.join(', #')}})${{{fallback_marker_var}}}`)"
     )
     lines.append(f"{indent}}}")
 
     throw_line = (
-        f"throw new Error(`verifier-disagreement: Unit {unit.unit_id} refuted by "
+        f"throw __halt(`verifier-disagreement: Unit {unit.unit_id} refuted by "
         f"${{{refute_count_var}}}/${{{reported_var}.length}} reporting verifiers "
         f"(${{{missing_idx_var}.length}} missing)${{{fallback_marker_var}}}{throw_suffix}`)"
     )
@@ -2947,12 +3105,16 @@ def _emit_verify_panel(
     Renders a ``parallel([...])`` of ``unit.verify.n`` verifier ``agent()`` calls over the
     unit's result (each at the SAME ``{model, effort}`` tier as the unit per R4), then
     records which verifiers reported vs. runtime-missing (R1/R5) -- a ``null`` verdict slot
-    OR a non-null verdict lacking a usable ``.refuted`` array both count as missing, since
-    neither is a trustworthy signal -- and recomputes the pass-rule threshold over the
-    reporters (R3): ``majority`` => ``>= max(1, ceil(k/2))`` of the ``k`` reporting verifiers
-    refuted; ``unanimous`` => all ``k`` refuted. A quorum floor of ``ceil(n/2)`` of the
-    declared ``n`` (plan KTD3) marks the result UNDER-STRENGTH when under-met, but a
-    refutation still acts regardless (plan KTD4).
+    OR a non-null verdict lacking a usable ``.refuted_deliverable`` / ``.advisory_corrections``
+    array both count as missing, since neither is a trustworthy signal -- and recomputes the
+    pass-rule threshold over the reporters (R3): ``majority`` => ``>= max(1, ceil(k/2))`` of
+    the ``k`` reporting verifiers refuted; ``unanimous`` => all ``k`` refuted. #686: "refuted"
+    throughout this arithmetic means a non-empty GATING bucket -- a verifier reporting only
+    ``advisory_corrections`` is a reporter that did NOT refute. A quorum floor of a STRICT
+    majority of the declared ``n`` -- ``n // 2 + 1`` (plan KTD3) -- marks the result
+    UNDER-STRENGTH when under-met, but a refutation still acts regardless (plan KTD4). The
+    floor must be the strict majority rather than ``ceil(n/2)``: the two differ at even ``n``,
+    and a floor that a half-strength panel can still meet lets a lost refuter flip HALT to PASS.
     (This is a panel-level signal, not per-finding survival: a generic emitter cannot match
     findings across verifiers, so it surfaces "did enough skeptics refute anything" for the
     operator/runtime to act on.) The resulting ``<var>_refuted`` boolean is CONSUMED: when
@@ -2962,7 +3124,8 @@ def _emit_verify_panel(
     panel = unit.verify
     assert panel is not None  # caller guards this
     n = panel.n
-    floor = (n + 1) // 2
+    # Strict majority of the declared panel size -- must match _emit_panel_reconciliation.
+    floor = n // 2 + 1
 
     lines.append(f"// verify: refute-{n} panel over {unit.unit_id} (pass_rule: {panel.pass_rule};")
     lines.append(
@@ -3548,6 +3711,10 @@ def emit_workflow_script(
     # dispositions here; the single batched escalation check runs after every layer.
     lines.append("const __pulledCords = []")
     lines.append("")
+    # #686 R4: workflow-level advisory collector -- every verify panel's NON-GATING corrections
+    # land here (via __logAdvisory at the reconciliation site) and ride out on the final return.
+    lines.append(_JS_ADVISORY_HELPER)
+    lines.append("")
     lines.append(_JS_GATE_HELPER)
     lines.append("")
     lines.append(_JS_RETRY_HELPER)
@@ -3690,7 +3857,7 @@ def emit_workflow_script(
     # cord unit is never marked complete because the run fails here before returning.
     lines.append("if (__pulledCords.length > 0) {")
     lines.append(
-        "  throw new Error(`pull-cord (#364): ${__pulledCords.length} unit(s) self-reported "
+        "  throw __halt(`pull-cord (#364): ${__pulledCords.length} unit(s) self-reported "
         "out of depth -- ` +"
     )
     lines.append(
@@ -3701,6 +3868,20 @@ def emit_workflow_script(
     lines.append(
         "    '. ONE batched escalation ask -- confirm climbs via /tier patch and re-emit.')"
     )
+    lines.append("}")
+    lines.append("")
+
+    # #686 R4/KTD4: every emitted harness ends with a return value. `advisory_corrections` is the
+    # non-gating half of the verify verdict reaching the driving session (the logging half fires
+    # during the run); `units` carries each unit's result so the return is useful beyond
+    # advisories. Emitted harnesses returned `undefined` before this, so any object is additive
+    # for consumers that do not destructure.
+    unit_entries = ", ".join(
+        f"{_js_string(unit.unit_id)}: {_var(unit.unit_id)}" for unit in spec.units
+    )
+    lines.append("return {")
+    lines.append(f"  units: {{ {unit_entries} }},")
+    lines.append("  advisory_corrections: __advisories,")
     lines.append("}")
     lines.append("")
 

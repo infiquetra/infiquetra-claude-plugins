@@ -19,6 +19,398 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-08-03
+
+### A workflow lease cannot survive the run it governs: its 5-minute TTL versus a driver told never to poll  {#workflow-lease-ttl-outlives-no-poll-contract}
+
+**Context.** After the #686 ultracode run returned, the `/work` skill's teardown step
+`workflow_emitter.py release "$WORKFLOW_LEASE_METADATA"` returned `{"released_lease_ids": []}`.
+That reads like a clean no-op, which is exactly why it is worth stopping on: an empty release is
+indistinguishable at a glance from a successful one.
+
+**Evidence.** The reservation contract
+(`.saga/workflow-lease-989b6475-4003-46f4-b9aa-debd80737030.json`) declares
+`"execution_ttl_seconds": 300`. The run it governed took **1,929,940 ms — 32.2 minutes** (workflow
+`wf_7dbd5245-def`, 3 agents, 138 tool calls). Querying the live broker registry at
+`~/.local/state/infiquetra/fleet-leases/registry.json` afterwards: `leases` is empty, and **neither
+lease id** (`9ea7c6f5-…`, `a2acaba7-…`) nor the batch id appears anywhere in the file — not in
+`leases`, not in `settlements`. Absence from both is the discriminator: a settled lease leaves a
+settlement record, an expired one leaves nothing.
+
+**Mechanism.** `release()` calls `settle_batch()`, which can only settle leases that are still
+live. The two slots were swept on TTL expiry roughly five minutes into a thirty-two minute run, so
+by teardown there was nothing left to settle. The deeper contradiction is in the skill contract, not
+the broker: `/work` instructs the driver **not to poll** a running Workflow (the harness re-invokes
+on completion), while the lease expects `renew` calls "at long collection boundaries." A single
+blocking `Workflow(...)` call has no intermediate boundaries — control does not return to the driver
+until the run is over. Under the skill's own guidance the lease is therefore *unrenewable*, and every
+ultracode run longer than five minutes silently loses its slot reservation partway through.
+
+**Impact.** Nothing leaked and nothing is corrupt — admission control still gated the launch, and the
+empty registry means no phantom slot is held against future runs. What is lost is the *mid-run*
+guarantee: for ~27 of 32 minutes, a second session could have oversubscribed the aggregate limit
+without the broker objecting.
+
+**Fix (or queued).** Not fixed here — out of scope for #686, and the remedy is a design choice, not a
+patch. Two candidate shapes: (a) size `execution_ttl_seconds` from the spec's expected wall-clock
+rather than a fixed 300s, or (b) have the emitter's own lease keeper renew from inside the run
+(a `.saga/lease-keeper-*.log` already exists for an earlier invocation, so the mechanism has
+precedent). Needs a defect card before either is chosen.
+
+**What surprised.** The failure signal is an empty list, not an error. `released_lease_ids: []` is
+the same output a genuinely idle batch would produce, so the skill's teardown step cannot distinguish
+"nothing to release" from "expired 27 minutes ago" — and neither could I, until I checked the
+registry for the absence of a settlement record.
+
+**Generalizable rule.** When a lease, lock, or token has a TTL, check it against the *measured*
+duration of the work it protects, not the expected one. And when a teardown call returns an empty
+collection, treat that as an unanswered question rather than a success — prove where the resources
+went before calling it clean.
+
+**Refs.** [[verdict-contract-has-three-prompt-surfaces]], `plugins/saga/skills/work/SKILL.md` §1.5,
+`plugins/saga/scripts/workflow_emitter.py:191-206`.
+
+### A verdict contract had FOUR prompt surfaces; the plan enumerated two  {#verdict-contract-has-three-prompt-surfaces}
+
+> The anchor slug says "three" because that is what the first pass found and other entries already
+> link to it. A fourth surface turned up in code review — see **The fourth surface** below. The slug
+> is kept stable on purpose; the count in it is historical, not current.
+
+**Context.** #686 split the refute-N verifier verdict into a gating bucket
+(`refuted_deliverable`) and a non-gating one (`advisory_corrections`). The plan's KTD6 correctly
+insisted every prompt surface change together, and named two: the Python-assembled
+`_verifier_prompt()` and the emitted JavaScript `__verifierPrompt` helper. Both were ported verbatim.
+
+**Evidence.** `plugins/saga/agents/readonly-verifier.md:37` still read
+`emit a structured verdict {refuted: [...], upheld: [...]}` after both emitter surfaces were fixed.
+Found by the unit doing the emitter work, which flagged it as outside its declared file list and
+left it unassigned; the doc-review had not caught it either, because it verified the plan against a
+working reference implementation whose agent-definition layer the reference did not include.
+
+**Mechanism.** That file is not documentation — it is the system prompt of every verifier the
+emitter spawns, since the emitter passes `agentType: "saga:readonly-verifier"` unconditionally on
+every verify call (KTD6). So the verifier received two contradictory instructions: its definition
+said emit `{refuted, upheld}`, the per-call prompt said emit the split shape. A verifier following
+its own definition produces a verdict the attached StructuredOutput schema **rejects**, and the
+consequence depends on a layer this repo does not own — see the open question below. Either way the
+verdict does not count as a refutation, so the panel drifts toward its quorum floor for reasons that
+look like verifier flakiness rather than like a contract mismatch. That is the same class of silent
+gate-disarming #686 exists to remove.
+
+**Open question — the repo asserts both answers and settles neither.** What the StructuredOutput
+boundary does with a schema-invalid verdict is load-bearing for every "malformed verdict" analysis in
+this subsystem, and the journal currently contradicts itself about it:
+
+- `{#verifier-schema-predicate-alignment-527}` says the tool boundary **retries or fails** a
+  schema-invalid return, and that only a *predicate*-invalid-but-schema-valid verdict reaches the
+  panel to be silently dropped.
+- This entry, as first written, and DECISIONS `{#verify-panel-severity-axis-686}` KTD2 both assumed a
+  schema-invalid verdict **reaches** the reconciliation helper and classifies as runtime-missing.
+
+Both cannot hold. If the boundary rejects and retries, a verdict missing a `required` key never
+arrives to be classified, and the drop population is narrower than KTD2 describes. Neither claim is
+backed by an observed post-schema run: the tests validate a verdict with in-process `jsonschema` and
+then run the emitted predicate under node, which simulates both layers rather than exercising the
+real one. Until a run settles it, treat any reachability argument that depends on the answer as
+unproven, and prefer fixes that are correct under either reading — the strict-majority quorum floor
+is one, because it closes the even-n fail-open regardless of *why* a verdict went missing.
+
+**Generalizable rule.** When an analysis turns on the behavior of a layer you do not own, write down
+which behavior you assumed and mark it unverified. An assumption recorded as a fact propagates into
+every later severity judgment that cites it.
+
+**Fix.** Agent definition updated to the split shape with a "the per-call prompt is authoritative"
+deferral, so the two can never contradict again; `tests/test_saga_execution_spec.py` gained a drift
+guard asserting the legacy literal is absent and both bucket names present. No test pinned that
+sentence before — `test_agent_registration_drift.py` and `test_saga_execution_spec.py` pinned only
+the `name:` and `tools:` frontmatter, which is why the drift was invisible.
+
+**The fourth surface.** Code review found one more, and it is the reason the "grep, don't recall"
+rule below needs a second clause. `plugins/saga/references/sandbox-spawn-sites.md:85` — the fallback
+ladder this repo's CLAUDE.md routes every out-of-saga verify spawn through — still instructed a
+caller to restate "the structured `{refuted, upheld}` verdict contract" in its own dispatch prompt
+when `saga:readonly-verifier` cannot be resolved. So the documented degradation path rebuilt the
+severity-blind gate by hand. A repo-wide `git grep` DID surface this file; what made it easy to
+dismiss was that ~20 other files matched too — `docs/plans/*.workflow.js` frozen execution records
+and historical journal entries, all correctly stale. The discriminator is not "does the old string
+appear" but **"does anything read this file to decide what to do next."** A drift guard now covers
+it, and the same guard shape now covers all four surfaces.
+
+**Generalizable rule.** Before changing a wire contract, enumerate its surfaces by **grepping for the
+old shape across tracked files**, not by recalling them into a plan. Then partition the hits into
+frozen artifacts and live instructions, and fix every live one: agent definitions, skill and command
+markdown, and reference docs that tell a caller what to say are all prompt surfaces with the same
+standing as generated prompts. They are systematically forgotten because they read as configuration.
+If a contract is worth a hard cutover, every surface that states it is worth a drift guard.
+
+**Refs.** [[workflow-lease-ttl-outlives-no-poll-contract]],
+[[worktree-copies-poison-recursive-grep]], [[quorum-floor-must-be-a-strict-majority]],
+DECISIONS `{#verify-panel-severity-axis-686}`.
+
+### A quorum floor of `ceil(n/2)` fails open at even panel sizes, because the threshold it guards is recomputed over survivors  {#quorum-floor-must-be-a-strict-majority}
+
+**Context.** A refute-N verify panel drops any verdict that fails a shape predicate, then decides
+"did enough skeptics refute" over the *survivors*. Two numbers govern that: an emit-time quorum
+**floor** over the DECLARED panel size `n`, below which the panel halts UNDER-STRENGTH, and a runtime
+**threshold** over the `k` verdicts that actually reported. The floor was `ceil(n / 2)`; the majority
+threshold is `ceil(k / 2)`.
+
+**Evidence.** Those two formulas disagree at even `n`, and the gap is exactly one verdict wide. At
+`n = 2`, one dropped verifier leaves `k = 1`, which still *meets* a floor of 1 — so no under-strength
+halt fires — and `refute_count` of 0 against a threshold of 1 PASSES the unit. The dropped verifier
+was the one that refuted. Measured at `n = 2` and `n = 4` with half the panel's verdicts dropped:
+the **base** emitter returned clean — the unit PASSED — while the **patched** one throws
+`verifier-under-strength: reported 1/2 verifiers (quorum floor 2)`. The full-strength control
+separates the two effects: with every verdict surviving, both emitters throw
+`verifier-disagreement`, so the change moves only the half-strength cells. An exhaustive sweep of
+every `(n, pass_rule, reporters, refuters)` combination for `n = 1..7` — 238 scenarios executed
+against both emitters — differs in exactly 18 cells, all at `n ∈ {2, 4, 6}`, all at exactly
+half-strength, all in the fail-closed direction. Reproducible with *any* cause
+of a dropped verdict — a crashed verifier, a timeout, a prose reply, a schema-invalid shape — so it
+long predated the #686 severity split, which merely widened the drop population. Odd `n` was never
+exposed, because there the two formulas coincide; all 36 committed panels are `n = 3`, which is why
+nothing had ever hit it.
+
+**Mechanism.** A floor that a half-strength panel can still satisfy is not a quorum. `ceil(n/2)` is
+"at least half"; a quorum needs "more than half". The bug is invisible in review because each formula
+is locally reasonable — you have to hold both at once, at an even `n` nobody had authored, to see it.
+
+**Fix.** `floor = n // 2 + 1` at both computation sites, plus the docstring and emitted comment that
+stated it as `ceil(n/2)`. It is a **no-op at every odd `n`** (1, 3, 5, 7 → 1, 2, 3, 4), so no
+committed panel changed behavior and the existing parametrized floor test — which used only odd `n` —
+kept passing untouched. That is also precisely why it had no coverage: the test matrix and the
+defect occupied disjoint halves of the parameter space. The parametrization now spans `n = 1..7`.
+
+**Generalizable rule.** When one constant guards a second constant computed over a *different*
+denominator, test the parity boundary — the two will agree on half the inputs and diverge on the
+other half, and a suite pinned to one representative value has a 50% chance of proving nothing. More
+generally: "at least half" is never a quorum, and a fail-open in a gate is worth finding even when no
+current configuration can reach it, because configurations are data and data changes.
+
+### Grepping a code generator's output can assert on the un-interpolated template, which passes forever  {#generator-output-greps-assert-on-templates}
+
+**Context.** `execution_spec.py` emits a JavaScript harness. Testing it by asserting substrings in
+the emitted text is the cheap, obvious move, and most of those assertions are sound. One was not.
+
+**Evidence.** `test_verifier_prompt_states_the_panel_s_actual_gating_bar` asserted
+`"${gatingBar} KILLS the unit" in script`, intending to prove the panel tells its verifiers the
+right gating bar. But `${gatingBar}` is a placeholder inside the **emitted helper function's own
+template-literal source** — it is present verbatim in every emitted script no matter what the
+ternary computes, or whether the ternary exists. Deleting the branching logic entirely and
+hardcoding one arm left the suite at 552 passed / 1 skipped, byte-identical to baseline. Found by a
+review lens whose method was mutation, not reading (PR #689; the same run's `passRule` fix at
+`plugins/saga/scripts/execution_spec.py:745`).
+
+**Mechanism.** A generator's output contains two kinds of text: values it *computed* for this
+emission, and template source it *copied through*. A substring assertion cannot tell them apart, and
+`${...}` is exactly the syntax that looks like an interpolation site while being a literal. The
+supporting cause was in the test harness rather than the test: the stub `agent` was declared
+`async (_prompt, opts)`, discarding the prompt — so **no** test built on it could observe rendered
+prompt text, and the blind spot was structural, not an oversight in one assertion.
+
+**Fix.** Split the claim in two. The emitted-text half asserts only what is genuinely computed (the
+call site threads the `pass_rule` literal — drop the argument and the substring vanishes). The
+rendering half executes the harness under node and reads the prompt the panel actually handed its
+verifiers. The stub now records prompts, so the structural gap is closed for future tests.
+
+**Generalizable rule.** When testing a generator, ask of every assertion: *would this string still
+be present if the feature were deleted?* If the answer is yes, the test is pinning the template, not
+the behavior — execute the artifact instead. And a mutation check is the cheapest way to ask that
+question, especially for tests written by whoever wrote the code, who shares its blind spots.
+
+### Stale worktree checkouts under `.claude/worktrees/` turn a repo-wide `grep -r` into a confident false positive  {#worktree-copies-poison-recursive-grep}
+
+**Context.** Sweeping the repo to prove the legacy `refuted` verdict shape survived nowhere (#686
+R2), a `grep -rn` from the repo root returned **3,661 matches across 612 files**, including what
+looked like unfixed legacy gate arithmetic still sitting in `execution_spec.py` at lines 608, 654,
+724 and 778 — after the fix had demonstrably landed.
+
+**Evidence.** Those line numbers do not exist in the tracked file's changed regions (the real gate
+site is `:2822`), and the same document paths repeated two and three times in one result set.
+`.claude/worktrees/` holds full checkouts at older commits — the lease registry independently showed
+`worktree_root: …/.claude/worktrees/agent-a46e08f1ff00a76ef`. Re-running the identical sweep as
+`git grep` (tracked files, working tree only) returned a legible ~45 lines, every one classifiable.
+
+**Mechanism.** Agent isolation provisions disposable git worktrees inside the repo directory. They
+are real checkouts of the same repo at whatever commit the agent started from, so a recursive
+filesystem walk finds N stale copies of every tracked file. `.gitignore` does not help: `grep -r`
+does not read it.
+
+**What surprised.** The failure mode is a *false positive against your own fix* — the sweep says the
+old code is still there, at plausible-looking line numbers, in a file you just corrected. That reads
+as "the change did not land," which is a far more alarming and more believable wrong answer than an
+empty result would have been.
+
+**Generalizable rule.** In any repo that provisions agent worktrees under its own root, use
+`git grep` rather than `grep -r` for correctness sweeps. If a recursive search returns duplicate
+paths or line numbers that contradict a diff you just read, suspect a nested checkout before
+suspecting the diff.
+
+**Refs.** [[verdict-contract-has-three-prompt-surfaces]].
+
+### "Regenerate and diff against the hand patch" is unsatisfiable when the patch touched a layer the generator never reads  {#regenerate-diff-fails-on-hand-patched-artifacts}
+
+**Context.** The plan for #686 (give the refute-N verify panel a severity axis) ended with a
+cross-repo acceptance unit: re-emit `infiquetra-codex-plugins`' committed execution-spec with the
+fixed emitter, diff the verdict-contract lines against that repo's hand-patched harness, and treat
+any difference as a defect in the unit that did the emitter work. It reads like the right check —
+prove the generator now produces what we had to hand-write.
+
+**Evidence.** Measured 2026-08-03 against `infiquetra-codex-plugins` `origin/main` (`790477c`). The
+committed harness carries prompt corrections authored *during* the run it drove — `CORRECTED
+PREMISE …`, `MANDATORY AFTER THE RE-RENDER …` — and those strings appear in **zero** of the
+committed spec's seven unit prompts. Re-emitting with today's emitter yields 87 differing
+`refuted|advisory` lines, exactly 1 of which is unit-prompt text. That one line is unreachable by any
+emitter change, because the text it differs by was never in the generator's input.
+
+**Mechanism.** A generated artifact and its generator input are two layers, and a hand patch can land
+in either. Patches to *generator logic* converge on re-emit; patches to the *artifact* do not, unless
+they were also written back to the input. Here the operator edited unit prompts directly in the
+running harness — the fastest correct move mid-run — which permanently forked the artifact from its
+spec. An acceptance check phrased as "regenerate and diff" silently assumes those two layers never
+diverged, and the assumption is strongest exactly when the artifact was valuable enough to hand-patch.
+
+**Fix.** Doc review rewrote the unit before it ran
+(`docs/reviews/doc-review-issue-686-2026-08-03.md`, finding D2). The acceptance is now four
+independent behavioral counts — legacy gate absent, and predicate / gate-arithmetic / advisory-helper
+counts matching across both files — plus a residual diff that filters unit-prompt lines, with the
+measured 87-line/1-prompt-line result recorded in the plan so the executing agent recognizes expected
+noise instead of investigating it.
+
+**What surprised.** The check was not merely noisy — it was guaranteed to fail. A *correct*
+implementation would have tripped it, and the unit's escalation said to HALT and file a defect
+against the unit that had just done its job correctly. A verification step can be worse than no
+verification step: this one converted success into a false defect report.
+
+**Generalizable rule.** Before writing "regenerate X and diff it against the committed X", ask which
+layer the committed copy was last edited in. If any hand edit landed in the artifact rather than its
+source, an empty diff is unreachable — so specify the check as a list of *behavioral* facts that must
+hold, each independently true or false, and state the expected residual difference with a measured
+number. And when a plan cites a working reference implementation, review the plan against that
+reference rather than against its own internal consistency: both P1 findings in this review came from
+reading the reference harness, and neither was visible from the plan alone.
+
+**Refs.** Plan `docs/plans/2026-08-02-issue-686-verify-panel-severity-axis-plan.md`; review
+`docs/reviews/doc-review-issue-686-2026-08-03.md`; issue #686. Related:
+[[#defect-cards-decay-two-directions]].
+
+### A ProjectV2 single-select option survives an option-list rewrite if you pass its `id` — name-matching is what fails  {#projectv2-option-id-preserves-selections}
+
+**Context.** Reconciling the CAMPPS board (project #4) to its schema-declared Status vocabulary
+meant adding three options and retiring one, on a live board holding 411 cards — 188 of them in the
+option being retired. The existing LEARNINGS entry
+[[#projectv2-option-update-clears-selections]] concluded this was structurally unsafe: *"a single-select
+option list is immutable-in-place: every 'edit' is a destroy-and-recreate of all options."* Taken at
+face value, that says no safe migration path exists, which is why the drift had stood since
+2026-07-04.
+
+**Evidence.** `ProjectV2SingleSelectFieldOptionInput` accepts an optional `id: String` (GraphQL
+schema introspection). Passing existing options with their ids across two full option-list rewrites
+— one to add `Idea`/`Committed`/`Parked`, one to remove `Todo` — preserved both survivors and every
+card assignment. Verified live the next day: `In Progress` is still `47fc9ee4` and `Done` is still
+`98236657`, the exact ids present before the first mutation, with `{Done: 223}` intact throughout.
+The earlier failure resubmitted its four options **byte-identical by name and color, with no ids**,
+and lost 26 of 27 selections.
+
+**Mechanism.** `updateProjectV2Field` does replace the entire option list, as the earlier entry
+found — but option identity is the `id` field, not the name. Omit the id and the API cannot know
+you meant "this existing option", so it mints a new one and every card pointing at the old id is
+orphaned. Supply the id and the option is updated in place. Byte-identical names look like they
+should match and never do; that near-miss is exactly what makes the failure mode convincing.
+
+**Fix.** Three-phase procedure, verified between phases, applied 2026-08-02: (1) snapshot every
+item's `(item_id, current option)` to disk — the only rollback path; (2) add new options while
+passing every existing option **with its `id`**, then confirm the card distribution is unchanged
+before continuing; (3) migrate cards off the doomed option and confirm its count reaches 0; (4)
+re-issue the field update omitting it. Card moves batched as aliased `updateProjectV2ItemFieldValue`
+mutations (`m0:`, `m1:`, …), 20 per request, 188 cards, zero failures.
+
+**What surprised.** The prior entry's *observation* was correct and its *generalization* was wrong,
+in the direction that forecloses the fix. "This mutation destroyed my data" generalized to "this
+mutation is inherently destructive" without testing whether the API offered an identity key — and
+the resulting rule was durable enough to keep a known drift unreconciled for a month.
+
+**Generalizable rule.** When an API "replaces" a collection, look for the element identity field
+before concluding replacement is destructive — and when writing up a destructive surprise, scope the
+rule to what you actually tested. A journal entry that overreaches is worse than no entry: it stops
+the next reader from finding the safe path.
+
+**Refs.** Corrects [[#projectv2-option-update-clears-selections]]; DECISIONS
+[[#board-vocabulary-schema-is-truth-584]] (why the board was migrated rather than the schema).
+
+### `gh api graphql --paginate` only paginates a variable named literally `$endCursor` — any other name hangs silently  {#gh-graphql-paginate-endcursor-name}
+
+**Context.** Enumerating all cards on the Operations board with `gh api graphql --paginate`, using a
+query declaring `query($after: String)` and `items(first: 100, after: $after)`.
+
+**Evidence.** The `$after` form returned nothing within the two minutes it was watched in the
+foreground, so it was abandoned and rewritten. Left running in the background it eventually
+**completed with exit status 0**, having emitted **146,381,294 bytes**. Renaming the variable to
+`$endCursor` — changing nothing else — returned the complete board in **93,457 bytes**. The broken
+form produced roughly **1,566× the correct payload and reported success**.
+
+**Mechanism.** `--paginate` is a client-side loop in `gh`: it reads `pageInfo.endCursor` from each
+response and re-issues the query with that value substituted into a variable it looks up **by the
+literal name `endCursor`**. With any other variable name there is nothing to substitute, so the
+cursor stays null and the server returns page 1 again — forever, or until something upstream stops
+it. Each identical page is appended to the output stream.
+
+**What surprised.** The failure does not present as a hang or an error. It presents as **success
+with an absurd amount of data**: exit 0, no warning, and an output stream of the same page repeated
+until termination. A caller that pipes this into `--jq` or a counter gets the first page's nodes
+over and over, so the natural downstream symptom is *silent duplication*, not emptiness. The
+mid-flight appearance (no output yet, still running) and the final state (exit 0, enormous output)
+point at two completely different diagnoses, and only the second one is true.
+
+**Generalizable rule.** `gh api graphql --paginate` requires the query to declare `$endCursor` by
+that exact name. More broadly: when a paginating client loops on a cursor it cannot advance, the
+tell-tale is **output volume wildly disproportionate to the data, with a zero exit status** — so
+sanity-check the size of a paginated response against what the data should plausibly weigh, and
+never treat exit 0 as evidence the pagination contract was honored. Judging a long-running command
+by what it has produced *so far* also risks recording the wrong failure mode entirely.
+
+**Refs.** Used during the CAMPPS migration, DECISIONS [[#board-vocabulary-schema-is-truth-584]].
+
+### Defect cards decay in two directions — "still reproduces" is not the same as "still worth fixing"  {#defect-cards-decay-two-directions}
+
+**Context.** An audit of all 33 cards carrying the `defects-claude-plugins` Objective on the
+Operations board, validating each against current code rather than against its own description.
+Twenty were open at the start.
+
+**Evidence.** Five closed, for two structurally different reasons. **(1) Fixed but still open:**
+#597's halt-receipt `kind` collision was repaired by commit `8882bdc2` (PR #636), which was scoped
+to an unrelated issue (#627) and never mentioned #597. Proven by running the real
+`outcome_report._halted_subplots` against both record shapes — production yields `{'leaf-a'}`,
+pre-fix yields `set()`. **(2) Still reproduces but no longer worth fixing:** #645, #646, #647 and
+#661 were each verified line-by-line as live defects in
+`plugins/fleet-core/scripts/fleet_commons/lease_broker.py` — and all four sit inside the module that
+#677 deletes outright, in a component already globally disarmed
+(`INFIQUETRA_FLEET_LEASE_ENFORCEMENT: "off"` in both `~/.claude/settings.json` and
+`~/.claude-company/settings.json`). Closed `not planned`, each with its verified reproduction in the
+close comment so reopening is cheap if #677 is descoped.
+
+**Mechanism.** Two independent decay processes act on a defect card and neither writes back to it. A
+fix can arrive as a side effect of adjacent work, because the code that satisfies a card's
+acceptance criteria does not have to be authored by someone holding the card. And a card's *value*
+can go to zero while its *reproduction* stays perfectly green, because value depends on whether the
+surrounding component still has a future — which is decided elsewhere, on a different card.
+Validating a card against its own text detects neither.
+
+**Also observed — closing an issue does not move its project card.** All five closed issues remained
+in `Shaping` afterward; no GitHub project auto-workflow moved them. Closed-but-not-Done drift
+accumulates silently and has to be swept explicitly
+(`sdlc_manager.py board move --status Done`).
+
+**Generalizable rule.** Before planning work from a defect backlog, validate each card against
+current code and against the fate of the component it lives in — and ask both questions separately.
+"Does it still reproduce?" and "is fixing it still worth anything?" have different answers, and a
+card that passes the first while failing the second is the most expensive kind to pick up, because
+everything about it looks legitimate right up until the module is deleted.
+
+**Refs.** DECISIONS [[#external-agents-like-native-671]] (why the lease broker is being retired);
+issue #677 (the deletion the four lease defects were closed against); the #597 resolution note on
+DECISIONS [[#gate-record-absence-contract-371]].
+
 ## 2026-08-02
 
 ### Adapter validation must reproduce producer boundaries, including whitespace semantics  {#hermes-profile-request-producer-boundaries}
@@ -3131,6 +3523,12 @@ the right-answer-wrong-reason case.
 **Fix (or queued).** Recovery reordered the sequence: finish ALL option-list mutations first, then write item selections exactly once against the final option set. Post-migration census verified (10 Idea/open, 17 Done/closed). Standing procedure: snapshot per-item field values before any single-select option-list mutation; treat selection restore as part of the mutation, not a contingency.
 **Generalizable rule.** A GitHub Projects single-select option list is immutable-in-place: every "edit" is a destroy-and-recreate of all options plus silent loss of every selection. Schema mutations and data writes must be strictly phased — schema converges first, data is written once, last.
 **Refs.** `plugins/mission-control/skills/flow/SKILL.md` hard-rules section (understated warning); Gate F mutation plan rev 2 (`docs/plans/2026-07-04-plugin-fleet-gate-f-mutation-plan.md`).
+
+> **Partially corrected 2026-08-02 — the phasing rule holds, "immutable-in-place" does not.** An
+> option *can* be preserved across an option-list rewrite by passing its `id` in
+> `ProjectV2SingleSelectFieldOptionInput`; what fails is matching by name, which is what this
+> incident did. Read [[#projectv2-option-id-preserves-selections]] before planning any option-list
+> migration from this entry.
 
 ### Three independent schemas governed one issue-creation path — each discovered only by consulting its executable source  {#three-schema-drift-issue-creation}
 

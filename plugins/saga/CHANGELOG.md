@@ -1,5 +1,120 @@
 # Changelog
 
+## [0.124.0] - 2026-08-03
+
+### Fixed
+
+- **Quorum floor is now a strict majority of the declared panel size** (`n // 2 + 1`, was
+  `ceil(n / 2)`). The floor is baked at emit time over the declared `n`, but the majority threshold
+  it guards is recomputed at runtime over the verdicts that actually reported. Those two formulas
+  agree at odd `n` and differ by one at even `n`, so an even-sized panel that lost exactly half its
+  verifiers still met the floor — and because the lost verdicts were the refuting ones, a
+  `verifier-disagreement` HALT silently became a PASS. Reproducible with any cause of a dropped
+  verdict (crash, timeout, prose reply, schema-invalid shape), so it predates the 0.123.0 severity
+  split rather than being introduced by it. The change is a **no-op at every odd `n`**, so all 36
+  committed `n=3` panels are unaffected. Changed at both computation sites plus the docstring and
+  emitted comment that described the old formula.
+- `__logAdvisory` no longer logs `deliverable UPHELD` unconditionally. The call is emitted before the
+  gate's enforcement throw on every path, so a refuting panel printed "deliverable UPHELD" and then
+  threw `verifier-disagreement` on the next statement — two contradictory lines, the false one first.
+  The verdict is now passed in and the wording branches (`REFUTED` / `UPHELD`).
+- A `null` element in `advisory_corrections` no longer halts a run. The schema types the bucket as a
+  bare array with no `items` constraint, so a JSON `null` crosses the tool boundary; `typeof null` is
+  `"object"`, so the renderer dereferenced `null.claim` and threw — aborting runs whose gate found
+  zero gating refutations, and on a degraded panel preempting the correct diagnostic throw with an
+  opaque null dereference. Elements are now null-guarded and the whole accumulate-and-log body is
+  wrapped, so the non-gating accumulator can never halt a run.
+- Control and invisible formatting characters in advisory text are collapsed to spaces before the
+  text is logged or stored. Advisory content is model-authored by a verifier that read a diff it did
+  not write, and reached `log()` verbatim. Two passes over two hazards: the C0 controls, DEL, the C1
+  block (NEL at U+0085) and the line/paragraph separators, any of which forges a second, more
+  alarming log line; then the bidi marks, embeddings, overrides and isolates (U+200E/F,
+  U+202A–U+202E, U+2066–U+2069) plus the BOM, which leave the byte sequence intact while reordering
+  what a human reads in a terminal or log viewer — the Trojan-Source pattern. The channel is
+  non-gating, so the exposure is misleading display, never a flipped verdict.
+- The harvest-failure marker is scrubbed like any other advisory. It embeds an exception message —
+  model-reachable text — and was the one path that built an entry without going through
+  `__renderAdvisory`, reopening the newline forgery above on the path least likely to be audited.
+- Truncation never stores half of a surrogate pair. `.slice()` cuts on UTF-16 code units, and the
+  cap now bounds the value **stored and returned**, not just the logged line, so an emoji straddling
+  the boundary would have put ill-formed UTF-16 across the harness return — substituted or rejected
+  by any consumer that re-encodes it.
+- Advisory entries carry a `round` ordinal, and `advisory_corrections` entries are capped per panel
+  with a `dropped` count. An `iterate_to_consensus` unit or a `#364` tier climb pushes one entry per
+  round under the same `unit`, so without a round marker corrections about a discarded intermediate
+  result were indistinguishable from those about the accepted one. The ordinal counts **panel
+  rounds**, incremented on every round including one that produced nothing; deriving it from stored
+  entries instead renumbered silently, so a unit whose first round came back clean labelled its
+  second round "round 1".
+- Advisories survive a halt. A bare `throw` skips the harness's final `return`, which is their only
+  structured exit — stranding advisories from units that had already delivered. Every emitted throw
+  now routes through `__halt`, which attaches the accumulator to the error as
+  `err.advisory_corrections`.
+- The verifier prompt states the panel's actual gating bar. The VERDICT CONTRACT hardcoded "a
+  majority of the panel KILLS the unit" and was emitted verbatim into `unanimous` panels, so a
+  verifier applying the prompt's own calibration test reasoned against a bar of 2/4 when the real bar
+  was 4/4. `pass_rule` is now threaded into `__verifierPrompt`.
+- `references/sandbox-spawn-sites.md` — the **fourth** verdict-shape surface — no longer tells
+  out-of-saga verify spawns to restate the retired `{refuted, upheld}` contract. This repo's
+  CLAUDE.md routes every such spawn through that fallback ladder, so the documented degradation path
+  rebuilt the severity-blind gate by hand. A drift guard now covers it.
+- `references/execution-spec.md` described `advisory_corrections` as a flat list of corrections; it
+  is a list of per-panel `{unit, round, corrections, dropped}` objects. The doc is the contract for
+  the deferred `/work` consumer, so a consumer written from it would have rendered `[object Object]`.
+
+### Tests
+
+- Panel-size coverage widened from `n=3` only to `n=1..7` for the quorum floor and `n=1..4` for the
+  split-bucket gate arithmetic. The defect above lived entirely at even `n`, which the previous
+  matrix never emitted — the test parameters and the bug occupied disjoint halves of the space.
+- Reserved harness identifiers are now proven to be rejected as unit ids by emission, rather than
+  asserted to be present in a Python set. A refactor that dropped them from the collision path while
+  leaving them in the set would have kept the old membership assertion green.
+- New runtime tests execute whole emitted harnesses under node for: the even-`n` half-strength halt,
+  a `null` advisory element, control-character stripping, invisible formatting characters
+  (bidi/NEL/BOM), the harvest-failure marker, surrogate-safe truncation, the refuted-panel log
+  wording, advisory survival across a halt in a multi-unit run, per-round advisory labelling under
+  `iterate_to_consensus` including a round that produced nothing, and the per-panel item cap.
+- The verifier prompt's gating-bar wording is pinned by **executing** the emitted harness and reading
+  the prompt the panel handed its verifiers. The previous assertion grepped the emitted source for
+  `${gatingBar}` — the helper's own un-interpolated template literal, present verbatim in every
+  emitted script regardless of what the ternary computes, or whether it exists. Deleting the
+  branching logic outright left the suite green. The harness stub now records verifier prompts
+  instead of discarding them, so no future prompt-contract test inherits that blind spot.
+
+## [0.123.0] - 2026-08-03
+
+### Fixed - the refute-N verify panel now has a severity axis (#686)
+
+The emitted verify-panel verdict schema carried exactly one rejection bucket. A verifier that read
+a unit's code, tests, and check results correctly, then found one wrong sentence in the unit's own
+self-description, tripped the same gate as a verifier who found the code itself broken — and did,
+in a real seven-unit workflow run (`infiquetra/infiquetra-codex-plugins#71`), where a false-negative
+gate discarded a correct unit and dead-lettered five downstream units.
+
+- `execution_spec.py::_verifier_schema()`: the single `refuted` key is renamed to
+  `refuted_deliverable` (gating — the unit's actual work is wrong, or the verifier could not see
+  enough evidence to judge) and joined by a new required `advisory_corrections` key (non-gating —
+  the work is right but the unit's prose about it is wrong). A verdict missing either bucket is a
+  runtime failure that counts toward the missing-verifier quorum floor; there is no legacy-`refuted`
+  compatibility shim.
+- `_emit_panel_reconciliation()` — the single gate-arithmetic site shared by the one-shot panel, the
+  `iterate_to_consensus` retry loop, and the `#364` `escalate_on_signal` tier climb — now counts a
+  verifier as refuting only when its gating bucket is non-empty. An advisory-only panel upholds the
+  unit and never burns a tier escalation.
+- Non-gating corrections are logged during the run and collected into a new module-level
+  `__advisories` accumulator, surfaced in every emitted harness's final
+  `return { units, advisory_corrections }` (harnesses previously returned `undefined`).
+- Both emitted prompt surfaces — the Python-assembled `_verifier_prompt()` and the emitted JavaScript
+  `__verifierPrompt` helper — state the two-bucket VERDICT CONTRACT with concrete examples and the
+  "sound code, wrong prose" test, ported verbatim from the hand-validated prototype wording in
+  `infiquetra-codex-plugins`.
+- `agents/readonly-verifier.md` — the verifier's own system prompt, and the third verdict-shape
+  surface — no longer instructs the legacy `{refuted, upheld}` shape. Left stale it would have
+  contradicted the schema attached at spawn: a verifier following its own definition would emit a
+  verdict the schema rejects, classifying as runtime-missing and pushing the panel toward the quorum
+  floor. A drift guard in `tests/test_saga_execution_spec.py` now pins all three surfaces.
+
 ## [0.122.0] - 2026-07-27
 
 ### Removed - the write fence and the emitted lease contract, both unreachable (#671)

@@ -859,6 +859,29 @@ def test_workflow_iterate_unit_id_rejects_local_shadowing(unit_id: str) -> None:
         ES.emit_workflow_script(spec)
 
 
+def _as_runtime_harness(script: str, tail: str = "") -> str:
+    """Wrap an emitted harness the way the Workflow runtime actually loads it.
+
+    The runtime hoists the single leading ``export const meta`` statement and runs everything
+    after it as an async FUNCTION BODY -- which is why an emitted harness may use both top-level
+    ``await`` and (since #686 KTD4) a final top-level ``return``. Node's ESM parser accepts the
+    first and rejects the second with "Illegal return statement", so checking the raw text with
+    ``--input-type=module`` models the runtime incorrectly. Wrapping here keeps these two node
+    tests honest about what the runtime does with the script.
+    """
+    body = script.replace("export const meta", "const meta", 1)
+    return "const __harness = async () => {\n" + body + "\n};\n" + tail
+
+
+# Stub verdict every stubbed verifier returns: BOTH #686 buckets, so the emitted reporter
+# predicate counts it (a single-bucket stub would be classified runtime-missing and the panel
+# would throw verifier-under-strength instead of executing the path under test).
+_STUB_VERDICT_JS = (
+    '{refuted_deliverable: [], advisory_corrections: [], upheld: [], verifier_identity: "stub", '
+    'fallback_depth: 0, examined_sha: "deadbeef"}'
+)
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
 def test_workflow_iterate_ordinary_identifier_executes_with_runtime_stubs() -> None:
     script = _emit_units(
@@ -869,17 +892,21 @@ def test_workflow_iterate_ordinary_identifier_executes_with_runtime_stubs() -> N
             )
         ]
     )
-    prelude = """
-const log = () => {};
+    prelude = f"""
+const log = () => {{}};
 const parallel = async (thunks) => Promise.all(thunks.map((thunk) => thunk()));
 const agent = async (_prompt, opts) => opts && opts.agentType
-  ? {refuted: [], upheld: [], verifier_identity: "stub", fallback_depth: 0,
-     examined_sha: "deadbeef"}
-  : {result: "ok"};
+  ? {_STUB_VERDICT_JS}
+  : {{result: "ok"}};
 """
+    wrapped = _as_runtime_harness(
+        script,
+        "const __result = await __harness();\n"
+        "console.log(JSON.stringify(__result.units.ordinary_unit));\n",
+    )
     proc = subprocess.run(
         [shutil.which("node") or "node", "--input-type=module"],
-        input=prelude + script + "\nconsole.log(JSON.stringify(ordinary_unit));\n",
+        input=prelude + wrapped,
         text=True,
         capture_output=True,
         check=False,
@@ -925,7 +952,7 @@ def test_workflow_comment_fields_are_inert_and_emitted_javascript_parses() -> No
     assert r"\${globalThis.__injected = true}\`\u2028next" in script
     proc = subprocess.run(
         [shutil.which("node") or "node", "--check", "--input-type=module"],
-        input=script,
+        input=_as_runtime_harness(script),
         text=True,
         capture_output=True,
         check=False,
@@ -1246,6 +1273,15 @@ def test_sandbox_coexists_with_engine_selector_without_interference() -> None:
 
 AGENTS_DIR = ROOT / "plugins" / "saga" / "agents"
 READONLY_VERIFIER_AGENT = AGENTS_DIR / "readonly-verifier.md"
+SANDBOX_SPAWN_SITES_REFERENCE = ROOT / "plugins" / "saga" / "references" / "sandbox-spawn-sites.md"
+
+# Harness-owned globals: the reservation set minus the JS runtime builtins, which are already
+# covered behaviorally by test_workflow_unit_id_rejects_harness_global_shadowing. These are the
+# names the EMITTER itself declares, so a unit id equal to any of them would shadow a harness
+# global and silently break the emitted script.
+_RESERVED_FOR_SHADOW_TEST = frozenset(
+    ES._WORKFLOW_RESERVED_IDENTIFIERS - ES._WORKFLOW_RUNTIME_GLOBAL_IDENTIFIERS
+)
 
 
 def _frontmatter_scalar(text: str, key: str) -> str:
@@ -1315,14 +1351,16 @@ def _verifier_schema_fragment() -> str:
     schema: dict[str, object] = {
         "type": "object",
         "properties": {
-            "refuted": {"type": "array"},
+            "refuted_deliverable": {"type": "array"},
+            "advisory_corrections": {"type": "array"},
             "upheld": {"type": "array"},
             "verifier_identity": {"type": "string", "minLength": 1},
             "fallback_depth": {},
             "examined_sha": {"type": "string", "minLength": 1},
         },
         "required": [
-            "refuted",
+            "refuted_deliverable",
+            "advisory_corrections",
             "upheld",
             "verifier_identity",
             "fallback_depth",
@@ -1343,6 +1381,20 @@ def test_readonly_verifier_agent_definition_exists_with_readonly_toolset() -> No
     assert "Edit" not in tools and "Write" not in tools
 
 
+def test_readonly_verifier_agent_definition_carries_the_split_verdict_shape() -> None:
+    # #686: the agent definition is the THIRD verdict-shape prompt surface, alongside the two
+    # the emitter renders (`_verifier_prompt` and `_JS_VERIFIER_PROMPT_HELPER`). It is the
+    # verifier's own system prompt, so a stale legacy shape here is not cosmetic: a verifier
+    # that follows its definition over the per-call prompt emits `{refuted, upheld}`, which the
+    # attached StructuredOutput schema REJECTS -- the verdict then classifies as runtime-missing
+    # and pushes the panel toward the quorum floor. That failure disarms a merge-blocking gate
+    # silently, so R2 ("the legacy shape must not survive anywhere") is pinned here too.
+    text = READONLY_VERIFIER_AGENT.read_text(encoding="utf-8")
+    assert "{refuted: [...], upheld: [...]}" not in text
+    assert "refuted_deliverable" in text
+    assert "advisory_corrections" in text
+
+
 def test_verifier_agenttype_literal_matches_agent_definition_name() -> None:
     # Literal-consistency guard (#287 U2, saga-side half of the registry-drift risk): the
     # agentType string the emitter bakes into every verifier call MUST equal the agent
@@ -1360,7 +1412,7 @@ def test_verifier_panel_emits_readonly_agenttype_and_isolation() -> None:
     assert 'isolation: "worktree"' in script
     assert script.count(_verifier_schema_fragment()) == 2
     assert "__verifierPrompt(" in script
-    assert "UNIT RESULT INPUT (authoritative structured evidence)" in script
+    assert "UNIT RESULT INPUT (structured evidence" in script
     assert "status --short" in script
     assert "named untracked output files" in script
 
@@ -1431,7 +1483,8 @@ def _extract_emitted_line(script: str, prefix: str) -> str:
 
 
 _SCHEMA_VALID_VERDICT: dict[str, object] = {
-    "refuted": [],
+    "refuted_deliverable": [],
+    "advisory_corrections": [],
     "upheld": ["finding-1 upheld: evidence matches"],
     "verifier_identity": "saga:readonly-verifier",
     "fallback_depth": 0,
@@ -1446,13 +1499,34 @@ def test_schema_valid_verdict_satisfies_verifier_schema_and_prose_fails() -> Non
     jsonschema = pytest.importorskip("jsonschema")
     schema = ES._verifier_schema()
     jsonschema.validate(_SCHEMA_VALID_VERDICT, schema)  # must not raise
-    refuting = dict(_SCHEMA_VALID_VERDICT, refuted=["claim X contradicted by file:line"])
+    refuting = dict(
+        _SCHEMA_VALID_VERDICT, refuted_deliverable=["claim X contradicted by file:line"]
+    )
     jsonschema.validate(refuting, schema)
+    # #686 R6/KTD2: a legacy single-bucket verdict is REJECTED at the tool boundary -- no
+    # tolerant read of `refuted` onto the gating bucket, and omitting either bucket fails.
+    legacy = {
+        "refuted": [],
+        "upheld": [],
+        "verifier_identity": "saga:readonly-verifier",
+        "fallback_depth": 0,
+        "examined_sha": "deadbeefcafe",
+    }
+    advisory_only_missing_gating = {
+        key: value for key, value in _SCHEMA_VALID_VERDICT.items() if key != "refuted_deliverable"
+    }
     malformed: object
     for malformed in (
         "All findings upheld; examined SHA deadbeef.",  # prose verdict (the #527 evidence)
         {},  # empty object
-        {"refuted": [], "upheld": []},  # missing the #390 U6 attribution fields
+        legacy,  # #686: pre-split verdict carrying only `refuted`
+        advisory_only_missing_gating,  # #686: omits the gating bucket
+        {  # #686: omits the non-gating bucket
+            key: value
+            for key, value in _SCHEMA_VALID_VERDICT.items()
+            if key != "advisory_corrections"
+        },
+        {"refuted_deliverable": [], "upheld": []},  # missing the #390 U6 attribution fields
         dict(_SCHEMA_VALID_VERDICT, examined_sha=""),  # empty sha fails minLength
         dict(_SCHEMA_VALID_VERDICT, verifier_identity=""),  # empty identity fails minLength
     ):
@@ -1470,19 +1544,23 @@ def test_schema_valid_verdict_is_counted_as_reporter_in_emitted_aggregation() ->
     script = _emit_units([_verify_unit("a", verify={"n": 2, "pass_rule": "majority"})])
     predicate_line = _extract_emitted_line(script, "const a_valid_verifier_verdict =")
     reported_line = _extract_emitted_line(script, "const a_reported =")
-    refuting = dict(_SCHEMA_VALID_VERDICT, refuted=["claim X contradicted by file:line"])
+    refuting = dict(
+        _SCHEMA_VALID_VERDICT, refuted_deliverable=["claim X contradicted by file:line"]
+    )
     js = "\n".join(
         [
             "const a_verdicts = ["
             + json.dumps(_SCHEMA_VALID_VERDICT)
             + ", "
             + json.dumps(refuting)
-            + ', "All findings upheld; examined SHA deadbeef.", null, {refuted: []}]',
+            + ', "All findings upheld; examined SHA deadbeef.", null, '
+            "{refuted_deliverable: []}]",
             # The historical `<var>_verdicts` aggregate remains authoritative after bounded
             # chunks append their ordered results.
             predicate_line,
             reported_line,
-            "const a_refute_count = a_reported.filter((v) => v.refuted.length > 0).length",
+            "const a_refute_count = "
+            "a_reported.filter((v) => v.refuted_deliverable.length > 0).length",
             "console.log(JSON.stringify("
             "{reported: a_reported.length, refute_count: a_refute_count}))",
         ]
@@ -1497,6 +1575,735 @@ def test_schema_valid_verdict_is_counted_as_reporter_in_emitted_aggregation() ->
     result = json.loads(proc.stdout.strip())
     # Both schema-valid verdicts count as reporters; prose/null/partial are runtime-missing.
     assert result == {"reported": 2, "refute_count": 1}
+
+
+# ---------------------------------------------------------------------------
+# #686: the verify verdict has a severity axis -- `refuted_deliverable` GATES the unit,
+# `advisory_corrections` never does. These execute the EMITTED gate arithmetic under node so
+# the assertions describe runtime behavior, not just emitted substrings.
+# ---------------------------------------------------------------------------
+
+
+def _verdict(*, gating: list[str], advisory: list[str]) -> dict[str, object]:
+    """One schema-valid verifier verdict with the two #686 buckets filled explicitly."""
+    return dict(
+        _SCHEMA_VALID_VERDICT,
+        refuted_deliverable=list(gating),
+        advisory_corrections=list(advisory),
+    )
+
+
+_GATING_VERDICT = _verdict(
+    gating=["U1 deleted the retry guard; tests do not cover it"], advisory=[]
+)
+_ADVISORY_VERDICT = _verdict(
+    gating=[], advisory=["notes attribute the fix to _emit_thunk; it landed in the shared helper"]
+)
+
+
+def _run_panel_gate(
+    pass_rule: str, verdicts: list[dict[str, object]], n: int = 3
+) -> dict[str, object]:
+    """Execute the emitted panel gate lines for one panel against a fixed verdict list.
+
+    Extracts the reporter predicate, reported filter, missing-index map, refute count, threshold
+    and refuted boolean VERBATIM from the emitted harness, so what runs here is exactly what the
+    workflow runtime would run. ``n`` is a parameter because the threshold arithmetic rounds
+    differently at even and odd panel sizes, and a suite that only ever emits n=3 cannot see it.
+    """
+    script = _emit_units([_verify_unit("a", verify={"n": n, "pass_rule": pass_rule})])
+    js = "\n".join(
+        [
+            "const a_verdicts = " + json.dumps(verdicts),
+            _extract_emitted_line(script, "const a_valid_verifier_verdict ="),
+            _extract_emitted_line(script, "const a_reported ="),
+            _extract_emitted_line(script, "const a_missing_idx ="),
+            _extract_emitted_line(script, "const a_refute_count ="),
+            _extract_emitted_line(script, "const a_threshold ="),
+            _extract_emitted_line(script, "const a_refuted ="),
+            "console.log(JSON.stringify({reported: a_reported.length, "
+            "missing: a_missing_idx.length, refute_count: a_refute_count, "
+            "threshold: a_threshold, refuted: a_refuted}))",
+        ]
+    )
+    proc = subprocess.run(
+        [shutil.which("node") or "node", "-e", js],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    )
+    return dict(json.loads(proc.stdout.strip()))
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+@pytest.mark.parametrize("pass_rule", ["majority", "unanimous"])
+def test_advisory_only_panel_does_not_refute_the_unit(pass_rule: str) -> None:
+    # R2/R7: three verifiers, every one of them carrying a non-empty NON-GATING bucket and an
+    # empty gating bucket. This is the #71 failure (all five refutations targeted the unit's
+    # `notes`); under the split contract the unit is UPHELD under both pass rules.
+    result = _run_panel_gate(pass_rule, [_ADVISORY_VERDICT] * 3)
+
+    assert result["reported"] == 3
+    assert result["missing"] == 0
+    assert result["refute_count"] == 0
+    assert result["refuted"] is False
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+@pytest.mark.parametrize("pass_rule", ["majority", "unanimous"])
+def test_gating_bucket_still_refutes_unchanged(pass_rule: str) -> None:
+    # R2/R7: a non-empty GATING bucket from every reporter still kills the unit, exactly as the
+    # single-bucket contract did. The fix narrows what gates; it does not weaken the gate.
+    result = _run_panel_gate(pass_rule, [_GATING_VERDICT] * 3)
+
+    assert result["refute_count"] == 3
+    assert result["refuted"] is True
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+@pytest.mark.parametrize(
+    ("pass_rule", "threshold"),
+    [("majority", 2), ("unanimous", 3)],
+)
+def test_mixed_panel_one_gating_two_advisory_upholds(pass_rule: str, threshold: int) -> None:
+    # R7: one verifier gates, two return advisories only. One gating vote is below BOTH the
+    # majority threshold (2 of 3) and the unanimous threshold (3 of 3), so the unit is upheld.
+    result = _run_panel_gate(pass_rule, [_GATING_VERDICT, _ADVISORY_VERDICT, _ADVISORY_VERDICT])
+
+    assert result["refute_count"] == 1
+    assert result["threshold"] == threshold
+    assert result["refuted"] is False
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_majority_gating_refutes_over_advisory_minority() -> None:
+    # R2/R7: two gating votes of three reaches the majority threshold -- a panel that mostly
+    # found broken work still stops the unit even when one verifier only had prose corrections.
+    result = _run_panel_gate("majority", [_GATING_VERDICT, _GATING_VERDICT, _ADVISORY_VERDICT])
+
+    assert result["refute_count"] == 2
+    assert result["threshold"] == 2
+    assert result["refuted"] is True
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+@pytest.mark.parametrize("omitted", ["refuted_deliverable", "advisory_corrections"])
+def test_verdict_omitting_either_bucket_counts_as_missing_verifier(omitted: str) -> None:
+    # R6/KTD2: a verdict missing EITHER bucket fails the reporter predicate and counts toward
+    # the missing-verifier floor -- no tolerant read, so a legacy `refuted`-only verdict cannot
+    # smuggle a prose refutation into the gating bucket.
+    partial = {key: value for key, value in _ADVISORY_VERDICT.items() if key != omitted}
+    result = _run_panel_gate("majority", [_ADVISORY_VERDICT, _ADVISORY_VERDICT, partial])
+
+    assert result["reported"] == 2
+    assert result["missing"] == 1
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_legacy_single_bucket_verdict_counts_as_missing_verifier() -> None:
+    # KTD2 stated as behavior: the pre-#686 verdict shape is a runtime failure, not a reporter.
+    legacy = {
+        "refuted": ["the notes misdescribe the mechanism"],
+        "upheld": [],
+        "verifier_identity": "saga:readonly-verifier",
+        "fallback_depth": 0,
+        "examined_sha": "deadbeefcafe",
+    }
+    result = _run_panel_gate("majority", [_ADVISORY_VERDICT, _ADVISORY_VERDICT, legacy])
+
+    assert result["reported"] == 2
+    assert result["missing"] == 1
+    assert result["refuted"] is False
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_advisories_are_logged_and_returned_by_the_emitted_harness() -> None:
+    # R4 end-to-end: run a whole emitted harness under stubs where every verifier returns an
+    # advisory-only verdict. The unit must survive the gate, the advisory must reach a log()
+    # call DURING the run, and it must ride out on the harness return value. Losing either half
+    # is the naive-fix failure mode (`__advisories` declared but never pushed to).
+    script = _emit_units([_verify_unit("a", verify={"n": 3, "pass_rule": "majority"})])
+    advisory_text = "notes claim the gate moved in _emit_thunk; it moved in the shared helper"
+    prelude = f"""
+const __logged = [];
+const log = (line) => {{ __logged.push(String(line)); }};
+const parallel = async (thunks) => Promise.all(thunks.map((thunk) => thunk()));
+const agent = async (_prompt, opts) => opts && opts.agentType
+  ? {json.dumps(_verdict(gating=[], advisory=[advisory_text]))}
+  : {{result: "ok"}};
+"""
+    wrapped = _as_runtime_harness(
+        script,
+        "const __result = await __harness();\n"
+        "console.log(JSON.stringify({advisories: __result.advisory_corrections, "
+        "unit: __result.units.a, logged: __logged}));\n",
+    )
+    proc = subprocess.run(
+        [shutil.which("node") or "node", "--input-type=module"],
+        input=prelude + wrapped,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=30,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout.strip())
+    # The advisory-only panel did NOT kill the unit.
+    assert payload["unit"] == {"result": "ok"}
+    # R4 half one: present in the emitted workflow's return value, attributed to its unit.
+    assert payload["advisories"] == [
+        {"unit": "a", "round": 1, "corrections": [advisory_text] * 3, "dropped": 0}
+    ]
+    # R4 half two: logged during the run, naming the non-gating disposition.
+    advisory_logs = [line for line in payload["logged"] if "advisory correction" in line]
+    assert len(advisory_logs) == 1
+    assert "deliverable UPHELD with 3 advisory correction(s)" in advisory_logs[0]
+    assert "non-gating" in advisory_logs[0]
+    assert advisory_text[:60] in advisory_logs[0]
+
+
+def _run_harness(
+    units: list[dict[str, object]],
+    *,
+    verdict_js: str,
+    tail: str,
+    unit_result: str = '{result: "ok"}',
+) -> subprocess.CompletedProcess[str]:
+    """Run a whole emitted harness under stubs, capturing thrown errors as structured JSON.
+
+    ``verdict_js`` is a JS expression evaluated per verifier call; it may close over ``__vcall``
+    (a 1-based verifier call counter) so a test can make one verifier in a panel behave
+    differently from its peers.
+    """
+    script = _emit_units(units)
+    prelude = f"""
+const __logged = [];
+const __prompts = [];
+let __vcall = 0;
+const log = (line) => {{ __logged.push(String(line)); }};
+const parallel = async (thunks) => Promise.all(thunks.map((thunk) => thunk()));
+const agent = async (prompt, opts) => {{
+  if (opts && opts.agentType) {{
+    __vcall += 1;
+    __prompts.push(String(prompt));
+    return ({verdict_js});
+  }}
+  return {unit_result};
+}};
+"""
+    return subprocess.run(
+        [shutil.which("node") or "node", "--input-type=module"],
+        input=prelude + _as_runtime_harness(script, tail),
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=30,
+    )
+
+
+_CAPTURE_OK = (
+    "const __result = await __harness();\n"
+    "console.log(JSON.stringify({ok: true, advisories: __result.advisory_corrections, "
+    "logged: __logged}));\n"
+)
+_CAPTURE_PROMPTS = "await __harness();\nconsole.log(JSON.stringify({prompts: __prompts}));\n"
+_CAPTURE_THROW = (
+    "try {\n"
+    "  const __result = await __harness();\n"
+    "  console.log(JSON.stringify({ok: true, advisories: __result.advisory_corrections, "
+    "logged: __logged}));\n"
+    "} catch (err) {\n"
+    "  console.log(JSON.stringify({ok: false, message: String(err && err.message), "
+    "advisories: err && err.advisory_corrections, logged: __logged}));\n"
+    "}\n"
+)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+@pytest.mark.parametrize("n", [2, 4])
+def test_even_n_panel_cannot_reach_a_verdict_on_half_strength(n: int) -> None:
+    # REGRESSION PIN for the even-n fail-open. The quorum floor is baked at emit time over the
+    # DECLARED n, while the majority threshold is recomputed at runtime over the SURVIVING
+    # reporters. Under the old floor of ceil(n/2) those two disagreed at even n: a panel that
+    # lost exactly half its verifiers still met the floor, and because the verifiers it lost
+    # were the refuting ones, refute_count fell to 0 and a HALT silently became a PASS.
+    #
+    # Here exactly half the panel refutes the deliverable but omits the semantically-empty
+    # `advisory_corrections`, so those verdicts are dropped as runtime-missing. With a STRICT
+    # majority floor (n // 2 + 1) the survivors can no longer carry a verdict and the panel
+    # halts UNDER-STRENGTH -- fail-closed -- instead of passing the unit.
+    half = n // 2
+    verdict_js = (
+        f"__vcall <= {half}"
+        ' ? {refuted_deliverable: ["BUILD BROKEN"], upheld: [],'
+        ' verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
+        ' examined_sha: "deadbeef"}'
+        ' : {refuted_deliverable: [], advisory_corrections: [], upheld: ["fine"],'
+        ' verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
+        ' examined_sha: "deadbeef"}'
+    )
+    proc = _run_harness(
+        [_verify_unit("a", verify={"n": n, "pass_rule": "majority"})],
+        verdict_js=verdict_js,
+        tail=_CAPTURE_THROW,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout.strip())
+    assert payload["ok"] is False, "half-strength even-n panel must not reach a verdict"
+    assert "verifier-under-strength" in payload["message"]
+    assert f"quorum floor {n // 2 + 1}" in payload["message"]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+@pytest.mark.parametrize("n", [1, 2, 3, 4])
+@pytest.mark.parametrize("pass_rule", ["majority", "unanimous"])
+def test_advisory_only_panel_upholds_at_every_panel_size(n: int, pass_rule: str) -> None:
+    # The severity axis must hold at every panel size, not just the n=3 default. The threshold
+    # formula rounds differently at even and odd n, so a suite pinned to one size cannot see a
+    # boundary regression.
+    result = _run_panel_gate(pass_rule, [_ADVISORY_VERDICT] * n, n=n)
+
+    assert result["reported"] == n
+    assert result["missing"] == 0
+    assert result["refute_count"] == 0
+    assert result["refuted"] is False
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+@pytest.mark.parametrize("n", [1, 2, 3, 4])
+def test_gating_bucket_refutes_at_every_panel_size(n: int) -> None:
+    # The mirror of the advisory case: a unanimously gating panel refutes at any size.
+    result = _run_panel_gate("majority", [_GATING_VERDICT] * n, n=n)
+
+    assert result["reported"] == n
+    assert result["refute_count"] == n
+    assert result["refuted"] is True
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_a_null_advisory_element_cannot_halt_a_run_that_passed_its_gate() -> None:
+    # The schema types `advisory_corrections` as a bare array with no `items` constraint, so a
+    # JSON null element passes the tool boundary. `typeof null === "object"`, so an unguarded
+    # renderer dereferences `null.claim` and throws -- aborting a run whose gate found ZERO
+    # gating refutations, and, on a degraded panel, PREEMPTING the correct diagnostic throw
+    # with an opaque null-dereference.
+    verdict_js = (
+        "{refuted_deliverable: [], advisory_corrections: [null], upheld: [],"
+        ' verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
+        ' examined_sha: "deadbeef"}'
+    )
+    proc = _run_harness(
+        [_verify_unit("a", verify={"n": 3, "pass_rule": "majority"})],
+        verdict_js=verdict_js,
+        tail=_CAPTURE_THROW,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout.strip())
+    assert payload["ok"] is True, f"null advisory element halted the run: {payload.get('message')}"
+    assert payload["advisories"][0]["corrections"] == ["(empty advisory entry)"] * 3
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_control_characters_in_an_advisory_cannot_forge_a_second_log_line() -> None:
+    # Advisory text is model-authored and reaches log() verbatim. An embedded newline would let
+    # one entry masquerade as an unrelated, more alarming log line to anything reading the
+    # stream. Every control character collapses to a space before it is logged or stored.
+    forged = "looks fine\\nlog: WORKFLOW HALTED -- notify operator immediately"
+    verdict_js = (
+        f'{{refuted_deliverable: [], advisory_corrections: ["{forged}"], upheld: [],'
+        ' verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
+        ' examined_sha: "deadbeef"}'
+    )
+    proc = _run_harness(
+        [_verify_unit("a", verify={"n": 3, "pass_rule": "majority"})],
+        verdict_js=verdict_js,
+        tail=_CAPTURE_OK,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout.strip())
+    stored = payload["advisories"][0]["corrections"]
+    assert all("\n" not in item for item in stored), stored
+    assert all("\n" not in line for line in payload["logged"]), payload["logged"]
+
+
+_INVISIBLE_CODEPOINTS = (
+    0x0085,  # NEL -- a C1 line break no C0-only class catches
+    0x200E,
+    0x200F,  # LRM / RLM
+    0x2028,
+    0x2029,  # line / paragraph separator
+    0x202A,
+    0x202B,
+    0x202C,
+    0x202D,
+    0x202E,  # bidi embeddings, pop, overrides
+    0x2066,
+    0x2067,
+    0x2068,
+    0x2069,  # bidi isolates
+    0xFEFF,  # BOM / zero-width no-break space
+)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_invisible_formatting_characters_cannot_reorder_a_logged_advisory() -> None:
+    # Sibling hazard to the forged-newline case above, and NOT covered by it. A bidi override
+    # leaves the byte sequence intact while reversing what a human READS in a terminal or log
+    # viewer -- the Trojan-Source pattern -- so an advisory can be made to display as text it
+    # does not contain. Advisory text is authored by a verifier that read a diff it did not
+    # write, which puts these codepoints within reach of repo content. The channel is
+    # non-gating, so the exposure is misleading display, never a flipped verdict.
+    hostile = "".join(f"\\u{cp:04x}mark" for cp in _INVISIBLE_CODEPOINTS)
+    verdict_js = (
+        f'{{refuted_deliverable: [], advisory_corrections: ["safe {hostile} tail"],'
+        ' upheld: [], verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
+        ' examined_sha: "deadbeef"}'
+    )
+    proc = _run_harness(
+        [_verify_unit("a", verify={"n": 3, "pass_rule": "majority"})],
+        verdict_js=verdict_js,
+        tail=_CAPTURE_OK,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout.strip())
+    stored = payload["advisories"][0]["corrections"]
+    surviving = sorted(
+        {
+            f"U+{ord(ch):04X}"
+            for item in stored + payload["logged"]
+            for ch in item
+            if ord(ch) in _INVISIBLE_CODEPOINTS
+        }
+    )
+    assert not surviving, surviving
+    # Scrubbing is not blanking -- the readable content still has to arrive.
+    assert stored[0].startswith("safe ") and stored[0].endswith(" tail")
+    assert stored[0].count("mark") == len(_INVISIBLE_CODEPOINTS)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_advisory_log_names_the_actual_verdict_when_the_panel_refuted() -> None:
+    # The advisory line is emitted BEFORE the gate's enforcement throw, on every path. Stating
+    # "deliverable UPHELD" unconditionally means the run log asserts the gate did not fire on
+    # exactly the runs where it did -- and a log-scraper filtering for UPHELD reads a killed
+    # unit as passed.
+    verdict_js = (
+        '{refuted_deliverable: ["the test asserts nothing"],'
+        ' advisory_corrections: ["notes misattribute the change"], upheld: [],'
+        ' verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
+        ' examined_sha: "deadbeef"}'
+    )
+    proc = _run_harness(
+        [_verify_unit("a", verify={"n": 3, "pass_rule": "majority"})],
+        verdict_js=verdict_js,
+        tail=_CAPTURE_THROW,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout.strip())
+    assert payload["ok"] is False
+    assert "verifier-disagreement" in payload["message"]
+    advisory_logs = [line for line in payload["logged"] if "advisory correction" in line]
+    assert len(advisory_logs) == 1
+    assert "deliverable REFUTED" in advisory_logs[0]
+    assert "deliverable UPHELD" not in advisory_logs[0]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_a_halt_carries_the_advisories_collected_before_it() -> None:
+    # Advisories exist to tell the driving session "the work was right, the account of it was
+    # wrong". A halt is when that context matters most, but a bare `throw` skips the harness's
+    # final `return` -- which is their only structured exit. In a multi-unit run that also
+    # strands advisories from units that DELIVERED. They ride out on the thrown error instead.
+    units = [
+        _verify_unit("a", verify={"n": 3, "pass_rule": "majority"}),
+        _verify_unit("b", verify={"n": 3, "pass_rule": "majority"}, depends_on=["a"]),
+    ]
+    verdict_js = (
+        "__vcall <= 3"
+        ' ? {refuted_deliverable: [], advisory_corrections: ["unit a: wrong rationale"],'
+        ' upheld: [], verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
+        ' examined_sha: "deadbeef"}'
+        ' : {refuted_deliverable: ["unit b is broken"], advisory_corrections: [], upheld: [],'
+        ' verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
+        ' examined_sha: "deadbeef"}'
+    )
+    proc = _run_harness(units, verdict_js=verdict_js, tail=_CAPTURE_THROW)
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout.strip())
+    assert payload["ok"] is False
+    assert "verifier-disagreement: Unit b" in payload["message"]
+    # Unit `a` delivered and its advisories survive the halt of a LATER unit.
+    assert payload["advisories"] is not None, "halt discarded every accumulated advisory"
+    assert [entry["unit"] for entry in payload["advisories"]] == ["a"]
+    assert payload["advisories"][0]["corrections"] == ["unit a: wrong rationale"] * 3
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_iterate_to_consensus_labels_each_round_of_advisories() -> None:
+    # An iterate-to-consensus unit runs its panel once per round. Without a round marker the
+    # entry describing a DISCARDED intermediate result is indistinguishable from the one
+    # describing the accepted result, and a driver may act on a correction about work that no
+    # longer exists. Round 1 refutes (so the unit re-runs); round 2 upholds.
+    unit = _verify_unit(
+        "a",
+        verify={
+            "n": 3,
+            "pass_rule": "majority",
+            "iterate_to_consensus": True,
+            "max_iterations": 2,
+        },
+    )
+    verdict_js = (
+        "__vcall <= 3"
+        ' ? {refuted_deliverable: ["round one is wrong"],'
+        ' advisory_corrections: ["round one prose"], upheld: [],'
+        ' verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
+        ' examined_sha: "deadbeef"}'
+        ' : {refuted_deliverable: [], advisory_corrections: ["round two prose"], upheld: [],'
+        ' verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
+        ' examined_sha: "deadbeef"}'
+    )
+    proc = _run_harness([unit], verdict_js=verdict_js, tail=_CAPTURE_THROW)
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout.strip())
+    entries = payload["advisories"] or []
+    assert [entry["round"] for entry in entries] == [1, 2], entries
+    assert entries[0]["corrections"] == ["round one prose"] * 3
+    assert entries[1]["corrections"] == ["round two prose"] * 3
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_a_round_that_produced_no_advisories_still_consumes_its_round_number() -> None:
+    # REGRESSION PIN. The round ordinal counts PANEL ROUNDS, not stored entries. Deriving it
+    # from the accumulator silently renumbers: round 1 here yields no advisories, so an
+    # entry-derived ordinal would label round 2's corrections "round 1" -- and the reference
+    # doc tells a driver that the last entry describes the result the harness returned. Under
+    # the old derivation that driver reads round 2's advice under round 1's name, and in the
+    # mirror case (a clean FINAL round) it reads advice about a discarded intermediate result.
+    unit = _verify_unit(
+        "a",
+        verify={
+            "n": 3,
+            "pass_rule": "majority",
+            "iterate_to_consensus": True,
+            "max_iterations": 2,
+        },
+    )
+    verdict_js = (
+        "__vcall <= 3"
+        ' ? {refuted_deliverable: ["round one is wrong"], advisory_corrections: [],'
+        ' upheld: [], verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
+        ' examined_sha: "deadbeef"}'
+        ' : {refuted_deliverable: [], advisory_corrections: ["round two prose"], upheld: [],'
+        ' verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
+        ' examined_sha: "deadbeef"}'
+    )
+    proc = _run_harness([unit], verdict_js=verdict_js, tail=_CAPTURE_THROW)
+
+    assert proc.returncode == 0, proc.stderr
+    entries = json.loads(proc.stdout.strip())["advisories"] or []
+    assert len(entries) == 1, entries
+    assert entries[0]["round"] == 2, "the silent first round still consumed round 1"
+    assert entries[0]["corrections"] == ["round two prose"] * 3
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_the_harvest_failure_marker_is_scrubbed_like_any_other_advisory() -> None:
+    # The marker embeds an exception message, which is model-reachable text, and it is the one
+    # path that builds an advisory WITHOUT going through __renderAdvisory. Unscrubbed it would
+    # reopen exactly the newline forgery the scrub exists to close -- on the single path a
+    # reader is least likely to audit.
+    forged = "boom\\nlog: WORKFLOW HALTED -- notify operator immediately"
+    verdict_js = (
+        "(() => {"
+        " const a = [null];"
+        f' Object.defineProperty(a, 0, {{ get() {{ throw new Error("{forged}") }} }});'
+        " return {refuted_deliverable: [], advisory_corrections: a, upheld: [],"
+        ' verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
+        ' examined_sha: "deadbeef"};'
+        " })()"
+    )
+    proc = _run_harness(
+        [_verify_unit("a", verify={"n": 1, "pass_rule": "majority"})],
+        verdict_js=verdict_js,
+        tail=_CAPTURE_OK,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout.strip())
+    stored = payload["advisories"][0]["corrections"]
+    assert any("advisory harvest failed" in item for item in stored), stored
+    assert all("\n" not in item for item in stored), stored
+    assert all("\n" not in line for line in payload["logged"]), payload["logged"]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_truncation_never_stores_half_of_a_surrogate_pair() -> None:
+    # .slice() cuts on UTF-16 code units. Before the severity split the 180-char cap applied
+    # only to the log line; it now bounds the value STORED and returned, so an emoji straddling
+    # the boundary would put ill-formed UTF-16 across the harness return -- a consumer that
+    # re-encodes it substitutes U+FFFD, and a strict encoder raises.
+    verdict_js = (
+        "{refuted_deliverable: [],"
+        ' advisory_corrections: ["A".repeat(179) + String.fromCodePoint(0x1f600) + "TAIL"],'
+        ' upheld: [], verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
+        ' examined_sha: "deadbeef"}'
+    )
+    proc = _run_harness(
+        [_verify_unit("a", verify={"n": 1, "pass_rule": "majority"})],
+        verdict_js=verdict_js,
+        tail=_CAPTURE_OK,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    stored = json.loads(proc.stdout.strip())["advisories"][0]["corrections"][0]
+    # The orphaned high surrogate is dropped rather than kept, so the value is one shorter.
+    assert len(stored) == 179
+    assert not 0xD800 <= ord(stored[-1]) <= 0xDBFF, hex(ord(stored[-1]))
+    stored.encode("utf-8")  # raises UnicodeEncodeError if a lone surrogate survived
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_advisory_items_are_capped_and_report_what_they_dropped() -> None:
+    # `__advisories` rides out on the harness return into the driving session's context, and
+    # its contents are model-authored with no schema size bound. The cap keeps one verbose
+    # panel from dominating the return value, and `dropped` keeps the truncation honest rather
+    # than silent.
+    items = ", ".join(f'"item-{i:03d}"' for i in range(80))
+    verdict_js = (
+        f"{{refuted_deliverable: [], advisory_corrections: [{items}], upheld: [],"
+        ' verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
+        ' examined_sha: "deadbeef"}'
+    )
+    proc = _run_harness(
+        [_verify_unit("a", verify={"n": 1, "pass_rule": "majority"})],
+        verdict_js=verdict_js,
+        tail=_CAPTURE_OK,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    entry = json.loads(proc.stdout.strip())["advisories"][0]
+    assert len(entry["corrections"]) == 50
+    assert entry["dropped"] == 30
+    assert "[+30 suppressed]" in "".join(json.loads(proc.stdout.strip())["logged"])
+
+
+@pytest.mark.parametrize("pass_rule", ["majority", "unanimous"])
+def test_verifier_prompt_call_threads_the_panel_s_pass_rule(pass_rule: str) -> None:
+    # Emitted-text half: the panel's pass rule reaches the helper at all. This cannot assert
+    # what the helper RENDERS -- `${gatingBar}` is the helper's own template-literal source and
+    # is present verbatim in every emitted script regardless of how (or whether) the ternary
+    # computes it. Rendering is pinned by the node-executed test below.
+    script = _emit_units([_verify_unit("a", verify={"n": 4, "pass_rule": pass_rule})])
+
+    assert "__verifierPrompt(" in script
+    assert f', "{pass_rule}")' in script
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+@pytest.mark.parametrize(
+    ("pass_rule", "rendered", "other_arm"),
+    [
+        ("majority", "a majority of the panel", "EVERY reporting verifier"),
+        ("unanimous", "EVERY reporting verifier", "a majority of the panel"),
+    ],
+)
+def test_verifier_prompt_renders_the_gating_bar_the_panel_actually_applies(
+    pass_rule: str, rendered: str, other_arm: str
+) -> None:
+    # The VERDICT CONTRACT asks each verifier to apply a calibration test -- "put a finding in
+    # the gating bucket only if you would defend stopping the run over it". A verifier told the
+    # bar is a majority when the panel is unanimous reasons against the wrong consequence.
+    #
+    # This runs the emitted harness and reads the prompt string the panel actually handed its
+    # verifiers. A source grep cannot do that: deleting the `passRule` ternary outright and
+    # hardcoding one arm leaves every emitted-text assertion green.
+    verdict_js = (
+        '{refuted_deliverable: [], advisory_corrections: [], upheld: ["fine"],'
+        ' verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
+        ' examined_sha: "deadbeef"}'
+    )
+    proc = _run_harness(
+        [_verify_unit("a", verify={"n": 3, "pass_rule": pass_rule})],
+        verdict_js=verdict_js,
+        tail=_CAPTURE_PROMPTS,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    prompts = json.loads(proc.stdout.strip())["prompts"]
+    assert len(prompts) == 3, "every verifier in the panel is prompted"
+    for prompt in prompts:
+        assert f"from {rendered} KILLS the unit" in prompt
+        assert other_arm not in prompt
+
+
+@pytest.mark.parametrize("unit_id", sorted(_RESERVED_FOR_SHADOW_TEST))
+def test_reserved_harness_identifiers_are_rejected_as_unit_ids(unit_id: str) -> None:
+    # The reservation set is only meaningful if emission actually rejects a unit id that would
+    # shadow a harness global. Asserting set MEMBERSHIP proves nothing: a refactor that dropped
+    # these names from the collision path while leaving them in the set would keep a membership
+    # test green. This is the emitter-owned half of the set -- the JS runtime builtins are
+    # covered by test_workflow_unit_id_rejects_harness_global_shadowing.
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(unit_id=unit_id))
+
+    with pytest.raises(ES.SpecError, match="reserved JavaScript identifier"):
+        ES.emit_workflow_script(spec)
+
+
+def test_sandbox_spawn_sites_reference_carries_the_split_verdict_shape() -> None:
+    # The FOURTH verdict-shape surface. This repo's CLAUDE.md routes every verify-class agent
+    # spawn made outside a saga skill through this file's fallback ladder, and that ladder tells
+    # a caller to restate the verdict contract in its own dispatch prompt when the verifier
+    # agent type cannot be resolved. Left naming the legacy single-bucket shape, the documented
+    # fallback reproduces the exact severity-blind gate #686 exists to remove.
+    text = SANDBOX_SPAWN_SITES_REFERENCE.read_text(encoding="utf-8")
+
+    assert "{refuted, upheld}" not in text
+    assert "refuted_deliverable" in text
+    assert "advisory_corrections" in text
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_advisory_only_panel_does_not_burn_the_364_one_rung_climb() -> None:
+    # R8: the #364 escalate_on_signal ladder climb is the SECOND consumer of the refuted
+    # boolean. An advisory-only panel must leave the unit at its authored tier -- the retry
+    # branch is guarded by the same `<var>_refuted` the gate arithmetic now computes from the
+    # gating bucket only, so a prose-only panel cannot burn a tier escalation.
+    script = _emit_units_unattended([_escalate_unit()])
+    js = "\n".join(
+        [
+            "const U1_verdicts = " + json.dumps([_ADVISORY_VERDICT] * 3),
+            _extract_emitted_line(script, "const U1_valid_verifier_verdict ="),
+            _extract_emitted_line(script, "const U1_reported ="),
+            _extract_emitted_line(script, "const U1_refute_count ="),
+            _extract_emitted_line(script, "const U1_threshold ="),
+            _extract_emitted_line(script, "const U1_refuted ="),
+            # The emitted climb is `if (U1_refuted) { ...re-run one rung up... }`.
+            "console.log(JSON.stringify({climbed: U1_refuted}))",
+        ]
+    )
+    proc = subprocess.run(
+        [shutil.which("node") or "node", "-e", js],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    )
+
+    assert json.loads(proc.stdout.strip()) == {"climbed": False}
+    # And the climb really is gated on that boolean (guards the assertion above from drifting
+    # into a test of an expression the emitted harness no longer consumes).
+    assert "if (U1_refuted) {" in script
+    assert "climbing ONE rung to sonnet/high" in script
 
 
 def test_verifier_iterate_singleton_emits_readonly_agenttype_and_isolation() -> None:
@@ -2050,7 +2857,7 @@ def test_pull_cord_not_complete_batched() -> None:  # R8
     assert script.count("if (__pulledCords.length > 0)") == 1
     assert "ONE batched escalation ask" in script
     # The batch fails the run (throw) so a cord unit is never marked complete.
-    assert "throw new Error(`pull-cord (#364)" in script
+    assert "throw __halt(`pull-cord (#364)" in script
     # Each cord entry carries its one-rung proposal computed at emit time.
     assert 'cordProposal: "haiku/low -> haiku/medium (+1 effort rung)"' in script
 

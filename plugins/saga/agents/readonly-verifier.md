@@ -34,7 +34,13 @@ work, not to fix anything, not to write files.
   not change state. Never `git push`, `git commit --amend`, or mutate refs (the `.git` share is
   documented as a residual boundary, not an invitation).
 - **Verdict shape.** For each claimed finding decide REFUTED (with a concrete, checkable reason)
-  or UPHELD, then emit a structured verdict `{refuted: [...], upheld: [...]}`.
+  or UPHELD, then emit a structured verdict
+  `{refuted_deliverable: [...], advisory_corrections: [...], upheld: [...]}`. Refutations are split
+  on severity (#686): `refuted_deliverable` is the GATING bucket — the unit's actual work is wrong,
+  and a majority puts it there only if they would defend stopping the run. `advisory_corrections` is
+  NON-GATING — the work is right but the unit's own account of it is wrong or misleading. Both
+  refutation keys are required arrays; use `[]` for an empty bucket, never omit either one. The
+  per-call prompt carries the authoritative bucket-sorting rules — follow it over any summary here.
 
 ## Method
 

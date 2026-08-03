@@ -350,11 +350,15 @@ _WORKFLOW_RESERVED_IDENTIFIERS = (
     frozenset(
         {
             "REPO",
+            "__ADVISORY_ITEM_CAP",
+            "__ADVISORY_ITEM_CHARS",
             "__advisories",
             "__gate",
+            "__halt",
             "__is429",
             "__logAdvisory",
             "__pulledCords",
+            "__renderAdvisory",
             "__retry",
             "__retryAfterMs",
             "__retryBackoffMs",
@@ -533,7 +537,7 @@ _JS_GATE_HELPER = r"""function __gate(result, opts) {
   }
 
   if (opts.expectsOutput && isEmptyOrAbsent(result)) {
-    throw new Error(
+    throw __halt(
       `missing-output: Unit ${unitId} expected structured output but received none or empty.`
     );
   }
@@ -556,7 +560,7 @@ _JS_GATE_HELPER = r"""function __gate(result, opts) {
       try {
         JSON.parse(s);
       } catch (e) {
-        throw new Error(
+        throw __halt(
           `malformed-output: Unit ${unitId} output is a structurally truncated JSON: ${e.message}`
         );
       }
@@ -588,7 +592,7 @@ _JS_GATE_HELPER = r"""function __gate(result, opts) {
     }
     if (producedCount < targetCount) {
       const shortfall = targetCount - producedCount;
-      throw new Error(
+      throw __halt(
         `missing-output: Unit ${unitId} produced fewer items than expected. ` +
         `Expected ${targetCount}, produced ${producedCount}. Shortfall: ${shortfall}.`
       );
@@ -598,7 +602,7 @@ _JS_GATE_HELPER = r"""function __gate(result, opts) {
   if (opts.returns && opts.returns.length > 0) {
     const parsed = parseResult(result);
     if (parsed === null || parsed === undefined || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      throw new Error(
+      throw __halt(
         `missing-output: Unit ${unitId} result is not a structured dictionary. ` +
         `Missing required keys: ${opts.returns.join(', ')}.`
       );
@@ -607,7 +611,7 @@ _JS_GATE_HELPER = r"""function __gate(result, opts) {
       k => !(k in parsed) || parsed[k] === null || parsed[k] === undefined
     );
     if (missing.length > 0) {
-      throw new Error(
+      throw __halt(
         `missing-output: Unit ${unitId} output is missing required keys: ${missing.join(', ')}.`
       );
     }
@@ -691,22 +695,56 @@ async function __retry(thunk, opts) {
 # each covering only one panel shape). `__logAdvisory` both LOGS during the run and accumulates
 # for the final return, which is R4's "reach the driving session" in its two required halves.
 _JS_ADVISORY_HELPER = r"""const __advisories = []
-function __logAdvisory(unitId, reported) {
-  var items = []
-  for (var i = 0; i < reported.length; i++) {
-    var adv = reported[i].advisory_corrections || []
-    for (var j = 0; j < adv.length; j++) items.push(adv[j])
+const __ADVISORY_ITEM_CAP = 50
+const __ADVISORY_ITEM_CHARS = 180
+function __renderAdvisory(a) {
+  var s
+  try {
+    if (a === null || a === undefined) s = "(empty advisory entry)"
+    else if (typeof a === "string") s = a
+    else s = String(a.claim || a.id || JSON.stringify(a))
+  } catch (e) {
+    s = "(unrenderable advisory entry)"
   }
-  if (items.length > 0) {
-    __advisories.push({ unit: unitId, corrections: items })
-    log(`verify panel over ${unitId}: deliverable UPHELD with ${items.length} advisory correction(s) (narrative/rationale only, non-gating): ` +
-        items.map((a) => String(typeof a === "string" ? a : (a.claim || a.id || JSON.stringify(a))).slice(0, 180)).join(" | "))
+  return s.replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, " ").slice(0, __ADVISORY_ITEM_CHARS)
+}
+function __halt(message) {
+  var e = new Error(message)
+  e.advisory_corrections = __advisories
+  return e
+}
+function __logAdvisory(unitId, reported, refuted) {
+  var items = []
+  try {
+    for (var i = 0; i < reported.length; i++) {
+      var adv = Array.isArray(reported[i].advisory_corrections) ? reported[i].advisory_corrections : []
+      for (var j = 0; j < adv.length; j++) items.push(__renderAdvisory(adv[j]))
+    }
+  } catch (e) {
+    items.push("(advisory harvest failed: " + String(e && e.message).slice(0, 120) + ")")
+  }
+  if (items.length === 0) return items
+  var round = __advisories.filter((entry) => entry.unit === unitId).length + 1
+  var dropped = 0
+  if (items.length > __ADVISORY_ITEM_CAP) {
+    dropped = items.length - __ADVISORY_ITEM_CAP
+    items = items.slice(0, __ADVISORY_ITEM_CAP)
+  }
+  __advisories.push({ unit: unitId, round: round, corrections: items, dropped: dropped })
+  try {
+    log(`verify panel over ${unitId} (round ${round}): deliverable ${refuted ? "REFUTED" : "UPHELD"} with ${items.length + dropped} advisory correction(s) (narrative/rationale only, non-gating): ` +
+        items.join(" | ") + (dropped > 0 ? ` [+${dropped} suppressed]` : ""))
+  } catch (e) {
+    /* the non-gating accumulator must never be able to halt a run */
   }
   return items
 }"""
 
 
-_JS_VERIFIER_PROMPT_HELPER = r"""function __verifierPrompt(basePrompt, unitResult) {
+_JS_VERIFIER_PROMPT_HELPER = r"""function __verifierPrompt(basePrompt, unitResult, passRule) {
+  var gatingBar = (passRule === "unanimous")
+    ? "EVERY reporting verifier"
+    : "a majority of the panel";
   var rendered;
   try {
     rendered = JSON.stringify(unitResult, null, 2);
@@ -744,7 +782,7 @@ you find into exactly one of these. Getting the bucket right matters more than f
   or its reported result does not reproduce. Re-run the commands and check.
 - The unit says \`status: "done"\` but the work is not done.
 - You could not see enough to judge (visibility gap).
-A non-empty \`refuted_deliverable\` from a majority of the panel KILLS the unit and HALTS the whole
+A non-empty \`refuted_deliverable\` from ${gatingBar} KILLS the unit and HALTS the whole
 workflow. Put a finding here only if you would defend stopping the run over it.
 
 \`advisory_corrections\` — NON-GATING. A finding belongs here if the WORK is right but the unit's
@@ -2717,7 +2755,15 @@ def _emit_panel_reconciliation(
     panel = unit.verify
     assert panel is not None
     n = panel.n
-    floor = (n + 1) // 2  # plan KTD3: quorum floor, baked as a literal per panel
+    # Quorum floor, baked as a literal per panel (plan KTD3). STRICT majority of the DECLARED
+    # panel size -- `n // 2 + 1`, not `ceil(n / 2)`. At even n those differ by one, and the
+    # emit-time floor is compared against a runtime majority threshold recomputed over the
+    # SURVIVING reporters (`ceil(k / 2)`). With `ceil(n / 2)` the two disagree at even n, so a
+    # panel that lost exactly half its verifiers -- to a crash, a timeout, a prose verdict, or
+    # any schema-invalid shape -- still met the floor while the refuters it lost were the ones
+    # that would have carried the majority. That is a silent HALT->PASS flip. `n // 2 + 1` is a
+    # no-op at every odd n (1, 3, 5, 7 -> 1, 2, 3, 4), so no committed panel changes behavior.
+    floor = n // 2 + 1
     verifier_prompt = _verifier_prompt(unit)
     verifier_opts = _verifier_agent_opts(unit)
 
@@ -2740,7 +2786,10 @@ def _emit_panel_reconciliation(
 
     def _emit_verifier_member(_index: int) -> None:
         lines.append(f"{indent}  () => {_retry_open()}")
-        lines.append(f"{indent}    __verifierPrompt({_js_string(verifier_prompt)}, {result_var}),")
+        lines.append(
+            f"{indent}    __verifierPrompt({_js_string(verifier_prompt)}, {result_var}, "
+            f"{_js_string(panel.pass_rule)}),"
+        )
         lines.append(
             f"{indent}    {{ "
             + ", ".join(verifier_opts)
@@ -2839,7 +2888,9 @@ def _emit_panel_reconciliation(
     # appended after that point would silently never emit for climb units, leaving advisories
     # absent on exactly that path and nowhere else. Emitting here covers all three panel shapes
     # (one-shot, iterate-to-consensus, climb) with a single insertion.
-    lines.append(f"{indent}__logAdvisory({_js_string(unit.unit_id)}, {reported_var})")
+    lines.append(
+        f"{indent}__logAdvisory({_js_string(unit.unit_id)}, {reported_var}, {refuted_var})"
+    )
     # R4/R5: annotate missing verifiers and hard-fail below the baked quorum floor before any
     # accept/disagree decision can be computed over too little evidence.
     lines.append(f"{indent}if ({missing_idx_var}.length > 0) {{")
@@ -2856,14 +2907,14 @@ def _emit_panel_reconciliation(
     lines.append(f"{indent}}}")
     lines.append(f"{indent}if ({reported_var}.length < {floor}) {{")
     lines.append(
-        f"{indent}  throw new Error(`verifier-under-strength: Unit {unit.unit_id} reported "
+        f"{indent}  throw __halt(`verifier-under-strength: Unit {unit.unit_id} reported "
         f"${{{reported_var}.length}}/{n} verifiers (quorum floor {floor}; "
         f"missing #${{{missing_idx_var}.join(', #')}})${{{fallback_marker_var}}}`)"
     )
     lines.append(f"{indent}}}")
 
     throw_line = (
-        f"throw new Error(`verifier-disagreement: Unit {unit.unit_id} refuted by "
+        f"throw __halt(`verifier-disagreement: Unit {unit.unit_id} refuted by "
         f"${{{refute_count_var}}}/${{{reported_var}.length}} reporting verifiers "
         f"(${{{missing_idx_var}.length}} missing)${{{fallback_marker_var}}}{throw_suffix}`)"
     )
@@ -3032,9 +3083,11 @@ def _emit_verify_panel(
     pass-rule threshold over the reporters (R3): ``majority`` => ``>= max(1, ceil(k/2))`` of
     the ``k`` reporting verifiers refuted; ``unanimous`` => all ``k`` refuted. #686: "refuted"
     throughout this arithmetic means a non-empty GATING bucket -- a verifier reporting only
-    ``advisory_corrections`` is a reporter that did NOT refute. A quorum floor of ``ceil(n/2)``
-    of the declared ``n`` (plan KTD3) marks the result UNDER-STRENGTH when under-met, but a
-    refutation still acts regardless (plan KTD4).
+    ``advisory_corrections`` is a reporter that did NOT refute. A quorum floor of a STRICT
+    majority of the declared ``n`` -- ``n // 2 + 1`` (plan KTD3) -- marks the result
+    UNDER-STRENGTH when under-met, but a refutation still acts regardless (plan KTD4). The
+    floor must be the strict majority rather than ``ceil(n/2)``: the two differ at even ``n``,
+    and a floor that a half-strength panel can still meet lets a lost refuter flip HALT to PASS.
     (This is a panel-level signal, not per-finding survival: a generic emitter cannot match
     findings across verifiers, so it surfaces "did enough skeptics refute anything" for the
     operator/runtime to act on.) The resulting ``<var>_refuted`` boolean is CONSUMED: when
@@ -3044,7 +3097,8 @@ def _emit_verify_panel(
     panel = unit.verify
     assert panel is not None  # caller guards this
     n = panel.n
-    floor = (n + 1) // 2
+    # Strict majority of the declared panel size -- must match _emit_panel_reconciliation.
+    floor = n // 2 + 1
 
     lines.append(f"// verify: refute-{n} panel over {unit.unit_id} (pass_rule: {panel.pass_rule};")
     lines.append(
@@ -3776,7 +3830,7 @@ def emit_workflow_script(
     # cord unit is never marked complete because the run fails here before returning.
     lines.append("if (__pulledCords.length > 0) {")
     lines.append(
-        "  throw new Error(`pull-cord (#364): ${__pulledCords.length} unit(s) self-reported "
+        "  throw __halt(`pull-cord (#364): ${__pulledCords.length} unit(s) self-reported "
         "out of depth -- ` +"
     )
     lines.append(

@@ -953,9 +953,19 @@ def test_missing_verifier_recording_emits_runtime_failure_log() -> None:
     )
 
 
-@pytest.mark.parametrize(("n", "floor"), [(3, 2), (7, 4), (1, 1)])
+@pytest.mark.parametrize(
+    ("n", "floor"),
+    [(1, 1), (2, 2), (3, 2), (4, 3), (5, 3), (6, 4), (7, 4)],
+)
 def test_missing_verifier_quorum_floor_scales_with_declared_n(n: int, floor: int) -> None:
-    """KTD3: the quorum floor is ceil(n/2) of the declared n, baked as a literal per panel."""
+    """KTD3: the quorum floor is a STRICT majority of the declared n, baked per panel.
+
+    `n // 2 + 1`, NOT `ceil(n / 2)`. The two agree at every odd n and differ by one at even
+    n, and the emit-time floor is compared against a majority threshold recomputed at runtime
+    over the SURVIVING reporters (`ceil(k / 2)`). Under `ceil(n / 2)` an even-n panel that lost
+    exactly half its verifiers still met the floor, so the refuters it lost could not carry the
+    majority and a HALT silently became a PASS. The even-n rows below are the regression pins.
+    """
     mod = _load()
     data = _valid_spec_dict()
     units = data["units"]
@@ -1082,11 +1092,21 @@ def test_advisory_accumulator_and_helper_are_emitted_once_per_harness() -> None:
     script = _panel_script(_load())
 
     assert script.count("const __advisories = []") == 1
-    assert script.count("function __logAdvisory(unitId, reported) {") == 1
+    assert script.count("function __logAdvisory(unitId, reported, refuted) {") == 1
     # The helper reads the NON-GATING bucket only, and logs it as explicitly non-gating.
-    assert "reported[i].advisory_corrections || []" in script
+    # The bucket read is `Array.isArray(...) ? ... : []` rather than `|| []`: the predicate
+    # that produced `reported` guarantees the KEY is an array but says nothing about a
+    # re-entrant or hand-built caller, and `|| []` would pass a non-array truthy value through
+    # to the element loop.
+    assert (
+        "Array.isArray(reported[i].advisory_corrections) "
+        "? reported[i].advisory_corrections : []" in script
+    )
     assert "advisory correction(s) (narrative/rationale only, non-gating)" in script
-    assert "__advisories.push({ unit: unitId, corrections: items })" in script
+    assert (
+        "__advisories.push({ unit: unitId, round: round, corrections: items, "
+        "dropped: dropped })" in script
+    )
 
 
 def test_panel_populates_the_advisory_accumulator_before_the_missing_verifier_block() -> None:
@@ -1095,8 +1115,8 @@ def test_panel_populates_the_advisory_accumulator_before_the_missing_verifier_bl
     block, because `_emit_panel_reconciliation` returns early on the #364 climb path."""
     script = _panel_script(_load())
 
-    assert '__logAdvisory("U2", U2_reported)' in script
-    call_at = script.index('__logAdvisory("U2", U2_reported)')
+    assert '__logAdvisory("U2", U2_reported, U2_refuted)' in script
+    call_at = script.index('__logAdvisory("U2", U2_reported, U2_refuted)')
     refuted_const_at = script.index("const U2_refuted = U2_refute_count >= U2_threshold")
     missing_block_at = script.index("if (U2_missing_idx.length > 0) {")
     # Immediately after the refuted const and before the missing-verifier bookkeeping.
@@ -1123,10 +1143,10 @@ def test_escalate_on_signal_unit_still_emits_its_advisory_call() -> None:
     # One call per emitted panel: the first panel and the post-climb retry panel (which
     # reconciles under its own `U2_retry_` prefix).
     assert script.count('__logAdvisory("U2", ') == 2
-    assert '__logAdvisory("U2", U2_reported)' in script
-    assert '__logAdvisory("U2", U2_retry_reported)' in script
+    assert '__logAdvisory("U2", U2_reported, U2_refuted)' in script
+    assert '__logAdvisory("U2", U2_retry_reported, U2_retry_refuted)' in script
     # Each call precedes its own `if (U2_refuted) {` consumer, never trails it.
-    first_call = script.index('__logAdvisory("U2", U2_reported)')
+    first_call = script.index('__logAdvisory("U2", U2_reported, U2_refuted)')
     assert first_call < script.index("if (U2_refuted) {")
 
 
@@ -1207,7 +1227,7 @@ def test_refute_throw_guard_is_unconditional_on_quorum_floor() -> None:
     spec = mod.ExecutionSpec.from_dict(data)
     script = mod.emit_workflow_script(spec)
 
-    assert "if (U2_refuted) {\n  throw new Error(`verifier-disagreement:" in script
+    assert "if (U2_refuted) {\n  throw __halt(`verifier-disagreement:" in script
 
 
 def test_iterate_throw_at_max_iterations_is_unconditional_on_quorum_floor() -> None:
@@ -1230,7 +1250,7 @@ def test_iterate_throw_at_max_iterations_is_unconditional_on_quorum_floor() -> N
     spec = mod.ExecutionSpec.from_dict(data)
     script = mod.emit_workflow_script(spec)
 
-    assert "if (iter === 2) {\n    throw new Error(`verifier-disagreement:" in script
+    assert "if (iter === 2) {\n    throw __halt(`verifier-disagreement:" in script
 
 
 def test_all_three_reconciliation_sites_carry_the_recompute() -> None:
@@ -1917,7 +1937,7 @@ def test_emitted_null_check() -> None:
     assert "__gate(U4_verdicts" not in script
 
     # 4. The guard HALTS on null (emitted code throws).
-    assert "throw new Error" in script
+    assert "throw __halt" in script
 
     # 5. A fan-out unit (U3) emits the count-reconcile guard arg (targets count is 2).
     assert "targets: 2" in script
@@ -1956,7 +1976,7 @@ def test_refuted_panel_emits_verifier_disagreement_halt() -> None:
     spec = mod.ExecutionSpec.from_dict(data)
     script = mod.emit_workflow_script(spec)
 
-    assert "throw new Error" in script
+    assert "throw __halt" in script
     assert "verifier-disagreement" in script
     assert "U2_refute_count" in script
     # It must throw verifier-disagreement and NOT just log and continue

@@ -82,8 +82,16 @@ outright or silently reverting to an unsandboxed spawn:
    `mutation_policy: read-only` axis survives by tool omission, the same enforcement mechanism
    `saga:readonly-verifier` uses, not a prose instruction hoping the agent complies. Preserved:
    both sandbox axes (read-only by tool omission, worktree isolation). Lost: the verifier-specific
-   system prompt (the REFUTE-first framing, the structured `{refuted, upheld}` verdict contract) —
-   restate that framing in the dispatch prompt itself.
+   system prompt (the REFUTE-first framing, and the structured two-bucket verdict contract
+   `{refuted_deliverable, advisory_corrections, upheld}`) — restate that framing in the dispatch
+   prompt itself. Both refutation buckets are required arrays; use `[]` for an empty one, never
+   omit either. The split is load-bearing, not cosmetic (#686): `refuted_deliverable` is the
+   GATING bucket — a majority there kills the unit and halts the run — while
+   `advisory_corrections` is NON-GATING and records the case where the work is right but the
+   unit's own account of it is wrong. Restating the retired single-rejection-bucket shape (the one
+   with no `refuted_deliverable`) reintroduces the severity-blind gate that split exists to remove.
+   A drift guard in `tests/test_saga_execution_spec.py` asserts the retired shape appears nowhere in
+   this file, so state it by description here, never by literal.
 2. **`subagent_type: general-purpose` + `isolation: "worktree"` + an explicit read-only
    instruction in the prompt** — only if `Explore` is *also* absent from the session. Preserved:
    worktree isolation (accidental-clobber protection per KTD7 below). Lost: the structural

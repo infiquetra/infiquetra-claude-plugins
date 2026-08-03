@@ -70,7 +70,11 @@ went before calling it clean.
 **Refs.** [[verdict-contract-has-three-prompt-surfaces]], `plugins/saga/skills/work/SKILL.md` §1.5,
 `plugins/saga/scripts/workflow_emitter.py:191-206`.
 
-### A verdict contract had three prompt surfaces; the plan enumerated two, and the third was the agent's own system prompt  {#verdict-contract-has-three-prompt-surfaces}
+### A verdict contract had FOUR prompt surfaces; the plan enumerated two  {#verdict-contract-has-three-prompt-surfaces}
+
+> The anchor slug says "three" because that is what the first pass found and other entries already
+> link to it. A fourth surface turned up in code review — see **The fourth surface** below. The slug
+> is kept stable on purpose; the count in it is historical, not current.
 
 **Context.** #686 split the refute-N verifier verdict into a gating bucket
 (`refuted_deliverable`) and a non-gating one (`advisory_corrections`). The plan's KTD6 correctly
@@ -87,11 +91,33 @@ working reference implementation whose agent-definition layer the reference did 
 emitter spawns, since the emitter passes `agentType: "saga:readonly-verifier"` unconditionally on
 every verify call (KTD6). So the verifier received two contradictory instructions: its definition
 said emit `{refuted, upheld}`, the per-call prompt said emit the split shape. A verifier following
-its own definition produces a verdict the attached StructuredOutput schema **rejects** — and the
-reconciliation helper classifies a schema-invalid verdict as *runtime-missing*, which counts toward
-the missing-verifier quorum floor. The result is a panel drifting toward under-strength for reasons
-that look like verifier flakiness, which is the same class of silent gate-disarming #686 exists to
-remove.
+its own definition produces a verdict the attached StructuredOutput schema **rejects**, and the
+consequence depends on a layer this repo does not own — see the open question below. Either way the
+verdict does not count as a refutation, so the panel drifts toward its quorum floor for reasons that
+look like verifier flakiness rather than like a contract mismatch. That is the same class of silent
+gate-disarming #686 exists to remove.
+
+**Open question — the repo asserts both answers and settles neither.** What the StructuredOutput
+boundary does with a schema-invalid verdict is load-bearing for every "malformed verdict" analysis in
+this subsystem, and the journal currently contradicts itself about it:
+
+- `{#verifier-schema-predicate-alignment-527}` says the tool boundary **retries or fails** a
+  schema-invalid return, and that only a *predicate*-invalid-but-schema-valid verdict reaches the
+  panel to be silently dropped.
+- This entry, as first written, and DECISIONS `{#verify-panel-severity-axis-686}` KTD2 both assumed a
+  schema-invalid verdict **reaches** the reconciliation helper and classifies as runtime-missing.
+
+Both cannot hold. If the boundary rejects and retries, a verdict missing a `required` key never
+arrives to be classified, and the drop population is narrower than KTD2 describes. Neither claim is
+backed by an observed post-schema run: the tests validate a verdict with in-process `jsonschema` and
+then run the emitted predicate under node, which simulates both layers rather than exercising the
+real one. Until a run settles it, treat any reachability argument that depends on the answer as
+unproven, and prefer fixes that are correct under either reading — the strict-majority quorum floor
+is one, because it closes the even-n fail-open regardless of *why* a verdict went missing.
+
+**Generalizable rule.** When an analysis turns on the behavior of a layer you do not own, write down
+which behavior you assumed and mark it unverified. An assumption recorded as a fact propagates into
+every later severity judgment that cites it.
 
 **Fix.** Agent definition updated to the split shape with a "the per-call prompt is authoritative"
 deferral, so the two can never contradict again; `tests/test_saga_execution_spec.py` gained a drift
@@ -99,14 +125,61 @@ guard asserting the legacy literal is absent and both bucket names present. No t
 sentence before — `test_agent_registration_drift.py` and `test_saga_execution_spec.py` pinned only
 the `name:` and `tools:` frontmatter, which is why the drift was invisible.
 
+**The fourth surface.** Code review found one more, and it is the reason the "grep, don't recall"
+rule below needs a second clause. `plugins/saga/references/sandbox-spawn-sites.md:85` — the fallback
+ladder this repo's CLAUDE.md routes every out-of-saga verify spawn through — still instructed a
+caller to restate "the structured `{refuted, upheld}` verdict contract" in its own dispatch prompt
+when `saga:readonly-verifier` cannot be resolved. So the documented degradation path rebuilt the
+severity-blind gate by hand. A repo-wide `git grep` DID surface this file; what made it easy to
+dismiss was that ~20 other files matched too — `docs/plans/*.workflow.js` frozen execution records
+and historical journal entries, all correctly stale. The discriminator is not "does the old string
+appear" but **"does anything read this file to decide what to do next."** A drift guard now covers
+it, and the same guard shape now covers all four surfaces.
+
 **Generalizable rule.** Before changing a wire contract, enumerate its surfaces by **grepping for the
-old shape across tracked files**, not by recalling them into a plan. Agent and subagent definition
-files are prompt surfaces with the same standing as generated prompts, and they are systematically
-forgotten because they read as configuration. If a contract is worth a hard cutover, every surface
-that states it is worth a drift guard.
+old shape across tracked files**, not by recalling them into a plan. Then partition the hits into
+frozen artifacts and live instructions, and fix every live one: agent definitions, skill and command
+markdown, and reference docs that tell a caller what to say are all prompt surfaces with the same
+standing as generated prompts. They are systematically forgotten because they read as configuration.
+If a contract is worth a hard cutover, every surface that states it is worth a drift guard.
 
 **Refs.** [[workflow-lease-ttl-outlives-no-poll-contract]],
-[[worktree-copies-poison-recursive-grep]], DECISIONS `{#verify-panel-severity-axis-686}`.
+[[worktree-copies-poison-recursive-grep]], [[quorum-floor-must-be-a-strict-majority]],
+DECISIONS `{#verify-panel-severity-axis-686}`.
+
+### A quorum floor of `ceil(n/2)` fails open at even panel sizes, because the threshold it guards is recomputed over survivors  {#quorum-floor-must-be-a-strict-majority}
+
+**Context.** A refute-N verify panel drops any verdict that fails a shape predicate, then decides
+"did enough skeptics refute" over the *survivors*. Two numbers govern that: an emit-time quorum
+**floor** over the DECLARED panel size `n`, below which the panel halts UNDER-STRENGTH, and a runtime
+**threshold** over the `k` verdicts that actually reported. The floor was `ceil(n / 2)`; the majority
+threshold is `ceil(k / 2)`.
+
+**Evidence.** Those two formulas disagree at even `n`, and the gap is exactly one verdict wide. At
+`n = 2`, one dropped verifier leaves `k = 1`, which still *meets* a floor of 1 — so no under-strength
+halt fires — and `refute_count` of 0 against a threshold of 1 PASSES the unit. The dropped verifier
+was the one that refuted. Measured against the pre-change emitter at `n = 2` and `n = 4`: the base
+emitter threw `verifier-disagreement`, the patched one returned clean. Reproducible with *any* cause
+of a dropped verdict — a crashed verifier, a timeout, a prose reply, a schema-invalid shape — so it
+long predated the #686 severity split, which merely widened the drop population. Odd `n` was never
+exposed, because there the two formulas coincide; all 36 committed panels are `n = 3`, which is why
+nothing had ever hit it.
+
+**Mechanism.** A floor that a half-strength panel can still satisfy is not a quorum. `ceil(n/2)` is
+"at least half"; a quorum needs "more than half". The bug is invisible in review because each formula
+is locally reasonable — you have to hold both at once, at an even `n` nobody had authored, to see it.
+
+**Fix.** `floor = n // 2 + 1` at both computation sites, plus the docstring and emitted comment that
+stated it as `ceil(n/2)`. It is a **no-op at every odd `n`** (1, 3, 5, 7 → 1, 2, 3, 4), so no
+committed panel changed behavior and the existing parametrized floor test — which used only odd `n` —
+kept passing untouched. That is also precisely why it had no coverage: the test matrix and the
+defect occupied disjoint halves of the parameter space. The parametrization now spans `n = 1..7`.
+
+**Generalizable rule.** When one constant guards a second constant computed over a *different*
+denominator, test the parity boundary — the two will agree on half the inputs and diverge on the
+other half, and a suite pinned to one representative value has a 50% chance of proving nothing. More
+generally: "at least half" is never a quorum, and a fail-open in a gate is worth finding even when no
+current configuration can reach it, because configurations are data and data changes.
 
 ### Stale worktree checkouts under `.claude/worktrees/` turn a repo-wide `grep -r` into a confident false positive  {#worktree-copies-poison-recursive-grep}
 

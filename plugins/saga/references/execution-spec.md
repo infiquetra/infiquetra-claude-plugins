@@ -130,10 +130,29 @@ Absent `verify` round-trips unchanged — existing specs and the `team_emitter.p
 ### Workflow return shape (#686, KTD4)
 
 Every emitted harness ends with `return { units, advisory_corrections }` instead of returning
-`undefined`. `units` is the existing per-unit result map; `advisory_corrections` is the flat list of
-every non-gating correction logged across the run (empty when no unit carries a `verify` panel, or
-when every panel upheld its unit cleanly). Because emitted harnesses returned `undefined` before this
-change, the new return value is additive for any consumer that does not destructure it.
+`undefined`. `units` is the existing per-unit result map. `advisory_corrections` is a list of
+**per-panel entries**, each shaped:
+
+```js
+{ unit: "U2", round: 1, corrections: ["...", "..."], dropped: 0 }
+```
+
+It is NOT a flat list of correction strings — a consumer that iterates it expecting strings gets
+objects. A unit appears once per panel round that produced corrections, so an `iterate_to_consensus`
+unit or a `#364` tier climb contributes more than one entry under the same `unit`; `round` is the
+1-based per-unit ordinal that distinguishes them, and only the last round's entry describes the
+result the harness actually returned. `corrections` are rendered strings — control characters are
+collapsed to spaces and each item is truncated — capped per entry, with `dropped` recording how many
+were suppressed. The list is empty when no unit carries a `verify` panel, or when every panel upheld
+its unit with nothing in the non-gating bucket.
+
+Because emitted harnesses returned `undefined` before this change, the new return value is additive
+for any consumer that does not destructure it.
+
+A harness that HALTS never reaches this return, so accumulated advisories would otherwise be lost —
+including advisories from units that already delivered. Every emitted `throw` therefore goes through
+`__halt`, which attaches the accumulator to the thrown error as `err.advisory_corrections`. A caller
+handling a failed run should read it from there.
 
 ### Runtime ladder climbing (#364): `escalate_on_signal` + `pull_cord`
 

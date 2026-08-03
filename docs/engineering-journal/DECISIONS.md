@@ -1,5 +1,56 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-08-02
+
+### `sdlc-schema.json` is the source of truth for board Status vocabulary; drift is reconciled by migrating the board {#board-vocabulary-schema-is-truth-584}
+
+**Decision.** When a live GitHub Projects board's Status options disagree with the vocabulary
+declared for it in `plugins/mission-control/config/sdlc-schema.json`, **the schema wins and the
+board is migrated.** The schema is not updated to describe whatever the board happens to be.
+Applied 2026-08-02 to CAMPPS (project #4), whose live options were `Todo / In Progress / Done`
+against the schema's `["Idea", "Committed", "In Progress", "Done", "Parked"]`
+(`sdlc-schema.json:87`).
+
+**Rationale.** The schema is what code reads. `check_issue_contract_parity.py --live`,
+`board_census.py --check`, and saga's `phase_board_map` all resolve status names from it; the live
+board is read by humans. Letting the board define the vocabulary would mean every consumer's
+declared contract is retroactively rewritten by whatever an operator clicked in the GitHub UI, and
+the parity gate could never do more than describe the present. With the schema as truth the gate
+has an opinion, and drift becomes a finite migration instead of a permanent exception.
+
+**How cards were routed — the schema supplied the rule, not judgment.** 188 of the board's 411
+cards sat in the retiring `Todo` option. `sdlc-schema.json:204` states `Committed` requires
+"Objective field is set", so that predicate did the routing mechanically: **183 cards with an
+Objective → `Committed`, 5 without → `Idea`.** No card was classified by reading it. Final
+distribution `{Done: 223, Committed: 183, Idea: 5}`, total 411, zero cards lost.
+
+**Rejected: update the schema to match the board.** Cheaper by one command and wrong in kind — it
+makes the declared contract a lagging description of the UI, and silently retires `Committed` and
+`Parked`, which the issue-type admission rules at `sdlc-schema.json:190-204` are written against.
+
+**Rejected: a single `updateProjectV2Field` call setting the options to the schema's list.** This
+is the obvious implementation and it is destructive: the mutation replaces the whole option list,
+so it would have blanked Status on all 188 `Todo` cards *and* orphaned the 223 already in `Done`
+by minting fresh option ids for the survivors. Executed as three verified phases instead — add by
+id, migrate cards, then remove the empty option. Mechanism in LEARNINGS
+[[#projectv2-option-id-preserves-selections]].
+
+**Rejected: harmonize CAMPPS and Operations onto one vocabulary.** Operations (project #3) declares
+a deliberately different set at `sdlc-schema.json:82` —
+`["Idea", "Shaping", "Ready", "Active", "Verify", "Done"]`. The two boards model different work
+(delivery flow vs portfolio admission) and the divergence is intentional. Do not "fix" it.
+
+**Revisit when:** a third board is onboarded with a vocabulary not yet in the schema (add it to the
+schema first, then create the options); or a CI credential with `read:project` scope is provisioned,
+at which point the `--live` parity leg stops being operator-only and this class of drift is caught
+mechanically rather than during a grooming pass — see [[#board-census-shape-only-live-skip-424]].
+
+**Refs.** Issue #584 requirement R3 (the operator decision this discharges); discharges the
+"CAMPPS Status-option drift found live is deliberately reconciled" revisit condition on
+[[#board-census-shape-only-live-skip-424]]; LEARNINGS
+[[#projectv2-option-id-preserves-selections]] (safe-migration mechanism, correcting
+[[#projectv2-option-update-clears-selections]]).
+
 ## 2026-08-01
 
 ### Claude Code forwards profile influence through Hermes; it does not implement profile authority {#hermes-profile-evolution-01}
@@ -1433,6 +1484,7 @@ call, the defining module excluded by documented rule) with legacy debt pinned E
 shrink-only baseline surfaced as `pending migration (applied: false)`. Gate records deliberately
 do NOT surface through the `/outcome` consolidated report until #597's halt-receipt kind-filter
 fix lands — inheriting that invisibility bug for a gate surface would defeat the point.
+*(That fix has since landed — see the resolution note at the end of this entry.)*
 
 **Rejected alternatives.** Fixing `AskUserQuestion` itself (struck by Gate-B as harness-level);
 a redis-channel second transport (file-sentinel proves the seam end-to-end in-process and the
@@ -1450,6 +1502,19 @@ edit must also make the new key optional in the validator or migrate written rec
 can then join the report tier with a `kind` the filter matches); or the lint's candidate
 vocabulary needs a second widget family (the documented fast-follow — extend enumeration, roll
 out via the baseline).
+
+> **Resolved 2026-08-02 — the #597 blocker is gone; the gate-record surfacing work is now
+> unblocked and unstarted.** `outcome.py:1376-1381` and `:1628-1633` now build halt records as
+> `{"phase": "halt", "key": ..., **receipt, "receipt_kind": receipt.get("kind"), "kind": "dispatch"}`
+> — the receipt spread happens *before* the `kind` literal, so the receipt can no longer overwrite
+> it, and its own kind is preserved under `receipt_kind`. Verified by running the real
+> `outcome_report._halted_subplots` against both record shapes: production shape yields
+> `{'leaf-a'}`, the pre-fix shape yields `set()`. Landed incidentally in `8882bdc2`
+> ("fix(saga,fleet-core): lease-seam and guard-scope defects (#627)", PR #636), which was scoped to
+> a different issue — #597 was closed as already-fixed on 2026-08-02 during a defect-board audit.
+> **Consequence:** the stated reason gate records stay out of the `/outcome` consolidated report no
+> longer holds. Giving them a `kind` the report filter matches is now a normal piece of work, not a
+> blocked one, and nothing has been filed for it yet.
 
 ---
 
@@ -1995,6 +2060,15 @@ unrelated PRs on a known, accepted drift or force an out-of-scope schema rewrite
 SKIP-capable to actually-enforced in the standard pipeline) or when the CAMPPS Status-option drift
 found live is deliberately reconciled (separate issue — board-schema redesign is out of #424's
 non-goals).
+
+> **Resolved 2026-08-02 (second condition only).** The CAMPPS drift described above is reconciled —
+> the live board now carries `Idea | Committed | In Progress | Done | Parked`, matching
+> `sdlc-schema.json:87`, and `check_issue_contract_parity.py --live` exits 0. The rationale above is
+> retained as the record of why #424 correctly declined to fix it in scope; the present-tense
+> "live is `Todo`/`In Progress`/`Done`" is no longer current. See
+> [[#board-vocabulary-schema-is-truth-584]]. **The first condition still stands** — no CI credential
+> has `read:project` scope, so both `--live` legs still SKIP in the standard pipeline and this drift
+> class remains detectable only by an operator running the gate by hand.
 
 **Refs.** `{#board-pagination-truncation-confirmed-live-424}` (LEARNINGS); `71faf92` /
 `{#outcome-board-status-schema-resolve-326}` (the schema-resolve-over-hardcode pattern this

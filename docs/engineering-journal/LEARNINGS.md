@@ -21,6 +21,123 @@
 
 ## 2026-08-03
 
+### A workflow lease cannot survive the run it governs: its 5-minute TTL versus a driver told never to poll  {#workflow-lease-ttl-outlives-no-poll-contract}
+
+**Context.** After the #686 ultracode run returned, the `/work` skill's teardown step
+`workflow_emitter.py release "$WORKFLOW_LEASE_METADATA"` returned `{"released_lease_ids": []}`.
+That reads like a clean no-op, which is exactly why it is worth stopping on: an empty release is
+indistinguishable at a glance from a successful one.
+
+**Evidence.** The reservation contract
+(`.saga/workflow-lease-989b6475-4003-46f4-b9aa-debd80737030.json`) declares
+`"execution_ttl_seconds": 300`. The run it governed took **1,929,940 ms — 32.2 minutes** (workflow
+`wf_7dbd5245-def`, 3 agents, 138 tool calls). Querying the live broker registry at
+`~/.local/state/infiquetra/fleet-leases/registry.json` afterwards: `leases` is empty, and **neither
+lease id** (`9ea7c6f5-…`, `a2acaba7-…`) nor the batch id appears anywhere in the file — not in
+`leases`, not in `settlements`. Absence from both is the discriminator: a settled lease leaves a
+settlement record, an expired one leaves nothing.
+
+**Mechanism.** `release()` calls `settle_batch()`, which can only settle leases that are still
+live. The two slots were swept on TTL expiry roughly five minutes into a thirty-two minute run, so
+by teardown there was nothing left to settle. The deeper contradiction is in the skill contract, not
+the broker: `/work` instructs the driver **not to poll** a running Workflow (the harness re-invokes
+on completion), while the lease expects `renew` calls "at long collection boundaries." A single
+blocking `Workflow(...)` call has no intermediate boundaries — control does not return to the driver
+until the run is over. Under the skill's own guidance the lease is therefore *unrenewable*, and every
+ultracode run longer than five minutes silently loses its slot reservation partway through.
+
+**Impact.** Nothing leaked and nothing is corrupt — admission control still gated the launch, and the
+empty registry means no phantom slot is held against future runs. What is lost is the *mid-run*
+guarantee: for ~27 of 32 minutes, a second session could have oversubscribed the aggregate limit
+without the broker objecting.
+
+**Fix (or queued).** Not fixed here — out of scope for #686, and the remedy is a design choice, not a
+patch. Two candidate shapes: (a) size `execution_ttl_seconds` from the spec's expected wall-clock
+rather than a fixed 300s, or (b) have the emitter's own lease keeper renew from inside the run
+(a `.saga/lease-keeper-*.log` already exists for an earlier invocation, so the mechanism has
+precedent). Needs a defect card before either is chosen.
+
+**What surprised.** The failure signal is an empty list, not an error. `released_lease_ids: []` is
+the same output a genuinely idle batch would produce, so the skill's teardown step cannot distinguish
+"nothing to release" from "expired 27 minutes ago" — and neither could I, until I checked the
+registry for the absence of a settlement record.
+
+**Generalizable rule.** When a lease, lock, or token has a TTL, check it against the *measured*
+duration of the work it protects, not the expected one. And when a teardown call returns an empty
+collection, treat that as an unanswered question rather than a success — prove where the resources
+went before calling it clean.
+
+**Refs.** [[verdict-contract-has-three-prompt-surfaces]], `plugins/saga/skills/work/SKILL.md` §1.5,
+`plugins/saga/scripts/workflow_emitter.py:191-206`.
+
+### A verdict contract had three prompt surfaces; the plan enumerated two, and the third was the agent's own system prompt  {#verdict-contract-has-three-prompt-surfaces}
+
+**Context.** #686 split the refute-N verifier verdict into a gating bucket
+(`refuted_deliverable`) and a non-gating one (`advisory_corrections`). The plan's KTD6 correctly
+insisted every prompt surface change together, and named two: the Python-assembled
+`_verifier_prompt()` and the emitted JavaScript `__verifierPrompt` helper. Both were ported verbatim.
+
+**Evidence.** `plugins/saga/agents/readonly-verifier.md:37` still read
+`emit a structured verdict {refuted: [...], upheld: [...]}` after both emitter surfaces were fixed.
+Found by the unit doing the emitter work, which flagged it as outside its declared file list and
+left it unassigned; the doc-review had not caught it either, because it verified the plan against a
+working reference implementation whose agent-definition layer the reference did not include.
+
+**Mechanism.** That file is not documentation — it is the system prompt of every verifier the
+emitter spawns, since the emitter passes `agentType: "saga:readonly-verifier"` unconditionally on
+every verify call (KTD6). So the verifier received two contradictory instructions: its definition
+said emit `{refuted, upheld}`, the per-call prompt said emit the split shape. A verifier following
+its own definition produces a verdict the attached StructuredOutput schema **rejects** — and the
+reconciliation helper classifies a schema-invalid verdict as *runtime-missing*, which counts toward
+the missing-verifier quorum floor. The result is a panel drifting toward under-strength for reasons
+that look like verifier flakiness, which is the same class of silent gate-disarming #686 exists to
+remove.
+
+**Fix.** Agent definition updated to the split shape with a "the per-call prompt is authoritative"
+deferral, so the two can never contradict again; `tests/test_saga_execution_spec.py` gained a drift
+guard asserting the legacy literal is absent and both bucket names present. No test pinned that
+sentence before — `test_agent_registration_drift.py` and `test_saga_execution_spec.py` pinned only
+the `name:` and `tools:` frontmatter, which is why the drift was invisible.
+
+**Generalizable rule.** Before changing a wire contract, enumerate its surfaces by **grepping for the
+old shape across tracked files**, not by recalling them into a plan. Agent and subagent definition
+files are prompt surfaces with the same standing as generated prompts, and they are systematically
+forgotten because they read as configuration. If a contract is worth a hard cutover, every surface
+that states it is worth a drift guard.
+
+**Refs.** [[workflow-lease-ttl-outlives-no-poll-contract]],
+[[worktree-copies-poison-recursive-grep]], DECISIONS `{#verify-panel-severity-axis-686}`.
+
+### Stale worktree checkouts under `.claude/worktrees/` turn a repo-wide `grep -r` into a confident false positive  {#worktree-copies-poison-recursive-grep}
+
+**Context.** Sweeping the repo to prove the legacy `refuted` verdict shape survived nowhere (#686
+R2), a `grep -rn` from the repo root returned **3,661 matches across 612 files**, including what
+looked like unfixed legacy gate arithmetic still sitting in `execution_spec.py` at lines 608, 654,
+724 and 778 — after the fix had demonstrably landed.
+
+**Evidence.** Those line numbers do not exist in the tracked file's changed regions (the real gate
+site is `:2822`), and the same document paths repeated two and three times in one result set.
+`.claude/worktrees/` holds full checkouts at older commits — the lease registry independently showed
+`worktree_root: …/.claude/worktrees/agent-a46e08f1ff00a76ef`. Re-running the identical sweep as
+`git grep` (tracked files, working tree only) returned a legible ~45 lines, every one classifiable.
+
+**Mechanism.** Agent isolation provisions disposable git worktrees inside the repo directory. They
+are real checkouts of the same repo at whatever commit the agent started from, so a recursive
+filesystem walk finds N stale copies of every tracked file. `.gitignore` does not help: `grep -r`
+does not read it.
+
+**What surprised.** The failure mode is a *false positive against your own fix* — the sweep says the
+old code is still there, at plausible-looking line numbers, in a file you just corrected. That reads
+as "the change did not land," which is a far more alarming and more believable wrong answer than an
+empty result would have been.
+
+**Generalizable rule.** In any repo that provisions agent worktrees under its own root, use
+`git grep` rather than `grep -r` for correctness sweeps. If a recursive search returns duplicate
+paths or line numbers that contradict a diff you just read, suspect a nested checkout before
+suspecting the diff.
+
+**Refs.** [[verdict-contract-has-three-prompt-surfaces]].
+
 ### "Regenerate and diff against the hand patch" is unsatisfiable when the patch touched a layer the generator never reads  {#regenerate-diff-fails-on-hand-patched-artifacts}
 
 **Context.** The plan for #686 (give the refute-N verify panel a severity axis) ended with a

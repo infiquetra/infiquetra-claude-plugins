@@ -350,8 +350,10 @@ _WORKFLOW_RESERVED_IDENTIFIERS = (
     frozenset(
         {
             "REPO",
+            "__advisories",
             "__gate",
             "__is429",
+            "__logAdvisory",
             "__pulledCords",
             "__retry",
             "__retryAfterMs",
@@ -682,6 +684,28 @@ async function __retry(thunk, opts) {
 }"""
 
 
+# #686 R4 / plan KTD3: the workflow-level NON-GATING correction accumulator. Structurally the
+# twin of `__pulledCords` -- one module-level global, one registration site in
+# _WORKFLOW_RESERVED_IDENTIFIERS, no per-panel-shape asymmetry (a per-unit binding would need
+# registering in BOTH _WORKFLOW_ITERATE_LOCAL_IDENTIFIERS and _unit_reserved_symbols' suffixes,
+# each covering only one panel shape). `__logAdvisory` both LOGS during the run and accumulates
+# for the final return, which is R4's "reach the driving session" in its two required halves.
+_JS_ADVISORY_HELPER = r"""const __advisories = []
+function __logAdvisory(unitId, reported) {
+  var items = []
+  for (var i = 0; i < reported.length; i++) {
+    var adv = reported[i].advisory_corrections || []
+    for (var j = 0; j < adv.length; j++) items.push(adv[j])
+  }
+  if (items.length > 0) {
+    __advisories.push({ unit: unitId, corrections: items })
+    log(`verify panel over ${unitId}: deliverable UPHELD with ${items.length} advisory correction(s) (narrative/rationale only, non-gating): ` +
+        items.map((a) => String(typeof a === "string" ? a : (a.claim || a.id || JSON.stringify(a))).slice(0, 180)).join(" | "))
+  }
+  return items
+}"""
+
+
 _JS_VERIFIER_PROMPT_HELPER = r"""function __verifierPrompt(basePrompt, unitResult) {
   var rendered;
   try {
@@ -704,10 +728,42 @@ ${repoLine}
   <path>. For named untracked output files, read the primary checkout path directly; never mutate
   the primary checkout.
 - Return examined_sha as the SHA you actually materialized or inspected. If you cannot see enough
-  evidence to judge, return a refuted entry explaining the visibility gap; do not emit prose-only
-  "nothing to verify" output.
+  evidence to judge, return a refuted_deliverable entry explaining the visibility gap; do not emit
+  prose-only "nothing to verify" output.
 
-UNIT RESULT INPUT (authoritative structured evidence):
+VERDICT CONTRACT — two separate buckets. Read this before you write anything.
+
+The unit result you are given contains BOTH a deliverable and a narrative. Sort every disagreement
+you find into exactly one of these. Getting the bucket right matters more than finding a lot.
+
+\`refuted_deliverable\` — GATING. A finding belongs here only if the unit's actual WORK is wrong:
+- A changed file is wrong, incomplete, or breaks something.
+- Required behavior is missing, or behavior the unit was told to preserve was destroyed.
+- A test is missing, wrong, asserts nothing, or does not test what it claims.
+- A claim in \`checks_run\` is FALSE — the command does not actually pass, or was not actually run,
+  or its reported result does not reproduce. Re-run the commands and check.
+- The unit says \`status: "done"\` but the work is not done.
+- You could not see enough to judge (visibility gap).
+A non-empty \`refuted_deliverable\` from a majority of the panel KILLS the unit and HALTS the whole
+workflow. Put a finding here only if you would defend stopping the run over it.
+
+\`advisory_corrections\` — NON-GATING. A finding belongs here if the WORK is right but the unit's
+own account of it is wrong or misleading:
+- Its explanation of WHY something happened is factually incorrect.
+- It misattributes a change to the wrong function, file, or line.
+- It mischaracterizes a mechanism, or states a rationale that does not hold.
+- Its advice to a downstream unit rests on a wrong premise.
+These are recorded and handed to the driver. They do NOT stop the run. Report them fully and
+precisely — a wrong premise passed downstream causes real damage later, so this bucket is
+genuinely valuable, not a consolation prize.
+
+The test: if the unit's code, tests, and check results are all sound, then NOTHING goes in
+\`refuted_deliverable\`, no matter how wrong its prose is. Prose errors are advisory. Full stop.
+
+Both keys are REQUIRED and must be arrays. Use \`[]\` for an empty bucket — never omit either one.
+
+UNIT RESULT INPUT (structured evidence — the \`notes\` field is the unit's NARRATIVE, judge it
+under \`advisory_corrections\`; the changed files, tests, and \`checks_run\` are the DELIVERABLE):
 ${rendered}`;
 }"""
 
@@ -2500,7 +2556,9 @@ def _verifier_prompt(unit: Unit) -> str:
         f"REFUTE-N VERIFIER over unit {unit.unit_id} ({unit.label}). You are an adversarial "
         f"skeptic: attempt to REFUTE the unit's result, do NOT re-do its work. Read the unit's "
         f"output and the evidence it cites; for each claimed finding decide REFUTED (with a "
-        f"concrete reason) or UPHELD. Emit a structured verdict {{refuted: [...], upheld: [...], "
+        f"concrete reason) or UPHELD, and sort every refutation into the gating bucket or the "
+        f"advisory bucket per the VERDICT CONTRACT below. Emit a structured verdict "
+        f"{{refuted_deliverable: [...], advisory_corrections: [...], upheld: [...], "
         f"verifier_identity: ..., fallback_depth: ..., examined_sha: ...}}.",
         # U6/R8/KTD7: attributed verify-spawn. The emitter STAMPS the agent identity it knows
         # ({READONLY_VERIFIER_AGENT_TYPE}) and a fallback_depth of 0 -- a workflow agent() call
@@ -2583,18 +2641,25 @@ def _verifier_schema() -> dict[str, object]:
     ``minLength: 1`` on the #390 U6 attribution strings matches the predicate's
     ``.length > 0`` checks, so any verdict the schema admits is counted as a reporter. Flat
     typed object only: the API rejects top-level combinators (see ``_return_schema``).
+
+    #686 severity axis: the single ``refuted`` bucket is RENAMED to ``refuted_deliverable``
+    (gating) and joined by ``advisory_corrections`` (non-gating). Both are required arrays --
+    hard cutover, no legacy-``refuted`` shim (plan KTD2): a tolerant reader would map a legacy
+    prose refutation onto the gating bucket and reintroduce the exact bug being fixed.
     """
     return {
         "type": "object",
         "properties": {
-            "refuted": {"type": "array"},
+            "refuted_deliverable": {"type": "array"},
+            "advisory_corrections": {"type": "array"},
             "upheld": {"type": "array"},
             "verifier_identity": {"type": "string", "minLength": 1},
             "fallback_depth": {},
             "examined_sha": {"type": "string", "minLength": 1},
         },
         "required": [
-            "refuted",
+            "refuted_deliverable",
+            "advisory_corrections",
             "upheld",
             "verifier_identity",
             "fallback_depth",
@@ -2697,15 +2762,18 @@ def _emit_panel_reconciliation(
         lines.append(f"{indent}{verdicts_var}.push({joined_chunks})")
     # R1/R5: record which verifiers reported vs. runtime-missing; R3: recompute the pass-rule
     # threshold over the reporters, not the declared n (plan KTD1/KTD3). A verdict that is
-    # non-null but lacks a usable `.refuted` array is a runtime failure too (a verifier that
-    # returned a malformed/partial response is not distinguishable from one that returned a
-    # legitimate non-refuting verdict unless shape is checked here -- completeness_gate.py's
-    # classify() only gates the unit's own result, never verifier verdicts, so this is the only
-    # place malformed verdicts get caught).
+    # non-null but lacks a usable `.refuted_deliverable` OR `.advisory_corrections` array is a
+    # runtime failure too (a verifier that returned a malformed/partial response is not
+    # distinguishable from one that returned a legitimate non-refuting verdict unless shape is
+    # checked here -- completeness_gate.py's classify() only gates the unit's own result, never
+    # verifier verdicts, so this is the only place malformed verdicts get caught). #686 R6/KTD2:
+    # requiring BOTH buckets is what makes a legacy single-`refuted` verdict a runtime failure
+    # that counts toward the missing-verifier floor instead of being silently read as gating.
     valid_verdict_var = f"{name_prefix}valid_verifier_verdict"
     lines.append(
         f'{indent}const {valid_verdict_var} = (v) => v != null && typeof v === "object" && '
-        f"Array.isArray(v.refuted) && Array.isArray(v.upheld) && "
+        f"Array.isArray(v.refuted_deliverable) && Array.isArray(v.advisory_corrections) && "
+        f"Array.isArray(v.upheld) && "
         f'typeof v.verifier_identity === "string" && v.verifier_identity.length > 0 && '
         f'Object.prototype.hasOwnProperty.call(v, "fallback_depth") && '
         f'typeof v.examined_sha === "string" && v.examined_sha.length > 0'
@@ -2745,9 +2813,13 @@ def _emit_panel_reconciliation(
         f"{indent}const {missing_idx_var} = {reconciled_verdicts_var}.map((v, i) => "
         f"(!{valid_verdict_var}(v) ? i + 1 : null)).filter((i) => i != null)"
     )
+    # #686 R2: the gate counts a verifier as refuting ONLY when its GATING bucket is non-empty.
+    # `advisory_corrections` is deliberately absent from this arithmetic -- a panel that found
+    # nothing but wrong prose upholds the unit (plan KTD5: this is the single gate site, so the
+    # one-shot panel, the iterate-to-consensus loop, and the #364 climb all change together).
     lines.append(
         f"{indent}const {refute_count_var} = {reported_var}.filter((v) => "
-        f"v.refuted.length > 0).length"
+        f"v.refuted_deliverable.length > 0).length"
     )
     if panel.pass_rule == "majority":
         lines.append(
@@ -2760,6 +2832,14 @@ def _emit_panel_reconciliation(
             f"Math.max(1, {reported_var}.length)  // unanimous over reporters"
         )
     lines.append(f"{indent}const {refuted_var} = {refute_count_var} >= {threshold_var}")
+    # #686 R4 / plan U1 site 4: harvest the NON-GATING bucket into the workflow-level
+    # `__advisories` accumulator and log it. POSITION IS LOAD-BEARING -- this must sit here,
+    # after the refuted const and BEFORE the missing-verifier block, because the #364 unattended
+    # climb path returns early from this function at the `if (<refuted>) {` line below. A call
+    # appended after that point would silently never emit for climb units, leaving advisories
+    # absent on exactly that path and nowhere else. Emitting here covers all three panel shapes
+    # (one-shot, iterate-to-consensus, climb) with a single insertion.
+    lines.append(f"{indent}__logAdvisory({_js_string(unit.unit_id)}, {reported_var})")
     # R4/R5: annotate missing verifiers and hard-fail below the baked quorum floor before any
     # accept/disagree decision can be computed over too little evidence.
     lines.append(f"{indent}if ({missing_idx_var}.length > 0) {{")
@@ -2947,11 +3027,13 @@ def _emit_verify_panel(
     Renders a ``parallel([...])`` of ``unit.verify.n`` verifier ``agent()`` calls over the
     unit's result (each at the SAME ``{model, effort}`` tier as the unit per R4), then
     records which verifiers reported vs. runtime-missing (R1/R5) -- a ``null`` verdict slot
-    OR a non-null verdict lacking a usable ``.refuted`` array both count as missing, since
-    neither is a trustworthy signal -- and recomputes the pass-rule threshold over the
-    reporters (R3): ``majority`` => ``>= max(1, ceil(k/2))`` of the ``k`` reporting verifiers
-    refuted; ``unanimous`` => all ``k`` refuted. A quorum floor of ``ceil(n/2)`` of the
-    declared ``n`` (plan KTD3) marks the result UNDER-STRENGTH when under-met, but a
+    OR a non-null verdict lacking a usable ``.refuted_deliverable`` / ``.advisory_corrections``
+    array both count as missing, since neither is a trustworthy signal -- and recomputes the
+    pass-rule threshold over the reporters (R3): ``majority`` => ``>= max(1, ceil(k/2))`` of
+    the ``k`` reporting verifiers refuted; ``unanimous`` => all ``k`` refuted. #686: "refuted"
+    throughout this arithmetic means a non-empty GATING bucket -- a verifier reporting only
+    ``advisory_corrections`` is a reporter that did NOT refute. A quorum floor of ``ceil(n/2)``
+    of the declared ``n`` (plan KTD3) marks the result UNDER-STRENGTH when under-met, but a
     refutation still acts regardless (plan KTD4).
     (This is a panel-level signal, not per-finding survival: a generic emitter cannot match
     findings across verifiers, so it surfaces "did enough skeptics refute anything" for the
@@ -3548,6 +3630,10 @@ def emit_workflow_script(
     # dispositions here; the single batched escalation check runs after every layer.
     lines.append("const __pulledCords = []")
     lines.append("")
+    # #686 R4: workflow-level advisory collector -- every verify panel's NON-GATING corrections
+    # land here (via __logAdvisory at the reconciliation site) and ride out on the final return.
+    lines.append(_JS_ADVISORY_HELPER)
+    lines.append("")
     lines.append(_JS_GATE_HELPER)
     lines.append("")
     lines.append(_JS_RETRY_HELPER)
@@ -3701,6 +3787,20 @@ def emit_workflow_script(
     lines.append(
         "    '. ONE batched escalation ask -- confirm climbs via /tier patch and re-emit.')"
     )
+    lines.append("}")
+    lines.append("")
+
+    # #686 R4/KTD4: every emitted harness ends with a return value. `advisory_corrections` is the
+    # non-gating half of the verify verdict reaching the driving session (the logging half fires
+    # during the run); `units` carries each unit's result so the return is useful beyond
+    # advisories. Emitted harnesses returned `undefined` before this, so any object is additive
+    # for consumers that do not destructure.
+    unit_entries = ", ".join(
+        f"{_js_string(unit.unit_id)}: {_var(unit.unit_id)}" for unit in spec.units
+    )
+    lines.append("return {")
+    lines.append(f"  units: {{ {unit_entries} }},")
+    lines.append("  advisory_corrections: __advisories,")
     lines.append("}")
     lines.append("")
 

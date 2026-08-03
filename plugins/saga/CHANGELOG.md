@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.123.0] - 2026-08-03
+
+### Fixed - the refute-N verify panel now has a severity axis (#686)
+
+The emitted verify-panel verdict schema carried exactly one rejection bucket. A verifier that read
+a unit's code, tests, and check results correctly, then found one wrong sentence in the unit's own
+self-description, tripped the same gate as a verifier who found the code itself broken — and did,
+in a real seven-unit workflow run (`infiquetra/infiquetra-codex-plugins#71`), where a false-negative
+gate discarded a correct unit and dead-lettered five downstream units.
+
+- `execution_spec.py::_verifier_schema()`: the single `refuted` key is renamed to
+  `refuted_deliverable` (gating — the unit's actual work is wrong, or the verifier could not see
+  enough evidence to judge) and joined by a new required `advisory_corrections` key (non-gating —
+  the work is right but the unit's prose about it is wrong). A verdict missing either bucket is a
+  runtime failure that counts toward the missing-verifier quorum floor; there is no legacy-`refuted`
+  compatibility shim.
+- `_emit_panel_reconciliation()` — the single gate-arithmetic site shared by the one-shot panel, the
+  `iterate_to_consensus` retry loop, and the `#364` `escalate_on_signal` tier climb — now counts a
+  verifier as refuting only when its gating bucket is non-empty. An advisory-only panel upholds the
+  unit and never burns a tier escalation.
+- Non-gating corrections are logged during the run and collected into a new module-level
+  `__advisories` accumulator, surfaced in every emitted harness's final
+  `return { units, advisory_corrections }` (harnesses previously returned `undefined`).
+- Both emitted prompt surfaces — the Python-assembled `_verifier_prompt()` and the emitted JavaScript
+  `__verifierPrompt` helper — state the two-bucket VERDICT CONTRACT with concrete examples and the
+  "sound code, wrong prose" test, ported verbatim from the hand-validated prototype wording in
+  `infiquetra-codex-plugins`.
+- `agents/readonly-verifier.md` — the verifier's own system prompt, and the third verdict-shape
+  surface — no longer instructs the legacy `{refuted, upheld}` shape. Left stale it would have
+  contradicted the schema attached at spawn: a verifier following its own definition would emit a
+  verdict the schema rejects, classifying as runtime-missing and pushing the panel toward the quorum
+  floor. A drift guard in `tests/test_saga_execution_spec.py` now pins all three surfaces.
+
 ## [0.122.0] - 2026-07-27
 
 ### Removed - the write fence and the emitted lease contract, both unreachable (#671)

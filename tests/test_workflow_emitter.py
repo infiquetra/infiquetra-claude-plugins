@@ -778,7 +778,7 @@ def test_verify_panel_emits_n_verifier_agents_and_majority_check() -> None:
     # The verifiers are adversarial skeptics over the unit's output (refute, not redo).
     assert "REFUTE-N VERIFIER" in script
     assert "VERIFIER VISIBILITY PROTOCOL (#519)" in script
-    assert "UNIT RESULT INPUT (authoritative structured evidence)" in script
+    assert "UNIT RESULT INPUT (structured evidence" in script
     assert "status --short" in script
     assert "named untracked output files" in script
     assert "examined_sha" in script
@@ -812,14 +812,16 @@ def test_every_verify_panel_agent_call_carries_verdict_schema() -> None:
         {
             "type": "object",
             "properties": {
-                "refuted": {"type": "array"},
+                "refuted_deliverable": {"type": "array"},
+                "advisory_corrections": {"type": "array"},
                 "upheld": {"type": "array"},
                 "verifier_identity": {"type": "string", "minLength": 1},
                 "fallback_depth": {},
                 "examined_sha": {"type": "string", "minLength": 1},
             },
             "required": [
-                "refuted",
+                "refuted_deliverable",
+                "advisory_corrections",
                 "upheld",
                 "verifier_identity",
                 "fallback_depth",
@@ -926,7 +928,7 @@ def test_missing_verifier_recording_emits_runtime_failure_log() -> None:
     script = mod.emit_workflow_script(spec)
 
     assert 'U2_valid_verifier_verdict = (v) => v != null && typeof v === "object"' in script
-    assert "Array.isArray(v.refuted)" in script
+    assert "Array.isArray(v.refuted_deliverable) && Array.isArray(v.advisory_corrections)" in script
     assert "Array.isArray(v.upheld)" in script
     assert 'typeof v.verifier_identity === "string" && v.verifier_identity.length > 0' in script
     assert 'Object.prototype.hasOwnProperty.call(v, "fallback_depth")' in script
@@ -1023,10 +1025,10 @@ def test_malformed_verdict_treated_as_missing_not_implicit_uphold() -> None:
     script = mod.emit_workflow_script(spec)
 
     # Both the reported-filter and the missing-index map must check verdict shape, not just
-    # null-ness, so `{}` / `{refuted: []}` without upheld/identity/depth/examined_sha is treated
-    # as missing.
+    # null-ness, so `{}` / `{refuted_deliverable: []}` without advisory_corrections / upheld /
+    # identity / depth / examined_sha is treated as missing.
     assert 'U2_valid_verifier_verdict = (v) => v != null && typeof v === "object"' in script
-    assert "Array.isArray(v.refuted)" in script
+    assert "Array.isArray(v.refuted_deliverable) && Array.isArray(v.advisory_corrections)" in script
     assert "Array.isArray(v.upheld)" in script
     assert 'typeof v.verifier_identity === "string" && v.verifier_identity.length > 0' in script
     assert 'Object.prototype.hasOwnProperty.call(v, "fallback_depth")' in script
@@ -1036,9 +1038,159 @@ def test_malformed_verdict_treated_as_missing_not_implicit_uphold() -> None:
         "U2_missing_idx = U2_verdicts.map((v, i) => "
         "(!U2_valid_verifier_verdict(v) ? i + 1 : null))" in script
     )
-    # refute_count no longer needs a redundant `v.refuted &&` guard -- reported already
-    # guarantees `Array.isArray(v.refuted)` for every element.
-    assert "U2_refute_count = U2_reported.filter((v) => v.refuted.length > 0).length" in script
+    # refute_count no longer needs a redundant `v.refuted_deliverable &&` guard -- reported
+    # already guarantees `Array.isArray(v.refuted_deliverable)` for every element.
+    assert (
+        "U2_refute_count = U2_reported.filter((v) => v.refuted_deliverable.length > 0).length"
+        in script
+    )
+
+
+# ---------------------------------------------------------------------------
+# #686: the emitted verdict contract has two rejection buckets -- `refuted_deliverable`
+# (gating) and `advisory_corrections` (non-gating). These pin the EMITTED TEXT of the six
+# sites; the runtime behavior of the gate is pinned in tests/test_saga_execution_spec.py.
+# ---------------------------------------------------------------------------
+
+
+def _panel_script(mod: ModuleType, *, pass_rule: str = "majority") -> str:
+    data = _valid_spec_dict()
+    units = data["units"]
+    assert isinstance(units, list)
+    second = units[1]
+    assert isinstance(second, dict)
+    second["verify"] = {"n": 3, "pass_rule": pass_rule}
+    spec = mod.ExecutionSpec.from_dict(data)
+    return str(mod.emit_workflow_script(spec))
+
+
+@pytest.mark.parametrize("pass_rule", ["majority", "unanimous"])
+def test_emitted_gate_never_reads_the_legacy_single_bucket(pass_rule: str) -> None:
+    """R2 round-trip: a bare `v.refuted.length > 0` must not survive anywhere in an emitted
+    harness -- under either pass rule. This is the one-line arithmetic that discarded a correct
+    unit in infiquetra-codex-plugins#71."""
+    script = _panel_script(_load(), pass_rule=pass_rule)
+
+    assert script.count("v.refuted.length > 0") == 0
+    assert "Array.isArray(v.refuted) &&" not in script
+    assert script.count("v.refuted_deliverable.length > 0") == 1
+
+
+def test_advisory_accumulator_and_helper_are_emitted_once_per_harness() -> None:
+    """R4 / plan site 8: the harness declares the module-level accumulator and the helper that
+    both logs and accumulates. One declaration per harness, regardless of panel count."""
+    script = _panel_script(_load())
+
+    assert script.count("const __advisories = []") == 1
+    assert script.count("function __logAdvisory(unitId, reported) {") == 1
+    # The helper reads the NON-GATING bucket only, and logs it as explicitly non-gating.
+    assert "reported[i].advisory_corrections || []" in script
+    assert "advisory correction(s) (narrative/rationale only, non-gating)" in script
+    assert "__advisories.push({ unit: unitId, corrections: items })" in script
+
+
+def test_panel_populates_the_advisory_accumulator_before_the_missing_verifier_block() -> None:
+    """R4 / plan site 4 -- the site a naive fix drops. Declaring `__advisories` without ever
+    pushing to it returns `[]` on every run. The call must also sit BEFORE the missing-verifier
+    block, because `_emit_panel_reconciliation` returns early on the #364 climb path."""
+    script = _panel_script(_load())
+
+    assert '__logAdvisory("U2", U2_reported)' in script
+    call_at = script.index('__logAdvisory("U2", U2_reported)')
+    refuted_const_at = script.index("const U2_refuted = U2_refute_count >= U2_threshold")
+    missing_block_at = script.index("if (U2_missing_idx.length > 0) {")
+    # Immediately after the refuted const and before the missing-verifier bookkeeping.
+    assert refuted_const_at < call_at < missing_block_at
+
+
+def test_escalate_on_signal_unit_still_emits_its_advisory_call() -> None:
+    """R4/R8 placement guard: the #364 unattended one-rung climb makes
+    `_emit_panel_reconciliation` return early at the `if (<refuted>) {` line. A `__logAdvisory`
+    call appended after that point would be silently absent on exactly the climb path and
+    nowhere else -- so assert both the first panel and the retry panel emit theirs."""
+    mod = _load()
+    data = _valid_spec_dict()
+    units = data["units"]
+    assert isinstance(units, list)
+    second = units[1]
+    assert isinstance(second, dict)
+    second["verify"] = {"n": 3, "pass_rule": "majority"}
+    second["escalate_on_signal"] = True
+    spec = mod.ExecutionSpec.from_dict(data)
+    script = str(mod.emit_workflow_script(spec, unattended=True))
+
+    assert "climbing ONE rung" in script  # the climb retry panel exists
+    # One call per emitted panel: the first panel and the post-climb retry panel (which
+    # reconciles under its own `U2_retry_` prefix).
+    assert script.count('__logAdvisory("U2", ') == 2
+    assert '__logAdvisory("U2", U2_reported)' in script
+    assert '__logAdvisory("U2", U2_retry_reported)' in script
+    # Each call precedes its own `if (U2_refuted) {` consumer, never trails it.
+    first_call = script.index('__logAdvisory("U2", U2_reported)')
+    assert first_call < script.index("if (U2_refuted) {")
+
+
+def test_advisory_globals_are_reserved_identifiers() -> None:
+    """R9: every new emitted global is registered, so the emitter's identifier scanner does not
+    drift and a unit id colliding with one is rejected at emit."""
+    mod = _load()
+
+    assert "__advisories" in mod._WORKFLOW_RESERVED_IDENTIFIERS
+    assert "__logAdvisory" in mod._WORKFLOW_RESERVED_IDENTIFIERS
+
+
+def test_emitted_harness_returns_units_and_advisory_corrections() -> None:
+    """KTD4: every emitted harness ends with a return carrying the unit results and the
+    accumulated non-gating corrections -- R4's 'reaches the driving session' half that survives
+    past the run."""
+    script = _panel_script(_load())
+
+    assert script.rstrip().endswith("}")
+    assert "return {\n" in script
+    assert '  units: { "U1": U1, "U2": U2, "U3": U3 },' in script
+    assert "  advisory_corrections: __advisories," in script
+    # The return is the LAST statement: it must follow the #364 pull-cord batch throw, or a
+    # cord would return normally instead of failing the run.
+    assert script.index("if (__pulledCords.length > 0) {") < script.index("return {\n")
+
+
+def test_both_verifier_prompt_surfaces_define_the_two_buckets() -> None:
+    """R3: the Python-assembled prompt states the verdict SHAPE; the emitted JS helper carries
+    the VERDICT CONTRACT that defines the boundary with examples and the 'sound code, wrong
+    prose' test. Wording is ported verbatim from the prototype that empirically worked -- a
+    paraphrase is the issue's own top pre-mortem (verifiers dumping everything into gating)."""
+    script = _panel_script(_load())
+
+    # Surface 1 -- _verifier_prompt(): the shape, and the instruction to sort.
+    assert (
+        "sort every refutation into the gating bucket or the advisory bucket per the "
+        "VERDICT CONTRACT below" in script
+    )
+    assert (
+        "Emit a structured verdict {refuted_deliverable: [...], advisory_corrections: [...], "
+        "upheld: [...], verifier_identity: ..., fallback_depth: ..., examined_sha: ...}" in script
+    )
+    # Surface 2 -- the JS __verifierPrompt helper: the contract itself.
+    assert "VERDICT CONTRACT" in script
+    assert "GATING. A finding belongs here only if the unit's actual WORK is wrong" in script
+    assert "NON-GATING. A finding belongs here if the WORK is right but the unit's" in script
+    # The gating bucket explicitly covers false verification claims and the visibility gap --
+    # a too-narrow definition would let a real defect through as advice.
+    assert "is FALSE" in script and "does not actually pass" in script
+    assert 'The unit says \\`status: "done"\\`' in script
+    assert "You could not see enough to judge (visibility gap)." in script
+    assert (
+        "evidence to judge, return a refuted_deliverable entry explaining the visibility gap"
+        in script
+    )
+    # The explicit "sound code, wrong prose" test, verbatim.
+    assert (
+        "The test: if the unit's code, tests, and check results are all sound, then NOTHING "
+        "goes in" in script
+    )
+    assert "no matter how wrong its prose is. Prose errors are advisory. Full stop." in script
+    # R6 stated to the verifier itself.
+    assert "Both keys are REQUIRED and must be arrays." in script
 
 
 def test_refute_throw_guard_is_unconditional_on_quorum_floor() -> None:

@@ -93,26 +93,54 @@ context:
 | Field | Type | Meaning |
 |---|---|---|
 | `n` | integer ≥ 1 | Number of independent adversarial verifiers dispatched. Hard cap: `VERIFY_N_CAP = 7` (above the cap, `validate` hard-blocks — guards the rate-limit overcorrection). Soft warn band: `n > 5` validates but emits a stderr warning. |
-| `pass_rule` | `"majority"` \| `"unanimous"` | A finding **survives** unless refuted per this rule, recomputed over the verifiers that actually reported — see "Missing verdicts" below. |
+| `pass_rule` | `"majority"` \| `"unanimous"` | A finding **survives** unless refuted per this rule, recomputed over the verifiers that actually reported — see "Missing verdicts" below. Only a verifier's **gating** bucket (`refuted_deliverable`) counts toward this arithmetic; its non-gating bucket (`advisory_corrections`) never does (#686). |
 | `iterate_to_consensus` | boolean, default `false` | When `true`, a refuted result retries (re-runs the unit, re-panels) up to `max_iterations` instead of failing on the first refutation. |
 | `max_iterations` | integer | Retry ceiling for `iterate_to_consensus`; the final iteration throws instead of retrying. |
 
 **Defaults for `/plan` authoring (KTD3):** `n=3`, `pass_rule="majority"` — a finding survives unless ≥2 of
-3 verifiers refute it. Override per unit when the operator requests a different panel size. N=3/majority is
+3 verifiers put it in the gating bucket. Override per unit when the operator requests a different panel size. N=3/majority is
 the conservative default: enough independent skeptics to surface noise without hitting the rate-limit
 overcorrection that prompted the cap.
 
-**Consumption.** A refuted panel is never silently logged: the emitted script `throw`s
-`verifier-disagreement: …` so a refuted unit result halts the workflow rather than being relied on —
-a one-shot panel (`iterate_to_consensus: false`) throws immediately; an iterate-to-consensus panel
-retries up to `max_iterations` then throws on the final attempt.
+**Two-bucket verdict contract (#686).** Every verifier's structured verdict carries two required,
+distinct arrays instead of one legacy `refuted` array:
+
+- **`refuted_deliverable` — gating.** A finding belongs here only when the unit's actual work — its
+  code, its tests, its `checks_run` results — is wrong, or when the verifier cannot see enough
+  evidence to judge (a visibility gap is itself gating). Only this bucket feeds the pass-rule
+  arithmetic above.
+- **`advisory_corrections` — non-gating.** A finding belongs here when the work is right but the
+  unit's self-description (its `notes`, its prose) is wrong. Sound code with wrong prose puts
+  nothing in `refuted_deliverable`, no matter how wrong the prose is.
+
+A verdict that omits either bucket is a runtime failure and counts toward the missing-verifier
+floor (`quorum floor`, unchanged — see "Missing verdicts" below); there is no tolerant reader that
+maps a legacy `refuted` key onto either bucket.
+
+**Consumption.** A gating-refuted panel is never silently logged: the emitted script `throw`s
+`verifier-disagreement: …` so a gating-refuted unit result halts the workflow rather than being
+relied on — a one-shot panel (`iterate_to_consensus: false`) throws immediately; an
+iterate-to-consensus panel retries up to `max_iterations` then throws on the final attempt.
+Non-gating corrections never throw; they are `log()`-ged during the run and also collected into the
+emitted workflow's final return value (see "Workflow return shape" below), so the driving session
+sees them without the unit being killed.
 
 Absent `verify` round-trips unchanged — existing specs and the `team_emitter.py` never gain a spurious key.
+
+### Workflow return shape (#686, KTD4)
+
+Every emitted harness ends with `return { units, advisory_corrections }` instead of returning
+`undefined`. `units` is the existing per-unit result map; `advisory_corrections` is the flat list of
+every non-gating correction logged across the run (empty when no unit carries a `verify` panel, or
+when every panel upheld its unit cleanly). Because emitted harnesses returned `undefined` before this
+change, the new return value is additive for any consumer that does not destructure it.
 
 ### Runtime ladder climbing (#364): `escalate_on_signal` + `pull_cord`
 
 A unit may set `"escalate_on_signal": true` (requires a verify panel — the refute is the signal).
-On a refuted panel the emitted script reacts by **exactly one rung** of `escalate_tier()`
+The signal is a **gating** refutation only (#686, R8): an advisory-only panel — every finding in
+`advisory_corrections`, nothing in `refuted_deliverable` — upholds the unit and never burns a tier
+escalation. On a gating-refuted panel the emitted script reacts by **exactly one rung** of `escalate_tier()`
 (effort-first, then model; never unrunnable; `None` at the top / session ceiling):
 
 - **Attended emission (default):** the refute `throw` carries an

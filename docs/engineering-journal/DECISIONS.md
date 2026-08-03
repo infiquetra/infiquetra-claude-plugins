@@ -1,5 +1,67 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-08-03
+
+### Refute-N verify panel severity axis — KTD1 through KTD8 (#686) {#verify-panel-severity-axis-686}
+
+Plan: `docs/plans/2026-08-02-issue-686-verify-panel-severity-axis-plan.md`. The emitted verify-panel
+verdict schema had exactly one rejection bucket, so a verifier that found a unit's code and checks
+sound but one sentence of its self-description wrong tripped the same gate as a verifier that found
+the code broken. Measured cost: `infiquetra/infiquetra-codex-plugins#71` — a seven-unit workflow
+died at the Unit 1 gate on three verifiers' prose-only refutations, discarding a correct unit and
+dead-lettering five downstream units.
+
+**KTD1 — Port the prototype's bucket names verbatim: `refuted_deliverable` (gating) and
+`advisory_corrections` (non-gating).** The issue left naming open, but the prompt wording that
+empirically worked (in the hand-patched second run of `infiquetra-codex-plugins#71`) is written
+against these names, and the downstream repo's committed harness already uses them. Renaming would
+force a re-validation of the prompt and guarantee a textual diff in the U3 acceptance check, which
+compares the regenerated harness against the hand patch.
+
+**KTD2 — Hard cutover, no back-compatibility shim.** The validator predicate requires both arrays; a
+verdict carrying only the legacy `refuted` key is a runtime failure that counts toward the
+missing-verifier floor. A tolerant reader mapping legacy `refuted` onto the gating bucket would
+silently treat a legacy prose refutation as gating — reintroducing the exact bug for precisely the
+cached verdicts most likely to carry it. *Accepted cost:* a `resumeFromRunId` workflow mid-run when
+this lands re-runs every verifier call, because the schema change invalidates cached verdicts — a
+one-time cost, no in-flight runs known at merge time.
+
+**KTD3 — Advisories ride the existing `__pulledCords` pattern, not a per-unit binding.** A
+module-level `__advisories` array plus a `__logAdvisory(unitId, reported)` helper, registered once
+in `_WORKFLOW_RESERVED_IDENTIFIERS`, structurally identical to how `__pulledCords` is declared and
+surfaced elsewhere in `execution_spec.py`. *Rejected: a per-unit `<prefix>advisories` binding* — it
+would need registration in two separate identifier-reservation sets, each covering only one panel
+shape, so missing one drifts silently on exactly the other shape.
+
+**KTD4 — Every emitted harness gains a final `return { units, advisory_corrections }`.** Emitted
+harnesses returned `undefined` before this change, so the new return value is additive for any
+consumer that does not destructure it. This is an operator decision taken during planning, not an
+inference from the issue.
+
+**KTD5 — The gate arithmetic changes in exactly one place.**
+`execution_spec.py::_emit_panel_reconciliation` is the single source of truth for all three panel
+forms (`_emit_thunk`, `_emit_verify_loop_singleton`, `_emit_verify_panel`), so the one-line predicate
+change there fixes the one-shot panel, the iterate-to-consensus loop, and the `#364`
+`escalate_on_signal` tier climb together. No second gate path was added.
+
+**KTD6 — Both prompt surfaces change, not one.** The Python-assembled `_verifier_prompt()` states
+the verdict shape; the emitted JavaScript `__verifierPrompt` helper carries the visibility protocol,
+whose "return a refuted entry explaining the visibility gap" clause now routes to the gating bucket —
+a verifier that cannot see enough to judge must still be able to stop the unit.
+
+**KTD7 — This plan's own units carry no verify panel.** A panel authored against the plan and
+emitted from pre-fix `main` would run the single-bucket gate the plan itself fixes — the very
+failure being fixed could kill the unit fixing it. Dogfooding the corrected gate is deferred to a
+follow-up run after this lands.
+
+**KTD8 — `execution_spec.py`'s two identifier-collision sets for the emitted JavaScript variable
+name `<prefix>refuted` are a different contract and stay unchanged.** Those are binding-collision
+detection sets for emitted variable names, unrelated to the verdict field of the same spelling.
+Editing them would rename emitted bindings for no reason the issue asked for.
+
+**Revisit when:** a follow-up teaches `/work` to consume the new `advisory_corrections` return
+value, or a real dogfood run (KTD7) surfaces panel behavior this plan did not anticipate.
+
 ## 2026-08-02
 
 ### `sdlc-schema.json` is the source of truth for board Status vocabulary; drift is reconciled by migrating the board {#board-vocabulary-schema-is-truth-584}

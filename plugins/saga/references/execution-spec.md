@@ -140,11 +140,22 @@ Every emitted harness ends with `return { units, advisory_corrections }` instead
 It is NOT a flat list of correction strings — a consumer that iterates it expecting strings gets
 objects. A unit appears once per panel round that produced corrections, so an `iterate_to_consensus`
 unit or a `#364` tier climb contributes more than one entry under the same `unit`; `round` is the
-1-based per-unit ordinal that distinguishes them, and only the last round's entry describes the
-result the harness actually returned. `corrections` are rendered strings — control characters are
-collapsed to spaces and each item is truncated — capped per entry, with `dropped` recording how many
-were suppressed. The list is empty when no unit carries a `verify` panel, or when every panel upheld
-its unit with nothing in the non-gating bucket.
+1-based per-unit **panel-round** ordinal that distinguishes them.
+
+`round` counts every round the panel ran, including rounds that produced no corrections — but a
+round with nothing to report stores no entry. Entry ordinals may therefore skip (`round: 1` then
+`round: 3`), and **the last entry is not necessarily the final round**: a unit whose closing round
+came back clean leaves an earlier round's entry last. A consumer that wants the round the harness
+actually returned must compare `round` against the number of rounds the run made, not assume the
+tail of the list.
+
+`corrections` are rendered strings, each truncated to a fixed length (never splitting a UTF-16
+surrogate pair) and scrubbed in two passes: first the C0 controls, DEL, the C1 block and the
+line/paragraph separators — which would otherwise forge a second log line — then the bidi marks,
+embeddings, overrides and isolates plus the BOM, which leave the bytes intact but reorder what a
+human reads. The list is capped per entry, with `dropped` recording how many were suppressed. It is
+empty when no unit carries a `verify` panel, or when every panel upheld its unit with nothing in the
+non-gating bucket.
 
 Because emitted harnesses returned `undefined` before this change, the new return value is additive
 for any consumer that does not destructure it.

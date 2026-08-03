@@ -158,8 +158,14 @@ threshold is `ceil(k / 2)`.
 **Evidence.** Those two formulas disagree at even `n`, and the gap is exactly one verdict wide. At
 `n = 2`, one dropped verifier leaves `k = 1`, which still *meets* a floor of 1 — so no under-strength
 halt fires — and `refute_count` of 0 against a threshold of 1 PASSES the unit. The dropped verifier
-was the one that refuted. Measured against the pre-change emitter at `n = 2` and `n = 4`: the base
-emitter threw `verifier-disagreement`, the patched one returned clean. Reproducible with *any* cause
+was the one that refuted. Measured at `n = 2` and `n = 4` with half the panel's verdicts dropped:
+the **base** emitter returned clean — the unit PASSED — while the **patched** one throws
+`verifier-under-strength: reported 1/2 verifiers (quorum floor 2)`. The full-strength control
+separates the two effects: with every verdict surviving, both emitters throw
+`verifier-disagreement`, so the change moves only the half-strength cells. An exhaustive sweep of
+every `(n, pass_rule, reporters, refuters)` combination for `n = 1..7` — 238 scenarios executed
+against both emitters — differs in exactly 18 cells, all at `n ∈ {2, 4, 6}`, all at exactly
+half-strength, all in the fail-closed direction. Reproducible with *any* cause
 of a dropped verdict — a crashed verifier, a timeout, a prose reply, a schema-invalid shape — so it
 long predated the #686 severity split, which merely widened the drop population. Odd `n` was never
 exposed, because there the two formulas coincide; all 36 committed panels are `n = 3`, which is why
@@ -180,6 +186,37 @@ denominator, test the parity boundary — the two will agree on half the inputs 
 other half, and a suite pinned to one representative value has a 50% chance of proving nothing. More
 generally: "at least half" is never a quorum, and a fail-open in a gate is worth finding even when no
 current configuration can reach it, because configurations are data and data changes.
+
+### Grepping a code generator's output can assert on the un-interpolated template, which passes forever  {#generator-output-greps-assert-on-templates}
+
+**Context.** `execution_spec.py` emits a JavaScript harness. Testing it by asserting substrings in
+the emitted text is the cheap, obvious move, and most of those assertions are sound. One was not.
+
+**Evidence.** `test_verifier_prompt_states_the_panel_s_actual_gating_bar` asserted
+`"${gatingBar} KILLS the unit" in script`, intending to prove the panel tells its verifiers the
+right gating bar. But `${gatingBar}` is a placeholder inside the **emitted helper function's own
+template-literal source** — it is present verbatim in every emitted script no matter what the
+ternary computes, or whether the ternary exists. Deleting the branching logic entirely and
+hardcoding one arm left the suite at 552 passed / 1 skipped, byte-identical to baseline. Found by a
+review lens whose method was mutation, not reading (PR #689; the same run's `passRule` fix at
+`plugins/saga/scripts/execution_spec.py:745`).
+
+**Mechanism.** A generator's output contains two kinds of text: values it *computed* for this
+emission, and template source it *copied through*. A substring assertion cannot tell them apart, and
+`${...}` is exactly the syntax that looks like an interpolation site while being a literal. The
+supporting cause was in the test harness rather than the test: the stub `agent` was declared
+`async (_prompt, opts)`, discarding the prompt — so **no** test built on it could observe rendered
+prompt text, and the blind spot was structural, not an oversight in one assertion.
+
+**Fix.** Split the claim in two. The emitted-text half asserts only what is genuinely computed (the
+call site threads the `pass_rule` literal — drop the argument and the substring vanishes). The
+rendering half executes the harness under node and reads the prompt the panel actually handed its
+verifiers. The stub now records prompts, so the structural gap is closed for future tests.
+
+**Generalizable rule.** When testing a generator, ask of every assertion: *would this string still
+be present if the feature were deleted?* If the answer is yes, the test is pinning the template, not
+the behavior — execute the artifact instead. And a mutation check is the cheapest way to ask that
+question, especially for tests written by whoever wrote the code, who shares its blind spots.
 
 ### Stale worktree checkouts under `.claude/worktrees/` turn a repo-wide `grep -r` into a confident false positive  {#worktree-copies-poison-recursive-grep}
 

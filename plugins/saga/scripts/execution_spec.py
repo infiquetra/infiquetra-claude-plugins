@@ -353,6 +353,7 @@ _WORKFLOW_RESERVED_IDENTIFIERS = (
             "__ADVISORY_ITEM_CAP",
             "__ADVISORY_ITEM_CHARS",
             "__advisories",
+            "__advisoryRounds",
             "__gate",
             "__halt",
             "__is429",
@@ -695,6 +696,7 @@ async function __retry(thunk, opts) {
 # each covering only one panel shape). `__logAdvisory` both LOGS during the run and accumulates
 # for the final return, which is R4's "reach the driving session" in its two required halves.
 _JS_ADVISORY_HELPER = r"""const __advisories = []
+const __advisoryRounds = new Map()
 const __ADVISORY_ITEM_CAP = 50
 const __ADVISORY_ITEM_CHARS = 180
 function __renderAdvisory(a) {
@@ -706,7 +708,23 @@ function __renderAdvisory(a) {
   } catch (e) {
     s = "(unrenderable advisory entry)"
   }
-  return s.replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, " ").slice(0, __ADVISORY_ITEM_CHARS)
+  // Two passes over two distinct hazards. First: C0, DEL, C1 (NEL included) and the
+  // line/paragraph separators -- these forge a second log line. Second: the bidi marks,
+  // embeddings, overrides and isolates plus the BOM -- these leave the byte sequence intact
+  // but reorder what a human READS in a terminal or log viewer (the Trojan-Source pattern).
+  // Advisory text is model-authored by a verifier that read a diff it did not write, so both
+  // classes are reachable from repo content.
+  var t = s
+    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ")
+    .replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]+/g, " ")
+    .slice(0, __ADVISORY_ITEM_CHARS)
+  // .slice() cuts on UTF-16 code units, so an astral character (any emoji) straddling the cap
+  // leaves a lone high surrogate behind. This string is now STORED and returned, not just
+  // logged, so ill-formed UTF-16 would cross the harness return boundary -- a consumer that
+  // re-encodes it substitutes U+FFFD or raises. Drop the orphan half.
+  var tail = t.charCodeAt(t.length - 1)
+  if (tail >= 0xd800 && tail <= 0xdbff) t = t.slice(0, -1)
+  return t
 }
 function __halt(message) {
   var e = new Error(message)
@@ -714,6 +732,14 @@ function __halt(message) {
   return e
 }
 function __logAdvisory(unitId, reported, refuted) {
+  // Counted on EVERY call, before the empty-items early return below -- a panel round that
+  // produced no advisories is still a round. Deriving the ordinal from stored entries instead
+  // would silently renumber: an iterate_to_consensus unit whose first round was clean would
+  // label its second round "round 1", and a driver told to read the last entry would act on
+  // advice about a discarded intermediate result. A Map, not an object, so a unit id like
+  // `constructor` cannot collide with a prototype member.
+  var round = (__advisoryRounds.get(unitId) || 0) + 1
+  __advisoryRounds.set(unitId, round)
   var items = []
   try {
     for (var i = 0; i < reported.length; i++) {
@@ -721,10 +747,11 @@ function __logAdvisory(unitId, reported, refuted) {
       for (var j = 0; j < adv.length; j++) items.push(__renderAdvisory(adv[j]))
     }
   } catch (e) {
-    items.push("(advisory harvest failed: " + String(e && e.message).slice(0, 120) + ")")
+    // Through __renderAdvisory, not around it: this marker embeds a model-reachable
+    // message and is the one path that would otherwise reach log() unscrubbed.
+    items.push(__renderAdvisory("(advisory harvest failed: " + String(e && e.message) + ")"))
   }
   if (items.length === 0) return items
-  var round = __advisories.filter((entry) => entry.unit === unitId).length + 1
   var dropped = 0
   if (items.length > __ADVISORY_ITEM_CAP) {
     dropped = items.length - __ADVISORY_ITEM_CAP

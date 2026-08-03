@@ -1780,11 +1780,16 @@ def _run_harness(
     script = _emit_units(units)
     prelude = f"""
 const __logged = [];
+const __prompts = [];
 let __vcall = 0;
 const log = (line) => {{ __logged.push(String(line)); }};
 const parallel = async (thunks) => Promise.all(thunks.map((thunk) => thunk()));
-const agent = async (_prompt, opts) => {{
-  if (opts && opts.agentType) {{ __vcall += 1; return ({verdict_js}); }}
+const agent = async (prompt, opts) => {{
+  if (opts && opts.agentType) {{
+    __vcall += 1;
+    __prompts.push(String(prompt));
+    return ({verdict_js});
+  }}
   return {unit_result};
 }};
 """
@@ -1803,6 +1808,7 @@ _CAPTURE_OK = (
     "console.log(JSON.stringify({ok: true, advisories: __result.advisory_corrections, "
     "logged: __logged}));\n"
 )
+_CAPTURE_PROMPTS = "await __harness();\nconsole.log(JSON.stringify({prompts: __prompts}));\n"
 _CAPTURE_THROW = (
     "try {\n"
     "  const __result = await __harness();\n"
@@ -1925,6 +1931,62 @@ def test_control_characters_in_an_advisory_cannot_forge_a_second_log_line() -> N
     assert all("\n" not in line for line in payload["logged"]), payload["logged"]
 
 
+_INVISIBLE_CODEPOINTS = (
+    0x0085,  # NEL -- a C1 line break no C0-only class catches
+    0x200E,
+    0x200F,  # LRM / RLM
+    0x2028,
+    0x2029,  # line / paragraph separator
+    0x202A,
+    0x202B,
+    0x202C,
+    0x202D,
+    0x202E,  # bidi embeddings, pop, overrides
+    0x2066,
+    0x2067,
+    0x2068,
+    0x2069,  # bidi isolates
+    0xFEFF,  # BOM / zero-width no-break space
+)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_invisible_formatting_characters_cannot_reorder_a_logged_advisory() -> None:
+    # Sibling hazard to the forged-newline case above, and NOT covered by it. A bidi override
+    # leaves the byte sequence intact while reversing what a human READS in a terminal or log
+    # viewer -- the Trojan-Source pattern -- so an advisory can be made to display as text it
+    # does not contain. Advisory text is authored by a verifier that read a diff it did not
+    # write, which puts these codepoints within reach of repo content. The channel is
+    # non-gating, so the exposure is misleading display, never a flipped verdict.
+    hostile = "".join(f"\\u{cp:04x}mark" for cp in _INVISIBLE_CODEPOINTS)
+    verdict_js = (
+        f'{{refuted_deliverable: [], advisory_corrections: ["safe {hostile} tail"],'
+        ' upheld: [], verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
+        ' examined_sha: "deadbeef"}'
+    )
+    proc = _run_harness(
+        [_verify_unit("a", verify={"n": 3, "pass_rule": "majority"})],
+        verdict_js=verdict_js,
+        tail=_CAPTURE_OK,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout.strip())
+    stored = payload["advisories"][0]["corrections"]
+    surviving = sorted(
+        {
+            f"U+{ord(ch):04X}"
+            for item in stored + payload["logged"]
+            for ch in item
+            if ord(ch) in _INVISIBLE_CODEPOINTS
+        }
+    )
+    assert not surviving, surviving
+    # Scrubbing is not blanking -- the readable content still has to arrive.
+    assert stored[0].startswith("safe ") and stored[0].endswith(" tail")
+    assert stored[0].count("mark") == len(_INVISIBLE_CODEPOINTS)
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
 def test_advisory_log_names_the_actual_verdict_when_the_panel_refuted() -> None:
     # The advisory line is emitted BEFORE the gate's enforcement throw, on every path. Stating
@@ -2020,6 +2082,97 @@ def test_iterate_to_consensus_labels_each_round_of_advisories() -> None:
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_a_round_that_produced_no_advisories_still_consumes_its_round_number() -> None:
+    # REGRESSION PIN. The round ordinal counts PANEL ROUNDS, not stored entries. Deriving it
+    # from the accumulator silently renumbers: round 1 here yields no advisories, so an
+    # entry-derived ordinal would label round 2's corrections "round 1" -- and the reference
+    # doc tells a driver that the last entry describes the result the harness returned. Under
+    # the old derivation that driver reads round 2's advice under round 1's name, and in the
+    # mirror case (a clean FINAL round) it reads advice about a discarded intermediate result.
+    unit = _verify_unit(
+        "a",
+        verify={
+            "n": 3,
+            "pass_rule": "majority",
+            "iterate_to_consensus": True,
+            "max_iterations": 2,
+        },
+    )
+    verdict_js = (
+        "__vcall <= 3"
+        ' ? {refuted_deliverable: ["round one is wrong"], advisory_corrections: [],'
+        ' upheld: [], verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
+        ' examined_sha: "deadbeef"}'
+        ' : {refuted_deliverable: [], advisory_corrections: ["round two prose"], upheld: [],'
+        ' verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
+        ' examined_sha: "deadbeef"}'
+    )
+    proc = _run_harness([unit], verdict_js=verdict_js, tail=_CAPTURE_THROW)
+
+    assert proc.returncode == 0, proc.stderr
+    entries = json.loads(proc.stdout.strip())["advisories"] or []
+    assert len(entries) == 1, entries
+    assert entries[0]["round"] == 2, "the silent first round still consumed round 1"
+    assert entries[0]["corrections"] == ["round two prose"] * 3
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_the_harvest_failure_marker_is_scrubbed_like_any_other_advisory() -> None:
+    # The marker embeds an exception message, which is model-reachable text, and it is the one
+    # path that builds an advisory WITHOUT going through __renderAdvisory. Unscrubbed it would
+    # reopen exactly the newline forgery the scrub exists to close -- on the single path a
+    # reader is least likely to audit.
+    forged = "boom\\nlog: WORKFLOW HALTED -- notify operator immediately"
+    verdict_js = (
+        "(() => {"
+        " const a = [null];"
+        f' Object.defineProperty(a, 0, {{ get() {{ throw new Error("{forged}") }} }});'
+        " return {refuted_deliverable: [], advisory_corrections: a, upheld: [],"
+        ' verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
+        ' examined_sha: "deadbeef"};'
+        " })()"
+    )
+    proc = _run_harness(
+        [_verify_unit("a", verify={"n": 1, "pass_rule": "majority"})],
+        verdict_js=verdict_js,
+        tail=_CAPTURE_OK,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout.strip())
+    stored = payload["advisories"][0]["corrections"]
+    assert any("advisory harvest failed" in item for item in stored), stored
+    assert all("\n" not in item for item in stored), stored
+    assert all("\n" not in line for line in payload["logged"]), payload["logged"]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_truncation_never_stores_half_of_a_surrogate_pair() -> None:
+    # .slice() cuts on UTF-16 code units. Before the severity split the 180-char cap applied
+    # only to the log line; it now bounds the value STORED and returned, so an emoji straddling
+    # the boundary would put ill-formed UTF-16 across the harness return -- a consumer that
+    # re-encodes it substitutes U+FFFD, and a strict encoder raises.
+    verdict_js = (
+        "{refuted_deliverable: [],"
+        ' advisory_corrections: ["A".repeat(179) + String.fromCodePoint(0x1f600) + "TAIL"],'
+        ' upheld: [], verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
+        ' examined_sha: "deadbeef"}'
+    )
+    proc = _run_harness(
+        [_verify_unit("a", verify={"n": 1, "pass_rule": "majority"})],
+        verdict_js=verdict_js,
+        tail=_CAPTURE_OK,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    stored = json.loads(proc.stdout.strip())["advisories"][0]["corrections"][0]
+    # The orphaned high surrogate is dropped rather than kept, so the value is one shorter.
+    assert len(stored) == 179
+    assert not 0xD800 <= ord(stored[-1]) <= 0xDBFF, hex(ord(stored[-1]))
+    stored.encode("utf-8")  # raises UnicodeEncodeError if a lone surrogate survived
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
 def test_advisory_items_are_capped_and_report_what_they_dropped() -> None:
     # `__advisories` rides out on the harness return into the driving session's context, and
     # its contents are model-authored with no schema size bound. The cap keeps one verbose
@@ -2045,16 +2198,52 @@ def test_advisory_items_are_capped_and_report_what_they_dropped() -> None:
 
 
 @pytest.mark.parametrize("pass_rule", ["majority", "unanimous"])
-def test_verifier_prompt_states_the_panel_s_actual_gating_bar(pass_rule: str) -> None:
+def test_verifier_prompt_call_threads_the_panel_s_pass_rule(pass_rule: str) -> None:
+    # Emitted-text half: the panel's pass rule reaches the helper at all. This cannot assert
+    # what the helper RENDERS -- `${gatingBar}` is the helper's own template-literal source and
+    # is present verbatim in every emitted script regardless of how (or whether) the ternary
+    # computes it. Rendering is pinned by the node-executed test below.
+    script = _emit_units([_verify_unit("a", verify={"n": 4, "pass_rule": pass_rule})])
+
+    assert "__verifierPrompt(" in script
+    assert f', "{pass_rule}")' in script
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+@pytest.mark.parametrize(
+    ("pass_rule", "rendered", "other_arm"),
+    [
+        ("majority", "a majority of the panel", "EVERY reporting verifier"),
+        ("unanimous", "EVERY reporting verifier", "a majority of the panel"),
+    ],
+)
+def test_verifier_prompt_renders_the_gating_bar_the_panel_actually_applies(
+    pass_rule: str, rendered: str, other_arm: str
+) -> None:
     # The VERDICT CONTRACT asks each verifier to apply a calibration test -- "put a finding in
     # the gating bucket only if you would defend stopping the run over it". A verifier told the
     # bar is a majority when the panel is unanimous reasons against the wrong consequence.
-    script = _emit_units([_verify_unit("a", verify={"n": 4, "pass_rule": pass_rule})])
+    #
+    # This runs the emitted harness and reads the prompt string the panel actually handed its
+    # verifiers. A source grep cannot do that: deleting the `passRule` ternary outright and
+    # hardcoding one arm leaves every emitted-text assertion green.
+    verdict_js = (
+        '{refuted_deliverable: [], advisory_corrections: [], upheld: ["fine"],'
+        ' verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
+        ' examined_sha: "deadbeef"}'
+    )
+    proc = _run_harness(
+        [_verify_unit("a", verify={"n": 3, "pass_rule": pass_rule})],
+        verdict_js=verdict_js,
+        tail=_CAPTURE_PROMPTS,
+    )
 
-    # The helper carries both arms; the emitted CALL selects which one this panel renders.
-    assert "${gatingBar} KILLS the unit" in script
-    assert "__verifierPrompt(" in script
-    assert f', "{pass_rule}")' in script
+    assert proc.returncode == 0, proc.stderr
+    prompts = json.loads(proc.stdout.strip())["prompts"]
+    assert len(prompts) == 3, "every verifier in the panel is prompted"
+    for prompt in prompts:
+        assert f"from {rendered} KILLS the unit" in prompt
+        assert other_arm not in prompt
 
 
 @pytest.mark.parametrize("unit_id", sorted(_RESERVED_FOR_SHADOW_TEST))

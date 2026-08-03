@@ -24,13 +24,28 @@
   zero gating refutations, and on a degraded panel preempting the correct diagnostic throw with an
   opaque null dereference. Elements are now null-guarded and the whole accumulate-and-log body is
   wrapped, so the non-gating accumulator can never halt a run.
-- Control characters in advisory text are collapsed to spaces before the text is logged or stored.
-  Advisory content is model-authored and reached `log()` verbatim, so an embedded newline could forge
-  a second, more alarming log line.
+- Control and invisible formatting characters in advisory text are collapsed to spaces before the
+  text is logged or stored. Advisory content is model-authored by a verifier that read a diff it did
+  not write, and reached `log()` verbatim. Two passes over two hazards: the C0 controls, DEL, the C1
+  block (NEL at U+0085) and the line/paragraph separators, any of which forges a second, more
+  alarming log line; then the bidi marks, embeddings, overrides and isolates (U+200E/F,
+  U+202A–U+202E, U+2066–U+2069) plus the BOM, which leave the byte sequence intact while reordering
+  what a human reads in a terminal or log viewer — the Trojan-Source pattern. The channel is
+  non-gating, so the exposure is misleading display, never a flipped verdict.
+- The harvest-failure marker is scrubbed like any other advisory. It embeds an exception message —
+  model-reachable text — and was the one path that built an entry without going through
+  `__renderAdvisory`, reopening the newline forgery above on the path least likely to be audited.
+- Truncation never stores half of a surrogate pair. `.slice()` cuts on UTF-16 code units, and the
+  cap now bounds the value **stored and returned**, not just the logged line, so an emoji straddling
+  the boundary would have put ill-formed UTF-16 across the harness return — substituted or rejected
+  by any consumer that re-encodes it.
 - Advisory entries carry a `round` ordinal, and `advisory_corrections` entries are capped per panel
   with a `dropped` count. An `iterate_to_consensus` unit or a `#364` tier climb pushes one entry per
   round under the same `unit`, so without a round marker corrections about a discarded intermediate
-  result were indistinguishable from those about the accepted one.
+  result were indistinguishable from those about the accepted one. The ordinal counts **panel
+  rounds**, incremented on every round including one that produced nothing; deriving it from stored
+  entries instead renumbered silently, so a unit whose first round came back clean labelled its
+  second round "round 1".
 - Advisories survive a halt. A bare `throw` skips the harness's final `return`, which is their only
   structured exit — stranding advisories from units that had already delivered. Every emitted throw
   now routes through `__halt`, which attaches the accumulator to the error as
@@ -56,9 +71,16 @@
   asserted to be present in a Python set. A refactor that dropped them from the collision path while
   leaving them in the set would have kept the old membership assertion green.
 - New runtime tests execute whole emitted harnesses under node for: the even-`n` half-strength halt,
-  a `null` advisory element, control-character stripping, the refuted-panel log wording, advisory
-  survival across a halt in a multi-unit run, per-round advisory labelling under
-  `iterate_to_consensus`, and the per-panel item cap.
+  a `null` advisory element, control-character stripping, invisible formatting characters
+  (bidi/NEL/BOM), the harvest-failure marker, surrogate-safe truncation, the refuted-panel log
+  wording, advisory survival across a halt in a multi-unit run, per-round advisory labelling under
+  `iterate_to_consensus` including a round that produced nothing, and the per-panel item cap.
+- The verifier prompt's gating-bar wording is pinned by **executing** the emitted harness and reading
+  the prompt the panel handed its verifiers. The previous assertion grepped the emitted source for
+  `${gatingBar}` — the helper's own un-interpolated template literal, present verbatim in every
+  emitted script regardless of what the ternary computes, or whether it exists. Deleting the
+  branching logic outright left the suite green. The harness stub now records verifier prompts
+  instead of discarding them, so no future prompt-contract test inherits that blind spot.
 
 ## [0.123.0] - 2026-08-03
 

@@ -1,0 +1,82 @@
+{
+  "approval_state": null,
+  "created_at": "2026-08-03T19:54:42.240967+00:00",
+  "created_issue_number": 693,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/693",
+  "draft_path": "docs/sdlc-issue-drafts/2026-08-03-work-skill-overwrites-the-orchestration-ref-it-l.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": "actionable",
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/69f09efc-465e-4e84-9258-fcca4901722b/scratchpad/cards/03-orchestration-ref-overloaded.md",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "'Acceptance criteria' is not executable (card_validator requires each criterion to name a runnable check -- a `code span` or a ``` fenced block -- with its expected result)",
+      "'Verification' has no fenced code block (card_validator requires at least one ``` block)",
+      "'Files expected to change' has no path-like line (card_validator requires at least one `dir/file` style entry)",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-08-03-work-skill-overwrites-the-orchestration-ref-it-l.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\nmode: actionable\nrisk: medium\n---\n\n## Objective\n\nStop the `/work` skill from overwriting the saga field it later reads, by giving the workflow run\nhandle its own field instead of overloading `orchestration_ref`.\n\n## Intent\n\n`plugins/saga/skills/work/SKILL.md` uses `orchestration_ref` for two incompatible purposes.\n\nAt line 290 it **reads** the field to locate the canonical spec JSON, then passes that value as a\npath to three scripts (lines 301, 302, 304: `spec_table.py`, `execution_spec.py emit`,\n`execution_spec.py lease`). After launch, line 395 **writes** the field again with\n`--orchestration-ref <workflow-id>`.\n\nThe two values are not interchangeable. One is a path to a file on disk; the other is a workflow run\nidentifier. Whichever was written last wins, and the launch step always runs after the read step, so\na saga that has launched has lost its spec path.\n\nThe failure is quiet rather than loud. The resume halt at lines 402 and 410 tests only that the\nfield is **present** and non-empty. A resumed saga carrying a run id therefore clears the halt \u2014 the\nguard that exists precisely to catch a missing ref reports it as satisfied \u2014 and then hands a\nworkflow id to a script expect",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/69f09efc-465e-4e84-9258-fcca4901722b/scratchpad/cards/03-orchestration-ref-overloaded.md",
+    "ref": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/69f09efc-465e-4e84-9258-fcca4901722b/scratchpad/cards/03-orchestration-ref-overloaded.md",
+    "title": "03-orchestration-ref-overloaded",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "Work skill overwrites the orchestration_ref it later reads to locate the spec",
+  "updated_at": "2026-08-03T19:54:55.163992+00:00"
+}

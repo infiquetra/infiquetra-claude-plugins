@@ -1,0 +1,82 @@
+{
+  "approval_state": null,
+  "created_at": "2026-08-03T19:54:57.622939+00:00",
+  "created_issue_number": 694,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/694",
+  "draft_path": "docs/sdlc-issue-drafts/2026-08-03-workflow-execution-lease-expires-long-before-the.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": "actionable",
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/69f09efc-465e-4e84-9258-fcca4901722b/scratchpad/cards/04-workflow-lease-ttl.md",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "'Acceptance criteria' is not executable (card_validator requires each criterion to name a runnable check -- a `code span` or a ``` fenced block -- with its expected result)",
+      "'Verification' has no fenced code block (card_validator requires at least one ``` block)",
+      "'Files expected to change' has no path-like line (card_validator requires at least one `dir/file` style entry)",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-08-03-workflow-execution-lease-expires-long-before-the.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\nmode: actionable\nrisk: medium\n---\n\n## Objective\n\nMake the workflow execution lease outlive the workflow it guards, so the concurrency guarantee it\nexists to provide actually holds for the duration of a run.\n\n## Intent\n\n`plugins/saga/scripts/execution_spec.py:3582` hard-codes `\"execution_ttl_seconds\": 300` for the\nlease minted before a `cc-workflows-ultracode` launch. That lease is what enforces the operator's\nconcurrency cap across the fleet.\n\nFive minutes is shorter than the runs it guards. The #686 execution ran 32.2 minutes of wall clock\nagainst that 300-second lease. The slots were swept roughly five minutes in, while three subagents\nwere still executing. Nothing over-subscribed in that instance, but for the remaining 27 minutes the\nlease was not providing the guarantee it was minted for \u2014 the fleet had no record that those slots\nwere in use.\n\nA renewal path exists: `plugins/saga/scripts/lease_broker.py:437` defines a `renew` subcommand and\nline 406 calls `renew_batch`. Nothing in the `/work` skill invokes it during a workflow run. The\nskill's only documented mid-run checkpoint is the phase/segment boundary\n(`plugins/saga/skills/work/SKILL.md:552`, which reads the adjustmen",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/69f09efc-465e-4e84-9258-fcca4901722b/scratchpad/cards/04-workflow-lease-ttl.md",
+    "ref": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/69f09efc-465e-4e84-9258-fcca4901722b/scratchpad/cards/04-workflow-lease-ttl.md",
+    "title": "04-workflow-lease-ttl",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "Workflow execution lease expires long before the run it guards",
+  "updated_at": "2026-08-03T19:55:09.490304+00:00"
+}

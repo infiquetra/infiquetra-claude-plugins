@@ -62,8 +62,6 @@ Editing them would rename emitted bindings for no reason the issue asked for.
 **Revisit when:** a follow-up teaches `/work` to consume the new `advisory_corrections` return
 value, or a real dogfood run (KTD7) surfaces panel behavior this plan did not anticipate.
 
-## 2026-08-02
-
 ### `sdlc-schema.json` is the source of truth for board Status vocabulary; drift is reconciled by migrating the board {#board-vocabulary-schema-is-truth-584}
 
 **Decision.** When a live GitHub Projects board's Status options disagree with the vocabulary

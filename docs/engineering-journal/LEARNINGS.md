@@ -294,8 +294,6 @@ reading the reference harness, and neither was visible from the plan alone.
 `docs/reviews/doc-review-issue-686-2026-08-03.md`; issue #686. Related:
 [[#defect-cards-decay-two-directions]].
 
-## 2026-08-02
-
 ### A ProjectV2 single-select option survives an option-list rewrite if you pass its `id` — name-matching is what fails  {#projectv2-option-id-preserves-selections}
 
 **Context.** Reconciling the CAMPPS board (project #4) to its schema-declared Status vocabulary
@@ -412,6 +410,8 @@ everything about it looks legitimate right up until the module is deleted.
 **Refs.** DECISIONS [[#external-agents-like-native-671]] (why the lease broker is being retired);
 issue #677 (the deletion the four lease defects were closed against); the #597 resolution note on
 DECISIONS [[#gate-record-absence-contract-371]].
+
+## 2026-08-02
 
 ### Adapter validation must reproduce producer boundaries, including whitespace semantics  {#hermes-profile-request-producer-boundaries}
 

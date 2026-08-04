@@ -288,10 +288,17 @@ sequential subagents as a substitute (that was the campps issue-38 failure: para
 dropped). It either runs the real Workflow tool or halts visibly.
 
 **Re-emit for freshness (KD3).** Read the saga's `orchestration_ref` to locate the canonical spec JSON
-the plan authored. Mint the logical invocation identity first, then re-emit a fresh `.workflow.js`
-and its driver-owned lease contract from the same spec — any intermediate re-plan that changed the
-spec is reflected. `CLAUDE_CODE_SESSION_ID` is host-provided to Bash and hook subprocesses and matches
-the hooks' trusted `session_id`; HALT if it is absent. Never substitute the saga id.
+the plan authored, and gate it mechanically before trusting it (#693):
+
+```bash
+python3 plugins/saga/scripts/saga.py spec-check --saga-id <saga-id>
+```
+
+Any verdict but `ok` is a HALT condition (see below) — do not proceed on a `missing`, `run-id`, or
+`file-missing` ref. On `ok`, mint the logical invocation identity first, then re-emit a fresh
+`.workflow.js` and its driver-owned lease contract from the same spec — any intermediate re-plan that
+changed the spec is reflected. `CLAUDE_CODE_SESSION_ID` is host-provided to Bash and hook subprocesses
+and matches the hooks' trusted `session_id`; HALT if it is absent. Never substitute the saga id.
 
 ```bash
 test -n "$CLAUDE_CODE_SESSION_ID" || { echo "HALT — CLAUDE_CODE_SESSION_ID is absent" >&2; exit 2; }
@@ -386,29 +393,39 @@ For a long driver-side collection step, renew cooperatively at the boundary (the
 python3 plugins/saga/scripts/workflow_emitter.py renew "$WORKFLOW_LEASE_METADATA"
 ```
 
-The Workflow tool owns execution from this point. `/work` records the returned workflow id as
-`orchestration_ref` via a saga tick:
+The Workflow tool owns execution from this point. `/work` records the returned workflow id in
+`orchestration_run_id` via a saga tick (#693) — never in `orchestration_ref`, which stays the durable
+spec-path pointer written at `/plan` time (overloading it destroyed the spec path the next resume
+needs to locate the spec):
 
 ```bash
 python3 plugins/saga/scripts/saga.py save \
   --kind <issue|task> --id <...> \
-  --orchestration-ref <workflow-id>
+  --orchestration-run-id <workflow-id>
 ```
 
 **HALT conditions.** If **either** of the following holds, `/work` MUST halt — never substitute with
 hand-rolled serial subagents or any other inline fallback:
 
 1. The **Workflow tool is genuinely absent** from this session (not found in the available tools).
-2. The **spec or orchestration_ref is missing** from the saga (the plan did not author a spec, or the
-   saga tick never recorded the ref).
+2. `saga.py spec-check --saga-id <saga-id>` reports any verdict but `ok` (#693). The guard
+   DISCRIMINATES rather than testing presence — an `orchestration_run_id` held beside the ref never
+   satisfies it:
+   - `missing`: the plan did not author a spec, or the saga tick never recorded the ref.
+   - `run-id`: the ref holds a workflow run handle — the pre-#693 clobber shape.
+   - `file-missing`: the ref is a path, but the spec file does not exist.
 
 On a HALT, surface the reason and one recovery line, e.g.:
 
 - Workflow tool absent: "HALT — Workflow tool not available in this session. Recovery: resume in a
   Claude Code session where the Workflow tool is present, or ask the operator to switch the backend to
   `team-execution` or `inline`."
-- Spec/ref missing: "HALT — saga `orchestration_ref` is empty or the spec file does not exist at
-  `<path>`. Recovery: re-run `/plan` to author the spec and record the ref, then resume `/work`."
+- `missing` / `file-missing`: "HALT — saga `orchestration_ref` is empty or the spec file does not
+  exist at `<path>`. Recovery: re-run `/plan` to author the spec and record the ref, then resume
+  `/work`."
+- `run-id`: "HALT — saga `orchestration_ref` holds a workflow run id, not the spec path (the pre-#693
+  clobber). Recovery: re-record the spec path (`saga.py save ... --orchestration-ref
+  docs/plans/<date>-<topic>-spec.json`); the run handle belongs in `--orchestration-run-id`."
 
 This is **explicitly not** the off-host recompile-down path (`recheck_orchestration_capability` in
 `lifecycle_state.py`), which is reserved for `/loop` and `/resume`. A guarantee-bearing ultracode

@@ -119,7 +119,8 @@ construct a `Saga` (no default); all others have the listed default.
 | `status` | enum | — | `active` | Thread disposition (§4) — **MUST** be in `STATUSES`, **MUST NOT** be `pending`/`in_progress`. |
 | `next_step` | str | — | `""` | The one imperative resume anchor (top of `## Remaining`). |
 | `orchestration_mode` | enum | — | `inline` | How work runs — decision contract in `references/operator-choice.md`; **MUST** be in `ORCHESTRATION_MODES`. |
-| `orchestration_ref` | str | — | `""` | Pointer into the orchestration (team name, workflow id, …). |
+| `orchestration_ref` | str | — | `""` | The DURABLE pointer into the orchestration: the team name (`team-execution`) or the canonical spec JSON path (`cc-workflows-ultracode`). Never holds a workflow run handle (#693 — that is `orchestration_run_id`). |
+| `orchestration_run_id` | str | — | `""` | The TRANSIENT workflow run handle the Workflow tool returns at launch (#693), recorded by `/work` post-launch. Set only for `cc-workflows-ultracode`; empty on older sagas and other backends. |
 | `orchestration_recommended` | str | — | `""` | The backend the recommender suggested for this decision (R12). Empty on older sagas. |
 | `orchestration_operator_choice` | str | — | `""` | The backend the operator actually picked (R12). Differs from `orchestration_mode` when overriding. Empty on older sagas. |
 | `orchestration_downgrade` | str | — | `""` | One-line capability-portable downgrade note (R11). Set on an off-host resume when the Workflow tool is unavailable and the orchestration tier recompiled DOWN (unit specs + per-unit tiers preserved); empty on a host that ran the authored tier. Empty on older sagas. |
@@ -219,7 +220,8 @@ phase_status: in_progress
 status: active
 next_step: "wire /resume to call saga.restore"
 orchestration_mode: cc-workflows-ultracode
-orchestration_ref: "wf-saga-foundation"
+orchestration_ref: "docs/plans/2026-06-02-saga-foundation-spec.json"
+orchestration_run_id: "wf_7dbd5245-def"
 orchestration_recommended: cc-workflows-ultracode
 orchestration_operator_choice: cc-workflows-ultracode
 issue_ref: "infiquetra/infiquetra-claude-plugins#42"

@@ -19,6 +19,46 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-08-04
+
+### A presence-only guard passes the WRONG-KIND value: never gate on "field is set" when the field has kinds  {#presence-guards-pass-wrong-kind-values}
+
+**Context.** `/work`'s ultracode resume halt existed precisely to catch a missing spec ref — and it
+reported "satisfied" for every saga whose ref had been overwritten with a workflow run id. The guard
+asked "is `orchestration_ref` non-empty?"; the failure was not emptiness but the wrong KIND of value
+(a run handle where a file path belongs), so the guard that exists to catch the failure certified it.
+
+**Evidence.** #693; `.claude/saga/state.json` at filing: 93 sagas, 15 run-id-shaped refs, 7 spec
+paths, 71 empty — the field was already predominantly the wrong kind for the read at
+`plugins/saga/skills/work/SKILL.md` §1.5. The #686 work session
+(`docs/work-sessions/2026-08-03-verify-panel-severity-axis.md`) hit it live and worked around it by
+hand (spec path kept, run handle in `--notes`).
+
+**Mechanism.** Two value kinds shared one field (durable spec path + transient workflow run id); the
+writer that runs LAST (post-launch) always won, and the halt tested only presence, which both kinds
+satisfy. Presence is a NECESSARY condition for a usable value, never a SUFFICIENT one when the field
+is overloaded — the guard's predicate must discriminate the kind it needs (shape + file existence),
+not merely the field's non-emptiness.
+
+**Fix.** Saga 0.125.0 split the field (`orchestration_run_id` for the run handle) and replaced the
+presence test with a mechanical discriminator — `saga.py spec-check` (`ok` / `missing` / `run-id` /
+`file-missing`, exit 0 only on `ok`), wired as HALT condition 2 in the work SKILL. Commit on
+`fix/693-orchestration-ref-overload`.
+
+**Validation.** `test_spec_check_halts_on_missing_spec_path_even_with_run_handle` (the case that
+passed pre-fix), `test_spec_check_flags_run_id_shaped_spec_ref`, the clobber round-trip test, and the
+SKILL drift guard — plus the mutation-proof requirement that reverting the guard to presence-only
+fails the suite.
+
+**Generalizable rule.** When a guard protects a READ of a field, write the guard's predicate against
+the KIND the reader consumes (shape, existence, enum membership) — never against the field's mere
+presence. If a field serves two kinds, the kinds will eventually be written in the wrong order, and a
+presence check will certify exactly the corrupted state it was built to catch.
+
+**Refs.** DECISIONS [#orchestration-run-id-split-693](DECISIONS.md#orchestration-run-id-split-693);
+LEARNINGS [#workflow-lease-ttl-outlives-no-poll-contract] (same #686 session, same "quiet failure"
+family); issue #693.
+
 ## 2026-08-03
 
 ### A workflow lease cannot survive the run it governs: its 5-minute TTL versus a driver told never to poll  {#workflow-lease-ttl-outlives-no-poll-contract}

@@ -11,7 +11,7 @@ Saga owns lifecycle state and routing. It does not own adjacent systems' mutatio
 | `saga` | lifecycle choice, local saga state, routing decisions, handoff envelopes | its own append-only ticks |
 | `mission-control` | issue bodies, prepared issue drafts, labels, project fields, GitHub issue mutation | `issue_ref` pointer |
 | `deploy` | tag promotion, deployment mutation, environment state | destination intent and PR refs |
-| `team-execution` | reviewer orchestration, validator orchestration, consensus protocol | `orchestration_mode` and `orchestration_ref` |
+| `team-execution` | reviewer orchestration, validator orchestration, consensus protocol | `orchestration_mode`, `orchestration_ref`, and `orchestration_run_id` (#693) |
 
 When Saga's cached pointer disagrees with the source system, the source system wins. Git owns branches and commits. GitHub owns PR state. `mission-control` owns SDLC issue state. `deploy` owns environment state.
 

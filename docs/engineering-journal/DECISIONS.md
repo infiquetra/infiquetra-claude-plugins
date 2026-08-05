@@ -1,5 +1,40 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-08-04
+
+### Split `orchestration_ref`: durable spec pointer vs transient run handle (#693) {#orchestration-run-id-split-693}
+
+Issue: `infiquetra-claude-plugins#693`. The saga envelope's `orchestration_ref` was overloaded with
+two incompatible value kinds — the durable spec JSON path `/work` READS to locate the canonical spec
+(passed as a file path to `spec_table.py` / `execution_spec.py emit|lease`) and the transient
+workflow run id `/work` WRITES post-launch. Launch always runs after the read, so every launched saga
+lost its spec path; the resume halt tested only field PRESENCE, so a run-id-shaped ref cleared the
+guard and was handed to a script expecting a filename. Measured at filing: 15 of 93 local sagas held
+a run-id-shaped ref.
+
+**KTD1 — Split into a NEW field; never migrate by rewriting values.** `orchestration_run_id` is the
+dedicated home for the run handle; `orchestration_ref` keeps its durable-pointer meaning (team name
+for `team-execution`, spec JSON path for `cc-workflows-ultracode`). A run-handle-only tick carries
+the spec ref forward via the existing scalar carry-forward — no merge-path change needed.
+
+**KTD2 — Discriminate, don't delete, and make the gate mechanical.** The resume halt becomes
+`saga.py spec-check --saga-id <id>`: verdicts `ok` / `missing` / `run-id` / `file-missing`, exit 0
+only on `ok`. A run handle held BESIDE the ref never satisfies the guard (the case that passed
+pre-fix and must not — mutation-proofed in `test_spec_check_halts_on_missing_spec_path_even_with_run_handle`).
+`/work` gates the ultracode launch on it in prose AND exit code.
+
+**KTD3 — Run-id detection is conservative and flag-only.** Shape `^wf[_-][A-Za-z0-9-]+$` — the
+Workflow tool's `wf_<hex>-<hex>` mint shape. Detection happens at READ time (`spec-check`), never as
+a save-time rejection: `/loop` also writes `orchestration_ref` for its own offloads, and a blunt
+save guard would reach past the defect's blast radius.
+
+**KTD4 — No backfill of the 15 run-id-shaped sagas.** The issue marks migration a separate call;
+`spec-check` surfaces them one at a time with a per-verdict recovery line when they are resumed.
+
+**KTD5 — Additive field, no `schema_version` bump; plugin bump 0.125.0.** saga-spec §9: a new
+optional frontmatter field with a default round-trips through `extra` on older readers. Release
+surfaces (plugin.json / marketplace.json / CHANGELOG) bumped in the same commit per the tri-lock.
+
 ## 2026-08-03
 
 ### Refute-N verify panel severity axis — KTD1 through KTD8 (#686) {#verify-panel-severity-axis-686}

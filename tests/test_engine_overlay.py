@@ -101,4 +101,9 @@ def test_mutation_helpers_return_valid_new_overlay() -> None:
 
 
 def test_gitignore_ignores_local_engine_overlay() -> None:
-    assert ".saga/engine-overlay.json" in (ROOT / ".gitignore").read_text(encoding="utf-8")
+    gitignore_lines = {
+        line.strip() for line in (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+    }
+    # #695: the blanket `.saga/` entry covers engine-overlay.json — the previously-named
+    # entry under-ignored the rest of the saga runtime directory.
+    assert ".saga/" in gitignore_lines

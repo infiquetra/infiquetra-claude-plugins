@@ -250,21 +250,25 @@ but never reads `orchestration_mode`). A command that does not yet write a saga 
 |---|---|
 | `inline` | empty string `""` |
 | `team-execution` | the team name |
-| `cc-workflows-ultracode` | the **spec JSON path** (at `/plan` tick time); the workflow id (after `/work` launches the Workflow) |
+| `cc-workflows-ultracode` | the **spec JSON path** (durable, set at `/plan` tick time); the workflow run handle rides in `orchestration_run_id` (#693), never here |
 
 **`cc-workflows-ultracode` ref lifecycle.** At `/plan` time, `orchestration_ref` is set to the **canonical
 spec JSON** (`docs/plans/<date>-<topic>-spec.json`). The `.workflow.js` is a derived artifact — regenerable
 at any time via `execution_spec.py emit <spec.json>` — so the spec JSON is the durable pointer. When `/work`
-subsequently launches the Workflow tool and receives a workflow id, it overwrites `orchestration_ref` with
-that id via a second saga tick, preserving the spec path in the plan artifact itself. The spec JSON is
-therefore always the canonical authoring artifact; the workflow id is the transient execution handle.
+subsequently launches the Workflow tool and receives a workflow id, it records that id in a second saga tick
+as **`orchestration_run_id`** — never as `orchestration_ref` (#693: overwriting the ref destroyed the spec
+path the same launch had just read, leaving the next resume nothing to locate the spec with). The spec JSON
+is therefore always the canonical authoring artifact and the workflow id the transient execution handle, and
+the two coexist on one saga. `saga.py spec-check` discriminates the ref at launch/resume time — a run id in
+the ref, an empty ref, or a missing spec file is a HALT, not a silent misdelivery.
 
 **The halt-not-degrade guarantee.** A `cc-workflows-ultracode` choice is a **guarantee-bearing** commitment —
 the operator chose parallel fan-out **and** refute-N adversarial verification. `/work` honors this guarantee by
 halting rather than silently degrading when execution is impossible in the current session:
 
 - **Workflow tool absent:** HALT with a recovery line pointing to a capable session or a backend switch.
-- **Spec or orchestration_ref missing:** HALT with a recovery line pointing back to `/plan` to author the spec.
+- **Spec ref not `ok` (`saga.py spec-check`, #693):** HALT with a recovery line pointing back to `/plan` to
+  author the spec (or re-record the spec path when the ref holds a stale run id).
 
 This halt-not-degrade rule is **explicitly NOT** the off-host recompile-down path
 (`recheck_orchestration_capability` in `lifecycle_state.py`), which is reserved for `/loop`'s phase-walk

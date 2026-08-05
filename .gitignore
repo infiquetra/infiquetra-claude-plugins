@@ -28,6 +28,7 @@ ENV/
 # Testing
 .pytest_cache/
 .coverage
+coverage.xml
 htmlcov/
 .tox/
 .nox/
@@ -59,15 +60,14 @@ Thumbs.db
 
 # OutcomeOrchestrator managed sub-outcome worktrees (durable but never committed; R15)
 .saga-worktrees/
-# Local Saga engine-offer preferences (operator-specific, never committed)
-.saga/engine-prefs.json
-# Local Saga engine routing overlay (operator-specific, never committed)
-.saga/engine-overlay.json
-# Mid-run adjustment envelope + reversible-mutation undo ledger (#372) — per-run control
-# surface + act-log; polled/replayed at boundaries, never committed (keeps git status clean)
-.saga/adjustment-envelope.json
-.saga/undo-ledger.jsonl
-.saga/gates/
+# Local Saga runtime state (#695) — machine-local, never committed. Holds the engine-offer
+# preferences and routing overlay (operator-specific), the mid-run adjustment envelope +
+# reversible-mutation undo ledger (#372), gate records, workflow-lease-*.json receipts,
+# workflow-evidence-*/ directories, lease-keeper/renew-loop logs, per-issue invocation-id
+# pointers, and per-run .env files. The five previously-named paths under-ignored the
+# directory — the blanket entry closes the gap so a blanket `git add -A` can never sweep
+# runtime artifacts into a commit.
+.saga/
 
 # Mutation-canary run log (#427) — appended each run, inspectable locally / uploaded as a CI
 # workflow artifact; never committed so a canary run never dirties the working tree.

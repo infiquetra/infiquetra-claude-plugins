@@ -45,7 +45,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.124.0"  # verify-panel severity axis + quorum floor (#686)
+    assert plugin_json["version"] == "0.125.0"  # orchestration_run_id split + spec-check (#693)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]
@@ -3476,6 +3476,186 @@ def test_scan_exposes_picker_fields(tmp_path, monkeypatch: pytest.MonkeyPatch) -
     assert candidate["branch"] == "feat/loop-probe"
     assert candidate["orchestration_mode"] == "cc-workflows-ultracode"
     assert candidate["orchestration_ref"] == "wf_probe123"
+
+
+def _stub_saga_git_seam(saga, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Offline save: stub the git seam exactly like test_scan_exposes_picker_fields does."""
+    no_git = lambda *_a, **_k: SimpleNamespace(returncode=1, stdout="", stderr="")  # noqa: E731
+    monkeypatch.setattr(saga.subprocess, "run", no_git)
+    for fn_name in ("save", "current_git_state"):
+        fn = getattr(saga, fn_name)
+        new_kwdefaults = dict(fn.__kwdefaults__ or {})
+        new_kwdefaults["runner"] = no_git
+        monkeypatch.setattr(fn, "__kwdefaults__", new_kwdefaults)
+
+
+def test_saga_holds_spec_ref_and_run_id_without_clobber(tmp_path, monkeypatch) -> None:
+    """#693: the durable spec path and the transient run handle coexist on one saga.
+
+    Pre-#693, /work's post-launch tick overwrote ``orchestration_ref`` with the workflow
+    id, destroying the spec path the same launch had just read. Both values must
+    round-trip through save/restore, and a run-handle-only tick must carry the spec ref
+    forward rather than clobbering it.
+    """
+    saga_mod = _load_saga_module()
+    _stub_saga_git_seam(saga_mod, monkeypatch)
+    saga_id = saga_mod.derive_saga_id("issue", "693")
+    spec_ref = "docs/plans/2026-08-04-issue-693-spec.json"
+
+    saga_mod.save(
+        tmp_path,
+        saga_mod.Saga(
+            saga_id=saga_id,
+            kind="issue",
+            id="693",
+            orchestration_mode="cc-workflows-ultracode",
+            orchestration_operator_choice="cc-workflows-ultracode",
+            orchestration_ref=spec_ref,
+        ),
+        now=datetime(2026, 8, 4, 9, 0, 0, tzinfo=UTC),
+    )
+    # The post-launch tick records ONLY the run handle; the spec ref carries forward.
+    saga_mod.save(
+        tmp_path,
+        saga_mod.Saga(
+            saga_id=saga_id,
+            kind="issue",
+            id="693",
+            orchestration_run_id="wf_7dbd5245-def",
+        ),
+        now=datetime(2026, 8, 4, 9, 32, 0, tzinfo=UTC),
+    )
+
+    restored = saga_mod.restore(tmp_path, saga_id)
+    assert restored is not None
+    assert restored.orchestration_ref == spec_ref
+    assert restored.orchestration_run_id == "wf_7dbd5245-def"
+
+    envelope = saga_mod.latest_envelope_for(tmp_path, saga_id).read_text(encoding="utf-8")
+    assert f"orchestration_ref: {spec_ref}" in envelope
+    assert "orchestration_run_id: wf_7dbd5245-def" in envelope
+
+    # Both surfaces that feed /loop and the derived index carry the run handle too.
+    candidate = next(c for c in saga_mod.scan(tmp_path) if c["saga_id"] == saga_id)
+    assert candidate["orchestration_run_id"] == "wf_7dbd5245-def"
+
+
+def test_spec_check_halts_on_missing_spec_path_even_with_run_handle(tmp_path, monkeypatch) -> None:
+    """#693: the resume guard DISCRIMINATES — a run handle beside the ref never satisfies it.
+
+    This is the case that passed pre-#693 and must not: the old presence-only halt read a
+    run-id-shaped ``orchestration_ref`` as "ref present" and handed a workflow id to a
+    script expecting a filename. Mutation proof target: reverting the guard to a
+    presence-only check (one satisfied by ``orchestration_run_id``) flips the verdict away
+    from ``missing`` and this test fails.
+    """
+    saga_mod = _load_saga_module()
+    _stub_saga_git_seam(saga_mod, monkeypatch)
+    saga_id = saga_mod.derive_saga_id("issue", "693")
+
+    saga_mod.save(
+        tmp_path,
+        saga_mod.Saga(
+            saga_id=saga_id,
+            kind="issue",
+            id="693",
+            orchestration_mode="cc-workflows-ultracode",
+            orchestration_operator_choice="cc-workflows-ultracode",
+            orchestration_run_id="wf_7dbd5245-def",  # run handle present, spec path absent
+        ),
+        now=datetime(2026, 8, 4, 9, 0, 0, tzinfo=UTC),
+    )
+
+    restored = saga_mod.restore(tmp_path, saga_id)
+    verdict, detail = saga_mod.spec_ref_verdict(restored, tmp_path)
+    assert verdict == "missing"
+    assert "empty" in detail
+
+    # The CLI gate exits non-zero so the driving session halts mechanically, and the
+    # payload surfaces the run handle that does NOT satisfy the guard.
+    monkeypatch.chdir(tmp_path)
+    assert saga_mod.main(["spec-check", "--saga-id", saga_id]) == 2
+
+
+def test_spec_check_flags_run_id_shaped_spec_ref(tmp_path, monkeypatch) -> None:
+    """#693: a run-id-shaped value in the spec-path field is flagged, never silently accepted."""
+    saga_mod = _load_saga_module()
+    _stub_saga_git_seam(saga_mod, monkeypatch)
+    saga_id = saga_mod.derive_saga_id("issue", "693")
+
+    saga_mod.save(
+        tmp_path,
+        saga_mod.Saga(
+            saga_id=saga_id,
+            kind="issue",
+            id="693",
+            orchestration_mode="cc-workflows-ultracode",
+            orchestration_operator_choice="cc-workflows-ultracode",
+            orchestration_ref="wf_7dbd5245-def",  # the pre-#693 clobber shape
+        ),
+        now=datetime(2026, 8, 4, 9, 0, 0, tzinfo=UTC),
+    )
+
+    restored = saga_mod.restore(tmp_path, saga_id)
+    verdict, detail = saga_mod.spec_ref_verdict(restored, tmp_path)
+    assert verdict == "run-id"
+    assert "orchestration_run_id" in detail
+
+    monkeypatch.chdir(tmp_path)
+    assert saga_mod.main(["spec-check", "--saga-id", saga_id]) == 2
+
+
+def test_spec_check_ok_and_file_missing_verdicts(tmp_path, monkeypatch) -> None:
+    """#693: a real spec path verifies ok; a path whose file is gone is file-missing."""
+    saga_mod = _load_saga_module()
+    _stub_saga_git_seam(saga_mod, monkeypatch)
+
+    spec_path = tmp_path / "docs" / "plans" / "2026-08-04-ok-spec.json"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("{}", encoding="utf-8")
+
+    ok_id = saga_mod.derive_saga_id("issue", "693")
+    saga_mod.save(
+        tmp_path,
+        saga_mod.Saga(
+            saga_id=ok_id,
+            kind="issue",
+            id="693",
+            orchestration_ref="docs/plans/2026-08-04-ok-spec.json",
+        ),
+        now=datetime(2026, 8, 4, 9, 0, 0, tzinfo=UTC),
+    )
+    restored = saga_mod.restore(tmp_path, ok_id)
+    assert saga_mod.spec_ref_verdict(restored, tmp_path) == (
+        "ok",
+        "docs/plans/2026-08-04-ok-spec.json",
+    )
+
+    gone_id = saga_mod.derive_saga_id("issue", "694")
+    saga_mod.save(
+        tmp_path,
+        saga_mod.Saga(
+            saga_id=gone_id, kind="issue", id="694", orchestration_ref="docs/plans/gone-spec.json"
+        ),
+        now=datetime(2026, 8, 4, 9, 5, 0, tzinfo=UTC),
+    )
+    verdict, _ = saga_mod.spec_ref_verdict(saga_mod.restore(tmp_path, gone_id), tmp_path)
+    assert verdict == "file-missing"
+
+    monkeypatch.chdir(tmp_path)
+    assert saga_mod.main(["spec-check", "--saga-id", ok_id]) == 0
+    assert saga_mod.main(["spec-check", "--saga-id", gone_id]) == 2
+
+
+def test_work_skill_records_run_handle_in_its_own_field() -> None:
+    """#693 drift guard: /work no longer overloads orchestration_ref with the workflow id."""
+    work_doc = _read(PLUGIN_ROOT / "skills" / "work" / "SKILL.md")
+    # The retired overload must be gone in BOTH grep forms the issue's acceptance used.
+    assert "orchestration-ref <workflow-id>" not in work_doc
+    assert "--orchestration-ref <workflow-id>" not in work_doc
+    # The dedicated field and the discriminating gate replace it.
+    assert "--orchestration-run-id <workflow-id>" in work_doc
+    assert "spec-check" in work_doc
 
 
 def test_ae10_status_card_single_emitter_routing() -> None:

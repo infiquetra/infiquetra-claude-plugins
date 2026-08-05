@@ -379,5 +379,9 @@ def test_drift_guard_stage_skills_reference_shared_engine_offer_helper() -> None
 
 
 def test_engine_preference_file_is_gitignored() -> None:
-    gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
-    assert ".saga/engine-prefs.json" in gitignore
+    gitignore_lines = {
+        line.strip() for line in (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+    }
+    # #695: the blanket `.saga/` entry covers engine-prefs.json — the previously-named
+    # entry under-ignored the rest of the saga runtime directory.
+    assert ".saga/" in gitignore_lines

@@ -179,6 +179,13 @@ class Saga:
     next_step: str = ""
     orchestration_mode: str = "inline"
     orchestration_ref: str = ""
+    # Workflow run handle (#693): the TRANSIENT id the Workflow tool returns at launch.
+    # Split out of orchestration_ref so the durable spec-path pointer and the run handle
+    # coexist on one saga instead of clobbering each other (whichever was written last used
+    # to win, and launch always ran after the spec read — so a launched saga lost its spec
+    # path). /work records it post-launch via --orchestration-run-id and never overwrites
+    # orchestration_ref. Empty on older sagas and on non-ultracode backends.
+    orchestration_run_id: str = ""
     # Choice-vs-recommendation recording (R12 — enables override-rate computation in /retro+/optimize).
     # orchestration_recommended = what the recommender suggested;
     # orchestration_operator_choice = what the operator actually picked.
@@ -269,6 +276,7 @@ FRONTMATTER_FIELDS: tuple[str, ...] = (
     "next_step",
     "orchestration_mode",
     "orchestration_ref",
+    "orchestration_run_id",
     "orchestration_recommended",
     "orchestration_operator_choice",
     "orchestration_downgrade",
@@ -860,6 +868,8 @@ def _saga_summary(saga: Saga) -> dict[str, Any]:
         "branch": saga.branch,
         "orchestration_mode": saga.orchestration_mode,
         "orchestration_ref": saga.orchestration_ref,
+        # #693: the run handle rides beside the spec ref so both surfaces can report it.
+        "orchestration_run_id": saga.orchestration_run_id,
         "next_step": saga.next_step,
         "updated_at": saga.updated_at,
     }
@@ -1064,6 +1074,7 @@ def scan(root: Path, *, max_candidates: int | None = None) -> list[dict[str, Any
                     "branch": saga.branch,
                     "orchestration_mode": saga.orchestration_mode,
                     "orchestration_ref": saga.orchestration_ref,
+                    "orchestration_run_id": saga.orchestration_run_id,
                     "legacy": False,
                 }
             )
@@ -1072,6 +1083,47 @@ def scan(root: Path, *, max_candidates: int | None = None) -> list[dict[str, Any
     if max_candidates is not None:
         return candidates[:max_candidates]
     return candidates
+
+
+# ---------------------------------------------------------------------------
+# spec-ref validation (#693)
+# ---------------------------------------------------------------------------
+
+# Workflow run handles minted by the Workflow tool are shaped ``wf_<hex>-<hex>`` (e.g.
+# ``wf_7dbd5245-def``). Since #693 they live in ``orchestration_run_id``; finding one in
+# ``orchestration_ref`` means the durable spec-path pointer was clobbered by the pre-#693
+# overload (launch wrote the run id over the spec path the launch itself had just read).
+_RUN_ID_RE = re.compile(r"^wf[_-][A-Za-z0-9-]+$")
+
+
+def looks_like_run_id(value: str) -> bool:
+    """True when ``value`` is shaped like a workflow run handle, not a file path."""
+    return bool(_RUN_ID_RE.match(value.strip()))
+
+
+def spec_ref_verdict(saga: Saga, root: Path) -> tuple[str, str]:
+    """Classify the saga's ``orchestration_ref`` for a workflow launch/resume (#693).
+
+    Returns ``(verdict, detail)``: ``ok`` (a spec path whose file exists), ``missing``
+    (ref empty), ``run-id`` (a workflow run handle — the wrong kind of value), or
+    ``file-missing`` (a plausible path whose file does not exist). Every verdict but
+    ``ok`` is a HALT condition for ``/work``'s ultracode launch. The guard DISCRIMINATES
+    rather than testing presence: a run handle held BESIDE the ref (in
+    ``orchestration_run_id``) never satisfies it, so a saga that lost its spec path halts
+    loudly instead of handing a workflow id to a script expecting a filename.
+    """
+    ref = saga.orchestration_ref.strip()
+    if not ref:
+        return "missing", "saga orchestration_ref is empty"
+    if looks_like_run_id(ref):
+        return (
+            "run-id",
+            f"saga orchestration_ref holds a workflow run handle ({ref!r}), not the spec "
+            "path — the run handle belongs in orchestration_run_id (#693)",
+        )
+    if not (root / ref).is_file():
+        return "file-missing", f"spec file does not exist at {ref!r}"
+    return "ok", ref
 
 
 # ---------------------------------------------------------------------------
@@ -1406,6 +1458,7 @@ def _build_save_saga(args: argparse.Namespace) -> tuple[Saga, frozenset[str]]:
         next_step=args.next_step,
         orchestration_mode=orchestration_mode,
         orchestration_ref=args.orchestration_ref,
+        orchestration_run_id=args.orchestration_run_id,
         orchestration_recommended=args.orchestration_recommended,
         orchestration_operator_choice=orchestration_operator_choice,
         orchestration_downgrade=args.orchestration_downgrade,
@@ -1485,6 +1538,14 @@ def _add_save_parser(sub: Any) -> None:
     )
     p.add_argument("--orchestration-ref", default="")
     p.add_argument(
+        "--orchestration-run-id",
+        default="",
+        help=(
+            "transient workflow run handle returned by the Workflow tool at launch (#693); "
+            "never record it via --orchestration-ref — that field stays the durable spec pointer"
+        ),
+    )
+    p.add_argument(
         "--orchestration-downgrade",
         default="",
         help="one-line capability-portable downgrade note (R11; recorded on off-host resume)",
@@ -1560,6 +1621,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     scan_p = sub.add_parser("scan", help="List one candidate per saga (newest first)")
     scan_p.add_argument("--max-candidates", type=int, default=None)
 
+    spec_check_p = sub.add_parser(
+        "spec-check",
+        help="Validate the saga's spec ref for a workflow launch/resume (#693)",
+    )
+    spec_check_p.add_argument("--saga-id", required=True)
+
     ctx_p = sub.add_parser("context", help="Aggregate issue/PR/journal context")
     ctx_p.add_argument("--repo", required=True)
     ctx_p.add_argument("--issue", type=int, required=True)
@@ -1607,6 +1674,38 @@ def main(argv: Sequence[str] | None = None) -> int:
         candidates = scan(root, max_candidates=args.max_candidates)
         print(json.dumps({"candidates": candidates, "count": len(candidates)}, indent=2))
         return 0
+
+    if args.command == "spec-check":
+        saga = restore(root, args.saga_id)
+        if saga is None:
+            print(
+                json.dumps(
+                    {
+                        "saga_id": args.saga_id,
+                        "found": False,
+                        "verdict": "missing",
+                        "detail": f"no saga found for {args.saga_id!r}",
+                    },
+                    indent=2,
+                )
+            )
+            return 2
+        verdict, detail = spec_ref_verdict(saga, root)
+        print(
+            json.dumps(
+                {
+                    "saga_id": args.saga_id,
+                    "found": True,
+                    "verdict": verdict,
+                    "detail": detail,
+                    "orchestration_run_id": saga.orchestration_run_id,
+                },
+                indent=2,
+            )
+        )
+        # Anything but ``ok`` is a HALT for /work's ultracode launch/resume (#693): a
+        # non-zero exit lets the driving session gate mechanically instead of parsing prose.
+        return 0 if verdict == "ok" else 2
 
     if args.command == "context":
         owner, repo = parse_repo(args.repo)

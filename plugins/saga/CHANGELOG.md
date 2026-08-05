@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.125.0] - 2026-08-04
+
+### Fixed
+
+- **`/work` no longer overwrites the saga field it later reads (#693).** `orchestration_ref`
+  was overloaded with two incompatible values: the durable spec JSON path `/work` reads to locate
+  the canonical spec (and passes as a file path to `spec_table.py` / `execution_spec.py emit` /
+  `execution_spec.py lease`), and the transient workflow run id recorded post-launch. The launch
+  step always runs after the read step, so every saga that launched a Workflow lost its spec path.
+  The failure was quiet: the resume halt tested only field PRESENCE, so a saga carrying a run id
+  cleared the guard that exists precisely to catch a missing ref, then handed a workflow id to a
+  script expecting a filename. Measured at filing: 15 of 93 local sagas held a run-id-shaped ref.
+  The overload is retired with a discriminating guard, not a deleted one.
+
+### Added
+
+- New saga envelope field `orchestration_run_id` (+ `saga.py save --orchestration-run-id`) — the
+  dedicated home for the workflow run handle the Workflow tool returns at launch. The spec path and
+  the run handle now coexist on one saga; a run-handle-only tick carries the spec ref forward
+  instead of clobbering it. Mirrored into `_saga_summary` (restore/state.json index/ticks) and
+  `scan` candidates; documented in `saga-spec.md` §3.1/§3.4 (the example envelope no longer shows a
+  run-id-shaped `orchestration_ref`), `operator-choice.md` §6, and the docs model + boundaries map.
+  Additive optional field — no `schema_version` bump (saga-spec §9).
+- `saga.py spec-check --saga-id <id>` — the discriminating pre-launch/resume gate over the ref:
+  `ok` / `missing` / `run-id` / `file-missing`, exit 0 only on `ok`. `/work` now gates the ultracode
+  launch on it mechanically instead of testing presence in prose. A run handle held BESIDE the ref
+  never satisfies the guard (the case that passed pre-fix and must not), and a run-id-shaped value
+  IN the ref is flagged with its own recovery line rather than silently accepted.
+
+### Changed
+
+- `/work` §1.5: the post-launch tick records `--orchestration-run-id <workflow-id>` and never
+  `--orchestration-ref <workflow-id>`; the HALT conditions route through the `spec-check` verdicts
+  with per-verdict recovery lines. The 15 sagas already holding run-id refs are NOT migrated —
+  backfill is a separate call (#693 out-of-scope).
+
 ## [0.124.0] - 2026-08-03
 
 ### Fixed

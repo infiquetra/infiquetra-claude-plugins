@@ -47,6 +47,15 @@ are the discovery-envelope strings the codex port consumes verbatim — changing
 cross-runtime negotiation decision, not U1 mechanics. Queued for U7-or-follow-up in QUEUED.md
 ([#handoff-negotiation-vocabulary-escapee](QUEUED.md#handoff-negotiation-vocabulary-escapee)).
 
+**KTD6 — Release surfaces move per-PR; the unit's "no bump until U7" non-goal loses to the #429
+diff guard.** The plan's R8 consolidated all three version bumps into U7 — but the diff-aware
+release-surface bump guard (`tools/release_surface_diff_guard.py`, shipped 2026-07-04, predating
+the plan) fails any PR that changes plugin behavior without moving that plugin's release surface
+in the same diff. CI enforcement on the U1 PR proved the contradiction. The standing repo rule
+wins: saga bumped 0.125.0 → 0.126.0 in the U1 PR (plugin.json, regenerated marketplace.json,
+CHANGELOG, version-pin test), and every later unit that touches saga moves it again; U7's R8
+target table needs re-noting to "on top of the per-unit versions" before it is pulled.
+
 ## 2026-08-04
 
 ### Split `orchestration_ref`: durable spec pointer vs transient run handle (#693) {#orchestration-run-id-split-693}

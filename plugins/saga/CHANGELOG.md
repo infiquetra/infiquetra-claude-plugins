@@ -1,6 +1,30 @@
 # Changelog
 
+## [0.126.0] - 2026-08-05
+
+### Removed
+
+- **Fleet lease broker retired from the cross-runtime handoff protocol — campaign #677 unit U1
+  (#678).** All six broker call sites in `outcome_compat.py` (`verify`,
+  `prepare_agent_settlement`, `commit_agent_settlement`, `inspect_resource_head`,
+  `acquire_successor`, `verify`) are gone: `offer_handoff` writes the sealed offer record via
+  the store's write-once path with a caller-asserted (but REQUIRED — an anonymous offer HALTs)
+  `issuer_owner_id`, and `accept_handoff` completes on the write-once intent/commit pair alone
+  — no successor lease, no close-receipt CAS. Deleted outright as token-threading-only:
+  `_acquire_successor_or_resume`, `_broker_module`, `_lease_broker_mod`,
+  `outcome_dispatch_resource`, `_HANDOFF_PRODUCER`. Absorbed coupled callers in `outcome.py`
+  (handoff/attach CLI branches, `attached_advance`/`attended_handoff` signatures, the
+  `_cli_broker`/`_cli_broker_error`/`_cli_admission` helpers); the CLI admission flags stay
+  accepted for cross-runtime compatibility but no longer feed a broker. Issuer identity
+  becoming caller-asserted is an accepted loss of the plan's Option C scope decision —
+  DECISIONS `{#u1-absorbs-outcome-handoff-callers-678}`. The discovery envelope's
+  `fleet-broker-fencing` capability string and `fleet-broker` authority value are unchanged
+  pending the cross-runtime vocabulary decision (QUEUED
+  `{#handoff-negotiation-vocabulary-escapee}`). Release surfaces move per-PR under the #429
+  diff guard; the campaign's final module deletion lands in U7.
+
 ## [0.125.0] - 2026-08-04
+
 
 ### Fixed
 

@@ -56,11 +56,14 @@ it is pulled.
 | `docs/engineering-journal/DECISIONS.md` | `{#u1-absorbs-outcome-handoff-callers-678}` |
 | `docs/engineering-journal/LEARNINGS.md` | `{#file-disjoint-units-must-be-api-disjoint}` + `{#shared-sys-modules-key-test-collision}` (the full-suite-only test collision the new test file's module-key load caused and fixed) |
 | `docs/engineering-journal/QUEUED.md` | `{#handoff-negotiation-vocabulary-escapee}` |
+| Release surfaces (second commit) | `plugins/saga/.claude-plugin/plugin.json` + `.claude-plugin/marketplace.json` (regenerated) + `plugins/saga/CHANGELOG.md` + the version-pin test: saga 0.125.0 → 0.126.0 under the #429 diff guard (KTD6) |
 
 ## Deliberately not done
 
-- **No plugin version bump** — per the unit's non-goal, all three release surfaces move together in
-  U7 (#684). `check_release_surface_parity.py` passes unchanged.
+- ~~**No plugin version bump**~~ — **OVERTURNED by CI**: the #429 diff-aware bump guard fails any
+  PR that changes plugin behavior without moving that plugin's release surface in the same diff,
+  so the unit's "no bump until U7" non-goal contradicted the standing repo rule. saga bumped
+  0.125.0 → 0.126.0 in this PR (DECISIONS KTD6); U7's R8 table needs re-noting.
 - **`REQUIRED_CAPABILITIES`/`AUTHORITY` still name `fleet-broker-fencing`/`fleet-broker`** — the
   discovery-envelope negotiation vocabulary the codex port consumes verbatim. Changing it is a
   cross-runtime decision, queued as `{#handoff-negotiation-vocabulary-escapee}` for U7-or-follow-up.

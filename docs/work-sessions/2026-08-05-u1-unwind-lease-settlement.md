@@ -5,9 +5,10 @@ issue: https://github.com/infiquetra/infiquetra-claude-plugins/issues/678
 plan: docs/plans/2026-07-30-issue-677-lease-broker-retirement-plan.md
 doc_review: docs/reviews/doc-review-issue-677-2026-07-30.md
 branch: feat/678-u1-unwind-lease-settlement
-commit: 68d3092d
-pull_request: ""
-merge_commit: ""
+commit: b727fa5c
+final_commit: 42080178
+pull_request: https://github.com/infiquetra/infiquetra-claude-plugins/pull/697
+merge_commit: af8cb644
 saga: issue-678
 orchestration: inline
 ---

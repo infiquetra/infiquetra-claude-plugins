@@ -19,6 +19,84 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-08-05
+
+### File-disjoint units must also be API-disjoint: a caller that passes the retired thing IN and reads it OUT is coupled to the unit that removes it  {#file-disjoint-units-must-be-api-disjoint}
+
+**Context.** The lease-broker retirement (#677) cut its units file-disjoint so U1–U4 "may run in
+parallel." U1 (#678) owns `outcome_compat.py`; `outcome.py` is U4's. But `outcome.py`'s
+handoff/attach branches are the ONLY callers of the functions U1 unwinds — they pass
+`broker=`/`lease=`/`admission=` in and read `accepted["lease"].lease_id` out. The unit boundary was
+drawn on FILE OWNERSHIP, not on the call graph, so the file-disjointness claim was true and the
+independence claim was false.
+
+**Evidence.** #678 acceptance criteria 2+3 (green full suite, no pass-through wrappers) versus its
+non-goal ("do not touch `outcome.py`") — proven mutually unsatisfiable before the first edit: any
+compat-stub route still breaks `attached_advance` and IS the forbidden wrapper; a red-suite route
+fails criterion 3. `outcome.py:1847-1883` (`_cli_broker`/`_cli_admission`), `:2806-2833` (handoff
+branch), `:2834-2867` (attach branch), `:1992` (`accepted["lease"].lease_id`) — all exclusively the
+handoff/attach path U1 unwinds.
+
+**Mechanism.** A decomposition survey enumerates consumers by "which file imports the module" — a
+FILE census. But a unit that changes a function SIGNATURE or RETURN SHAPE couples to every CALLER of
+that function, regardless of which file the caller lives in. File disjointness is a necessary
+condition for parallel safety (no two writers in one file), not a sufficient one (a signature change
+in unit A's file is a compile/runtime break in unit B's caller). The survey that produced the file
+list never asked "who calls these functions and what do they do with the return."
+
+**Fix.** The operator chose to absorb the coupled call sites into U1 (DECISIONS
+[#u1-absorbs-outcome-handoff-callers-678](DECISIONS.md#u1-absorbs-outcome-handoff-callers-678)) —
+the same fold-in pattern D12 used for the two survey-escapee files. U4's `outcome.py` row shrinks to
+the prune-path `default_lease_authority()` threading; its issue needs re-noting before it is pulled.
+
+**Validation.** Both affected test files rewritten in the same commit; full suite green with no
+`lease_broker`/`lease_authority`/`fleet_leases` match left in `outcome_compat.py`.
+
+**Generalizable rule.** When cutting parallel units, measure coupling by CALL GRAPH, not file
+ownership: before declaring units parallel-safe, grep for cross-unit callers of every function whose
+signature or return shape the unit changes. And when a unit's acceptance criteria (green suite)
+contradict its file list, the acceptance criteria win — absorb the minimal coupled surface, record
+the deviation, and re-note the unit that lost the work.
+
+**Refs.** DECISIONS [#u1-absorbs-outcome-handoff-callers-678](DECISIONS.md#u1-absorbs-outcome-handoff-callers-678); plan `docs/plans/2026-07-30-issue-677-lease-broker-retirement-plan.md` (D12 precedent); campaign #677.
+
+### Two test modules loading one plugin script must not share the sys.modules key  {#shared-sys-modules-key-test-collision}
+
+**Context.** U1 (#678) added `tests/test_saga_outcome_compat.py` alongside the existing
+`tests/test_outcome_cross_runtime_contract.py`. Both load `plugins/saga/scripts/outcome_compat.py`
+via importlib. The new file copied the house `_load()` pattern verbatim — including its
+unconditional `sys.modules["outcome_compat"] = module` registration.
+
+**Evidence.** Full suite (5585 tests): `TestAttachedAdvance::test_frontier_change_halts_rather_than_broadening`
+FAILED twice, reproducible, while passing in isolation and in every subset run that excluded the new
+file. The traceback showed the expected `handoff-frontier-changed` halt escaping its own
+`pytest.raises(OC.CompatibilityHaltError)`.
+
+**Mechanism.** Pytest imports all test modules at collection, in filename order. The contract file
+(`test_outcome_*`) registers its load under `"outcome_compat"` first; the new file (`test_saga_*`)
+registered a SECOND load under the SAME key, winning the entry. At runtime, `outcome.py`'s lazy
+`import outcome_compat` inside `attached_advance` resolved the winner (the new file's module), so
+the raised exception carried the winner's `CompatibilityHaltError` class — a different class object
+than the contract test's `OC.CompatibilityHaltError` — and `pytest.raises` on the loser's class
+missed it. Subset runs that excluded one file could not collide, which is why isolation and cluster
+runs stayed green.
+
+**Fix.** Load under a distinct key (`"_test_outcome_compat_u1"`) — the precedent was already in the
+tree and was deleted by this same unit: the contract file's old `_load_broker_module()` carried a
+comment saying clobbering the shared name "breaks unrelated outcome CLI tests in-session." The
+comment outlived the lesson only until the next file needed it.
+
+**Validation.** Full suite green after the key change (both modules keep their own class identity;
+lazy sibling imports resolve per-key).
+
+**Generalizable rule.** When two test modules importlib-load the same plugin script, each must use
+its own `sys.modules` key — the key is a process-global registry entry, and whichever module pytest
+collects last wins it for every lazy `import <name>` in the production code under test. A failure
+that reproduces only in the full suite and shows an exception escaping its own `pytest.raises` is
+this bug until proven otherwise.
+
+**Refs.** PR for #678 (U1); campaign #677.
+
 ## 2026-08-04
 
 ### A presence-only guard passes the WRONG-KIND value: never gate on "field is set" when the field has kinds  {#presence-guards-pass-wrong-kind-values}

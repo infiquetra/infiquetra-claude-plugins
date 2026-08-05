@@ -673,37 +673,12 @@ class TestCanonicalReconstruction:
 
 
 # ---------------------------------------------------------------------------
-# Protected same-clone handoff (R5/R6, U3) — against the REAL fleet broker
+# Protected same-clone handoff (R5/R6) — write-once store records, no fleet broker
+# (#677/U1 retired the broker's settlement fencing and successor grant)
 # ---------------------------------------------------------------------------
 
-FLEET_COMMONS = ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons"
-
-
-def _load_broker_module() -> ModuleType:
-    if str(FLEET_COMMONS) not in sys.path:
-        sys.path.insert(0, str(FLEET_COMMONS))
-    # A distinct sys.modules key: plugins/saga/scripts/ has its OWN lease_broker.py (the session
-    # admission CLI), and clobbering that name breaks unrelated outcome CLI tests in-session.
-    spec = importlib.util.spec_from_file_location(
-        "_test_fleet_lease_broker", FLEET_COMMONS / "lease_broker.py"
-    )
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["_test_fleet_lease_broker"] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-LB = _load_broker_module()
-
-IDENTITY = "github.com/infiquetra/demo-repo"
 SUBPLOT = "sub-2"
-ADMISSION = {
-    "session_id": "sess-receiver",
-    "policy_sha256": "b" * 64,
-    "session_limit": 3,
-    "aggregate_limit": 6,
-}
+ISSUER_OWNER_ID = "issuer-claude"
 
 
 # ------------------------------------------------------------------ handoff-store privacy (#624)
@@ -889,69 +864,40 @@ def test_write_once_refuses_symlinked_home_component_via_resolved_path(
     assert list(wwroot.iterdir()) == []  # nothing created through the resolved link
 
 
-@pytest.fixture
-def broker(tmp_path: Path) -> Any:
-    root = tmp_path / "fleet-leases"
-    root.mkdir(mode=0o700)
-    return LB.LeaseBroker(root)
-
-
-def _issuer_lease(broker: Any, *, attempt: int = 1) -> Any:
-    return broker.acquire_agent(
-        owner_id="issuer-claude",
-        session_id="sess-issuer",
-        policy_sha256="a" * 64,
-        session_limit=3,
-        aggregate_limit=6,
-        mutation="read-write",
-        resource_ref=OC.outcome_dispatch_resource(IDENTITY, OUTCOME_ID, SUBPLOT, attempt),
-    )
-
-
-def _offer(repo: Path, broker: Any, lease: Any, **kw: Any) -> tuple[dict, dict]:
+def _offer(repo: Path, **kw: Any) -> tuple[dict, dict]:
     defaults: dict[str, Any] = {
         "operation": "advance-one",
         "attempt": 1,
-        "broker": broker,
-        "lease": lease,
+        "issuer_owner_id": ISSUER_OWNER_ID,
         "dispatch_id": "outcome:demo:frontier:abc",
     }
     defaults.update(kw)
     return cast("tuple[dict, dict]", OC.offer_handoff(repo, OUTCOME_ID, SUBPLOT, **defaults))
 
 
-def _accept(repo: Path, broker: Any, handoff_id: str, **kw: Any) -> dict[str, Any]:
+def _accept(repo: Path, handoff_id: str, **kw: Any) -> dict[str, Any]:
     defaults: dict[str, Any] = {
         "operation": "advance-one",
         "subplot_id": SUBPLOT,
         "receiver_owner_id": "receiver-codex",
         "receiver_runtime": "codex",
-        "admission": dict(ADMISSION),
-        "broker": broker,
     }
     defaults.update(kw)
     return cast("dict[str, Any]", OC.accept_handoff(repo, OUTCOME_ID, handoff_id, **defaults))
 
 
 class TestProtectedHandoff:
-    def test_offer_accept_transfers_broker_authority_once(
-        self, outcome_repo: Path, broker: Any
-    ) -> None:
-        lease = _issuer_lease(broker)
-        offer, reference = _offer(outcome_repo, broker, lease)
+    def test_offer_accept_binds_exactly_one_receiver(self, outcome_repo: Path) -> None:
+        offer, reference = _offer(outcome_repo)
         assert reference["schema"] == OC.SCHEMA_HANDOFF_REFERENCE
         assert reference["digest"] == offer["sha256"]
-        assert offer["issuer_owner_id"] == "issuer-claude"
-        result = _accept(outcome_repo, broker, offer["handoff_id"])
-        successor = result["lease"]
-        assert successor.owner_id == "receiver-codex"
-        assert successor.token.fencing_sequence > lease.token.fencing_sequence
-        assert result["commit"]["successor_lease_id"] == successor.lease_id
+        assert offer["issuer_owner_id"] == ISSUER_OWNER_ID
+        result = _accept(outcome_repo, offer["handoff_id"])
+        assert set(result) == {"offer", "intent", "commit"}
+        assert result["commit"]["receiver_owner_id"] == "receiver-codex"
 
-    def test_public_reference_carries_no_paths_or_cache_facts(
-        self, outcome_repo: Path, broker: Any
-    ) -> None:
-        _offer_record, reference = _offer(outcome_repo, broker, _issuer_lease(broker))
+    def test_public_reference_carries_no_paths_or_cache_facts(self, outcome_repo: Path) -> None:
+        _offer_record, reference = _offer(outcome_repo)
         text = json.dumps(reference)
         assert str(outcome_repo) not in text
         assert "/Users/" not in text and "/tmp/" not in text and "/private/" not in text
@@ -964,174 +910,132 @@ class TestProtectedHandoff:
             "subplot_id",
         }
 
-    def test_same_receiver_reacceptance_is_idempotent(
-        self, outcome_repo: Path, broker: Any
-    ) -> None:
-        offer, _ = _offer(outcome_repo, broker, _issuer_lease(broker))
-        first = _accept(outcome_repo, broker, offer["handoff_id"])
-        second = _accept(outcome_repo, broker, offer["handoff_id"])
+    def test_same_receiver_reacceptance_is_idempotent(self, outcome_repo: Path) -> None:
+        offer, _ = _offer(outcome_repo)
+        first = _accept(outcome_repo, offer["handoff_id"])
+        second = _accept(outcome_repo, offer["handoff_id"])
+        assert second["intent"] == first["intent"]
         assert second["commit"] == first["commit"]
-        assert second["lease"].owner_id == "receiver-codex"
 
-    def test_crash_between_grant_and_commit_resumes_for_same_receiver(
-        self, outcome_repo: Path, broker: Any
+    def test_crash_between_intent_and_commit_resumes_for_same_receiver(
+        self, outcome_repo: Path
     ) -> None:
-        offer, _ = _offer(outcome_repo, broker, _issuer_lease(broker))
-        first = _accept(outcome_repo, broker, offer["handoff_id"])
-        commit_path = OC._handoffs_dir(outcome_repo, OUTCOME_ID) / (
-            f"{offer['handoff_id']}.commit.json"
+        frozen = 1_800_000_000.0
+        offer, _ = _offer(outcome_repo, now=lambda: frozen)
+        first = _accept(outcome_repo, offer["handoff_id"], now=lambda: frozen + 5)
+        commit_path = (
+            OC._handoffs_dir(outcome_repo, OUTCOME_ID) / f"{offer['handoff_id']}.commit.json"
         )
-        commit_path.unlink()  # simulate the crash window after grant, before commit
-        resumed = _accept(outcome_repo, broker, offer["handoff_id"])
-        assert resumed["commit"]["successor_lease_id"] == first["lease"].lease_id
+        commit_path.unlink()  # simulate the crash window after intent, before commit
+        resumed = _accept(outcome_repo, offer["handoff_id"], now=lambda: frozen + 5)
+        assert resumed["intent"] == first["intent"]
+        assert resumed["commit"] == first["commit"]
 
-    def test_second_receiver_halts_on_bound_intent(self, outcome_repo: Path, broker: Any) -> None:
-        offer, _ = _offer(outcome_repo, broker, _issuer_lease(broker))
-        _accept(outcome_repo, broker, offer["handoff_id"])
+    def test_second_receiver_halts_on_bound_intent(self, outcome_repo: Path) -> None:
+        offer, _ = _offer(outcome_repo)
+        _accept(outcome_repo, offer["handoff_id"])
         with pytest.raises(OC.CompatibilityHaltError) as exc:
             _accept(
                 outcome_repo,
-                broker,
                 offer["handoff_id"],
                 receiver_owner_id="receiver-two",
             )
         assert exc.value.code == "handoff-receiver-conflict"
 
-    def test_expired_offer_halts(self, outcome_repo: Path, broker: Any) -> None:
-        offer, _ = _offer(outcome_repo, broker, _issuer_lease(broker), ttl_seconds=60)
+    def test_expired_offer_halts(self, outcome_repo: Path) -> None:
+        offer, _ = _offer(outcome_repo, ttl_seconds=60)
         with pytest.raises(OC.CompatibilityHaltError) as exc:
             _accept(
                 outcome_repo,
-                broker,
                 offer["handoff_id"],
                 now=lambda: float(offer["expires_at_epoch"] + 1),
             )
         assert exc.value.code == "handoff-expired"
 
-    def test_future_issued_offer_halts_clock_skew(self, outcome_repo: Path, broker: Any) -> None:
+    def test_future_issued_offer_halts_clock_skew(self, outcome_repo: Path) -> None:
         import time as _time
 
         future = _time.time() + 1000
-        offer, _ = _offer(outcome_repo, broker, _issuer_lease(broker), now=lambda: future)
+        offer, _ = _offer(outcome_repo, now=lambda: future)
         with pytest.raises(OC.CompatibilityHaltError) as exc:
-            _accept(outcome_repo, broker, offer["handoff_id"])
+            _accept(outcome_repo, offer["handoff_id"])
         assert exc.value.code == "handoff-clock-skew"
 
-    def test_ttl_above_cap_halts(self, outcome_repo: Path, broker: Any) -> None:
+    def test_ttl_above_cap_halts(self, outcome_repo: Path) -> None:
         with pytest.raises(OC.CompatibilityHaltError) as exc:
-            _offer(outcome_repo, broker, _issuer_lease(broker), ttl_seconds=301)
+            _offer(outcome_repo, ttl_seconds=301)
         assert exc.value.code == "handoff-ttl-too-long"
 
-    def test_byte_tamper_halts_seal(self, outcome_repo: Path, broker: Any) -> None:
-        offer, _ = _offer(outcome_repo, broker, _issuer_lease(broker))
+    def test_byte_tamper_halts_seal(self, outcome_repo: Path) -> None:
+        offer, _ = _offer(outcome_repo)
         path = OC._handoffs_dir(outcome_repo, OUTCOME_ID) / f"{offer['handoff_id']}.offer.json"
         record = json.loads(path.read_text())
         record["subplot_id"] = "sub-other"
         path.write_text(json.dumps(record))
         with pytest.raises(OC.CompatibilityHaltError) as exc:
-            _accept(outcome_repo, broker, offer["handoff_id"])
+            _accept(outcome_repo, offer["handoff_id"])
         assert exc.value.code == "handoff-seal-invalid"
 
-    def test_advance_one_offer_requires_dispatch_id(self, outcome_repo: Path, broker: Any) -> None:
+    def test_advance_one_offer_requires_dispatch_id(self, outcome_repo: Path) -> None:
         with pytest.raises(OC.CompatibilityHaltError) as exc:
-            _offer(outcome_repo, broker, _issuer_lease(broker), dispatch_id="")
+            _offer(outcome_repo, dispatch_id="")
         assert exc.value.code == "schema-field-type"
         assert "dispatch" in exc.value.receipt()["unsupported"]
 
-    def test_attend_offer_permits_empty_dispatch_id(self, outcome_repo: Path, broker: Any) -> None:
+    def test_attend_offer_permits_empty_dispatch_id(self, outcome_repo: Path) -> None:
         # Pins the guard's operation scope: attend derives a resume pointer and may omit the
         # #351 dispatch identity, so the advance-one requirement must not leak onto it.
-        offer, reference = _offer(
-            outcome_repo, broker, _issuer_lease(broker), operation="attend", dispatch_id=""
-        )
+        offer, reference = _offer(outcome_repo, operation="attend", dispatch_id="")
         assert offer["operation"] == "attend"
         assert offer["dispatch_id"] == ""
         assert reference["operation"] == "attend"
 
-    def test_unclosed_source_lease_halts(self, outcome_repo: Path, broker: Any) -> None:
-        # A validly sealed offer pointing at a live lease that never went through the
-        # settlement close: seal passes, but the head carries no canonical close receipt.
-        offer, _ = _offer(outcome_repo, broker, _issuer_lease(broker))
-        live = _issuer_lease(broker, attempt=2)
-        path = OC._handoffs_dir(outcome_repo, OUTCOME_ID) / f"{offer['handoff_id']}.offer.json"
-        record = json.loads(path.read_text())
-        record["lease_id"] = live.lease_id
-        record["resource_ref"] = dict(live.resource_ref)
-        record["token"] = {
-            "broker_epoch": live.token.broker_epoch,
-            "fencing_sequence": live.token.fencing_sequence,
-        }
-        del record["sha256"]
-        path.write_text(OC.canonical_json(OC._seal(record)) + "\n", encoding="utf-8")
-        with pytest.raises(OC.CompatibilityHaltError) as exc:
-            _accept(outcome_repo, broker, offer["handoff_id"])
-        assert exc.value.code == "handoff-source-not-closed"
-
-    def test_wrong_repository_halts(self, outcome_repo: Path, broker: Any) -> None:
-        offer, _ = _offer(outcome_repo, broker, _issuer_lease(broker))
+    def test_wrong_repository_halts(self, outcome_repo: Path) -> None:
+        offer, _ = _offer(outcome_repo)
         _git(outcome_repo, "remote", "set-url", "origin", "https://github.com/other/repo.git")
         with pytest.raises(OC.CompatibilityHaltError) as exc:
-            _accept(outcome_repo, broker, offer["handoff_id"])
+            _accept(outcome_repo, offer["handoff_id"])
         assert exc.value.code == "handoff-wrong-repository"
 
-    def test_wrong_revision_halts(self, outcome_repo: Path, broker: Any) -> None:
-        offer, _ = _offer(outcome_repo, broker, _issuer_lease(broker))
+    def test_wrong_revision_halts(self, outcome_repo: Path) -> None:
+        offer, _ = _offer(outcome_repo)
         spec_file = outcome_repo / "docs" / "outcomes" / OUTCOME_ID / "outcome-spec.json"
         spec_file.write_text(json.dumps(_spec_dict(revision=4), indent=1), encoding="utf-8")
         _git(outcome_repo, "commit", "-aqm", "supersede revision")
         with pytest.raises(OC.CompatibilityHaltError) as exc:
-            _accept(outcome_repo, broker, offer["handoff_id"])
+            _accept(outcome_repo, offer["handoff_id"])
         assert exc.value.code == "handoff-wrong-revision"
 
-    def test_wrong_operation_and_subplot_halt(self, outcome_repo: Path, broker: Any) -> None:
-        offer, _ = _offer(outcome_repo, broker, _issuer_lease(broker))
+    def test_wrong_operation_and_subplot_halt(self, outcome_repo: Path) -> None:
+        offer, _ = _offer(outcome_repo)
         with pytest.raises(OC.CompatibilityHaltError) as wrong_op:
-            _accept(outcome_repo, broker, offer["handoff_id"], operation="attend")
+            _accept(outcome_repo, offer["handoff_id"], operation="attend")
         assert wrong_op.value.code == "handoff-wrong-operation"
         with pytest.raises(OC.CompatibilityHaltError) as wrong_sub:
-            _accept(outcome_repo, broker, offer["handoff_id"], subplot_id="sub-9")
+            _accept(outcome_repo, offer["handoff_id"], subplot_id="sub-9")
         assert wrong_sub.value.code == "handoff-wrong-subplot"
 
-    def test_already_settled_dispatch_halts(self, outcome_repo: Path, broker: Any) -> None:
-        offer, _ = _offer(outcome_repo, broker, _issuer_lease(broker))
+    def test_already_settled_dispatch_halts(self, outcome_repo: Path) -> None:
+        offer, _ = _offer(outcome_repo)
         with pytest.raises(OC.CompatibilityHaltError) as exc:
             _accept(
                 outcome_repo,
-                broker,
                 offer["handoff_id"],
                 settled_lookup=lambda _d, _u, _a: True,
             )
         assert exc.value.code == "handoff-already-settled"
 
-    def test_dirty_working_tree_blocks_offer(self, outcome_repo: Path, broker: Any) -> None:
+    def test_dirty_working_tree_blocks_offer(self, outcome_repo: Path) -> None:
         spec_file = outcome_repo / "docs" / "outcomes" / OUTCOME_ID / "outcome-spec.json"
         spec_file.write_text(json.dumps(_spec_dict(revision=42), indent=1), encoding="utf-8")
         with pytest.raises(OC.CompatibilityHaltError) as exc:
-            _offer(outcome_repo, broker, _issuer_lease(broker))
+            _offer(outcome_repo)
         assert exc.value.code == "working-tree-divergent"
 
-    def test_released_issuer_lease_cannot_offer(self, outcome_repo: Path, broker: Any) -> None:
-        lease = _issuer_lease(broker)
-        broker.release(lease.lease_id, token=lease.token, owner_id=lease.owner_id)
+    def test_missing_offer_record_halts(self, outcome_repo: Path) -> None:
         with pytest.raises(OC.CompatibilityHaltError) as exc:
-            _offer(outcome_repo, broker, lease)
-        assert exc.value.code == "handoff-issuer-not-current"
-
-    def test_missing_offer_record_halts(self, outcome_repo: Path, broker: Any) -> None:
-        with pytest.raises(OC.CompatibilityHaltError) as exc:
-            _accept(outcome_repo, broker, "0" * 32)
+            _accept(outcome_repo, "0" * 32)
         assert exc.value.code == "handoff-missing"
-
-    def test_offer_closes_the_issuer_lease_with_a_receipt(
-        self, outcome_repo: Path, broker: Any
-    ) -> None:
-        lease = _issuer_lease(broker)
-        offer, _ = _offer(outcome_repo, broker, lease)
-        head = broker.inspect_resource_head(offer["resource_ref"])
-        assert head is not None
-        assert head["close_receipt"] is not None
-        state = broker.classify_token(offer["resource_ref"], lease.token)
-        assert state == "closed"
 
 
 # ---------------------------------------------------------------------------
@@ -1235,51 +1139,6 @@ class TestCliVerbs:
         reference = OC.validate_handoff_reference(json.loads(result.stdout))
         assert reference["operation"] == "advance-one"
 
-    def test_cli_handoff_broker_rejection_is_structured(
-        self, outcome_repo: Path, tmp_path: Path
-    ) -> None:
-        # An ordinary broker rejection (capacity, policy, registry) is an operational error,
-        # not a compatibility halt: exit 1 with the standard structured stderr line, never a
-        # bare traceback.
-        broker_root = tmp_path / "cli-broker-full"
-        broker_root.mkdir(mode=0o700)
-        seed = LB.LeaseBroker(broker_root)
-        seed.acquire_agent(
-            owner_id="seed-occupant",
-            session_id="sess-cli",
-            policy_sha256="c" * 64,
-            session_limit=1,
-            aggregate_limit=4,
-            mutation="read-write",
-            resource_ref=OC.outcome_dispatch_resource(IDENTITY, OUTCOME_ID, SUBPLOT, 7),
-        )
-        result = _cli(
-            outcome_repo,
-            "handoff",
-            OUTCOME_ID,
-            SUBPLOT,
-            "--operation",
-            "advance-one",
-            "--dispatch-id",
-            "outcome:cli:frontier:demo",
-            "--session-id",
-            "sess-cli",
-            "--policy-sha256",
-            "c" * 64,
-            "--session-limit",
-            "1",
-            "--aggregate-limit",
-            "4",
-            "--broker-root",
-            str(broker_root),
-        )
-        assert result.returncode == 1
-        assert result.stdout == ""
-        assert "Traceback" not in result.stderr
-        err = json.loads(result.stderr)
-        assert err["ok"] is False
-        assert "CapacityExhaustedError" in err["error"]
-
     def test_cli_attach_advance_requires_handoff_flags(self, outcome_repo: Path) -> None:
         result = _cli(outcome_repo, "attach", OUTCOME_ID, "--advance")
         assert result.returncode == 1
@@ -1292,37 +1151,29 @@ class TestCliVerbs:
 
 
 class TestAttachedAdvance:
-    def test_attached_advance_dispatches_exactly_the_offered_subplot(
-        self, tmp_path: Path, broker: Any
-    ) -> None:
+    def test_attached_advance_dispatches_exactly_the_offered_subplot(self, tmp_path: Path) -> None:
         repo = _single_node_repo(tmp_path)
-        lease = _issuer_lease(broker)
-        offer, _ = _offer(repo, broker, lease)
+        offer, _ = _offer(repo)
         result = OCLI.attached_advance(
             repo,
             OUTCOME_ID,
             SUBPLOT,
             handoff_id=offer["handoff_id"],
             receiver_owner_id="receiver-codex",
-            admission=dict(ADMISSION),
-            broker=broker,
         )
         assert result["advance"]["dispatched"] == [SUBPLOT]
         assert result["subplot_id"] == SUBPLOT
+        assert "successor_lease_id" not in result  # the successor grant is retired (#677/U1)
 
-    def test_replayed_attached_advance_never_double_dispatches(
-        self, tmp_path: Path, broker: Any
-    ) -> None:
+    def test_replayed_attached_advance_never_double_dispatches(self, tmp_path: Path) -> None:
         repo = _single_node_repo(tmp_path)
-        offer, _ = _offer(repo, broker, _issuer_lease(broker))
+        offer, _ = _offer(repo)
         first = OCLI.attached_advance(
             repo,
             OUTCOME_ID,
             SUBPLOT,
             handoff_id=offer["handoff_id"],
             receiver_owner_id="receiver-codex",
-            admission=dict(ADMISSION),
-            broker=broker,
         )
         assert first["advance"]["dispatched"] == [SUBPLOT]
         replay = OCLI.attached_advance(
@@ -1331,16 +1182,12 @@ class TestAttachedAdvance:
             SUBPLOT,
             handoff_id=offer["handoff_id"],
             receiver_owner_id="receiver-codex",
-            admission=dict(ADMISSION),
-            broker=broker,
         )
         assert replay["advance"]["dispatched"] == []  # settled dispatch record dedups (R7)
 
-    def test_frontier_change_halts_rather_than_broadening(
-        self, tmp_path: Path, broker: Any
-    ) -> None:
+    def test_frontier_change_halts_rather_than_broadening(self, tmp_path: Path) -> None:
         repo = _single_node_repo(tmp_path, depends_on=["sub-dep"])
-        offer, _ = _offer(repo, broker, _issuer_lease(broker))
+        offer, _ = _offer(repo)
         with pytest.raises(OC.CompatibilityHaltError) as exc:
             OCLI.attached_advance(
                 repo,
@@ -1348,25 +1195,21 @@ class TestAttachedAdvance:
                 SUBPLOT,
                 handoff_id=offer["handoff_id"],
                 receiver_owner_id="receiver-codex",
-                admission=dict(ADMISSION),
-                broker=broker,
             )
         assert exc.value.code == "handoff-frontier-changed"
 
-    def test_two_receivers_race_one_successor(self, tmp_path: Path, broker: Any) -> None:
+    def test_two_receivers_race_one_acceptance(self, tmp_path: Path) -> None:
         import threading
 
         repo = _single_node_repo(tmp_path)
-        offer, _ = _offer(repo, broker, _issuer_lease(broker))
+        offer, _ = _offer(repo)
         barrier = threading.Barrier(2)
         outcomes: dict[str, Any] = {}
 
         def contend(receiver: str) -> None:
             barrier.wait()
             try:
-                outcomes[receiver] = _accept(
-                    repo, broker, offer["handoff_id"], receiver_owner_id=receiver
-                )
+                outcomes[receiver] = _accept(repo, offer["handoff_id"], receiver_owner_id=receiver)
             except OC.CompatibilityHaltError as halt:
                 outcomes[receiver] = halt
 
@@ -1384,11 +1227,10 @@ class TestAttachedAdvance:
             value for value in outcomes.values() if isinstance(value, OC.CompatibilityHaltError)
         ]
         assert len(wins) == 1 and len(halts) == 1
-        assert halts[0].code in ("handoff-receiver-conflict", "handoff-superseded")
-        winner = wins[0]["lease"]
+        assert halts[0].code == "handoff-receiver-conflict"
         commit_path = OC._handoffs_dir(repo, OUTCOME_ID) / f"{offer['handoff_id']}.commit.json"
         committed = json.loads(commit_path.read_text())
-        assert committed["successor_lease_id"] == winner.lease_id
+        assert committed["receiver_owner_id"] == wins[0]["commit"]["receiver_owner_id"]
 
 
 # ---------------------------------------------------------------------------

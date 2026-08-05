@@ -83,7 +83,7 @@
     {
       "name": "saga",
       "source": "./plugins/saga",
-      "version": "0.125.0",
+      "version": "0.126.0",
       "description": "Infiquetra lifecycle plugin: /outcome DAG orchestration with cross-runtime discovery/handoff, liveness facts, /pulse telemetry, trust-gated engine onboarding, and /fleet-doctor cross-source auditing.",
       "author": {
         "name": "Infiquetra",
@@ -248,7 +248,12 @@
       },
       "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
       "license": "MIT",
-      "keywords": ["hermes", "profiles", "sovereignty", "governance"],
+      "keywords": [
+        "hermes",
+        "profiles",
+        "sovereignty",
+        "governance"
+      ],
       "category": "development"
     }
   ],

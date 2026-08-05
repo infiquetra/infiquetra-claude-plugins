@@ -558,22 +558,19 @@ class TestVerdictOracles:
         assert observed == "handoff-missing"
 
     def test_expect_refusal_pins_the_mechanism_text(self, tool: ModuleType) -> None:
-        stdout = (
-            '{"code": "handoff-superseded",'
-            ' "unsupported": "a handoff whose broker resource head no longer exists"}'
-        )
+        stdout = '{"code": "handoff-expired", "unsupported": "a handoff accepted 12s past expiry"}'
         assert tool._expect_refusal(
             self._proc(3, stdout=stdout),
             case="c",
-            code="handoff-superseded",
-            unsupported_contains="no longer exists",
+            code="handoff-expired",
+            unsupported_contains="past expiry",
         )
         with pytest.raises(tool.HarnessError) as exc:
             tool._expect_refusal(
                 self._proc(3, stdout=stdout),
                 case="c",
-                code="handoff-superseded",
-                unsupported_contains="superseded by another authority",
+                code="handoff-expired",
+                unsupported_contains="issued in the future",
             )
         assert exc.value.code == "handoff-negative-code"
 

@@ -1,5 +1,61 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-08-05
+
+### U1 absorbs `outcome.py`'s handoff/attach call sites — acceptance criteria outrank the file list (#678) {#u1-absorbs-outcome-handoff-callers-678}
+
+Issue: `infiquetra-claude-plugins#678`, unit U1 of the lease-broker retirement campaign (#677),
+plan `docs/plans/2026-07-30-issue-677-lease-broker-retirement-plan.md`. U1's shaped constraint set
+proved inconsistent before the first edit: the acceptance criteria demand a green full suite and no
+pass-through wrappers left behind, the non-goal says do not touch `outcome.py` (U4's file), and
+`outcome.py`'s `handoff`/`attach` CLI branches are the ONLY callers of the functions U1 unwinds —
+passing `broker=`/`lease=`/`admission=` in and reading `accepted["lease"].lease_id` out. No design
+satisfies all three constraints: a compat-stub route still breaks `attached_advance` and IS the
+forbidden pass-through; a red-suite route fails acceptance criterion 3. The operator chose to break
+the non-goal, minimally.
+
+**KTD1 — Absorb the coupled call sites, not the whole file.** U1 updates exactly the handoff/attach
+surface of `outcome.py`: `attached_advance` / `attended_handoff` signatures, the `handoff` and
+`attach` CLI branches, and the now-callerless `_cli_broker` / `_cli_broker_error` / `_cli_admission`
+helpers plus the broker-error `except` arm. The other broker uses in the same file (the prune path's
+`default_lease_authority()` threading at the `prune` CLI branch) stay untouched — they belong to U3/U4.
+
+**KTD2 — CLI flags stay accepted, unused.** `--session-id` / `--policy-sha256` / `--session-limit`
+/ `--aggregate-limit` / `--broker-root` remain on the `handoff` and `attach` subcommands for
+cross-runtime CLI compatibility (the codex runtime drives this CLI), with a code comment naming the
+reason. Removing flags would break the other runtime's scripts; accepting-then-ignoring them is the
+Option-C-accepted loss made visible at the seam.
+
+**KTD3 — Issuer identity becomes caller-asserted, and still REQUIRED.** `offer_handoff` gains
+`issuer_owner_id: str` (the plan's Option C accepted loss, row 2); the old broker-derived identity
+fed the same field. An empty/missing assertion is a `schema-field-type` HALT — caller-asserted is
+not anonymous. `accept_handoff` loses `broker`/`admission` entirely and returns
+`{"offer", "intent", "commit"}` — the write-once intent/commit pair is now the whole successor
+binding, so `_acquire_successor_or_resume`, `_broker_module`, `_lease_broker_mod`,
+`outcome_dispatch_resource`, and `_HANDOFF_PRODUCER` are deleted outright (their only job was
+threading the token).
+
+**KTD4 — Consequence: U1 and U4 are no longer file-disjoint; U4's `outcome.py` row shrinks to the
+prune-path sites.** The plan's "U1–U4 may run in parallel" claim relied on file disjointness, which
+was a survey artifact, not a coupling measurement (see LEARNINGS
+[#file-disjoint-units-must-be-api-disjoint](LEARNINGS.md#file-disjoint-units-must-be-api-disjoint)).
+U4's issue must be re-noted before it is pulled.
+
+**KTD5 — The negotiation vocabulary escapee is deferred, named, and queued.** `REQUIRED_CAPABILITIES`
+still contains `"fleet-broker-fencing"` and `AUTHORITY` still names `"fleet-broker"` after U1. These
+are the discovery-envelope strings the codex port consumes verbatim — changing them is a
+cross-runtime negotiation decision, not U1 mechanics. Queued for U7-or-follow-up in QUEUED.md
+([#handoff-negotiation-vocabulary-escapee](QUEUED.md#handoff-negotiation-vocabulary-escapee)).
+
+**KTD6 — Release surfaces move per-PR; the unit's "no bump until U7" non-goal loses to the #429
+diff guard.** The plan's R8 consolidated all three version bumps into U7 — but the diff-aware
+release-surface bump guard (`tools/release_surface_diff_guard.py`, shipped 2026-07-04, predating
+the plan) fails any PR that changes plugin behavior without moving that plugin's release surface
+in the same diff. CI enforcement on the U1 PR proved the contradiction. The standing repo rule
+wins: saga bumped 0.125.0 → 0.126.0 in the U1 PR (plugin.json, regenerated marketplace.json,
+CHANGELOG, version-pin test), and every later unit that touches saga moves it again; U7's R8
+target table needs re-noting to "on top of the per-unit versions" before it is pulled.
+
 ## 2026-08-04
 
 ### Split `orchestration_ref`: durable spec pointer vs transient run handle (#693) {#orchestration-run-id-split-693}

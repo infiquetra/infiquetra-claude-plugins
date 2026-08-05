@@ -39,7 +39,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 # Make sibling scripts importable when loaded by path (tests, CLI).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -1844,40 +1844,6 @@ def _saga_version() -> str:
     return str(data.get("version", "0")) if isinstance(data, dict) else "0"
 
 
-def _cli_broker(broker_root: str | None) -> Any:
-    """The production #356 broker (host state root), or an explicit root for tests."""
-    import fleet_commons_shim
-
-    lease_broker = fleet_commons_shim.load("lease_broker")
-    return (
-        lease_broker.LeaseBroker(Path(broker_root)) if broker_root else lease_broker.LeaseBroker()
-    )
-
-
-def _cli_broker_error() -> type[Exception]:
-    """The #356 broker's error root, resolved lazily so broker-free verbs never load fleet-core."""
-    import fleet_commons_shim
-
-    return cast("type[Exception]", fleet_commons_shim.load("lease_broker").LeaseBrokerError)
-
-
-def _cli_admission(args: Any) -> dict[str, Any]:
-    """The session-admission snapshot (resolved by the caller, never invented here)."""
-    values = {
-        "session_id": args.session_id,
-        "policy_sha256": args.policy_sha256,
-        "session_limit": args.session_limit,
-        "aggregate_limit": args.aggregate_limit,
-    }
-    missing = sorted(key for key, value in values.items() if value in (None, ""))
-    if missing:
-        raise OutcomeError(
-            f"missing session-admission flags: {', '.join('--' + k.replace('_', '-') for k in missing)}"
-            " (pass the canonical resolved snapshot; admission values are never defaulted)"
-        )
-    return values
-
-
 def _settled_lookup(repo_root: Path, outcome_id: str = ""):
     """A settled-attempt query for handoff acceptance (R5) — never a new ledger.
 
@@ -1934,8 +1900,6 @@ def attached_advance(
     *,
     handoff_id: str,
     receiver_owner_id: str,
-    admission: dict[str, Any],
-    broker: Any,
     settled_lookup: Callable[[str, str, int], bool] | None = None,
 ) -> dict[str, Any]:
     """Accept an ``advance-one`` handoff, then run ONE allowlisted one-subplot tick (R5/R7).
@@ -1957,8 +1921,6 @@ def attached_advance(
         subplot_id=subplot_id,
         receiver_owner_id=receiver_owner_id,
         receiver_runtime=outcome_compat.RUNTIME_LABEL,
-        admission=admission,
-        broker=broker,
         settled_lookup=settled_lookup,
     )
     binding = outcome_compat.resolve_committed_spec(repo_root, outcome_id)
@@ -1989,7 +1951,6 @@ def attached_advance(
     return {
         "handoff_id": handoff_id,
         "subplot_id": subplot_id,
-        "successor_lease_id": accepted["lease"].lease_id,
         "advance": result.to_dict(),
     }
 
@@ -2001,8 +1962,6 @@ def attended_handoff(
     *,
     handoff_id: str,
     receiver_owner_id: str,
-    admission: dict[str, Any],
-    broker: Any,
 ) -> str:
     """Accept an ``attend`` handoff, then derive the native resume command (R11).
 
@@ -2019,8 +1978,6 @@ def attended_handoff(
         subplot_id=subplot_id,
         receiver_owner_id=receiver_owner_id,
         receiver_runtime=outcome_compat.RUNTIME_LABEL,
-        admission=admission,
-        broker=broker,
     )
     return attend(repo_root, outcome_id, subplot_id)
 
@@ -2804,28 +2761,16 @@ def main(argv: list[str] | None = None) -> int:
                     )
                     print(outcome_compat.canonical_json(envelope))
                 elif args.command == "handoff":
-                    broker = _cli_broker(args.broker_root)
-                    admission = _cli_admission(args)
-                    identity = outcome_compat.repository_identity(root)
-                    lease = broker.acquire_agent(
-                        owner_id=f"outcome-handoff-{os.getpid()}-{time.monotonic_ns()}",
-                        session_id=admission["session_id"],
-                        policy_sha256=admission["policy_sha256"],
-                        session_limit=admission["session_limit"],
-                        aggregate_limit=admission["aggregate_limit"],
-                        mutation="read-write",
-                        resource_ref=outcome_compat.outcome_dispatch_resource(
-                            identity, args.outcome_id, args.subplot_id, args.attempt
-                        ),
-                    )
+                    # The --session-id / --policy-sha256 / --session-limit / --aggregate-limit
+                    # / --broker-root flags stay accepted for cross-runtime CLI compatibility
+                    # (#678/U1) but no longer feed a broker: issuer identity is caller-asserted.
                     _offer, reference = outcome_compat.offer_handoff(
                         root,
                         args.outcome_id,
                         args.subplot_id,
                         operation=args.operation,
                         attempt=args.attempt,
-                        broker=broker,
-                        lease=lease,
+                        issuer_owner_id=f"outcome-handoff-{os.getpid()}-{time.monotonic_ns()}",
                         dispatch_id=args.dispatch_id,
                         ttl_seconds=args.ttl_seconds,
                     )
@@ -2836,8 +2781,6 @@ def main(argv: list[str] | None = None) -> int:
                             raise OutcomeError(
                                 "attach --advance/--attend requires --handoff-id and --subplot"
                             )
-                        broker = _cli_broker(args.broker_root)
-                        admission = _cli_admission(args)
                         receiver = args.receiver or (
                             f"outcome-attach-{os.getpid()}-{time.monotonic_ns()}"
                         )
@@ -2848,8 +2791,6 @@ def main(argv: list[str] | None = None) -> int:
                                 args.subplot,
                                 handoff_id=args.handoff_id,
                                 receiver_owner_id=receiver,
-                                admission=admission,
-                                broker=broker,
                                 settled_lookup=_settled_lookup(root, args.outcome_id),
                             )
                             print(json.dumps(outcome_result))
@@ -2861,8 +2802,6 @@ def main(argv: list[str] | None = None) -> int:
                                     args.subplot,
                                     handoff_id=args.handoff_id,
                                     receiver_owner_id=receiver,
-                                    admission=admission,
-                                    broker=broker,
                                 )
                             )
                     else:
@@ -2871,15 +2810,6 @@ def main(argv: list[str] | None = None) -> int:
             except outcome_compat.CompatibilityHaltError as halt:
                 print(json.dumps(halt.receipt()))
                 return 3
-            except _cli_broker_error() as exc:
-                # A broker rejection (capacity, policy, registry) is an operational failure of
-                # this clone's coordination authority, not a cross-runtime compatibility halt —
-                # exit 1 with the standard structured error, never a bare traceback.
-                print(
-                    json.dumps({"ok": False, "error": f"{type(exc).__name__}: {exc}"}),
-                    file=sys.stderr,
-                )
-                return 1
         elif args.command == "attend":
             if args.subplot_id:
                 print(attend(root, args.outcome_id, args.subplot_id))

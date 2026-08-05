@@ -13,7 +13,7 @@ file, never any cache) and **GitHub** completion evidence (merged PRs, closed is
 
 | context | may read | may mutate |
 |---|---|---|
-| same clone (same git common dir) | committed spec + GitHub + shared coordination state | one subplot, only under a validated protected handoff + #356 broker successor + #351 settlement identity |
+| same clone (same git common dir) | committed spec + GitHub + shared coordination state | one subplot, only under a validated protected handoff + #351 settlement identity (#677/U1 retired the #356 broker successor) |
 | different clone / host | committed spec + GitHub | **nothing** — reconstruction is read-only, `mutation_allowed: false`, always |
 
 Runtime-local directories (`~/.claude`, `~/.codex`, caches, transcripts, launch receipts) are
@@ -84,36 +84,34 @@ receipt. There is no best-effort field dropping and no post-mutation downgrade.
 Records live under `<git-common-dir>/saga-outcomes/<outcome-id>/handoffs/`, write-once and
 sealed (sha256 over the canonical record bytes). Three records per handoff:
 
-1. **Offer** (`outcome.handoff-offer.v1`) — written INSIDE the #356 broker's settlement-close
-   protected write (#355 linearization: prepare → protected writer → canonical close receipt),
-   so offering and relinquishing are one receipt-bearing transition. Binds: repository
-   identity, outcome id, committed commit/blob/digest, spec revision, protocol version, source
-   runtime, broker-derived issuer + lease + fencing token, exact operation (`advance-one` or
+1. **Offer** (`outcome.handoff-offer.v1`) — written directly to the store's write-once path.
+   Binds: repository identity, outcome id, committed commit/blob/digest, spec revision,
+   protocol version, source runtime, issuer owner id, exact operation (`advance-one` or
    `attend`), one subplot, #351 idempotency identity (a non-empty dispatch id is required for
    `advance-one`, so the settled-attempt check is always live; `attend` derives a resume pointer
-   and may omit it), issued/expires epochs (TTL ≤ 300 s), nonce. Issuer identity comes from the
-   live broker lease record, never a caller label.
+   and may omit it), issued/expires epochs (TTL ≤ 300 s), nonce. Issuer identity is
+   caller-asserted and REQUIRED — an anonymous offer HALTs (#677/U1 retired the broker lease the
+   identity was read from; that is an accepted loss of the lease-broker retirement).
 2. **Accept-intent** (`outcome.handoff-accept-intent.v1`) — write-once; binds exactly one
    receiver and the idempotency key. A second receiver HALTs; the same receiver resumes any
    crash gap idempotently.
-3. **Accept-commit** (`outcome.handoff-accept-commit.v1`) — binds the successor lease id and
-   token after `acquire_successor` succeeds against the close-receipt CAS.
+3. **Accept-commit** (`outcome.handoff-accept-commit.v1`) — records the bound receiver and the
+   commit epoch. The write-once intent/commit pair IS the acceptance transition (#677/U1 retired
+   the broker successor grant and its close-receipt CAS).
 
 Acceptance validates, in order: seal, freshness (expiry; > 30 s future issuance is clock-skew),
 repository identity, committed digest + revision, working-tree byte-match (KTD3), operation,
-subplot, #351 settled state, broker head/token/close-receipt — every failure a distinct halt
-code (`handoff-expired`, `handoff-clock-skew`, `handoff-wrong-repository`,
-`handoff-wrong-revision`, `handoff-wrong-operation`, `handoff-wrong-subplot`,
-`handoff-receiver-conflict`, `handoff-superseded`, `handoff-source-not-closed`,
-`handoff-already-settled`, `handoff-seal-invalid`, `working-tree-divergent`). If the receiver
-dies after the grant, the broker's existing TTL/dead-owner recovery must close its token before
-a new handoff; elapsed time alone grants nothing.
+subplot, #351 settled state — every failure a distinct halt code (`handoff-expired`,
+`handoff-clock-skew`, `handoff-wrong-repository`, `handoff-wrong-revision`,
+`handoff-wrong-operation`, `handoff-wrong-subplot`, `handoff-receiver-conflict`,
+`handoff-already-settled`, `handoff-seal-invalid`, `working-tree-divergent`). A receiver that
+dies after binding leaves its intent/commit records behind; a different receiver still HALTs on
+the bound intent, and the same receiver resumes idempotently.
 
-`attach --advance` re-checks the committed revision and the ready frontier AFTER authority
-acquisition and enters the existing `advance` behind a one-subplot gate — there is no `--loop`,
-no frontier-wide handoff, and a moved frontier HALTs (`handoff-frontier-changed`) rather than
-broadening. `attach --attend` derives the native resume command only after every binding
-validates.
+`attach --advance` re-checks the committed revision and the ready frontier AFTER acceptance and
+enters the existing `advance` behind a one-subplot gate — there is no `--loop`, no frontier-wide
+handoff, and a moved frontier HALTs (`handoff-frontier-changed`) rather than broadening.
+`attach --attend` derives the native resume command only after every binding validates.
 
 ## Legacy `outcome-bundle/1` — retired
 
@@ -125,9 +123,9 @@ There is no escape hatch that copies a cache between hosts.
 ## Recovery guidance
 
 * A halt receipt's `next_action` is always non-mutating and safe to follow verbatim.
-* `handoff-superseded` / `handoff-source-not-closed`: the broker authority moved — request a
-  fresh handoff from the current holder; never retry with the stale reference.
-* An expired offer leaves the resource head closed with a receipt; the issuing side re-acquires
-  through `acquire_successor` with its own close receipt (normal broker succession).
+* `handoff-receiver-conflict`: the handoff is bound to another receiver (or the offer id
+  collided) — request a fresh handoff; never retry with the stale reference.
+* An expired offer leaves a sealed offer record behind; the issuing side mints a fresh handoff
+  with a new nonce rather than reusing the expired one.
 * Cross-clone consumers that need mutation must move to the clone holding the coordination
   state (or wait for a future networked active-dispatch authority — out of scope here).

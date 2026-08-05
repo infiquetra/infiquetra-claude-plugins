@@ -206,6 +206,17 @@ primitive. Ids named in issue #463 itself are marked ★.
 
 ## P2 — important
 
+### Handoff negotiation vocabulary still advertises the retired fleet broker  {#handoff-negotiation-vocabulary-escapee}
+
+**Priority.** P2 (P1 the moment U7 deletes the module and the envelope starts naming a capability that no longer exists anywhere).
+
+**Effort.** Hours. A capability string + an authority-block value + the two tests that pin them + the codex-port coordination to land the vocabulary change on both sides together.
+
+**Worth it when.** U7 (#684, delete fleet-core) lands, or the next cross-runtime handoff negotiation rework. Do NOT do it unilaterally in a saga-only PR — the strings are consumed verbatim by the codex port.
+
+**Context.** Surfaced during U1 (#678). `outcome_compat.py`'s `REQUIRED_CAPABILITIES` still carries `"fleet-broker-fencing"` and `AUTHORITY["same_clone_coordination"]` still names `"fleet-broker"` even though U1 removed every broker call from the settlement/handoff path. These are discovery-envelope negotiation strings, so U1 deferred them deliberately (a cross-runtime decision, not U1 mechanics) — DECISIONS [#u1-absorbs-outcome-handoff-callers-678](DECISIONS.md#u1-absorbs-outcome-handoff-callers-678) KTD5. `test_authority_block_must_match_the_frozen_model` and the negotiation tests pin the current strings; they move with the change.
+
+
 ### fleet-core `validate_receipt` under-validates `transport: null` and crashes on unhashable transports  {#bridge-receipt-transport-hardening}
 
 **Priority.** P2.

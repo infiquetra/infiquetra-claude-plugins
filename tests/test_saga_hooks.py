@@ -608,13 +608,10 @@ def _git_repo(tmp_path: Path) -> Path:
 
 def test_session_end_records_request_only_for_this_sessions_open_runs(tmp_path: Path) -> None:
     ledger_module, teardown_module = _teardown_modules()
-    authority = tmp_path / "authority"
     repo = _git_repo(tmp_path)
-    broker = B.LeaseBroker(authority)
     ledger = ledger_module.RunLedger.resolve(repo)
     teardown_module.open_run(
         ledger,
-        broker,
         subplot_id="hook-test",
         session_id="session-mine",
         at="2026-07-18T14:00:00Z",
@@ -622,7 +619,6 @@ def test_session_end_records_request_only_for_this_sessions_open_runs(tmp_path: 
     )
     teardown_module.open_run(
         ledger,
-        broker,
         subplot_id="hook-test",
         session_id="session-other",
         at="2026-07-18T14:00:00Z",
@@ -633,46 +629,46 @@ def test_session_end_records_request_only_for_this_sessions_open_runs(tmp_path: 
         TEAM_TEARDOWN_HOOK,
         {"hook_event_name": "SessionEnd", "session_id": "session-mine", "cwd": str(repo)},
         cwd=repo,
-        environment=_environment(authority),
+        environment=_environment(tmp_path / "authority"),
     )
     assert result.returncode == 0
     assert "request evidence only" in result.stderr
     facts = ledger_module.read_facts(ledger)
     intents = {f["team_run_id"] for f in facts if f.get("event") == "teardown-intent"}
     assert intents == {"team-run-mine"}
-    assert broker.inspect_owner_admission("team-run-mine") is not None
-    assert broker.inspect_owner_admission("team-run-other") is None
 
 
-def test_session_start_recovers_expired_dead_owner_run(tmp_path: Path) -> None:
-    import time as _time
+def _seed_registry(repo: Path, outcome_id: str, subplot_id: str, path: Path) -> None:
+    store_dir = repo / ".git" / "saga-outcomes" / outcome_id
+    store_dir.mkdir(parents=True, exist_ok=True)
+    registry = store_dir / "worktrees.json"
+    data = json.loads(registry.read_text(encoding="utf-8")) if registry.exists() else {}
+    entries = data.get("worktrees", {})
+    entries[subplot_id] = {"path": str(path), "outcome_id": outcome_id, "repo_root": str(repo)}
+    registry.write_text(
+        json.dumps({"worktrees": entries}, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
+
+def test_session_start_recovers_run_whose_worktrees_are_all_absent(tmp_path: Path) -> None:
     ledger_module, teardown_module = _teardown_modules()
-    authority = tmp_path / "authority"
     repo = _git_repo(tmp_path)
-    broker = B.LeaseBroker(authority)
     ledger = ledger_module.RunLedger.resolve(repo)
     teardown_module.open_run(
         ledger,
-        broker,
         subplot_id="hook-test",
         session_id="session-crashed",
         at="2026-07-18T14:00:00Z",
         team_run_id="team-run-crashed",
     )
-    limits = P.AdmissionLimits()
-    broker.acquire_agent(
-        owner_id="team-run-crashed",
-        session_id="session-crashed",
-        policy_sha256=limits.policy_sha256(),
-        session_limit=limits.max_concurrent,
-        aggregate_limit=limits.aggregate_max_concurrent,
-        mutation="read-write",
-        ttl_seconds=1,
-        resource_ref={"logical_unit_id": "crashed-unit"},
-        agent_type="worker",
+    # The crashed run's worktree is registered but git no longer lists it — the
+    # broker-free liveness signal recovery acts on (#677/U2).
+    _seed_registry(
+        repo,
+        "hook-outcome",
+        "crashed-sub",
+        repo / ".saga-worktrees" / "hook-outcome" / "crashed-sub",
     )
-    _time.sleep(1.2)  # the crashed coordinator's lease derives expired
 
     result = _run_hook(
         TEAM_TEARDOWN_HOOK,
@@ -683,45 +679,62 @@ def test_session_start_recovers_expired_dead_owner_run(tmp_path: Path) -> None:
             "cwd": str(repo),
         },
         cwd=repo,
-        environment=_environment(authority),
+        environment=_environment(tmp_path / "authority"),
     )
     assert result.returncode == 0
     facts = ledger_module.read_facts(ledger)
     events = {f["event"] for f in facts if f.get("team_run_id") == "team-run-crashed"}
     assert "teardown-complete" in events
     assert "recovery-observation" in events
-    remaining = [
-        item for item in broker.inspect()["leases"] if item["owner_id"] == "team-run-crashed"
-    ]
-    assert remaining == []
+    # Teardown removed nothing from disk: the registry entry is untouched evidence.
+    assert (repo / ".git" / "saga-outcomes" / "hook-outcome" / "worktrees.json").exists()
 
 
-def test_session_start_retains_live_owner_runs(tmp_path: Path) -> None:
+def test_session_start_skips_runs_with_git_listed_worktrees(tmp_path: Path) -> None:
     ledger_module, teardown_module = _teardown_modules()
-    authority = tmp_path / "authority"
     repo = _git_repo(tmp_path)
-    broker = B.LeaseBroker(authority)
+    (repo / "seed.txt").write_text("seed\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(repo), "add", "seed.txt"],
+        check=True,
+        capture_output=True,
+        timeout=30,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.email=hook@test",
+            "-c",
+            "user.name=Hook",
+            "commit",
+            "-q",
+            "-m",
+            "seed",
+        ],
+        check=True,
+        capture_output=True,
+        timeout=30,
+    )
     ledger = ledger_module.RunLedger.resolve(repo)
     teardown_module.open_run(
         ledger,
-        broker,
         subplot_id="hook-test",
         session_id="session-live",
         at="2026-07-18T14:00:00Z",
         team_run_id="team-run-live",
     )
-    limits = P.AdmissionLimits()
-    lease = broker.acquire_agent(
-        owner_id="team-run-live",
-        session_id="session-live",
-        policy_sha256=limits.policy_sha256(),
-        session_limit=limits.max_concurrent,
-        aggregate_limit=limits.aggregate_max_concurrent,
-        mutation="read-write",
-        ttl_seconds=600,
-        resource_ref={"logical_unit_id": "live-unit"},
-        agent_type="worker",
+    live_path = repo / ".saga-worktrees" / "hook-outcome" / "live-sub"
+    live_path.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "worktree", "add", "--quiet", "--detach", str(live_path)],
+        check=True,
+        capture_output=True,
+        timeout=60,
     )
+    _seed_registry(repo, "hook-outcome", "live-sub", live_path)
 
     result = _run_hook(
         TEAM_TEARDOWN_HOOK,
@@ -732,14 +745,14 @@ def test_session_start_retains_live_owner_runs(tmp_path: Path) -> None:
             "cwd": str(repo),
         },
         cwd=repo,
-        environment=_environment(authority),
+        environment=_environment(tmp_path / "authority"),
     )
     assert result.returncode == 0
     facts = ledger_module.read_facts(ledger)
     events = {f["event"] for f in facts if f.get("team_run_id") == "team-run-live"}
     assert "teardown-complete" not in events
     assert "recovery-observation" in events  # honesty: observed, nothing safe to reclaim
-    assert any(item["lease_id"] == lease.lease_id for item in broker.inspect()["leases"])
+    assert live_path.exists()
 
 
 def test_teardown_hook_is_visible_and_nonblocking_on_bad_input(tmp_path: Path) -> None:

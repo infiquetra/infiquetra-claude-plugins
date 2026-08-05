@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Non-skippable team-run teardown: closed event family, projection, terminal driver (#358).
 
-Composes the #356 fleet broker (live register-on-spawn ownership plus the owner-admission
-closing fence) with the #351 hash-chained ``run_fact.v1`` ledger (append-only history) and
-#357 confirmed liveness decisions. This module adds **no** second registry, mutable status
-store, TTL clock, heartbeat detector, or reaper decision engine (R1): live ownership is the
-broker, history is the ledger, and every view here is projected from one chain-verified
-ledger snapshot plus one lock-consistent broker snapshot. The two stores are **not**
-transactionally atomic — action-time identity rechecks close that gap (R4).
+Retires the #356 fleet lease authority from the teardown contract (#677/U2). Resources
+are no longer enumerated from leases: the census reads the per-outcome **worktree
+registries** (``<git-common-dir>/saga-outcomes/*/worktrees.json``) cross-checked with
+``git worktree list``, and every view here is projected from one chain-verified
+``run_fact.v1`` ledger snapshot plus one read-only registry census. The ledger remains
+append-only history; this module adds **no** second registry, mutable status store, TTL
+clock, heartbeat detector, or reaper decision engine (R1) — and per KTD12 it performs
+**no worktree removal at all**: the sweep is report-only, because teardown never
+reclaimed worktrees even when the lease authority existed (no production caller ever
+injected a reaper).
 
 Event family (``kind=teardown``, closed — R9): ``run-opened``, ``teardown-intent``,
 ``resource-attempt``, ``resource-result``, ``recovery-observation``, ``teardown-complete``.
@@ -24,7 +27,6 @@ import hashlib
 import json
 import os
 import sys
-import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -33,7 +35,8 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import fleet_commons_shim  # noqa: E402
+import outcome_store  # noqa: E402
+import outcome_worktrees  # noqa: E402
 import run_ledger  # noqa: E402
 
 TEARDOWN_SCHEMA = "team_teardown.v1"
@@ -52,14 +55,14 @@ TERMINAL_REASONS = frozenset({"success", "hard-fail", "operator-abort", "andon",
 DISPOSITIONS = frozenset({"released", "already-absent", "retained", "failed"})
 # A finally-disposed action key converges: repeated reclaim may not act on it again (R4).
 FINAL_DISPOSITIONS = frozenset({"released", "already-absent"})
+# The closed action vocabulary is frozen even though #677/U2 retired every discovery
+# source except the worktree sweep: ledger facts recorded under the lease-era kinds
+# remain valid reads, and a driver wired for an unknown/retired action conservatively
+# retains rather than acts (KTD6).
 ACTION_KINDS = frozenset({"resident-stop", "process-stop", "lease-release", "worktree-sweep"})
 RESOURCE_KINDS = frozenset(
     {"resident-agent", "owned-subprocess", "outcome-worktree", "provisional-lease"}
 )
-# The subprocess stop policy is recorded on the broker lease at registration time (trusted
-# store, spawn-time provenance) — never taken from caller prose at action time (R8).
-SUBPROCESS_TERM_ONLY = "owned-subprocess:term-only"
-SUBPROCESS_TERM_THEN_KILL = "owned-subprocess:term-then-kill"
 
 _MAX_TEXT = 256
 _MAX_EVIDENCE_REFS = 16
@@ -102,7 +105,7 @@ def _evidence_refs(value: Any) -> list[str]:
 
 
 def new_team_run_id() -> str:
-    """A bounded, collision-resistant team run identity (also the broker owner_id)."""
+    """A bounded, collision-resistant team run identity (the run's owner_id)."""
 
     return f"team-run-{uuid.uuid4()}"
 
@@ -393,10 +396,11 @@ def _validate_transition(existing: Sequence[Mapping[str, Any]], fact: Mapping[st
             and rec.get("intent_id") == fact.get("intent_id")
         ]
         # close_generation is deliberately NOT intent identity (it is excluded from
-        # intent_id): the broker's bounded closed-owner map may evict and re-close an
-        # owner under a fresh generation, and that re-close must replay the one logical
-        # intent, never poison the run with a permanent conflict. The driver fences on
-        # its own pass-local generation, not the recorded intent's.
+        # intent_id): under #358 it carried the lease-authority close fence's generation,
+        # which could be re-issued; a re-issued close had to replay the one logical
+        # intent, never poison the run with a permanent conflict. #677/U2 retired the
+        # fence (the driver now records the vestigial constant 1), but the exclusion
+        # stays so lease-era ledgers keep replaying cleanly.
         for rec in same_intent:
             existing_identity = {
                 k: v for k, v in _without_volatile(rec).items() if k != "close_generation"
@@ -487,11 +491,11 @@ def append_teardown_event(ledger: run_ledger.RunLedger, fact: Mapping[str, Any])
     conflicting duplicate or an ordering violation raises. The returned record carries the
     chain fields of whichever record now represents the event.
 
-    Validation here is ledger-internal by design: the broker zero-open recheck and the
-    still-closed generation gate live in :func:`reclaim_all`, the only sanctioned
-    ``teardown-complete`` emitter. A direct append that bypasses the driver cannot
-    fabricate closure — :func:`project` derives ``open_count`` live from the broker, so
-    a completion fact recorded over an open resource stays visibly inconsistent.
+    Validation here is ledger-internal by design: the zero-open recheck lives in
+    :func:`reclaim_all`, the only sanctioned ``teardown-complete`` emitter. A direct
+    append that bypasses the driver cannot fabricate closure — :func:`project` derives
+    ``open_count`` live from the registry census, so a completion fact recorded over an
+    unsettled resource stays visibly inconsistent.
     """
 
     if fact.get("kind") != "teardown":
@@ -512,57 +516,96 @@ def append_teardown_event(ledger: run_ledger.RunLedger, fact: Mapping[str, Any])
 
 @dataclass(frozen=True)
 class DecisionInput:
-    """One immutable decision input: a chain-verified ledger view + one broker snapshot.
+    """One immutable decision input: a chain-verified ledger view + one registry census.
 
-    The two reads are lock-consistent individually, not atomic across stores (R4) —
-    consumers must recheck identity at action time.
+    The two reads are consistent individually, not atomic across stores (R4) — the
+    driver re-reads the census after acting. Census entries carry ``outcome_id``,
+    ``subplot_id``, ``path``, and ``live`` (git still lists the path).
     """
 
     ledger_records: tuple[dict[str, Any], ...]
-    broker_view: dict[str, Any]
+    worktrees: tuple[dict[str, Any], ...]
 
 
-def read_decision_input(ledger: run_ledger.RunLedger, broker: Any) -> DecisionInput:
+def _worktree_census(repo_root: Path) -> tuple[dict[str, Any], ...]:
+    """One read-only census of registered outcome worktrees across every outcome store.
+
+    The enumeration source is the per-outcome worktree registry cross-checked with
+    ``git worktree list`` via :func:`outcome_worktrees.live_worktrees` (#677/U2) — the
+    lease list it replaces no longer exists. The census enumerates in order to REPORT,
+    never to remove: entries are read through the lenient registry path (a malformed
+    registry reads as empty, never fatal), and entries without a usable path are
+    skipped.
+    """
+
+    root = Path(repo_root)
+    try:
+        common = outcome_store.resolve_common_dir(root)
+    except outcome_store.OutcomeStoreError as exc:
+        raise TeardownError(f"cannot enumerate worktrees without git: {exc}") from exc
+    namespace = common / outcome_store.STORE_NAMESPACE
+    if not namespace.is_dir():
+        return ()
+    ops = outcome_worktrees.git_worktree_ops(root)
+    items: list[dict[str, Any]] = []
+    for registry_path in sorted(namespace.glob("*/worktrees.json")):
+        store = outcome_store.Store(root=registry_path.parent)
+        outcome_id = registry_path.parent.name
+        live = outcome_worktrees.live_worktrees(store, ops)
+        for sid, entry in sorted(outcome_worktrees.read_registry(store).items()):
+            path = str(entry.get("path", ""))
+            if not path:
+                continue
+            items.append(
+                {
+                    "outcome_id": outcome_id,
+                    "subplot_id": sid,
+                    "path": path,
+                    "live": sid in live,
+                }
+            )
+    return tuple(items)
+
+
+def read_decision_input(ledger: run_ledger.RunLedger, *, repo_root: Path) -> DecisionInput:
     snapshot = run_ledger.read_snapshot(ledger)
     if not snapshot.report.ok:
         raise TeardownError(
             f"refusing decisions on a broken run-fact chain: {snapshot.report.reason}"
         )
-    try:
-        view = broker.inspect()
-    except Exception as exc:
-        raise TeardownError(f"broker snapshot unavailable or corrupt: {exc}") from exc
-    if not isinstance(view, dict):
-        raise TeardownError("broker inspect() returned a non-object snapshot")
     return DecisionInput(
         ledger_records=tuple(dict(rec) for rec in snapshot.records),
-        broker_view=view,
+        worktrees=_worktree_census(repo_root),
     )
 
 
-def _classify_lease(lease: Mapping[str, Any]) -> tuple[str, str]:
-    """Map one broker lease to its (resource_kind, action) per the resource action matrix."""
+def _worktree_generation(item: Mapping[str, Any]) -> str:
+    """The registry coordinates of one census entry — its stable generation string."""
 
-    pool = lease.get("pool")
-    if pool == "worktree":
-        return "outcome-worktree", "worktree-sweep"
-    agent_type = str(lease.get("agent_type") or "")
-    if agent_type in (SUBPROCESS_TERM_ONLY, SUBPROCESS_TERM_THEN_KILL):
-        return "owned-subprocess", "process-stop"
-    if lease.get("agent_id"):
-        return "resident-agent", "resident-stop"
-    return "provisional-lease", "lease-release"
+    return f"{item.get('outcome_id')}:{item.get('subplot_id')}"
 
 
-def _owned_leases(view: Mapping[str, Any], owner_id: str) -> list[dict[str, Any]]:
-    leases = view.get("leases")
-    if not isinstance(leases, list):
-        raise TeardownError("broker snapshot has no lease list")
-    return [dict(lease) for lease in leases if lease.get("owner_id") == owner_id]
+def _worktree_action_key(team_run_id: str, item: Mapping[str, Any]) -> str:
+    return action_key(
+        team_run_id, str(item.get("path")), _worktree_generation(item), "worktree-sweep"
+    )
+
+
+def _present_keys(team_run_id: str, worktrees: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    keys: dict[str, Any] = {}
+    for item in worktrees:
+        keys[_worktree_action_key(team_run_id, item)] = item
+    return keys
 
 
 def project(decision: DecisionInput, team_run_id: str) -> dict[str, Any]:
-    """The derived ``team_teardown.v1`` terminal contract — never a stored summary (R9)."""
+    """The derived ``team_teardown.v1`` terminal contract — never a stored summary (R9).
+
+    ``open_count`` counts census entries whose action key has not reached a final
+    disposition: the registry never shrinks on its own (#677/U2 removed the only
+    automatic deregisterer along with the reap path), so "still open" means "still
+    unsettled", which is exactly what the completion gate rechecks.
+    """
 
     run = _run_records(decision.ledger_records, team_run_id)
     opened = [rec for rec in run if rec.get("event") == "run-opened"]
@@ -574,23 +617,25 @@ def project(decision: DecisionInput, team_run_id: str) -> dict[str, Any]:
     results = _last_result_by_action(run)
     attempts = _attempts_by_action(run)
 
-    open_leases = _owned_leases(decision.broker_view, owner_id)
     resources: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
-    for lease in open_leases:
-        kind, action = _classify_lease(lease)
-        resource_id = str(lease.get("lease_id"))
-        generation = f"{lease.get('fencing_sequence')}"
-        key = action_key(team_run_id, resource_id, generation, action)
+    open_count = 0
+    for item in decision.worktrees:
+        resource_id = str(item.get("path"))
+        generation = _worktree_generation(item)
+        key = action_key(team_run_id, resource_id, generation, "worktree-sweep")
         last = results.get(key)
+        disposition = str(last.get("disposition")) if last else "open"
+        if disposition not in FINAL_DISPOSITIONS:
+            open_count += 1
         resources.append(
             {
                 "resource_id": resource_id,
                 "generation": generation,
-                "kind": kind,
+                "kind": "outcome-worktree",
                 "owner_ref": owner_id,
-                "action": action,
-                "disposition": str(last.get("disposition")) if last else "open",
+                "action": "worktree-sweep",
+                "disposition": disposition,
                 "evidence_refs": list(last.get("evidence_refs", [])) if last else [],
             }
         )
@@ -613,7 +658,6 @@ def project(decision: DecisionInput, team_run_id: str) -> dict[str, Any]:
         )
 
     dispositions = [res["disposition"] for res in resources]
-    open_count = len(open_leases)
     projection = {
         "schema": TEARDOWN_SCHEMA,
         "team_run_id": team_run_id,
@@ -636,8 +680,8 @@ def project(decision: DecisionInput, team_run_id: str) -> dict[str, Any]:
 def open_runs(decision: DecisionInput, *, root_sha256: str | None = None) -> list[str]:
     """Team runs with a run-opened fact and no teardown-complete, oldest first.
 
-    ``root_sha256`` scopes discovery to one canonical repository (R5): runs opened against a
-    different broker root are never surfaced to this repository's hooks or CLI.
+    ``root_sha256`` scopes discovery to one canonical repository (R5): runs opened against
+    a different repository identity are never surfaced to this repository's hooks or CLI.
     """
 
     opened: list[str] = []
@@ -657,27 +701,21 @@ def open_runs(decision: DecisionInput, *, root_sha256: str | None = None) -> lis
 # --------------------------------------------------------------------------- run lifecycle
 
 
-def default_broker() -> Any:
-    """The canonical fleet lease authority, or a typed failure naming the install gap."""
+def repository_root_sha256(ledger: run_ledger.RunLedger) -> str:
+    """The canonical repository identity run-opened facts are scoped by (#677/U2).
 
-    try:
-        authority = fleet_commons_shim.load("lease_broker")
-        broker = authority.LeaseBroker()
-    except Exception as exc:  # noqa: BLE001 - plugin skew is named at the runtime boundary
-        raise TeardownError(
-            f"team teardown requires lease-capable fleet-core; install/update fleet-core: {exc}"
-        ) from exc
-    for required in ("close_owner_admission", "inspect_owner_admission", "sweep", "inspect"):
-        if not callable(getattr(broker, required, None)):
-            raise TeardownError(
-                f"installed fleet-core lease broker lacks {required}(); update fleet-core"
-            )
-    return broker
+    Replaces the lease authority's root digest: the ledger is anchored under the
+    repository's git common dir (``<common-dir>/saga-run-facts/run-facts.jsonl``), so
+    the resolved common-dir path is a stable, dependency-free identity anchor. It is a
+    path digest — a relocated clone gets a fresh identity, exactly like the old root.
+    """
+
+    common_dir = Path(ledger.path).parent.parent
+    return hashlib.sha256(str(common_dir).encode("utf-8")).hexdigest()
 
 
 def open_run(
     ledger: run_ledger.RunLedger,
-    broker: Any,
     *,
     subplot_id: str,
     session_id: str,
@@ -693,7 +731,7 @@ def open_run(
         team_run_id=run_id,
         owner_id=run_id,
         session_id=session_id,
-        root_sha256=str(broker.root_sha256),
+        root_sha256=repository_root_sha256(ledger),
     )
     return append_teardown_event(ledger, fact)
 
@@ -737,7 +775,7 @@ class ActionOutcome:
 
 
 def _retain(reason_code: str) -> Callable[[Mapping[str, Any]], ActionOutcome]:
-    def _adapter(_lease: Mapping[str, Any]) -> ActionOutcome:
+    def _adapter(_resource: Mapping[str, Any]) -> ActionOutcome:
         return ActionOutcome(disposition="retained", reason_code=reason_code)
 
     return _adapter
@@ -745,10 +783,12 @@ def _retain(reason_code: str) -> Callable[[Mapping[str, Any]], ActionOutcome]:
 
 @dataclass(frozen=True)
 class ReclaimAdapters:
-    """Injected typed action adapters, one per resource kind (KTD4).
+    """Injected typed action adapters, one per action kind (KTD4).
 
     The default for every slot is conservative retain — a driver wired without a trusted
     adapter can never destroy anything; the run stays a truthful blocked terminal (KTD6).
+    #677/U2 retired every discovery source except the worktree sweep, so the other slots
+    are unreachable in production; they keep their conservative defaults.
     """
 
     resident_stop: Callable[[Mapping[str, Any]], ActionOutcome] = field(
@@ -793,23 +833,25 @@ class ReclaimStats:
 
 def request(
     ledger: run_ledger.RunLedger,
-    broker: Any,
     *,
     subplot_id: str,
     team_run_id: str,
     terminal_reason: str,
     at: str,
 ) -> dict[str, Any]:
-    """Record teardown intent (close fence + intent fact) without acting — the bounded
-    ``SessionEnd`` path (R5). A recorded request is evidence of the ask, never of closure."""
+    """Record teardown intent without acting — the bounded ``SessionEnd`` path (R5).
 
-    close = broker.close_owner_admission(owner_id=team_run_id)
+    A recorded request is evidence of the ask, never of closure. #677/U2 retired the
+    owner-admission close fence that used to precede the intent; ``close_generation``
+    stays in the fact shape as the vestigial constant 1.
+    """
+
     intent = build_teardown_intent(
         subplot_id=subplot_id,
         at=at,
         team_run_id=team_run_id,
         terminal_reason=terminal_reason,
-        close_generation=int(close["close_generation"]),
+        close_generation=1,
     )
     record = append_teardown_event(ledger, intent)
     return {
@@ -817,7 +859,7 @@ def request(
         "recorded": "teardown-intent",
         "team_run_id": team_run_id,
         "intent_id": record["intent_id"],
-        "close_generation": int(close["close_generation"]),
+        "close_generation": 1,
         "complete": False,
     }
 
@@ -859,44 +901,47 @@ def _reclaim_guard(ledger: run_ledger.RunLedger, team_run_id: str) -> Iterator[P
 
 def reclaim_all(
     ledger: run_ledger.RunLedger,
-    broker: Any,
     adapters: ReclaimAdapters,
     *,
     subplot_id: str,
     team_run_id: str,
     terminal_reason: str,
     at_provider: Callable[[], str],
+    repo_root: Path,
     max_actions: int | None = None,
     dry_run: bool = False,
     stats: ReclaimStats | None = None,
 ) -> dict[str, Any]:
-    """The idempotent Step B8 driver (R3/R4): close, snapshot, act, re-reconcile, receipt.
+    """The idempotent Step B8 driver (R3/R4): snapshot, act, re-reconcile, receipt.
 
-    Ordering: (1) close owner admission (idempotent — after this no new resource can race
-    the zero-open receipt); (2) one verified decision input; (3) recover crash-orphaned
-    action keys as ``already-absent``; (4) typed actions per owned resource, each rechecked
-    by its adapter at action time; (5) fresh re-reconcile; (6) re-verify the still-closed
-    close generation; (7) append ``teardown-complete`` only at zero open with no
-    retained/failed keys. Repeated calls converge by stable action keys; concurrent
-    physical passes for one run serialize on :func:`_reclaim_guard` so each logical action
-    invokes its adapter once. ``dry_run`` projects without closing, acting, or appending —
-    census evidence, never completion. ``stats`` receives this call's budgeted action
-    count as it accrues — crash-orphan reconciles never increment it, and it stays
-    readable when the call raises mid-flight.
+    Ordering: (1) one verified decision input (ledger snapshot + registry census);
+    (2) recover crash-orphaned action keys as ``already-absent``; (3) typed actions per
+    census entry, each rechecked by its adapter at action time; (4) fresh re-reconcile;
+    (5) append ``teardown-complete`` only when no census entry is unsettled and no
+    retained/failed or dangling keys remain. Repeated calls converge by stable action
+    keys; concurrent physical passes for one run serialize on :func:`_reclaim_guard` so
+    each logical action invokes its adapter once. ``dry_run`` projects without acting
+    or appending — census evidence, never completion. ``stats`` receives this call's
+    budgeted action count as it accrues — crash-orphan reconciles never increment it,
+    and it stays readable when the call raises mid-flight.
+
+    #677/U2 retired the owner-admission fence and its still-closed recheck: there is no
+    spawn racing completion anymore because the census is read at decision time and
+    re-read after acting, and adapters only ever REPORT worktree state.
     """
 
     if dry_run:
-        return project(read_decision_input(ledger, broker), team_run_id)
+        return project(read_decision_input(ledger, repo_root=repo_root), team_run_id)
 
     with _reclaim_guard(ledger, team_run_id) as lock_path:
         projection = _reclaim_all_locked(
             ledger,
-            broker,
             adapters,
             subplot_id=subplot_id,
             team_run_id=team_run_id,
             terminal_reason=terminal_reason,
             at_provider=at_provider,
+            repo_root=repo_root,
             max_actions=max_actions,
             stats=stats if stats is not None else ReclaimStats(),
         )
@@ -911,25 +956,23 @@ def reclaim_all(
 
 def _reclaim_all_locked(
     ledger: run_ledger.RunLedger,
-    broker: Any,
     adapters: ReclaimAdapters,
     *,
     subplot_id: str,
     team_run_id: str,
     terminal_reason: str,
     at_provider: Callable[[], str],
+    repo_root: Path,
     max_actions: int | None,
     stats: ReclaimStats,
 ) -> dict[str, Any]:
     # A completed teardown is final: a repeated physical entry converges to the recorded
     # receipt without re-opening the state machine (R3 — once logically). Checked under
     # the guard so a racer that waited out the winner sees the winner's receipt.
-    prior = project(read_decision_input(ledger, broker), team_run_id)
+    prior = project(read_decision_input(ledger, repo_root=repo_root), team_run_id)
     if prior["completion_fact_ref"] is not None:
         return prior
 
-    close = broker.close_owner_admission(owner_id=team_run_id)
-    generation = int(close["close_generation"])
     intent = append_teardown_event(
         ledger,
         build_teardown_intent(
@@ -937,24 +980,17 @@ def _reclaim_all_locked(
             at=at_provider(),
             team_run_id=team_run_id,
             terminal_reason=terminal_reason,
-            close_generation=generation,
+            close_generation=1,
         ),
     )
     intent_id = str(intent["intent_id"])
 
-    decision = read_decision_input(ledger, broker)
+    decision = read_decision_input(ledger, repo_root=repo_root)
     run = _run_records(decision.ledger_records, team_run_id)
-    owned = _owned_leases(decision.broker_view, team_run_id)
     results = _last_result_by_action(run)
     attempts = _attempts_by_action(run)
 
-    present_keys: dict[str, dict[str, Any]] = {}
-    for lease in owned:
-        kind, action = _classify_lease(lease)
-        key = action_key(
-            team_run_id, str(lease.get("lease_id")), f"{lease.get('fencing_sequence')}", action
-        )
-        present_keys[key] = {"lease": lease, "kind": kind, "action": action}
+    present_keys = _present_keys(team_run_id, decision.worktrees)
 
     # R4 crash seam: an attempt with no result whose resource is no longer present was
     # acted on before the fact could land — reconcile trusted reality, never act again.
@@ -984,8 +1020,7 @@ def _reclaim_all_locked(
         last = results.get(key)
         if last is not None and str(last.get("disposition")) in FINAL_DISPOSITIONS:
             continue
-        entry = present_keys[key]
-        lease = entry["lease"]
+        item = present_keys[key]
         append_teardown_event(
             ledger,
             build_resource_attempt(
@@ -993,14 +1028,14 @@ def _reclaim_all_locked(
                 at=at_provider(),
                 team_run_id=team_run_id,
                 intent_id=intent_id,
-                resource_id=str(lease.get("lease_id")),
-                resource_kind=entry["kind"],
-                generation=f"{lease.get('fencing_sequence')}",
-                action=entry["action"],
+                resource_id=str(item.get("path")),
+                resource_kind="outcome-worktree",
+                generation=_worktree_generation(item),
+                action="worktree-sweep",
             ),
         )
         try:
-            outcome = adapters.for_action(entry["action"])(lease).validated()
+            outcome = adapters.for_action("worktree-sweep")(item).validated()
         except TeardownError:
             raise
         except Exception as exc:  # noqa: BLE001 - a failed action is evidence, never dropped
@@ -1022,23 +1057,20 @@ def _reclaim_all_locked(
         )
         stats.actions_taken += 1
 
-    final = read_decision_input(ledger, broker)
+    final = read_decision_input(ledger, repo_root=repo_root)
     final_run = _run_records(final.ledger_records, team_run_id)
     final_results = _last_result_by_action(final_run)
-    still_open = _owned_leases(final.broker_view, team_run_id)
+    still_open = sorted(
+        key
+        for key, item in _present_keys(team_run_id, final.worktrees).items()
+        if str(final_results.get(key, {}).get("disposition", "")) not in FINAL_DISPOSITIONS
+    )
     blocked = sorted(
         key
         for key, rec in final_results.items()
         if str(rec.get("disposition")) not in FINAL_DISPOSITIONS
     )
     dangling = sorted(key for key in _attempts_by_action(final_run) if key not in final_results)
-
-    verify = broker.inspect_owner_admission(team_run_id)
-    if verify is None or int(verify["close_generation"]) != generation:
-        raise TeardownError(
-            f"owner admission for {team_run_id!r} is no longer the closed generation "
-            f"{generation}; refusing completion (R3)"
-        )
 
     if not still_open and not blocked and not dangling:
         dispositions = [str(rec.get("disposition")) for rec in final_results.values()]
@@ -1049,374 +1081,61 @@ def _reclaim_all_locked(
                 at=at_provider(),
                 team_run_id=team_run_id,
                 intent_id=intent_id,
-                close_generation=generation,
+                close_generation=1,
                 released_count=dispositions.count("released"),
                 already_absent_count=dispositions.count("already-absent"),
             ),
         )
-    return project(read_decision_input(ledger, broker), team_run_id)
+    return project(read_decision_input(ledger, repo_root=repo_root), team_run_id)
 
 
 # --------------------------------------------------------------------------- action adapters
 
 
-def _current_head(broker: Any, lease: Mapping[str, Any]) -> tuple[dict[str, Any] | None, Any]:
-    """Re-read one lease's current broker head immediately before action (R4).
-
-    Returns ``(head, token)`` — ``head`` is None when the lease no longer exists, and the
-    token is built from the broker's own defining module (a second module load yields a
-    different dataclass whose equality never matches).
-    """
-
-    lease_id = str(lease.get("lease_id"))
-    view = broker.inspect()
-    head = next(
-        (item for item in view.get("leases", []) if item.get("lease_id") == lease_id),
-        None,
-    )
-    if head is None:
-        return None, None
-    authority_module = sys.modules[type(broker).__module__]
-    token = authority_module.FencingToken(str(view["broker_epoch"]), int(head["fencing_sequence"]))
-    return head, token
-
-
-def make_resident_stop_adapter(broker: Any) -> Callable[[Mapping[str, Any]], ActionOutcome]:
-    """Resident teammates release only against broker-recorded terminal evidence (R7/R8).
-
-    The stop request itself is a host-runtime act (Step B8 step 1); this adapter's
-    authority is the ``child_terminal_at`` receipt the host hook recorded. Silence,
-    timeout, and a missing receipt retain the lease — they are never terminal evidence.
-    """
-
-    def _resident_stop(lease: Mapping[str, Any]) -> ActionOutcome:
-        head, token = _current_head(broker, lease)
-        lease_id = str(lease.get("lease_id"))
-        if head is None:
-            return ActionOutcome(
-                disposition="already-absent",
-                evidence_refs=(f"broker:lease-absent:{lease_id}",),
-                reason_code="lease-already-released",
-            )
-        if head.get("fencing_sequence") != lease.get("fencing_sequence"):
-            return ActionOutcome(disposition="retained", reason_code="lease-generation-superseded")
-        if not head.get("child_terminal_at"):
-            return ActionOutcome(disposition="retained", reason_code="no-terminal-receipt")
-        released = broker.release(lease_id, token=token, owner_id=str(lease.get("owner_id")))
-        if released:
-            return ActionOutcome(
-                disposition="released",
-                evidence_refs=(
-                    f"broker:terminal-at:{head['child_terminal_at']}",
-                    f"broker:released:{lease_id}",
-                ),
-            )
-        return ActionOutcome(
-            disposition="already-absent",
-            evidence_refs=(f"broker:release-noop:{lease_id}",),
-            reason_code="lease-already-released",
-        )
-
-    return _resident_stop
-
-
-def make_process_stop_adapter(
-    broker: Any,
-    *,
-    kill: Callable[[int, int], None] | None = None,
-    sleep: Callable[[float], None] | None = None,
-    term_wait_seconds: float = 5.0,
-    poll_interval_seconds: float = 0.1,
-) -> Callable[[Mapping[str, Any]], ActionOutcome]:
-    """Signal only a process whose PID, start identity, boot, and run ownership all match
-    the registration-time lease (R8). ``SIGTERM`` first; ``SIGKILL`` only when the lease
-    was registered with the explicit ``term-then-kill`` escalation class. Every ambiguity
-    fails safe as ``retained`` — a wrong signal is worse than a leaked process.
-
-    Residual window: between the last identity check and the ``kill()`` syscall the target
-    can exit and its PID be reused — inherent to any ``os.kill``-based manager on POSIX
-    (only a pidfd removes it, Linux-only). The start-identity recheck immediately before
-    each send narrows the window to sub-millisecond; it cannot close it.
-    """
-
-    import signal as _signal
-
-    providers = broker.providers
-    send = kill if kill is not None else os.kill
-    wait = sleep if sleep is not None else time.sleep
-
-    def _gone(pid: int, start: str) -> bool:
-        if not providers.process_exists(pid):
-            return True
-        return bool(providers.process_identity(pid) != start)
-
-    def _await_exit(pid: int, start: str) -> bool:
-        waited = 0.0
-        while waited < term_wait_seconds:
-            if _gone(pid, start):
-                return True
-            wait(poll_interval_seconds)
-            waited += poll_interval_seconds
-        return _gone(pid, start)
-
-    def _process_stop(lease: Mapping[str, Any]) -> ActionOutcome:
-        head, token = _current_head(broker, lease)
-        lease_id = str(lease.get("lease_id"))
-        if head is None:
-            return ActionOutcome(
-                disposition="already-absent",
-                evidence_refs=(f"broker:lease-absent:{lease_id}",),
-                reason_code="lease-already-released",
-            )
-        if head.get("fencing_sequence") != lease.get("fencing_sequence"):
-            return ActionOutcome(disposition="retained", reason_code="lease-generation-superseded")
-        pid_raw = head.get("owner_pid")
-        start = head.get("owner_process_start")
-        recorded_boot = head.get("boot_id")
-        if pid_raw is None or not start:
-            return ActionOutcome(disposition="retained", reason_code="process-identity-unrecorded")
-        pid = int(pid_raw)
-        current_boot = providers.boot_id()
-        if recorded_boot != current_boot:
-            # A different boot: the registered process is provably gone. If the PID exists
-            # now it belongs to an unrelated post-reboot process — never signal it.
-            return _release_absent(head, token, lease, "boot-identity-changed")
-        if not providers.process_exists(pid):
-            return _release_absent(head, token, lease, "process-not-running")
-        current = providers.process_identity(pid)
-        if current is None:
-            return ActionOutcome(disposition="retained", reason_code="process-identity-unavailable")
-        if current != start:
-            return _release_absent(head, token, lease, "pid-identity-mismatch")
-        try:
-            send(pid, _signal.SIGTERM)
-        except PermissionError:
-            return ActionOutcome(disposition="retained", reason_code="signal-permission-denied")
-        except ProcessLookupError:
-            return _release_absent(head, token, lease, "exited-during-signal")
-        if _await_exit(pid, start):
-            return _release_stopped(head, token, lease, "sigterm")
-        if head.get("agent_type") != SUBPROCESS_TERM_THEN_KILL:
-            return ActionOutcome(
-                disposition="retained", reason_code="alive-after-term-no-escalation"
-            )
-        try:
-            send(pid, _signal.SIGKILL)
-        except ProcessLookupError:
-            return _release_stopped(head, token, lease, "exited-before-kill")
-        if _await_exit(pid, start):
-            return _release_stopped(head, token, lease, "term-then-kill")
-        return ActionOutcome(disposition="failed", reason_code="alive-after-kill")
-
-    def _release_absent(
-        head: Mapping[str, Any], token: Any, lease: Mapping[str, Any], reason: str
-    ) -> ActionOutcome:
-        broker.release(
-            str(head.get("lease_id") or lease.get("lease_id")),
-            token=token,
-            owner_id=str(lease.get("owner_id")),
-        )
-        return ActionOutcome(
-            disposition="already-absent",
-            evidence_refs=(f"process:absence-proof:{reason}",),
-            reason_code=reason,
-        )
-
-    def _release_stopped(
-        head: Mapping[str, Any], token: Any, lease: Mapping[str, Any], receipt: str
-    ) -> ActionOutcome:
-        broker.release(
-            str(head.get("lease_id") or lease.get("lease_id")),
-            token=token,
-            owner_id=str(lease.get("owner_id")),
-        )
-        return ActionOutcome(
-            disposition="released",
-            evidence_refs=(f"process:signal-receipt:{receipt}",),
-        )
-
-    return _process_stop
-
-
 def make_worktree_sweep_adapter(
-    broker: Any,
-    *,
-    worktree_reaper: Callable[[Any], bool] | None = None,
+    ops: outcome_worktrees.WorktreeOps,
 ) -> Callable[[Mapping[str, Any]], ActionOutcome]:
-    """Worktrees go through the canonical #356 ``sweep`` only (R6) — never a direct
-    ``git worktree remove``. Without an injected validated reaper the sweep can still
-    release expired agent debris, but every worktree stays visibly retained.
+    """Report one registered worktree's disposition against git — never remove anything.
+
+    #677/U2 re-keyed the #358 sweep's five lease-indexed outcomes (plan R5c) onto
+    worktree path. The two retained rows (the sweep's retained-with-reason branch and
+    its never-a-candidate fallthrough) converge on ``retained`` / ``worktree-listed``:
+    git still lists the worktree, and teardown never removes — there is no sweep
+    decision engine left to encode. The two lease-absent rows converge on
+    ``already-absent`` / ``worktree-not-listed``, whose meaning CHANGED with the
+    re-key: it now means "git no longer lists this worktree" (previously "the lease
+    head is gone", which said nothing about disk). The released-by-reap row has no
+    successor: the reap branch and its reaper seam were deleted with the lease
+    authority — this unit removes nothing from disk under any input (KTD12), so
+    #358's R6 prohibition on a direct ``git worktree remove`` has nothing left to
+    guard.
     """
 
-    def _worktree_sweep(lease: Mapping[str, Any]) -> ActionOutcome:
-        lease_id = str(lease.get("lease_id"))
-        head, _token = _current_head(broker, lease)
-        if head is None:
-            return ActionOutcome(
-                disposition="already-absent",
-                evidence_refs=(f"broker:lease-absent:{lease_id}",),
-                reason_code="lease-already-released",
-            )
-        swept = broker.sweep(worktree_reaper=worktree_reaper)
-        result = swept.to_dict() if hasattr(swept, "to_dict") else dict(swept)
-        if lease_id in result.get("reaped_worktree_leases", []):
-            return ActionOutcome(
-                disposition="released",
-                evidence_refs=(f"sweep:reaped:{lease_id}",),
-            )
-        retained_reason = result.get("retained", {}).get(lease_id)
-        if retained_reason is not None:
-            return ActionOutcome(disposition="retained", reason_code=f"sweep:{retained_reason}")
-        follow_up, _ = _current_head(broker, lease)
-        if follow_up is None:
-            return ActionOutcome(
-                disposition="already-absent",
-                evidence_refs=(f"sweep:lease-gone:{lease_id}",),
-                reason_code="released-by-sweep",
-            )
-        return ActionOutcome(disposition="retained", reason_code="not-a-sweep-candidate")
+    def _worktree_sweep(resource: Mapping[str, Any]) -> ActionOutcome:
+        ref = _worktree_generation(resource)
+        path = str(resource.get("path", ""))
+        if path and ops.exists(path):
+            return ActionOutcome(disposition="retained", reason_code="worktree-listed")
+        return ActionOutcome(
+            disposition="already-absent",
+            evidence_refs=(f"worktree:path-absent:{ref}",),
+            reason_code="worktree-not-listed",
+        )
 
     return _worktree_sweep
-
-
-def register_subprocess(
-    broker: Any,
-    *,
-    team_run_id: str,
-    session_id: str,
-    pid: int,
-    argv_digest: str,
-    policy_sha256: str,
-    session_limit: int,
-    aggregate_limit: int,
-    escalation: str = "term-only",
-    ttl_seconds: int = 3600,
-    mutation: str = "read-write",
-) -> Any:
-    """B1: register one coordinator-created subprocess in the broker before it matters (R2/R8).
-
-    The stop policy rides the lease's ``agent_type`` — recorded at spawn time in the
-    trusted store, never taken from caller prose at action time. The lease's
-    ``owner_pid``/``owner_process_start``/``boot_id`` capture the child's exact identity.
-    ``mutation`` must match the session's pinned admission snapshot (the broker refuses a
-    mixed snapshot while the session holds live leases).
-    """
-
-    if escalation not in ("term-only", "term-then-kill"):
-        raise TeardownError("escalation must be term-only or term-then-kill")
-    agent_type = (
-        SUBPROCESS_TERM_THEN_KILL if escalation == "term-then-kill" else SUBPROCESS_TERM_ONLY
-    )
-    digest = _bounded_text(argv_digest, "argv_digest")
-    return broker.acquire_agent(
-        owner_id=_bounded_text(team_run_id, "team_run_id"),
-        session_id=_bounded_text(session_id, "session_id"),
-        policy_sha256=policy_sha256,
-        session_limit=session_limit,
-        aggregate_limit=aggregate_limit,
-        mutation=mutation,
-        ttl_seconds=ttl_seconds,
-        resource_ref={"logical_unit_id": f"subprocess:{digest[:32]}:{pid}"},
-        owner_pid=pid,
-        agent_type=agent_type,
-    )
-
-
-# --------------------------------------------------------------------------- idle eviction
-
-
-def authorize_resident_stop(
-    broker: Any,
-    decision: Mapping[str, Any] | None,
-    *,
-    team_run_id: str,
-    lease_id: str,
-    explicit_shed: bool = False,
-) -> dict[str, Any]:
-    """The R7/KTD5 eviction gate: only a #357 ``confirmed-stalled`` decision or an explicit
-    segment-boundary shed, paired with current #356 ownership, authorizes a resident stop.
-
-    Phi suspicion, chat activity, a bare idle notice, pending ack/re-ping, pointer age, and
-    agent prose are never authorization. The returned record is the *stop intent* for the
-    host runtime; the release itself still flows through
-    :func:`make_resident_stop_adapter`, which requires the broker-recorded terminal receipt.
-    """
-
-    def _refuse(reason: str) -> dict[str, Any]:
-        return {"authorized": False, "reason_code": reason, "lease_id": lease_id}
-
-    head, _token = _current_head(broker, {"lease_id": lease_id})
-    if head is None:
-        return _refuse("lease-absent")
-    if str(head.get("owner_id")) != team_run_id:
-        return _refuse("not-owned-by-run")
-    warm = {
-        "authorized": True,
-        "lease_id": lease_id,
-        "generation": f"{head.get('fencing_sequence')}",
-        "agent_id": head.get("agent_id"),
-    }
-    if explicit_shed:
-        return {**warm, "reason_code": "segment-boundary-shed"}
-    if not isinstance(decision, Mapping):
-        return _refuse("no-liveness-decision")
-    classification = str(decision.get("classification") or "unknown")
-    if classification != "confirmed-stalled":
-        return _refuse(f"liveness-{classification}-not-actionable")
-    if str(decision.get("terminal_authority") or "none") == "none":
-        return _refuse("confirmed-without-terminal-authority")
-    return {
-        **warm,
-        "reason_code": "confirmed-stalled",
-        "liveness_generation": decision.get("generation"),
-    }
 
 
 # --------------------------------------------------------------------------- production wiring
 
 
-def production_adapters(
-    broker: Any,
-    *,
-    worktree_reaper: Callable[[Any], bool] | None = None,
-    kill: Callable[[int, int], None] | None = None,
-    sleep: Callable[[float], None] | None = None,
-) -> ReclaimAdapters:
-    """The trusted production adapter set (KTD4): identity-checked broker release for
-    provisional leases, terminal-receipt-gated resident release, exact-identity process
-    stop with policy-bound escalation, and the canonical #356 worktree sweep."""
-
-    def _lease_release(lease: Mapping[str, Any]) -> ActionOutcome:
-        lease_id = str(lease.get("lease_id"))
-        head, token = _current_head(broker, lease)
-        if head is None:
-            return ActionOutcome(
-                disposition="already-absent",
-                evidence_refs=(f"broker:lease-absent:{lease_id}",),
-                reason_code="lease-already-released",
-            )
-        if head.get("fencing_sequence") != lease.get("fencing_sequence"):
-            return ActionOutcome(
-                disposition="retained",
-                reason_code="lease-generation-superseded",
-            )
-        released = broker.release(lease_id, token=token, owner_id=str(lease.get("owner_id")))
-        if released:
-            return ActionOutcome(
-                disposition="released",
-                evidence_refs=(f"broker:released:{lease_id}",),
-            )
-        return ActionOutcome(
-            disposition="already-absent",
-            evidence_refs=(f"broker:release-noop:{lease_id}",),
-            reason_code="lease-already-released",
-        )
+def production_adapters(repo_root: Path) -> ReclaimAdapters:
+    """The trusted production adapter set (#677/U2): the report-only worktree sweep over
+    git's live listing. The resident-stop, process-stop, and lease-release slots keep
+    their conservative retain defaults — no census source enumerates those resources
+    anymore, and a driver wired without a trusted adapter can never destroy anything."""
 
     return ReclaimAdapters(
-        lease_release=_lease_release,
-        resident_stop=make_resident_stop_adapter(broker),
-        process_stop=make_process_stop_adapter(broker, kill=kill, sleep=sleep),
-        worktree_sweep=make_worktree_sweep_adapter(broker, worktree_reaper=worktree_reaper),
+        worktree_sweep=make_worktree_sweep_adapter(outcome_worktrees.git_worktree_ops(repo_root))
     )
 
 
@@ -1457,50 +1176,50 @@ def _observe_recovery(
 
 def recover(
     ledger: run_ledger.RunLedger,
-    broker: Any,
     adapters: ReclaimAdapters,
     *,
     subplot_id: str,
     expired_only: bool,
     max_actions: int,
     at_provider: Callable[[], str],
+    repo_root: Path,
 ) -> dict[str, Any]:
     """One bounded recovery pass over this repository's open runs (R5).
 
     Discovery is read-only; every destructive step re-enters the same idempotent
     :func:`reclaim_all` state machine under the same guards. ``expired_only`` skips any
-    run that still holds a live-derived lease — a crashed coordinator's leases derive
-    ``expired`` after TTL, and only then does recovery act. An observation fact is
-    appended per run even when nothing was safe to reclaim. Per-run isolation is total:
-    the pass body degrades to the run's pass entry on failure, and the budget charge is
-    counted at the source (:class:`ReclaimStats`, inside the per-run guard) rather than
-    inferred from ledger snapshots — accounting has no failable read of its own, so the
-    only degradable bookkeeping left is the observation append (``evidence_error``).
+    run while the census still sees a git-listed worktree — with the lease authority
+    gone (#677/U2), a live worktree is the only liveness signal teardown has, and
+    recovery never finalizes reporting over one. An observation fact is appended per run
+    even when nothing was safe to reclaim. Per-run isolation is total: the pass body
+    degrades to the run's pass entry on failure, and the budget charge is counted at the
+    source (:class:`ReclaimStats`, inside the per-run guard) rather than inferred from
+    ledger snapshots — accounting has no failable read of its own, so the only
+    degradable bookkeeping left is the observation append (``evidence_error``).
     """
 
     if max_actions < 0:
         raise TeardownError("max_actions must be non-negative")
-    decision = read_decision_input(ledger, broker)
-    runs = open_runs(decision, root_sha256=str(broker.root_sha256))
+    decision = read_decision_input(ledger, repo_root=repo_root)
+    runs = open_runs(decision, root_sha256=repository_root_sha256(ledger))
     passes: list[dict[str, Any]] = []
     budget = max_actions
+    live = [item for item in decision.worktrees if item.get("live")]
     for run_id in runs:
-        owned = _owned_leases(decision.broker_view, run_id)
-        live = [item for item in owned if item.get("derived_state") == "live"]
         if expired_only and live:
             entry: dict[str, Any] = {
                 "team_run_id": run_id,
                 "actions_taken": 0,
-                "skipped": "live-owner",
+                "skipped": "live-worktrees",
             }
             lost = _observe_recovery(
                 ledger,
                 subplot_id=subplot_id,
                 at=at_provider(),
                 team_run_id=run_id,
-                observed_open=len(owned),
+                observed_open=len(decision.worktrees),
                 actions_taken=0,
-                reason_code="expired-only-live-owner",
+                reason_code="expired-only-live-worktrees",
             )
             if lost is not None:
                 entry["evidence_error"] = lost
@@ -1513,7 +1232,7 @@ def recover(
                 subplot_id=subplot_id,
                 at=at_provider(),
                 team_run_id=run_id,
-                observed_open=len(owned),
+                observed_open=len(decision.worktrees),
                 actions_taken=0,
                 reason_code="recovery-action-budget-exhausted",
             )
@@ -1522,9 +1241,8 @@ def recover(
             passes.append(entry)
             continue
         # Per-run isolation: one run's refused pass (a blocked terminal, a conflicted
-        # ledger, a corrupt broker record, an adapter refusal) is that run's evidence —
-        # it must never head-of-line block recovery of every newer open run. The broker's
-        # own error family (LeaseBrokerError et al.) is not TeardownError, so the net is
+        # ledger, a corrupt registry entry, an adapter refusal) is that run's evidence —
+        # it must never head-of-line block recovery of every newer open run. The net is
         # deliberately wide; the observation append records the type as the evidence.
         stats = ReclaimStats()
         run_error: str | None = None
@@ -1532,12 +1250,12 @@ def recover(
         try:
             projection = reclaim_all(
                 ledger,
-                broker,
                 adapters,
                 subplot_id=subplot_id,
                 team_run_id=run_id,
                 terminal_reason="recovered-crash",
                 at_provider=at_provider,
+                repo_root=repo_root,
                 max_actions=budget,
                 stats=stats,
             )
@@ -1558,7 +1276,7 @@ def recover(
             entry["open_count"] = projection["open_count"]
             entry["complete"] = projection["completion_fact_ref"] is not None
         else:
-            observed_open = len(owned)
+            observed_open = len(decision.worktrees)
             reason_code = f"recovery-run-error:{run_error}"
             entry["error"] = run_error
         lost = _observe_recovery(
@@ -1656,12 +1374,11 @@ def _matching_open_runs(
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
+        repo_root = Path(args.repo_root).resolve()
         ledger = _cli_ledger(args.repo_root)
-        broker = default_broker()
         if args.command == "open-run":
             record = open_run(
                 ledger,
-                broker,
                 subplot_id=args.subplot_id,
                 session_id=args.session_id,
                 at=_now_utc_text(),
@@ -1669,31 +1386,32 @@ def main(argv: list[str] | None = None) -> int:
             )
             _print_json({"opened": record["team_run_id"], "fact_ref": record["this_hash"]})
         elif args.command == "status":
-            decision = read_decision_input(ledger, broker)
+            decision = read_decision_input(ledger, repo_root=repo_root)
             if args.team_run_id is not None:
                 _print_json(project(decision, args.team_run_id))
             else:
                 _print_json(
                     {
                         "schema": TEARDOWN_SCHEMA,
-                        "open_runs": open_runs(decision, root_sha256=str(broker.root_sha256)),
+                        "open_runs": open_runs(
+                            decision, root_sha256=repository_root_sha256(ledger)
+                        ),
                     }
                 )
         elif args.command == "request":
-            decision = read_decision_input(ledger, broker)
+            decision = read_decision_input(ledger, repo_root=repo_root)
             targets = (
                 [args.team_run_id]
                 if args.team_run_id is not None
                 else _matching_open_runs(
                     decision,
-                    root_sha256=str(broker.root_sha256),
+                    root_sha256=repository_root_sha256(ledger),
                     session_id=args.session_id,
                 )
             )
             recorded = [
                 request(
                     ledger,
-                    broker,
                     subplot_id=args.subplot_id,
                     team_run_id=run_id,
                     terminal_reason=args.reason,
@@ -1706,12 +1424,12 @@ def main(argv: list[str] | None = None) -> int:
             _print_json(
                 reclaim_all(
                     ledger,
-                    broker,
-                    production_adapters(broker),
+                    production_adapters(repo_root),
                     subplot_id=args.subplot_id,
                     team_run_id=args.team_run_id,
                     terminal_reason=args.reason,
                     at_provider=_now_utc_text,
+                    repo_root=repo_root,
                     max_actions=args.max_actions,
                     dry_run=args.dry_run,
                 )
@@ -1720,12 +1438,12 @@ def main(argv: list[str] | None = None) -> int:
             _print_json(
                 recover(
                     ledger,
-                    broker,
-                    production_adapters(broker),
+                    production_adapters(repo_root),
                     subplot_id=args.subplot_id,
                     expired_only=args.expired_only,
                     max_actions=args.max_actions,
                     at_provider=_now_utc_text,
+                    repo_root=repo_root,
                 )
             )
     except TeardownError as exc:

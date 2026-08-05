@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.127.0] - 2026-08-05
+
+### Changed
+
+- **`already-absent` changed meaning in team teardown — campaign #677 unit U2 (#679).** The
+  disposition now means "git no longer lists this worktree" (the census is the per-outcome
+  worktree registry cross-checked with `git worktree list`). Pre-retirement it meant "the
+  lease head is gone", which said nothing about disk. Its evidence-ref namespace moved with
+  it: the lease-namespaced `broker:`/`sweep:` strings plus `{lease_id}` are redefined as
+  `worktree:path-absent:<outcome-id>:<subplot-id>`. The retained branch reports
+  `worktree-listed`. `released` keeps its place in the closed disposition vocabulary, but the
+  sweep no longer produces it — its only producer was the reap branch, deleted with the reaper
+  seam (see Removed). `open_count` in the `team_teardown.v1` projection now counts census
+  entries not yet at a final disposition ("still open" = "still unsettled"); the registry does
+  not shrink on its own, and completion was re-gated to match. Recovery's `--expired-only`
+  skip re-keyed from lease liveness onto "a git-listed worktree exists" (observation reason
+  `expired-only-live-worktrees`). DECISIONS `{#u2-rekeys-teardown-onto-worktree-registry-679}`.
+
+### Removed
+
+- **Fleet lease broker retired from the non-skippable teardown contract — campaign #677 unit
+  U2 (#679).** Teardown enumerates worktrees via `outcome_worktrees.live_worktrees` over every
+  `saga-outcomes/*/worktrees.json` registry instead of a lease list, threading `repo_root`
+  through the hook and CLI (the census spans all outcome stores; a single store handle was the
+  wrong seam shape). Deleted outright: `default_broker`, `_current_head`,
+  `make_resident_stop_adapter`, `make_process_stop_adapter`, `register_subprocess` (the
+  spawn-time registration seam), `authorize_resident_stop` (the idle-eviction gate — its
+  post-retirement story is queued for U6, QUEUED
+  `{#teardown-eviction-gate-retired-needs-u6-story}`), the owner-admission close fence and its
+  still-closed recheck (`close_generation` stays in the fact shape as the vestigial constant
+  1), and the worktree sweep's reaper seam — teardown is report-only and removes no worktree
+  from disk under any input (KTD12: it never did). A regression sentinel pins both the disk
+  guarantee and the seam's structural absence. The closed event family, the projection schema,
+  and the CLI verb/flag surface are unchanged; the action-kind/resource-kind vocabularies stay
+  frozen so lease-era ledger facts remain valid reads. Agent docs moved in the same PR (R11):
+  `teardown-reclamation.md` and `teardown-consumer-sites.md` rewritten for the broker-free
+  contract. Release surfaces move per-PR under the #429 diff guard.
+
 ## [0.126.0] - 2026-08-05
 
 ### Removed

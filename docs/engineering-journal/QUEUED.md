@@ -217,6 +217,17 @@ primitive. Ids named in issue #463 itself are marked ★.
 **Context.** Surfaced during U1 (#678). `outcome_compat.py`'s `REQUIRED_CAPABILITIES` still carries `"fleet-broker-fencing"` and `AUTHORITY["same_clone_coordination"]` still names `"fleet-broker"` even though U1 removed every broker call from the settlement/handoff path. These are discovery-envelope negotiation strings, so U1 deferred them deliberately (a cross-runtime decision, not U1 mechanics) — DECISIONS [#u1-absorbs-outcome-handoff-callers-678](DECISIONS.md#u1-absorbs-outcome-handoff-callers-678) KTD5. `test_authority_block_must_match_the_frozen_model` and the negotiation tests pin the current strings; they move with the change.
 
 
+### Teardown's idle-eviction gate retired with the broker — U6 must decide the resident-stop story  {#teardown-eviction-gate-retired-needs-u6-story}
+
+**Priority.** P2 (lands with U6 #683's liveness rewire, or is formally rejected there).
+
+**Effort.** Decision first; implementation hours-to-day depending on the decision.
+
+**Worth it when.** U6 (#683, team-execution + liveness) is pulled — it owns the broker-free liveness story and is the only unit positioned to revive, replace, or formally retire eviction.
+
+**Context.** Surfaced during U2 (#679). `authorize_resident_stop` (the R7/KTD5 gate: only a #357 `confirmed-stalled` decision or an explicit segment-boundary shed, paired with current lease ownership, authorized a resident stop) was deleted with the lease authority — ownership was its second input, and the resident-stop adapter's terminal-receipt source was the first. Nothing stops residents now, and nothing authorizes stopping them; the loss is Option C's caller-asserted-identity exposure applied to eviction. DECISIONS [#u2-rekeys-teardown-onto-worktree-registry-679](DECISIONS.md#u2-rekeys-teardown-onto-worktree-registry-679) KTD5. If U6's rewire produces a trusted-enough identity/liveness pair, decide whether eviction comes back (and what authorizes it); otherwise record the retirement as permanent and strike the idle-eviction prose from the team-execution skill docs that still describe it.
+
+
 ### fleet-core `validate_receipt` under-validates `transport: null` and crashes on unhashable transports  {#bridge-receipt-transport-hardening}
 
 **Priority.** P2.

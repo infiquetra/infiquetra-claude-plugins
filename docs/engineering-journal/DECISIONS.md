@@ -2,6 +2,75 @@
 
 ## 2026-08-05
 
+### U2 re-keys teardown onto the worktree registry — a census with no ownership axis, and a sweep that reports only (#679) {#u2-rekeys-teardown-onto-worktree-registry-679}
+
+Issue: `infiquetra-claude-plugins#679`, unit U2 of the lease-broker retirement campaign (#677),
+plan `docs/plans/2026-07-30-issue-677-lease-broker-retirement-plan.md` (requirement R5c). U2
+strips the lease authority out of the #358 non-skippable teardown contract. The shape of the
+replacement was settled during execution, and six of its consequences are decisions, not
+mechanics.
+
+**KTD1 — The census is the registry cross-checked with git, and it has no ownership axis.** The
+lease list teardown enumerated was OWNER-KEYED (`owner_id == team_run_id`); the replacement —
+`outcome_worktrees.live_worktrees` over every `<git-common-dir>/saga-outcomes/*/worktrees.json`
+— carries no team-run ownership at all. So a run's teardown now reports the worktree state of the
+whole repository, not "the resources this run owns." `open_count` is re-defined to match the
+completion gate: it counts census entries whose action key has not reached a final disposition
+("still open" = "still unsettled"), because the registry never shrinks on its own once the reap
+path is gone. Per-run reporting over a shared registry is the honest post-broker semantics;
+pretending an ownership axis survived would be the dishonest version.
+
+**KTD2 — The sweep is report-only, structurally.** Per KTD12 teardown never reclaimed worktrees
+(no production caller ever injected a reaper), so the replacement deletes the reaper seam itself,
+not just its wiring: `make_worktree_sweep_adapter(ops)` takes no reaper parameter, and the disk
+sentinel (`tests/test_team_teardown.py::TestDiskRemovalSentinel`) asserts no input makes teardown
+remove a worktree, plus the seam's structural absence. Any future removal re-opens KTD8 in full
+(git cannot supply owner-liveness) and #358's R6.
+
+**KTD3 — The five R5c rows converge on two branches; `released` keeps its vocabulary slot but
+loses its producer.** Git-listed → `retained` / `worktree-listed` (rows 3+5: there is no sweep
+decision engine left to encode). Git-unlisted → `already-absent` / `worktree-not-listed` with
+evidence `worktree:path-absent:<outcome-id>:<subplot-id>` (rows 1+4; the RE-DEFINED meaning is
+"git no longer lists this worktree", not the old "the lease head is gone"). Row 2
+(released-by-reap) is deleted with the reaper: `released` remains in the frozen `DISPOSITIONS`
+vocabulary and recordable by any wired adapter, but nothing produces it now. The plan's R5
+"remain produced" was satisfied at the vocabulary level deliberately — manufacturing a producer
+would have required either disk removal (forbidden) or registry mutation (not teardown's
+ownership, per `stale_worktree_debits`' harvester-is-the-sole-mutation-owner model). The
+evidence-ref namespace move (`broker:`/`sweep:` + `{lease_id}` → `worktree:` +
+`{outcome-id}:{subplot-id}`) and the `already-absent` redefinition are named in the saga
+CHANGELOG under `Changed`, per R5c consequence 1.
+
+**KTD4 — `repo_root`, not a store object, is the threaded seam.** The issue said "thread the
+outcome store through the hook." The census spans EVERY outcome store under the common dir, so a
+single store handle is the wrong shape; the hook and CLI pass `repo_root` into
+`read_decision_input` / `reclaim_all` / `recover`, and the stores are derived inside. Same
+plumbing obligation, correct handle.
+
+**KTD5 — Vestigial contract fields stay in shape, retired in source.** `close_generation` (the
+old admission fence's generation) remains on the intent/complete facts as the constant 1; the
+fence itself, its still-closed recheck, and the generation-reissue replay semantics are gone.
+`ACTION_KINDS` / `RESOURCE_KINDS` stay frozen with all four kinds even though only
+`worktree-sweep` has a discovery source left — ledger facts recorded under the lease-era kinds
+must stay valid reads. `register_subprocess`, `authorize_resident_stop`, and the resident/process
+adapters are deleted outright: their trusted identity source is the accepted Option C loss, and
+the eviction story is queued for U6 (QUEUED
+[#teardown-eviction-gate-retired-needs-u6-story](QUEUED.md#teardown-eviction-gate-retired-needs-u6-story)).
+`root_sha256` is re-derived as a digest of the ledger's git-common-dir path (the lease
+authority's root digest retired with it); `recover --expired-only` re-keys onto "a git-listed
+worktree exists" (skip reason `live-worktrees`, observation reason
+`expired-only-live-worktrees`) — the only liveness signal left. The retirement also reached a
+test outside the unit's file list: `tests/test_team_execution_plugin.py` pinned the reference
+doc's lease-era strings `term-then-kill` and `confirmed-stalled`, which left the contract with
+the mechanisms they named — the required-list rows retired in the same commit (the
+file-disjoint-but-API-coupled shape from U1's LEARNINGS entry, recurring in the test suite).
+
+**KTD6 — Release surfaces move per-PR again (0.126.0 → 0.127.0).** The issue's "no bump until
+U7" non-goal loses to the #429 diff-aware bump guard exactly as it did for U1 (see
+[#u1-absorbs-outcome-handoff-callers-678](DECISIONS.md#u1-absorbs-outcome-handoff-callers-678)
+KTD6 — U7's R8 table still needs re-noting). saga moves 0.126.0 → 0.127.0 in this PR:
+plugin.json, regenerated marketplace.json, CHANGELOG, version-pin test.
+
 ### U1 absorbs `outcome.py`'s handoff/attach call sites — acceptance criteria outrank the file list (#678) {#u1-absorbs-outcome-handoff-callers-678}
 
 Issue: `infiquetra-claude-plugins#678`, unit U1 of the lease-broker retirement campaign (#677),

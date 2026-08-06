@@ -1,5 +1,107 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-08-06
+
+### U3 re-keys dispatch and manifest settlement onto self-authenticating close receipts (#680) {#u3-rekeys-dispatch-settlement-onto-close-receipts-680}
+
+Issue: `infiquetra-claude-plugins#680`, unit U3 of the lease-broker retirement campaign (#677),
+plan `docs/plans/2026-07-30-issue-677-lease-broker-retirement-plan.md`. U3 strips the broker out of
+`engine_dispatch.py` — the largest broker surface left — and the shape of the replacement fencing
+is a decision, not mechanics.
+
+**KTD1 — The settlement close re-keys to `saga.close-receipt.v1`: a receipt that proves itself by
+digest.** The broker's `settlement_close.v1` was fenced — its authority was the broker's resource
+head. With the broker gone, dispatch mints a close receipt per registered dispatch
+(`provenance["dispatch_close"]`) whose `receipt_sha256` closes over every other field; the claim
+and adjudication manifest transitions chain from their predecessor receipt by re-deriving that
+digest, and `satisfy_gate` re-validates the terminal receipt the same way. The chain therefore
+survives without any external head to consult. The byte-level CAS on manifest writes and the
+strict audit mirror are PRESERVED — they never needed the broker. What is lost is fencing: a
+stale concurrent writer is no longer refused at admission, it is caught (loudly) after the fact.
+
+**KTD2 — The accepted fencing loss settles at the byte check, and the race test pins the honest
+semantics.** Two racing claims of one execution are now BOTH admitted; the transition's post-write
+read-back (`canonical manifest write does not match expected output bytes`) detects an interleaved
+writer, so a contender whose bytes were overwritten fails loudly and exactly one final manifest
+persists. The two-process race pin was rewritten to assert exactly that — admission never refuses,
+the loser's only typed failure is the byte check. A re-claim from identical inputs is
+content-addressed and mints the identical receipt: no fencing sequence exists to distinguish two
+dispatches, by design.
+
+**KTD3 — Resource identity stays execution-stable; `attempt_id` is documentation.**
+`_engine_resource_ref` hashes only the `execution_id`, so every receipt for one execution shares
+its resource ref and retries chain across attempts without an identity fork. `session_id` survives
+everywhere: it arms the delegation-integrity tripwire and keys the integrity counter — broker-free
+purposes both. `LeaseAdmission` is deleted outright: nothing consumes admission limits without the
+broker.
+
+**KTD4 — Panels lose their fence entirely; the session contract stays.** Member dispatches append
+reconcile/apply facts directly once the foreman result validates — no settlement guard holds the
+append window, and a second panel dispatch over the same execution proceeds (pinned). The bounded
+session identity stays REQUIRED: it is validated before any preflight, dispatch, or fact.
+
+---
+
+### U3 absorbs three coupled broker consumers; U4 shrinks to one file (#680) {#u3-absorbs-three-coupled-broker-consumers-680}
+
+Issue: `infiquetra-claude-plugins#680` (re-noted during execution; KTD4 of
+`{#u1-absorbs-outcome-handoff-callers-678}` makes the re-note discipline mandatory).
+
+**KTD1 — Three forced absorptions landed in U3's PR because a green suite is unreachable
+otherwise.** (a) `outcome.py`'s surviving broker surface — `production_worktree_processor` and the
+two CLI branches injecting `default_lease_authority()` — existed only to thread `lease_authority`
+into the worktree seams U3 deletes. (b) `second_opinion.py`'s lease surface
+(`lease_admission_for_session`, the `lease_session_id`/`lease_admission` threading) existed only to
+feed `engine_dispatch.dispatch`, whose signature changes; it re-keys to the trusted `session_id`
+alone. (c) `outcome_dispatcher.py`'s WHOLE broker surface (three `fleet_commons_shim.load` sites,
+`default_lease_authority`, `DispatcherLeaseTransientError`) existed only to serve the lease-acquire
+path; deleting the seams without it leaves the suite red. Same precedent as U1: callers of deleted
+seams move in the same PR.
+
+**KTD2 — U4 (#681) is re-noted to ONE file.** With the dispatcher absorbed, U4 shrinks to
+`workflow_emitter.py` (third correction; #681's body carries the history). The plan's "U1–U4 are
+file-disjoint and may run in parallel" claim is retired as a survey artifact — units land
+sequentially against a moving tree, and the issue bodies are the authoritative shapes.
+
+---
+
+### U3 makes cross-run worktree reclamation a documented operator path (#680) {#u3-makes-worktree-reclamation-an-operator-path-680}
+
+Issue: `infiquetra-claude-plugins#680` (campaign #677 Scope Decision row 3).
+
+**KTD1 — The sweep was the only cross-run reaper; its loss is named, not papered over.**
+`lease_authority.sweep(worktree_reaper=...)` in `outcome_worktrees.py` was the one production
+reaper that crossed run boundaries. What survives unchanged: terminal reaping and path-absent
+settlement in `harvest_worktrees` (same-outcome passes) and prune/teardown reaping. What is lost:
+abandoned dispatched worktrees accumulate until reclaimed by hand.
+
+**KTD2 — The replacement is report-only by construction.** `reclaim_candidates(repo_root)` takes a
+census (`live` / `path-absent` / `unregistered`), `--reclaim-list` prints it as JSON, and
+`plugins/saga/references/worktree-reclamation.md` documents the manual `git worktree remove --force`
+procedure. Nothing wires the inventory to any tick — the 88-worktree manual cleanup is the
+precedent, and wiring a reaper would be a scope reversal needing its own decision.
+
+**KTD3 — Removing a live sub-outcome's worktree drives the R32 `rejected` terminal; the doc says
+so.** That is the designed consequence of out-of-band removal, pinned end-to-end in
+`test_manual_reclamation_procedure_end_to_end`. **Revisit-when:** abandoned-worktree accumulation
+becomes operationally painful (crash-heavy fleets), or U7's fleet-core deletion frees a natural
+home for an opt-in reaper.
+
+---
+
+### U3 restores a loud dispatcher abort for the whole DispatcherError category (#680) {#u3-restores-loud-dispatcher-abort-680}
+
+Issue: `infiquetra-claude-plugins#680`.
+
+**KTD1 — The transient/permanent split existed only to classify lease refusals; the category is
+extinct.** `DispatcherLeaseTransientError` and outcome.py's halt-and-continue arm (#627/#637)
+existed because lease refusals were recoverable-by-retry. With admission gone, NO DispatcherError
+is transient: `make_dispatcher` translates only `BackendHaltError`/`BackendRateLimitError`, and
+outcome.py's reconcile arm re-raises everything else loudly — the pre-#627 posture, restored for
+the whole category rather than grown a new classification. The store-level dispatch lock stays
+HELD on abort (its TTL stale-reclaim is the recovery), the coordinator lock is freed by advance's
+outer finally, and the pin asserts the abort happens before any ledger write.
+
 ## 2026-08-05
 
 ### U2 re-keys teardown onto the worktree registry — a census with no ownership axis, and a sweep that reports only (#679) {#u2-rekeys-teardown-onto-worktree-registry-679}

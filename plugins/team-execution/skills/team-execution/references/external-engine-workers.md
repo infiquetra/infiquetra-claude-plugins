@@ -92,12 +92,13 @@ the complete returned list with `panel_halt()`, and only starts member dispatch 
 available. It must not call `resolve({role_kind: "panel"})`; that API remains the resolver's existing
 single-resolution role policy, not a fan-out request.
 
-The coordinator also supplies the trusted runtime `session_id` and the exact Saga-resolved
-`LeaseAdmission` before role resolution. Each ordered member gets a stable `panel:<index>` attempt
-inside that session. The fleet broker acquires before invoking the adapter, enters an exact-token
-settlement guard immediately after the adapter returns, holds that guard across evidence processing
-and durable fact writes, and atomically releases afterward. A retry cannot supersede a member while
-its accepted result is being persisted.
+The coordinator also supplies the trusted runtime `session_id` before role resolution. Each ordered
+member gets a stable `panel:<index>` attempt inside that session; member identity is caller-asserted
+(#677/U3) — the bounded session/execution/attempt identities are validated for shape, never
+broker-verified. Member dispatches no longer acquire or renew a lease, and the reconcile/apply facts
+are appended directly once the foreman result validates — the accepted fencing loss applies (plan
+#677 Scope Decision row 1). `session_id` stays required: it keys the delegation-integrity tripwire
+inside each member dispatch.
 
 Member findings stay in-memory advisory evidence. Each typed finding becomes a panel source; identical
 content at the same source ordinal is deduplicated while retaining all producing member identities,
@@ -196,9 +197,9 @@ governs how the resolver responds when nothing usable is available:
 ## 3. Dispatch — protocol forwarded verbatim (R11)
 
 When `resolution.halt` is `None` and the engine is not `"claude"`, the chaperone initializes one
-broker authority, one Saga-resolved **read-write** admission, one trusted session, and one bounded
-attempt identity for the entire dispatch → claim → adjudication → gate sequence. It builds the
-wrapper invocation from the resolution's own payload — never re-authored or paraphrased:
+trusted session and one bounded attempt identity for the entire dispatch → claim → adjudication →
+gate sequence. It builds the wrapper invocation from the resolution's own payload — never
+re-authored or paraphrased:
 
 ```python
 invocation = (
@@ -210,8 +211,7 @@ invocation = (
 )
 evidence = engine_dispatch.dispatch(
     resolution, runner=runner, model=model, sandbox=unit_sandbox, write_set=unit_files,
-    session_id=session_id, lease_authority=lease_authority,
-    lease_admission=lease_admission, attempt_id=attempt_id,
+    session_id=session_id, attempt_id=attempt_id,
     execution_id=f"{worker_id}-{unit_id}", intent=unit_intent,
     expected_identity=(
         f"{plan_time_resolution_preview['engine_id']}/{plan_time_resolution_preview['variant']}"
@@ -221,11 +221,15 @@ evidence = engine_dispatch.dispatch(
 )
 ```
 
-Here `lease_authority` is the single `lease_broker.LeaseBroker` selected for the worker run,
-`lease_admission` is the one resolved `LeaseAdmission(..., mutation="read-write")`,
-`session_id = CLAUDE_CODE_SESSION_ID`, and `attempt_id` is a non-empty, control-character-free
-identifier of at most 256 characters. Do not construct a second broker or admission snapshot for
-the later manifest transitions.
+Here `session_id = CLAUDE_CODE_SESSION_ID` and `attempt_id` is a non-empty, control-character-free
+identifier of at most 256 characters. Identity is caller-asserted since the fleet broker's
+retirement (#677/U3): the bounded session/execution/attempt identities are validated for shape,
+never broker-verified, and dispatch is not admitted against any runtime lease — two concurrent
+dispatches of the same attempt both proceed (accepted loss, plan #677 Scope Decision row 1). The
+registered dispatch mints a self-authenticating `saga.close-receipt.v1` receipt onto
+`evidence.provenance["dispatch_close"]`; that receipt seeds the claim → adjudication → gate receipt
+chain in §5. Do not re-author identities for the later manifest transitions — the chain carries
+itself by digest.
 
 `expected_identity` (`engine_dispatch.py:165`) is the §1 plan-time preview, forwarded verbatim
 so `dispatch()` stamps it onto the evidence's provenance. This is what lets the shared manifest
@@ -329,17 +333,16 @@ here.
    3 must exist first.
 3. **Create the canonical manifest chain and gate.** Execute the detailed manifest procedure below
    before touching the working tree. After the claim and any required adjudication return their exact
-   settlement closes, call:
+   close receipts, call:
    ```python
    engine_dispatch.satisfy_gate(
        evidence, adjudicated.manifest,
        reconciliation=result, ledger=ledger, store=store,
        audit_store_root=audit_store_root,
-       manifest_settlement_close=adjudicated.settlement_close,
-       lease_authority=lease_authority,
+       manifest_close_receipt=adjudicated.close_receipt,
    )
    ```
-   A stale, missing, noncanonical, or mismatched close refuses before apply.
+   A stale, missing, noncanonical, or mismatched close receipt refuses before apply.
 4. **Apply.** Only after the gate accepts the bound result does the chaperone apply the reviewed patch
    — the engine never touches the working
    tree (KTD6/R23). The chaperone **owns the commit**, but the commit itself happens only after
@@ -375,16 +378,17 @@ here.
        execution_id=f"{worker_id}-{unit_id}", saga_ref=saga_ref, created_at=created_at,
        effort=resolution.effort, protocol="\n".join(resolution.protocol),
        audit_store_root=fleet_commons_shim.load("audit_store").Store.for_root(None).root,
-       predecessor_close=evidence.provenance["lease"]["settlement_close"],
-       session_id=session_id, lease_admission=lease_admission,
-       lease_authority=lease_authority,
+       predecessor_close=evidence.provenance["dispatch_close"],
+       session_id=session_id,
    )
    manifest = claim_result.manifest
    ```
    This is an exact receipt-chain transition, not an ordinary manifest overwrite. The resource is
-   stable by `execution_id`; `attempt_id` is evidence metadata only. The broker acquires a successor
-   from the registered dispatch's exact token and receipt hash, then commits the manifest and strict
-   audit mirror before publishing `claim_result.settlement_close`.
+   stable by `execution_id`; `attempt_id` is evidence metadata only. The transition re-validates the
+   dispatch's `saga.close-receipt.v1` receipt by digest re-derivation, CAS-commits the manifest
+   bytes against the store's current bytes, writes the strict audit mirror, and mints the claim's
+   own close receipt — published as `claim_result.close_receipt` (#677/U3; the broker's
+   successor-CAS fencing was retired with it, the byte CAS stays).
 
    `audit_store_root` (#396) mirrors the manifest — and the raw `bridge_receipt.v1` when
    `evidence.runner_receipt` carries one — to the durable delegation-audit store
@@ -393,28 +397,27 @@ here.
    documented call site that resolves the real-world default explicitly — `record_dispatch_manifest`
    itself defaults `audit_store_root` to `None` (skip), so a direct unit-test caller never touches a
    real developer's home directory unless it opts in. Pass the same resolved root and
-   `claim_result.settlement_close` to `adjudicate_manifest(...)`, reusing the exact same
-   `session_id`, `lease_admission`, `lease_authority`, and `audit_store_root`:
+   `claim_result.close_receipt` to `adjudicate_manifest(...)`, reusing the exact same
+   `session_id` and `audit_store_root`:
    ```python
    adjudicated = engine_dispatch.adjudicate_manifest(
        store, evidence.execution_id, adjudications,
        audit_store_root=audit_store_root,
-       predecessor_close=claim_result.settlement_close,
-       session_id=session_id, lease_admission=lease_admission,
-       lease_authority=lease_authority,
+       predecessor_close=claim_result.close_receipt,
+       session_id=session_id,
    )
    engine_dispatch.satisfy_gate(
        evidence, adjudicated.manifest,
        reconciliation=result, ledger=ledger, store=store,
        audit_store_root=audit_store_root,
-       manifest_settlement_close=adjudicated.settlement_close,
-       lease_authority=lease_authority,
+       manifest_close_receipt=adjudicated.close_receipt,
    )
    ```
    Adjudication compares the source bytes captured for its outgoing manifest against the callback's
    current bytes, then commits the adjudication plus strict mirror and returns its own close receipt.
-   A stale predecessor or changed source cannot alter either byte sequence, and a gate receives only
-   the returned adjudication close.
+   A stale or tampered predecessor receipt fails digest re-derivation and a changed source fails the
+   byte CAS before any byte sequence is altered; the gate receives only the returned adjudication
+   close receipt and re-validates the whole chain by digest.
    `build_dispatch_manifest` derives the disposition from the
    evidence alone: `evidence.halt is not None` → `FELL_BACK_TO_CLAUDE` (carrying the
    halt/downgrade note as `disposition_note`); otherwise, when the evidence's provenance carries

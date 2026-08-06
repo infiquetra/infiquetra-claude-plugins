@@ -12,7 +12,7 @@ import json
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
@@ -120,215 +120,23 @@ def test_make_dispatcher_raises_halt_with_receipt() -> None:
     assert exc.value.receipt.subplot_id == "build"
 
 
-def test_make_dispatcher_holds_lease_across_backend_settlement(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    authority = D.fleet_commons_shim.load("lease_broker")
-    selected = authority.LeaseBroker(tmp_path / "authority")
-    original_dispatch = D.dispatch
-
-    def observing_dispatch(req: Any, *, available: Any) -> dict[str, Any]:
-        live = selected.inspect()["leases"]
-        assert len(live) == 1
-        assert live[0]["session_id"] == "outcome:ship-x"
-        assert live[0]["mutation"] == "none"
-        return cast(dict[str, Any], original_dispatch(req, available=available))
-
-    monkeypatch.setattr(D, "dispatch", observing_dispatch)
-    dispatcher = D.make_dispatcher(lease_authority=selected)
-
-    assert dispatcher(_req("inline")) == "leaf-ship-x-build"
-    assert selected.inspect()["leases"] == []
+def test_concurrent_dispatch_of_the_same_leaf_both_proceed() -> None:
+    # #677 Scope Decision row 1 (accepted loss, pinned): dispatch admission is gone with the fleet
+    # broker, so two concurrent dispatches of the same leaf BOTH PROCEED — neither raises. This is
+    # intended behavior now, not a regression to "fix".
+    first = D.dispatch(_req("team-execution"))
+    second = D.dispatch(_req("team-execution"))
+    assert first["status"] == "dispatched" == second["status"]
+    assert first["leaf_saga_id"] == second["leaf_saga_id"]
 
 
-def test_make_dispatcher_refuses_capacity_before_backend_call(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    authority = D.fleet_commons_shim.load("lease_broker")
-    policy = D.fleet_commons_shim.load("concurrency_policy")
-    selected = authority.LeaseBroker(tmp_path / "authority")
-    limits = policy.AdmissionLimits()
-    for index in range(limits.max_concurrent):
-        selected.acquire_agent(
-            owner_id=f"owner-{index}",
-            session_id="outcome:ship-x",
-            policy_sha256=limits.policy_sha256(),
-            session_limit=limits.max_concurrent,
-            aggregate_limit=limits.aggregate_max_concurrent,
-            mutation="none",
-            resource_ref={"logical_unit_id": f"existing-{index}"},
-        )
-    monkeypatch.setattr(
-        D,
-        "dispatch",
-        lambda *_args, **_kwargs: pytest.fail("capacity denial must precede backend dispatch"),
-    )
-
-    with pytest.raises(D.DispatcherError, match="lease admission refused"):
-        D.make_dispatcher(lease_authority=selected)(_req("inline"))
-
-
-def test_make_dispatcher_preserves_primary_failure_when_release_also_fails(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class BrokenReleaseAuthority:
-        root_sha256 = "a" * 64
-
-        def acquire_agent(self, **_kwargs: Any) -> Any:
-            return SimpleNamespace(lease_id="lease-1", token=SimpleNamespace())
-
-        def release(self, *_args: Any, **_kwargs: Any) -> bool:
-            raise RuntimeError("cleanup exploded")
-
-    monkeypatch.setattr(
-        D,
-        "dispatch",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("primary exploded")),
-    )
-
-    with pytest.raises(RuntimeError, match="primary exploded") as exc:
-        D.make_dispatcher(lease_authority=BrokenReleaseAuthority())(_req("inline"))
-    assert any(
-        "lease settlement refused: cleanup exploded" in note
-        for note in getattr(exc.value, "__notes__", ())
-    )
-
-
-def test_make_dispatcher_refuses_live_cross_runtime_prior(tmp_path: Path) -> None:
-    # #627 R2: a concurrent runtime already holding the outcome-dispatch lease on the same
-    # content-derived digest makes the refuse-mode acquire surface as a typed DispatcherError at
-    # admission — not as the loser's later renew failure. Two brokers over one state dir stand in
-    # for the two runtimes.
-    authority = D.fleet_commons_shim.load("lease_broker")
-    policy = D.fleet_commons_shim.load("concurrency_policy")
-    root = tmp_path / "authority"
-    peer = authority.LeaseBroker(root)
-    selected = authority.LeaseBroker(root)
-    limits = policy.AdmissionLimits()
-    req = _req("inline")
-    req.dispatch_id = "outcome:ship-x:frontier:build"
-    req.attempt = 1
-    # The peer holds the exact resource_ref make_dispatcher will compute for this request.
-    peer.acquire_agent(
-        owner_id="peer-runtime",
-        session_id="outcome:ship-x",
-        policy_sha256=limits.policy_sha256(),
-        session_limit=limits.max_concurrent,
-        aggregate_limit=limits.aggregate_max_concurrent,
-        mutation="none",
-        resource_ref={"logical_unit_id": "outcome:ship-x:build:outcome:ship-x:frontier:build"},
-        agent_type="outcome-dispatch",
-        on_conflict="refuse",
-    )
-
-    with pytest.raises(D.DispatcherError, match="lease admission refused") as exc:
-        D.make_dispatcher(lease_authority=selected)(req)
-    assert "peer-runtime" in str(exc.value)  # the holder is named through the wrapped conflict
-
-
-def test_make_dispatcher_resource_digest_is_deterministic(monkeypatch: pytest.MonkeyPatch) -> None:
-    # #627 KTD6: dispatch_identity is content-derived, so two DispatchRequests for the same
-    # outcome/subplot/attempt resolve to ONE resource digest. Pinned by capturing the resource_ref
-    # make_dispatcher actually hands the broker, not by reimplementing the key here.
-    authority = D.fleet_commons_shim.load("lease_broker")
-    captured: list[dict[str, Any]] = []
-
-    class _Capturing:
-        DEFAULT_TTL_SECONDS = 900
-
-        def acquire_agent(self, **kwargs: Any) -> Any:
-            captured.append(kwargs)
-            return SimpleNamespace(lease_id="lease-1", token=SimpleNamespace())
-
-        def renew(self, *_a: Any, **_k: Any) -> Any:
-            return SimpleNamespace()
-
-        def release(self, *_a: Any, **_k: Any) -> bool:
-            return True
-
-    def _make_req() -> Any:
-        req = _req("inline")
-        req.dispatch_id = "outcome:ship-x:frontier:build"
-        req.attempt = 1
-        return req
-
-    D.make_dispatcher(lease_authority=_Capturing())(_make_req())
-    D.make_dispatcher(lease_authority=_Capturing())(_make_req())
-
-    assert len(captured) == 2
-    assert all(call["on_conflict"] == "refuse" for call in captured)  # R2 wiring
-    digests = {authority.resource_sha256(call["resource_ref"]) for call in captured}
-    assert len(digests) == 1  # same outcome/subplot/attempt -> one resource digest
-
-
-@pytest.mark.parametrize("version", [1, 99])
-def test_outcome_dispatch_rejects_lease_protocol_skew(version: int) -> None:
-    with pytest.raises(D.DispatcherError, match="install/update fleet-core"):
-        D._require_lease_protocol(SimpleNamespace(PROTOCOL_VERSION=version))
-
-
-# ------------------------------------------------------- #637: typed transient/permanent contract
-# The dispatcher seam classifies WHERE the cause is in hand (KTD2): a lease-lifecycle transient
-# raises the exported ``DispatcherLeaseTransientError`` subclass; every other fault stays a plain
-# ``DispatcherError``. ``outcome.py`` then branches with one isinstance and never imports fleet-core.
-
-
-def test_lease_transient_is_a_dispatcher_error_subclass() -> None:
-    # KTD2: a subclass so every existing ``except DispatcherError`` (the seam's own ``main``, the
-    # reconcile arm's base catch) still catches both flavors; the branch is by isinstance, not type.
-    assert issubclass(D.DispatcherLeaseTransientError, D.DispatcherError)
-
-
-def test_admission_conflict_raises_transient_subclass() -> None:
-    # #637 KTD2: a refuse-mode admission conflict (the broker raising ``LeaseConflictError`` on a
-    # live-unexpired prior) is classified TRANSIENT by the normalize arm.
-    authority = D.fleet_commons_shim.load("lease_broker")
-
-    class _ConflictAuthority:
-        def acquire_agent(self, **_kwargs: Any) -> Any:
-            raise authority.LeaseConflictError(
-                "holder peer-runtime already holds this resource",
-                holder_owner_id="peer-runtime",
-            )
-
-    with pytest.raises(D.DispatcherLeaseTransientError, match="lease admission refused") as exc:
-        D.make_dispatcher(lease_authority=_ConflictAuthority())(_req("inline"))
-    assert "peer-runtime" in str(exc.value)  # the conflict cause is preserved through the wrap
-
-
-def test_admission_shim_failure_raises_plain_permanent(monkeypatch: pytest.MonkeyPatch) -> None:
-    # #637 KTD2: a fleet-core shim-load / protocol-resolution failure at admission is PERMANENT —
-    # it stays a plain ``DispatcherError`` (NOT the transient subclass), so the reconcile arm aborts
-    # the tick loudly rather than re-queuing forever. The classifier's own shim load also fails and
-    # correctly declines the transient classification (fails closed to permanent).
-    def _boom(_name: str) -> Any:
-        raise RuntimeError("fleet-core not installed")
-
-    monkeypatch.setattr(D.fleet_commons_shim, "load", _boom)
-
-    class _Auth:
-        def acquire_agent(self, **_kwargs: Any) -> Any:  # pragma: no cover - never reached
-            raise AssertionError("shim load fails before acquire")
-
-    with pytest.raises(D.DispatcherError, match="lease admission refused") as exc:
-        D.make_dispatcher(lease_authority=_Auth())(_req("inline"))
-    assert not isinstance(exc.value, D.DispatcherLeaseTransientError)
-
-
-def test_renew_failure_raises_transient_subclass() -> None:
-    # #637 KTD2: a mid-flight renew loss (the lease expired under us before settlement) is TRANSIENT.
-    class _RenewFailAuthority:
-        def acquire_agent(self, **_kwargs: Any) -> Any:
-            return SimpleNamespace(lease_id="lease-1", token=SimpleNamespace())
-
-        def renew(self, *_a: Any, **_k: Any) -> Any:
-            raise RuntimeError("lease vanished under us")
-
-        def release(self, *_a: Any, **_k: Any) -> bool:
-            return True
-
-    with pytest.raises(D.DispatcherLeaseTransientError, match="expired before settlement"):
-        D.make_dispatcher(lease_authority=_RenewFailAuthority())(_req("inline"))
+def test_make_dispatcher_concurrent_dispatch_both_proceed() -> None:
+    # The dispatcher seam no longer refuses on admission (#677/U3): back-to-back dispatches of the
+    # same request both proceed. The docstring names the accepted idempotency loss (KTD11: zero
+    # recorded refusals).
+    disp = D.make_dispatcher()
+    assert disp(_req("team-execution")) == "leaf-ship-x-build"
+    assert disp(_req("team-execution")) == "leaf-ship-x-build"
 
 
 # --------------------------------------------------------------------------- team_emitter wiring (R5)

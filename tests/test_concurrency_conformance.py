@@ -77,55 +77,37 @@ EXPECTED_ROWS: frozenset[InventoryRow] = frozenset(
             "lease_protocol.renew",
             "lease_protocol.teardown",
         ),
+        # Broker-free rows since #677/U3: the lease lifecycle cells are retired markers; the
+        # settlement record is the close-receipt mint, the worktree's ownership its registry entry.
         (
             "plugins/saga/scripts/engine_dispatch.py",
             "_dispatch_once",
-            "concurrency_policy.AdmissionLimits",
+            "retired:broker-free-(#677/U3)",
             "agent",
-            "engine_dispatch.dispatch",
+            "retired:broker-free-(#677/U3)",
             "not-applicable:in-process-adapter",
-            "LeaseBroker.prepare_agent_settlement",
-            "LeaseBroker.commit_agent_settlement",
-        ),
-        (
-            "plugins/saga/scripts/engine_dispatch.py",
-            "guarded_runner",
-            "concurrency_policy.AdmissionLimits",
-            "agent",
-            "engine_dispatch.dispatch",
-            "not-applicable:in-process-adapter",
-            "LeaseBroker.prepare_agent_settlement",
-            "LeaseBroker.commit_agent_settlement",
-        ),
-        (
-            "plugins/saga/scripts/engine_dispatch.py",
-            "guarded_panel_runner",
-            "concurrency_policy.AdmissionLimits",
-            "agent",
-            "engine_dispatch.dispatch_advisory_panel",
-            "not-applicable:in-process-adapter",
-            "LeaseBroker.renew",
-            "LeaseBroker.commit_agent_settlement",
+            "retired:broker-free-(#677/U3)",
+            "saga.close-receipt.v1:mint",
         ),
         (
             "plugins/saga/scripts/outcome.py",
             "_reconcile_once",
-            "concurrency_policy.AdmissionLimits",
+            "retired:broker-free-(#677/U3)",
             "agent",
-            "outcome_dispatcher.make_dispatcher",
+            "retired:broker-free-(#677/U3)",
             "not-applicable:in-process-adapter",
-            "LeaseBroker.renew",
-            "LeaseBroker.release",
+            "retired:broker-free-(#677/U3)",
+            "retired:broker-free-(#677/U3)",
         ),
         (
             "plugins/saga/scripts/outcome_worktrees.py",
             "ensure_worktree",
             "WORKTREE_CAP",
             "worktree",
-            "_arm_worktree",
-            "worktree_lease_receipt",
-            "reconcile_worktree_leases",
-            "_reap_prevalidated",
+            "registry.register",
+            "not-applicable:registry-entry",
+            "retired:broker-free-(#677/U3)",
+            "reap_worktree.deregister",
         ),
     }
 )
@@ -134,11 +116,11 @@ EXPECTED_CONCURRENCY_ROWS: frozenset[ConcurrencyRow] = frozenset(
     for source, function, governor, _pool, _acquire, _bind, _renew, _release in EXPECTED_ROWS
     if source == REL_SOURCE
 )
+# guarded_runner / guarded_panel_runner are gone with the settlement fence (#677/U3): the runner
+# invocation lives directly inside _dispatch_once now.
 EXPECTED_EXECUTABLE_SPAWNS = frozenset(
     {
         ("plugins/saga/scripts/engine_dispatch.py", "_dispatch_once", "runner"),
-        ("plugins/saga/scripts/engine_dispatch.py", "guarded_runner", "runner"),
-        ("plugins/saga/scripts/engine_dispatch.py", "guarded_panel_runner", "runner"),
         ("plugins/saga/scripts/outcome.py", "_reconcile_once", "dispatch"),
         ("plugins/saga/scripts/outcome_worktrees.py", "ensure_worktree", "ops.add"),
     }
@@ -167,34 +149,10 @@ def test_issue_355_decision_uses_one_broker_authority() -> None:
         assert obsolete not in section
 
 
+# Broker-free since #677/U3: the engine_dispatch / outcome_dispatcher / outcome_worktrees lease
+# lifecycle entries are deleted with their seams. The workflow_emitter and lease_broker entries
+# stay until their own retirement units (U4/U5) land.
 EXPECTED_LEASE_CALLS: dict[tuple[str, str], frozenset[str]] = {
-    ("plugins/saga/scripts/engine_dispatch.py", "dispatch"): frozenset(
-        {
-            "selected.acquire_agent",
-            "selected.acquire_successor",
-            "selected.commit_agent_settlement",
-            "selected.abort_agent_settlement",
-            "selected.release",
-        }
-    ),
-    ("plugins/saga/scripts/engine_dispatch.py", "guarded_runner"): frozenset(
-        {"selected.prepare_agent_settlement"}
-    ),
-    ("plugins/saga/scripts/engine_dispatch.py", "dispatch_advisory_panel"): frozenset(
-        {
-            "selected.acquire_agent",
-            "selected.prepare_agent_settlement",
-            "selected.commit_agent_settlement",
-            "selected.abort_agent_settlement",
-            "selected.release",
-        }
-    ),
-    ("plugins/saga/scripts/engine_dispatch.py", "guarded_panel_runner"): frozenset(
-        {"selected.renew"}
-    ),
-    ("plugins/saga/scripts/outcome_dispatcher.py", "_dispatch"): frozenset(
-        {"selected.acquire_agent", "selected.renew", "selected.release"}
-    ),
     ("plugins/saga/scripts/workflow_emitter.py", "reserve"): frozenset({"selected.reserve_batch"}),
     ("plugins/saga/scripts/workflow_emitter.py", "renew"): frozenset({"selected.renew_batch"}),
     ("plugins/saga/scripts/workflow_emitter.py", "release"): frozenset({"selected.settle_batch"}),
@@ -207,19 +165,6 @@ EXPECTED_LEASE_CALLS: dict[tuple[str, str], frozenset[str]] = {
     ),
     ("plugins/saga/scripts/lease_broker.py", "record_hook_parent"): frozenset(
         {"selected.record_parent_completed"}
-    ),
-    ("plugins/saga/scripts/outcome_worktrees.py", "ensure_worktree"): frozenset(
-        {"_arm_worktree", "ops.add"}
-    ),
-    ("plugins/saga/scripts/outcome_worktrees.py", "reconcile_worktree_leases"): frozenset(
-        {
-            "lease_authority.transfer_worktree",
-            "lease_authority.sweep",
-            "lease_authority.renew",
-        }
-    ),
-    ("plugins/saga/scripts/outcome_worktrees.py", "_reap_prevalidated"): frozenset(
-        {"lease_authority.release"}
     ),
 }
 SITE_CONTRACTS = {
@@ -1020,16 +965,11 @@ def test_injected_unguarded_executable_spawn_is_rejected() -> None:
         assert_conformance(sources, INVENTORY_PATH.read_text())
 
 
+# The engine_dispatch / outcome_dispatcher parameters are retired with their seams (#677/U3);
+# workflow_emitter keeps its lifecycle until U4.
 @pytest.mark.parametrize(
     ("source_path", "call"),
     [
-        ("plugins/saga/scripts/engine_dispatch.py", "selected.acquire_agent"),
-        ("plugins/saga/scripts/engine_dispatch.py", "selected.prepare_agent_settlement"),
-        ("plugins/saga/scripts/engine_dispatch.py", "selected.commit_agent_settlement"),
-        ("plugins/saga/scripts/engine_dispatch.py", "selected.release"),
-        ("plugins/saga/scripts/outcome_dispatcher.py", "selected.acquire_agent"),
-        ("plugins/saga/scripts/outcome_dispatcher.py", "selected.renew"),
-        ("plugins/saga/scripts/outcome_dispatcher.py", "selected.release"),
         ("plugins/saga/scripts/workflow_emitter.py", "selected.reserve_batch"),
         ("plugins/saga/scripts/workflow_emitter.py", "selected.renew_batch"),
         ("plugins/saga/scripts/workflow_emitter.py", "selected.settle_batch"),

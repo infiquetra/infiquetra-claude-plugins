@@ -153,33 +153,39 @@ def test_external_engine_workers_has_one_manifest_construction_path() -> None:
     )
 
 
-def test_documented_chaperone_manifest_path_names_exact_broker_receipt_chain() -> None:
+def test_documented_chaperone_manifest_path_names_exact_close_receipt_chain() -> None:
+    # Broker-free chain (#677/U3): dispatch mints a self-authenticating close receipt; claim and
+    # adjudication chain from it by digest; the gate re-validates the terminal receipt.
     body = EXTERNAL_ENGINE_WORKERS_MD.read_text(encoding="utf-8")
+    for banned in ("lease_admission", "lease_authority", "settlement_close"):
+        assert banned not in body, (
+            f"the broker's {banned!r} vocabulary must be gone from the chaperone contract"
+        )
     for required in (
-        "lease_admission=lease_admission",
-        "lease_authority=lease_authority",
         "attempt_id=attempt_id",
-        'predecessor_close=evidence.provenance["lease"]["settlement_close"]',
-        "claim_result.settlement_close",
+        'provenance["dispatch_close"]',
+        'predecessor_close=evidence.provenance["dispatch_close"]',
+        "claim_result.close_receipt",
         "adjudicated = engine_dispatch.adjudicate_manifest(",
-        "predecessor_close=claim_result.settlement_close",
-        "manifest_settlement_close=adjudicated.settlement_close",
+        "predecessor_close=claim_result.close_receipt",
+        "manifest_close_receipt=adjudicated.close_receipt",
         "stable by `execution_id`",
+        "saga.close-receipt.v1",
     ):
         assert required in body, f"canonical chaperone manifest contract is missing {required!r}"
     stages = (
         "evidence = engine_dispatch.dispatch(",
-        'predecessor_close=evidence.provenance["lease"]["settlement_close"]',
+        'predecessor_close=evidence.provenance["dispatch_close"]',
         "adjudicated = engine_dispatch.adjudicate_manifest(",
-        "predecessor_close=claim_result.settlement_close",
+        "predecessor_close=claim_result.close_receipt",
         "engine_dispatch.satisfy_gate(",
-        "manifest_settlement_close=adjudicated.settlement_close",
+        "manifest_close_receipt=adjudicated.close_receipt",
     )
     positions = [body.index(stage) for stage in stages[:4]] + [
         body.rindex(stage) for stage in stages[4:]
     ]
     assert positions == sorted(positions), "canonical close receipt sequence must remain ordered"
-    assert "A stale predecessor or changed source cannot alter either byte sequence" in body
+    assert "A stale or tampered predecessor receipt fails digest re-derivation" in body
 
 
 def test_documented_raw_manifest_cli_is_explicitly_noncanonical() -> None:

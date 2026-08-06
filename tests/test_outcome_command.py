@@ -894,152 +894,16 @@ def test_handed_off_leaf_status_and_attend_tell_one_story(repo: Path) -> None:
     assert calls == []
 
 
-# --------------------------------------------------------------------------- #627/R3: DispatcherError arm
+# ----------------------------------------------------- DispatcherError arm (#637, re-keyed #677/U3)
 
 
-def _refusing_dispatcher(message: str = "outcome dispatch lease admission refused: holder owner-A"):
-    """A dispatcher that raises a typed ``DispatcherLeaseTransientError`` (a cross-runtime lease
-    refusal or a mid-flight renew failure — both TRANSIENT per #637's dispatcher contract) for a
-    target subplot; other subplots dispatch normally."""
-
-    def _disp(req: Any) -> str:
-        raise DISPATCHER.DispatcherLeaseTransientError(message)
-
-    return _disp
-
-
-def test_advance_records_lease_refusal_as_halt_and_continues(repo: Path) -> None:
-    """#627/R3/KTD3 (codex COR1 pin parity): a mid-tick lease REFUSAL — the dispatcher raising a
-    typed ``DispatcherError`` at admission — releases the per-subplot lease WITHOUT a TTL wait,
-    writes a reducer-VISIBLE ``(dispatch, halt)`` record paired to the intent's key, surfaces the
-    subplot in ``halted``, and the tick continues (a second ready leaf still dispatches). Never a
-    wedge, never a leaked lock, never a silent orphaned intent."""
-    M.start(
-        repo,
-        "ship-x",
-        "Ship X",
-        nodes=[
-            {"subplot_id": "a", "title": "A", "kind": "code"},
-            {"subplot_id": "b", "title": "B", "kind": "code"},
-        ],
-    )
-
-    calls: list[str] = []
-
-    def dispatcher(req: Any) -> str:
-        calls.append(req.subplot_id)
-        if req.subplot_id == "a":
-            # #637: an admission refusal is a TRANSIENT — the production normalize arm now raises
-            # the typed subclass for a live-prior conflict; the halt-and-continue scenario is
-            # otherwise byte-identical to the #627 pin.
-            raise DISPATCHER.DispatcherLeaseTransientError(
-                "outcome dispatch lease admission refused: holder owner-A"
-            )
-        return f"leaf-{req.subplot_id}"
-
-    result = M.advance(repo, "ship-x", dispatcher=dispatcher, now=lambda: 1_700_000_000.0)
-
-    # the refused leaf is surfaced in `halted` (operator-visible), NOT in `retriable`
-    assert [h["subplot_id"] for h in result.halted] == ["a"]
-    assert "a" not in result.retriable
-    assert any("refused" in h.get("reason", "") for h in result.halted)
-    # the tick CONTINUED: the independent ready leaf `b` still dispatched in the SAME advance
-    assert result.dispatched == ["b"]
-    assert calls == ["a", "b"]
-
-    store = STORE.Store.for_outcome("ship-x", repo)
-    # the per-subplot dispatch lease was released — a fresh acquire succeeds WITHOUT a TTL wait
-    # (same `now`, no clock advance): the lock is gone, not merely expired.
-    assert STORE.acquire_dispatch(store, "a", "next-holder", 900.0, now=lambda: 1_700_000_000.0)
-
-    # the halt is reducer-VISIBLE: `kind` survived the spread as "dispatch", so the halt arm fires
-    reduced = STORE.reduce_dispatch_ledger(store)["a"]
-    assert reduced["halted"] is True and reduced["settled"] is False
-    # the receipt's own kind is preserved so no data is lost
-    halt_record = next(
-        r
-        for r in STORE.read_ledger(store)
-        if r.get("kind") == "dispatch" and r.get("phase") == "halt" and r.get("subplot_id") == "a"
-    )
-    assert halt_record["receipt_kind"] == "halt"
-    # paired to the intent lane: same `key` as the intent append
-    assert halt_record["key"] == "dispatch:a"
-
-
-def test_lease_refusal_halt_reaches_report_and_settles_silent_noop(repo: Path) -> None:
-    """#627/R3/KTD3: end-to-end — a refused leaf reaches the consolidated report's ambiguity tier
-    from a FRESH store read, and (settlement on) the attempt settles as a no-backend-effect
-    SILENT_NOOP without minting a new ledger classification."""
-    spec = M.start(
-        repo,
-        "ship-x",
-        "Ship X",
-        nodes=[{"subplot_id": "build", "title": "Build", "backend": "team-execution"}],
-    )
-    ledger = RUN_LEDGER.RunLedger(repo / "settlement" / "facts.jsonl")
-    dispatch_id, _units = SETTLEMENT.outcome_frontier_identity("ship-x", ["build"])
-
-    result = M.advance(
-        repo,
-        "ship-x",
-        dispatcher=_refusing_dispatcher(),
-        settlement_ledger=ledger,
-        now=lambda: 1_700_000_000.0,
-    )
-    assert [h["subplot_id"] for h in result.halted] == ["build"]
-    assert result.dispatched == []
-
-    # fresh store read (nothing cached): the report surfaces the still-live HALT as an ambiguity
-    fresh = STORE.Store.for_outcome("ship-x", repo)
-    assert REPORT._halted_subplots(fresh) == {"build"}
-    items = REPORT.consolidate(spec, fresh)
-    assert any(getattr(item, "subplot_id", None) == "build" for item in items)
-
-    # the settlement attempt was concluded as SILENT_NOOP — the closed vocabulary gained no member
-    settlement = next(
-        record
-        for record in RUN_LEDGER.read_facts(ledger)
-        if record.get("dispatch_id") == dispatch_id and record.get("event") == "settle"
-    )
-    assert settlement["classification"] == SETTLEMENT.SILENT_NOOP
-
-
-def test_lease_renew_failure_flavor_takes_the_same_arm(repo: Path) -> None:
-    """#627/R3: the renew-failure flavor of the refusal (``lease expired before settlement`` — a
-    mid-flight renew loss surfaced as ``DispatcherError``) takes the SAME arm: released lock,
-    visible halt, tick continues, attempt settled."""
-    M.start(
-        repo,
-        "ship-x",
-        "Ship X",
-        nodes=[{"subplot_id": "build", "title": "Build", "backend": "team-execution"}],
-    )
-    ledger = RUN_LEDGER.RunLedger(repo / "settlement" / "facts.jsonl")
-
-    result = M.advance(
-        repo,
-        "ship-x",
-        dispatcher=_refusing_dispatcher("outcome dispatch lease expired before settlement"),
-        settlement_ledger=ledger,
-        now=lambda: 1_700_000_000.0,
-    )
-    assert [h["subplot_id"] for h in result.halted] == ["build"]
-    assert any("expired before settlement" in h.get("reason", "") for h in result.halted)
-
-    store = STORE.Store.for_outcome("ship-x", repo)
-    reduced = STORE.reduce_dispatch_ledger(store)["build"]
-    assert reduced["halted"] is True and reduced["settled"] is False
-    # lock released without a TTL wait
-    assert STORE.acquire_dispatch(store, "build", "next-holder", 900.0, now=lambda: 1_700_000_000.0)
-
-
-def test_advance_permanent_dispatcher_fault_aborts_tick_loudly(repo: Path) -> None:
-    """#637 R4/R6/KTD2/KTD3: a PERMANENT DispatcherError (a plain base — fleet-core shim/protocol
-    skew, a fail-closed settlement refusal) is environmental and RE-RAISES to abort the tick loudly
-    (pre-#627 posture), BEFORE any lease-release or ledger write. No SILENT_NOOP settle and no halt
-    record for that subplot; the per-subplot ``dispatch-{sid}`` store lock stays HELD for its 900 s
-    TTL stale-reclaim (never released here), while the coordinator lock is freed by advance()'s
-    outer finally so an aborted tick never wedges the coordinator."""
+def test_advance_dispatcher_fault_aborts_tick_loudly(repo: Path) -> None:
+    """#637 R4/R6, re-keyed #677/U3: ANY DispatcherError re-raises to abort the tick loudly — the
+    transient lease-refusal arm the #627 era grew is retired with the broker, restoring the
+    pre-#627 posture for the whole category. The abort happens BEFORE any ledger write: no halt
+    record, no SILENT_NOOP settle for that subplot; the per-subplot ``dispatch-{sid}`` store lock
+    stays HELD for its TTL stale-reclaim (never released here), while the coordinator lock is
+    freed by advance()'s outer finally so an aborted tick never wedges the coordinator."""
     M.start(
         repo,
         "ship-x",
@@ -1056,11 +920,7 @@ def test_advance_permanent_dispatcher_fault_aborts_tick_loudly(repo: Path) -> No
     def dispatcher(req: Any) -> str:
         calls.append(req.subplot_id)
         if req.subplot_id == "a":
-            # a plain BASE DispatcherError == a PERMANENT fault (e.g. fleet-core protocol skew) —
-            # NOT the transient subclass, so the reconcile arm re-raises rather than halt-continues.
-            raise DISPATCHER.DispatcherError(
-                "outcome dispatch requires lease-capable fleet-core; install/update fleet-core"
-            )
+            raise DISPATCHER.DispatcherError("backend menu exhausted for this request")
         return f"leaf-{req.subplot_id}"
 
     with pytest.raises(DISPATCHER.DispatcherError) as exc:
@@ -1071,9 +931,7 @@ def test_advance_permanent_dispatcher_fault_aborts_tick_loudly(repo: Path) -> No
             settlement_ledger=ledger,
             now=lambda: 1_700_000_000.0,
         )
-    # the typed permanent fault surfaced and was NOT reclassified as the transient subclass
-    assert not isinstance(exc.value, DISPATCHER.DispatcherLeaseTransientError)
-    assert "fleet-core" in str(exc.value)
+    assert "backend menu exhausted" in str(exc.value)
     # the tick ABORTED at `a`: the independent ready leaf `b` was never reached in this tick
     assert calls == ["a"]
 

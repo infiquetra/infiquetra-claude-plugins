@@ -514,6 +514,25 @@ U1 → #678, U2 → #679, U3 → #680, U4 → #681, U5 → #682, U6 → #683, U7
 Units are file-disjoint so any two may share a dependency wave without tripping
 `assert_no_wave_file_conflicts()` (R7). U1 through U4 may run in parallel; U5 requires all of them.
 
+> **RE-NOTED 2026-08-06 (during U3 execution; plan otherwise unedited since `0a572448`).** The
+> "U1 through U4 may run in parallel" claim above and the U1–U4 file lists below are survey
+> artifacts, superseded by coupling measurement at each pull (DECISIONS
+> `{#u1-absorbs-outcome-handoff-callers-678}` KTD4):
+>
+> - **U1 (#678, merged)** absorbed `outcome.py`'s handoff/attach call sites.
+> - **U2 (#679, merged)** landed as shaped.
+> - **U3 (#680)** absorbed three forced absorptions — `outcome.py`'s surviving worktree-processor
+>   broker surface, `second_opinion.py`'s dispatch lease surface, and `outcome_dispatcher.py`'s
+>   whole broker surface (a green suite is unreachable otherwise). Its settlement fencing was
+>   re-keyed to self-authenticating `saga.close-receipt.v1` receipts (dispatch → claim →
+>   adjudication → gate, chained by digest; byte CAS preserved, fencing lost as accepted), and the
+>   deleted worktree sweep was replaced by the report-only operator path in
+>   `plugins/saga/references/worktree-reclamation.md`.
+> - **U4 (#681)** is re-noted to ONE file: `workflow_emitter.py`.
+>
+> Units now land sequentially against a moving tree. The issue bodies on #680/#681 are the
+> authoritative shapes.
+
 **U2 and U3 run in parallel — the sequencing question is closed (2026-07-30).** An earlier draft warned
 that U2 would have to add a dependency on `outcome_worktrees.py` while U3 rewrites it, and left the
 ordering open. That warning rested on a wrong premise. The enumeration source U2 needs already exists and
@@ -614,6 +633,12 @@ disk under any input**, which pins KTD12's finding that reclamation was never te
 
 ### U3. Unwind dispatch and worktree routing — issue #680
 
+> **RE-NOTED 2026-08-05/06.** Issue #680's body is authoritative: it absorbs `outcome.py`'s
+> worktree-processor surface, `second_opinion.py`'s dispatch lease surface, and
+> `outcome_dispatcher.py`'s whole broker surface; bumps saga's release surface per PR (#429
+> precedent); and corrects the test-suite name below — `tests/test_engine_dispatch.py` does not
+> exist; the engine-dispatch suite is `tests/test_saga_engine_dispatch.py`.
+
 The largest unit by call-site count — the two files where broker use is genuinely threaded rather than
 localized.
 
@@ -677,6 +702,10 @@ sub-outcomes get distinct worktrees; worktree cleanup runs without lease release
 manual reclamation path removes a stale leaf worktree.
 
 ### U4. Unwind the light consumers and the emitted contract — issue #681
+
+> **RE-NOTED 2026-08-05/06 (three corrections).** `outcome.py` was absorbed by U1 + U3,
+> `second_opinion.py` and `outcome_dispatcher.py` by U3. The unit is now ONE production file —
+> `workflow_emitter.py`. Issue #681's body is authoritative.
 
 Four files with few call sites each, grouped because none needs restructuring.
 

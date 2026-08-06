@@ -1,5 +1,52 @@
 # Changelog
 
+## [0.128.0] - 2026-08-06
+
+### Added
+
+- **`saga.close-receipt.v1` — self-authenticating settlement receipts for the broker-free dispatch
+  and manifest chain (#680, campaign #677 unit U3).** Every registered dispatch mints a close
+  receipt onto `provenance["dispatch_close"]`; the Team Execution claim and adjudication manifest
+  transitions chain from their predecessor receipt by digest re-derivation, and `satisfy_gate`
+  re-validates the terminal receipt's digest plus its output/write-intent bindings beside the
+  preserved byte CAS and strict audit mirror. DECISIONS
+  `{#u3-rekeys-dispatch-settlement-onto-close-receipts-680}`.
+
+- **Operator worktree-reclamation path (#680).** `outcome_worktrees.py --reclaim-list` prints a
+  report-only census of outcome worktrees (`live` / `path-absent` / `unregistered`); the manual
+  `git worktree remove --force` procedure and its R32 consequence are documented in
+  `references/worktree-reclamation.md`. Nothing wires the inventory to any lifecycle tick.
+  DECISIONS `{#u3-makes-worktree-reclamation-an-operator-path-680}`.
+
+### Changed
+
+- **Dispatch identity is caller-asserted; second opinions key on the trusted session id alone
+  (#680).** `dispatch` validates the bounded session/execution/attempt identities for shape —
+  never broker-verified — and retries chain via `predecessor_close`. `prepare_second_opinion` /
+  `dispatch_second_opinion` take `session_id` only; the lease admission the session once resolved
+  is retired. Two concurrent dispatches of the same attempt both proceed — the accepted loss, plan
+  #677 Scope Decision row 1.
+
+- **Prune's worktree preflight re-keyed onto the registry (#680).** `outcome_decompose.prune`
+  prevalidates through `registered_entry_strict` (registry intact AND bound to this outcome)
+  before any graph mutation — the lease-authority proof is gone, the corruption/mismatch refusals
+  stay. `reap_worktree` removes + deregisters authority-free; the registry entry is the reap
+  authority and a vestigial pre-retirement `lease` field is inert data.
+
+### Removed
+
+- **Fleet lease broker retired from engine dispatch, outcome worktrees, outcome reconcile, the
+  outcome dispatcher, and second opinions (#680, campaign #677 unit U3).** Deleted outright:
+  `LeaseAdmission`, `lease_admission_for_session`, `default_lease_authority`,
+  `DispatcherLeaseTransientError`, `reconcile_worktree_leases`, `prevalidate_reap_authority`, the
+  guarded runner/panel settlement wrappers, and every `lease_authority` / `lease_admission`
+  parameter across the six files. A `DispatcherError` now aborts the outcome tick loudly — the
+  pre-#627 posture restored for the whole category, since the transient classification existed
+  only for lease refusals (DECISIONS `{#u3-restores-loud-dispatcher-abort-680}`). Cross-run
+  worktree sweeping is gone: abandoned worktrees are reclaimed through the operator path (see
+  Added). Three coupled consumers were absorbed in the same PR — a green suite is unreachable
+  otherwise (DECISIONS `{#u3-absorbs-three-coupled-broker-consumers-680}`).
+
 ## [0.127.0] - 2026-08-05
 
 ### Changed

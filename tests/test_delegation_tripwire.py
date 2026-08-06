@@ -565,16 +565,13 @@ def _dispatch(
     runner: Any = None,
     predecessor_close: dict[str, Any] | None = None,
 ) -> Any:
-    lease_kwargs: dict[str, Any] = {}
+    # Broker-free (#677/U3): caller-asserted bounded identity, chained by close-receipt digest.
+    identity_kwargs: dict[str, Any] = {}
     if session_id:
-        lease_module, degradation = _D._load_fleet_module("lease_broker")
-        assert lease_module is not None, degradation
-        lease_kwargs = {
-            "lease_admission": _D.LeaseAdmission("a" * 64, 1, 1, "none"),
+        identity_kwargs = {
             "execution_id": execution_id or f"tripwire:{session_id}",
             "attempt_id": "attempt:1",
             "predecessor_close": predecessor_close,
-            "lease_authority": lease_module.LeaseBroker(tmp_path / "fleet-state"),
         }
     return _D.dispatch(
         _resolution(),
@@ -583,13 +580,13 @@ def _dispatch(
         gated=gated,
         session_id=session_id,
         workspace_root=tmp_path,
-        **lease_kwargs,
+        **identity_kwargs,
     )
 
 
-def _settlement_close(result: Any) -> dict[str, Any]:
+def _dispatch_close(result: Any) -> dict[str, Any]:
     evidence = result.evidence if isinstance(result, _D.RequeueDisposition) else result
-    return dict(evidence.provenance["lease"]["settlement_close"])
+    return dict(evidence.provenance["dispatch_close"])
 
 
 def _manifest_for(tmp_path: Path, evidence: Any, execution_id: str) -> Any:
@@ -639,7 +636,7 @@ class TestTwoSignalAcceptanceDoD:
             tmp_path,
             gated=True,
             session_id=session,
-            predecessor_close=_settlement_close(first),
+            predecessor_close=_dispatch_close(first),
         )
         assert isinstance(retry, _D.AdvisoryEvidence)
         assert retry.provenance.get("observer_corroborated") is True
@@ -650,7 +647,7 @@ class TestTwoSignalAcceptanceDoD:
             tmp_path,
             gated=True,
             session_id=session,
-            predecessor_close=_settlement_close(retry),
+            predecessor_close=_dispatch_close(retry),
         )
         assert isinstance(again, _D.RequeueDisposition)
         assert again.attempt == 1  # counter was reset by the corroborated acceptance
@@ -659,7 +656,7 @@ class TestTwoSignalAcceptanceDoD:
                 tmp_path,
                 gated=True,
                 session_id=session,
-                predecessor_close=_settlement_close(again),
+                predecessor_close=_dispatch_close(again),
             )
         assert bundle.is_dir()
 
@@ -678,9 +675,6 @@ class TestTwoSignalAcceptanceMatrix:
         assert evidence.halt is None
         assert evidence.provenance["observer_corroborated"] is True
 
-        lease_module, degradation = _D._load_fleet_module("lease_broker")
-        assert lease_module is not None, degradation
-        authority = lease_module.LeaseBroker(tmp_path / "fleet-state")
         store = _MS.Store(root=tmp_path / "manifests" / "exec-agree").ensure()
         audit_store_root = tmp_path / "audit-store"
         manifest_result = _D.record_dispatch_manifest(
@@ -690,12 +684,10 @@ class TestTwoSignalAcceptanceMatrix:
             saga_ref="saga-u5",
             created_at="2026-07-07T00:00:00Z",
             audit_store_root=audit_store_root,
-            predecessor_close=_settlement_close(evidence),
+            predecessor_close=_dispatch_close(evidence),
             session_id="sess-u5-agree",
-            lease_admission=_D.LeaseAdmission("a" * 64, 1, 1, "read-write"),
-            lease_authority=authority,
         )
-        assert isinstance(manifest_result, _D.ManifestSettlementResult)
+        assert isinstance(manifest_result, _D.ManifestTransitionResult)
         manifest = manifest_result.manifest
         assert manifest.disposition is _PM.Disposition.RAN_AS_REQUESTED
 
@@ -733,8 +725,7 @@ class TestTwoSignalAcceptanceMatrix:
                 reconciliation=reconciliation,
                 store=store,
                 audit_store_root=audit_store_root,
-                manifest_settlement_close=manifest_result.settlement_close,
-                lease_authority=authority,
+                manifest_close_receipt=manifest_result.close_receipt,
             )
             is None
         )
@@ -764,7 +755,7 @@ class TestTwoSignalAcceptanceMatrix:
             assert evidence.halt is not None
             assert "Downgraded external engine agy" in evidence.halt
             assert "delegation-integrity" in evidence.halt
-            predecessor_close = _settlement_close(evidence)
+            predecessor_close = _dispatch_close(evidence)
 
         manifest = _manifest_for(tmp_path, evidence, "exec-advisory")
         assert manifest.disposition is _PM.Disposition.DELEGATION_INTEGRITY
@@ -815,7 +806,7 @@ class TestTwoSignalAcceptanceMatrix:
                 gated=True,
                 session_id=session,
                 runner=raising_runner,
-                predecessor_close=_settlement_close(first),
+                predecessor_close=_dispatch_close(first),
             )
         assert _delegation_state.active(session, root=tmp_path) is None
 
@@ -927,16 +918,13 @@ def _http_dispatch(
     runner: Any = None,
     predecessor_close: dict[str, Any] | None = None,
 ) -> Any:
-    lease_kwargs: dict[str, Any] = {}
+    # Broker-free (#677/U3): caller-asserted bounded identity, chained by close-receipt digest.
+    identity_kwargs: dict[str, Any] = {}
     if session_id:
-        lease_module, degradation = _D._load_fleet_module("lease_broker")
-        assert lease_module is not None, degradation
-        lease_kwargs = {
-            "lease_admission": _D.LeaseAdmission("a" * 64, 1, 1, "none"),
+        identity_kwargs = {
             "execution_id": f"tripwire-http:{session_id}",
             "attempt_id": "attempt:1",
             "predecessor_close": predecessor_close,
-            "lease_authority": lease_module.LeaseBroker(tmp_path / "fleet-state"),
         }
     return _D.dispatch(
         _http_resolution(),
@@ -945,7 +933,7 @@ def _http_dispatch(
         gated=gated,
         session_id=session_id,
         workspace_root=tmp_path,
-        **lease_kwargs,
+        **identity_kwargs,
     )
 
 
@@ -1010,7 +998,7 @@ class TestHttpLaneReceiptCorroboration:
                 tmp_path,
                 session_id=session,
                 runner=tampered_runner,
-                predecessor_close=_settlement_close(first),
+                predecessor_close=_dispatch_close(first),
             )
 
     def test_missing_receipt_is_observer_no(self, tmp_path: Path) -> None:
@@ -1275,7 +1263,6 @@ try:
         gated=True,
         session_id="sess-xproc",
         workspace_root=WORKSPACE,
-        lease_admission=D.LeaseAdmission("a" * 64, 1, 1, "none"),
         execution_id="tripwire-xproc",
         attempt_id="attempt:1",
         predecessor_close=predecessor_close,
@@ -1285,7 +1272,7 @@ except D.DispatchError as exc:
     sys.exit(3)
 if isinstance(result, D.RequeueDisposition):
     predecessor_path.write_text(
-        json.dumps(result.evidence.provenance["lease"]["settlement_close"]),
+        json.dumps(result.evidence.provenance["dispatch_close"]),
         encoding="utf-8",
     )
     print(f"requeue:{result.attempt}")

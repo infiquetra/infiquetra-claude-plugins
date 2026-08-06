@@ -65,11 +65,16 @@ doc's lease-era strings `term-then-kill` and `confirmed-stalled`, which left the
 the mechanisms they named — the required-list rows retired in the same commit (the
 file-disjoint-but-API-coupled shape from U1's LEARNINGS entry, recurring in the test suite).
 
-**KTD6 — Release surfaces move per-PR again (0.126.0 → 0.127.0).** The issue's "no bump until
-U7" non-goal loses to the #429 diff-aware bump guard exactly as it did for U1 (see
+**KTD6 — Release surfaces move per-PR again — for BOTH plugins this diff touches (saga
+0.126.0 → 0.127.0, team-execution 2.23.0 → 2.24.0).** The issue's "no bump until U7" non-goal
+loses to the #429 diff-aware bump guard exactly as it did for U1 (see
 [#u1-absorbs-outcome-handoff-callers-678](DECISIONS.md#u1-absorbs-outcome-handoff-callers-678)
-KTD6 — U7's R8 table still needs re-noting). saga moves 0.126.0 → 0.127.0 in this PR:
-plugin.json, regenerated marketplace.json, CHANGELOG, version-pin test.
+KTD6 — U7's R8 table still needs re-noting). The guard deliberately does NOT exempt
+`skills/**/references/**` — agent-facing instruction IS behavior — so U2's R11 rewrite of
+team-execution's teardown reference moves team-execution's surface too (a minor bump; the
+3.0.0 breaking bump stays U6's, on top of the per-unit versions). saga moves 0.126.0 → 0.127.0:
+plugin.json, regenerated marketplace.json, CHANGELOG, version-pin test — and team-execution
+2.23.0 → 2.24.0 on the same four surfaces.
 
 ### U1 absorbs `outcome.py`'s handoff/attach call sites — acceptance criteria outrank the file list (#678) {#u1-absorbs-outcome-handoff-callers-678}
 

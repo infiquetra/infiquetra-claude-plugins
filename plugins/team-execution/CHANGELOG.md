@@ -4,6 +4,21 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [2.24.0] - 2026-08-05
+
+### Changed
+
+- **Teardown reference re-keyed for the lease-broker retirement — campaign #677 unit U2
+  (#679).** `references/teardown-reclamation.md` rewritten for the broker-free contract:
+  teardown enumerates worktrees from the outcome registries cross-checked with
+  `git worktree list` and only ever REPORTS dispositions — it removes nothing from disk
+  (it never did). `already-absent` changed meaning ("git no longer lists this worktree",
+  not "the lease head is gone"); the lease-era close fence, subprocess stop policy
+  (`term-then-kill`), and eviction gate (`confirmed-stalled`) prose are retired with the
+  mechanisms they named. The plugin's lease functionality itself is unchanged until U6
+  (#683); this release moves only the agent-facing documentation, per the repo's
+  release-surface rule (#429 diff guard).
+
 ## [2.23.0] - 2026-07-27
 
 ### Changed - empty-delivery check no longer shells out to a deleted saga helper (#666)

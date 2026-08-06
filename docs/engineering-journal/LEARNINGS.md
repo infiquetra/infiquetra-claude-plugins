@@ -19,6 +19,77 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-08-06
+
+### A test store rooted at a CWD-relative `git-common-dir` litters the real repository  {#cwd-relative-git-common-dir-litters-repo}
+
+**Context.** U3 (#680) added `test_manual_reclamation_procedure_end_to_end`, which places the
+outcome store under the test repo's git-common-dir so `reclaim_candidates`' census
+(`<git-common-dir>/saga-outcomes/*/worktrees.json`) can see it. The first draft resolved
+`git rev-parse --git-common-dir` with `Path(stdout)` — and the fresh test repo prints `.git`, a
+RELATIVE path.
+
+**Evidence.** The failing run created `.git/saga-outcomes/o-store/` under the REAL repository root
+(the pytest CWD), not under the tmp test repo; the census then found nothing and reported the
+worktree `unregistered`. Confirmed by inspecting the stray directory (its `worktrees.json`
+pointed at pytest tmp paths) and removing it by hand.
+
+**Mechanism.** `git rev-parse --git-common-dir` is cwd-scoped: run with `cwd=<repo>` it prints a
+repo-relative path, and `Path(".git")` resolves against the PROCESS cwd — the repository root
+during pytest — not against the test repo. Any code that joins that output to "where the store
+should live" without anchoring it to the repo silently writes into whatever directory the process
+happens to run in.
+
+**Fix.** Anchor the common dir to the repo that produced it, exactly as production's
+`_git_common_dir` does: `common = raw if raw.is_absolute() else (repo / raw).resolve()`
+(committed with the U3 PR).
+
+**What surprised.** The store APIs happily `ensure()` directories wherever you point them — there
+is no validation that the root is inside anything in particular, so a path bug becomes silent
+filesystem litter instead of an error.
+
+**Generalizable rule.** When a test derives a path from a git subprocess, resolve it against the
+repo you passed via `cwd=`, never against the process cwd — git's relative output is a promise
+about THAT repo's location, not the test runner's.
+
+**Refs.** `{#u3-makes-worktree-reclamation-an-operator-path-680}`,
+`plugins/saga/scripts/outcome_worktrees.py::_git_common_dir`,
+`tests/test_outcome_worktrees.py::test_manual_reclamation_procedure_end_to_end`.
+
+---
+
+### With admission fencing gone, the post-write byte read-back becomes the race detector  {#post-write-readback-is-the-race-detector}
+
+**Context.** U3 (#680) retired the broker's admission fencing for Team Execution manifest claims.
+The obvious question: what happens when two processes race to claim the same execution now that
+nothing refuses one of them at the door?
+
+**Evidence.** `test_team_execution_two_process_claim_race_both_proceed_and_one_state_persists`
+(`tests/test_saga_engine_dispatch.py`): two forked contenders claim from the same dispatch receipt
+behind a barrier. Across repeated runs the outcome is stable: both are ADMITTED, one completes, and
+the other — when the interleaving exposes it — fails with exactly one typed error,
+`canonical manifest write does not match expected output bytes`.
+
+**Mechanism.** `_canonical_manifest_transition` re-reads the manifest bytes AFTER
+`write_manifest` and refuses when they no longer match the bytes it just serialized. That
+read-back, added as a corruption check, doubles as a race detector: a contender whose bytes were
+overwritten between write and read-back observes the other's bytes and aborts loudly. The byte
+CAS's `expected_current_bytes` check (adjudication only) and the audit-mirror comparison at the
+gate catch the remaining drift shapes. Admission fencing was never the only protection — it was
+the EARLIEST one; the byte checks were already there behind it.
+
+**What surprised.** The race settles deterministically at the byte check in practice — the
+interleaving where BOTH read-backs pass (strict serialization of write+read pairs) did not appear
+in repeated runs, but the pin deliberately tolerates it and asserts the invariants instead of an
+exact ok/error split.
+
+**Generalizable rule.** When you delete an early-refusal fence, inventory the LATER checks first —
+one of them often absorbs the detection duty, and the honest re-key is to pin its failure mode
+rather than to rebuild the fence.
+
+**Refs.** `{#u3-rekeys-dispatch-settlement-onto-close-receipts-680}` KTD2,
+`plugins/saga/scripts/engine_dispatch.py::_canonical_manifest_transition`.
+
 ## 2026-08-05
 
 ### Re-keying an enumeration silently drops the enumeration's ownership axis — name the axis you are losing  {#census-rekey-loses-the-ownership-axis}

@@ -712,17 +712,18 @@ class _FailCommonDirRunner:
         )
 
 
-def _lease_bound_outcome_worktree(
+def _registered_outcome_worktree(
     repo: Path, *, outcome_id: str, subplot_id: str
-) -> tuple[Any, Any, Any, Any, Path]:
-    """Create a real Git outcome worktree carrying a real broker receipt."""
+) -> tuple[Any, Any, Any, Path]:
+    """Create a real Git outcome worktree bound to its registry entry (#677/U3: the registry
+    entry IS the reap authority — no broker receipt involved)."""
     outcome_spec = _load_scripts_module("outcome_spec")
     outcome_store = _load_scripts_module("outcome_store")
     outcome_worktrees = _load_scripts_module("outcome_worktrees")
     spec = outcome_spec.OutcomeSpec.from_dict(
         {
             "outcome_id": outcome_id,
-            "objective": "lease teardown regression",
+            "objective": "teardown reclamation regression",
             "nodes": [
                 {
                     "subplot_id": subplot_id,
@@ -741,7 +742,6 @@ def _lease_bound_outcome_worktree(
         }
     )
     store = outcome_store.Store.for_outcome(outcome_id, repo).ensure()
-    broker = outcome_worktrees.fleet_leases.authority.LeaseBroker(repo / ".test-fleet")
     ops = outcome_worktrees.git_worktree_ops(repo)
     created = outcome_worktrees.ensure_worktree(
         repo,
@@ -750,10 +750,9 @@ def _lease_bound_outcome_worktree(
         spec.nodes[0],
         ops,
         owner="teardown-regression",
-        lease_authority=broker,
     )
     assert created.state == "created"
-    return outcome_worktrees, spec, store, broker, Path(created.path)
+    return outcome_worktrees, spec, store, Path(created.path)
 
 
 def _managed_merged_worktree(repo: Path, *, outcome_id: str, subplot_id: str) -> Path:
@@ -893,34 +892,25 @@ def test_reclaim_registered_removal_failure_keeps_entry(wt_repo: tuple[Path, Pat
     assert report.failures, "the failed removal must be reported, never silently dropped"
 
 
-def test_reclaim_refuses_lease_bound_registered_worktree_without_broker(
+def test_reclaim_routes_registered_outcome_worktree_through_canonical_reap(
     wt_repo: tuple[Path, Path],
 ) -> None:
+    """Broker-free reclamation (#677/U3): the generic teardown needs no lease authority — a
+    REGISTERED outcome worktree routes through the canonical registry reaper and is removed +
+    deregistered. The registry entry is the reap authority now; nothing refuses it."""
     repo, _bare = wt_repo
-    outcome_worktrees, _spec, store, broker, wt_path = _lease_bound_outcome_worktree(
-        repo, outcome_id="leased-ship", subplot_id="s1"
+    outcome_worktrees, _spec, store, wt_path = _registered_outcome_worktree(
+        repo, outcome_id="registered-ship", subplot_id="s1"
     )
-    lease_id = outcome_worktrees.read_registry(store)["s1"]["lease"]["lease_id"]
     _advance_main(repo)
 
     report = ST.reclaim(repo, main_ref="main", authorize=lambda _op: "AUTHORIZED")
 
-    assert wt_path.exists(), "generic teardown must not remove a lease-bound worktree"
-    assert "s1" in outcome_worktrees.read_registry(store), "generic teardown must not deregister it"
-    assert [lease["lease_id"] for lease in broker.inspect()["leases"]] == [lease_id]
-    failure = next(entry for entry in report.entries if _rp(Path(entry.path)) == _rp(wt_path))
-    assert failure.action == ST.ACTION_REMOVAL_FAILED
-    assert "canonical lease-aware reap" in failure.note
-    assert "retained" in failure.note
-
-    assert outcome_worktrees.reap_worktree(
-        store,
-        "s1",
-        outcome_worktrees.git_worktree_ops(repo),
-        lease_authority=broker,
-    )
-    assert outcome_worktrees.read_registry(store) == {}
-    assert broker.inspect()["leases"] == [], "the failed generic attempt remains retryable"
+    assert not wt_path.exists(), "the canonical registry reaper removes the registered worktree"
+    assert outcome_worktrees.read_registry(store) == {}, "and deregisters its entry"
+    removed = next(entry for entry in report.entries if _rp(Path(entry.path)) == _rp(wt_path))
+    assert removed.action == ST.ACTION_REMOVED
+    assert "reap_worktree" in removed.note
 
 
 def test_reclaim_managed_path_with_missing_registry_fails_closed(
@@ -1010,47 +1000,18 @@ def test_reclaim_managed_path_with_unreadable_registry_fails_closed(
     assert "simulated unreadable registry" in failure.note
 
 
-def test_prune_refuses_lease_bound_worktree_without_broker(wt_repo: tuple[Path, Path]) -> None:
+def test_prune_refuses_corrupt_registry_atomically(wt_repo: tuple[Path, Path]) -> None:
+    """The broker-free preflight (#677/U3): a CORRUPT registry still halts the prune before any
+    graph mutation — exactly as the lease-authority preflight did; only the lease proof is gone."""
     repo, _bare = wt_repo
-    outcome_worktrees, spec, store, broker, wt_path = _lease_bound_outcome_worktree(
-        repo, outcome_id="leased-prune", subplot_id="s1"
+    outcome_worktrees, spec, store, wt_path = _registered_outcome_worktree(
+        repo, outcome_id="corrupt-prune", subplot_id="s1"
     )
     outcome_decompose = _load_scripts_module("outcome_decompose")
     registry_path = outcome_worktrees._registry_path(store)
+    registry_path.write_text("{broken\n", encoding="utf-8")
     before_spec = spec.to_dict()
     before_registry = registry_path.read_bytes()
-    before_authority = broker.inspect()
-    closed: list[str] = []
-
-    with pytest.raises(outcome_decompose.DecomposeError, match="requires both worktree_ops"):
-        outcome_decompose.prune(
-            spec,
-            store,
-            "s1",
-            issue_close=_issue_closer(closed),
-            lease_authority=broker,
-        )
-
-    assert spec.to_dict() == before_spec, (
-        "missing worktree_ops must not mutate revision/nodes/edges"
-    )
-    assert closed == [], "failed preflight must not close the generated issue"
-    assert wt_path.exists()
-    assert registry_path.read_bytes() == before_registry
-    assert broker.inspect() == before_authority
-
-
-def test_prune_wrong_authority_is_atomic(wt_repo: tuple[Path, Path]) -> None:
-    repo, _bare = wt_repo
-    outcome_worktrees, spec, store, broker, wt_path = _lease_bound_outcome_worktree(
-        repo, outcome_id="wrong-authority", subplot_id="s1"
-    )
-    outcome_decompose = _load_scripts_module("outcome_decompose")
-    wrong_broker = outcome_worktrees.fleet_leases.authority.LeaseBroker(repo / ".wrong-fleet")
-    registry_path = outcome_worktrees._registry_path(store)
-    before_spec = spec.to_dict()
-    before_registry = registry_path.read_bytes()
-    before_authority = broker.inspect()
     closed: list[str] = []
 
     with pytest.raises(outcome_decompose.DecomposeError, match="prevalidation failed"):
@@ -1060,30 +1021,30 @@ def test_prune_wrong_authority_is_atomic(wt_repo: tuple[Path, Path]) -> None:
             "s1",
             issue_close=_issue_closer(closed),
             worktree_ops=outcome_worktrees.git_worktree_ops(repo),
-            lease_authority=wrong_broker,
         )
 
-    assert spec.to_dict() == before_spec
-    assert closed == []
+    assert spec.to_dict() == before_spec, "failed preflight must not mutate revision/nodes/edges"
+    assert closed == [], "failed preflight must not close the generated issue"
     assert wt_path.exists()
-    assert registry_path.read_bytes() == before_registry
-    assert broker.inspect() == before_authority
-    assert wrong_broker.inspect()["leases"] == []
+    assert registry_path.read_bytes() == before_registry, "strict preflight never repairs"
+    assert list(store.quarantine_dir.iterdir()) == []
 
 
-def test_prune_invalid_fencing_token_is_atomic(wt_repo: tuple[Path, Path]) -> None:
+def test_prune_outcome_mismatch_is_atomic(wt_repo: tuple[Path, Path]) -> None:
+    """The registry entry must BIND THIS OUTCOME (#677/U3 preflight): a mismatched outcome_id
+    refuses before any graph mutation, atomically — the broker-era wrong-authority refusal,
+    re-keyed to the registry's own binding check."""
     repo, _bare = wt_repo
-    outcome_worktrees, spec, store, broker, wt_path = _lease_bound_outcome_worktree(
-        repo, outcome_id="invalid-token", subplot_id="s1"
+    outcome_worktrees, spec, store, wt_path = _registered_outcome_worktree(
+        repo, outcome_id="mismatch-prune", subplot_id="s1"
     )
     outcome_decompose = _load_scripts_module("outcome_decompose")
     entry = outcome_worktrees.read_registry(store)["s1"]
-    entry["lease"]["token"]["fencing_sequence"] += 1
+    entry["outcome_id"] = "some-other-outcome"
     outcome_worktrees.register(store, "s1", entry)
     registry_path = outcome_worktrees._registry_path(store)
     before_spec = spec.to_dict()
     before_registry = registry_path.read_bytes()
-    before_authority = broker.inspect()
     closed: list[str] = []
 
     with pytest.raises(outcome_decompose.DecomposeError, match="prevalidation failed"):
@@ -1093,43 +1054,61 @@ def test_prune_invalid_fencing_token_is_atomic(wt_repo: tuple[Path, Path]) -> No
             "s1",
             issue_close=_issue_closer(closed),
             worktree_ops=outcome_worktrees.git_worktree_ops(repo),
-            lease_authority=broker,
         )
 
     assert spec.to_dict() == before_spec
     assert closed == []
     assert wt_path.exists()
     assert registry_path.read_bytes() == before_registry
-    assert broker.inspect() == before_authority
 
 
-def test_canonical_reap_releases_exact_lease_before_deregister(
+def test_prune_reaps_entry_with_vestigial_lease_receipt(wt_repo: tuple[Path, Path]) -> None:
+    """A pre-retirement registry entry may still carry a ``lease`` receipt (#677/U3): it is inert
+    data — never read, never a reap blocker. The prune completes and the worktree goes."""
+    repo, _bare = wt_repo
+    outcome_worktrees, spec, store, wt_path = _registered_outcome_worktree(
+        repo, outcome_id="vestigial-prune", subplot_id="s1"
+    )
+    outcome_decompose = _load_scripts_module("outcome_decompose")
+    entry = outcome_worktrees.read_registry(store)["s1"]
+    entry["lease"] = {"lease_id": "lease-legacy", "token": {"fencing_sequence": 7}}
+    outcome_worktrees.register(store, "s1", entry)
+    closed: list[str] = []
+
+    result = outcome_decompose.prune(
+        spec,
+        store,
+        "s1",
+        issue_close=_issue_closer(closed),
+        worktree_ops=outcome_worktrees.git_worktree_ops(repo),
+    )
+
+    assert closed == ["42"]
+    assert not wt_path.exists(), "the vestigial lease receipt never blocks the reap"
+    assert "s1" not in outcome_worktrees.read_registry(store)
+    assert result["reaped_worktree"] is True
+
+
+def test_canonical_reap_removes_worktree_before_deregister(
     wt_repo: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Ordering invariant, re-keyed (#677/U3): the physical removal happens BEFORE the registry
+    entry is dropped — deregistering first would leak the worktree out of the cap accounting."""
     repo, _bare = wt_repo
-    outcome_worktrees, _spec, store, broker, _wt_path = _lease_bound_outcome_worktree(
-        repo, outcome_id="leased-canonical", subplot_id="s1"
+    outcome_worktrees, _spec, store, wt_path = _registered_outcome_worktree(
+        repo, outcome_id="ordering-canonical", subplot_id="s1"
     )
-    lease_id = outcome_worktrees.read_registry(store)["s1"]["lease"]["lease_id"]
+    ops = outcome_worktrees.git_worktree_ops(repo)
     original_deregister = outcome_worktrees.deregister
 
-    def assert_release_before_deregister(target_store: Any, subplot_id: str) -> None:
-        assert broker.inspect()["leases"] == [], "exact lease must release before deregistration"
+    def assert_removed_before_deregister(target_store: Any, subplot_id: str) -> None:
+        assert not ops.exists(str(wt_path)), "worktree must be removed before deregistration"
         original_deregister(target_store, subplot_id)
 
-    monkeypatch.setattr(outcome_worktrees, "deregister", assert_release_before_deregister)
+    monkeypatch.setattr(outcome_worktrees, "deregister", assert_removed_before_deregister)
 
-    assert (
-        outcome_worktrees.reap_worktree(
-            store,
-            "s1",
-            outcome_worktrees.git_worktree_ops(repo),
-            lease_authority=broker,
-        )
-        is True
-    )
+    assert outcome_worktrees.reap_worktree(store, "s1", ops) is True
     assert outcome_worktrees.read_registry(store) == {}
-    assert lease_id not in {lease["lease_id"] for lease in broker.inspect()["leases"]}
 
 
 def test_reclaim_if_idle_fresh_sidecar_noops(tmp_path: Path) -> None:

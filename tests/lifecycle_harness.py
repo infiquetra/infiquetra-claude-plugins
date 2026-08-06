@@ -401,7 +401,8 @@ def _step_worktree_open(step: dict[str, Any], workdir: Path) -> None:
 
 def _step_worktree_reclaim(step: dict[str, Any], workdir: Path) -> None:
     _spec, store, node, ops = _worktree_context(step, workdir)
-    if not WT.reap_worktree(store, node.subplot_id, ops, at="lifecycle-harness"):
+    # reap_worktree is authority-free since #677/U3 — the registry entry is the reap authority.
+    if not WT.reap_worktree(store, node.subplot_id, ops):
         raise LifecycleHarnessError(
             f"worktree_reclaim for {node.subplot_id!r}: reap_worktree reported nothing reclaimed"
         )

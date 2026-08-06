@@ -259,9 +259,10 @@ who names `#N` is confirming that request; a Claude-originated suggestion asks f
 Build U1's single-finding context from that exact durable finding and surface the selected provider, egress
 policy, and `opus/high` tier before dispatch. Persist `external_opinion.state=requested` plus the stable
 request identity atomically in the review artifact before the U1 wrapper path; the matching claim is the
-only runner owner. Derive `lease_admission_for_session` from the configured Saga session snapshot and pass
-both that exact admission and its originating `lease_session_id` to `prepare_second_opinion`; missing or
-mismatched session-policy authority halts before the wrapper. A resumed unresolved request is visible
+only runner owner. Pass the trusted runtime session id (`session_id = CLAUDE_CODE_SESSION_ID` from
+the configured Saga session snapshot) to `prepare_second_opinion`; a missing, empty, or
+control-character-bearing session id halts before the wrapper (#677/U3 retired the lease admission
+the session once resolved). A resumed unresolved request is visible
 `unavailable`, never a retry of the wrapper.
 
 In `programmatic` / `report-only` mode, never prompt and never dispatch. Place exactly

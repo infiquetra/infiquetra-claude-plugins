@@ -10,7 +10,6 @@ import multiprocessing
 import shutil
 import sys
 import threading
-from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any, cast
@@ -48,7 +47,7 @@ RC = D.reconcile
 
 @pytest.fixture(autouse=True)
 def _isolated_fleet_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep default lease authorities inside each test's private filesystem."""
+    """Keep fleet state (delegation tripwire/integrity stores) inside each test's private filesystem."""
 
     monkeypatch.setenv("INFIQUETRA_FLEET_STATE_DIR", str(tmp_path / "fleet-state"))
 
@@ -1046,292 +1045,107 @@ def _ok_runner(_invocation: dict[str, Any]) -> dict[str, Any]:
     return {"status": "ok", "output": "external finding", "receipt": _valid_receipt()}
 
 
-def _lease_admission(
-    *, policy_sha256: str = "a" * 64, session_limit: int = 1, aggregate_limit: int = 1
-) -> Any:
-    return D.LeaseAdmission(
-        policy_sha256=policy_sha256,
-        session_limit=session_limit,
-        aggregate_limit=aggregate_limit,
-        mutation="none",
-    )
+def _registered_kwargs(**overrides: str) -> dict[str, Any]:
+    """The broker-free registered-dispatch identity kwargs (#677/U3).
+
+    Identity is caller-asserted now — validated for shape, never broker-verified.
+    """
+    kwargs: dict[str, Any] = {
+        "session_id": "runtime-session",
+        "execution_id": "execution-1",
+        "attempt_id": "attempt-1",
+    }
+    kwargs.update(overrides)
+    return kwargs
 
 
-def _write_lease_admission() -> Any:
-    return D.LeaseAdmission(
-        policy_sha256="a" * 64,
-        session_limit=1,
-        aggregate_limit=1,
-        mutation="read-write",
-    )
-
-
-def test_engine_runtime_lease_wraps_runner_and_exact_settlement(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_dispatch_completes_with_the_lease_module_unimportable(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    lease_module, _ = D._load_fleet_module("lease_broker")
-    assert lease_module is not None
-    selected = lease_module.LeaseBroker(tmp_path / "authority")
+    # Acceptance (#677/U3): registered dispatch has no lease dependency left — it completes even
+    # when the fleet lease module cannot load at all.
     original_loader = D._load_fleet_module
-    lifecycle: list[str] = []
 
     def load(name: str) -> tuple[Any, str]:
-        if name == "delegation_state":
-            return (
-                SimpleNamespace(
-                    arm=lambda *_args, **_kwargs: SimpleNamespace(armed_at=1.0),
-                    disarm=lambda *_args, **_kwargs: lifecycle.append("disarmed"),
-                ),
-                "",
-            )
+        if name == "lease_broker":
+            return None, "lease_broker retired (#677)"
         return cast(tuple[Any, str], original_loader(name))
 
     monkeypatch.setattr(D, "_load_fleet_module", load)
+    evidence = D.dispatch(_resolution(), runner=_ok_runner, **_registered_kwargs())
+    assert isinstance(evidence, D.AdvisoryEvidence)
+    assert evidence.provenance["dispatch_close"]["schema"] == D.CLOSE_RECEIPT_SCHEMA
 
-    def runner(_invocation: dict[str, Any]) -> dict[str, str]:
-        live = selected.inspect()["leases"]
-        assert len(live) == 1
-        assert live[0]["session_id"] == "runtime-session"
-        assert live[0]["mutation"] == "none"
-        assert live[0]["session_limit"] == 1
-        assert live[0]["aggregate_limit"] == 1
-        lifecycle.append("runner")
-        return {"status": "ok", "output": "leased evidence"}
 
+def test_registered_dispatch_mints_a_self_authenticating_close_receipt() -> None:
     evidence = D.dispatch(
-        _resolution(),
-        runner=runner,
-        session_id="runtime-session",
-        execution_id="execution-1",
-        attempt_id="attempt-1",
-        lease_authority=selected,
-        lease_admission=_lease_admission(),
+        _resolution(), runner=_ok_runner, **_registered_kwargs(execution_id="exec-receipt")
     )
-
-    assert lifecycle == ["runner", "disarmed"]
-    assert selected.inspect()["leases"] == []
-    assert evidence.provenance["lease"]["root_sha256"] == selected.root_sha256
-    assert "token" not in evidence.provenance["lease"]
-
-
-def test_engine_runtime_dispatch_refuses_session_capacity(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    lease_module, _ = D._load_fleet_module("lease_broker")
-    policy_module, _ = D._load_fleet_module("concurrency_policy")
-    assert lease_module is not None and policy_module is not None
-    selected = lease_module.LeaseBroker(tmp_path / "authority")
-    limits = policy_module.AdmissionLimits()
-    for index in range(limits.max_concurrent):
-        selected.acquire_agent(
-            owner_id=f"owner-{index}",
-            session_id="full-session",
-            policy_sha256=limits.policy_sha256(),
-            session_limit=limits.max_concurrent,
-            aggregate_limit=limits.aggregate_max_concurrent,
-            mutation="none",
-            resource_ref={"logical_unit_id": f"existing-{index}"},
-        )
-    monkeypatch.setattr(
-        D,
-        "_load_fleet_module",
-        lambda name: (
-            (lease_module if name == "lease_broker" else policy_module),
-            "",
-        ),
-    )
-
-    with pytest.raises(D.DispatchError, match="lease admission refused"):
-        D.dispatch(
-            _resolution(),
-            runner=lambda _invocation: pytest.fail("capacity denial must precede runner"),
-            session_id="full-session",
-            execution_id="capacity-execution",
-            attempt_id="capacity-attempt",
-            lease_authority=selected,
-            lease_admission=_lease_admission(
-                policy_sha256=limits.policy_sha256(),
-                session_limit=limits.max_concurrent,
-                aggregate_limit=limits.aggregate_max_concurrent,
-            ),
-        )
+    assert isinstance(evidence, D.AdvisoryEvidence)
+    close = evidence.provenance["dispatch_close"]
+    assert close["schema"] == D.CLOSE_RECEIPT_SCHEMA
+    assert close["producer"] == "saga"
+    assert close["run_id"] == "exec-receipt"
+    assert close["phase"] == "closed" and close["terminal"] is True
+    assert close["predecessor_receipt_sha256"] == ""  # the chain root
+    assert close["resource_ref"] == D._engine_resource_ref("exec-receipt", "attempt-1")
+    for field in ("expected_output_sha256", "protected_write_intent_sha256", "receipt_sha256"):
+        value = close[field]
+        assert isinstance(value, str) and len(value) == 64
+    # self-authenticating: the digest re-derives from the content alone (no broker head to consult)
+    assert D._require_close_receipt_digest(close) == close["receipt_sha256"]
 
 
-@pytest.mark.parametrize("version", [1, 99])
-def test_engine_runtime_dispatch_rejects_lease_protocol_skew(version: int) -> None:
-    with pytest.raises(D.DispatchError, match="install/update fleet-core"):
-        D._require_lease_protocol(SimpleNamespace(PROTOCOL_VERSION=version))
-
-
-def test_registered_dispatch_requires_explicit_resolved_admission() -> None:
-    with pytest.raises(D.DispatchError, match="explicit Saga-resolved lease admission"):
-        D.dispatch(
-            _resolution(),
-            runner=lambda _invocation: pytest.fail("admission rejection must precede runner"),
-            session_id="runtime-session",
-            execution_id="execution-1",
-            attempt_id="attempt-1",
-        )
-
-
-def test_engine_retry_uses_stable_resource_ref_and_exact_predecessor_close(
-    tmp_path: Path,
-) -> None:
-    lease_module, _ = D._load_fleet_module("lease_broker")
-    assert lease_module is not None
-    selected = lease_module.LeaseBroker(tmp_path / "authority")
-    acquired: list[Any] = []
-    original_acquire = selected.acquire_agent
-    original_successor = selected.acquire_successor
-
-    def capture_acquire(**kwargs: Any) -> Any:
-        lease = original_acquire(**kwargs)
-        acquired.append(lease)
-        return lease
-
-    def capture_successor(**kwargs: Any) -> Any:
-        lease = original_successor(**kwargs)
-        acquired.append(lease)
-        return lease
-
-    selected.acquire_agent = capture_acquire  # type: ignore[method-assign]
-    selected.acquire_successor = capture_successor  # type: ignore[method-assign]
+def test_engine_retry_chains_its_close_receipt_and_keeps_one_resource_ref() -> None:
     first = D.dispatch(
-        _resolution(),
-        runner=lambda _invocation: {"status": "ok", "output": "evidence"},
-        session_id="runtime-session",
-        execution_id="execution-1",
-        attempt_id="attempt-1",
-        lease_authority=selected,
-        lease_admission=_lease_admission(),
+        _resolution(), runner=_ok_runner, **_registered_kwargs(execution_id="exec-retry")
     )
     assert isinstance(first, D.AdvisoryEvidence)
     second = D.dispatch(
         _resolution(),
-        runner=lambda _invocation: {"status": "ok", "output": "evidence"},
-        session_id="runtime-session",
-        execution_id="execution-1",
-        attempt_id="attempt-2",
-        predecessor_close=first.provenance["lease"]["settlement_close"],
-        lease_authority=selected,
-        lease_admission=_lease_admission(),
+        runner=_ok_runner,
+        predecessor_close=first.provenance["dispatch_close"],
+        **_registered_kwargs(execution_id="exec-retry", attempt_id="attempt-2"),
     )
     assert isinstance(second, D.AdvisoryEvidence)
+    first_close = first.provenance["dispatch_close"]
+    second_close = second.provenance["dispatch_close"]
+    # one execution-stable resource ref (the attempt label is documentation, not identity)
+    assert first_close["resource_ref"] == second_close["resource_ref"]
+    # the retry chains from the exact prior receipt DIGEST — binding by hash, not by broker token
+    assert second_close["predecessor_receipt_sha256"] == first_close["receipt_sha256"]
+    assert second_close["receipt_sha256"] != first_close["receipt_sha256"]
 
-    assert acquired[0].resource_ref == acquired[1].resource_ref
-    assert acquired[0].fencing_sequence < acquired[1].fencing_sequence
-    assert selected.classify_token(acquired[0].resource_ref, acquired[0].token) == "superseded"
 
-
-def test_expired_runner_output_does_not_write_advisory_fact(tmp_path: Path) -> None:
-    lease_module, _ = D._load_fleet_module("lease_broker")
-    assert lease_module is not None
-    monotonic = 0
-
-    def read_monotonic() -> int:
-        return monotonic
-
-    selected = lease_module.LeaseBroker(
-        tmp_path / "authority",
-        providers=lease_module.Providers(
-            wall_now=lambda: datetime(2026, 7, 16, tzinfo=UTC),
-            monotonic_ns=read_monotonic,
-            boot_id=lambda: "test-boot",
-        ),
+def test_retry_rejects_a_tampered_predecessor_receipt() -> None:
+    first = D.dispatch(
+        _resolution(), runner=_ok_runner, **_registered_kwargs(execution_id="exec-tamper")
     )
-    ledger = D.run_ledger.RunLedger(tmp_path / "run-facts.jsonl")
-
-    def runner(_invocation: dict[str, Any]) -> dict[str, str]:
-        nonlocal monotonic
-        monotonic = lease_module.DEFAULT_TTL_SECONDS * 1_000_000_000
-        return {"status": "ok", "output": "late evidence"}
-
-    with pytest.raises(D.DispatchError, match="expired before settlement"):
+    assert isinstance(first, D.AdvisoryEvidence)
+    tampered = {**first.provenance["dispatch_close"], "expected_output_sha256": "f" * 64}
+    with pytest.raises(D.DispatchError, match="tampered or stale receipt"):
         D.dispatch(
             _resolution(),
-            runner=runner,
-            ledger=ledger,
-            subplot_id="leaf",
-            at="2026-07-16T00:00:00Z",
-            session_id="runtime-session",
-            execution_id="execution-1",
-            attempt_id="attempt-1",
-            lease_authority=selected,
-            lease_admission=_lease_admission(),
+            runner=lambda _invocation: pytest.fail("predecessor validation must precede runner"),
+            predecessor_close=tampered,
+            **_registered_kwargs(execution_id="exec-tamper", attempt_id="attempt-2"),
         )
 
-    assert D.run_ledger.read_facts(ledger) == []
 
-
-def test_post_run_fact_write_occurs_inside_agent_settlement(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    lease_module, _ = D._load_fleet_module("lease_broker")
-    assert lease_module is not None
-    selected = lease_module.LeaseBroker(tmp_path / "authority")
-    ledger = D.run_ledger.RunLedger(tmp_path / "run-facts.jsonl")
-    original_commit = selected.commit_agent_settlement
-    original_record = D._record_advisory_facts
-    settlement_active = False
-    fact_guard_states: list[bool] = []
-
-    def tracked_commit(*args: Any, write: Any, **kwargs: Any) -> Any:
-        nonlocal settlement_active
-
-        def tracked_write(lease: Any) -> Any:
-            nonlocal settlement_active
-            settlement_active = True
-            try:
-                return write(lease)
-            finally:
-                settlement_active = False
-
-        return original_commit(*args, write=tracked_write, **kwargs)
-
-    def tracked_record(*args: Any, **kwargs: Any) -> Any:
-        fact_guard_states.append(settlement_active)
-        return original_record(*args, **kwargs)
-
-    selected.commit_agent_settlement = tracked_commit  # type: ignore[method-assign]
-    monkeypatch.setattr(D, "_record_advisory_facts", tracked_record)
-    D.dispatch(
-        _resolution(),
-        runner=lambda _invocation: {"status": "ok", "output": "guarded evidence"},
-        ledger=ledger,
-        subplot_id="leaf",
-        at="2026-07-16T00:00:00Z",
-        session_id="runtime-session",
-        execution_id="execution-1",
-        attempt_id="attempt-1",
-        lease_authority=selected,
-        lease_admission=_lease_admission(),
+def test_concurrent_registered_dispatches_both_proceed() -> None:
+    # #677 Scope Decision row 1 (accepted loss, pinned): dispatch is no longer admitted against a
+    # runtime lease, so two concurrent dispatches of the SAME attempt BOTH PROCEED — neither
+    # raises. The receipts come out identical because they are content-addressed over identical
+    # inputs: no fencing sequence exists to distinguish the two, by design.
+    evidence_a = D.dispatch(
+        _resolution(), runner=_ok_runner, **_registered_kwargs(execution_id="exec-concurrent")
     )
-
-    assert fact_guard_states == [True]
-    assert selected.inspect()["leases"] == []
-
-
-def test_release_failure_preserves_primary_dispatch_error(tmp_path: Path) -> None:
-    lease_module, _ = D._load_fleet_module("lease_broker")
-    assert lease_module is not None
-    selected = lease_module.LeaseBroker(tmp_path / "authority")
-
-    def broken_release(*_args: Any, **_kwargs: Any) -> bool:
-        raise lease_module.LeaseBrokerError("release unavailable")
-
-    selected.release = broken_release  # type: ignore[method-assign]
-    with pytest.raises(RuntimeError, match="runner failed") as caught:
-        D.dispatch(
-            _resolution(),
-            runner=lambda _invocation: (_ for _ in ()).throw(RuntimeError("runner failed")),
-            session_id="runtime-session",
-            execution_id="execution-1",
-            attempt_id="attempt-1",
-            lease_authority=selected,
-            lease_admission=_lease_admission(),
-        )
-
-    assert any("secondary lease cleanup failure" in note for note in caught.value.__notes__)
+    evidence_b = D.dispatch(
+        _resolution(), runner=_ok_runner, **_registered_kwargs(execution_id="exec-concurrent")
+    )
+    assert isinstance(evidence_a, D.AdvisoryEvidence)
+    assert isinstance(evidence_b, D.AdvisoryEvidence)
+    assert evidence_a.provenance["dispatch_close"] == evidence_b.provenance["dispatch_close"]
 
 
 def _store(tmp_path: Path) -> Any:
@@ -1441,10 +1255,9 @@ def test_adjudicate_manifest_updates_mirror(tmp_path: Path) -> None:
     assert mirrored["claim_provenance"]["claims"][0]["adjudicated"] == "verified"
 
 
-def test_team_execution_claim_and_adjudication_chain_exact_close_receipts(tmp_path: Path) -> None:
-    lease_module, _ = D._load_fleet_module("lease_broker")
-    assert lease_module is not None
-    authority = lease_module.LeaseBroker(tmp_path / "authority")
+def test_team_execution_claim_and_adjudication_chain_exact_close_receipts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     store = _store(tmp_path)
     audit_store_root = tmp_path / "audit-store"
     evidence = D.dispatch(
@@ -1453,11 +1266,9 @@ def test_team_execution_claim_and_adjudication_chain_exact_close_receipts(tmp_pa
         session_id="runtime-session",
         execution_id="exec-canonical",
         attempt_id="attempt-1",
-        lease_authority=authority,
-        lease_admission=_lease_admission(),
     )
     assert isinstance(evidence, D.AdvisoryEvidence)
-    dispatch_close = evidence.provenance["lease"]["settlement_close"]
+    dispatch_close = evidence.provenance["dispatch_close"]
 
     claim = D.record_dispatch_manifest(
         store,
@@ -1477,18 +1288,15 @@ def test_team_execution_claim_and_adjudication_chain_exact_close_receipts(tmp_pa
         audit_store_root=audit_store_root,
         predecessor_close=dispatch_close,
         session_id="runtime-session",
-        lease_admission=_write_lease_admission(),
-        lease_authority=authority,
     )
-    assert isinstance(claim, D.ManifestSettlementResult)
-    assert claim.settlement_close["token"] != dispatch_close["token"]
+    assert isinstance(claim, D.ManifestTransitionResult)
+    # the claim chains from the dispatch receipt DIGEST and binds the exact manifest bytes
+    assert claim.close_receipt["predecessor_receipt_sha256"] == dispatch_close["receipt_sha256"]
     claim_bytes = store.manifest_path("exec-canonical").read_bytes()
-    assert (
-        claim.settlement_close["expected_output_sha256"] == hashlib.sha256(claim_bytes).hexdigest()
-    )
-    assert len(claim.settlement_close["protected_write_intent_sha256"]) == 64
+    assert claim.close_receipt["expected_output_sha256"] == hashlib.sha256(claim_bytes).hexdigest()
+    assert len(claim.close_receipt["protected_write_intent_sha256"]) == 64
 
-    with pytest.raises(D.DispatchError, match="claim requires an exact saga predecessor"):
+    with pytest.raises(D.DispatchError, match="exact saga predecessor"):
         D.record_dispatch_manifest(
             store,
             evidence,
@@ -1496,15 +1304,11 @@ def test_team_execution_claim_and_adjudication_chain_exact_close_receipts(tmp_pa
             saga_ref="saga-invalid-claim",
             created_at="2026-07-01T00:00:01Z",
             audit_store_root=audit_store_root,
-            predecessor_close=claim.settlement_close,
+            predecessor_close=claim.close_receipt,
             session_id="runtime-session",
-            lease_admission=_write_lease_admission(),
-            lease_authority=authority,
-        )
+        )  # a claim receipt is team-execution-produced; a claim needs a SAGA predecessor
 
-    with pytest.raises(
-        D.DispatchError, match="adjudication requires an exact team-execution predecessor"
-    ):
+    with pytest.raises(D.DispatchError, match="exact team-execution predecessor"):
         D.adjudicate_manifest(
             store,
             "exec-canonical",
@@ -1512,9 +1316,7 @@ def test_team_execution_claim_and_adjudication_chain_exact_close_receipts(tmp_pa
             audit_store_root=audit_store_root,
             predecessor_close=dispatch_close,
             session_id="runtime-session",
-            lease_admission=_write_lease_admission(),
-            lease_authority=authority,
-        )
+        )  # the dispatch receipt is saga-produced; adjudication needs the CLAIM receipt
 
     adjudicated = D.adjudicate_manifest(
         store,
@@ -1526,28 +1328,34 @@ def test_team_execution_claim_and_adjudication_chain_exact_close_receipts(tmp_pa
             )
         },
         audit_store_root=audit_store_root,
-        predecessor_close=claim.settlement_close,
+        predecessor_close=claim.close_receipt,
         session_id="runtime-session",
-        lease_admission=_write_lease_admission(),
-        lease_authority=authority,
     )
 
-    assert isinstance(adjudicated, D.ManifestSettlementResult)
+    assert isinstance(adjudicated, D.ManifestTransitionResult)
     assert adjudicated.manifest.claim_provenance is not None
     assert (
         adjudicated.manifest.claim_provenance.claims[0].adjudicated is PM.AdjudicatedStatus.VERIFIED
     )
-    head = next(iter(authority.inspect()["resource_fences"].values()))
-    assert head["close_receipt"] == adjudicated.settlement_close
+    assert (
+        adjudicated.close_receipt["predecessor_receipt_sha256"]
+        == claim.close_receipt["receipt_sha256"]
+    )
     verified = dataclasses.replace(
         evidence,
         verified_by_claude=True,
         provenance={**evidence.provenance, "observer_corroborated": True},
     )
-    close_without_intent = {
-        **adjudicated.settlement_close,
-        "protected_write_intent_sha256": "0" * 64,
-    }
+
+    # a forged-but-self-consistent receipt (valid digest, wrong bindings) is refused at the gate
+    forged = D._mint_close_receipt(
+        resource_ref=D._engine_resource_ref("exec-canonical", "manifest-gate"),
+        producer="team-execution",
+        run_id="exec-canonical",
+        expected_output_sha256="f" * 64,
+        protected_write_intent_sha256="0" * 64,
+        predecessor_receipt_sha256=claim.close_receipt["receipt_sha256"],
+    )
     with pytest.raises(D.DispatchError, match="exact output and write intent"):
         D.satisfy_gate(
             verified,
@@ -1555,10 +1363,22 @@ def test_team_execution_claim_and_adjudication_chain_exact_close_receipts(tmp_pa
             reconciliation=_ready_reconciliation(verified),
             store=store,
             audit_store_root=audit_store_root,
-            manifest_settlement_close=close_without_intent,
-            lease_authority=authority,
+            manifest_close_receipt=forged,
         )
 
+    # a tampered receipt (content no longer matches its own digest) is refused before any bytes
+    tampered = {**adjudicated.close_receipt, "expected_output_sha256": "f" * 64}
+    with pytest.raises(D.DispatchError, match="tampered or stale receipt"):
+        D.satisfy_gate(
+            verified,
+            adjudicated.manifest,
+            reconciliation=_ready_reconciliation(verified),
+            store=store,
+            audit_store_root=audit_store_root,
+            manifest_close_receipt=tampered,
+        )
+
+    # store-byte drift is still refused (the byte CAS survives the broker's retirement)
     manifest_path = store.manifest_path("exec-canonical")
     exact_manifest_bytes = manifest_path.read_bytes()
     manifest_path.write_bytes(exact_manifest_bytes + b"\n")
@@ -1569,24 +1389,35 @@ def test_team_execution_claim_and_adjudication_chain_exact_close_receipts(tmp_pa
             reconciliation=_ready_reconciliation(verified),
             store=store,
             audit_store_root=audit_store_root,
-            manifest_settlement_close=adjudicated.settlement_close,
-            lease_authority=authority,
+            manifest_close_receipt=adjudicated.close_receipt,
         )
     manifest_path.write_bytes(exact_manifest_bytes)
 
-    original_inspect = authority.inspect
-    authority.inspect = lambda: {"resource_fences": {}}  # type: ignore[method-assign]
-    with pytest.raises(D.DispatchError, match="canonical resource head"):
+    # audit-mirror drift is refused (the stub loader simulates a diverged durable mirror)
+    original_loader = D._load_fleet_module
+
+    def drifted_loader(name: str) -> tuple[Any, str]:
+        if name == "audit_store":
+            return (
+                SimpleNamespace(
+                    Store=SimpleNamespace(for_root=lambda _root: SimpleNamespace()),
+                    resolve_manifest=lambda _mirror, _run_id: {"tampered": True},
+                ),
+                "",
+            )
+        return cast(tuple[Any, str], original_loader(name))
+
+    monkeypatch.setattr(D, "_load_fleet_module", drifted_loader)
+    with pytest.raises(D.DispatchError, match="audit mirror"):
         D.satisfy_gate(
             verified,
             adjudicated.manifest,
             reconciliation=_ready_reconciliation(verified),
             store=store,
             audit_store_root=audit_store_root,
-            manifest_settlement_close=adjudicated.settlement_close,
-            lease_authority=authority,
+            manifest_close_receipt=adjudicated.close_receipt,
         )
-    authority.inspect = original_inspect  # type: ignore[method-assign]
+    monkeypatch.setattr(D, "_load_fleet_module", original_loader)
 
     assert (
         D.satisfy_gate(
@@ -1595,34 +1426,47 @@ def test_team_execution_claim_and_adjudication_chain_exact_close_receipts(tmp_pa
             reconciliation=_ready_reconciliation(verified),
             store=store,
             audit_store_root=audit_store_root,
-            manifest_settlement_close=adjudicated.settlement_close,
-            lease_authority=authority,
+            manifest_close_receipt=adjudicated.close_receipt,
         )
         is None
     )
 
-    with pytest.raises(D.DispatchError, match="successor"):
-        D.record_dispatch_manifest(
-            store,
-            evidence,
-            execution_id="exec-canonical",
-            saga_ref="saga-1",
-            created_at="2026-07-01T00:00:00Z",
-            audit_store_root=audit_store_root,
-            predecessor_close=dispatch_close,
-            session_id="runtime-session",
-            lease_admission=_write_lease_admission(),
-            lease_authority=authority,
-        )
+    # Accepted fencing loss (#677 row 1): a double-claim from the same dispatch receipt is no
+    # longer refused at admission — the re-claim proceeds and, being content-addressed over
+    # identical inputs, mints the exact same receipt.
+    reclaimed = D.record_dispatch_manifest(
+        store,
+        evidence,
+        execution_id="exec-canonical",
+        saga_ref="saga-1",
+        created_at="2026-07-01T00:00:00Z",
+        claim_provenance=PM.ClaimProvenance(
+            claims=(
+                PM.Claim(
+                    text="a claim",
+                    claimed=PM.ClaimedStatus.NOT_CHECKED,
+                    source_ref="finding-1",
+                ),
+            )
+        ),
+        audit_store_root=audit_store_root,
+        predecessor_close=dispatch_close,
+        session_id="runtime-session",
+    )
+    assert isinstance(reclaimed, D.ManifestTransitionResult)
+    assert reclaimed.close_receipt["receipt_sha256"] == claim.close_receipt["receipt_sha256"]
 
 
-def test_adjudication_refuses_source_change_between_capture_and_settlement_preparation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_adjudication_refuses_source_change_between_capture_and_cas_commit(
+    tmp_path: Path,
 ) -> None:
-    """The adjudication CAS must preserve a concurrent manifest instead of overwriting it."""
-    lease_module, _ = D._load_fleet_module("lease_broker")
-    assert lease_module is not None
-    authority = lease_module.LeaseBroker(tmp_path / "authority")
+    """The adjudication CAS must preserve a concurrent manifest instead of overwriting it.
+
+    Broker-free pause point (#677/U3): the settlement fence is retired, so the race window is
+    spanned at the store seam instead — the adjudication reads the manifest once to capture the
+    source bytes and AGAIN inside the transition for the byte CAS; the barrier pauses the second
+    read so a concurrent writer can win between them.
+    """
     store = _store(tmp_path)
     audit_store_root = tmp_path / "audit-store"
     evidence = D.dispatch(
@@ -1631,8 +1475,6 @@ def test_adjudication_refuses_source_change_between_capture_and_settlement_prepa
         session_id="runtime-session",
         execution_id="exec-adjudication-toctou",
         attempt_id="attempt-1",
-        lease_authority=authority,
-        lease_admission=_write_lease_admission(),
     )
     assert isinstance(evidence, D.AdvisoryEvidence)
     claim = D.record_dispatch_manifest(
@@ -1651,32 +1493,40 @@ def test_adjudication_refuses_source_change_between_capture_and_settlement_prepa
             )
         ),
         audit_store_root=audit_store_root,
-        predecessor_close=evidence.provenance["lease"]["settlement_close"],
+        predecessor_close=evidence.provenance["dispatch_close"],
         session_id="runtime-session",
-        lease_admission=_write_lease_admission(),
-        lease_authority=authority,
     )
-    assert isinstance(claim, D.ManifestSettlementResult)
+    assert isinstance(claim, D.ManifestTransitionResult)
     audit_before = D._audit_store.resolve_manifest(
         D._audit_store.Store.for_root(audit_store_root), "exec-adjudication-toctou"
     )
     assert audit_before is not None
 
-    reached_prepare = threading.Barrier(2)
-    original_prepare = authority.prepare_agent_settlement
+    reached_cas = threading.Barrier(2)
+    original_manifest_path = store.manifest_path
+    path_calls = {"n": 0}
 
-    def pause_before_prepare(*args: Any, **kwargs: Any) -> Any:
-        reached_prepare.wait(timeout=5)
-        reached_prepare.wait(timeout=5)
-        return original_prepare(*args, **kwargs)
+    class _PausingStore:
+        """Delegating proxy (Store is a frozen dataclass): pause only the manifest_path seam."""
 
-    monkeypatch.setattr(authority, "prepare_agent_settlement", pause_before_prepare)
+        def manifest_path(self, execution_id: str) -> Path:
+            path_calls["n"] += 1
+            # call 1 = source capture; call 2 = the CAS re-read inside the transition
+            if path_calls["n"] == 2:
+                reached_cas.wait(timeout=5)
+                reached_cas.wait(timeout=5)
+            return cast(Path, original_manifest_path(execution_id))
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(store, name)
+
+    pausing_store = _PausingStore()
     errors: list[BaseException] = []
 
     def adjudicate() -> None:
         try:
             D.adjudicate_manifest(
-                store,
+                pausing_store,
                 "exec-adjudication-toctou",
                 {
                     ("a claim", "finding-1"): (
@@ -1687,23 +1537,21 @@ def test_adjudication_refuses_source_change_between_capture_and_settlement_prepa
                     )
                 },
                 audit_store_root=audit_store_root,
-                predecessor_close=claim.settlement_close,
+                predecessor_close=claim.close_receipt,
                 session_id="runtime-session",
-                lease_admission=_write_lease_admission(),
-                lease_authority=authority,
             )
         except BaseException as exc:  # noqa: BLE001 - assert the raised CAS refusal below.
             errors.append(exc)
 
     thread = threading.Thread(target=adjudicate)
     thread.start()
-    reached_prepare.wait(timeout=5)  # Source capture completed; settlement preparation has not.
+    reached_cas.wait(timeout=5)  # Source captured; the CAS re-read is paused on the barrier.
     concurrent = MS.read_manifest(store, "exec-adjudication-toctou")
     assert concurrent is not None
     concurrent["tripwire_note"] = "concurrent writer won"
     MS.write_manifest(store, "exec-adjudication-toctou", concurrent)
-    concurrent_bytes = store.manifest_path("exec-adjudication-toctou").read_bytes()
-    reached_prepare.wait(timeout=5)
+    concurrent_bytes = original_manifest_path("exec-adjudication-toctou").read_bytes()
+    reached_cas.wait(timeout=5)
     thread.join(timeout=5)
 
     assert not thread.is_alive()
@@ -1720,9 +1568,6 @@ def test_adjudication_refuses_source_change_between_capture_and_settlement_prepa
 
 
 def test_noncanonical_manifest_cannot_overwrite_canonical_namespaces(tmp_path: Path) -> None:
-    lease_module, _ = D._load_fleet_module("lease_broker")
-    assert lease_module is not None
-    authority = lease_module.LeaseBroker(tmp_path / "authority")
     store = _store(tmp_path)
     audit_store_root = tmp_path / "audit-store"
     canonical_evidence = D.dispatch(
@@ -1731,8 +1576,6 @@ def test_noncanonical_manifest_cannot_overwrite_canonical_namespaces(tmp_path: P
         session_id="runtime-session",
         execution_id="exec-separated",
         attempt_id="attempt-1",
-        lease_authority=authority,
-        lease_admission=_lease_admission(),
     )
     canonical = D.record_dispatch_manifest(
         store,
@@ -1741,12 +1584,10 @@ def test_noncanonical_manifest_cannot_overwrite_canonical_namespaces(tmp_path: P
         saga_ref="canonical",
         created_at="2026-07-01T00:00:00Z",
         audit_store_root=audit_store_root,
-        predecessor_close=canonical_evidence.provenance["lease"]["settlement_close"],
+        predecessor_close=canonical_evidence.provenance["dispatch_close"],
         session_id="runtime-session",
-        lease_admission=_write_lease_admission(),
-        lease_authority=authority,
     )
-    assert isinstance(canonical, D.ManifestSettlementResult)
+    assert isinstance(canonical, D.ManifestTransitionResult)
     canonical_bytes = store.manifest_path("exec-separated").read_bytes()
     canonical_mirror = D._audit_store.resolve_manifest(
         D._audit_store.Store.for_root(audit_store_root), "exec-separated"
@@ -1773,13 +1614,15 @@ def test_noncanonical_manifest_cannot_overwrite_canonical_namespaces(tmp_path: P
     assert legacy is not None and legacy["saga_ref"] == "legacy"
 
 
-def test_team_execution_two_process_claim_race_has_one_exact_cas_winner(
+def test_team_execution_two_process_claim_race_both_proceed_and_one_state_persists(
     tmp_path: Path,
 ) -> None:
-    lease_module, _ = D._load_fleet_module("lease_broker")
-    assert lease_module is not None
-    authority_root = tmp_path / "authority"
-    authority = lease_module.LeaseBroker(authority_root)
+    # #677 Scope Decision row 1 (accepted loss): admission fencing is gone, so two racing claims
+    # of the same execution are BOTH ADMITTED — neither is refused at the door. The race settles
+    # at the byte level instead: the transition's post-write read-back check detects an
+    # interleaved writer, so a contender whose bytes were overwritten fails LOUDLY on the byte
+    # check (never on a lease refusal) and exactly one final manifest persists. Mirror drift
+    # between contenders, where an interleaving admits it, is the gate's job to catch.
     store = _store(tmp_path)
     audit_store_root = tmp_path / "audit-store"
     evidence = D.dispatch(
@@ -1788,17 +1631,14 @@ def test_team_execution_two_process_claim_race_has_one_exact_cas_winner(
         session_id="race-dispatch-session",
         execution_id="exec-process-race",
         attempt_id="attempt-origin",
-        lease_authority=authority,
-        lease_admission=_lease_admission(),
     )
     assert isinstance(evidence, D.AdvisoryEvidence)
-    predecessor = evidence.provenance["lease"]["settlement_close"]
+    predecessor = evidence.provenance["dispatch_close"]
     context = multiprocessing.get_context("fork")
     start = context.Barrier(2)
     results = context.Queue()
 
     def contender(saga_ref: str, attempt_id: str) -> None:
-        local_authority = lease_module.LeaseBroker(authority_root)
         local_store = MS.Store(root=store.root).ensure()
         local_evidence = dataclasses.replace(
             evidence,
@@ -1815,14 +1655,12 @@ def test_team_execution_two_process_claim_race_has_one_exact_cas_winner(
                 audit_store_root=audit_store_root,
                 predecessor_close=predecessor,
                 session_id=f"race-{attempt_id}",
-                lease_admission=_write_lease_admission(),
-                lease_authority=local_authority,
             )
-        except Exception as exc:  # noqa: BLE001 - child reports the typed race loser.
+        except Exception as exc:  # noqa: BLE001 - child reports any typed failure.
             results.put(("error", saga_ref, type(exc).__name__, str(exc)))
         else:
-            assert isinstance(result, D.ManifestSettlementResult)
-            results.put(("ok", saga_ref, result.settlement_close["receipt_sha256"], ""))
+            assert isinstance(result, D.ManifestTransitionResult)
+            results.put(("ok", saga_ref, result.close_receipt["receipt_sha256"], ""))
 
     processes = [
         context.Process(target=contender, args=("saga-attempt-a", "attempt-a")),
@@ -1836,16 +1674,21 @@ def test_team_execution_two_process_claim_race_has_one_exact_cas_winner(
         assert process.exitcode == 0
     outcomes = [results.get(timeout=2), results.get(timeout=2)]
 
-    [winner] = [row for row in outcomes if row[0] == "ok"]
-    [loser] = [row for row in outcomes if row[0] == "error"]
-    assert "settlement" in loser[3] or "successor" in loser[3]
+    ok_rows = [row for row in outcomes if row[0] == "ok"]
+    error_rows = [row for row in outcomes if row[0] == "error"]
+    assert ok_rows, f"at least one claim must persist: {outcomes}"
+    # No admission refusal exists anymore: any race loser failed on the post-write byte check —
+    # the byte-CAS read-back detecting an interleaved writer — never on a lease/fence refusal.
+    for row in error_rows:
+        assert row[2] == "DispatchError", f"unexpected typed failure: {row}"
+        assert "does not match expected output bytes" in row[3], f"unexpected refusal: {row}"
     manifest = MS.read_manifest(store, "exec-process-race")
     assert manifest is not None
-    assert manifest["saga_ref"] == winner[1]
+    assert manifest["saga_ref"] in {"saga-attempt-a", "saga-attempt-b"}  # one final state
     mirror = D._audit_store.resolve_manifest(
         D._audit_store.Store.for_root(audit_store_root), "exec-process-race"
     )
-    assert mirror == manifest
+    assert mirror is not None and mirror["saga_ref"] in {"saga-attempt-a", "saga-attempt-b"}
 
 
 def test_halted_dispatch_records_disposition_note(tmp_path: Path) -> None:
@@ -2988,7 +2831,6 @@ def test_advisory_panel_reconciles_deduplicated_and_empty_output_before_append(
         foreman=foreman,
         execution_id="panel-execution",
         session_id="panel-session",
-        lease_admission=_lease_admission(),
         intent="second-opinion",
         ledger=ledger,
         subplot_id="issue-393",
@@ -3010,46 +2852,20 @@ def test_advisory_panel_reconciles_deduplicated_and_empty_output_before_append(
         D.satisfy_gate(verified, reconciliation=_ready_reconciliation(verified))
 
 
-def test_advisory_panel_fences_stale_retry_through_both_fact_appends(
+def test_advisory_panel_retry_is_no_longer_fenced(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    lease_module, _ = D._load_fleet_module("lease_broker")
-    assert lease_module is not None
-    selected = lease_module.LeaseBroker(tmp_path / "authority")
+    # #677 Scope Decision row 1 (accepted loss, pinned): the settlement fence that refused a
+    # second panel dispatch over the same execution is retired with the broker. A retry now
+    # PROCEEDS and appends its own reconcile/apply pair directly — no settlement guard holds the
+    # append window. The broker-era refusal ("expired before settlement") no longer exists.
     monkeypatch.setattr(
         D.engine_resolver,
         "resolve_role",
         lambda *_args, **_kwargs: [_resolution(variant="panel-one")],
     )
     ledger = RC.run_ledger.RunLedger(tmp_path / "panel-facts.jsonl")
-    foreman_started = threading.Event()
-    allow_foreman = threading.Event()
-    failures: list[BaseException] = []
-    settlement_depth = 0
-    append_depths: list[int] = []
-    original_commit = selected.commit_agent_settlement
-    original_append = D.reconcile.append_reconciliation_fact
-
-    def tracking_commit(*args: Any, write: Any, **kwargs: Any) -> Any:
-        nonlocal settlement_depth
-
-        def tracking_write(lease: Any) -> Any:
-            nonlocal settlement_depth
-            settlement_depth += 1
-            try:
-                return write(lease)
-            finally:
-                settlement_depth -= 1
-
-        return original_commit(*args, write=tracking_write, **kwargs)
-
-    def tracking_append(*args: Any, **kwargs: Any) -> Any:
-        append_depths.append(settlement_depth)
-        return original_append(*args, **kwargs)
-
-    monkeypatch.setattr(selected, "commit_agent_settlement", tracking_commit)
-    monkeypatch.setattr(D.reconcile, "append_reconciliation_fact", tracking_append)
 
     def panel_result(evidence: tuple[Any, ...], reconciliation_id: str) -> Any:
         return RC.build_panel_reconciliation_result(
@@ -3069,60 +2885,38 @@ def test_advisory_panel_fences_stale_retry_through_both_fact_appends(
             ),
         )
 
-    def foreman(evidence: tuple[Any, ...]) -> Any:
-        foreman_started.set()
-        assert allow_foreman.wait(timeout=5)
-        return panel_result(evidence, "stale-panel-reconciliation")
-
-    def run_first() -> None:
-        try:
-            D.dispatch_advisory_panel(
-                D.AdvisoryPanelRequest("cross-family-review-panel"),
-                registry=object(),
-                runner=lambda _invocation: _review_payload("finding"),
-                foreman=foreman,
-                execution_id="panel-execution",
-                session_id="panel-session",
-                lease_admission=_lease_admission(),
-                lease_authority=selected,
-                intent="second-opinion",
-                ledger=ledger,
-                subplot_id="issue-393",
-                at="2026-07-09T00:00:00Z",
-            )
-        except BaseException as exc:  # pragma: no cover - asserted through failures
-            failures.append(exc)
-
-    first = threading.Thread(target=run_first)
-    first.start()
-    assert foreman_started.wait(timeout=5)
     D.dispatch_advisory_panel(
         D.AdvisoryPanelRequest("cross-family-review-panel"),
         registry=object(),
-        runner=lambda _invocation: _review_payload("new finding"),
-        foreman=lambda evidence: panel_result(evidence, "current-panel-reconciliation"),
+        runner=lambda _invocation: _review_payload("finding"),
+        foreman=lambda evidence: panel_result(evidence, "first-panel-reconciliation"),
         execution_id="panel-execution",
         session_id="panel-session",
-        lease_admission=_lease_admission(),
-        lease_authority=selected,
         intent="second-opinion",
         ledger=ledger,
         subplot_id="issue-393",
         at="2026-07-09T00:00:00Z",
     )
-    allow_foreman.set()
-    first.join(timeout=5)
+    D.dispatch_advisory_panel(
+        D.AdvisoryPanelRequest("cross-family-review-panel"),
+        registry=object(),
+        runner=lambda _invocation: _review_payload("new finding"),
+        foreman=lambda evidence: panel_result(evidence, "second-panel-reconciliation"),
+        execution_id="panel-execution",
+        session_id="panel-session",
+        intent="second-opinion",
+        ledger=ledger,
+        subplot_id="issue-393",
+        at="2026-07-09T00:00:00Z",
+    )
 
-    assert first.is_alive() is False
-    assert len(failures) == 1
-    assert isinstance(failures[0], D.DispatchError)
-    assert "expired before settlement" in str(failures[0])
-    assert append_depths == [1, 1]
+    # Both runs appended their own fact pair — nothing refused the second dispatch.
     assert [fact["action"] for fact in RC.read_reconciliation_facts(ledger)] == [
         "reconcile",
         "apply",
+        "reconcile",
+        "apply",
     ]
-    assert selected.inspect()["leases"] == []
 
 
 def test_advisory_panel_unavailable_member_blocks_all_dispatch_and_append(
@@ -3147,7 +2941,6 @@ def test_advisory_panel_unavailable_member_blocks_all_dispatch_and_append(
             foreman=lambda _evidence: None,
             execution_id="panel-execution",
             session_id="panel-session",
-            lease_admission=_lease_admission(),
             intent="second-opinion",
             ledger=ledger,
             subplot_id="issue-393",
@@ -3186,7 +2979,6 @@ def test_failed_panel_foreman_writes_no_apply_fact(
             foreman=failed_foreman,
             execution_id="panel-execution",
             session_id="panel-session",
-            lease_admission=_lease_admission(),
             intent="second-opinion",
             ledger=ledger,
             subplot_id="issue-393",
@@ -3238,7 +3030,6 @@ def test_panel_flattens_member_findings_and_omission_appends_no_facts(
             foreman=foreman,
             execution_id="panel-execution",
             session_id="panel-session",
-            lease_admission=_lease_admission(),
             intent="second-opinion",
             ledger=ledger,
             subplot_id="issue-393",
@@ -3278,7 +3069,6 @@ def test_panel_rejects_hidden_raw_finding_before_foreman_or_ledger(
             foreman=foreman,
             execution_id="panel-execution",
             session_id="panel-session",
-            lease_admission=_lease_admission(),
             intent="second-opinion",
             ledger=ledger,
             subplot_id="issue-393",
@@ -3355,7 +3145,6 @@ def test_panel_binding_mismatch_appends_neither_action(
             foreman=foreman,
             execution_id="panel-execution",
             session_id="panel-session",
-            lease_admission=_lease_admission(),
             intent="second-opinion",
             ledger=ledger,
             subplot_id="issue-393",
@@ -3425,7 +3214,6 @@ def test_invalid_panel_metadata_has_no_preflight_dispatch_or_fact(
             foreman=foreman,
             execution_id=execution_id,
             session_id="panel-session",
-            lease_admission=_lease_admission(),
             intent=intent,
             ledger=ledger,
             subplot_id=subplot_id,
@@ -3438,10 +3226,13 @@ def test_invalid_panel_metadata_has_no_preflight_dispatch_or_fact(
     assert RC.run_ledger.read_facts(ledger) == []
 
 
-def test_invalid_panel_lease_contract_has_no_preflight_dispatch_or_fact(
+def test_invalid_panel_session_contract_has_no_preflight_dispatch_or_fact(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Broker-free (#677/U3): the lease-admission contract is gone, but the bounded session
+    # identity stays REQUIRED — it keys the delegation-integrity tripwire inside each member
+    # dispatch. An invalid session id rejects before any preflight, dispatch, or fact.
     preflights = 0
 
     def resolve_role(*_args: object, **_kwargs: object) -> list[Any]:
@@ -3451,15 +3242,14 @@ def test_invalid_panel_lease_contract_has_no_preflight_dispatch_or_fact(
 
     monkeypatch.setattr(D.engine_resolver, "resolve_role", resolve_role)
     ledger = RC.run_ledger.RunLedger(tmp_path / "panel-facts.jsonl")
-    with pytest.raises(D.DispatchError, match="lease admission"):
+    with pytest.raises(D.DispatchError, match="session_id must be a non-empty"):
         D.dispatch_advisory_panel(
             D.AdvisoryPanelRequest("cross-family-review-panel"),
             registry=object(),
             runner=_ok_runner,
             foreman=lambda _evidence: None,
             execution_id="panel-execution",
-            session_id="panel-session",
-            lease_admission=cast(Any, object()),
+            session_id="",
             intent="second-opinion",
             ledger=ledger,
             subplot_id="issue-393",
@@ -3510,7 +3300,6 @@ def test_later_panel_member_runtime_halt_skips_foreman_and_facts(
             foreman=foreman,
             execution_id="panel-execution",
             session_id="panel-session",
-            lease_admission=_lease_admission(),
             intent="second-opinion",
             ledger=ledger,
             subplot_id="issue-393",
@@ -3544,7 +3333,6 @@ def test_thrown_panel_foreman_exception_appends_neither_action(
             foreman=foreman,
             execution_id="panel-execution",
             session_id="panel-session",
-            lease_admission=_lease_admission(),
             intent="second-opinion",
             ledger=ledger,
             subplot_id="issue-393",
@@ -3582,7 +3370,6 @@ def test_panel_member_utf8_output_overflow_fails_without_foreman_or_facts(
             foreman=foreman,
             execution_id="panel-execution",
             session_id="panel-session",
-            lease_admission=_lease_admission(),
             intent="second-opinion",
             ledger=ledger,
             subplot_id="issue-393",
@@ -3617,7 +3404,6 @@ def test_panel_cumulative_output_overflow_fails_without_foreman_or_facts(
             foreman=foreman,
             execution_id="panel-execution",
             session_id="panel-session",
-            lease_admission=_lease_admission(),
             intent="second-opinion",
             ledger=ledger,
             subplot_id="issue-393",

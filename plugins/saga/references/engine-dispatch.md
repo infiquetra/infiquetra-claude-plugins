@@ -83,13 +83,16 @@ satisfy_gate(
     ledger=ledger,
     store=store,
     audit_store_root=audit_store_root,
-    manifest_settlement_close=adjudicated.settlement_close,
-    lease_authority=lease_authority,
+    manifest_close_receipt=adjudicated.close_receipt,
 )
 ```
 
-This call happens only after the broker-backed claim and adjudication chain has produced
-`adjudicated.settlement_close`, and before any patch is applied. `manifest` is optional only when no
+This call happens only after the receipt-chained claim and adjudication transitions have produced
+`adjudicated.close_receipt`, and before any patch is applied. Since the fleet broker's retirement
+(#677/U3) the chain is self-authenticating: dispatch mints a `saga.close-receipt.v1` receipt onto
+`provenance["dispatch_close"]`, each manifest transition re-validates its predecessor by digest
+re-derivation and mints its own, and the gate re-validates the final receipt and its output/write
+intent bindings. `manifest` is optional only when no
 manifest exists; a caller that has one must pass it. `ledger` and
 `store` are an optional pair for bridge-liveness checking: pass both or neither. The same exact
 in-memory `result` that Claude built and that the worker recorded is passed as `reconciliation`.

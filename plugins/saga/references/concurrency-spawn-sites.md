@@ -21,8 +21,16 @@ cooperative-boundary` means a foreground Agent/Task has no safe boundary while t
 running: it may outlive its TTL, but later delegated mutation is rejected instead of silently
 renewed. These are explicit lifecycle postures, not blank exemptions.
 
-The public `reap_worktree` path prevalidates teardown authority and delegates removal plus exact
-lease release to `_reap_prevalidated`; the inventory names that helper as the release seam.
+**#677/U3 re-key:** the fleet broker's retirement strips the lease lifecycle from the
+`engine_dispatch.py`, `outcome.py`, and `outcome_worktrees.py` rows. `retired:broker-free-(#677/U3)`
+marks a cell whose broker seam is deleted with an accepted loss attached: dispatch admission and
+cross-run worktree sweep are gone (two concurrent dispatches both proceed; abandoned outcome
+worktrees are reclaimed through the operator path in
+[`worktree-reclamation.md`](worktree-reclamation.md)). The external-engine settlement record is now
+the self-authenticating `saga.close-receipt.v1` mint, and the outcome worktree's ownership record
+is its registry entry — `reap_worktree` removes and deregisters authority-free. The
+`workflow_emitter`, hooks, and team-execution rows keep their broker lifecycle until their own
+retirement units land.
 
 | Source | Function or seam | Spawn form | Governor entry point | Lease pool | Acquire or reserve seam | Bind seam | Renewal seam | Release seam |
 |---|---|---|---|---|---|---|---|---|
@@ -30,11 +38,9 @@ lease release to `_reap_prevalidated`; the inventory names that helper as the re
 | `plugins/saga/scripts/execution_spec.py` | `emit_workflow_script` | dependency-layer worker agents | `concurrency_chunks` | `agent` | `workflow_emitter.reserve` | `lease_broker.claim_hook_agent` | `workflow_emitter.renew` | `workflow_emitter.release` |
 | `plugins/saga/hooks/hooks.json` | `Agent|Task` | normal Saga Agent and Task calls | `concurrency_policy.AdmissionLimits` | `agent` | `lease_broker.reserve_hook_agent` | `lease_broker.claim_hook_agent` | `expiry-fence:no-cooperative-boundary` | `lease_broker.record_hook_terminal+record_hook_parent` |
 | `plugins/team-execution/skills/team-execution/scripts/lease_protocol.py` | `team-execution-fan-out` | worker reviewer and validator waves | `concurrency_policy.AdmissionLimits` | `agent` | `lease_broker.reserve_hook_agent` | `lease_broker.claim_hook_agent` | `lease_protocol.renew` | `lease_protocol.teardown` |
-| `plugins/saga/scripts/engine_dispatch.py` | `_dispatch_once` | registered external-engine runner | `concurrency_policy.AdmissionLimits` | `agent` | `engine_dispatch.dispatch` | `not-applicable:in-process-adapter` | `LeaseBroker.prepare_agent_settlement` | `LeaseBroker.commit_agent_settlement` |
-| `plugins/saga/scripts/engine_dispatch.py` | `guarded_runner` | lease-settled external-engine adapter invocation | `concurrency_policy.AdmissionLimits` | `agent` | `engine_dispatch.dispatch` | `not-applicable:in-process-adapter` | `LeaseBroker.prepare_agent_settlement` | `LeaseBroker.commit_agent_settlement` |
-| `plugins/saga/scripts/engine_dispatch.py` | `guarded_panel_runner` | panel-wide lease-settled external-engine adapter invocation | `concurrency_policy.AdmissionLimits` | `agent` | `engine_dispatch.dispatch_advisory_panel` | `not-applicable:in-process-adapter` | `LeaseBroker.renew` | `LeaseBroker.commit_agent_settlement` |
-| `plugins/saga/scripts/outcome.py` | `_reconcile_once` | outcome backend dispatch | `concurrency_policy.AdmissionLimits` | `agent` | `outcome_dispatcher.make_dispatcher` | `not-applicable:in-process-adapter` | `LeaseBroker.renew` | `LeaseBroker.release` |
-| `plugins/saga/scripts/outcome_worktrees.py` | `ensure_worktree` | outcome-owned git worktree | `WORKTREE_CAP` | `worktree` | `_arm_worktree` | `worktree_lease_receipt` | `reconcile_worktree_leases` | `_reap_prevalidated` |
+| `plugins/saga/scripts/engine_dispatch.py` | `_dispatch_once` | registered external-engine runner | `retired:broker-free-(#677/U3)` | `agent` | `retired:broker-free-(#677/U3)` | `not-applicable:in-process-adapter` | `retired:broker-free-(#677/U3)` | `saga.close-receipt.v1:mint` |
+| `plugins/saga/scripts/outcome.py` | `_reconcile_once` | outcome backend dispatch | `retired:broker-free-(#677/U3)` | `agent` | `retired:broker-free-(#677/U3)` | `not-applicable:in-process-adapter` | `retired:broker-free-(#677/U3)` | `retired:broker-free-(#677/U3)` |
+| `plugins/saga/scripts/outcome_worktrees.py` | `ensure_worktree` | outcome-owned git worktree | `WORKTREE_CAP` | `worktree` | `registry.register` | `not-applicable:registry-entry` | `retired:broker-free-(#677/U3)` | `reap_worktree.deregister` |
 
 [`sandbox-spawn-sites.md`](sandbox-spawn-sites.md) separately inventories containment requirements.
 The inventories cross-link because verify-panel and external-engine rows are both concurrency-

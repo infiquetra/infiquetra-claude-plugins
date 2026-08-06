@@ -113,10 +113,11 @@ valid trigger route and cannot change it from `second-opinion`. Do not write a p
 the operator declined one offer. No answer or unattended mode records `unattended`; decline records
 `declined`; both proceed through the existing work gates with zero runner calls.
 
-For explicit acceptance, derive `lease_admission_for_session` from the same configured Saga session
-snapshot used by direct Agent/Task hooks and pass both that exact value and its originating
-`lease_session_id` to `prepare_second_opinion`; missing or mismatched session-policy authority halts before
-the wrapper. Then use `accept_work_offer` and atomically save the sidecar before invoking
+For explicit acceptance, pass the trusted runtime session id (`session_id = CLAUDE_CODE_SESSION_ID`,
+the same configured Saga session used by direct Agent/Task hooks) to `prepare_second_opinion`; a
+missing, empty, or control-character-bearing session id halts before the wrapper (#677/U3 retired
+the lease admission the session once resolved — the session id now arms the delegation tripwire and
+keys the integrity counter directly). Then use `accept_work_offer` and atomically save the sidecar before invoking
 `dispatch_second_opinion`. The U1 claim store takes its own durable
 `requested` reservation immediately before the wrapper; only that owner can call the runner. An unavailable,
 halted, timeout, empty, or malformed response calls `record_work_dispatch_outcome` and atomically saves

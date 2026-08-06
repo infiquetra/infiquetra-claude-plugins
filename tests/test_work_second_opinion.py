@@ -33,8 +33,8 @@ REG = SO.Registry.load(REGISTRY)
 
 
 @pytest.fixture(autouse=True)
-def _isolated_fleet_authority(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("INFIQUETRA_FLEET_STATE_DIR", str(tmp_path / "fleet-leases"))
+def _isolated_fleet_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INFIQUETRA_FLEET_STATE_DIR", str(tmp_path / "fleet-state"))
 
 
 def _attempt(
@@ -74,15 +74,6 @@ def _resolution() -> Any:
     )
 
 
-def _lease_admission() -> Any:
-    return SO.engine_dispatch.LeaseAdmission(
-        policy_sha256="a" * 64,
-        session_limit=1,
-        aggregate_limit=1,
-        mutation="none",
-    )
-
-
 def _prepared(monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.setattr(SO.engine_resolver, "resolve", lambda *_args, **_kwargs: _resolution())
     finding = SO.FindingSnapshot(
@@ -107,8 +98,7 @@ def _prepared(monkeypatch: pytest.MonkeyPatch) -> Any:
         registry=REG,
         requested_by="human",
         reason="Check this finding before selecting another fix.",
-        lease_session_id="work-session",
-        lease_admission=_lease_admission(),
+        session_id="work-session",  # broker-free since #677/U3: the trusted session id alone
     )
 
 

@@ -4,6 +4,20 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [2.25.0] - 2026-08-06
+
+### Changed
+
+- **Chaperone manifest contract re-keyed to the broker-free close-receipt chain — campaign #677
+  unit U3 (#680).** `references/external-engine-workers.md` §3/§5 rewritten: the dispatch call
+  drops `lease_authority`/`lease_admission`, the claim and adjudication transitions chain from
+  `provenance["dispatch_close"]` and `claim_result.close_receipt` by digest, and `satisfy_gate`
+  takes `manifest_close_receipt`. Identity is caller-asserted; two racing claims of one execution
+  both proceed and settle at the byte-CAS read-back (accepted loss, plan #677 Scope Decision
+  row 1). The documented chain stays pinned by the saga-side manifest consumer matrix. The
+  plugin's own lease scripts are unchanged until their retirement units land; this release moves
+  only the agent-facing documentation, per the repo's release-surface rule (#429 diff guard).
+
 ## [2.24.0] - 2026-08-05
 
 ### Changed

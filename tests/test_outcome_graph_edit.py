@@ -353,12 +353,18 @@ def test_prune_reconciles_orphans_closes_issue_and_reaps_worktree(tmp_path: Path
         ]
     )
     store = _store(tmp_path)
-    # give s a registered worktree so prune reaps it
+    # give s a registered worktree so prune reaps it — with the production entry shape
+    # (ensure_worktree always writes outcome_id; the strict prune preflight binds it, #677/U3)
     ops = _PathOps({str(WT.worktree_path(tmp_path, "o", "s"))}).ops()
     WT.register(
         store,
         "s",
-        {"path": str(WT.worktree_path(tmp_path, "o", "s")), "branch": "x", "owner": "me"},
+        {
+            "path": str(WT.worktree_path(tmp_path, "o", "s")),
+            "branch": "x",
+            "owner": "me",
+            "outcome_id": "o",
+        },
     )
     closed: list[str] = []
     summary = DEC.prune(spec, store, "s", issue_close=_closer(closed), worktree_ops=ops)

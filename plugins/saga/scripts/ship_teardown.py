@@ -662,10 +662,11 @@ def _reap_via_registry(
     try:
         return outcome_worktrees.reap_worktree(store, subplot_id, ops)
     except outcome_worktrees.WorktreeError as exc:
-        # Ship teardown has no coordinator lease/token.  A lease-bound entry must stay intact for
-        # the canonical outcome reaper; falling back to plain git removal would sever its fence.
+        # Ship teardown holds no reap authority of its own. An entry that fails strict
+        # prevalidation must stay intact for the canonical outcome reaper; falling back to plain
+        # git removal would sever the registry's ownership record (#677/U3).
         raise ShipTeardownError(
-            f"registered outcome worktree retained for canonical lease-aware reap: {exc}"
+            f"registered outcome worktree retained for canonical registry-owned reap: {exc}"
         ) from exc
 
 

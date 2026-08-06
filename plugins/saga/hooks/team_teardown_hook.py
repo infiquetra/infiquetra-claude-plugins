@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Claude hook adapter for team-run teardown recovery seams (#358 R5/R11).
+"""Claude hook adapter for team-run teardown recovery seams (#358 R5/R11, #677/U2).
 
-``SessionEnd`` records a bounded best-effort teardown *request* (close fence + intent) for
-this trusted session's open runs — it never claims the run is closed. ``SessionStart``
-(``startup|resume``) runs one bounded, expired-only recovery pass. Both act only on the
-hook's canonical repository (the run-fact ledger under its git common dir), use trusted
-hook JSON for session and cwd, and fail visibly without fabricating completion.
+``SessionEnd`` records a bounded best-effort teardown *request* (intent fact) for this
+trusted session's open runs — it never claims the run is closed. ``SessionStart``
+(``startup|resume``) runs one bounded recovery pass over runs whose registered
+worktrees git no longer lists. Both act only on the hook's canonical repository (the
+run-fact ledger under its git common dir), use trusted hook JSON for session and cwd,
+and fail visibly without fabricating completion.
 """
 
 from __future__ import annotations
@@ -46,21 +47,21 @@ def dispatch(payload: dict[str, Any]) -> None:
         ledger = run_ledger.RunLedger.resolve(repo_root)
     except Exception:  # noqa: BLE001 - not a git repo: cross-repo-safe silent degrade
         return
-    try:
-        broker = team_teardown.default_broker()
-    except team_teardown.TeardownError as exc:
-        _note(f"broker unavailable — no teardown action taken: {exc}")
-        return
 
     if event == "SessionEnd":
-        decision = team_teardown.read_decision_input(ledger, broker)
+        try:
+            decision = team_teardown.read_decision_input(ledger, repo_root=repo_root)
+        except team_teardown.TeardownError as exc:
+            _note(f"worktree census unavailable — no teardown action taken: {exc}")
+            return
         targets = team_teardown._matching_open_runs(
-            decision, root_sha256=str(broker.root_sha256), session_id=session_id
+            decision,
+            root_sha256=team_teardown.repository_root_sha256(ledger),
+            session_id=session_id,
         )
         for run_id in targets:
             recorded = team_teardown.request(
                 ledger,
-                broker,
                 subplot_id="team-execution-run",
                 team_run_id=run_id,
                 terminal_reason="operator-abort",
@@ -76,12 +77,12 @@ def dispatch(payload: dict[str, Any]) -> None:
     if event == "SessionStart":
         outcome = team_teardown.recover(
             ledger,
-            broker,
-            team_teardown.production_adapters(broker),
+            team_teardown.production_adapters(repo_root),
             subplot_id="team-execution-run",
             expired_only=True,
             max_actions=_RECOVERY_MAX_ACTIONS,
             at_provider=_now_utc_text,
+            repo_root=repo_root,
         )
         acted = [item for item in outcome.get("recovered_runs", []) if item.get("actions_taken")]
         if acted:

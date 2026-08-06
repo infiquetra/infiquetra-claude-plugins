@@ -1,14 +1,20 @@
-"""Hermetic leak invariant and source-aware teardown conformance (#358 U5, R10).
+"""Hermetic leak invariant and source-aware teardown conformance (#358 U5/R10, #677/U2).
 
-Every fixture here is a temporary Git repository, broker registry, and ledger — the tests
-never enumerate, inspect, or mutate the developer's global worktree set or live broker
-authority. The invariant is proven both ways: a planted unledgered worktree turns it red,
-and production registration + reclamation turns it green.
+Every fixture here is a temporary Git repository, outcome worktree registry, and
+ledger — the tests never enumerate, inspect, or mutate the developer's global worktree
+set or any live coordination state. The invariant is proven both ways: a planted
+unregistered worktree turns it red, and production registration turns it green.
+
+#677/U2 re-keyed the explanation source: a worktree is *explained* by an entry in its
+outcome's worktree registry — the lease list that used to explain them is retired.
+Registration, not reclamation, is what turns the invariant green: teardown reports
+dispositions and never removes anything from disk (KTD12).
 """
 
 from __future__ import annotations
 
 import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -17,10 +23,6 @@ from typing import Any
 
 ROOT = Path(__file__).parent.parent
 SCRIPTS = ROOT / "plugins" / "saga" / "scripts"
-BROKER_PATH = ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "lease_broker.py"
-POLICY_PATH = (
-    ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "concurrency_policy.py"
-)
 TEAM_SKILL = ROOT / "plugins" / "team-execution" / "skills" / "team-execution" / "SKILL.md"
 CONSUMER_SITES = ROOT / "plugins" / "saga" / "references" / "teardown-consumer-sites.md"
 
@@ -38,8 +40,7 @@ def _load(path: Path, name: str) -> ModuleType:
 
 RL = _load(SCRIPTS / "run_ledger.py", "run_ledger_for_ci_invariant")
 TT = _load(SCRIPTS / "team_teardown.py", "team_teardown_for_ci_invariant")
-B = _load(BROKER_PATH, "fleet_lease_broker_for_ci_invariant")
-P = _load(POLICY_PATH, "fleet_concurrency_policy_for_ci_invariant")
+OW = _load(SCRIPTS / "outcome_worktrees.py", "outcome_worktrees_for_ci_invariant")
 
 
 def _git(repo: Path, *argv: str) -> str:
@@ -85,43 +86,55 @@ def _list_worktrees(repo: Path) -> list[Path]:
     return [p for p in paths if p.resolve() != repo.resolve()]
 
 
-def _leased_worktree_paths(broker: Any, repo: Path) -> set[Path]:
-    leased: set[Path] = set()
-    for lease in broker.inspect().get("leases", []):
-        resource = lease.get("resource_ref")
-        if lease.get("pool") != "worktree" or not isinstance(resource, dict):
-            continue
-        if Path(resource.get("repo_root", "")).resolve() != repo.resolve():
-            continue
-        leased.add((repo / ".claude" / "worktrees" / str(resource.get("subplot_id"))).resolve())
-    return leased
+def _registered_paths(repo: Path) -> set[Path]:
+    """Every worktree path an outcome registry entry explains (#677/U2 explanation source)."""
+
+    registered: set[Path] = set()
+    namespace = repo / ".git" / "saga-outcomes"
+    if not namespace.is_dir():
+        return registered
+    for registry in sorted(namespace.glob("*/worktrees.json")):
+        data = json.loads(registry.read_text(encoding="utf-8"))
+        for entry in data.get("worktrees", {}).values():
+            path = str(entry.get("path", ""))
+            if path:
+                registered.add(Path(path).resolve())
+    return registered
 
 
-def unexplained_worktrees(broker: Any, repo: Path) -> list[Path]:
-    """The leak invariant: every fixture worktree must be explained by a broker lease.
+def unexplained_worktrees(repo: Path) -> list[Path]:
+    """The leak invariant: every fixture worktree must be explained by a registry entry.
 
     Scope is the fixture repository alone; an external worktree belonging to another
     repository is out of managed scope by construction (a different ``git worktree list``).
     """
 
-    leased = _leased_worktree_paths(broker, repo)
-    return sorted(p for p in _list_worktrees(repo) if p.resolve() not in leased)
-
-
-def _broker(tmp_path: Path) -> Any:
-    return B.LeaseBroker(tmp_path / "authority")
+    registered = _registered_paths(repo)
+    return sorted(p for p in _list_worktrees(repo) if p.resolve() not in registered)
 
 
 def _ledger(tmp_path: Path) -> Any:
     return RL.RunLedger(path=tmp_path / "run-facts.jsonl")
 
 
-def _worktree_resource(repo: Path, sid: str) -> dict[str, str]:
-    return {"repo_root": str(repo), "outcome_id": "ci-outcome", "subplot_id": sid}
+def _register(repo: Path, outcome_id: str, subplot_id: str, path: Path) -> None:
+    """The production registration seam: outcome_worktrees.register under the store."""
+
+    store = OW.outcome_store.Store(root=repo / ".git" / "saga-outcomes" / outcome_id)
+    OW.register(
+        store,
+        subplot_id,
+        {
+            "path": str(path),
+            "branch": f"saga-outcome-{outcome_id}-{subplot_id}",
+            "repo_root": str(repo),
+            "outcome_id": outcome_id,
+        },
+    )
 
 
-def _add_worktree(repo: Path, sid: str) -> Path:
-    path = repo / ".claude" / "worktrees" / sid
+def _add_worktree(repo: Path, outcome_id: str, subplot_id: str) -> Path:
+    path = repo / ".saga-worktrees" / outcome_id / subplot_id
     path.parent.mkdir(parents=True, exist_ok=True)
     _git(repo, "worktree", "add", "--quiet", "--detach", str(path))
     return path
@@ -130,76 +143,73 @@ def _add_worktree(repo: Path, sid: str) -> Path:
 class TestLeakInvariant:
     def test_clean_fixture_has_zero_unexplained(self, tmp_path: Path) -> None:
         repo = _fixture_repo(tmp_path)
-        broker = _broker(tmp_path)
-        assert unexplained_worktrees(broker, repo) == []
+        assert unexplained_worktrees(repo) == []
 
-    def test_unledgered_worktree_turns_the_invariant_red_then_production_reclaim_green(
+    def test_unregistered_worktree_turns_the_invariant_red_then_registration_green(
         self, tmp_path: Path
     ) -> None:
         repo = _fixture_repo(tmp_path)
-        broker = _broker(tmp_path)
         ledger = _ledger(tmp_path)
-        leak = _add_worktree(repo, "leaked-sub")
+        leak = _add_worktree(repo, "ci-outcome", "leaked-sub")
 
-        red = unexplained_worktrees(broker, repo)
+        red = unexplained_worktrees(repo)
         assert red == [leak]
 
-        # Register through the production broker: the worktree becomes explained.
-        lease = broker.acquire_worktree(
-            owner_id="team-run-ci",
-            session_id="session-ci",
-            resource_ref=_worktree_resource(repo, "leaked-sub"),
-            owner_pid=999999,  # a PID that provably does not exist -> dead owner
-            ttl_seconds=1,
-        )
-        assert unexplained_worktrees(broker, repo) == []
+        # Register through the production seam: the worktree becomes explained.
+        _register(repo, "ci-outcome", "leaked-sub", leak)
+        assert unexplained_worktrees(repo) == []
 
-        # Reclaim through the production driver with a real (fixture-scoped) reaper.
+        # Teardown REPORTS the registered worktree — it never reclaims it (KTD12).
         TT.open_run(
             ledger,
-            broker,
             subplot_id="ci-invariant",
             session_id="session-ci",
-            at="2026-07-18T15:00:00Z",
+            at="2026-08-05T15:00:00Z",
             team_run_id="team-run-ci",
         )
-
-        def _reaper(resource: Any) -> bool:
-            target = repo / ".claude" / "worktrees" / str(resource["subplot_id"])
-            _git(repo, "worktree", "remove", "--force", str(target))
-            return True
-
-        import time as _time
-
-        _time.sleep(1.2)  # the fixture lease's 1-second TTL derives expired
         projection = TT.reclaim_all(
             ledger,
-            broker,
-            TT.production_adapters(broker, worktree_reaper=_reaper),
+            TT.production_adapters(repo),
             subplot_id="ci-invariant",
             team_run_id="team-run-ci",
             terminal_reason="success",
-            at_provider=lambda: "2026-07-18T15:01:00Z",
+            at_provider=lambda: "2026-08-05T15:01:00Z",
+            repo_root=repo,
         )
-        assert projection["open_count"] == 0
-        assert projection["completion_fact_ref"] is not None
-        assert unexplained_worktrees(broker, repo) == []
-        assert not leak.exists()
-        assert lease.lease_id not in [item["lease_id"] for item in broker.inspect()["leases"]]
+        assert projection["retained_count"] == 1
+        assert projection["completion_fact_ref"] is None  # a truthful blocked terminal
+        assert unexplained_worktrees(repo) == []
+        assert leak.exists()  # teardown removed nothing from disk
 
-    def test_lease_with_missing_path_is_detected_distinctly(self, tmp_path: Path) -> None:
+    def test_registered_but_absent_worktree_reports_already_absent_and_completes(
+        self, tmp_path: Path
+    ) -> None:
         repo = _fixture_repo(tmp_path)
-        broker = _broker(tmp_path)
-        broker.acquire_worktree(
-            owner_id="team-run-ci",
+        ledger = _ledger(tmp_path)
+        phantom = repo / ".saga-worktrees" / "ci-outcome" / "phantom-sub"
+        _register(repo, "ci-outcome", "phantom-sub", phantom)
+        # Nothing on disk: not a leak (no unexplained worktree), and teardown's census
+        # reports the re-defined already-absent — git no longer lists this worktree.
+        assert unexplained_worktrees(repo) == []
+        TT.open_run(
+            ledger,
+            subplot_id="ci-invariant",
             session_id="session-ci",
-            resource_ref=_worktree_resource(repo, "phantom-sub"),
+            at="2026-08-05T15:00:00Z",
+            team_run_id="team-run-ci",
         )
-        # Nothing on disk: not a leak (no unexplained worktree), but the lease's path
-        # is visibly absent for the census.
-        assert unexplained_worktrees(broker, repo) == []
-        missing = [path for path in _leased_worktree_paths(broker, repo) if not path.exists()]
-        assert len(missing) == 1
+        projection = TT.reclaim_all(
+            ledger,
+            TT.production_adapters(repo),
+            subplot_id="ci-invariant",
+            team_run_id="team-run-ci",
+            terminal_reason="success",
+            at_provider=lambda: "2026-08-05T15:01:00Z",
+            repo_root=repo,
+        )
+        assert projection["already_absent_count"] == 1
+        assert projection["completion_fact_ref"] is not None
+        assert not phantom.exists()
 
     def test_external_repository_worktree_is_out_of_managed_scope(self, tmp_path: Path) -> None:
         repo = _fixture_repo(tmp_path)
@@ -220,113 +230,63 @@ class TestLeakInvariant:
             "x",
         )
         _git(other, "worktree", "add", "--quiet", "--detach", str(tmp_path / "other-wt"))
-        broker = _broker(tmp_path)
-        assert unexplained_worktrees(broker, repo) == []
+        assert unexplained_worktrees(repo) == []
 
-    def test_live_owner_worktree_is_retained_and_still_explained(self, tmp_path: Path) -> None:
-        import os as _os
-
+    def test_registered_worktree_stays_explained_across_repeated_reclaim(
+        self, tmp_path: Path
+    ) -> None:
         repo = _fixture_repo(tmp_path)
-        broker = _broker(tmp_path)
         ledger = _ledger(tmp_path)
-        _add_worktree(repo, "live-sub")
-        broker.acquire_worktree(
-            owner_id="team-run-ci",
-            session_id="session-ci",
-            resource_ref=_worktree_resource(repo, "live-sub"),
-            owner_pid=_os.getpid(),  # this test process is provably alive
-        )
+        target = _add_worktree(repo, "ci-outcome", "flaky-sub")
+        _register(repo, "ci-outcome", "flaky-sub", target)
         TT.open_run(
             ledger,
-            broker,
             subplot_id="ci-invariant",
             session_id="session-ci",
-            at="2026-07-18T15:00:00Z",
+            at="2026-08-05T15:00:00Z",
             team_run_id="team-run-ci",
         )
-        projection = TT.reclaim_all(
-            ledger,
-            broker,
-            TT.production_adapters(broker),
-            subplot_id="ci-invariant",
-            team_run_id="team-run-ci",
-            terminal_reason="operator-abort",
-            at_provider=lambda: "2026-07-18T15:01:00Z",
-        )
-        assert projection["retained_count"] == 1
-        assert projection["completion_fact_ref"] is None
-        assert unexplained_worktrees(broker, repo) == []
-
-    def test_failed_cleanup_stays_red_and_retry_converges_green(self, tmp_path: Path) -> None:
-        import time as _time
-
-        repo = _fixture_repo(tmp_path)
-        broker = _broker(tmp_path)
-        ledger = _ledger(tmp_path)
-        target = _add_worktree(repo, "flaky-sub")
-        broker.acquire_worktree(
-            owner_id="team-run-ci",
-            session_id="session-ci",
-            resource_ref=_worktree_resource(repo, "flaky-sub"),
-            owner_pid=999999,
-            ttl_seconds=1,
-        )
-        TT.open_run(
-            ledger,
-            broker,
-            subplot_id="ci-invariant",
-            session_id="session-ci",
-            at="2026-07-18T15:00:00Z",
-            team_run_id="team-run-ci",
-        )
-        _time.sleep(1.2)
-
         first = TT.reclaim_all(
             ledger,
-            broker,
-            TT.production_adapters(broker, worktree_reaper=lambda _r: False),
+            TT.production_adapters(repo),
             subplot_id="ci-invariant",
             team_run_id="team-run-ci",
             terminal_reason="hard-fail",
-            at_provider=lambda: "2026-07-18T15:01:00Z",
+            at_provider=lambda: "2026-08-05T15:01:00Z",
+            repo_root=repo,
         )
         assert first["retained_count"] == 1
         assert first["completion_fact_ref"] is None
         assert target.exists()
 
-        def _reaper(resource: Any) -> bool:
-            _git(
-                repo,
-                "worktree",
-                "remove",
-                "--force",
-                str(repo / ".claude" / "worktrees" / str(resource["subplot_id"])),
-            )
-            return True
-
+        # The worktree is removed out-of-band (an operator action, never teardown's);
+        # the next pass converges on the re-defined already-absent and completes.
+        _git(repo, "worktree", "remove", "--force", str(target))
         second = TT.reclaim_all(
             ledger,
-            broker,
-            TT.production_adapters(broker, worktree_reaper=_reaper),
+            TT.production_adapters(repo),
             subplot_id="ci-invariant",
             team_run_id="team-run-ci",
             terminal_reason="hard-fail",
-            at_provider=lambda: "2026-07-18T15:02:00Z",
+            at_provider=lambda: "2026-08-05T15:02:00Z",
+            repo_root=repo,
         )
         assert second["completion_fact_ref"] is not None
         assert not target.exists()
-        assert unexplained_worktrees(broker, repo) == []
+        assert unexplained_worktrees(repo) == []
 
     def test_live_census_dry_run_makes_no_file_or_ref_changes(self, tmp_path: Path) -> None:
         repo = _fixture_repo(tmp_path)
-        broker = _broker(tmp_path)
         ledger = _ledger(tmp_path)
+        _add_worktree(repo, "ci-outcome", "census-sub")
+        _register(
+            repo, "ci-outcome", "census-sub", repo / ".saga-worktrees" / "ci-outcome" / "census-sub"
+        )
         TT.open_run(
             ledger,
-            broker,
             subplot_id="ci-invariant",
             session_id="session-ci",
-            at="2026-07-18T15:00:00Z",
+            at="2026-08-05T15:00:00Z",
             team_run_id="team-run-ci",
         )
         ledger_bytes = ledger.path.read_bytes()
@@ -335,51 +295,45 @@ class TestLeakInvariant:
 
         projection = TT.reclaim_all(
             ledger,
-            broker,
-            TT.production_adapters(broker),
+            TT.production_adapters(repo),
             subplot_id="ci-invariant",
             team_run_id="team-run-ci",
             terminal_reason="success",
-            at_provider=lambda: "2026-07-18T15:01:00Z",
+            at_provider=lambda: "2026-08-05T15:01:00Z",
+            repo_root=repo,
             dry_run=True,
         )
         assert projection["completion_fact_ref"] is None
         assert ledger.path.read_bytes() == ledger_bytes
         assert _git(repo, "for-each-ref") == refs_before
         assert _list_worktrees(repo) == worktrees_before
-        assert broker.inspect_owner_admission("team-run-ci") is None
 
 
 # --------------------------------------------------------------- source-aware conformance
 
 
 def _spawn_conformance_violations(source: str) -> list[str]:
-    """Flag spawn shapes that create resources without teardown registration (R10).
+    """Flag creation shapes that skip their trusted seams (R10, re-keyed by #677/U2).
 
-    A fixture-grade checker: a source that spawns a subprocess or worktree must name the
-    production registration call, and a source that asserts completion must name the B8
-    driver. Deliberately shallow — the goal is that an unwired copy of a production
-    pattern cannot pass silently.
+    A fixture-grade checker: a source that adds a worktree must name the registry
+    registration seam, and a source that asserts completion must name the B8 driver.
+    The subprocess registration rule retired with the lease authority — spawn-time
+    subprocess identity is an accepted loss of the retirement (Option C), so there is
+    no seam left to require. Deliberately shallow — the goal is that an unwired copy
+    of a production pattern cannot pass silently.
     """
 
     violations: list[str] = []
-    spawns_subprocess = "subprocess.Popen" in source or "os.fork" in source
-    if spawns_subprocess and "register_subprocess" not in source:
-        violations.append("subprocess-spawn-without-registration")
-    adds_worktree = "worktree add" in source or "acquire_worktree" in source
-    if "worktree add" in source and "acquire_worktree" not in source:
+    if "worktree add" in source and "outcome_worktrees.register" not in source:
         violations.append("worktree-spawn-without-registration")
     claims_complete = "teardown-complete" in source or "run complete" in source
     if claims_complete and ("reclaim_all" not in source and "reclaim-all" not in source):
         violations.append("completion-claim-without-b8")
-    assert adds_worktree or spawns_subprocess or claims_complete or not violations
     return violations
 
 
 class TestSourceConformance:
-    def test_negative_fixture_unregistered_spawn_fails(self) -> None:
-        fixture = "child = subprocess.Popen([sys.executable, worker])\n"
-        assert "subprocess-spawn-without-registration" in _spawn_conformance_violations(fixture)
+    def test_negative_fixture_unregistered_worktree_fails(self) -> None:
         fixture_wt = 'run(["git", "worktree add", path])\n'
         assert "worktree-spawn-without-registration" in _spawn_conformance_violations(fixture_wt)
 
@@ -387,10 +341,10 @@ class TestSourceConformance:
         fixture = 'print("run complete")\n'
         assert "completion-claim-without-b8" in _spawn_conformance_violations(fixture)
 
-    def test_registered_spawn_and_b8_completion_pass(self) -> None:
+    def test_registered_worktree_and_b8_completion_pass(self) -> None:
         fixture = (
-            "child = subprocess.Popen(argv)\n"
-            "team_teardown.register_subprocess(broker, team_run_id=run, ...)\n"
+            'run(["git", "worktree add", path])\n'
+            "outcome_worktrees.register(store, subplot_id, entry)\n"
             "projection = team_teardown.reclaim_all(...)  # emits teardown-complete\n"
         )
         assert _spawn_conformance_violations(fixture) == []
@@ -405,18 +359,17 @@ class TestSourceConformance:
         inventory = CONSUMER_SITES.read_text(encoding="utf-8")
         for column in (
             "run-open",
-            "register",
-            "renewal",
+            "worktree census",
             "terminal driver",
             "action owner",
-            "release",
+            "disposition",
             "recovery",
             "proof",
         ):
             assert f"| {column} " in inventory or f" {column} |" in inventory
         for seam in (
             "lease_protocol.py open-run",
-            "register_subprocess",
+            "live_worktrees",
             "reclaim-all",
             "recover --expired-only --max-actions 4",
             "request",

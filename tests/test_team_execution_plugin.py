@@ -63,7 +63,7 @@ def test_team_execution_metadata_is_v2_and_marketplace_matches() -> None:
     marketplace = json.loads(_read(ROOT / ".claude-plugin" / "marketplace.json"))
     entry = next(p for p in marketplace["plugins"] if p["name"] == "team-execution")
 
-    assert plugin_json["version"] == "2.23.0"  # empty-delivery check inlined (#666)
+    assert plugin_json["version"] == "2.24.0"  # U2 teardown-doc re-key (#679, campaign #677)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/team-execution"
     assert "validator" in plugin_json["description"].lower()
@@ -240,6 +240,9 @@ def test_skill_documents_non_skippable_terminal_teardown() -> None:
         assert required in skill_doc, f"SKILL.md missing teardown wiring: {required!r}"
     # B7 prepares the draft; only B8's receipt allows the word complete (KTD2).
     assert "B7 cannot assert" in skill_doc
+    # #677/U2 retired the lease authority: `term-then-kill` (the subprocess stop policy)
+    # and `confirmed-stalled` (the eviction-gate liveness class) left the contract with the
+    # mechanisms they named, so they no longer pin the reference.
     for required in (
         "team_teardown.v1",
         "close-owner-admission",
@@ -249,8 +252,6 @@ def test_skill_documents_non_skippable_terminal_teardown() -> None:
         "resource-result",
         "recovery-observation",
         "teardown-complete",
-        "term-then-kill",
-        "confirmed-stalled",
         "already-absent",
         "request --cwd",
         "recover --expired-only --max-actions 4",

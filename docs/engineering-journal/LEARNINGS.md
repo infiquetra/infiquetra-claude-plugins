@@ -21,6 +21,49 @@
 
 ## 2026-08-05
 
+### Re-keying an enumeration silently drops the enumeration's ownership axis — name the axis you are losing  {#census-rekey-loses-the-ownership-axis}
+
+**Context.** U2 (#679) re-keyed team teardown's resource enumeration from the lease authority's
+lease list to the outcome worktree registries (`live_worktrees` over
+`<git-common-dir>/saga-outcomes/*/worktrees.json`). The plan and the issue both described the
+change as a RE-KEY — same teardown, different key. The two enumeration sources have different
+shapes in a way "re-key" hides: the lease list was owner-keyed (`owner_id == team_run_id`), while
+registry entries belong to OUTCOME subplots and carry no team-run ownership at all.
+
+**Evidence.** `team_teardown.py`'s `_owned_leases(view, owner_id)` filter (pre-U2) versus the
+post-U2 census, which has no owner field to filter on. Consequences that only surface once you
+notice the missing axis: a run's teardown now reports the worktree state of the whole repository;
+`open_count` had to be re-defined from "live leases owned by the run" to "census entries not yet
+at a final disposition" (or the completion gate could never trip — the registry does not shrink
+when the reap path is gone); and `recover --expired-only` lost the lease `derived_state == live`
+signal, re-keying onto "git still lists a registered worktree".
+
+**Mechanism.** An enumeration source is never just a list of things — it is a list of things plus
+every field the old source carried that callers silently consumed. When a replacement source
+lacks one of those fields (here: ownership), some downstream semantic either (a) silently widens
+(per-run view → repo-wide view), (b) silently dies (liveness filter with no signal), or (c)
+breaks outright (completion gate that counted the old field). A grep for the removed module finds
+the call sites; it does not find the consumed fields. The plan's stop condition ("reporting a
+correct disposition turns out to require owner-liveness") anticipated case (b) for dispositions
+but not for the census itself.
+
+**Fix.** DECISIONS [#u2-rekeys-teardown-onto-worktree-registry-679](DECISIONS.md#u2-rekeys-teardown-onto-worktree-registry-679)
+records each re-definition deliberately (KTD1/KTD5): the widened per-run semantics, the
+`open_count` redefinition, the recovery-skip re-key, and the recovery reason-string renames. The
+rewritten tests pin all of them in re-keyed form; the saga CHANGELOG carries the user-visible
+meaning changes under `Changed`.
+
+**Generalizable rule.** When swapping an enumeration source, diff the FIELDS the old source
+carried against the new one before writing code — ownership, liveness, generation, scope. For
+every field the new source lacks, write down which downstream semantic loses it and what that
+semantic becomes. "Re-key" is the wrong word when a field dies; call it a re-key + a loss, and
+record both.
+
+**Refs.** DECISIONS [#u2-rekeys-teardown-onto-worktree-registry-679](DECISIONS.md#u2-rekeys-teardown-onto-worktree-registry-679);
+plan KTD12 (teardown never reclaimed); LEARNINGS
+[#file-disjoint-units-must-be-api-disjoint](#file-disjoint-units-must-be-api-disjoint) (the U1
+sibling: a decomposition claim measured on the wrong axis).
+
 ### File-disjoint units must also be API-disjoint: a caller that passes the retired thing IN and reads it OUT is coupled to the unit that removes it  {#file-disjoint-units-must-be-api-disjoint}
 
 **Context.** The lease-broker retirement (#677) cut its units file-disjoint so U1–U4 "may run in

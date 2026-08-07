@@ -21,6 +21,45 @@
 
 ## 2026-08-07
 
+### CI load surfaces the races and clock assumptions local machines hide  {#ci-load-surfaces-the-races-and-clock-assumptions-local-machines-hide}
+
+**Context.** U4 (#681) passed the full local suite (5497 passed) and then failed merge-time CI
+twice — each run on a DIFFERENT test, both in code the unit never touched.
+
+**Evidence.** Run 1: `test_delegated_parent_must_hold_current_same_session_authority` asserted a
+halt that never came (`assert 0 == 2`). Run 2: the U3 two-process claim-race pin failed with
+`FileExistsError: .../audit-store` — a typed failure category the pin explicitly does not allow.
+Both passed locally minutes apart; PR #699's CI (same code paths) was green the day before.
+
+**Mechanism.** Two distinct hidden assumptions:
+1. **Concurrent-creation TOCTOU.** `audit_store._ensure_private_dir` checked `exists()` then ran
+   a bare `mkdir(mode=0o700)`. Once admission fencing went away (plan #677 Scope Decision row 1:
+   concurrent dispatches both proceed), two dispatches mirror to ONE shared store root — and on a
+   loaded CI runner the two forked contenders actually interleave at that window, which a
+   developer machine with spare CPU almost never does. The loser got EEXIST.
+2. **Monotonic-clock tricks silently assume uptime.** The hook test simulated lease expiry by
+   writing `renewed_monotonic_ns = 0`; expiry is `monotonic_now >= renewed + ttl*1e9` with the
+   lease's stored `ttl_seconds = 300`. On Linux the monotonic clock starts at boot, so the trick
+   only works on machines up longer than five minutes. GitHub runners provisioned fresh during
+   the capacity incident had less.
+
+**Fix (or queued).** Same PR (`feat/681-u4-unwind-workflow-lease-contract`): `mkdir(...,
+exist_ok=True)` with the post-state lstat validation unchanged (fleet-core 0.23.1) plus a
+two-process creation-race pin; the hook test's tampered registry also sets `ttl_seconds = 1` so
+the expiry is uptime-independent.
+
+**What surprised.** The "both proceed" semantics the campaign accepts are not free: everything
+UNDER the contenders — shared directories, shared roots — must be process-idempotent too, or the
+accepted loss leaks in as crashes instead of clean byte-check settlements.
+
+**Generalizable rule.** When a design starts allowing concurrent actors on a shared path, audit
+every `exists()`-then-create on that path (make creation idempotent and validate the final
+state), and never simulate time with the monotonic clock unless the assertion is
+uptime-independent. Local green means little for races: loaded CI is the honest machine.
+
+**Refs.** DECISIONS `{#u4-retires-the-workflow-emitter-onto-the-frozen-contract-681}` KTD5;
+LEARNINGS `{#post-write-readback-is-the-race-detector}` (the byte check the race now settles on).
+
 ### The batch protocol's "degrade" branch was the original admission path all along  {#the-batch-fallback-was-the-original-admission-path}
 
 **Context.** U4 (#681) deletes the driver's batch reservation — the last production call that put

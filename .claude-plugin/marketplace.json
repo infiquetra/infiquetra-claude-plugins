@@ -200,7 +200,7 @@
     {
       "name": "fleet-core",
       "source": "./plugins/fleet-core",
-      "version": "0.23.0",
+      "version": "0.23.1",
       "description": "Fleet-commons library plugin: shared primitives, lease and liveness decisions, bridge receipts, attestations, and the delegation audit store. Scripts-only - no skills, commands, or agents.",
       "author": {
         "name": "Infiquetra",

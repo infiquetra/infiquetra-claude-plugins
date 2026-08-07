@@ -46,6 +46,19 @@ contract/shape pins, and added the issue's two mandated pins plus CLI HALT cover
 `execution_spec.py` emission and carries zero broker references; the lease protocol's home was
 always `test_saga_workflow_emitter.py`.
 
+**KTD5 — CI load surfaced two latent races the campaign's semantics now require; both absorbed.**
+Merge-time CI failed twice on two DIFFERENT tests, each environmental, each real:
+(1) `audit_store._ensure_private_dir` walked `exists()`-then-`mkdir` — a TOCTOU — and with
+admission fencing gone (Scope Decision row 1: concurrent dispatches both proceed) two dispatches
+mirror to ONE shared store root; the loser died on `FileExistsError` under CI load. Fixed in
+fleet-core production code (`mkdir(exist_ok=True)`; the final lstat validation still enforces
+ownership/0o700/not-a-symlink whoever created it), pinned by a two-process race test, fleet-core
+bumped 0.23.0 → 0.23.1. (2) `test_delegated_parent_must_hold_current_same_session_authority`
+simulated lease expiry with `renewed_monotonic_ns = 0`, which only expires once machine uptime
+exceeds the 300s claim TTL — a fresh runner flaked it. The tampered registry now also carries
+`ttl_seconds = 1`, making the expiry uptime-independent. LEARNINGS
+`{#ci-load-surfaces-the-races-and-clock-assumptions-local-machines-hide}`.
+
 ## 2026-08-06
 
 ### U3 re-keys dispatch and manifest settlement onto self-authenticating close receipts (#680) {#u3-rekeys-dispatch-settlement-onto-close-receipts-680}

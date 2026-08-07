@@ -321,9 +321,10 @@ python3 plugins/saga/scripts/workflow_emitter.py attest "$WORKFLOW_LEASE_METADAT
 The final `attest` remains the launch gate, but since #677/U4 it is a contract-shape check only:
 any refusal (malformed or not-launch-ready metadata) means **launch none and HALT**. No batch lease
 exists to reserve or attest — admission retired with the lease broker (#677/U4) — so `reserve` and
-`attest` validate the frozen contract and report the retired, broker-free outcome. Until U5 removes
-the lease lifecycle hook, hooks fall back to per-spawn admission instead of batch-slot assignment.
-Generated JavaScript and children receive neither a registry path nor filesystem access.
+`attest` validate the frozen contract and report the retired, broker-free outcome. Since #677/U5
+the lease lifecycle hook is deleted outright: Agent/Task spawns carry no lease admission at all —
+no reservation, no claim, no lifecycle records. Generated JavaScript and children receive neither
+a registry path nor filesystem access.
 
 Then launch it:
 
@@ -532,29 +533,10 @@ Workflow run returns.
 Execute **one meaningful phase at a time** per `references/execution-strategy.md` (for `inline` and
 `team-execution` modes, and for post-workflow Phase 2 wrap-up):
 
-Before the first direct `Agent` or `Task` call in an `inline` Saga phase, pin the exact admission
-snapshot already resolved by the approved plan/run. Do not reconstruct defaults at the hook:
-
-```bash
-test -n "$CLAUDE_CODE_SESSION_ID" || { echo "HALT — CLAUDE_CODE_SESSION_ID is absent" >&2; exit 2; }
-python3 plugins/saga/scripts/lease_broker.py configure-session \
-  --session-id "$CLAUDE_CODE_SESSION_ID" \
-  --policy-sha256 "$RESOLVED_POLICY_SHA256" \
-  --session-limit "$RESOLVED_SESSION_LIMIT" \
-  --aggregate-limit "$RESOLVED_AGGREGATE_LIMIT" \
-  --mutation "$RESOLVED_MUTATION"
-```
-
-Those four values must come from the canonical execution-spec resolver or the approved Workflow
-metadata for this run, including lane/run overrides. Missing values HALT before spawning. For
-`team-execution`, its required lease preflight pins that backend's closed default snapshot instead.
-After every direct child is authoritatively terminal, clear the inline pin; the broker refuses while
-any live session lease remains:
-
-```bash
-python3 plugins/saga/scripts/lease_broker.py clear-session \
-  --session-id "$CLAUDE_CODE_SESSION_ID"
-```
+No admission pinning: the inline admission snapshot — pinned before the first direct spawn and
+cleared once every direct child is authoritatively terminal — retired with the lease lifecycle
+hook (#677/U5). Direct `Agent`/`Task` spawns carry no lease admission. For `team-execution`, the
+lease preflight retires with U6.
 
 - **Execution strategy** — inline / serial subagents / parallel subagents, chosen from task count and
   dependency structure, gated by the **Parallel Safety Check** (file-to-unit overlap → worktree

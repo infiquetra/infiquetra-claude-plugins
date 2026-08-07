@@ -59,6 +59,61 @@ exceeds the 300s claim TTL — a fresh runner flaked it. The tampered registry n
 `ttl_seconds = 1`, making the expiry uptime-independent. LEARNINGS
 `{#ci-load-surfaces-the-races-and-clock-assumptions-local-machines-hide}`.
 
+### U5 deletes the lease lifecycle hook and the saga wrapper — runtime admission is over (#682) {#u5-deletes-the-lease-lifecycle-hook-and-the-saga-wrapper-682}
+
+Issue: `infiquetra-claude-plugins#682`, unit U5 of the lease-broker retirement campaign (#677),
+plan `docs/plans/2026-07-30-issue-677-lease-broker-retirement-plan.md`. The cheapest unit in the
+decomposition and the first purely subtractive one: two whole-file deletions (92 + 574 lines)
+whose coupled surfaces moved by construction, as in U1–U4.
+
+**KTD1 — Whole-file deletion and manifest unregistration land in one commit; the neighbours are
+pinned.** The hook was registered in five event blocks (`PreToolUse` Agent|Task, `SubagentStart`,
+`SubagentStop`, `PostToolUse` Agent|Task, `PostToolUseFailure`) — a dangling registration is a
+startup error, not a dead entry. `SubagentStart` and `PostToolUseFailure` lose the key entirely:
+the lease hook was their only registrant, and an empty event block would be a dead entry, not a
+retirement. The neighbours that shared the edited blocks (team spawn residency, delegation stop
+audit, journal nudge) stay armed, and the new manifest pins assert they survived — the guard
+against the manifest edit taking a neighbouring registration with it. The precondition was
+verified before the deletion: the hook was the wrapper's only importer.
+
+**KTD2 — The kill switch retires with its only reader, and the #671 revisit-when resolves.**
+`INFIQUETRA_FLEET_LEASE_ENFORCEMENT` had exactly one reader — the deleted hook; the #677 doc
+review measured that in advance ("no coverage gap"). The variable stays set in the operator's
+settings and is now inert. This fires DECISIONS `{#fence-carried-batch-renewal-671}`'s
+revisit-when ("the lease system's runtime admission is retired wholesale" — U5 is that branch).
+Its gating question — does a 300s TTL survive the longest real wave with renewal only at wave
+boundaries? — no longer needs an answer: enforcement is not being restored. The batch-renewal
+heartbeat debt dies with the broker itself in U7, whose re-add guard pins the absence.
+
+**KTD3 — U4's revisit-when fires: the ritual keeps its frozen-contract calls; the adapter pinning
+block goes.** U4 KTD3 said the retired reserve/attest/release/renew calls *can* leave the `/work`
+ritual once the hook is gone. Judgment: they STAY, prose re-keyed — attest still genuinely
+rejects a malformed contract before launch, and deleting the commands would ripple into
+`workflow_emitter.py` and `execution_spec.py`'s lease producer, the exact coupling U4 measured
+and deferred; retiring the frozen contract itself is a separate decision no unit carries. What
+DID go is the `configure-session`/`clear-session` block: it called the deleted wrapper, and its
+mechanism (an admission snapshot for hooks to read) has no reader left. R11 allows no lying
+window — no instruction to run a deleted script survives.
+
+**KTD4 — Conformance flips to absence; inventory rows re-key including the team-execution hook
+cells.** `EXPECTED_LEASE_CALLS` retired with the wrapper; the four hook adapter entry points and
+both deleted file paths are pinned absent across all saga sources; the manifest presence asserts
+became a per-event absence sweep. The spawn-site rows carry `retired:broker-free-(#677/U5)` —
+including the team-execution row's reserve/bind cells: those cells documented the saga hooks
+firing on team-execution's spawns, and U5 deletes the hooks for ALL spawns even though
+`lease_protocol.py` itself is U6's. That row's renewal/release cells stay `lease_protocol` until
+U6. The `expiry-fence:no-cooperative-boundary` posture retired with the last cell that used it.
+
+**KTD5 — The issue's "no version bump" line is a decomposition-era artifact; saga bumps per PR.**
+Issue #682 says "No plugin version bump in this unit. All three release surfaces move together
+in U7" — written 2026-07-30, before the #429 per-PR release-surface diff guard became the
+operating rule. Deleting two plugin files and a manifest registration is exactly the non-doc
+change the guard requires a bump for, so saga moves 0.129.0 → 0.130.0 as U1–U4 did; U7 still owns
+the three-plugin sweep and the team-execution 3.0.0 breaking bump (R8). LEARNINGS
+`{#acceptance-greps-must-exclude-the-historical-record-682}` (the issue's zero-match acceptance
+grep cannot be literal over a plugin tree: the CHANGELOG's historical entries legitimately name
+what earlier versions shipped).
+
 ## 2026-08-06
 
 ### U3 re-keys dispatch and manifest settlement onto self-authenticating close receipts (#680) {#u3-rekeys-dispatch-settlement-onto-close-receipts-680}

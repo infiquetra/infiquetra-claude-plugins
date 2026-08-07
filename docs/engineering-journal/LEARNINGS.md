@@ -21,6 +21,36 @@
 
 ## 2026-08-07
 
+### Acceptance greps must exclude the historical record  {#acceptance-greps-must-exclude-the-historical-record-682}
+
+**Context.** Issue #682 (campaign #677 unit U5) carries the acceptance criterion
+`grep -rn "lease_lifecycle_hook\|lease_broker" plugins/saga/` returns no matches. Taken
+literally, it is unreachable: `plugins/saga/CHANGELOG.md` is inside that tree and its historical
+entries name `lease_broker.py` and `lease_lifecycle_hook.py` because earlier versions genuinely
+shipped them (the 0.129.0 entry even quotes the retirement's own acceptance grep).
+
+**Evidence.** At U5 execution time the grep matched ~30 live references and ~10 CHANGELOG
+lines; only the live ones were defects. U4 dodged the same trap because its acceptance grep was
+scoped to ONE file (`workflow_emitter.py`), not a plugin tree.
+
+**Mechanism.** An acceptance grep measures "the code no longer references X," but a CHANGELOG
+measures "what the code used to reference" — the two purposes collide exactly when the criterion
+sweeps a directory containing the historical record. The criterion was authored at decomposition
+time, before the unit's own CHANGELOG entry existed to contradict it.
+
+**Fix.** U5 read the criterion as "no LIVE references (code, manifest, skills, references); the
+CHANGELOG keeps its history" — recorded in DECISIONS
+`{#u5-deletes-the-lease-lifecycle-hook-and-the-saga-wrapper-682}` KTD5. Future issue authors:
+scope retirement greps to live surfaces (`--exclude=CHANGELOG.md`, or enumerate dirs), or phrase
+the criterion as "no references outside CHANGELOG.md."
+
+**Generalizable rule.** A zero-match acceptance criterion over a directory that contains an
+append-only historical record is self-falsifying the moment the unit writes its own changelog
+entry. Scope the grep to live surfaces, not to trees that include the history of the thing being
+removed.
+
+**Refs.** DECISIONS `{#u5-deletes-the-lease-lifecycle-hook-and-the-saga-wrapper-682}`.
+
 ### CI load surfaces the races and clock assumptions local machines hide  {#ci-load-surfaces-the-races-and-clock-assumptions-local-machines-hide}
 
 **Context.** U4 (#681) passed the full local suite (5497 passed) and then failed merge-time CI

@@ -1,53 +1,28 @@
-"""Lease lifecycle and mutation-hook contracts for Saga (#356, U2)."""
+"""Surviving-hook contracts for Saga after the lease retirement (#356, #677/U5).
+
+The lease lifecycle hook and the saga broker wrapper are deleted by campaign #677 unit U5;
+this module now pins what REMAINS: the team teardown hook still fires on its session seams,
+and the hook manifest carries no lease registration — with the registrations that shared the
+lease hook's matcher blocks still armed.
+"""
 
 from __future__ import annotations
 
 import importlib.util
-import inspect
 import json
 import os
 import subprocess
 import sys
-import threading
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import ModuleType
-from typing import Any, cast
-
-import pytest
+from typing import Any
 
 ROOT = Path(__file__).parent.parent
 SAGA = ROOT / "plugins" / "saga"
-LIFECYCLE_HOOK = SAGA / "hooks" / "lease_lifecycle_hook.py"
-BROKER_PATH = ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "lease_broker.py"
 POLICY_PATH = (
     ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "concurrency_policy.py"
 )
 HOOKS_JSON = SAGA / "hooks" / "hooks.json"
-
-# Mirrors lease_broker._ADMISSION_ENV. Tests strip these from the inherited
-# environment so an operator's own fleet settings cannot decide the outcome.
-_ADMISSION_ENV = frozenset(
-    {
-        "INFIQUETRA_FLEET_SESSION_LIMIT",
-        "INFIQUETRA_FLEET_AGGREGATE_LIMIT",
-        "INFIQUETRA_FLEET_POLICY_SHA256",
-        "INFIQUETRA_FLEET_MUTATION",
-    }
-)
-
-
-def _unmanaged_env() -> dict[str, str]:
-    """Inherit the environment with every fleet variable removed.
-
-    Filtering only `_ADMISSION_ENV` is not enough: these tests hand the result to a hook
-    *subprocess*, and any other `INFIQUETRA_FLEET_*` key rides along and changes the
-    verdict. `INFIQUETRA_FLEET_BATCH_ID=ghost` in the operator's shell failed the
-    unmanaged-session test with "workflow batch 'ghost' has no available reserved slot"
-    (#662 review P2). Filter by prefix so the next variable added cannot reopen this.
-    """
-
-    return {k: v for k, v in os.environ.items() if not k.startswith("INFIQUETRA_FLEET_")}
 
 
 def _load(path: Path, name: str) -> ModuleType:
@@ -60,7 +35,6 @@ def _load(path: Path, name: str) -> ModuleType:
     return module
 
 
-B = _load(BROKER_PATH, "saga_hook_broker_under_test")
 P = _load(POLICY_PATH, "saga_hook_policy_under_test")
 
 
@@ -106,371 +80,6 @@ def _run_hook_text(
     )
 
 
-def _spawn_payload(cwd: Path, tool: str, *, session: str = "session") -> dict[str, Any]:
-    return {
-        "hook_event_name": "PreToolUse",
-        "session_id": session,
-        "cwd": str(cwd),
-        "tool_name": "Agent",
-        "tool_use_id": tool,
-        "tool_input": {"subagent_type": "worker"},
-    }
-
-
-def _start_payload(cwd: Path, child: str, *, session: str = "session") -> dict[str, Any]:
-    return {
-        "hook_event_name": "SubagentStart",
-        "session_id": session,
-        "cwd": str(cwd),
-        "agent_id": child,
-        "agent_type": "worker",
-    }
-
-
-def _parent_payload(cwd: Path, tool: str, *, failure: bool = False) -> dict[str, Any]:
-    return {
-        "hook_event_name": "PostToolUseFailure" if failure else "PostToolUse",
-        "session_id": "session",
-        "cwd": str(cwd),
-        "tool_name": "Agent",
-        "tool_use_id": tool,
-        "tool_input": {"subagent_type": "worker"},
-    }
-
-
-def _stop_payload(cwd: Path, child: str) -> dict[str, Any]:
-    return {
-        "hook_event_name": "SubagentStop",
-        "session_id": "session",
-        "cwd": str(cwd),
-        "agent_id": child,
-        "agent_type": "worker",
-    }
-
-
-def _spawn_payload_with_isolation(
-    cwd: Path, tool: str, isolation: str | None, *, session: str = "session"
-) -> dict[str, Any]:
-    payload = _spawn_payload(cwd, tool, session=session)
-    tool_input = dict(payload["tool_input"])
-    if isolation is not None:
-        tool_input["isolation"] = isolation
-    payload["tool_input"] = tool_input
-    return payload
-
-
-def _broker(authority: Path) -> Any:
-    return B.LeaseBroker(authority)
-
-
-def _leases(authority: Path) -> list[dict[str, Any]]:
-    return cast(list[dict[str, Any]], _broker(authority).inspect()["leases"])
-
-
-def test_reserve_before_call_and_cross_ordered_same_type_claims(tmp_path: Path) -> None:
-    authority = tmp_path / "authority"
-    env = _environment(authority)
-    first = _run_hook(
-        LIFECYCLE_HOOK, _spawn_payload(tmp_path, "tool-1"), cwd=tmp_path, environment=env
-    )
-    second = _run_hook(
-        LIFECYCLE_HOOK, _spawn_payload(tmp_path, "tool-2"), cwd=tmp_path, environment=env
-    )
-    assert first.returncode == second.returncode == 0
-    assert {lease["tool_use_id"] for lease in _leases(authority)} == {"tool-1", "tool-2"}
-
-    # SubagentStart has no parent tool id. Serialized oldest-compatible claims are safe.
-    start_b = _run_hook(
-        LIFECYCLE_HOOK, _start_payload(tmp_path, "child-b"), cwd=tmp_path, environment=env
-    )
-    start_a = _run_hook(
-        LIFECYCLE_HOOK, _start_payload(tmp_path, "child-a"), cwd=tmp_path, environment=env
-    )
-    assert start_b.returncode == start_a.returncode == 0
-    by_child = {lease["agent_id"]: lease for lease in _leases(authority)}
-    assert by_child["child-b"]["tool_use_id"] == "tool-1"
-    assert by_child["child-a"]["tool_use_id"] == "tool-2"
-    # #616 R1/KTD3: neither spawn declared isolation="worktree", so the PreToolUse-stamped
-    # claim is unfenced — no worktree_root on the resource_ref.
-    assert by_child["child-b"]["resource_ref"] == {"logical_unit_id": "tool-1"}
-
-
-def test_replayed_pretool_and_start_are_idempotent(tmp_path: Path) -> None:
-    authority = tmp_path / "authority"
-    env = _environment(authority)
-    spawn = _spawn_payload(tmp_path, "tool-1")
-    assert _run_hook(LIFECYCLE_HOOK, spawn, cwd=tmp_path, environment=env).returncode == 0
-    assert _run_hook(LIFECYCLE_HOOK, spawn, cwd=tmp_path, environment=env).returncode == 0
-    assert len(_leases(authority)) == 1
-    start = _start_payload(tmp_path, "child")
-    assert _run_hook(LIFECYCLE_HOOK, start, cwd=tmp_path, environment=env).returncode == 0
-    assert _run_hook(LIFECYCLE_HOOK, start, cwd=tmp_path, environment=env).returncode == 0
-    assert len(_leases(authority)) == 1
-
-
-def test_delegated_parent_must_hold_current_same_session_authority(tmp_path: Path) -> None:
-    authority = tmp_path / "authority"
-    env = _environment(authority)
-    _run_hook(
-        LIFECYCLE_HOOK, _spawn_payload(tmp_path, "parent-tool"), cwd=tmp_path, environment=env
-    )
-    _run_hook(LIFECYCLE_HOOK, _start_payload(tmp_path, "parent"), cwd=tmp_path, environment=env)
-
-    nested = _spawn_payload(tmp_path, "nested-tool")
-    nested["agent_id"] = "parent"
-    assert _run_hook(LIFECYCLE_HOOK, nested, cwd=tmp_path, environment=env).returncode == 0
-
-    wrong_session = _spawn_payload(tmp_path, "wrong-session", session="other")
-    wrong_session["agent_id"] = "parent"
-    refused = _run_hook(LIFECYCLE_HOOK, wrong_session, cwd=tmp_path, environment=env)
-    assert refused.returncode == 2
-    assert "different session" in refused.stderr
-
-    raw = json.loads((authority / B.REGISTRY_NAME).read_text(encoding="utf-8"))
-    parent = next(lease for lease in raw["leases"].values() if lease["agent_id"] == "parent")
-    parent["renewed_monotonic_ns"] = 0
-    # Expiry compares the monotonic clock against renewed + ttl, so renewed=0 alone only expires
-    # once machine uptime exceeds the claim-time ttl (300s) — a fresh CI runner flaked it. ttl=1
-    # makes the expiry deterministic on any runner that has been up a second.
-    parent["ttl_seconds"] = 1
-    (authority / B.REGISTRY_NAME).write_text(json.dumps(raw), encoding="utf-8")
-    os.chmod(authority / B.REGISTRY_NAME, 0o600)
-    expired = _spawn_payload(tmp_path, "expired-parent")
-    expired["agent_id"] = "parent"
-    blocked = _run_hook(LIFECYCLE_HOOK, expired, cwd=tmp_path, environment=env)
-    assert blocked.returncode == 2
-    assert "no current spawn authority" in blocked.stderr
-
-
-def test_parallel_claims_bind_each_reservation_once(tmp_path: Path) -> None:
-    authority = tmp_path / "authority"
-    env = _environment(authority)
-    for tool in ("tool-1", "tool-2"):
-        assert (
-            _run_hook(
-                LIFECYCLE_HOOK, _spawn_payload(tmp_path, tool), cwd=tmp_path, environment=env
-            ).returncode
-            == 0
-        )
-
-    barrier = threading.Barrier(2)
-
-    def start(child: str) -> subprocess.CompletedProcess[str]:
-        barrier.wait()
-        return _run_hook(
-            LIFECYCLE_HOOK, _start_payload(tmp_path, child), cwd=tmp_path, environment=env
-        )
-
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        results = list(executor.map(start, ("child-1", "child-2")))
-    assert all(result.returncode == 0 for result in results)
-    leases = _leases(authority)
-    assert {lease["agent_id"] for lease in leases} == {"child-1", "child-2"}
-    assert {lease["tool_use_id"] for lease in leases} == {"tool-1", "tool-2"}
-
-
-def test_capacity_refusal_blocks_agent_tool_before_spawn(tmp_path: Path) -> None:
-    authority = tmp_path / "authority"
-    env = _environment(
-        authority,
-        INFIQUETRA_FLEET_SESSION_LIMIT="1",
-        INFIQUETRA_FLEET_AGGREGATE_LIMIT="1",
-    )
-    first = _run_hook(
-        LIFECYCLE_HOOK, _spawn_payload(tmp_path, "tool-1"), cwd=tmp_path, environment=env
-    )
-    refused = _run_hook(
-        LIFECYCLE_HOOK,
-        _spawn_payload(tmp_path, "tool-2", session="other"),
-        cwd=tmp_path,
-        environment=env,
-    )
-    assert first.returncode == 0
-    assert refused.returncode == 2
-    assert "reservation refused before spawn" in refused.stderr
-    assert len(_leases(authority)) == 1
-
-
-def test_unmanaged_session_arms_normal_agent_admission_from_policy_defaults(
-    tmp_path: Path,
-) -> None:
-    """A session that never ran a Saga preflight is not Saga-managed, so it admits."""
-
-    authority = tmp_path / "authority"
-    env = _unmanaged_env()
-    env["INFIQUETRA_FLEET_STATE_DIR"] = str(authority)
-    admitted = _run_hook(
-        LIFECYCLE_HOOK,
-        _spawn_payload(tmp_path, "tool-unmanaged"),
-        cwd=tmp_path,
-        environment=env,
-    )
-    assert admitted.returncode == 0
-    limits = P.AdmissionLimits()
-    assert _leases(authority)[0]["session_limit"] == limits.max_concurrent
-
-
-def test_partial_admission_environment_still_refuses_before_spawn(tmp_path: Path) -> None:
-    """A half-resolved environment means a preflight broke; that must not be papered over."""
-
-    authority = tmp_path / "authority"
-    env = _unmanaged_env()
-    env["INFIQUETRA_FLEET_STATE_DIR"] = str(authority)
-    env["INFIQUETRA_FLEET_SESSION_LIMIT"] = "1"
-    refused = _run_hook(
-        LIFECYCLE_HOOK,
-        _spawn_payload(tmp_path, "tool-partial"),
-        cwd=tmp_path,
-        environment=env,
-    )
-    assert refused.returncode == 2
-    assert "incomplete Saga admission environment" in refused.stderr
-    assert "INFIQUETRA_FLEET_MUTATION" in refused.stderr
-    assert _leases(authority) == []
-
-
-def test_partial_admission_environment_refuses_even_with_a_pinned_snapshot(
-    tmp_path: Path,
-) -> None:
-    """A configured snapshot must not shelter a broken preflight (#662 review P1).
-
-    The partial-environment guard used to live inside the ``configured is None`` branch, so
-    a session that already had a pinned snapshot skipped it entirely: the half-resolved env
-    was neither complete enough to trip the mismatch check nor empty enough to be treated as
-    unmanaged, and the spawn proceeded on the earlier snapshot's limits. The guard runs
-    before ``configured`` is trusted, so this refuses like the unpinned case.
-    """
-
-    authority = tmp_path / "authority"
-    env = _unmanaged_env()
-    env["INFIQUETRA_FLEET_STATE_DIR"] = str(authority)
-
-    limits = P.AdmissionLimits()
-    _broker(authority).configure_session_admission(
-        "session",
-        policy_sha256=limits.policy_sha256(),
-        session_limit=3,
-        aggregate_limit=7,
-        mutation="read-write",
-    )
-
-    env["INFIQUETRA_FLEET_SESSION_LIMIT"] = "1"
-    refused = _run_hook(
-        LIFECYCLE_HOOK,
-        _spawn_payload(tmp_path, "tool-partial-pinned"),
-        cwd=tmp_path,
-        environment=env,
-    )
-    assert refused.returncode == 2
-    assert "incomplete Saga admission environment" in refused.stderr
-    assert _leases(authority) == []
-
-
-def test_normal_agent_uses_pinned_resolved_session_admission(tmp_path: Path) -> None:
-    authority = tmp_path / "authority"
-    env = _unmanaged_env()
-    env["INFIQUETRA_FLEET_STATE_DIR"] = str(authority)
-
-    limits = P.AdmissionLimits()
-    _broker(authority).configure_session_admission(
-        "session",
-        policy_sha256=limits.policy_sha256(),
-        session_limit=1,
-        aggregate_limit=limits.aggregate_max_concurrent,
-        mutation="read-write",
-    )
-    admitted = _run_hook(
-        LIFECYCLE_HOOK,
-        _spawn_payload(tmp_path, "tool-pinned"),
-        cwd=tmp_path,
-        environment=env,
-    )
-    assert admitted.returncode == 0
-    assert _leases(authority)[0]["session_limit"] == 1
-
-
-def test_missing_reservation_at_subagent_start_arms_no_implicit_grant(tmp_path: Path) -> None:
-    authority = tmp_path / "authority"
-    result = _run_hook(
-        LIFECYCLE_HOOK,
-        _start_payload(tmp_path, "orphan"),
-        cwd=tmp_path,
-        environment=_environment(authority),
-    )
-    assert result.returncode == 0  # SubagentStart cannot block after creation.
-    assert "No live fleet lease was bound" in result.stdout
-    assert _leases(authority) == []
-
-
-# The three write-fence tests that lived here were removed with `lease_mutation_hook.py` (#671).
-# They asserted that a bound child could mutate, that a removed worktree blocked a later mutation,
-# and that missing/expired/superseded child authority refused one. All three exercised
-# `assert_write_target`, which the #616 privilege change had already reduced to a no-op for any
-# spawn without a declared worktree. The broker-level behavior they incidentally covered is still
-# pinned directly: supersede-becomes-head at `test_fleet_lease_broker.py:862`
-# (`test_retry_supersedes_at_full_capacity`) and the fence's own two branches at `:1958`/`:1990`.
-
-
-@pytest.mark.parametrize("first_signal", ["parent", "child"])
-def test_both_lifecycle_signals_are_required_in_either_order(
-    tmp_path: Path, first_signal: str
-) -> None:
-    authority = tmp_path / "authority"
-    env = _environment(authority)
-    _run_hook(LIFECYCLE_HOOK, _spawn_payload(tmp_path, "tool"), cwd=tmp_path, environment=env)
-    _run_hook(LIFECYCLE_HOOK, _start_payload(tmp_path, "child"), cwd=tmp_path, environment=env)
-    first = (
-        _parent_payload(tmp_path, "tool")
-        if first_signal == "parent"
-        else _stop_payload(tmp_path, "child")
-    )
-    second = (
-        _stop_payload(tmp_path, "child")
-        if first_signal == "parent"
-        else _parent_payload(tmp_path, "tool")
-    )
-    assert _run_hook(LIFECYCLE_HOOK, first, cwd=tmp_path, environment=env).returncode == 0
-    assert len(_leases(authority)) == 1
-    assert _run_hook(LIFECYCLE_HOOK, second, cwd=tmp_path, environment=env).returncode == 0
-    assert _leases(authority) == []
-
-
-def test_parallel_terminal_and_parent_signals_release_exactly_once(tmp_path: Path) -> None:
-    authority = tmp_path / "authority"
-    env = _environment(authority)
-    _run_hook(LIFECYCLE_HOOK, _spawn_payload(tmp_path, "tool"), cwd=tmp_path, environment=env)
-    _run_hook(LIFECYCLE_HOOK, _start_payload(tmp_path, "child"), cwd=tmp_path, environment=env)
-    barrier = threading.Barrier(2)
-
-    def signal(payload: dict[str, Any]) -> subprocess.CompletedProcess[str]:
-        barrier.wait()
-        return _run_hook(LIFECYCLE_HOOK, payload, cwd=tmp_path, environment=env)
-
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        futures = [
-            executor.submit(signal, _parent_payload(tmp_path, "tool")),
-            executor.submit(signal, _stop_payload(tmp_path, "child")),
-        ]
-        results = [future.result() for future in futures]
-    assert all(result.returncode == 0 for result in results)
-    assert _leases(authority) == []
-    json.loads((authority / B.REGISTRY_NAME).read_text(encoding="utf-8"))
-
-
-def test_unclaimed_posttool_failure_releases_provisional_slot(tmp_path: Path) -> None:
-    authority = tmp_path / "authority"
-    env = _environment(authority)
-    _run_hook(LIFECYCLE_HOOK, _spawn_payload(tmp_path, "tool"), cwd=tmp_path, environment=env)
-    result = _run_hook(
-        LIFECYCLE_HOOK,
-        _parent_payload(tmp_path, "tool", failure=True),
-        cwd=tmp_path,
-        environment=env,
-    )
-    assert result.returncode == 0
-    assert _leases(authority) == []
-
-
 def _commands(entries: list[dict[str, Any]], matcher: str | None = None) -> list[str]:
     result: list[str] = []
     for entry in entries:
@@ -480,111 +89,50 @@ def _commands(entries: list[dict[str, Any]], matcher: str | None = None) -> list
     return result
 
 
-def test_hooks_json_arms_every_required_lifecycle_seam() -> None:
+# The three write-fence tests that lived here were removed with `lease_mutation_hook.py` (#671),
+# and the lease lifecycle tests beside them were removed with `lease_lifecycle_hook.py`
+# (#677/U5). The broker-level behavior they incidentally covered stays pinned directly:
+# supersede-becomes-head at `test_fleet_lease_broker.py:862`
+# (`test_retry_supersedes_at_full_capacity`) and the fence's own two branches at `:1958`/`:1990`
+# — until campaign #677 unit U7 deletes that module too.
+
+
+def test_hooks_json_retires_the_lease_lifecycle_hook_and_keeps_its_neighbours() -> None:
+    """#677/U5: no lease registration survives anywhere in the manifest, and the hooks that
+    shared the lease hook's matcher blocks are still armed — the guard against the manifest
+    edit taking a neighbouring registration with it."""
+
     events = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))["hooks"]
-    assert any(
-        "lease_lifecycle_hook.py" in command
-        for command in _commands(events["PreToolUse"], "Agent|Task")
-    )
-    # No mutation fence on the write path since #671, and nothing should put one back without
-    # rehoming batch renewal first — see DECISIONS {#fence-carried-batch-renewal-671}.
+    for event, entries in events.items():
+        assert not any("lease_lifecycle_hook.py" in command for command in _commands(entries)), (
+            f"lease lifecycle hook still registered on {event}"
+        )
+
+    # No mutation fence on the write path since #671; the lease lifecycle hook that shared its
+    # kill switch is gone with #677/U5, and U7's re-add guard is the only path that could
+    # restore either — see DECISIONS {#fence-carried-batch-renewal-671}.
     assert not any(
         "lease_mutation_hook.py" in command
         for matcher in (None, "Bash|Write|Edit|MultiEdit|NotebookEdit")
         for command in _commands(events["PreToolUse"], matcher)
     )
+
+    # Surviving neighbours of the edited blocks:
     assert any(
-        "lease_lifecycle_hook.py" in command for command in _commands(events["SubagentStart"])
-    )
-    assert any(
-        "lease_lifecycle_hook.py" in command for command in _commands(events["SubagentStop"])
-    )
-    assert any(
-        "lease_lifecycle_hook.py" in command
-        for command in _commands(events["PostToolUse"], "Agent|Task")
+        "team_spawn_residency_hook.py" in command
+        for command in _commands(events["PreToolUse"], "Agent|Task")
     )
     assert any(
-        "lease_lifecycle_hook.py" in command
-        for command in _commands(events["PostToolUseFailure"], "Agent|Task")
+        "delegation_stop_audit_hook.py" in command for command in _commands(events["SubagentStop"])
+    )
+    assert any(
+        "journal_nudge_hook.py" in command for command in _commands(events["PostToolUse"], "Bash")
     )
 
-
-def test_record_hook_parent_forwards_spawn_failed_from_hook_event_name(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """Issue #644 U2: PostToolUseFailure maps to spawn_failed=True, PostToolUse to False."""
-
-    scripts = SAGA / "scripts"
-    if str(scripts) not in sys.path:
-        sys.path.insert(0, str(scripts))
-    adapter = _load(scripts / "lease_broker.py", "saga_lease_adapter_spawn_failed_test")
-
-    calls: list[tuple[str, str, bool]] = []
-
-    class _FakeBroker:
-        def record_parent_completed(
-            self, session_id: str, tool_use_id: str, *, spawn_failed: bool = False
-        ) -> tuple[str, ...]:
-            calls.append((session_id, tool_use_id, spawn_failed))
-            return ()
-
-        def inspect(self) -> dict[str, Any]:
-            return {"leases": []}
-
-    monkeypatch.setattr(adapter, "broker", lambda env=None: _FakeBroker())
-
-    adapter.record_hook_parent(_parent_payload(tmp_path, "tool"))
-    adapter.record_hook_parent(_parent_payload(tmp_path, "tool", failure=True))
-
-    assert calls == [
-        ("session", "tool", False),
-        ("session", "tool", True),
-    ]
-
-
-@pytest.mark.parametrize("version", [1, 99])
-def test_saga_adapter_rejects_lease_protocol_skew(
-    monkeypatch: pytest.MonkeyPatch, version: int
-) -> None:
-    scripts = SAGA / "scripts"
-    if str(scripts) not in sys.path:
-        sys.path.insert(0, str(scripts))
-    adapter = _load(scripts / "lease_broker.py", "saga_lease_adapter_skew_test")
-    monkeypatch.setattr(adapter.authority, "PROTOCOL_VERSION", version)
-
-    with pytest.raises(adapter.HookInputError, match="install/update fleet-core"):
-        adapter.ensure_protocol()
-
-
-def test_saga_lease_cli_requires_exact_token_and_session_scoped_owner_release() -> None:
-    scripts = SAGA / "scripts"
-    if str(scripts) not in sys.path:
-        sys.path.insert(0, str(scripts))
-    adapter = _load(scripts / "lease_broker.py", "saga_lease_adapter_cli_contract_test")
-    parser = adapter._build_parser()
-
-    for argv in (
-        ["renew", "lease-id"],
-        ["release", "lease-id"],
-        ["release-owner", "owner-id"],
-    ):
-        with pytest.raises(SystemExit) as caught:
-            parser.parse_args(argv)
-        assert caught.value.code == 2
-
-    renewed = parser.parse_args(
-        [
-            "renew",
-            "lease-id",
-            "--broker-epoch",
-            "00000000-0000-0000-0000-000000000001",
-            "--fencing-sequence",
-            "7",
-        ]
-    )
-    assert renewed.fencing_sequence == 7
-    released_owner = parser.parse_args(["release-owner", "owner-id", "--session-id", "session-id"])
-    assert released_owner.session_id == "session-id"
+    # The two events whose ONLY registrant was the lease hook are gone entirely — an empty
+    # event block would be a dead entry, not a retirement.
+    assert "SubagentStart" not in events
+    assert "PostToolUseFailure" not in events
 
 
 # --------------------------------------------------------------- team teardown hook (#358)
@@ -799,271 +347,3 @@ def test_hooks_json_arms_bounded_teardown_recovery_seams() -> None:
         if "team_teardown_hook.py" in hook["command"]
     ]
     assert session_start and session_start[0]["timeout"] == 15
-
-
-def test_kill_switch_off_disarms_the_lifecycle_hook_and_touches_no_state(tmp_path: Path) -> None:
-    """#615 R7: the exact value "off" disarms loudly and reads no broker state.
-
-    Covered one hook since #671 removed ``lease_mutation_hook.py``; the kill switch itself is
-    unchanged, and this is now the only hook it gates.
-    """
-
-    authority = tmp_path / "state"
-    env = _environment(authority, INFIQUETRA_FLEET_LEASE_ENFORCEMENT="off")
-    lifecycle = _run_hook(
-        LIFECYCLE_HOOK, _spawn_payload(tmp_path, "tool-1"), cwd=tmp_path, environment=env
-    )
-    assert lifecycle.returncode == 0
-    assert "INFIQUETRA_FLEET_LEASE_ENFORCEMENT=off" in lifecycle.stderr
-    assert "DISABLED" in lifecycle.stderr
-    assert not authority.exists()
-
-
-@pytest.mark.parametrize("value", ["", "On", "false", "OFF", "disable"])
-def test_kill_switch_unrecognized_values_stay_armed(tmp_path: Path, value: str) -> None:
-    """#615 R7 fail-safe direction: anything but the exact string "off" keeps enforcement."""
-
-    authority = tmp_path / "state"
-    env = _environment(authority, INFIQUETRA_FLEET_LEASE_ENFORCEMENT=value)
-    # A delegated spawn whose named parent holds no lease is refused before the spawn -- the
-    # armed-path HALT this parametrization exists to prove.
-    ghost_parent = _spawn_payload(tmp_path, "tool-1")
-    ghost_parent["agent_id"] = "ghost"
-    result = _run_hook(LIFECYCLE_HOOK, ghost_parent, cwd=tmp_path, environment=env)
-    assert result.returncode == 2
-    assert "HALT" in result.stderr
-
-
-def test_declared_isolation_helper_normalizes_worktree_absent_and_remote() -> None:
-    """#616 U2/KTD2: only the exact declared string "worktree" is forwarded; absence or any
-
-    other declared mode (e.g. "remote") normalizes to None inside the adapter, before the
-    broker boundary (fleet-core's own ``_agent_isolation`` would reject "remote" outright).
-    """
-
-    scripts = SAGA / "scripts"
-    if str(scripts) not in sys.path:
-        sys.path.insert(0, str(scripts))
-    adapter = _load(scripts / "lease_broker.py", "saga_declared_isolation_unit_test")
-
-    assert adapter._declared_isolation({"tool_input": {"isolation": "worktree"}}) == "worktree"
-    assert adapter._declared_isolation({"tool_input": {}}) is None
-    assert adapter._declared_isolation({}) is None
-    assert adapter._declared_isolation({"tool_input": {"isolation": "remote"}}) is None
-    assert adapter._declared_isolation({"tool_input": {"isolation": ""}}) is None
-    assert adapter._declared_isolation({"tool_input": "not-a-dict"}) is None
-
-
-@pytest.mark.parametrize(
-    ("declared", "expected_isolation", "expects_worktree_root"),
-    [
-        ("worktree", "worktree", True),
-        (None, None, False),
-        ("remote", None, False),
-    ],
-)
-def test_reservation_forwards_normalized_isolation_through_claim(
-    tmp_path: Path,
-    declared: str | None,
-    expected_isolation: str | None,
-    expects_worktree_root: bool,
-) -> None:
-    """#616 R1/R2/KTD3, exercised at the adapter seam: the PreToolUse reservation carries the
-
-    normalized declared isolation onto the lease; SubagentStart claim (an unchanged 5-key
-    payload, no isolation field) preserves it, and the broker's claim-time fence policy stamps
-    ``worktree_root`` only for the declared-worktree case.
-    """
-
-    authority = tmp_path / "authority"
-    env = _environment(authority)
-    spawn = _run_hook(
-        LIFECYCLE_HOOK,
-        _spawn_payload_with_isolation(tmp_path, "tool-1", declared),
-        cwd=tmp_path,
-        environment=env,
-    )
-    assert spawn.returncode == 0
-    reserved = _leases(authority)
-    assert len(reserved) == 1
-    assert reserved[0]["isolation"] == expected_isolation
-
-    start = _run_hook(
-        LIFECYCLE_HOOK, _start_payload(tmp_path, "child-1"), cwd=tmp_path, environment=env
-    )
-    assert start.returncode == 0
-    claimed = _leases(authority)[0]
-    assert claimed["agent_id"] == "child-1"
-    assert claimed["isolation"] == expected_isolation
-    assert ("worktree_root" in claimed["resource_ref"]) is expects_worktree_root
-
-
-def test_subagent_start_claim_payload_contract_is_unchanged_by_isolation_threading() -> None:
-    """#616 U2 boundary: claim_hook_agent (SubagentStart) is untouched — the payload fixture
-
-    stays the exact 5-key contract (hook_event_name, session_id, cwd, agent_id, agent_type),
-    cwd stays required and canonicalized, and no isolation field is read from it.
-    """
-
-    scripts = SAGA / "scripts"
-    if str(scripts) not in sys.path:
-        sys.path.insert(0, str(scripts))
-    adapter = _load(scripts / "lease_broker.py", "saga_claim_contract_unit_test")
-
-    signature = inspect.signature(adapter.claim_hook_agent)
-    assert list(signature.parameters) == ["payload", "environment"]
-
-    source = inspect.getsource(adapter.claim_hook_agent)
-    assert "isolation" not in source
-
-
-# ------------------------------------------------------- doctor / repair CLI seam (#617 U2)
-
-SAGA_LEASE_CLI = SAGA / "scripts" / "lease_broker.py"
-
-
-def _adapter(name: str) -> ModuleType:
-    scripts = SAGA / "scripts"
-    if str(scripts) not in sys.path:
-        sys.path.insert(0, str(scripts))
-    return _load(scripts / "lease_broker.py", name)
-
-
-def _run_lease_cli(
-    authority: Path, *args: str, cwd: Path, environment: dict[str, str]
-) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [sys.executable, str(SAGA_LEASE_CLI), *args],
-        cwd=cwd,
-        env=environment,
-        capture_output=True,
-        check=False,
-        text=True,
-    )
-
-
-def test_saga_lease_cli_doctor_and_repair_parser_contract() -> None:
-    # #617 R7/R8: doctor is a bare verb; repair carries the explicit opt-in --strip-unknown flag.
-    adapter = _adapter("saga_lease_adapter_doctor_repair_parser_test")
-    parser = adapter._build_parser()
-
-    assert parser.parse_args(["doctor"]).command == "doctor"
-
-    default_repair = parser.parse_args(["repair"])
-    assert default_repair.command == "repair"
-    assert default_repair.strip_unknown is False
-    assert parser.parse_args(["repair", "--strip-unknown"]).strip_unknown is True
-
-
-def test_saga_lease_cli_doctor_routes_through_broker_and_maps_exit_codes(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # #617 R7: the doctor verb calls the shim-resolved broker's doctor() (no direct import bypass)
-    # and maps its structured status to distinct exit codes — 0 clean / 3 unknowns / 4 corrupt.
-    adapter = _adapter("saga_lease_adapter_doctor_exit_test")
-
-    class _FakeBroker:
-        def __init__(self, status: str) -> None:
-            self.status = status
-            self.doctor_calls = 0
-
-        def doctor(self) -> dict[str, Any]:
-            self.doctor_calls += 1
-            return {"status": self.status, "extras": []}
-
-    for status, expected in (
-        ("valid", 0),
-        ("tolerated-unknowns", 3),
-        ("corrupt", 4),
-        # #617 review F3: an unmapped future status must fail closed to the corrupt code —
-        # a diagnostic verb never reports clean for a state it does not recognize.
-        ("unrecognized-future-status", 4),
-    ):
-        fake = _FakeBroker(status)
-        monkeypatch.setattr(adapter, "broker", lambda env=None, fake=fake: fake)
-        assert adapter.main(["doctor"]) == expected
-        assert fake.doctor_calls == 1
-
-
-def test_saga_lease_cli_repair_requires_explicit_strip_unknown_flag(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # #617 R8/KTD4: repair performs no default action; without --strip-unknown it refuses (exit 2)
-    # and never touches the broker. With the flag it routes through the shim-resolved broker.
-    adapter = _adapter("saga_lease_adapter_repair_flag_test")
-
-    class _FakeBroker:
-        def __init__(self) -> None:
-            self.repair_calls = 0
-
-        def repair(self) -> dict[str, Any]:
-            self.repair_calls += 1
-            return {"status": "clean", "repaired": False}
-
-    fake = _FakeBroker()
-    monkeypatch.setattr(adapter, "broker", lambda env=None: fake)
-
-    with pytest.raises(SystemExit) as caught:
-        adapter.main(["repair"])
-    assert caught.value.code == 2
-    assert fake.repair_calls == 0
-
-    assert adapter.main(["repair", "--strip-unknown"]) == 0
-    assert fake.repair_calls == 1
-
-
-def test_saga_lease_cli_doctor_and_repair_end_to_end(tmp_path: Path) -> None:
-    # #617 R7/R8: end-to-end through the real shim-resolved broker — doctor flags injected unknown
-    # fields (exit 3), repair --strip-unknown down-migrates under backup (exit 0), and a follow-up
-    # doctor confirms the closed shape (exit 0). repair without the flag refuses without mutation.
-    authority = tmp_path / "authority"
-    env = _environment(authority)
-    assert (
-        _run_hook(
-            LIFECYCLE_HOOK, _spawn_payload(tmp_path, "tool-1"), cwd=tmp_path, environment=env
-        ).returncode
-        == 0
-    )
-    registry_path = _broker(authority).registry_path
-    lease_id = _leases(authority)[0]["lease_id"]
-
-    # Clean authority: doctor reports valid (exit 0).
-    clean = _run_lease_cli(authority, "doctor", cwd=tmp_path, environment=env)
-    assert clean.returncode == 0
-    assert json.loads(clean.stdout)["status"] == "valid"
-
-    # Inject additive unknown fields at the top level and inside the live lease.
-    raw = json.loads(registry_path.read_text(encoding="utf-8"))
-    raw["future_top"] = {"nested": True}
-    raw["leases"][lease_id]["future_lease"] = "L"
-    registry_path.write_text(json.dumps(raw), encoding="utf-8")
-    os.chmod(registry_path, 0o600)
-    injected_bytes = registry_path.read_bytes()
-
-    doctored = _run_lease_cli(authority, "doctor", cwd=tmp_path, environment=env)
-    assert doctored.returncode == 3
-    report = json.loads(doctored.stdout)
-    assert report["status"] == "tolerated-unknowns"
-    paths = {entry["path"] for entry in report["extras"]}
-    assert "$" in paths and f"$.leases.{lease_id}" in paths
-
-    # repair without the explicit flag refuses (exit 2) and leaves the document untouched.
-    refused = _run_lease_cli(authority, "repair", cwd=tmp_path, environment=env)
-    assert refused.returncode == 2
-    assert registry_path.read_bytes() == injected_bytes
-
-    # repair --strip-unknown down-migrates under a backup (exit 0).
-    repaired = _run_lease_cli(authority, "repair", "--strip-unknown", cwd=tmp_path, environment=env)
-    assert repaired.returncode == 0
-    repaired_report = json.loads(repaired.stdout)
-    assert repaired_report["status"] == "repaired"
-    backup = Path(repaired_report["backup"])
-    assert backup.read_bytes() == injected_bytes
-    stripped = json.loads(registry_path.read_text(encoding="utf-8"))
-    assert "future_top" not in stripped
-    assert "future_lease" not in stripped["leases"][lease_id]
-
-    # A follow-up doctor confirms the closed shape (exit 0).
-    final = _run_lease_cli(authority, "doctor", cwd=tmp_path, environment=env)
-    assert final.returncode == 0
-    assert json.loads(final.stdout)["status"] == "valid"

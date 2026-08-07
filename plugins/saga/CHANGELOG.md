@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.129.0] - 2026-08-07
+
+### Changed
+
+- **Workflow lease reservation protocol retired with the lease broker (#681, campaign #677 unit
+  U4).** `workflow_emitter.py` no longer imports or calls the broker: `reserve` reports zero lease
+  bindings, `attest` stays the launch gate as a contract-shape check only (no reservation is
+  attested — plan #677 KTD4: no batch lease exists to renew), and `renew`/`release` settle nothing
+  and report empty results. The vocabulary slots survive without producers, as in the U2 re-key.
+  DECISIONS `{#u4-retires-the-workflow-emitter-onto-the-frozen-contract-681}`.
+
+- **The emitter's `except` is re-narrowed to the surviving concrete exception type (#681).**
+  `lease_broker.HookInputError` and `lease_broker.authority.LeaseBrokerError` disappear with the
+  module; the CLI HALT path now catches `WorkflowLeaseContractError` alone — not bare, not deleted
+  — and real failures still surface as `workflow-lease: HALT — …` with exit 2.
+
+- **The emitted receipt/attestation shapes drop `root_sha256` (#681).** No fleet root survives the
+  retirement; the receipt keeps the contract's identity fields with `lease_ids: []`, and the
+  attestation reports attested width 0 while `launch_authorized: true` remains the retired gate's
+  verdict.
+
+- **`/work` ritual and spawn-site inventory re-keyed (#681, R11).** The lease ritual section in
+  `skills/work/SKILL.md` no longer claims atomic reservation or hook batch discovery — until U5
+  removes the lease lifecycle hook, hooks fall back to per-spawn admission. The two
+  `execution_spec.py` rows in `references/concurrency-spawn-sites.md` carry
+  `retired:broker-free-(#677/U4)` markers.
+
+### Removed
+
+- **The broker consumer from `workflow_emitter.py` (#681).** Deleted: `import lease_broker`, the
+  broker constructions, the one live `renew_batch` call (plan #677 KTD4), `settle_batch`,
+  `reserve_batch`, and the authority-environment threading. The acceptance grep for
+  `lease_broker|lease_authority|fleet_leases|saga_leases` is empty, and the conformance suite pins
+  the lifecycle calls' ABSENCE so re-arming fails loudly.
+
 ## [0.128.0] - 2026-08-06
 
 ### Added

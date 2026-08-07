@@ -28,14 +28,21 @@ cross-run worktree sweep are gone (two concurrent dispatches both proceed; aband
 worktrees are reclaimed through the operator path in
 [`worktree-reclamation.md`](worktree-reclamation.md)). The external-engine settlement record is now
 the self-authenticating `saga.close-receipt.v1` mint, and the outcome worktree's ownership record
-is its registry entry — `reap_worktree` removes and deregisters authority-free. The
-`workflow_emitter`, hooks, and team-execution rows keep their broker lifecycle until their own
-retirement units land.
+is its registry entry — `reap_worktree` removes and deregisters authority-free. The hooks and
+team-execution rows keep their broker lifecycle until their own retirement units land.
+
+**#677/U4 re-key:** the batch lease concept retires, and the two `execution_spec.py` rows lose
+their reserve/renew/release cells to `retired:broker-free-(#677/U4)`: `workflow_emitter.py`
+validates the frozen reservation contract and reports the retired, broker-free outcome — no batch
+lease is reserved, renewed, or settled (plan #677 KTD4: no batch lease exists to renew). The bind
+cell keeps `lease_broker.claim_hook_agent` until U5 deletes the hook: with no live batch,
+`reserve_hook_agent` falls back to the pre-#356 per-spawn `acquire_agent` admission, so spawned
+children are still claimed through the hook until the wrapper goes.
 
 | Source | Function or seam | Spawn form | Governor entry point | Lease pool | Acquire or reserve seam | Bind seam | Renewal seam | Release seam |
 |---|---|---|---|---|---|---|---|---|
-| `plugins/saga/scripts/execution_spec.py` | `_emit_panel_reconciliation` | verify-panel verdict agents | `concurrency_governor.ordered_chunks` | `agent` | `workflow_emitter.reserve` | `lease_broker.claim_hook_agent` | `workflow_emitter.renew` | `workflow_emitter.release` |
-| `plugins/saga/scripts/execution_spec.py` | `emit_workflow_script` | dependency-layer worker agents | `concurrency_chunks` | `agent` | `workflow_emitter.reserve` | `lease_broker.claim_hook_agent` | `workflow_emitter.renew` | `workflow_emitter.release` |
+| `plugins/saga/scripts/execution_spec.py` | `_emit_panel_reconciliation` | verify-panel verdict agents | `concurrency_governor.ordered_chunks` | `agent` | `retired:broker-free-(#677/U4)` | `lease_broker.claim_hook_agent` | `retired:broker-free-(#677/U4)` | `retired:broker-free-(#677/U4)` |
+| `plugins/saga/scripts/execution_spec.py` | `emit_workflow_script` | dependency-layer worker agents | `concurrency_chunks` | `agent` | `retired:broker-free-(#677/U4)` | `lease_broker.claim_hook_agent` | `retired:broker-free-(#677/U4)` | `retired:broker-free-(#677/U4)` |
 | `plugins/saga/hooks/hooks.json` | `Agent|Task` | normal Saga Agent and Task calls | `concurrency_policy.AdmissionLimits` | `agent` | `lease_broker.reserve_hook_agent` | `lease_broker.claim_hook_agent` | `expiry-fence:no-cooperative-boundary` | `lease_broker.record_hook_terminal+record_hook_parent` |
 | `plugins/team-execution/skills/team-execution/scripts/lease_protocol.py` | `team-execution-fan-out` | worker reviewer and validator waves | `concurrency_policy.AdmissionLimits` | `agent` | `lease_broker.reserve_hook_agent` | `lease_broker.claim_hook_agent` | `lease_protocol.renew` | `lease_protocol.teardown` |
 | `plugins/saga/scripts/engine_dispatch.py` | `_dispatch_once` | registered external-engine runner | `retired:broker-free-(#677/U3)` | `agent` | `retired:broker-free-(#677/U3)` | `not-applicable:in-process-adapter` | `retired:broker-free-(#677/U3)` | `saga.close-receipt.v1:mint` |

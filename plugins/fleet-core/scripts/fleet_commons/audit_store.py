@@ -198,7 +198,10 @@ def _ensure_private_dir(path: Path) -> None:
         missing.append(current)
         current = current.parent
     for directory in reversed(missing):
-        directory.mkdir(mode=0o700)
+        # exist_ok: concurrent dispatches both proceed (#677 Scope Decision row 1) and mirror to
+        # one shared store root; a racing creator wins the mkdir, the lstat check below still
+        # validates the final state (ownership, mode, not-a-symlink) whoever created it.
+        directory.mkdir(mode=0o700, exist_ok=True)
         os.chmod(directory, 0o700, follow_symlinks=False)
     metadata = path.lstat()
     if (

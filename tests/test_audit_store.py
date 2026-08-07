@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import multiprocessing
 import os
 import stat
 import sys
@@ -269,6 +270,38 @@ def test_ensure_private_dir_creates_fresh_below_home_path(
     audit_store._ensure_private_dir(target)
     for directory in (target, target.parent):
         assert stat.S_IMODE(directory.lstat().st_mode) == 0o700
+
+
+def test_ensure_private_dir_is_process_safe_when_two_creators_race(
+    audit_store: ModuleType, tmp_path: Path
+) -> None:
+    """#681 (#677/U4): concurrent dispatches both proceed (plan #677 Scope Decision row 1) and
+    mirror to one shared store root. The mkdir walk used to race — exists()-then-mkdir is a
+    TOCTOU — and the losing process died on FileExistsError under CI load. ``exist_ok`` plus the
+    final lstat validation make creation process-idempotent: both contenders succeed and the
+    directory is still 0o700."""
+    home = Path.home()
+    home.mkdir(parents=True, exist_ok=True)
+    target = home / "raced" / "audit"
+    context = multiprocessing.get_context("fork")
+    start = context.Barrier(2)
+    errors = context.Queue()
+
+    def creator() -> None:
+        start.wait(timeout=10)
+        try:
+            audit_store._ensure_private_dir(target)
+        except Exception as exc:  # noqa: BLE001 - child reports any typed failure.
+            errors.put(f"{type(exc).__name__}: {exc}")
+
+    processes = [context.Process(target=creator) for _ in range(2)]
+    for process in processes:
+        process.start()
+    for process in processes:
+        process.join(timeout=30)
+    assert processes[0].exitcode == 0 and processes[1].exitcode == 0
+    assert errors.empty()
+    assert stat.S_IMODE(target.lstat().st_mode) == 0o700
 
 
 def test_ensure_private_dir_accepts_group_writable_ancestor_below_home(

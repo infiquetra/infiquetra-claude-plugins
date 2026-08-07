@@ -229,6 +229,10 @@ def test_delegated_parent_must_hold_current_same_session_authority(tmp_path: Pat
     raw = json.loads((authority / B.REGISTRY_NAME).read_text(encoding="utf-8"))
     parent = next(lease for lease in raw["leases"].values() if lease["agent_id"] == "parent")
     parent["renewed_monotonic_ns"] = 0
+    # Expiry compares the monotonic clock against renewed + ttl, so renewed=0 alone only expires
+    # once machine uptime exceeds the claim-time ttl (300s) — a fresh CI runner flaked it. ttl=1
+    # makes the expiry deterministic on any runner that has been up a second.
+    parent["ttl_seconds"] = 1
     (authority / B.REGISTRY_NAME).write_text(json.dumps(raw), encoding="utf-8")
     os.chmod(authority / B.REGISTRY_NAME, 0o600)
     expired = _spawn_payload(tmp_path, "expired-parent")

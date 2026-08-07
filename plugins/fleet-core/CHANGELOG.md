@@ -5,6 +5,18 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.23.1] - 2026-08-07
+
+### Fixed
+
+- **Audit-store directory creation is process-idempotent (#681, campaign #677 unit U4).**
+  `_ensure_private_dir` walked `exists()`-then-`mkdir` — a TOCTOU — so two concurrent dispatches
+  mirroring to one shared store root (both proceed per plan #677 Scope Decision row 1) raced, and
+  the losing process died on `FileExistsError`. The mkdir is now `exist_ok=True`; the final
+  lstat validation still enforces ownership, 0o700 mode, and not-a-symlink whoever created the
+  directory. Surfaced by the U3 two-process claim-race pin under CI load; pinned by
+  `test_ensure_private_dir_is_process_safe_when_two_creators_race`.
+
 ## [0.23.0] - 2026-07-24
 
 ### Added - generic plugin-root resolver `fleet_commons/plugin_resolution.py` (#620)

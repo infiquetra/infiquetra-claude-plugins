@@ -1,22 +1,21 @@
 #!/usr/bin/env python3
-"""Driver-side Workflow lease reservation protocol (#356).
+"""Driver-side Workflow reservation contract CLI after the lease broker's retirement (#356, #677/U4).
 
-Generated JavaScript and children never receive registry access. The trusted root driver materializes
-the metadata, reserves before ``Workflow(...)``, attests the full batch, renews at collection seams,
-and releases only after authoritative return or cancellation.
+The frozen ``workflow_lease_reservation.v1`` metadata shape still validates closed and launch-ready,
+but no batch lease is reserved, attested, renewed, or settled: admission retired with the lease
+broker (plan #677, KTD4 — no batch lease exists to renew). The commands keep their vocabulary and
+report the retired, broker-free outcome; the launch gate survives as a contract-shape check only.
+Generated JavaScript and children still receive no registry access.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, NoReturn, cast
-
-import lease_broker
+from typing import Any, NoReturn
 
 SCHEMA = "workflow_lease_reservation.v1"
 _KEYS = frozenset(
@@ -105,105 +104,63 @@ def validate_metadata(value: Mapping[str, Any], *, launch_ready: bool = True) ->
     return data
 
 
-def reserve(
-    metadata: Mapping[str, Any],
-    *,
-    session_id: str,
-    environment: Mapping[str, str] | None = None,
-) -> dict[str, Any]:
-    """Reserve the complete simultaneous wave or mutate nothing."""
+def reserve(metadata: Mapping[str, Any], *, session_id: str) -> dict[str, Any]:
+    """Validate the frozen contract and report that no batch lease is reserved.
+
+    Batch admission retired with the lease broker (#677/U4): the receipt keeps the contract's
+    identity fields, reports zero lease bindings, and carries no fleet root.
+    """
 
     contract = validate_metadata(metadata)
-    selected = lease_broker.broker(environment)
-    leases = selected.reserve_batch(
-        count=contract["reservation_width"],
-        owner_id=contract["owner_id"],
-        owner_pid=os.getppid(),
-        session_id=_text(session_id, "session_id"),
-        batch_id=contract["batch_id"],
-        agent_type="*",
-        policy_sha256=contract["policy_sha256"],
-        session_limit=contract["session_limit"],
-        aggregate_limit=contract["aggregate_limit"],
-        mutation=contract["mutation"],
-        ttl_seconds=contract["claim_ttl_seconds"],
-    )
     return {
         "schema": "workflow_lease_receipt.v1",
         "batch_id": contract["batch_id"],
         "owner_id": contract["owner_id"],
-        "session_id": session_id,
-        "root_sha256": selected.root_sha256,
+        "session_id": _text(session_id, "session_id"),
         "reservation_width": contract["reservation_width"],
-        "lease_ids": [lease.lease_id for lease in leases],
+        "lease_ids": [],
     }
 
 
-def attest(
-    metadata: Mapping[str, Any],
-    *,
-    session_id: str,
-    environment: Mapping[str, str] | None = None,
-) -> dict[str, Any]:
-    """Fail closed unless the exact unclaimed live batch exists before launch."""
+def attest(metadata: Mapping[str, Any], *, session_id: str) -> dict[str, Any]:
+    """Validate the frozen contract as the launch gate; no lease state is attested.
+
+    Admission retired with the lease broker (#677/U4): the gate still rejects a malformed or
+    not-launch-ready contract, but ``launch_authorized`` no longer reflects any reservation
+    check — no batch lease exists to attest (plan #677, KTD4).
+    """
 
     contract = validate_metadata(metadata)
-    snapshot = lease_broker.broker(environment).inspect()
-    leases = [
-        lease
-        for lease in snapshot.get("leases", [])
-        if lease.get("batch_id") == contract["batch_id"]
-    ]
-    if len(leases) != contract["reservation_width"]:
-        raise WorkflowLeaseContractError(
-            f"batch {contract['batch_id']!r} has {len(leases)} of "
-            f"{contract['reservation_width']} required slots"
-        )
-    for lease in leases:
-        if (
-            lease.get("derived_state") != "live"
-            or lease.get("owner_id") != contract["owner_id"]
-            or lease.get("session_id") != session_id
-            or lease.get("agent_id") is not None
-            or lease.get("tool_use_id") is not None
-        ):
-            raise WorkflowLeaseContractError(
-                f"batch {contract['batch_id']!r} is not an unclaimed live prelaunch reservation"
-            )
+    _text(session_id, "session_id")
     return {
         "schema": "workflow_lease_attestation.v1",
         "batch_id": contract["batch_id"],
-        "root_sha256": snapshot["root_sha256"],
-        "reservation_width": len(leases),
+        "reservation_width": 0,
         "launch_authorized": True,
     }
 
 
-def renew(
-    metadata: Mapping[str, Any], environment: Mapping[str, str] | None = None
-) -> tuple[str, ...]:
-    contract = validate_metadata(metadata)
-    selected = lease_broker.broker(environment)
-    leases = selected.renew_batch(contract["batch_id"], owner_id=contract["owner_id"])
-    return tuple(lease.lease_id for lease in leases)
+def renew(metadata: Mapping[str, Any]) -> tuple[str, ...]:
+    """Validate the frozen contract and renew nothing — no batch lease exists to renew.
+
+    Cooperative boundary renewal retired with the lease broker (#677/U4, plan #677 KTD4); no
+    substitute renewal mechanism replaces it.
+    """
+
+    validate_metadata(metadata)
+    return ()
 
 
-def release(
-    metadata: Mapping[str, Any],
-    *,
-    session_id: str,
-    environment: Mapping[str, str] | None = None,
-) -> tuple[str, ...]:
-    contract = validate_metadata(metadata)
-    selected = lease_broker.broker(environment)
-    return cast(
-        tuple[str, ...],
-        selected.settle_batch(
-            contract["batch_id"],
-            owner_id=contract["owner_id"],
-            session_id=_text(session_id, "session_id"),
-        ),
-    )
+def release(metadata: Mapping[str, Any], *, session_id: str) -> tuple[str, ...]:
+    """Validate the frozen contract and settle nothing — no batch lease exists to release.
+
+    Settlement retired with the lease broker (#677/U4); the vocabulary slot survives without a
+    producer, as in the U2 teardown re-key (#679).
+    """
+
+    validate_metadata(metadata)
+    _text(session_id, "session_id")
+    return ()
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -249,11 +206,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise AssertionError(args.command)
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0
-    except (
-        WorkflowLeaseContractError,
-        lease_broker.HookInputError,
-        lease_broker.authority.LeaseBrokerError,
-    ) as exc:
+    except WorkflowLeaseContractError as exc:
         _die(str(exc))
 
 

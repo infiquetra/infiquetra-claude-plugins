@@ -1,5 +1,64 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-08-07
+
+### U4 retires the workflow emitter onto the frozen contract, not into deletion (#681) {#u4-retires-the-workflow-emitter-onto-the-frozen-contract-681}
+
+Issue: `infiquetra-claude-plugins#681`, unit U4 of the lease-broker retirement campaign (#677),
+plan `docs/plans/2026-07-30-issue-677-lease-broker-retirement-plan.md`. U4's re-note (third
+correction) measured ONE production file — `workflow_emitter.py` — and that measurement held for
+production code; the coupled surfaces moved by construction, as in U1–U3.
+
+**KTD1 — The emitted contract keeps its frozen shape and vocabulary; the producers retire.**
+`reserve`/`attest`/`renew`/`release` still validate the closed `workflow_lease_reservation.v1`
+metadata and still print their receipt/attestation schemas, but they report the retirement: the
+receipt loses `root_sha256` (no fleet root survives) and binds zero leases; the attestation
+reports attested width 0 and keeps `launch_authorized` as the retired gate's verdict; renew and
+release return empty. Renaming the schemas or deleting the commands would have rippled into
+`execution_spec.py`'s `lease` producer and the `/work` ritual — outside U4's measured scope. The
+vocabulary-slot-without-a-producer move is the U2 re-key precedent.
+
+**KTD2 — The hooks degrade to per-spawn admission; measured before the batch concept went.**
+Deleting the batch reservation was safe only because `lease_broker.reserve_hook_agent` was read
+first: when `active_batch_id` finds no live batch it falls back to the pre-#356 per-spawn
+`acquire_agent` path — the "degrade" branch IS the original admission design (#356 inserted the
+batch branch in front of it). Between U4 and U5 there is no PreToolUse HALT regression; U5
+deletes the hook and the wrapper whole. LEARNINGS `{#the-batch-fallback-was-the-original-admission-path}`.
+
+**KTD3 — The ritual keeps its calls; its prose moves with U4 under R11, and the ownership miss is
+named.** The plan assigned `skills/work/SKILL.md` to U3; U3 re-keyed the second-opinion section
+and left the lease ritual. U4 changes what the ritual's commands DO, so R11 ("no window where the
+shipped skill lies") pulled the prose into this PR: attest is a contract-shape gate only, no
+atomic reservation, no hook batch discovery (hooks fall back to per-spawn admission until U5).
+The calls stay for protocol continuity — attest still genuinely rejects a malformed contract
+before launch. Revisit-when: U5 deletes the lease lifecycle hook; the retired calls can leave the
+ritual entirely then.
+
+**KTD4 — Conformance pins flip to ABSENCE; seven broker-lifecycle tests go extinct.** The
+conformance suite's required-call pins (`selected.reserve_batch` / `renew_batch` / `settle_batch`
+in the emitter) became absence pins so re-arming fails loudly; `EXPECTED_LEASE_CALLS` dropped the
+emitter entries and the spawn-site rows carry `retired:broker-free-(#677/U4)` markers (the claim
+cell keeps `lease_broker.claim_hook_agent` until U5). `test_saga_workflow_emitter.py` retired
+seven tests — admission, capacity, claim/recycle/renew, and hook binding were broker concepts
+with no broker-free successor (plan KTD4: no batch lease exists to renew) — kept the four
+contract/shape pins, and added the issue's two mandated pins plus CLI HALT coverage. The issue's
+"update `tests/test_workflow_emitter.py`" line was a survey artifact: that file tests
+`execution_spec.py` emission and carries zero broker references; the lease protocol's home was
+always `test_saga_workflow_emitter.py`.
+
+**KTD5 — CI load surfaced two latent races the campaign's semantics now require; both absorbed.**
+Merge-time CI failed twice on two DIFFERENT tests, each environmental, each real:
+(1) `audit_store._ensure_private_dir` walked `exists()`-then-`mkdir` — a TOCTOU — and with
+admission fencing gone (Scope Decision row 1: concurrent dispatches both proceed) two dispatches
+mirror to ONE shared store root; the loser died on `FileExistsError` under CI load. Fixed in
+fleet-core production code (`mkdir(exist_ok=True)`; the final lstat validation still enforces
+ownership/0o700/not-a-symlink whoever created it), pinned by a two-process race test, fleet-core
+bumped 0.23.0 → 0.23.1. (2) `test_delegated_parent_must_hold_current_same_session_authority`
+simulated lease expiry with `renewed_monotonic_ns = 0`, which only expires once machine uptime
+exceeds the 300s claim TTL — a fresh runner flaked it. The tampered registry now also carries
+`ttl_seconds = 1`, making the expiry uptime-independent. LEARNINGS
+`{#ci-load-surfaces-the-races-and-clock-assumptions-local-machines-hide}`.
+
 ## 2026-08-06
 
 ### U3 re-keys dispatch and manifest settlement onto self-authenticating close receipts (#680) {#u3-rekeys-dispatch-settlement-onto-close-receipts-680}

@@ -297,9 +297,10 @@ python3 plugins/saga/scripts/saga.py spec-check --saga-id <saga-id>
 
 Any verdict but `ok` is a HALT condition (see below) — do not proceed on a `missing`, `run-id`, or
 `file-missing` ref. On `ok`, mint the logical invocation identity first, then re-emit a fresh
-`.workflow.js` and its driver-owned lease contract from the same spec — any intermediate re-plan that
-changed the spec is reflected. `CLAUDE_CODE_SESSION_ID` is host-provided to Bash and hook subprocesses
-and matches the hooks' trusted `session_id`; HALT if it is absent. Never substitute the saga id.
+`.workflow.js` and its driver-owned reservation contract (the frozen #356 shape — since #677/U4 it
+binds no leases) from the same spec — any intermediate re-plan that changed the spec is reflected.
+`CLAUDE_CODE_SESSION_ID` is host-provided to Bash and hook subprocesses and matches the hooks'
+trusted `session_id`; HALT if it is absent. Never substitute the saga id.
 
 ```bash
 test -n "$CLAUDE_CODE_SESSION_ID" || { echo "HALT — CLAUDE_CODE_SESSION_ID is absent" >&2; exit 2; }
@@ -317,11 +318,12 @@ python3 plugins/saga/scripts/workflow_emitter.py attest "$WORKFLOW_LEASE_METADAT
   --session-id "$CLAUDE_CODE_SESSION_ID"
 ```
 
-The final `attest` is the launch gate: any refusal means **launch none and HALT**. The complete
-simultaneous width is reserved atomically. Hooks discover the one live batch from the locked broker
-by trusted session id; do not rely on a shell `export` persisting into a later Workflow tool call.
-`PreToolUse Agent|Task` assigns a slot, `SubagentStart` binds it, and each parent collection renews
-the batch. Generated JavaScript and children receive neither a registry path nor filesystem access.
+The final `attest` remains the launch gate, but since #677/U4 it is a contract-shape check only:
+any refusal (malformed or not-launch-ready metadata) means **launch none and HALT**. No batch lease
+exists to reserve or attest — admission retired with the lease broker (#677/U4) — so `reserve` and
+`attest` validate the frozen contract and report the retired, broker-free outcome. Until U5 removes
+the lease lifecycle hook, hooks fall back to per-spawn admission instead of batch-slot assignment.
+Generated JavaScript and children receive neither a registry path nor filesystem access.
 
 Then launch it:
 
@@ -379,16 +381,17 @@ PY
 Workflow({ scriptPath: "docs/plans/<topic>.workflow.js" })
 ```
 
-After the Workflow returns, or after the host authoritatively confirms cancellation, release unused
-reservations and confirmed-terminal slots immediately. Do not release merely because a wait timed out
-or a `SubagentStop` hook was blocked:
+After the Workflow returns, or after the host authoritatively confirms cancellation, close the
+protocol with the release command. Since #677/U4 no batch lease exists to settle, so it validates
+the frozen contract and reports an empty result:
 
 ```bash
 python3 plugins/saga/scripts/workflow_emitter.py release "$WORKFLOW_LEASE_METADATA" \
   --session-id "$CLAUDE_CODE_SESSION_ID"
 ```
 
-For a long driver-side collection step, renew cooperatively at the boundary (there is no daemon):
+For a long driver-side collection step, the boundary renew call stays for protocol continuity;
+since #677/U4 there is no batch lease to renew (plan #677 KTD4), and it reports an empty result:
 
 ```bash
 python3 plugins/saga/scripts/workflow_emitter.py renew "$WORKFLOW_LEASE_METADATA"

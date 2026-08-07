@@ -160,7 +160,7 @@ def test_ttl_cold_start_is_suspicion_only() -> None:
         _observation(
             now=301,
             heartbeat_times=(),
-            lease_ttl_seconds=300,
+            ttl_seconds=300,
             reping_candidate=LV.RePingCandidate("g", "heartbeat-absent", 0, 0, "c"),
         )
     )
@@ -169,14 +169,14 @@ def test_ttl_cold_start_is_suspicion_only() -> None:
     assert decision.terminal_authority == LV.TerminalAuthority.NONE
 
 
-def test_lease_ttl_cold_start_boundary_is_strict() -> None:
+def test_ttl_cold_start_boundary_is_strict() -> None:
     # elapsed == ttl stays healthy (strict >); the first instant past the ttl is suspicion.
-    at_ttl = LV.evaluate(_observation(now=300.0, heartbeat_times=(), lease_ttl_seconds=300))
-    over = LV.evaluate(_observation(now=300.5, heartbeat_times=(), lease_ttl_seconds=300))
+    at_ttl = LV.evaluate(_observation(now=300.0, heartbeat_times=(), ttl_seconds=300))
+    over = LV.evaluate(_observation(now=300.5, heartbeat_times=(), ttl_seconds=300))
     assert at_ttl.classification == LV.Classification.HEALTHY
     assert over.phi is None
     assert over.classification == LV.Classification.HEARTBEAT_SUSPECT
-    assert over.reason_code == "lease-ttl-cold-start"
+    assert over.reason_code == "ttl-cold-start"
 
 
 def test_renewal_or_expiry_alone_is_not_an_engine_input() -> None:

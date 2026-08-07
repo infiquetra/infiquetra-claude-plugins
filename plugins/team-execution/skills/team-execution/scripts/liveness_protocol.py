@@ -22,7 +22,6 @@ from pathlib import Path
 from typing import Any
 
 import artifact_pointer
-import fleet_commons_shim
 
 SAGA_SCRIPT = Path("scripts") / "liveness_events.py"
 PENDING_SCHEMA = "liveness.reping-pending.v1"
@@ -235,60 +234,87 @@ def capture_spawn_baseline(
     )
 
 
+def _current_boot_id() -> str:
+    """Best-effort boot identifier without the lease broker.
+
+    The broker's ``Providers().boot_id()`` previously supplied this. With the broker
+    retired, read the kernel boot identifier directly when available; otherwise
+    return a stable fallback. The value only needs to be consistent between
+    ``bind_identity`` and ``poll`` — mismatched identifiers surface as
+    ``boot-identity-changed`` in the engine, which is still correct without a lease.
+    """
+
+    for candidate in (Path("/proc/sys/kernel/random/boot_id"),):
+        try:
+            text = candidate.read_text(encoding="utf-8").strip()
+            if text:
+                return text
+        except OSError:
+            continue
+    return "boot-1"
+
+
 def bind_identity(
     request: Mapping[str, Any],
     baseline: Mapping[str, Any],
-    *,
-    lease_broker: Any | None = None,
 ) -> dict[str, Any]:
-    """Bind caller metadata to the broker-verified current agent lease.
+    """Bind caller metadata to a caller-asserted liveness identity.
 
-    Resource, token, session, boot, TTL, and fencing values are derived from canonical fleet-core
-    authority. The caller cannot choose their digests or generations.
+    The lease broker is retired. Resource, token, session, boot, TTL, and fencing
+    values are caller-asserted and validated only for shape — the broker no longer
+    provides untamperable identity. A caller may supply ``ttl_seconds`` in the
+    request to drive the cold-start heuristic; otherwise a default is used.
     """
 
-    if set(request) != _IDENTITY_REQUEST_KEYS:
+    allowed_extra = {"ttl_seconds"}
+    if not set(request).issubset(
+        _IDENTITY_REQUEST_KEYS | allowed_extra
+    ) or not _IDENTITY_REQUEST_KEYS.issubset(set(request)):
         raise LivenessProtocolError(
             f"identity request fields are not closed (expected {sorted(_IDENTITY_REQUEST_KEYS)})"
         )
     agent_id = request.get("agent_id")
     if not isinstance(agent_id, str) or not agent_id:
         raise LivenessProtocolError("identity request requires agent_id")
-    authority = fleet_commons_shim.load("lease_broker")
-    selected = authority.LeaseBroker() if lease_broker is None else lease_broker
-    try:
-        lease = selected.verify_agent(agent_id)
-        if lease.pool != "agent" or lease.agent_id != agent_id or lease.resource_ref is None:
-            raise LivenessProtocolError("broker returned a non-agent or mismatched liveness lease")
-        resource = authority.canonical_resource_ref("agent", lease.resource_ref)
-    except authority.LeaseBrokerError as exc:
-        raise LivenessProtocolError(f"cannot bind current liveness lease: {exc}") from exc
     if baseline.get("schema") != artifact_pointer.LIVENESS_BASELINE_SCHEMA:
         raise LivenessProtocolError("identity binding requires a liveness artifact baseline")
     for field in ("baseline_digest", "path_set_sha256"):
         if not isinstance(baseline.get(field), str) or not _HEX64.fullmatch(baseline[field]):
             raise LivenessProtocolError(f"identity baseline {field} is invalid")
-    token = lease.token.to_dict()
+    # Caller-asserted TTL — replaces the former ``lease.ttl_seconds``.
+    ttl_raw = request.get("ttl_seconds", 300.0)
+    try:
+        ttl_seconds = float(ttl_raw)
+        if ttl_seconds < 0 or not (ttl_seconds == ttl_seconds and ttl_seconds != float("inf")):
+            raise ValueError
+    except Exception as exc:
+        raise LivenessProtocolError("ttl_seconds must be a finite nonnegative number") from exc
+    # Deterministic caller-asserted placeholders for former lease fields.
+    resource = {"logical_unit_id": f"team:{request['unit_id']}"}
+    resource_sha256 = hashlib.sha256(
+        json.dumps(resource, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    token = {"broker_epoch": "epoch-1", "fencing_sequence": 1}
     token_sha256 = hashlib.sha256(
         json.dumps(token, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     return {
-        "session_id": lease.session_id,
+        "session_id": f"session-{agent_id}",
         "subplot_id": request["subplot_id"],
         "dispatch_id": request["dispatch_id"],
         "unit_id": request["unit_id"],
         "attempt": request["attempt"],
         "resident_id": request["resident_id"],
         "agent_id": agent_id,
-        "lease_id": lease.lease_id,
-        "resource_sha256": authority.resource_sha256(resource),
-        "broker_epoch": lease.broker_epoch,
-        "fencing_sequence": lease.fencing_sequence,
-        "boot_id": lease.boot_id,
+        "lease_id": f"lease-{agent_id}",
+        "resource_sha256": resource_sha256,
+        "broker_epoch": "epoch-1",
+        "fencing_sequence": 1,
+        "boot_id": _current_boot_id(),
         "manifest_sha256": request["manifest_sha256"],
         "spawn_sha256": request["spawn_sha256"],
         "token_sha256": token_sha256,
-        "lease_ttl_seconds": lease.ttl_seconds,
+        "ttl_seconds": ttl_seconds,
         "baseline_sha256": baseline["baseline_digest"],
         "path_set_sha256": baseline["path_set_sha256"],
     }
@@ -459,8 +485,7 @@ def poll(
     resolution: SagaResolution | None = None,
 ) -> dict[str, Any]:
     selected = resolution or resolve_saga_plugin()
-    authority = fleet_commons_shim.load("lease_broker")
-    current_boot_id = authority.Providers().boot_id()
+    current_boot_id = _current_boot_id()
     argv = [
         "poll",
         "--subject-id",

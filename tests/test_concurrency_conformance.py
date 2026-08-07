@@ -67,16 +67,7 @@ EXPECTED_ROWS: frozenset[InventoryRow] = frozenset(
             "retired:broker-free-(#677/U5)",
             "retired:broker-free-(#677/U5)",
         ),
-        (
-            "plugins/team-execution/skills/team-execution/scripts/lease_protocol.py",
-            "team-execution-fan-out",
-            "concurrency_policy.AdmissionLimits",
-            "agent",
-            "retired:broker-free-(#677/U5)",
-            "retired:broker-free-(#677/U5)",
-            "lease_protocol.renew",
-            "lease_protocol.teardown",
-        ),
+        # U6 retired the team-execution lease protocol whole — the row is deleted, not retired.
         # Broker-free rows since #677/U3: the lease lifecycle cells are retired markers; the
         # settlement record is the close-receipt mint, the worktree's ownership its registry entry.
         (
@@ -706,29 +697,10 @@ def _assert_host_spawn_contracts() -> None:
         ), f"lease lifecycle hook re-registered on {event}"
 
     team_path = ROOT / "plugins/team-execution/skills/team-execution/scripts/lease_protocol.py"
-    team_tree = ast.parse(team_path.read_text(encoding="utf-8"), filename=str(team_path))
-    team_parents = _parents(team_tree)
-    team_functions = {
-        node.name
-        for node in ast.walk(team_tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
-    assert {"preflight", "renew", "teardown"} <= team_functions
-    team_calls = {
-        (owner.name, callee)
-        for node in ast.walk(team_tree)
-        if isinstance(node, ast.Call)
-        and (callee := _qualified_name(node.func)) is not None
-        and (owner := _enclosing_function(node, team_parents)) is not None
-    }
-    for required in (
-        ("renew", "selected.renew_session"),
-        ("teardown", "selected.release_session_if_terminal"),
-        ("teardown", "selected.sweep"),
-    ):
-        assert required in team_calls, (
-            f"missing team-execution lease lifecycle call: {required[0]}:{required[1]}"
-        )
+    assert not team_path.exists(), (
+        "lease_protocol.py was deleted in #677/U6 — the team-execution lease wrapper is gone; "
+        "remove any remaining reference to its preflight/renew/teardown lifecycle"
+    )
 
 
 def assert_conformance(sources: dict[str, str], inventory: str) -> None:

@@ -91,7 +91,7 @@ class LivenessObservation:
     reping_candidate: RePingCandidate | None = None
     reping_send_unresolved: bool = False
     reping_delivery_blocked: bool = False
-    lease_ttl_seconds: float | None = None
+    ttl_seconds: float | None = None
     subject_boot_id: str | None = None
     current_boot_id: str | None = None
     evidence_error: str | None = None
@@ -285,8 +285,8 @@ def evaluate(
         )
         ttl = (
             None
-            if observation.lease_ttl_seconds is None
-            else _finite_nonnegative(observation.lease_ttl_seconds, "lease_ttl_seconds")
+            if observation.ttl_seconds is None
+            else _finite_nonnegative(observation.ttl_seconds, "ttl_seconds")
         )
     except LivenessInputError:
         empty = PhiScore(None, 0, None, observation.dispatched_at)
@@ -364,5 +364,5 @@ def evaluate(
         observation,
         score,
         Classification.HEARTBEAT_SUSPECT,
-        "phi-threshold" if phi_suspect else "lease-ttl-cold-start",
+        "phi-threshold" if phi_suspect else "ttl-cold-start",
     )

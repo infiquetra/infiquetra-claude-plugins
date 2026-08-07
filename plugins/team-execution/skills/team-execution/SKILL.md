@@ -292,18 +292,13 @@ eligibility, and state location.
 
 If the plan has no `## Team Structure`, stop and tell the user to run `/team-execute`.
 
-Before anything can spawn, open the bounded team run (#358 R2):
+Before anything can spawn, establish the bounded team run via the file-disjoint frontier
+(#358 R2):
 
-```bash
-lease_protocol.py open-run --session-id "$CLAUDE_CODE_SESSION_ID"
-```
-
-The wrapper resolves Saga's canonical `team_teardown.py` (local checkout and installed
-plugin layouts resolve the same script; a pre-#358 Saga fails loud — B8 is never armed
-silently). The returned `team_run_id` is the run's canonical owner identity: every lease
-this run acquires carries it as the broker `owner_id`, and Step B8's owner-admission close
-fences exactly that identity. Record the id in the run state; prompts, prose, or wall time
-never substitute for it.
+The coordinator validates that the plan's wave assignments are file-disjoint via
+`wave_file_conflicts()` — no lease broker is consulted. The run's identity is the
+`CLAUDE_CODE_SESSION_ID` and the derived `team_run_id` recorded in the run state;
+prompts, prose, or wall time never substitute for it.
 
 ---
 
@@ -328,19 +323,15 @@ here in Phase B preflight.
 
 Workers execute approved tasks. Coordinate dependencies, keep work scoped to the plan, and run execution waves using the resident-worker residency protocol:
 
-- **Lease preflight and renewal (#356):** before the first direct `Agent` call, require
-  `CLAUDE_CODE_SESSION_ID` and run
-  `lease_protocol.py preflight --session-id "$CLAUDE_CODE_SESSION_ID"`. Saga's installed
-  `PreToolUse` hook reserves each exact worker,
-  reviewer, and validator call before provider dispatch; team-execution must not keep a parallel
-  counter or reserve a Workflow batch. At every wave or result-collection boundary run
-  `lease_protocol.py renew --session-id "$CLAUDE_CODE_SESSION_ID"`. A renewal refusal halts the
-  wave; it never creates replacement authority. See `references/lease-protocol.md`.
+- **No lease preflight — file-disjoint frontier:** waves are validated at emit time via
+  `wave_file_conflicts()` — no lease broker is consulted and no renewal is performed.
+  Saga's lifecycle hook remains the only admission authority for worker calls, but it no
+  longer fences through a lease.
 
 - **Canonical worker liveness (#357):** preflight the packaged `liveness_protocol.py` adapter before
   the first background Agent call. Immediately before each resident spawn, capture the approved path
   baseline; immediately after the host returns the trusted agent handle, append `subject-open` with
-  the exact #351 manifest/spawn and current #356 lease/token/boot digests. Poll at every lease renewal,
+  the exact #351 manifest/spawn and caller-asserted **TTL**. Poll at every
   Agent/SendMessage host return, dependency-unblock boundary, and before B2. If poll returns a
   `reping` candidate, claim it atomically before staging the exact recipient/request digest and
   calling SendMessage. Saga's SendMessage hook records accepted or definitive-not-sent host receipts;
@@ -450,8 +441,7 @@ invariance, and the KTD7 capability-keyed fallback to inlined content).
 
 Run reviewers according to `consensus-protocol.md`.
 
-Renew the team session at this collection/fan-out boundary using `lease_protocol.py renew` before
-the reviewer manifest and Agent calls. Poll every resident liveness subject before unblocking B2;
+Poll every resident liveness subject before unblocking B2;
 `confirmed-stalled` is detection evidence only and #358 remains the destructive-action owner. The
 per-reviewer Saga lifecycle hook reservation remains the only admission authority.
 
@@ -594,22 +584,12 @@ raised andon — enters B8 exactly once logically, even when invoked repeatedly 
 
 1. **Stop residents.** Send an explicit stop to every named resident worker, reviewer, and
    validator. Wait for every handle to report terminal; silence, timeout, and a missing
-   handle are not terminal evidence. Then run
-   `lease_protocol.py teardown --session-id "$CLAUDE_CODE_SESSION_ID"`, passing each
-   verified terminal agent id with `--terminal-agent-id`. The wrapper refuses unresolved
-   children, releases only this session's agent leases, and sweeps expired agent debris.
-   Follow the exact protocol in `references/lease-protocol.md`.
-2. **Reclaim the run.** Run the idempotent terminal driver:
-
-   ```bash
-   lease_protocol.py reclaim-all --team-run-id "$TEAM_RUN_ID" --reason <success|hard-fail|operator-abort|andon>
-   ```
-
-   The driver closes owner admission in the broker (after which no acquire, reserve,
-   claim, or retry for this run can race the receipt), appends `teardown-intent`,
-   reconciles the complete owned-resource snapshot, executes typed authorized actions,
-   appends each outcome, re-reconciles, re-verifies the still-closed close generation, and
-   emits `teardown-complete` only at zero open resources.
+   handle are not terminal evidence. No lease release is performed — the broker is
+   retired and capacity is governed by the file-disjoint frontier.
+2. **Reclaim the run.** Run the idempotent terminal driver directly via `team_teardown.py`
+   (no `lease_protocol` wrapper). It reconciles the complete owned-resource snapshot,
+   executes typed authorized actions, appends each outcome, re-reconciles, and emits
+   `teardown-complete` only at zero open resources.
 3. **Read the verdict.** The returned `team_teardown.v1` projection is the only completion
    authority: `open_count == 0` plus a `completion_fact_ref` is a completed teardown. A
    run with `retained`/`failed` resources is **terminal-but-blocked** — report it exactly
@@ -617,9 +597,8 @@ raised andon — enters B8 exactly once logically, even when invoked repeatedly 
    by stable action keys.
 
 A crashed or `SIGKILL`ed coordinator cannot run B8 synchronously: Saga's `SessionEnd` hook
-records a bounded teardown request, and `SessionStart` recovery (or an explicit
-`lease_protocol.py recover --expired-only`) reclaims after lease expiry with dead-owner
-proof. Hook receipts are request evidence only — completion always requires the derived
+records a bounded teardown request, and `SessionStart` recovery reclaims after a short
+delay. Hook receipts are request evidence only — completion always requires the derived
 zero-open receipt. Full contract: `references/teardown-reclamation.md`.
 
 ---
@@ -635,7 +614,6 @@ team-execution/
 │       ├── SKILL.md
 │       └── references/
 │           ├── consensus-protocol.md
-│           ├── lease-protocol.md
 │           ├── review-criteria.md
 │           ├── reviewer-registry.md
 │           ├── validator-criteria.md

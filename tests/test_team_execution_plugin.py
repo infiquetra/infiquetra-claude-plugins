@@ -40,7 +40,6 @@ VALIDATOR_REFERENCES = {
 
 WORKER_REFERENCES = {
     "external-engine-workers.md",
-    "lease-protocol.md",
     "teardown-reclamation.md",
 }
 
@@ -216,9 +215,10 @@ def test_skill_documents_validator_state_and_automation_gates() -> None:
         "maximum 3 remediation loops",
         "Step B8",
         "CLAUDE_CODE_SESSION_ID",
-        "lease_protocol.py teardown",
     ):
         assert required in skill_doc
+    # U6 retired the lease wrapper — the teardown string must be absent.
+    assert "lease_protocol.py teardown" not in skill_doc
 
 
 def test_skill_documents_non_skippable_terminal_teardown() -> None:
@@ -230,16 +230,22 @@ def test_skill_documents_non_skippable_terminal_teardown() -> None:
     )
 
     for required in (
-        "lease_protocol.py open-run",
-        "lease_protocol.py reclaim-all",
         "team_run_id",
         "terminal-but-blocked",
         "success, hard-fail, operator abort",
         "exactly once logically",
         "zero-open",
-        "recover --expired-only",
     ):
         assert required in skill_doc, f"SKILL.md missing teardown wiring: {required!r}"
+    # U6 retired the lease wrapper — the old lease_protocol strings must be absent.
+    for absent in (
+        "lease_protocol.py open-run",
+        "lease_protocol.py reclaim-all",
+        "recover --expired-only",
+    ):
+        assert absent not in skill_doc, (
+            f"SKILL.md still references retired lease wrapper: {absent!r}"
+        )
     # B7 prepares the draft; only B8's receipt allows the word complete (KTD2).
     assert "B7 cannot assert" in skill_doc
     # #677/U2 retired the lease authority: `term-then-kill` (the subprocess stop policy)
@@ -261,51 +267,13 @@ def test_skill_documents_non_skippable_terminal_teardown() -> None:
         assert required in reference, f"teardown-reclamation.md missing: {required!r}"
 
 
-def test_lease_protocol_resolves_and_runs_the_real_teardown_cli(tmp_path: Path) -> None:
-    """#358 R11/U6: the wrapper resolves Saga's canonical team_teardown.py (same script for
-    local checkout and installed layouts) and drives the real B0/B8 verbs end to end,
-    against a hermetic fleet-state root — never the developer's live authority."""
-    import subprocess
-    import sys as _sys
-
+def test_lease_protocol_is_retired(tmp_path: Path) -> None:
+    """U6: the wrapper is deleted — no script, no CLI, no fleet-state interaction."""
     script = PLUGIN_ROOT / "skills" / "team-execution" / "scripts" / "lease_protocol.py"
-    env = dict(**__import__("os").environ)
-    # Hermetic stores: a temp fleet-state root and a temp git repo whose common dir
-    # receives the run-fact ledger — the developer's live authority is never touched.
-    env["INFIQUETRA_FLEET_STATE_DIR"] = str(tmp_path / "fleet-state")
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    subprocess.run(
-        ["git", "init", "--quiet", str(repo)], check=True, capture_output=True, timeout=30
-    )
-
-    def _run(*argv: str) -> dict:
-        completed = subprocess.run(
-            [_sys.executable, str(script), *argv],
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=60,
-            cwd=ROOT,
-        )
-        assert completed.returncode == 0, completed.stderr
-        parsed = json.loads(completed.stdout)
-        assert isinstance(parsed, dict)
-        return parsed
-
-    opened = _run("open-run", "--repo-root", str(repo), "--session-id", "conformance-session")
-    run_id = opened["opened"]
-    assert run_id.startswith("team-run-")
-
-    status = _run("status", "--repo-root", str(repo), "--team-run-id", run_id)
-    assert status["schema"] == "team_teardown.v1"
-    assert status["completion_fact_ref"] is None
-
-    reclaimed = _run(
-        "reclaim-all", "--repo-root", str(repo), "--team-run-id", run_id, "--reason", "success"
-    )
-    assert reclaimed["open_count"] == 0
-    assert reclaimed["completion_fact_ref"] is not None
+    assert not script.exists(), "lease_protocol.py should be deleted in #677/U6"
+    # The Skill must not reference the deleted wrapper.
+    skill_doc = _read(PLUGIN_ROOT / "skills" / "team-execution" / "SKILL.md")
+    assert "lease_protocol.py" not in skill_doc
 
 
 def test_skill_documents_required_evidence_absence_gate() -> None:

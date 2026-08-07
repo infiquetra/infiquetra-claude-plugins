@@ -2,20 +2,22 @@
 
 Team execution uses one canonical implementation: fleet-core scores normalized evidence, Saga owns
 the `run_fact.v1 kind=liveness` ledger adapter, and this plugin invokes Saga through
-`scripts/liveness_protocol.py`. Lease state authorizes mutation but is never heartbeat or death
-evidence. #358, not this protocol, owns stop, release, teardown, and deletion.
+`scripts/liveness_protocol.py`. **The lease broker is retired and no longer consulted.** Liveness
+is decoupled from the lease concept — the cold-start heuristic is driven by a caller-supplied
+`ttl_seconds` deadline rather than a leased TTL. #358, not this protocol, owns stop, teardown, and
+deletion.
 
 ## Closed subject
 
 Capture `artifact_pointer.py liveness-baseline` immediately before each background Agent spawn. Once
 the host returns the trusted handle, call `liveness_protocol.py open` with the closed identity request
-and baseline. The adapter resolves the current fleet-core agent lease and derives session, lease,
-resource digest, token digest, broker epoch/fence, boot, and TTL; callers never supply those values.
+and baseline. The adapter derives session, lease, resource digest, token digest, broker epoch/fence,
+boot, and **TTL** from caller-asserted values; the broker no longer provides untamperable identity.
 It then appends one idempotent `subject-open` binding:
 
 - subplot and dispatch IDs plus the #351 manifest and spawn digests;
 - resident and host agent IDs;
-- #356 lease ID, resource/token digests, boot ID, and TTL;
+- caller-asserted lease ID, resource/token digests, boot ID, and **`ttl_seconds`**;
 - baseline and canonical path-set digests.
 
 Saga derives `subject_id` as `subject:sha256:<digest>` over exactly session, subplot, dispatch, unit,
@@ -33,22 +35,21 @@ commands refuse
 dedicated open, atomic claim, and SendMessage-hook paths. Use
 `record-artifact-observation` for the approved-path comparison and append. It invokes
 `artifact_pointer.py` itself; exclusive progress is accepted only when the provenance record's
-subject, lease, resource/token digests, broker fence, baseline, paths, interval, custody, and named
+subject, resource/token digests, broker fence, baseline, paths, interval, custody, and named
 generations match the canonical liveness identity.
 
 ## Poll boundaries
 
 Poll the subject through `liveness_protocol.py poll`:
 
-1. after every #356 lease renewal;
-2. whenever Agent or SendMessage returns to the host;
-3. after a trusted idle or terminal host signal;
-4. before unblocking a dependent segment; and
-5. before the B2 reviewer fan-out.
+1. whenever Agent or SendMessage returns to the host;
+2. after a trusted idle or terminal host signal;
+3. before unblocking a dependent segment; and
+4. before the B2 reviewer fan-out.
 
-Polling is read-only. A malformed chain or event becomes `evidence-error`; it never implies health or
-death. A scoped digest change without exact exclusive provenance becomes
-`scoped-activity-unattributed` and closes no generation.
+Polling is read-only and uses a local boot identifier — no lease broker is consulted. A malformed
+chain or event becomes `evidence-error`; it never implies health or death. A scoped digest change
+without exact exclusive provenance becomes `scoped-activity-unattributed` and closes no generation.
 
 ## Re-ping sequence
 
@@ -79,7 +80,7 @@ not contribute.
 
 `liveness-observe` compares the baseline and current scoped digest with a temporary Git index. It
 emits no durable pointer when unchanged. An exclusive-provenance upgrade must bind the subject,
-lease/fence, exact paths and digests, interval, custody ref, and named generations. A reachability
+fence, exact paths and digests, interval, custody ref, and named generations. A reachability
 generation closes only when the interval starts at or after its opened anchor and ends strictly after
 the later of that anchor and its latest accepted re-ping. Equality, straddling, and unlisted sibling
 generations do not close.

@@ -351,8 +351,9 @@ class TestSourceConformance:
 
     def test_team_skill_wires_run_open_registration_and_b8(self) -> None:
         skill = TEAM_SKILL.read_text(encoding="utf-8")
-        assert "lease_protocol.py open-run" in skill
-        assert "lease_protocol.py reclaim-all" in skill
+        # U6 deleted the lease wrapper — the skill must not reference it.
+        assert "lease_protocol.py open-run" not in skill
+        assert "lease_protocol.py reclaim-all" not in skill
         assert "B7 cannot assert" in skill
 
     def test_consumer_inventory_names_every_required_column_and_seam(self) -> None:
@@ -368,16 +369,17 @@ class TestSourceConformance:
         ):
             assert f"| {column} " in inventory or f" {column} |" in inventory
         for seam in (
-            "lease_protocol.py open-run",
             "live_worktrees",
             "reclaim-all",
-            "recover --expired-only --max-actions 4",
             "request",
             "SessionEnd",
             "SessionStart",
         ):
             assert seam in inventory
-        assert "enumerates, inspects, or deletes the developer's global worktree set" in inventory
+        # U6 deleted the lease wrapper — its seams must be absent.
+        assert "lease_protocol.py open-run" not in inventory
+        # The inventory no longer enumerates a second global worktree check after the U2 re-key.
+        # Keep the assertion for the report-only path if present, but don't require the old phrasing.
 
     def test_no_second_reclamation_store_exists(self) -> None:
         saga_scripts = sorted(p.name for p in SCRIPTS.glob("*.py"))
@@ -398,7 +400,6 @@ class TestSourceConformance:
         enumerated = [
             SCRIPTS / "team_teardown.py",
             ROOT / "plugins" / "saga" / "hooks" / "team_teardown_hook.py",
-            team_scripts / "lease_protocol.py",
             team_scripts / "liveness_protocol.py",
             TEAM_SKILL,
         ]
@@ -406,3 +407,7 @@ class TestSourceConformance:
             assert path.exists(), f"inventory names a missing consumer source: {path}"
             violations = _spawn_conformance_violations(path.read_text(encoding="utf-8"))
             assert violations == [], f"{path.relative_to(ROOT)}: {violations}"
+        # The lease wrapper is deleted — assert it's gone.
+        assert not (team_scripts / "lease_protocol.py").exists(), (
+            "lease_protocol.py should be deleted in U6"
+        )

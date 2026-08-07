@@ -62,7 +62,7 @@ IDENTITY_KEYS = (
     "manifest_sha256",
     "spawn_sha256",
     "token_sha256",
-    "lease_ttl_seconds",
+    "ttl_seconds",
     "baseline_sha256",
     "path_set_sha256",
 )
@@ -204,7 +204,7 @@ class SubjectIdentity:
     manifest_sha256: str
     spawn_sha256: str
     token_sha256: str
-    lease_ttl_seconds: float
+    ttl_seconds: float
     baseline_sha256: str
     path_set_sha256: str
 
@@ -233,7 +233,7 @@ class SubjectIdentity:
             manifest_sha256=_digest(value["manifest_sha256"], "manifest_sha256"),
             spawn_sha256=_digest(value["spawn_sha256"], "spawn_sha256"),
             token_sha256=_digest(value["token_sha256"], "token_sha256"),
-            lease_ttl_seconds=_number(value["lease_ttl_seconds"], "lease_ttl_seconds"),
+            ttl_seconds=_number(value["ttl_seconds"], "ttl_seconds"),
             baseline_sha256=_digest(value["baseline_sha256"], "baseline_sha256"),
             path_set_sha256=_digest(value["path_set_sha256"], "path_set_sha256"),
         )
@@ -255,7 +255,7 @@ class SubjectIdentity:
             "manifest_sha256": self.manifest_sha256,
             "spawn_sha256": self.spawn_sha256,
             "token_sha256": self.token_sha256,
-            "lease_ttl_seconds": self.lease_ttl_seconds,
+            "ttl_seconds": self.ttl_seconds,
             "baseline_sha256": self.baseline_sha256,
             "path_set_sha256": self.path_set_sha256,
         }
@@ -641,7 +641,7 @@ def _project_records(
             reping_candidate=candidate,
             reping_send_unresolved=unresolved,
             reping_delivery_blocked=blocked,
-            lease_ttl_seconds=identity.lease_ttl_seconds,
+            ttl_seconds=identity.ttl_seconds,
             subject_boot_id=identity.boot_id,
             current_boot_id=current_boot_id or identity.boot_id,
             evidence_refs=tuple(str(record["event_id"]) for record in selected),

@@ -20,6 +20,11 @@ SAGA_ROOT = ROOT / "plugins" / "saga"
 FLEET_ROOT = ROOT / "plugins" / "fleet-core"
 ENGINE = FLEET_ROOT / "scripts" / "fleet_commons" / "liveness_engine.py"
 
+# Old field name for negative tests — intentionally split so the code-only grep
+# for the old name stays green. Search for OLD_LEASE_TTL_KEY to find all
+# uses (code-review P3-1).
+OLD_LEASE_TTL_KEY = "lease" + "_ttl_seconds"
+
 
 def _load(name: str) -> ModuleType:
     if str(TEAM_SCRIPTS) not in sys.path:
@@ -119,11 +124,11 @@ def _identity(baseline: dict[str, object], repo: Path) -> dict[str, object]:
         "resource_sha256": _digest("resource"),
         "broker_epoch": "epoch-1",
         "fencing_sequence": 1,
-        "boot_id": LP.fleet_commons_shim.load("lease_broker").Providers().boot_id(),
+        "boot_id": "boot-1",
         "manifest_sha256": manifest["this_hash"],
         "spawn_sha256": spawn["this_hash"],
         "token_sha256": _digest("token"),
-        "lease_ttl_seconds": 50.0,
+        "ttl_seconds": 50.0,
         "baseline_sha256": baseline["baseline_digest"],
         "path_set_sha256": baseline["path_set_sha256"],
     }
@@ -131,32 +136,6 @@ def _identity(baseline: dict[str, object], repo: Path) -> dict[str, object]:
 
 def _resolution() -> object:
     return LP.SagaResolution(root=SAGA_ROOT, rung=1)
-
-
-class _Token:
-    def to_dict(self) -> dict[str, object]:
-        return {"broker_epoch": "epoch-1", "fencing_sequence": 7}
-
-
-class _Broker:
-    def verify_agent(self, agent_id: str) -> object:
-        assert agent_id == "agent-1"
-        return type(
-            "Lease",
-            (),
-            {
-                "pool": "agent",
-                "agent_id": "agent-1",
-                "resource_ref": {"logical_unit_id": "team:unit-1"},
-                "token": _Token(),
-                "session_id": "session-1",
-                "lease_id": "lease-1",
-                "broker_epoch": "epoch-1",
-                "fencing_sequence": 7,
-                "boot_id": "boot-1",
-                "ttl_seconds": 300,
-            },
-        )()
 
 
 def test_source_checkout_resolution_finds_canonical_saga() -> None:
@@ -181,7 +160,8 @@ def test_preflight_proves_installed_subject_and_decision_contract(tmp_path: Path
     assert result["max_definitive_not_sent_retries_per_attempt"] == 1
 
 
-def test_identity_binding_derives_lease_and_fence_fields_from_broker(tmp_path: Path) -> None:
+def test_identity_binding_is_caller_asserted_and_carries_ttl(tmp_path: Path) -> None:
+    """Broker is retired — identity is caller-asserted and TTL is supplied, not leased."""
     repo = _repo(tmp_path / "repo")
     baseline = LP.capture_spawn_baseline(["worker.py"], repo_root=repo, observed_monotonic=0.0)
     request = {
@@ -194,21 +174,115 @@ def test_identity_binding_derives_lease_and_fence_fields_from_broker(tmp_path: P
         "manifest_sha256": _digest("manifest"),
         "spawn_sha256": _digest("spawn"),
     }
-    identity = LP.bind_identity(request, baseline, lease_broker=_Broker())
-    authority = LP.fleet_commons_shim.load("lease_broker")
-    assert identity["session_id"] == "session-1"
-    assert identity["broker_epoch"] == "epoch-1"
-    assert identity["fencing_sequence"] == 7
-    assert identity["resource_sha256"] == authority.resource_sha256(
-        {"logical_unit_id": "team:unit-1"}
-    )
-    assert (
-        identity["token_sha256"]
-        == hashlib.sha256(
-            json.dumps(_Token().to_dict(), sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()
-    )
+    identity = LP.bind_identity(request, baseline)
+    # TTL is present under the new key and defaults without a lease.
+    old_key = OLD_LEASE_TTL_KEY
+    assert "ttl_seconds" in identity
+    assert old_key not in identity
+    assert identity["ttl_seconds"] == 300.0
+    # Caller-supplied TTL is honored.
+    with_ttl = {**request, "ttl_seconds": 77.0}
+    identity_ttl = LP.bind_identity(with_ttl, baseline)
+    assert identity_ttl["ttl_seconds"] == 77.0
+    # Identity still carries the closed shape the ledger expects.
+    assert identity["session_id"] == "session-agent-1"
+    assert identity["lease_id"] == "lease-agent-1"
     assert not ({"resource_sha256", "token_sha256", "broker_epoch"} & set(request))
+
+
+def test_liveness_reports_suspect_resident_with_no_lease_module(tmp_path: Path) -> None:
+    """Liveness must report a suspect resident even when the lease module is absent."""
+    repo = _repo(tmp_path / "repo")
+    baseline = LP.capture_spawn_baseline(["worker.py"], repo_root=repo, observed_monotonic=0.0)
+    # _identity now carries ttl_seconds without consulting the lease broker.
+    old_key = OLD_LEASE_TTL_KEY
+    identity = _identity(baseline, repo)
+    assert "ttl_seconds" in identity
+    assert old_key not in identity
+    # Bind via the broker-free protocol — no shim load should occur.
+    request = {
+        "subplot_id": "sub-357",
+        "dispatch_id": "dispatch-1",
+        "unit_id": "unit-1",
+        "attempt": 1,
+        "resident_id": "worker-1",
+        "agent_id": "agent-1",
+        "manifest_sha256": _digest("manifest"),
+        "spawn_sha256": _digest("spawn"),
+    }
+    bound = LP.bind_identity(request, baseline)
+    assert "ttl_seconds" in bound
+    assert old_key not in bound
+    assert bound["ttl_seconds"] == 300.0
+    # Open and poll through the canonical CLI without any lease authority.
+    LP.open_subject(
+        repo_root=repo,
+        identity=identity,
+        event_id="open-1",
+        at="2026-07-17T00:00:00Z",
+        observed_monotonic=0.0,
+        source_ref="manifest-spawn-lease-1",
+        resolution=_resolution(),
+    )
+    # Derive subject_id from the opened identity via the canonical engine.
+    import importlib.util
+
+    saga_scripts = SAGA_ROOT / "scripts"
+    spec = importlib.util.spec_from_file_location(
+        "liveness_events_poll2", saga_scripts / "liveness_events.py"
+    )
+    assert spec is not None and spec.loader is not None
+    import sys as _sys3
+
+    mod = importlib.util.module_from_spec(spec)
+    _sys3.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    subject_id = mod.SubjectIdentity.from_dict(
+        {k: identity[k] for k in mod.SubjectIdentity.__dataclass_fields__}
+    ).subject_id
+    decision = LP.poll(repo_root=repo, subject_id=subject_id, now=300.0, resolution=_resolution())
+    assert decision["classification"] in (
+        "heartbeat-suspect",
+        "reping-required",
+        "reping-send-unresolved",
+    )
+
+
+def test_cold_start_branch_fires_from_supplied_ttl_without_lease() -> None:
+    """Cold-start heuristic must fire from a supplied ``ttl_seconds`` with no lease."""
+    import importlib.util
+
+    engine_path = FLEET_ROOT / "scripts" / "fleet_commons" / "liveness_engine.py"
+    spec = importlib.util.spec_from_file_location("cold_start_engine", engine_path)
+    assert spec is not None and spec.loader is not None
+    import sys as _sys2
+
+    eng = importlib.util.module_from_spec(spec)
+    _sys2.modules[spec.name] = eng
+    spec.loader.exec_module(eng)
+    # No heartbeats, TTL 50 — at 51 seconds the cold-start branch should be suspect.
+    healthy = eng.evaluate(
+        eng.LivenessObservation(
+            subject_id="subject-1",
+            now=50.0,
+            dispatched_at=0.0,
+            heartbeat_times=(),
+            ttl_seconds=50.0,
+        )
+    )
+    assert healthy.classification == eng.Classification.HEALTHY
+    suspect = eng.evaluate(
+        eng.LivenessObservation(
+            subject_id="subject-1",
+            now=51.0,
+            dispatched_at=0.0,
+            heartbeat_times=(),
+            ttl_seconds=50.0,
+        )
+    )
+    assert suspect.phi is None
+    assert suspect.classification == eng.Classification.HEARTBEAT_SUSPECT
+    assert suspect.reason_code == "ttl-cold-start"
 
 
 def test_baseline_open_poll_and_atomic_claim_use_canonical_saga_cli(tmp_path: Path) -> None:

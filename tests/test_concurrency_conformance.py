@@ -42,20 +42,20 @@ EXPECTED_ROWS: frozenset[InventoryRow] = frozenset(
             "_emit_panel_reconciliation",
             "concurrency_governor.ordered_chunks",
             "agent",
-            "workflow_emitter.reserve",
+            "retired:broker-free-(#677/U4)",
             "lease_broker.claim_hook_agent",
-            "workflow_emitter.renew",
-            "workflow_emitter.release",
+            "retired:broker-free-(#677/U4)",
+            "retired:broker-free-(#677/U4)",
         ),
         (
             REL_SOURCE,
             "emit_workflow_script",
             "concurrency_chunks",
             "agent",
-            "workflow_emitter.reserve",
+            "retired:broker-free-(#677/U4)",
             "lease_broker.claim_hook_agent",
-            "workflow_emitter.renew",
-            "workflow_emitter.release",
+            "retired:broker-free-(#677/U4)",
+            "retired:broker-free-(#677/U4)",
         ),
         (
             "plugins/saga/hooks/hooks.json",
@@ -150,12 +150,9 @@ def test_issue_355_decision_uses_one_broker_authority() -> None:
 
 
 # Broker-free since #677/U3: the engine_dispatch / outcome_dispatcher / outcome_worktrees lease
-# lifecycle entries are deleted with their seams. The workflow_emitter and lease_broker entries
-# stay until their own retirement units (U4/U5) land.
+# lifecycle entries are deleted with their seams, and #677/U4 retires the workflow_emitter entries
+# with the batch concept itself. The lease_broker entries stay until U5 deletes the wrapper.
 EXPECTED_LEASE_CALLS: dict[tuple[str, str], frozenset[str]] = {
-    ("plugins/saga/scripts/workflow_emitter.py", "reserve"): frozenset({"selected.reserve_batch"}),
-    ("plugins/saga/scripts/workflow_emitter.py", "renew"): frozenset({"selected.renew_batch"}),
-    ("plugins/saga/scripts/workflow_emitter.py", "release"): frozenset({"selected.settle_batch"}),
     ("plugins/saga/scripts/lease_broker.py", "reserve_hook_agent"): frozenset(
         {"selected.prepare_batch_call", "selected.acquire_agent"}
     ),
@@ -965,8 +962,9 @@ def test_injected_unguarded_executable_spawn_is_rejected() -> None:
         assert_conformance(sources, INVENTORY_PATH.read_text())
 
 
-# The engine_dispatch / outcome_dispatcher parameters are retired with their seams (#677/U3);
-# workflow_emitter keeps its lifecycle until U4.
+# The batch lease lifecycle calls retired with the batch concept itself (#677/U4, plan KTD4):
+# pin their ABSENCE so re-arming the workflow emitter against any fleet lease authority is a
+# loud test failure, not a silent regression.
 @pytest.mark.parametrize(
     ("source_path", "call"),
     [
@@ -975,12 +973,9 @@ def test_injected_unguarded_executable_spawn_is_rejected() -> None:
         ("plugins/saga/scripts/workflow_emitter.py", "selected.settle_batch"),
     ],
 )
-def test_removing_required_lease_lifecycle_call_is_rejected(source_path: str, call: str) -> None:
+def test_retired_lease_lifecycle_calls_are_absent(source_path: str, call: str) -> None:
     sources = _sources()
-    assert call in sources[source_path]
-    sources[source_path] = sources[source_path].replace(call, "selected.inspect", 1)
-    with pytest.raises(AssertionError, match="missing lease lifecycle call"):
-        assert_conformance(sources, INVENTORY_PATH.read_text())
+    assert call not in sources[source_path]
 
 
 @pytest.mark.parametrize("drift", ["remove", "add"])
@@ -989,8 +984,8 @@ def test_inventory_row_drift_is_rejected(drift: str) -> None:
     row = (
         "| `plugins/saga/scripts/execution_spec.py` | `_emit_panel_reconciliation` "
         "| verify-panel verdict agents | `concurrency_governor.ordered_chunks` | `agent` "
-        "| `workflow_emitter.reserve` | `lease_broker.claim_hook_agent` "
-        "| `workflow_emitter.renew` | `workflow_emitter.release` |"
+        "| `retired:broker-free-(#677/U4)` | `lease_broker.claim_hook_agent` "
+        "| `retired:broker-free-(#677/U4)` | `retired:broker-free-(#677/U4)` |"
     )
     assert row in inventory
     if drift == "remove":

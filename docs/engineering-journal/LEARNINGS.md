@@ -19,6 +19,45 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-08-07
+
+### The batch protocol's "degrade" branch was the original admission path all along  {#the-batch-fallback-was-the-original-admission-path}
+
+**Context.** U4 (#681) deletes the driver's batch reservation — the last production call that put
+a live Workflow batch into the fleet lease authority. The lease lifecycle hook still fires on
+every Agent/Task spawn between U4 and U5 (U5 deletes it), and its PreToolUse dispatch HALTs on
+any reservation exception — so if `reserve_hook_agent` had no answer for "no live batch", every
+agent spawn in that window would have halted.
+
+**Evidence.** `plugins/saga/scripts/lease_broker.py:313-357` (`reserve_hook_agent`): `batch_id =
+active_batch_id(payload, env)`, then `if batch_id: return selected.prepare_batch_call(...)` — and
+the else branch is a full `selected.acquire_agent(...)` call with session admission limits. Read
+while measuring U4's blast radius, before any deletion.
+
+**Mechanism.** #356 did not replace per-spawn admission with batch admission; it inserted the
+batch branch IN FRONT of it. `active_batch_id` returns None whenever no live batch exists — the
+normal state for every non-Workflow agent spawn — so the "fallback" was the hot path for most
+spawns even at full broker operation, and the batch protocol was the special case. Deleting the
+concept that feeds the first branch makes the condition permanently false and resurrects the
+pre-#356 design as the runtime behavior, with zero code changes in the hook.
+
+**Fix (or queued).** No fix needed — the measurement converted a potential PreToolUse HALT
+regression into a confirmed safe degrade, and U4 proceeded (`feat/681-u4-unwind-workflow-lease-contract`).
+U5 (#682) deletes the hook and the wrapper whole.
+
+**What surprised.** The fallback branch was not defensive code; it was the predecessor mechanism.
+A dispatcher that branches on a concept you are deleting usually hides the previous design in its
+else branch — and deleting the concept silently switches runtime semantics to it while types,
+imports, and tests all stay green.
+
+**Generalizable rule.** Before deleting a concept a dispatcher branches on, read the else branch
+first: the degrade path may be the resurrected former design, and the deletion changes runtime
+semantics without breaking a single compile or import check.
+
+**Refs.** DECISIONS `{#u4-retires-the-workflow-emitter-onto-the-frozen-contract-681}` KTD2; plan
+`docs/plans/2026-07-30-issue-677-lease-broker-retirement-plan.md` KTD4; campaign #677 unit U5
+(#682) owns the hook deletion.
+
 ## 2026-08-06
 
 ### A test store rooted at a CWD-relative `git-common-dir` litters the real repository  {#cwd-relative-git-common-dir-litters-repo}

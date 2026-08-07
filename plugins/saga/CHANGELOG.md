@@ -1,5 +1,45 @@
 # Changelog
 
+## [0.130.0] - 2026-08-07
+
+### Removed
+
+- **The lease lifecycle hook and the saga broker wrapper, deleted whole (#682, campaign #677
+  unit U5).** `plugins/saga/hooks/lease_lifecycle_hook.py` (92 lines) and
+  `plugins/saga/scripts/lease_broker.py` (574 lines) are gone, and all five manifest
+  registrations — `PreToolUse` Agent|Task, `SubagentStart`, `SubagentStop`, `PostToolUse`
+  Agent|Task, and `PostToolUseFailure` — were removed in the same commit. `SubagentStart` and
+  `PostToolUseFailure` disappear entirely: the lease hook was their only registrant. The
+  neighbouring registrations that shared the edited blocks (team spawn residency, delegation
+  stop audit, journal nudge) stay armed, pinned by test. The emergency kill switch
+  `INFIQUETRA_FLEET_LEASE_ENFORCEMENT` retires with its only reader. DECISIONS
+  `{#u5-deletes-the-lease-lifecycle-hook-and-the-saga-wrapper-682}`.
+
+- **The inline admission-pinning ritual from `/work` (#682).** The `configure-session` /
+  `clear-session` blocks die with the wrapper they called; direct Agent/Task spawns carry no
+  lease admission. The frozen-contract `reserve`/`attest`/`release`/`renew` calls stay in the
+  ritual — U4 KTD3's revisit-when resolved as keep-and-re-key, not deletion.
+
+- **The operator lease inspection/recovery surface (#682).** The wrapper's `inspect` and
+  `sweep` commands are deleted with it; `references/concurrency-spawn-sites.md` re-keys the
+  section to a retirement note (no successor mechanism — lease admission, claim, and recovery
+  are gone, not rehomed).
+
+### Changed
+
+- **Conformance pins flip to ABSENCE (#682).** The required-call pins for the four hook
+  adapter entry points (`reserve_hook_agent`, `claim_hook_agent`, `record_hook_terminal`,
+  `record_hook_parent`) became absence pins over all saga sources, both deleted file paths are
+  pinned absent, and the manifest asserts flipped from presence to a per-event absence sweep.
+  The spawn-site inventory rows carry `retired:broker-free-(#677/U5)` markers — including the
+  team-execution row's reserve/bind cells, whose session-level renewal/release cells remain
+  until U6.
+
+- **`tests/test_saga_hooks.py` rewritten onto the surviving hooks (#682).** Thirty-three lease
+  lifecycle/adapter test items retired with their mechanisms; the five team teardown hook tests
+  remain as the "remaining hooks still fire" guard beside the new lease-retirement manifest
+  pins.
+
 ## [0.129.0] - 2026-08-07
 
 ### Changed

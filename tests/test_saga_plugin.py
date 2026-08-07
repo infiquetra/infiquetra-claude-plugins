@@ -46,8 +46,8 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
 
     assert plugin_json["name"] == "saga"
     assert (
-        plugin_json["version"] == "0.129.0"
-    )  # U4 workflow-emitter retirement (#681, campaign #677)
+        plugin_json["version"] == "0.130.0"
+    )  # U5 lease hook + saga wrapper deletion (#682, campaign #677)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]
@@ -56,12 +56,22 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     )
 
 
-def test_fleet_lease_runtime_adapters_are_packaged() -> None:
-    assert (PLUGIN_ROOT / "scripts" / "lease_broker.py").is_file()
-    assert (PLUGIN_ROOT / "hooks" / "lease_lifecycle_hook.py").is_file()
-    # No mutation hook since #671: its write fence was a no-op for every spawn without a declared
-    # worktree, and concurrent-writer collisions are now prevented at emit by wave_file_conflicts().
+def test_fleet_lease_runtime_adapters_are_retired_from_the_package() -> None:
+    # #677/U5: the saga broker wrapper and the lease lifecycle hook are deleted outright, and
+    # the plugin loads with no lease hook registered. No mutation hook either, since #671: its
+    # write fence was a no-op for every spawn without a declared worktree, and concurrent-writer
+    # collisions are prevented at emit by wave_file_conflicts().
+    assert not (PLUGIN_ROOT / "scripts" / "lease_broker.py").exists()
+    assert not (PLUGIN_ROOT / "hooks" / "lease_lifecycle_hook.py").exists()
     assert not (PLUGIN_ROOT / "hooks" / "lease_mutation_hook.py").exists()
+    hooks_json = json.loads(_read(PLUGIN_ROOT / "hooks" / "hooks.json"))
+    commands = [
+        hook["command"]
+        for entries in hooks_json["hooks"].values()
+        for group in entries
+        for hook in group["hooks"]
+    ]
+    assert not any("lease" in command for command in commands)
 
 
 def test_work_skill_wires_driver_owned_workflow_settlement() -> None:
@@ -72,8 +82,6 @@ def test_work_skill_wires_driver_owned_workflow_settlement() -> None:
         "workflow_emitter.py reserve",
         "workflow_emitter.py attest",
         "workflow_emitter.py release",
-        "lease_broker.py configure-session",
-        "lease_broker.py clear-session",
         "CLAUDE_CODE_SESSION_ID",
         "dispatch_settlement.py --repo-root .",
         "Generated agents still receive no filesystem or ledger-write",

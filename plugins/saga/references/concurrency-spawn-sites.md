@@ -16,10 +16,9 @@ collection, and the unchanged direct chunk target as `bounded_members`. Literal 
 and closer emissions outside the helper fail closed.
 
 `not-applicable:in-process-adapter` means the launch API returns synchronously without a provider-
-assigned child identity; the exact acquired token is already bound to that call. `expiry-fence:no-
-cooperative-boundary` means a foreground Agent/Task has no safe boundary while the provider call is
-running: it may outlive its TTL, but later delegated mutation is rejected instead of silently
-renewed. These are explicit lifecycle postures, not blank exemptions.
+assigned child identity; the exact acquired token is already bound to that call. This is an
+explicit lifecycle posture, not a blank exemption. (The `expiry-fence:no-cooperative-boundary`
+posture retired with the last cell that used it, #677/U5.)
 
 **#677/U3 re-key:** the fleet broker's retirement strips the lease lifecycle from the
 `engine_dispatch.py`, `outcome.py`, and `outcome_worktrees.py` rows. `retired:broker-free-(#677/U3)`
@@ -35,16 +34,24 @@ team-execution rows keep their broker lifecycle until their own retirement units
 their reserve/renew/release cells to `retired:broker-free-(#677/U4)`: `workflow_emitter.py`
 validates the frozen reservation contract and reports the retired, broker-free outcome — no batch
 lease is reserved, renewed, or settled (plan #677 KTD4: no batch lease exists to renew). The bind
-cell keeps `lease_broker.claim_hook_agent` until U5 deletes the hook: with no live batch,
-`reserve_hook_agent` falls back to the pre-#356 per-spawn `acquire_agent` admission, so spawned
-children are still claimed through the hook until the wrapper goes.
+cell kept the lease hook's claim seam at that point; U5 retired it with the hook itself.
+
+**#677/U5 re-key:** the lease lifecycle hook and the saga broker wrapper are deleted whole, and
+their manifest registrations are removed in the same commit. Every remaining lease cell in this
+table — the bind cell of the two `execution_spec.py` rows, all four lease cells of the
+`hooks.json` row (its admission governor included), and the reserve/bind cells of the
+team-execution row — becomes `retired:broker-free-(#677/U5)`. Normal Agent/Task spawns carry no
+lease admission at all now; the team-execution row keeps its session-level renewal/release cells
+until U6 retires that protocol. The emergency kill switch retires with the hook: the doc review
+of #677 measured exactly one reader, and the `INFIQUETRA_FLEET_LEASE_ENFORCEMENT` variable now
+has none in this repository.
 
 | Source | Function or seam | Spawn form | Governor entry point | Lease pool | Acquire or reserve seam | Bind seam | Renewal seam | Release seam |
 |---|---|---|---|---|---|---|---|---|
-| `plugins/saga/scripts/execution_spec.py` | `_emit_panel_reconciliation` | verify-panel verdict agents | `concurrency_governor.ordered_chunks` | `agent` | `retired:broker-free-(#677/U4)` | `lease_broker.claim_hook_agent` | `retired:broker-free-(#677/U4)` | `retired:broker-free-(#677/U4)` |
-| `plugins/saga/scripts/execution_spec.py` | `emit_workflow_script` | dependency-layer worker agents | `concurrency_chunks` | `agent` | `retired:broker-free-(#677/U4)` | `lease_broker.claim_hook_agent` | `retired:broker-free-(#677/U4)` | `retired:broker-free-(#677/U4)` |
-| `plugins/saga/hooks/hooks.json` | `Agent|Task` | normal Saga Agent and Task calls | `concurrency_policy.AdmissionLimits` | `agent` | `lease_broker.reserve_hook_agent` | `lease_broker.claim_hook_agent` | `expiry-fence:no-cooperative-boundary` | `lease_broker.record_hook_terminal+record_hook_parent` |
-| `plugins/team-execution/skills/team-execution/scripts/lease_protocol.py` | `team-execution-fan-out` | worker reviewer and validator waves | `concurrency_policy.AdmissionLimits` | `agent` | `lease_broker.reserve_hook_agent` | `lease_broker.claim_hook_agent` | `lease_protocol.renew` | `lease_protocol.teardown` |
+| `plugins/saga/scripts/execution_spec.py` | `_emit_panel_reconciliation` | verify-panel verdict agents | `concurrency_governor.ordered_chunks` | `agent` | `retired:broker-free-(#677/U4)` | `retired:broker-free-(#677/U5)` | `retired:broker-free-(#677/U4)` | `retired:broker-free-(#677/U4)` |
+| `plugins/saga/scripts/execution_spec.py` | `emit_workflow_script` | dependency-layer worker agents | `concurrency_chunks` | `agent` | `retired:broker-free-(#677/U4)` | `retired:broker-free-(#677/U5)` | `retired:broker-free-(#677/U4)` | `retired:broker-free-(#677/U4)` |
+| `plugins/saga/hooks/hooks.json` | `Agent|Task` | normal Saga Agent and Task calls | `retired:broker-free-(#677/U5)` | `agent` | `retired:broker-free-(#677/U5)` | `retired:broker-free-(#677/U5)` | `retired:broker-free-(#677/U5)` | `retired:broker-free-(#677/U5)` |
+| `plugins/team-execution/skills/team-execution/scripts/lease_protocol.py` | `team-execution-fan-out` | worker reviewer and validator waves | `concurrency_policy.AdmissionLimits` | `agent` | `retired:broker-free-(#677/U5)` | `retired:broker-free-(#677/U5)` | `lease_protocol.renew` | `lease_protocol.teardown` |
 | `plugins/saga/scripts/engine_dispatch.py` | `_dispatch_once` | registered external-engine runner | `retired:broker-free-(#677/U3)` | `agent` | `retired:broker-free-(#677/U3)` | `not-applicable:in-process-adapter` | `retired:broker-free-(#677/U3)` | `saga.close-receipt.v1:mint` |
 | `plugins/saga/scripts/outcome.py` | `_reconcile_once` | outcome backend dispatch | `retired:broker-free-(#677/U3)` | `agent` | `retired:broker-free-(#677/U3)` | `not-applicable:in-process-adapter` | `retired:broker-free-(#677/U3)` | `retired:broker-free-(#677/U3)` |
 | `plugins/saga/scripts/outcome_worktrees.py` | `ensure_worktree` | outcome-owned git worktree | `WORKTREE_CAP` | `worktree` | `registry.register` | `not-applicable:registry-entry` | `retired:broker-free-(#677/U3)` | `reap_worktree.deregister` |
@@ -55,21 +62,9 @@ governed and sandbox-sensitive, but the lease table must not absorb sandbox poli
 
 ## Operator inspection and recovery
 
-Use the read-only broker view first; it redacts fencing tokens and the authority path:
-
-```bash
-python3 plugins/saga/scripts/lease_broker.py inspect
-```
-
-For crashed owners, stop any surviving child first and then let the canonical sweeper derive expiry
-and process death:
-
-```bash
-python3 plugins/saga/scripts/lease_broker.py sweep
-```
-
-Do not edit `registry.json`, copy a token from a receipt, or fabricate a release call. A live owner,
-an ambiguous child, a mismatched worktree registry, or a failed reap stays retained for the owning
-coordinator to resolve. Version or installation diagnostics are recovered by installing the required
-fleet-core release and rerunning the original preflight; bypassing hooks is outside the supported
-runtime contract.
+Retired with the saga broker wrapper (#677/U5): no saga seam binds fleet leases any more, so there
+is no lease registry for saga to inspect or recover. The wrapper's read-only `inspect` view and its
+`sweep` command are deleted with it, and no successor mechanism replaces them — lease admission,
+claim, and recovery are gone, not rehomed. Outcome-worktree recovery remains the report-only
+operator path in [`worktree-reclamation.md`](worktree-reclamation.md). The fleet-core broker and
+its registry stay dead weight nothing reads until campaign #677 unit U7 deletes them.

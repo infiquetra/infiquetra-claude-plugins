@@ -43,7 +43,7 @@ EXPECTED_ROWS: frozenset[InventoryRow] = frozenset(
             "concurrency_governor.ordered_chunks",
             "agent",
             "retired:broker-free-(#677/U4)",
-            "lease_broker.claim_hook_agent",
+            "retired:broker-free-(#677/U5)",
             "retired:broker-free-(#677/U4)",
             "retired:broker-free-(#677/U4)",
         ),
@@ -53,27 +53,27 @@ EXPECTED_ROWS: frozenset[InventoryRow] = frozenset(
             "concurrency_chunks",
             "agent",
             "retired:broker-free-(#677/U4)",
-            "lease_broker.claim_hook_agent",
+            "retired:broker-free-(#677/U5)",
             "retired:broker-free-(#677/U4)",
             "retired:broker-free-(#677/U4)",
         ),
         (
             "plugins/saga/hooks/hooks.json",
             "Agent|Task",
-            "concurrency_policy.AdmissionLimits",
+            "retired:broker-free-(#677/U5)",
             "agent",
-            "lease_broker.reserve_hook_agent",
-            "lease_broker.claim_hook_agent",
-            "expiry-fence:no-cooperative-boundary",
-            "lease_broker.record_hook_terminal+record_hook_parent",
+            "retired:broker-free-(#677/U5)",
+            "retired:broker-free-(#677/U5)",
+            "retired:broker-free-(#677/U5)",
+            "retired:broker-free-(#677/U5)",
         ),
         (
             "plugins/team-execution/skills/team-execution/scripts/lease_protocol.py",
             "team-execution-fan-out",
             "concurrency_policy.AdmissionLimits",
             "agent",
-            "lease_broker.reserve_hook_agent",
-            "lease_broker.claim_hook_agent",
+            "retired:broker-free-(#677/U5)",
+            "retired:broker-free-(#677/U5)",
             "lease_protocol.renew",
             "lease_protocol.teardown",
         ),
@@ -150,20 +150,9 @@ def test_issue_355_decision_uses_one_broker_authority() -> None:
 
 
 # Broker-free since #677/U3: the engine_dispatch / outcome_dispatcher / outcome_worktrees lease
-# lifecycle entries are deleted with their seams, and #677/U4 retires the workflow_emitter entries
-# with the batch concept itself. The lease_broker entries stay until U5 deletes the wrapper.
-EXPECTED_LEASE_CALLS: dict[tuple[str, str], frozenset[str]] = {
-    ("plugins/saga/scripts/lease_broker.py", "reserve_hook_agent"): frozenset(
-        {"selected.prepare_batch_call", "selected.acquire_agent"}
-    ),
-    ("plugins/saga/scripts/lease_broker.py", "claim_hook_agent"): frozenset({"selected.claim"}),
-    ("plugins/saga/scripts/lease_broker.py", "record_hook_terminal"): frozenset(
-        {"selected.record_child_terminal"}
-    ),
-    ("plugins/saga/scripts/lease_broker.py", "record_hook_parent"): frozenset(
-        {"selected.record_parent_completed"}
-    ),
-}
+# lifecycle entries are deleted with their seams, #677/U4 retires the workflow_emitter entries
+# with the batch concept itself, and #677/U5 deletes the saga lease hook and wrapper whole —
+# their required-call pins are absence pins now (test_lease_hook_and_wrapper_are_absent).
 SITE_CONTRACTS = {
     "_emit_panel_reconciliation": {
         "governor": "concurrency_governor.ordered_chunks",
@@ -693,25 +682,6 @@ def _assert_executable_spawn_inventory(
         )
 
 
-def _assert_lease_lifecycle_calls(
-    parsed: dict[str, tuple[ast.Module, dict[ast.AST, ast.AST]]],
-) -> None:
-    for (source_path, function), expected in EXPECTED_LEASE_CALLS.items():
-        tree, parents = parsed[source_path]
-        actual = {
-            callee
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call)
-            and (callee := _qualified_name(node.func)) is not None
-            and (owner := _enclosing_function(node, parents)) is not None
-            and owner.name == function
-        }
-        missing = sorted(expected - actual)
-        assert not missing, (
-            f"missing lease lifecycle call(s) in {source_path}:{function}: {', '.join(missing)}"
-        )
-
-
 def _hook_commands(entries: list[dict[str, Any]], matcher: str | None = None) -> list[str]:
     commands: list[str] = []
     for entry in entries:
@@ -726,23 +696,14 @@ def _hook_commands(entries: list[dict[str, Any]], matcher: str | None = None) ->
 
 
 def _assert_host_spawn_contracts() -> None:
+    # #677/U5: the lease lifecycle hook is deleted and unregistered everywhere — pin ABSENCE
+    # across every event so re-arming it through the manifest fails loudly.
     hooks_path = ROOT / "plugins/saga/hooks/hooks.json"
     events = json.loads(hooks_path.read_text(encoding="utf-8"))["hooks"]
-    assert any(
-        "lease_lifecycle_hook.py" in command
-        for command in _hook_commands(events["PreToolUse"], "Agent|Task")
-    )
-    assert any(
-        "lease_lifecycle_hook.py" in command for command in _hook_commands(events["SubagentStart"])
-    )
-    assert any(
-        "lease_lifecycle_hook.py" in command for command in _hook_commands(events["SubagentStop"])
-    )
-    for event in ("PostToolUse", "PostToolUseFailure"):
-        assert any(
-            "lease_lifecycle_hook.py" in command
-            for command in _hook_commands(events[event], "Agent|Task")
-        )
+    for event, entries in events.items():
+        assert not any(
+            "lease_lifecycle_hook.py" in command for command in _hook_commands(entries)
+        ), f"lease lifecycle hook re-registered on {event}"
 
     team_path = ROOT / "plugins/team-execution/skills/team-execution/scripts/lease_protocol.py"
     team_tree = ast.parse(team_path.read_text(encoding="utf-8"), filename=str(team_path))
@@ -793,7 +754,6 @@ def assert_conformance(sources: dict[str, str], inventory: str) -> None:
         helper_calls.extend((source_path, call) for call in source_helper_calls)
 
     _assert_executable_spawn_inventory(parsed, rows)
-    _assert_lease_lifecycle_calls(parsed)
     _assert_host_spawn_contracts()
 
     assert len(helper_defs) == 1, f"expected one {HELPER_NAME} definition"
@@ -978,13 +938,32 @@ def test_retired_lease_lifecycle_calls_are_absent(source_path: str, call: str) -
     assert call not in sources[source_path]
 
 
+def test_lease_hook_and_wrapper_are_absent_from_saga() -> None:
+    """#677/U5 deletes the lease lifecycle hook and the saga broker wrapper whole.
+
+    Pin the ABSENCE of both files — and of the four hook adapter entry points anywhere in
+    saga — so re-adding the wrapper or rewiring a hook seam to it is a loud test failure,
+    not a silent regression.
+    """
+    sources = _sources()
+    assert "plugins/saga/hooks/lease_lifecycle_hook.py" not in sources
+    assert "plugins/saga/scripts/lease_broker.py" not in sources
+    for name in (
+        "reserve_hook_agent",
+        "claim_hook_agent",
+        "record_hook_terminal",
+        "record_hook_parent",
+    ):
+        assert not any(name in source for source in sources.values()), name
+
+
 @pytest.mark.parametrize("drift", ["remove", "add"])
 def test_inventory_row_drift_is_rejected(drift: str) -> None:
     inventory = INVENTORY_PATH.read_text()
     row = (
         "| `plugins/saga/scripts/execution_spec.py` | `_emit_panel_reconciliation` "
         "| verify-panel verdict agents | `concurrency_governor.ordered_chunks` | `agent` "
-        "| `retired:broker-free-(#677/U4)` | `lease_broker.claim_hook_agent` "
+        "| `retired:broker-free-(#677/U4)` | `retired:broker-free-(#677/U5)` "
         "| `retired:broker-free-(#677/U4)` | `retired:broker-free-(#677/U4)` |"
     )
     assert row in inventory

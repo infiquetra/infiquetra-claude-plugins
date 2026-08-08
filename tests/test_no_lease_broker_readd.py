@@ -69,7 +69,10 @@ def _shim_resolved_paths() -> list[Path]:
     candidates: list[Path] = []
     # Variant 1: fleet_commons_shim (the vendored shim every consumer uses).
     for shim_name in ("fleet_commons_shim",):
-        for search_root in (ROOT / "plugins" / "saga" / "scripts", ROOT / "plugins" / "fleet-core" / "scripts"):
+        for search_root in (
+            ROOT / "plugins" / "saga" / "scripts",
+            ROOT / "plugins" / "fleet-core" / "scripts",
+        ):
             shim_path = search_root / f"{shim_name}.py"
             if not shim_path.is_file():
                 continue
@@ -91,7 +94,9 @@ def _shim_resolved_paths() -> list[Path]:
                 continue
     # Variant 2: plugin_resolution helper (the newer resolver).
     try:
-        res_path = ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "plugin_resolution.py"
+        res_path = (
+            ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "plugin_resolution.py"
+        )
         if res_path.is_file():
             spec = importlib.util.spec_from_file_location("plugin_resolution", res_path)
             assert spec is not None and spec.loader is not None
@@ -100,7 +105,12 @@ def _shim_resolved_paths() -> list[Path]:
             spec.loader.exec_module(mod)  # type: ignore[union-attr]
             for name in ("fleet-core",):
                 try:
-                    root, _rung = mod.resolve_plugin_root(name, markers=["scripts/fleet_commons/concurrency_policy.py"], env_var="FLEET_COMMONS_ROOT", anchor=str(res_path))  # type: ignore[attr-defined]
+                    root, _rung = mod.resolve_plugin_root(
+                        name,
+                        markers=["scripts/fleet_commons/concurrency_policy.py"],
+                        env_var="FLEET_COMMONS_ROOT",
+                        anchor=str(res_path),
+                    )  # type: ignore[attr-defined]
                     if root is not None:
                         candidates.append(Path(root) / "scripts" / "fleet_commons")
                 except Exception:
@@ -130,7 +140,9 @@ def test_no_file_under_plugins_imports_lease_broker_or_orphan_evidence() -> None
     # Also scan shim-resolved fleet-commons roots, if any.
     for resolved in _shim_resolved_paths():
         offenders = _scan_tree(resolved)
-        assert offenders == [], f"re-add guard: forbidden import via shim-resolved {resolved}: {offenders}"
+        assert offenders == [], (
+            f"re-add guard: forbidden import via shim-resolved {resolved}: {offenders}"
+        )
 
 
 def test_guard_fails_when_handed_a_fixture_that_does(tmp_path: Path) -> None:
@@ -147,7 +159,9 @@ def test_guard_inspects_shim_resolved_paths_not_just_the_tree(tmp_path: Path) ->
     # resolve to, containing a broker file.
     fake_root = tmp_path / "fake-plugins" / "fleet-core" / "scripts" / "fleet_commons"
     fake_root.mkdir(parents=True)
-    (fake_root / "lease_broker.py").write_text("import lease_broker  # stale cache\n", encoding="utf-8")
+    (fake_root / "lease_broker.py").write_text(
+        "import lease_broker  # stale cache\n", encoding="utf-8"
+    )
     # The tree scan alone would miss this — it only looks under plugins/.
     assert _scan_tree(PLUGINS) == []
     # But a shim-aware scan of the fake resolved path must catch it.

@@ -1,6 +1,6 @@
 ---
 name: fleet-doctor
-description: One strict, bounded, read-only cross-source audit of the fleet substrate — reconciles Git worktrees, outcome registries, broker leases/fences, chain-verified run facts, outcome dispatch events, and the delegation audit store into leaked-resource / unledgered-spawn / receiptless-delegation findings plus explicit evidence errors. Absence, corruption, and incompleteness are three different verdicts; a capped or corrupt scan exits 2 and can never return clean. Reports and routes to owners; never repairs, settles, retries, releases, or reaps. Triggers on "fleet doctor", "audit the fleet", "any leaked worktrees or unledgered spawns", "/fleet-doctor".
+description: One strict, bounded, read-only cross-source audit of the fleet substrate — reconciles Git worktrees, outcome registries, retired broker leases/fences (deleted #677/U7, always absent), chain-verified run facts, outcome dispatch events, and the delegation audit store into leaked-resource / unledgered-spawn / receiptless-delegation findings plus explicit evidence errors. Absence, corruption, and incompleteness are three different verdicts; a capped or corrupt scan exits 2 and can never return clean. Reports and routes to owners; never repairs, settles, retries, releases, or reaps. Triggers on "fleet doctor", "audit the fleet", "any leaked worktrees or unledgered spawns", "/fleet-doctor".
 argument-hint: "[--repo-root PATH] [--lease-store PATH] [--audit-store PATH] [--format text|json] [--show-local-paths]"
 ---
 
@@ -16,10 +16,10 @@ blocks a clean exit (KTD5).
 
 - **leaked-resource** — managed worktree drift in either direction (`stale-worktree`,
   `dangling-registry`), `ownership-drift` (path or lease-generation disagreement,
-  broker-only leases), and `terminal-resource-open` (a teardown released it, a closed owner
-  admission or close receipt exists, yet the lease lives on).
+  retired broker-only leases — deleted #677/U7, always absent), and `terminal-resource-open` (a teardown released it, a closed owner
+  admission or close receipt exists, yet the lease lives on — broker deleted #677/U7, finding now only from historical evidence).
 - **unledgered-spawn** — an independently observed position (outcome dispatch commit event or
-  supported broker agent lease) with no matching #351 manifest/spawn fact; plus
+  retired supported broker agent lease — deleted #677/U7, always absent) with no matching #351 manifest/spawn fact; plus
   `phantom-spawn-fact` (fact with no observation) and `unsettled-spawn` (observed, spawned,
   never settled). One producer fact is never proof a process ran (KTD3).
 - **receiptless-delegation** — a claimed real engine execution with no durable, schema-valid
@@ -54,4 +54,4 @@ blocks a clean exit (KTD5).
 
 The full source matrix — every observed source, its on-disk contract, its collector, and its
 proving test — is `references/fleet-doctor-sources.md`; the conformance suite fails if a
-collector and the matrix drift apart.
+collector and the matrix drift apart. **#677/U7 re-key:** the fleet lease broker and orphan evidence are deleted whole — the `lease-registry` source is retired (always absent; scan still emits the kind for contract stability) and broker-dependent findings are historical.

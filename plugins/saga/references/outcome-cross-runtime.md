@@ -13,7 +13,7 @@ file, never any cache) and **GitHub** completion evidence (merged PRs, closed is
 
 | context | may read | may mutate |
 |---|---|---|
-| same clone (same git common dir) | committed spec + GitHub + shared coordination state | one subplot, only under a validated protected handoff + #351 settlement identity (#677/U1 retired the #356 broker successor) |
+| same clone (same git common dir) | committed spec + GitHub + shared coordination state | one subplot, only under a validated protected handoff + #351 settlement identity (#677/U1 retired the #356 broker successor; #677/U7 deleted the broker whole) |
 | different clone / host | committed spec + GitHub | **nothing** — reconstruction is read-only, `mutation_allowed: false`, always |
 
 Runtime-local directories (`~/.claude`, `~/.codex`, caches, transcripts, launch receipts) are
@@ -41,7 +41,7 @@ Emitted by `outcome discover <id>` from the committed blob. Fields: `schema`, `p
 (`version`/`min_supported`/`max_supported`/`required_capabilities[]`), `repository.identity`,
 `outcome` (`id`/`spec_path`/`schema_version`/`spec_revision`), `committed`
 (`commit_oid`/`blob_oid`/`sha256`), `authority` (the frozen map: structure=committed-spec,
-completion=github, same_clone_coordination=git-common-dir+fleet-broker+dispatch-settlement,
+completion=github, same_clone_coordination=git-common-dir+fleet-broker+dispatch-settlement — `fleet-broker` retained verbatim for wire compatibility after #677/U7 deleted the broker (no runtime) —,
 cross_clone_mutation=forbidden), `producer` (`runtime`/`saga_version`). `producer` is
 compatibility metadata, not authority — a receiver derives repository and committed facts
 independently and compares; it never trusts the envelope's self-description.
@@ -75,7 +75,7 @@ skew, capability gaps, and schema violations are checked **before** even benign 
 
 The envelope advertises one protocol integer plus a supported min/max range and named required
 capabilities (`committed-spec-structure`, `github-completion`, `git-common-dir-coordination`,
-`fleet-broker-fencing`, `dispatch-settlement-identity`). Acceptance computes the intersection
+`fleet-broker-fencing` — retained verbatim for wire compatibility after #677/U7 deleted the broker —, `dispatch-settlement-identity`). Acceptance computes the intersection
 before any local coordination; an empty intersection or a missing capability returns the halt
 receipt. There is no best-effort field dropping and no post-mutation downgrade.
 
@@ -91,13 +91,13 @@ sealed (sha256 over the canonical record bytes). Three records per handoff:
    `advance-one`, so the settled-attempt check is always live; `attend` derives a resume pointer
    and may omit it), issued/expires epochs (TTL ≤ 300 s), nonce. Issuer identity is
    caller-asserted and REQUIRED — an anonymous offer HALTs (#677/U1 retired the broker lease the
-   identity was read from; that is an accepted loss of the lease-broker retirement).
+   identity was read from; #677/U7 deleted the broker whole; that is an accepted loss of the lease-broker retirement).
 2. **Accept-intent** (`outcome.handoff-accept-intent.v1`) — write-once; binds exactly one
    receiver and the idempotency key. A second receiver HALTs; the same receiver resumes any
    crash gap idempotently.
 3. **Accept-commit** (`outcome.handoff-accept-commit.v1`) — records the bound receiver and the
    commit epoch. The write-once intent/commit pair IS the acceptance transition (#677/U1 retired
-   the broker successor grant and its close-receipt CAS).
+   the broker successor grant and its close-receipt CAS; #677/U7 deleted the broker whole).
 
 Acceptance validates, in order: seal, freshness (expiry; > 30 s future issuance is clock-skew),
 repository identity, committed digest + revision, working-tree byte-match (KTD3), operation,

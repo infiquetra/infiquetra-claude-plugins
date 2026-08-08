@@ -19,6 +19,26 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-08-08
+
+### The re-add guard must scan shim-resolved paths and the test helper must track the live boot_id  {#shim-resolved-guard-and-live-boot-id-684}
+
+**Context.** Campaign #677 unit U7 (issue #684) deletes the fleet lease broker (`lease_broker.py` 4,731 + `orphan_evidence.py` 1,578) and their suites — the 10,203-line payload the seven-unit unwind built toward. Two pre-existing failures made the unit's correctness hard to prove: a stale plugin cache could resurrect the broker via `fleet_commons_shim` rung 3, and a test helper hard-coded a boot_id that production had made live.
+
+**Evidence.** (1) Defect #642 resurrected a deleted broker from `~/.claude/plugins/installed_plugins.json` via `fleet_commons_shim` cache-sibling scan — `grep plugins/ --include=*.py` for `lease_broker` returned 0 while `fleet_commons_shim.load("lease_broker")` still resolved to a stale cache. (2) After U6/P2 made `liveness_protocol.bind_identity()` and `poll()` both call `_current_boot_id()` (reads `/proc/sys/kernel/random/boot_id` on Linux, else `"boot-1"`), `tests/test_team_execution_liveness.py:127` `_identity()` still returned hard-coded `"boot-1"`. On Darwin open (`"boot-1"`) and poll (`"boot-1"`) matched; on Linux CI open (`"boot-1"`) vs poll (real uuid) mismatched, so `poll` returned `evidence-error` and `tests/test_team_execution_liveness.py::test_liveness_reports_suspect_resident_with_no_lease_module` and `::test_baseline_open_poll_and_atomic_claim_use_canonical_saga_cli` failed 2/5331 only on Linux (`actions/runs/31234214290` and `31234214290` re-run).
+
+**Mechanism.** (1) `fleet_commons_shim` resolves fleet-core by the first rung that succeeds — `FLEET_COMMONS_ROOT` → repo walk-up → `installed_plugins.json` → cache-sibling — so a cache hit can outrank the working tree. A tree-only grep proves the working tree is clean while the runtime still loads a stale artifact. (2) The boot_id is a liveness generation: `poll` compares `current_boot_id` against the subject's stored `boot_id`; a mismatch is `evidence-error` (subject appears to have been dispatched on a different boot). When production's source went live but the test helper stayed literal, the test/prod pair diverged only on the platform where `/proc` exists — a platform-coupled helper drift.
+
+**Fix.** (1) `tests/test_no_lease_broker_readd.py:60` `_shim_resolved_paths()` loads `fleet_commons_shim` and `plugin_resolution` via `spec_from_file_location` and scans those resolved roots if they exist; `test_no_file_under_plugins…:130` loops `for resolved in _shim_resolved_paths(): assert _scan_tree(resolved)==[]`. (2) `tests/test_team_execution_liveness.py:127` now sets `"boot_id": LP._current_boot_id() if hasattr(LP, "_current_boot_id") else "boot-1"` so open and poll share the same source on both Darwin and Linux. Guard is the unit's real product — 173 lines including the two non-tautological properties; the third test's final `assert fake_root in [fake_root]` is noted as tautological in code-review `b29725` #1 (advisory, the two prior asserts plus the resolver loop already close the property).
+
+**Validation.** Post-fix `uv run pytest --cov=plugins` 5342 passed on CI `fddbf2e` (was 2 failed on `4ed7783` `31234214290`; re-run `31235684211` SUCCESS), `grep` probe 0, `check_release_surface_parity` clean, `test_source_matrix_doc_matches_module_and_scan` passes because the `lease-registry` kind stays in column 1 and the retired note lives in column 2. Commit `fddbf2e` squashed to `e2ba7db5`; PR #703 `Tests` SUCCESS `IN_PROGRESS` → `SUCCESS`.
+
+**Generalizable rule.** A deletion guard must scan every path the runtime's resolver can return, not just the working tree — otherwise a cache hit can hide the deleted artifact on exactly the machine where the resolver's highest rung is a cache. And a test helper that manufactures an identity must call the same source the production code calls for generation fields (boot_id, fencing_sequence, epoch) — a literal that matched yesterday's production becomes a platform-coupled mismatch the day production goes live.
+
+**Refs.** PR #703 (`e2ba7db5`), `tests/test_no_lease_broker_readd.py:60`, `tests/test_team_execution_liveness.py:127`, `plugins/team-execution/skills/team-execution/scripts/liveness_protocol.py:237`, `docs/evidence/issue-684/artifacts/b29725…` (code-review CLEAN, 2 P3 advisories), `docs/plans/2026-07-30-issue-677-lease-broker-retirement-plan.md:771` §U7, `docs/work-sessions/2026-08-08-issue-684-u7.md`.
+
+---
+
 ## 2026-08-07
 
 ### Acceptance greps must exclude the historical record  {#acceptance-greps-must-exclude-the-historical-record-682}

@@ -1,5 +1,23 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-08-08
+
+### U7 deletes the fleet lease broker whole and guards the deletion at the resolver — frozen wires stay frozen  {#u7-deletes-the-fleet-lease-broker-whole-684}
+
+Issue: `infiquetra-claude-plugins#684`, unit U7 (last of 7) of the lease-broker retirement campaign (#677), plan `docs/plans/2026-07-30-issue-677-lease-broker-retirement-plan.md` §U7. `U1–U6` unwound 91 call sites across 12 files and 4 alias idioms; `U5` deleted the saga wrapper + hook; `U6` decoupled `team-execution` and renamed the wire field atomically.
+
+**KTD1 — Delete `lease_broker.py` (4,731) and `orphan_evidence.py` (1,578) plus their suites whole.** No function survives the lease concept — `lease_broker` is 4731 lines of fencing, generation, and registry; `orphan_evidence` has no production consumer. Rejected: a deprecated shim that keeps the modules alive to avoid the version bump — it would contradict R1/R2 and the `grep` acceptance. Accepted cost: `fleet-core` 0.23.1→0.24.0, `saga` 0.130.0→0.131.0, `team-execution` 2.25.0→3.0.0 (breaking, post-1.0) + `marketplace.json` via `sync_marketplace.py`. Payload is one squash `e2ba7db5` (three commits kept separate on the branch so the ~10k deletions were reviewable without doc noise).
+
+**KTD2 — The re-add guard is the product; it scans resolver roots, not just the tree.** `tests/test_no_lease_broker_readd.py` greps four names (`lease_broker`, `orphan_evidence`, `lease_authority`, `fleet_leases` — the three alias forms that missed consumers on 2026-07-30) and, via `_shim_resolved_paths()`, also scans every `fleet_commons_shim`/`plugin_resolution`-resolved root so defect #642's rung-3 cache resurrection (`installed_plugins.json` + cache-sibling) is caught. Rejected: tree-only `grep plugins/` — it proved the working tree clean while the runtime still loaded a stale cache.
+
+**KTD3 — Frozen wire strings stay byte-equal after deletion.** `plugins/saga/scripts/outcome_compat.py:81` `AUTHORITY["same_clone_coordination"] = "git-common-dir+fleet-broker+dispatch-settlement"` and `:72` `fleet-broker-fencing` capability, plus `tests/fixtures/outcome-cross-runtime/v1/` goldens, keep `fleet-broker` verbatim after the broker is gone. Docs (`outcome-cross-runtime.md:44/78`, `fleet-doctor-sources.md:9`, `concurrency-spawn-sites.md:50`) carry `retired:broker-free-(#677/U7)` / “retained verbatim for wire compatibility”. Renaming the strings would be a protocol bump with cross-runtime migration; the retirement note is the scope-consistent move.
+
+**KTD4 — Fleet-doctor keeps the `lease-registry` kind as `retired:broker-free` (always absent).** `fleet_doctor.SOURCE_KINDS` still contains `lease-registry` and the scan still emits the kind with verdict `absent` for contract stability — the `test_source_matrix_doc_matches_module_and_scan` parses column 1, so the retired note lives in column 2. The three broker-dependent findings (`ownership-drift` broker-only, `terminal-resource-open`, `lease-without-spawn-fact`) become historical. `--lease-store` stays as a first-class flag with an advisory `retired` note in docs (code-review `b29725` #2) rather than a hard removal that would break existing CLI calls.
+
+**Revisit when** a future outcome worktree reaper is reintroduced (U3's accepted loss is then revisitable), when cross-runtime negotiates a new protocol version that drops `fleet-broker` terms, or when fleet-doctor is ready to hard-delete the `lease-registry` source kind (requires a golden-fixture and `SOURCE_KINDS` bump).
+
+---
+
 ## 2026-08-07
 
 ### U4 retires the workflow emitter onto the frozen contract, not into deletion (#681) {#u4-retires-the-workflow-emitter-onto-the-frozen-contract-681}

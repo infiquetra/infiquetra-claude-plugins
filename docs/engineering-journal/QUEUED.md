@@ -206,6 +206,25 @@ primitive. Ids named in issue #463 itself are marked ★.
 
 ## P2 — important
 
+### Two real defects in the subagent presentation preamble, found by the delegation that paid for the agy 0.6.1 bump  {#preamble-findings-from-the-0-6-1-delegation}
+
+**Priority.** P2 (P1 if a subagent is observed swallowing a failure trajectory in the field — finding 2 below is the one with an operational cost).
+
+**Effort.** Half a day. The text lives in one canonical file and is copied verbatim into 36 agent-definition files, so the edit is scripted, but every affected plugin needs a version bump and `agy` needs another genuine delegation run for its proof — see LEARNINGS [#a-docs-only-bridge-edit-costs-an-external-run](LEARNINGS.md#a-docs-only-bridge-edit-costs-an-external-run). Batch it with other agent-definition work; do not spend a bridge run on this alone.
+
+**Worth it when.** The next edit that already touches the agent definitions, or the first after-measurement (issue #704's deferred step) showing subagent reports that read as compliant but unusable.
+
+**Context.** Surfaced by the `no-write` adversarial `agy` review recorded in `docs/delegation-proofs/agy/house-style-preamble-review-0.6.1.proof.json`. The delegate returned four findings against `plugins/house-style/references/subagent-presentation-preamble.md`; two survive scrutiny and two do not. They were NOT folded into issue #704's branch: that branch's `/code-review` gate had already closed with 26 findings fixed, and reopening it for a 36-file text change would have been scope drift past a gate.
+
+1. **"No operator ceremony" is unactionable jargon (real, and a violation of our own rule).** The rule reads "The operator-facing closing block and the main thread's style tell belong to the main thread alone." Both terms are defined only in `plugins/house-style/output-styles/house-style.md`, which subagents never read — so the preamble instructs an agent to suppress two things it cannot identify. This breaks `~/.claude/CLAUDE.md` Plain English rule 3 (expand every invented term on first use) inside the very document that enforces presentation quality. The delegate's proposed replacement — "**No conversational filler.** Do not write greetings, conversational sign-offs, or offers for further help. End when your content ends." — describes the behaviour instead of naming the artifact, and is a straight improvement.
+
+2. **"Report state, not activity" has no failure carve-out (real, and the costlier of the two).** When a subagent fails, its activity *is* the state its caller needs: which approaches were already tried, and which are therefore not worth retrying. As written the rule tells a failing agent to suppress exactly that, so the orchestrator either repeats the failed attempts or spends turns recovering the trajectory from transcripts. Needs one added sentence exempting failure and blocked-work reports, not a rewrite.
+
+3. **"Lead with the answer" versus "Situate before you detail" (rejected — soft, not a contradiction).** The delegate argued that a finding which *is* a path cannot be both situated-first and led-with. A single sentence satisfies both ("In `infiquetra-claude-plugins`, the evidence bundle is at `<path>`"), and the main-thread style already resolves this by requiring a situating *clause*, not a preceding sentence. Worth a wording nudge from "One sentence naming" to "One clause or sentence naming" if the file is opened anyway.
+
+4. **"Say what you did not verify" will be disobeyed (rejected as a text defect).** True, and already understood: models blur read facts and trained assumptions. That is a limit of instruction-following, not a defect in the wording, and no edit to this file fixes it. The detection method the delegate proposed — diff every factual claim against the agent's own tool output — is a separate tooling idea, not a change to the preamble.
+
+
 ### Handoff negotiation vocabulary still advertises the retired fleet broker  {#handoff-negotiation-vocabulary-escapee}
 
 **Priority.** P2 (P1 the moment U7 deletes the module and the envelope starts naming a capability that no longer exists anywhere).

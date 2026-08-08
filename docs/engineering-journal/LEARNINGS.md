@@ -21,6 +21,24 @@
 
 ## 2026-08-08
 
+### A comment-only edit to a bridge plugin costs a real external run, because two correct gates compose into one  {#a-docs-only-bridge-edit-costs-an-external-run}
+
+**Context.** Issue #704 copied a presentation contract into 36 agent-definition files. Two of them belong to the `agy` plugin, the fleet's only bridge to an external engine (Antigravity). The added text is inert prose: it changes what a spawned agent is told, and touches no code path in `plugins/agy/scripts/agy_delegate.py`.
+
+**Evidence.** That edit turned two independently-correct CI gates into a joint requirement. `tools/release_surface_diff_guard.py` returns `['agy']` for a change to `plugins/agy/agents/agy-coder.md`, so the edit *requires* a marketplace version bump — 0.6.0 to 0.6.1. `scripts/check_delegation_proof.py --mode version-gate` then requires that bump be backed by a `delegation-proof.v1` artifact whose attested transcript records a command matching the bridge discriminator in `marketplace/bridge_plugins.json`. Neither gate can be satisfied by editing the other's input: the diff guard does not exempt prose, and the proof gate does not accept a hand-written artifact, because it re-classifies the attested transcript's own content through `classify_transcript`.
+
+**Mechanism.** The diff guard's rule is "an agent definition is a release surface", which is right — a spawned agent's behaviour changes when its definition does. The proof gate's rule is "a bridge version bump must be backed by evidence the bridge still runs", which is also right, and is the recorded fix for the `#agy-delegate-silent-claude-fallback` failure class. Neither anticipated the other's trigger. Composed, they price *any* edit to a bridge plugin's agent definitions — including one that changes only prose — at one genuine external delegation.
+
+**Resolution.** The run was made genuinely useful rather than a ceremonial ping: a `no-write` adversarial review of `plugins/house-style/references/subagent-presentation-preamble.md`, the canonical source of the very text that caused the bump. Evidence in `docs/delegation-proofs/agy/house-style-preamble-review-0.6.1.proof.json`; the run bundle recorded `real_agy_verdict=real`, 4,246 bytes of delegate output in 67.05s, exit 0, `changed_paths=[]`, and a 0-byte `diff.patch`. Its four findings are queued at [[preamble-findings-from-the-0-6-1-delegation]] rather than folded in, because the branch's review gate had already closed.
+
+**What surprised.** The cost is invisible at authoring time. Adding a paragraph to 36 files reads as one mechanical edit; nothing in the diff signals that two of those files carry a toll the other 34 do not, and the toll is only discovered when CI turns red on a branch that is otherwise finished.
+
+**Generalizable rule.** When a gate keys on "this file is a release surface" and a second gate keys on "this version bump needs external proof", check whether any file matches both before making a bulk edit across the fleet. If it does, either schedule the external run as part of the work, or exclude those files from the bulk edit deliberately — discovering the coupling from a red run means paying it at the worst possible moment. Where the run is unavoidable, give it real work: a mandatory external call that reviews the change which triggered it converts a tax into evidence.
+
+**Refs.** `tools/release_surface_diff_guard.py`; `scripts/check_delegation_proof.py`; `marketplace/bridge_plugins.json`; `docs/delegation-proofs/README.md` (threat model); [[agy-delegate-silent-claude-fallback]].
+
+---
+
 ### A behaviour rule and the metric that scores it must be run against each other, or full compliance can read as a regression  {#test-the-rule-against-its-own-instrument}
 
 **Context.** Issue #704 ships an output style plus `tools/output_style_scorer.py`, whose figures are the Success Criteria that decide whether the style worked. Both were reviewed, and both were internally sound. Nothing had ever run one through the other.

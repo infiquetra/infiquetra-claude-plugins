@@ -5,6 +5,16 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.0] - 2026-08-08
+
+### Removed
+
+- **Fleet lease broker and orphan evidence, deleted whole — campaign #677 unit U7 (#684).** `scripts/fleet_commons/lease_broker.py` (4,731 lines) and `scripts/fleet_commons/orphan_evidence.py` (1,578 lines) are gone, with their test suites `tests/test_fleet_lease_broker.py` (2,709) and `tests/test_orphan_fencing.py` (1,185) — 10,203 lines. This is the payload deletion the seven-unit unwind built toward; the emit-time file-disjointness check (`wave_file_conflicts()`) that replaced the fencing third shipped in #673, and U1–U6 unwound the remaining callers. No shim-resurrected broker survives: the U7 re-add guard (`tests/test_no_lease_broker_readd.py`) scans shim-resolved paths, not just the tree, per defect #642.
+
+### Changed
+
+- **Plugin description drops “lease and” (R11a, #684).** `plugin.json:4` now advertises “shared primitives, liveness decisions, …” — regenerated into `marketplace.json` via `scripts/sync_marketplace.py`.
+
 ## [0.23.1] - 2026-08-07
 
 ### Fixed

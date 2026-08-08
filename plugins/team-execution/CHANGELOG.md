@@ -4,6 +4,17 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [3.0.0] - 2026-08-08
+
+### Removed
+
+- **Fleet lease broker capability, deleted whole — campaign #677 (U6 + U7, #683 + #684).** The `lease_protocol.py` wrapper (U6) and the fleet-core broker it wrapped (U7) are gone — lease admission, preflight, renewal, release, and dead-owner sweep described at `README.md:20-29` no longer exist. Waves are validated by the file-disjoint frontier (`wave_file_conflicts()`, #673); liveness is caller-asserted `ttl_seconds` (U6). This is the post-1.0 breaking change the plan's R8 called out; no deprecated shim survives (R1/R2).
+
+### Changed
+
+- **Release surface moves with the broker (R8, #684).** Version `2.25.0 → 3.0.0`, `marketplace.json` regenerated from `plugin.json` via `scripts/sync_marketplace.py`.
+- **Re-add guard ships in the same PR (U7, #684).** `tests/test_no_lease_broker_readd.py` scans shim-resolved paths (defect #642), not just the tree.
+
 ## [2.25.0] - 2026-08-06
 
 ### Changed

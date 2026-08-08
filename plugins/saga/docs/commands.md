@@ -459,7 +459,7 @@ Strict, bounded, read-only cross-source fleet audit — a tripwire, never a repa
 
 | Field | Value |
 |-------|-------|
-| Purpose | Derive one point-in-time `fleet_doctor_report.v1` correlating Git worktrees, outcome registries, broker leases/fences, the chain-verified run-fact ledger, dispatch commit events, and the delegation audit store into `leaked-resource` / `unledgered-spawn` / `receiptless-delegation` findings plus explicit evidence errors. |
+| Purpose | Derive one point-in-time `fleet_doctor_report.v1` correlating Git worktrees, outcome registries, retired broker leases/fences (deleted #677/U7, always absent), the chain-verified run-fact ledger, dispatch commit events, and the delegation audit store into `leaked-resource` / `unledgered-spawn` / `receiptless-delegation` findings plus explicit evidence errors. |
 | Use when | The operator suspects leaked worktrees, unledgered spawns, or receiptless delegations, or a CI/acceptance gate needs a strict clean-fleet tripwire with fail-closed exits. |
 | Do not use when | Anything needs repairing, reaping, settling, retrying, or releasing (findings name the owner; the doctor never acts), or a tolerant advisory query is enough (use `/delegation-audit`). |
 | Inputs | Optional `--repo-root`, `--lease-store`, `--audit-store`, `--format text|json`, `--show-local-paths`. |
@@ -468,7 +468,7 @@ Strict, bounded, read-only cross-source fleet audit — a tripwire, never a repa
 | Routes in | Operator fleet-health ask, cross-runtime acceptance gate. |
 | Routes out | `/outcome`, `/delegation-audit`. |
 | Gates | Absence, corruption, and incompleteness are distinct verdicts; any cap, corruption, unsafe path, or mid-scan source change forces exit 2 and can never truncate to a clean report. |
-| Boundary | Owns observation and classification only; `/outcome`, the lease broker, B8 teardown, and `/delegation-audit` own every recovery action. |
+| Boundary | Owns observation and classification only; `/outcome`, B8 teardown (lease broker deleted #677/U7), and `/delegation-audit` own every recovery action. |
 | Common mistakes | Treating exit 2 (incomplete proof) as a disease finding; expecting the doctor to clean up what it finds. |
 | Example | `/fleet-doctor --format json` |
 

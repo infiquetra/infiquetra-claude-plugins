@@ -46,8 +46,8 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
 
     assert plugin_json["name"] == "saga"
     assert (
-        plugin_json["version"] == "0.130.0"
-    )  # U5 lease hook + saga wrapper deletion (#682, campaign #677)
+        plugin_json["version"] == "0.131.0"
+    )  # U7 delete lease broker and orphan evidence — fleet-core 0.24.0, saga 0.131.0, team-execution 3.0.0 (#684, campaign #677)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]

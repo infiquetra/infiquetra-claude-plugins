@@ -63,8 +63,8 @@ def test_team_execution_metadata_is_v2_and_marketplace_matches() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "team-execution")
 
     assert (
-        plugin_json["version"] == "2.25.0"
-    )  # U3 manifest-contract doc re-key (#680, campaign #677)
+        plugin_json["version"] == "3.0.0"
+    )  # U7 delete lease broker and orphan evidence — fleet-core 0.24.0, saga 0.131.0, team-execution 3.0.0 (#684, campaign #677)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/team-execution"
     assert "validator" in plugin_json["description"].lower()

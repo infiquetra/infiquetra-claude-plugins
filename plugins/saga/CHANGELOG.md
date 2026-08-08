@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.131.0] - 2026-08-08
+
+### Removed
+
+- **Fleet lease broker payload lands — campaign #677 unit U7 (#684).** No new saga production files deleted here — the broker wrapper and lease hook went in U5 — but the fleet-core payload (`lease_broker.py` + `orphan_evidence.py`, 10,203 lines) ships in this pull request per R8's "all plugins whose files change move together." The version, CHANGELOG, and generated `marketplace.json` move together via `scripts/sync_marketplace.py`.
+
+### Changed
+
+- **Fleet-doctor loses its orphan-evidence probe (U7, #684).** `skills/fleet-doctor/SKILL.md` and `references/fleet-doctor-sources.md` drop the probe, `tests/test_fleet_doctor.py` drops its assertion, and the remaining doctor probes stay pinned.
+- **Concurrency-spawn inventory rewritten once, here (U7, #684).** `references/concurrency-spawn-sites.md` — an inventory whose columns *are* the lease seams — is now the broker-free table; it was emptied progressively by U1–U4 and is rewritten once when the last row goes. Incidental lease references in `references/outcome-spec.md`, `outcome-cross-runtime.md`, `docs/commands.md`, `skills/outcome/SKILL.md` updated in the same PR (R11).
+
 ## [0.130.0] - 2026-08-07
 
 ### Removed

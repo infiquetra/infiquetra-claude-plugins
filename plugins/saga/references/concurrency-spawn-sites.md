@@ -47,6 +47,13 @@ teardown lease lifecycle. The emergency kill switch retires with the hook: the d
 of #677 measured exactly one reader, and the `INFIQUETRA_FLEET_LEASE_ENFORCEMENT` variable now
 has none in this repository.
 
+**#677/U7 re-key:** the fleet lease broker and orphan evidence are deleted whole — 10,203 lines.
+Every remaining lease cell becomes `retired:broker-free-(#677/U7)` and this inventory is now
+broker-free; no file under `plugins/` imports `lease_broker` or `orphan_evidence` (pinned by
+`tests/test_no_lease_broker_readd.py` which scans shim-resolved paths per defect #642). Concurrency
+governance remains file-disjoint (`concurrency_governor.ordered_chunks` / `WORKTREE_CAP`); the table
+below is retained as the retired-lease record, not as an active lifecycle.
+
 | Source | Function or seam | Spawn form | Governor entry point | Lease pool | Acquire or reserve seam | Bind seam | Renewal seam | Release seam |
 |---|---|---|---|---|---|---|---|---|
 | `plugins/saga/scripts/execution_spec.py` | `_emit_panel_reconciliation` | verify-panel verdict agents | `concurrency_governor.ordered_chunks` | `agent` | `retired:broker-free-(#677/U4)` | `retired:broker-free-(#677/U5)` | `retired:broker-free-(#677/U4)` | `retired:broker-free-(#677/U4)` |

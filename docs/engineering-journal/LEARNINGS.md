@@ -224,8 +224,6 @@ see [[empty-input-makes-a-guard-vacuous]] and
 
 ---
 
-## 2026-08-07
-
 ### Measure which agents produce the output before choosing the mechanism that governs them  {#measure-the-agent-population-before-choosing-a-lever}
 
 **Context.** The output-styles document review established that a preamble in the `agents/` directory reaches only subagents that name that agent, and offered three candidate routes for delivering a presentation contract to the 57.02% of assistant output generated inside subagents. All three were reasoned from repository structure. None was reasoned from the population, and the population was measurable the whole time.
@@ -295,6 +293,66 @@ see [[empty-input-makes-a-guard-vacuous]] and
 **Refs.** `docs/reviews/2026-08-07-output-styles-requirements-doc-review.md` finding D6, `docs/measurements/2026-08-07-baseline.md` (its own reconciliation table records the 0.25% → 1.16% correction of the same shape).
 
 ---
+
+### A workflow-backend agent cannot spawn another agent, so one of two levers went untested by design, not by oversight  {#u1-lever-experiment-workflow-backend-cannot-spawn}
+
+**Context.** Issue #704's `house-style` plugin (a Claude Code output style enforcing Infiquetra's
+presentation rules) proposes reaching subagent output two ways: Lever A duplicates a presentation
+preamble into all 36 plugin agent-definition files, so the text ships with each agent's own
+system prompt; Lever B stamps the same text onto every prompt saga's workflow emitter (`saga`, the
+lifecycle plugin's `execution_spec.py`) composes for an `agent()` call. Plan unit U1 ran both as an
+experiment, with its own evidence artifact and a hard stop rather than a checkbox anyone could tick
+from reasoning alone (KTD1, a Key Technical Decision — a recorded design choice with its rejected
+alternatives).
+
+**What it found.** Lever B: PASS, proven twice. First at emission — a throwaway marker string added
+to `execution_spec.py`'s `_agent_prompt()` function went from 0 occurrences to 3 across 3 emitted
+`agent()` calls in a control spec, with the byte count of the difference (192 bytes = 3 × 64-byte
+marker) confirming no double-application. Second at delivery, observed live in-band on this very
+U1 run: the `RETURN CONTRACT` clause composed by that same function arrived verbatim, with this
+unit's own return-schema keys, in the prompt this unit's own agent actually received. The edit was
+reverted and the revert verified three ways (`git status --porcelain` empty, `git diff --exit-code`
+clean, and a re-emission of the control spec byte-identical to the pre-edit baseline).
+
+Lever A: **INCONCLUSIVE**, not proven and not disproven. Both of the plan's prescribed test methods —
+dispatching an unknown operation to an installed agent and checking its documented rejection
+behavior, or writing a marker into the agent's cached definition file and observing it — require
+spawning an agent to observe the result. Three independent `ToolSearch` probes (`select:Task,Agent`,
+plus two keyword searches) found no agent-spawning tool available to an agent running inside a
+workflow backend, and `ListAgents` confirmed zero in-process subagents alongside six unrelated peer
+sessions. Nothing was modified in testing Lever A — there was no marker to revert, because the
+method that would have needed one was never reachable.
+
+**Mechanism.** The workflow backend that runs plan units (saga's `saga:work` skill, emitting a
+`.workflow.js` script executed by the harness) hands each unit agent a fixed tool inventory —
+`Artifact`, `Bash`, `Edit`, `ListAgents`, `Read`, `ReportFindings`, `SendUserFile`, `Skill`,
+`ToolSearch`, `Write`, `StructuredOutput`, plus deferred tools and MCP servers — and that inventory
+has no `Task` or `Agent` tool. An interactive Claude Code session does carry an agent-spawning tool;
+a workflow-backend agent does not. Lever A's mechanism (an agent definition file's body governing
+the agent it defines) can only be observed by spawning that agent, so the test's availability is a
+property of the *runtime the test happens to run in*, not of the lever itself.
+
+**Fix / resolution.** None needed on the lever — U1 correctly reported `inconclusive` per its own
+rule ("a harness limitation is reported as `inconclusive` and halted for an operator decision — it
+is recorded neither as a pass nor as a disproof") rather than inventing a third test method, which
+the unit's own hard stop forbade. Requirements-document R27 (the requirement Lever A serves) was
+left open, not reopened as a disproof — nothing observed contradicts Lever A, it was simply never
+run.
+
+**Generalizable rule.** Before spending a plan unit's evidence budget proving a mechanism, confirm
+the *runtime that unit will actually execute in* carries the capability the test needs — don't
+assume an interactive session's tool inventory (agent-spawning included) transfers to a workflow
+backend. When it doesn't, `inconclusive` is a more honest evidence state than either forcing a
+result through an unavailable method or silently skipping the test.
+
+**Refs.** `docs/evidence/issue-704/lever-experiment.md` (the full U1 evidence artifact, including
+the byte-accounting table and the emission/delivery chain diagram);
+`_agent_prompt()` in `plugins/saga/scripts/execution_spec.py` (the single funnel Lever B stamps);
+DECISIONS `{#house-style-two-lever-hybrid-and-ktds}`.
+
+---
+
+## 2026-08-07
 
 ### Acceptance greps must exclude the historical record  {#acceptance-greps-must-exclude-the-historical-record-682}
 
@@ -5706,63 +5764,5 @@ Always validate immediately: `python3 -m json.tool .claude-plugin/marketplace.js
 **Generalizable rule.** When using `Edit` on a JSON/YAML file to append into a nested array, the `old_string` MUST include the array's closing bracket. Inserting "before the `]`" is correct; inserting "after the prior entry's `}`" is wrong because edits land on the line *after* the match. Always validate the file with the language's parser immediately after the edit.
 
 **Refs.** Same lesson cached in `~/.claude/projects/.../memory/marketplace_editing_guard.md` for runtime convenience; this file is the durable project record.
-
----
-
-### A workflow-backend agent cannot spawn another agent, so one of two levers went untested by design, not by oversight  {#u1-lever-experiment-workflow-backend-cannot-spawn}
-
-**Context.** Issue #704's `house-style` plugin (a Claude Code output style enforcing Infiquetra's
-presentation rules) proposes reaching subagent output two ways: Lever A duplicates a presentation
-preamble into all 36 plugin agent-definition files, so the text ships with each agent's own
-system prompt; Lever B stamps the same text onto every prompt saga's workflow emitter (`saga`, the
-lifecycle plugin's `execution_spec.py`) composes for an `agent()` call. Plan unit U1 ran both as an
-experiment, with its own evidence artifact and a hard stop rather than a checkbox anyone could tick
-from reasoning alone (KTD1, a Key Technical Decision — a recorded design choice with its rejected
-alternatives).
-
-**What it found.** Lever B: PASS, proven twice. First at emission — a throwaway marker string added
-to `execution_spec.py`'s `_agent_prompt()` function went from 0 occurrences to 3 across 3 emitted
-`agent()` calls in a control spec, with the byte count of the difference (192 bytes = 3 × 64-byte
-marker) confirming no double-application. Second at delivery, observed live in-band on this very
-U1 run: the `RETURN CONTRACT` clause composed by that same function arrived verbatim, with this
-unit's own return-schema keys, in the prompt this unit's own agent actually received. The edit was
-reverted and the revert verified three ways (`git status --porcelain` empty, `git diff --exit-code`
-clean, and a re-emission of the control spec byte-identical to the pre-edit baseline).
-
-Lever A: **INCONCLUSIVE**, not proven and not disproven. Both of the plan's prescribed test methods —
-dispatching an unknown operation to an installed agent and checking its documented rejection
-behavior, or writing a marker into the agent's cached definition file and observing it — require
-spawning an agent to observe the result. Three independent `ToolSearch` probes (`select:Task,Agent`,
-plus two keyword searches) found no agent-spawning tool available to an agent running inside a
-workflow backend, and `ListAgents` confirmed zero in-process subagents alongside six unrelated peer
-sessions. Nothing was modified in testing Lever A — there was no marker to revert, because the
-method that would have needed one was never reachable.
-
-**Mechanism.** The workflow backend that runs plan units (saga's `saga:work` skill, emitting a
-`.workflow.js` script executed by the harness) hands each unit agent a fixed tool inventory —
-`Artifact`, `Bash`, `Edit`, `ListAgents`, `Read`, `ReportFindings`, `SendUserFile`, `Skill`,
-`ToolSearch`, `Write`, `StructuredOutput`, plus deferred tools and MCP servers — and that inventory
-has no `Task` or `Agent` tool. An interactive Claude Code session does carry an agent-spawning tool;
-a workflow-backend agent does not. Lever A's mechanism (an agent definition file's body governing
-the agent it defines) can only be observed by spawning that agent, so the test's availability is a
-property of the *runtime the test happens to run in*, not of the lever itself.
-
-**Fix / resolution.** None needed on the lever — U1 correctly reported `inconclusive` per its own
-rule ("a harness limitation is reported as `inconclusive` and halted for an operator decision — it
-is recorded neither as a pass nor as a disproof") rather than inventing a third test method, which
-the unit's own hard stop forbade. Requirements-document R27 (the requirement Lever A serves) was
-left open, not reopened as a disproof — nothing observed contradicts Lever A, it was simply never
-run.
-
-**Generalizable rule.** Before spending a plan unit's evidence budget proving a mechanism, confirm
-the *runtime that unit will actually execute in* carries the capability the test needs — don't
-assume an interactive session's tool inventory (agent-spawning included) transfers to a workflow
-backend. When it doesn't, `inconclusive` is a more honest evidence state than either forcing a
-result through an unavailable method or silently skipping the test.
-
-**Refs.** `docs/evidence/issue-704/lever-experiment.md` (the full U1 evidence artifact, including
-the byte-accounting table and the emission/delivery chain diagram);
-`_agent_prompt()` in `plugins/saga/scripts/execution_spec.py` (the single funnel Lever B stamps);
-DECISIONS `{#house-style-two-lever-hybrid-and-ktds}`.
 
 ---

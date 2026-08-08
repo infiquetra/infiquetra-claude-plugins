@@ -3,7 +3,8 @@ title: Doc review — Custom Claude Code output styles requirements
 type: doc-review
 date: 2026-08-07
 target: docs/brainstorms/2026-08-07-output-styles-requirements.md
-blocked: true
+blocked: false
+blocked_history: "true until 2026-08-07, when the operator settled the R27 delivery route"
 ---
 
 # Doc review — output-styles requirements
@@ -14,7 +15,7 @@ blocked: true
 |---|---|
 | Target | `docs/brainstorms/2026-08-07-output-styles-requirements.md` |
 | Reviewed revision | working tree (document is untracked); repo `HEAD` = `f6436f6e`; branch `docs/output-styles-requirements-review` |
-| Blocked | **Yes** — one new *Resolve before planning* blocker now stands in the document (R27's delivery route) |
+| Blocked | **No, as of 2026-08-07** — was Yes; the R27 delivery-route blocker this review opened was settled by the operator the same day. See Resolution below. |
 | Findings | 19 raised — 1×P0, 4×P1, 7×P2, 7×P3 — all 19 fixed |
 | Applied fixes | 17 edits to the requirements document, 2 Python files reformatted |
 | Rubric review | Not run — the artifact is a brainstorm requirements document, which maps to none of the engine's `idea` / `issue` / `spec` phases |
@@ -111,3 +112,38 @@ circumstantial evidence for the mechanism, and it is not a direct experiment.
 
 The `bare_identifier_rate` metric is labelled heuristic by the instrument itself and is a trend line
 rather than a verdict on any single message. The Success Criteria table inherits that limitation.
+
+## Resolution — 2026-08-07, same day
+
+The blocker this review opened is closed. The operator settled three decisions, and one of them was
+settled by a measurement this review should have taken and did not.
+
+**The census.** Every subagent transcript record carries an `attributionAgent` field, so the question
+"which agents actually produce the 57.02%?" was answerable directly rather than by reasoning about
+repository structure. Counted over the baseline's exact window, roots, and exclusion, the total is
+128,622 — equal to `subagent_assistant_messages` in the committed baseline, so it is cross-validated
+against the instrument rather than being an independent guess. `workflow-subagent` is 59.44% and has
+no definition file; the four agent types that do have one total 29.93%. That retired route (a), the
+route this review had presented as ideation's own answer.
+
+**Decisions recorded.** The plugin is named `house-style`. R27 takes a hybrid route: the preamble is
+stamped into spawn prompts by saga's emitter (`plugins/saga/scripts/execution_spec.py`,
+`emit_workflow_script()` line 3590) for the 59.44%, and duplicated into the 36 repo-owned agent
+definitions with the byte-identity test restored for the 29.93% — combined ceiling ~89.4%, with the
+10.63% residue named rather than absorbed. The bare-Default control run is skipped, not deferred, with
+its attribution cost recorded.
+
+**One correction to this review's own figures.** It reported "the 400 agent files under
+`~/.claude/plugins/cache/`" secondhand. Measured: 226 `.md` files under `agents/` directories in the
+cache, 277 files of all types. The conclusion is unaffected — the cache is overwritten on every plugin
+update and is not a durable lever — but the count is 226, not 400.
+
+**Still unverified, and gating the plan.** Neither lever has been observed working. The mechanism is
+inference from repository structure and transcript fields. The plan must create an agent definition
+carrying a distinctive marker, spawn that type, confirm the marker reaches the output, and repeat for
+the emitter lever. A failure reopens the blocker rather than being routed around. Separately, whether
+*all* `workflow-subagent` traffic originates from saga-emitted scripts is not established; if some
+comes from ad-hoc workflows, R26's reach is below 59.44% and the 89.4% ceiling falls with it.
+
+See DECISIONS `{#house-style-hybrid-subagent-route}` and LEARNINGS
+`{#measure-the-agent-population-before-choosing-a-lever}`.

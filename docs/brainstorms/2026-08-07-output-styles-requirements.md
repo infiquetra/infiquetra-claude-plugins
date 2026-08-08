@@ -9,16 +9,20 @@ source: docs/ideation/2026-08-07-output-styles-ideation.md — all ten ranked su
 
 ## Summary
 
-Ship one Claude Code output style as a new plugin in `infiquetra-claude-plugins`, distributed through
-the `infiquetra-plugins` marketplace that both configurations load, fixing how Claude's terminal
-output is shaped: every state-changing turn closes with
-a status declaration and one decision, visuals appear when the reader is being oriented and not
-otherwise, and relayed subagent output is rewritten rather than pasted. Two supporting pieces ship
-outside the style, because a style cannot reach subagents and these must: the word-level language
-rules stay in `~/.claude/CLAUDE.md` with an annotation explaining why, and a presentation contract
-reaches subagents through the `agents/` directory both configurations already share — by a delivery
-mechanism that is now an open blocker rather than a settled one, because a single file in that
-directory defines one agent instead of governing all of them.
+Ship one Claude Code output style as a new plugin named **`house-style`** in
+`infiquetra-claude-plugins`, distributed through the `infiquetra-plugins` marketplace that both
+configurations load, fixing how Claude's terminal output is shaped: every state-changing turn closes
+with a status declaration and one decision, visuals appear when the reader is being oriented and not
+otherwise, and relayed subagent output is rewritten rather than pasted.
+
+Supporting pieces ship outside the style, because a style cannot reach subagents and these must. The
+word-level language rules stay in `~/.claude/CLAUDE.md` with an annotation explaining why. The
+presentation contract reaches subagents by a **hybrid route of two levers, both of them code this
+repository owns**: stamped into spawn prompts by saga's workflow emitter, which targets the
+`workflow-subagent` traffic at 59.44%, and duplicated into the 36 agent definition files under
+`plugins/*/agents/*.md` with a byte-identity test policing the copies, which reaches 29.93%. Combined
+reach is about **89.4%** and nothing may claim more; the 10.6% residue is built-in agent types and
+unclassified records, named rather than absorbed.
 
 ## Problem Frame
 
@@ -51,8 +55,9 @@ about *when* a visual is warranted, which no current instruction expresses.
 
 ## Key Decisions
 
-Six framing choices constrain everything below. Each was settled during this brainstorm or carried in
-settled from ideation.
+Eleven framing choices constrain everything below. The first eight were settled during this brainstorm
+or carried in settled from ideation; the last three were settled by the operator on 2026-08-07 after
+the document review.
 
 **One style file, with per-turn triggers doing all the varying.** The evidence supports variation at
 the turn, not at the repository. Response length is bimodal (median 142 characters, p90 1,658 —
@@ -116,6 +121,32 @@ exists on `origin` — so a plain branch off `main` is sufficient.
 **Plain English rule 2 keeps its text; R19 is its enforcement test.** The mechanical grammatical
 prohibition sits beside the ratified rule rather than rewriting it, consistent with the ruling that all
 seven rules stay as written.
+
+**The plugin is named `house-style`.** Settled by the operator on 2026-08-07. It names what the thing
+is without colliding with Claude Code's own "output style" terminology, which would otherwise make
+every sentence about the plugin ambiguous between the product and the concept. The name is permanent
+once published: it appears in the marketplace listing beside `saga`, `deploy`, and `fleet-core`, and
+it fixes the plugin directory path that every scaffolding step depends on.
+
+**The presentation contract takes a hybrid route, chosen by measurement rather than by argument.**
+Settled by the operator on 2026-08-07. The document review offered three candidate routes without
+knowing which agents actually produce the 57.02%, and that was measurable all along: every subagent
+transcript record carries an `attributionAgent` field. The census in the subagent-seam section settles
+it — duplicating a preamble into agent definition files reaches 29.93%, not a majority, because
+`workflow-subagent` alone is 59.44% and has no definition file. So both levers ship: the emitter stamp
+for `workflow-subagent`, and the definition-file duplication with its byte-identity test for the rest.
+Route (a) alone was rejected for reaching under a third of the surface; route (b), putting the contract
+in `CLAUDE.md`, was not taken because it contradicts the standing decision that the style is purely
+additive and `CLAUDE.md` is not growing presentation content; route (c) alone was rejected because its
+coverage depends on the main thread remembering to stamp each spawn, which moving the stamp into the
+emitter fixes outright. Combined reach is about 89.4%, and that ceiling is binding on every downstream
+document.
+
+**The bare-Default control run is skipped, not deferred.** Settled by the operator on 2026-08-07. The
+cost is accepted and recorded rather than discovered later: the after-measurement will show whether
+shipping the style improved things, but cannot attribute how much of any improvement belongs to the
+style and how much to `~/.claude/CLAUDE.md`, because every baseline number was recorded under the
+built-in Explanatory style and no unstyled control will exist to separate the two.
 
 ## Actors
 
@@ -211,18 +242,64 @@ ceremony from becoming noise.
 - R24. R22 and R23 carry a carve-out: verbatim reproduction is correct for exact error strings, diff
   hunks, and command output whose precise characters matter.
 - R25. A relay turn opens with the main thread's own verdict, not with the subagent's framing.
-- R26. Every spawn prompt the main thread writes carries a fixed presentation contract stating the
-  expected return format.
-- R27. A shared presentation preamble reaches subagents through the `agents/` directory. The symlink
-  half of this is verified: `~/.claude-company/agents` points at `~/.claude/agents`, so any file placed
-  there is seen identically by both configurations, and it may ship before the plugin does. The reach
-  half is not what the earlier wording assumed, and the difference is load-bearing. A `.md` file in an
-  `agents/` directory **defines one named agent**; it does not prepend text to other agents' prompts.
-  Every one of the 36 agent definitions in `infiquetra-claude-plugins` is a single agent keyed by a
-  `name:` frontmatter field, and `~/.claude/agents/` is currently **empty** — every agent available in
-  a session today ships from a plugin's own `agents/` directory or is built into Claude Code. A single
-  file dropped into `~/.claude/agents/` would therefore govern zero of the subagents that actually run.
-  How the contract reaches them instead is an open blocker; see Outstanding Questions.
+The route these two requirements take was settled by measuring which agents actually produce the
+57.02%, rather than by choosing among plausible mechanisms. The census below counts subagent assistant
+messages by the `attributionAgent` field carried on each transcript record, over the same window,
+roots, and exclusion as `docs/measurements/2026-08-07-baseline.json`. Its total is 128,622, which
+equals `subagent_assistant_messages` in the scorer's own output exactly, so the census is
+cross-validated against the committed instrument rather than being a second independent guess.
+
+| agent type | messages | share | has a definition file in this repository? |
+| --- | ---: | ---: | --- |
+| `workflow-subagent` | 76,459 | 59.44% | no |
+| `saga:readonly-verifier` | 38,345 | 29.81% | yes — `plugins/saga/agents/readonly-verifier.md` |
+| *(unnamed)* | 5,795 | 4.51% | unclassified |
+| `general-purpose` | 4,740 | 3.69% | no — built-in type |
+| `Explore` | 3,136 | 2.44% | no — built-in type |
+| `mission-control:sdlc-operator` | 84 | 0.07% | yes |
+| `codex:codex-reviewer` | 41 | 0.03% | yes |
+| `agy:agy-reviewer` | 22 | 0.02% | yes |
+
+Duplicating a preamble into agent definition files therefore reaches 38,492 messages, **29.93%** — the
+four types that have a definition file — and not the majority the mechanism appears to promise.
+
+**Count by agent, never by plugin.** Counting the same corpus by `attributionPlugin` credits the
+definition-file route with 52,607 messages, 40.90%. That figure is wrong and flattering: 11,394 of
+those are `workflow-subagent` records that happen to carry `plugin=saga`, and a `workflow-subagent`
+record has no definition file for a preamble to live in. The plugin field says which plugin was in
+play, not which file governs the agent.
+
+- R26. The presentation contract is stamped into spawn prompts by the code that composes them, not by
+  the main thread remembering to write it each time. The composer is
+  `plugins/saga/scripts/execution_spec.py`: `emit_workflow_script()` at line 3590 renders each unit
+  into an `agent()` call through `_emit_thunk` (line 2967), `_emit_parallel_wave` (line 2737), and
+  `_emit_verify_panel` (line 3090), and the per-unit `prompt` field is defined at line 1249 on the
+  `Unit` dataclass documented as "one `agent()` call in the emitted script". This lever targets
+  `workflow-subagent`, 59.44%. Moving the stamp into the emitter is what distinguishes this from the
+  rejected route (c), whose stated weakness was that coverage depended on the main thread remembering.
+- R27. A shared presentation preamble is duplicated into the 36 agent definition files this repository
+  owns under `plugins/*/agents/*.md`, with the byte-identity test restored to police the copies against
+  drift. This lever reaches 29.93%. The earlier wording proposed a single file in `~/.claude/agents/`
+  and assumed it would govern every subagent; it would not. A `.md` file in an `agents/` directory
+  **defines one named agent** rather than prepending text to other agents' prompts, and both
+  `~/.claude/agents/` and `~/.claude-company/agents/` contain **zero files**, so a file placed there
+  would govern nothing that runs. The 226 agent definition files under `~/.claude/plugins/cache/` are
+  overwritten on every plugin update and are not a durable lever either. The symlink between the two
+  configurations is real and still useful, but it governs file identity across configurations, not
+  coverage across subagents.
+
+**Combined reach is about 89.4%, and no document may claim more.** The residue is 10.6% and is named
+rather than absorbed: `general-purpose` at 3.69% and `Explore` at 2.44% are built-in types with no
+definition file and no plugin, unreachable by either lever; and 4.51% carries no `attributionAgent`
+at all and stays labelled unclassified. None of that 10.6% is assigned to either lever to improve a
+number.
+
+**Both levers are unverified by experiment and must be proven before anything is built on them.** The
+mechanism above is inference from repository structure and transcript fields, not observation. The
+gate is: create one agent definition carrying a distinctive marker, spawn that agent type, and check
+whether the marker appears in its output; then do the same for the emitter lever. If either fails,
+that half of the hybrid fails and the R27 blocker reopens — which is to be reported, not worked
+around.
 
 ### Style-file contract
 
@@ -362,17 +439,20 @@ Named because several are tempting and one was explicitly deferred rather than r
   different artifacts. Survivor 7 wanted it to police two style files, which the one-style decision
   does dispose of. Survivor 10 wanted the same test for a different reason — the presentation preamble
   "duplicates a block across N definition files" — and that reason survives untouched by the one-style
-  decision. If R27's blocker resolves toward duplicating the preamble into each agent definition, the
-  test comes back with it. Retiring it on survivor 7's reasoning alone would drop a control survivor 10
-  still needs.
+  decision. R27's blocker has now resolved toward duplicating the preamble into each agent definition,
+  so the test **is required** and ships with that duplication — it is no longer conditional. Retiring
+  it on survivor 7's reasoning alone would have dropped a control survivor 10 still needs.
 - **Any generator or build step** — settled during ideation. Whatever ships must be plain Markdown
   because there is no build step in the loading path, so a generator would only ever have been an
   authoring convenience, and it creates a class of bug where editing a shipped file is silently
   reverted.
 - **Pruning any Plain English rule** — closed. Absence of a traced failure in a 35-day window is not
   evidence a rule is idle; it is equally consistent with the rule working.
-- **The bare-Default control run** — still open as a question, not scheduled as work. See Outstanding
-  Questions.
+- **The bare-Default control run** — **skipped by operator decision on 2026-08-07.** Not deferred, not
+  scheduled; ruled out. The cost is stated rather than left implicit: the after-measurement will show
+  whether shipping the style improved things, but cannot attribute how much of any improvement belongs
+  to the style and how much to `~/.claude/CLAUDE.md`, because every baseline number was recorded under
+  the built-in Explanatory style and no unstyled control exists to separate them.
 - **`force-for-plugin: true`** — not used. The plugin does not override the operator's own style
   selection.
 - **Any change to subagent behaviour beyond the three named vehicles** — `CLAUDE.md`, the shared
@@ -428,24 +508,20 @@ are assumptions and are labelled as such.
 The two prior blockers were settled on 2026-08-07 and are recorded in Key Decisions. The document
 review on 2026-08-07 opened one new one.
 
-- **How the presentation contract actually reaches subagents (R27).** The requirement named the
-  `agents/` directory as the vehicle and assumed one file there would govern every subagent. It will
-  not: a `.md` file in `agents/` defines one named agent, and `~/.claude/agents/` is empty today, so
-  the file would govern nothing that runs. Three candidate routes exist and the choice is an
-  architecture decision, not a detail. (a) Duplicate the preamble block into every agent definition
-  file, which is what ideation's survivor 10 actually proposed, and restore the byte-identity test to
-  police the copies. (b) Put the contract in `~/.claude/CLAUDE.md`, which is the one lever verified to
-  reach every subagent — but which cuts against the Key Decision that the style is purely additive and
-  that `CLAUDE.md` is not growing presentation content. (c) Rely on R26's per-spawn contract alone and
-  drop R27, accepting that coverage then depends on the main thread remembering to stamp every spawn.
-  This blocks planning because it decides whether R27 survives, whether the byte-identity test returns,
-  and how much of the 57.02% out-of-reach surface the work claims to address.
+**None.** The blocker the document review opened on 2026-08-07 — how the presentation contract
+actually reaches subagents — was settled the same day by the operator, and is recorded in Key
+Decisions as the hybrid route. It is closed because a measurement replaced the guesswork: the agent
+census in the subagent-seam section shows the definition-file route reaching 29.93% rather than the
+majority the mechanism appeared to promise, which is what ruled out taking that route alone.
+
+One gate remains attached to that decision without reopening it. Neither lever has been verified by
+experiment, and the plan must run that experiment before building on either — create an agent
+definition carrying a distinctive marker, spawn that type, and check whether the marker reaches the
+output; then the same for the emitter lever. A failure there reopens this heading rather than being
+worked around.
 
 **Deferred to planning.**
 
-- The plugin's name, which is permanent and appears in the marketplace listing beside `saga`,
-  `deploy`, and `fleet-core`. A recommendation is on the table and the choice is the operator's; it is
-  not made here.
 - The concrete size threshold for R9. Note that the two figures usually quoted to bound it, median 142
   and p90 1,658, are unverified and not reproducible from the committed scorer — see Assumptions
   before treating them as a range.
@@ -456,18 +532,26 @@ review on 2026-08-07 opened one new one.
 - The closed exemption list in R21.
 - How R32 and R33 detect what they detect. Both measure something no current metric approximates, and
   the detection approach is a design question rather than a product one.
-- Whether the two deliverables that land outside this repository, the R18 annotation and whatever R27
-  resolves to, need a version-control home of their own, given that neither `~/.claude` nor
-  `~/.claude-company` is a git repository.
+- Whether the R18 annotation needs a version-control home of its own, given that neither `~/.claude`
+  nor `~/.claude-company` is a git repository. The hybrid route removed R27 from this question: both of
+  its levers are now code this repository owns and versions, so the annotation is the only deliverable
+  still landing outside version control.
+- Where exactly the preamble is stamped inside `execution_spec.py`, and whether every
+  `workflow-subagent` message is reached by stamping there. The emitter is located and confirmed to
+  compose `agent()` prompts, but whether all 59.44% of `workflow-subagent` traffic originates from
+  saga-emitted scripts, as opposed to workflows authored ad hoc, is not established. If some of it does
+  not, R26's reach is below 59.44% and the 89.4% ceiling falls with it.
 - Whether `tools/` should be added to the `mypy` and `bandit` scopes in continuous integration, so the
   scorer is gated rather than merely lintable. See R34.
 
-**Open, and deliberately not resolved here.**
+**Closed by operator decision, not deferred.**
 
-- The bare-Default control run. Every baseline number was recorded under the Explanatory style, so a
-  two-week run on Default would separate problems that style caused from problems it failed to prevent.
-  The one-style decision does not force the question either way, and the cost is delaying everything
-  by two weeks.
+- The bare-Default control run is **skipped**. Every baseline number was recorded under the built-in
+  Explanatory style, so a two-week run on Default would have separated problems that style caused from
+  problems it failed to prevent. The operator ruled it out on 2026-08-07 rather than deferring it, and
+  the cost is accepted and stated: the after-measurement will show whether shipping the style improved
+  things, but cannot attribute how much of any improvement belongs to the style and how much to
+  `~/.claude/CLAUDE.md`. No comparison drawn from the baseline may claim that attribution.
 
 ## Sources / Research
 

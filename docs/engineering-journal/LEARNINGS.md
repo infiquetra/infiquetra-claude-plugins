@@ -41,6 +41,40 @@
 
 ## 2026-08-07
 
+### Measure which agents produce the output before choosing the mechanism that governs them  {#measure-the-agent-population-before-choosing-a-lever}
+
+**Context.** The output-styles document review established that a preamble in the `agents/` directory reaches only subagents that name that agent, and offered three candidate routes for delivering a presentation contract to the 57.02% of assistant output generated inside subagents. All three were reasoned from repository structure. None was reasoned from the population, and the population was measurable the whole time.
+
+**Evidence.** Every subagent transcript record carries an `attributionAgent` field. Counting subagent assistant messages by that field over the baseline's exact window, roots, and exclusion gives a total of 128,622, which equals `subagent_assistant_messages` in `docs/measurements/2026-08-07-baseline.json` exactly — so the census is cross-validated against the committed instrument rather than being a second guess. The distribution: `workflow-subagent` 76,459 (59.44%), `saga:readonly-verifier` 38,345 (29.81%), unnamed 5,795 (4.51%), `general-purpose` 4,740 (3.69%), `Explore` 3,136 (2.44%), `mission-control:sdlc-operator` 84, `codex:codex-reviewer` 41, `agy:agy-reviewer` 22. Only four of those types have a definition file in this repository, totalling 38,492 messages — **29.93%**.
+
+**Mechanism.** The candidate route that looked most faithful to the source material (duplicate the preamble into every agent definition, which is what ideation's survivor 10 proposed) reaches under a third of the surface, because the single largest producer by far is `workflow-subagent` — an agent type spawned by the Workflow runtime that has no definition file to duplicate into. Structural reasoning could establish that a lever *works*; only counting could establish that it works on 29.93% rather than on most of the traffic. The decision flipped from "route (a)" to a hybrid of two levers the moment the population was visible.
+
+**What surprised.** Counting the same corpus by `attributionPlugin` instead of by agent gives 52,607 messages, 40.90%, for the same route — a third higher and entirely wrong. 11,394 of those are `workflow-subagent` records that happen to carry `plugin=saga`; the plugin field records which plugin was in play, not which file governs the agent. The wrong cut is the flattering one, which is exactly the direction an unchecked number drifts.
+
+**Fix.** Requirements R26 and R27 rewritten as a two-lever hybrid — emitter stamp for `workflow-subagent` at 59.44%, definition-file duplication with a byte-identity test at 29.93%, combined ceiling ~89.4% with the 10.63% residue named (built-in `general-purpose` and `Explore`, plus unclassified records) rather than absorbed. The emitter was located and confirmed: `plugins/saga/scripts/execution_spec.py`, `emit_workflow_script()` at line 3590, composing per-unit `agent()` calls via `_emit_thunk` (2967), `_emit_parallel_wave` (2737), `_emit_verify_panel` (3090), with the per-unit `prompt` field at line 1249.
+
+**Generalizable rule.** When choosing between mechanisms on the basis of reach, check whether reach is directly measurable before reasoning about it — a field on the records usually settles in one query what an architecture argument settles badly. And count by the entity the lever actually acts on, not by a correlated label sitting next to it: if the lever is a file per agent, count agents; counting plugins credits traffic that has no file to act on, and it will always flatter.
+
+**Refs.** `docs/brainstorms/2026-08-07-output-styles-requirements.md` (census table in the subagent-seam section), [[agents-dir-is-per-agent-type-not-a-preamble]], DECISIONS `{#house-style-hybrid-subagent-route}`.
+
+---
+
+### A traversal that skips symlinks fails quietly, and only a known-good total catches it  {#glob-vs-oswalk-symlink-undercount}
+
+**Context.** Re-deriving the subagent agent census to verify it independently before recording it in a requirements document.
+
+**Evidence.** The first census used `os.walk` and returned 124,078 subagent assistant messages against the scorer's 128,622 — a 4,544-message shortfall, 3.5%. Cause: `~/.claude-company/projects` contains symlinked subdirectories. `os.walk` does not follow symlinked directories by default and saw 907 `.jsonl` files there; `followlinks=True` sees 1,136. The scorer uses `glob.glob(os.path.join(root, "**", "*.jsonl"), recursive=True)` at `tools/output_style_scorer.py:181`, which does traverse them. Re-running the census with the scorer's exact glob call reproduced 128,622 exactly, and every per-agent row then matched independently.
+
+**Mechanism.** `os.walk(followlinks=False)` is the default because it protects against cycles; `glob` with `**` traverses into symlinked directories. Two traversals over the same tree therefore return different corpora, and the difference is invisible unless something outside the traversal knows the right answer. The undercount does not raise, does not warn, and produces a plausible distribution — the per-agent shares were within a percentage point of correct, so the shape looked right while every absolute count was low.
+
+**Fix.** Census re-run with the scorer's exact traversal; total cross-validated against `subagent_assistant_messages` before any figure was written into the requirements document.
+
+**Generalizable rule.** When re-deriving a number to check someone else's, mirror the original's traversal primitive exactly rather than reaching for the one you'd normally use — file-walking APIs disagree about symlinks, hidden files, and recursion depth, and each disagreement is a silent undercount. Always re-derive against a known-good total first; without one, a traversal bug presents as a confident finding rather than as an error. This is the same failure shape as the scorer's original 0% subagent share (`docs/measurements/2026-08-07-baseline.md`, "A note on how this instrument first failed") — a broken walk that reads as data.
+
+**Refs.** `tools/output_style_scorer.py:181`, `docs/measurements/2026-08-07-baseline.md` §"A note on how this instrument first failed", [[measure-the-agent-population-before-choosing-a-lever]].
+
+---
+
 ### The `agents/` directory is a per-agent-type lever, not a global preamble  {#agents-dir-is-per-agent-type-not-a-preamble}
 
 **Context.** The output-styles requirements document (`docs/brainstorms/2026-08-07-output-styles-requirements.md`, requirement R27) proposed reaching the 57.02% of assistant output generated inside subagents by placing "a shared presentation preamble" in the `agents/` directory, reasoning that because `~/.claude-company/agents` symlinks to `~/.claude/agents`, "one edit governs both configurations." The premise is true and the conclusion does not follow.

@@ -145,7 +145,12 @@ VISUAL_RE = re.compile(
 # A fenced block whose body opens a JSON object or array.  Restricting to JSON is what keeps
 # the legitimate verbatim cases out: a diff hunk, an exact error string and raw command output
 # are all correct to reproduce character for character, and none of them starts with { or [.
-PAYLOAD_FENCE_RE = re.compile(r"```[A-Za-z0-9_+-]*\n(.*?)```", re.DOTALL)
+# Whitespace is tolerated around the language tag, matching what MERMAID_RE and VISUAL_RE
+# already do for their own fences: ``` json and ```json are the same fence to a reader, and a
+# detector that sees only one of them under-reports by exactly the messages that used a space.
+# Widening cannot lose a match (every added element is optional) and gains none on the frozen
+# window -- measured 0 additional messages over 2026-07-03..2026-08-07, so no metric moves.
+PAYLOAD_FENCE_RE = re.compile(r"```[ \t]*[A-Za-z0-9_+-]*[ \t]*\r?\n(.*?)```", re.DOTALL)
 JSON_OPENS_RE = re.compile(r"^\s*[\[{]")
 # `"key":` -- used to recognise a dump that was cut off partway and so will not parse.  Five
 # is deliberately low: the fallback only ever runs on text that already opens a brace or a
@@ -357,6 +362,7 @@ def _scan_lines(
             corpus.lines_unparsed += 1
             continue
         stamp = record.get("timestamp")
+        when = None
         if isinstance(stamp, str):
             try:
                 when = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
@@ -367,18 +373,22 @@ def _scan_lines(
             # naive stamp as UTC, which is what every Claude Code transcript writes anyway.
             if when is not None and when.tzinfo is None:
                 when = when.replace(tzinfo=UTC)
-            if when is not None and not (since <= when <= until):
-                continue
-        else:
-            # No usable timestamp means the window filter cannot be applied to this record.
-            # Keeping it would let it into the corpus regardless of --since/--until, and its
-            # empty sort key would additionally make it the session's apparent first turn,
-            # stealing the orientation flag from the message that really opened the session.
-            # Counted in its own field, NOT in lines_unparsed -- these lines parsed perfectly
-            # well, and folding them into an "unparsed" count would report a corpus-integrity
-            # problem where there is none.  Over the baseline window this is ~97k records,
-            # none of them assistant messages, so no metric population is affected.
+        # One test for "no usable timestamp", covering BOTH an absent/non-string stamp and a
+        # string that is not a parseable datetime.  Testing only the absent case let a record
+        # stamped "not-a-date" fall through every branch into the corpus -- unfiltered by
+        # --since/--until and uncounted here, so nothing reported that it had happened.
+        #
+        # Keeping such a record would let it into the corpus regardless of the window, and its
+        # empty sort key would additionally make it the session's apparent first turn, stealing
+        # the orientation flag from the message that really opened the session.  Counted in its
+        # own field, NOT in lines_unparsed -- these lines parsed perfectly well, and folding
+        # them into an "unparsed" count would report a corpus-integrity problem where there is
+        # none.  Over the baseline window this is ~97k records, none of them assistant
+        # messages, and unparseable stamps measured 0 of them, so no metric population moves.
+        if when is None:
             corpus.records_without_timestamp += 1
+            continue
+        if not (since <= when <= until):
             continue
 
         kind = record.get("type")

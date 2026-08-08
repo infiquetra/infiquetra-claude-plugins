@@ -680,6 +680,44 @@ def test_a_record_without_a_timestamp_cannot_steal_the_session_opener(tmp_path: 
     assert got.lines_unparsed == 0, "it parsed perfectly well; only the window filter cannot run"
 
 
+def test_a_timestamp_that_is_a_string_but_not_a_date_is_excluded_and_counted(
+    tmp_path: Path,
+) -> None:
+    """`timestamp: "not-a-date"` is a third case, and it used to fall through every branch.
+
+    The stamp is a string, so the absent-stamp branch never ran; it failed to parse, so the
+    window comparison was skipped as well. The record entered the corpus unfiltered by
+    --since/--until AND left `records_without_timestamp` at zero, so nothing reported it.
+    Measured 0 times over the frozen 2026-07-03..2026-08-07 window, which is why closing it
+    moves no committed number -- but a corpus is not a guarantee, and silence was the defect.
+    """
+    garbled = _assistant("Out of window, unstamped, and silent about it.", False, "s", 0)
+    garbled["timestamp"] = "not-a-date"
+    root = tmp_path / "projects"
+    _write(root / "-r" / "s.jsonl", [garbled, _assistant("The real opener.", False, "s", 1)])
+    got = scorer.collect([str(root)], NOW - timedelta(days=1), NOW + timedelta(days=1), set())
+    assert got.main_assistant == ["The real opener."], "the garbled record must not be scored"
+    assert got.records_without_timestamp == 1, "and it must be reported, not silently dropped"
+    assert got.lines_unparsed == 0, "the LINE parsed; only its timestamp did not"
+
+
+def test_a_fence_with_a_space_before_its_language_tag_is_still_a_payload() -> None:
+    """``` json and ```json are the same fence to a reader, so they must be to the detector.
+
+    MERMAID_RE and VISUAL_RE already tolerate whitespace after the backticks; this detector
+    did not, so a pasted subagent return under ``` json read as zero. Measured 0 occurrences
+    over the frozen window, so widening moves no committed metric.
+    """
+    payload = json.dumps({"k": ["v"] * 400})
+    assert scorer._has_pasted_payload(f"```json\n{payload}\n```")[0] is True
+    assert scorer._has_pasted_payload(f"``` json\n{payload}\n```")[0] is True, "space before tag"
+    assert scorer._has_pasted_payload(f"```json \n{payload}\n```")[0] is True, "space after tag"
+    assert scorer._has_pasted_payload(f"```json\r\n{payload}\r\n```")[0] is True, "CRLF transcript"
+    # Widening the fence must not start counting the verbatim cases it deliberately excludes.
+    diff = "``` diff\n" + "\n".join(f"-old {i}\n+new {i}" for i in range(60)) + "\n```"
+    assert scorer._has_pasted_payload(diff) == (False, 0)
+
+
 def test_an_unreadable_sidechain_flag_is_reported_not_absorbed(tmp_path: Path) -> None:
     """If the schema stops setting isSidechain, both classifiers read zero and 'agree'.
 

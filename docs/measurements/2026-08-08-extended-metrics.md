@@ -43,8 +43,10 @@ That is the baseline's own reproduce command with one character changed: the `--
 `--exclude` is the transcript of the ideation session, kept identical so the nine original
 metrics are computed over exactly the corpus the baseline saw.
 
-Tests: `python3 -m pytest tests/test_output_style_scorer.py -q` (43 tests; 29 of them predate
-this work and still pass unchanged).
+Tests: `python3 -m pytest tests/test_output_style_scorer.py -q` (56 tests; 29 of them predate
+this work and still pass unchanged). The count grew twice after this measurement was taken: to 54
+with the code review's malformed-record and style-versus-instrument suites, then to 56 with the
+two council-review findings recorded at the end of this document. Neither round moved a metric.
 
 ## The nine original metrics reproduced exactly
 
@@ -108,6 +110,11 @@ a message inside the window, which is what the identical corpus counts demonstra
 count is a new field rather than a new fact: records with no usable timestamp were always skipped,
 and are now counted separately from `lines_unparsed` so that skipping them cannot be misread as a
 corpus-integrity problem. None of them is an assistant message, so no metric population is affected.
+
+One correction to that paragraph, from the council review recorded below: "always skipped" was true
+of a record with an *absent* timestamp and not of one carrying a string that fails to parse, which
+fell through both branches into the corpus. It is true as written only from that fix onward. The
+number is unaffected either way — the corpus holds zero such records, measured.
 
 ### What was removed from both artifacts, and why it is not a regeneration
 
@@ -242,3 +249,37 @@ row it does carry was computed the same way.
 - `tests/test_output_style_scorer.py::test_the_nine_baseline_metrics_are_unchanged_on_the_same_input`
   asserts the nine come back first, in order, with frozen counts on a fixed synthetic corpus, so
   none can be renamed, reordered, or redefined by a later edit.
+
+## Two later detector fixes, and the proof neither moved a number
+
+An automated council reviewer on pull request 705 found two defects in the instrument after this
+measurement was taken. Both are real, both were verified by reading the code rather than accepted on
+the reviewer's word, and both were measured on the frozen window before either was changed.
+
+**A string timestamp that is not a date fell through into the corpus.** `_scan_lines` tested
+`isinstance(stamp, str)` to decide whether the record had a stamp at all, then parsed it. A record
+carrying `timestamp: "not-a-date"` passed the first test and failed the parse, leaving `when` as
+`None` — so the window comparison was skipped and no branch dropped the record. It entered the
+corpus unfiltered by `--since`/`--until` and left `records_without_timestamp` unchanged, so nothing
+reported that it had happened. The fix collapses both cases into one test on `when is None`.
+
+**The payload-fence detector could not see ` ``` json`.** `PAYLOAD_FENCE_RE` required the language
+tag to sit flush against the backticks, while `MERMAID_RE` and `VISUAL_RE` in the same file already
+tolerated whitespace. A pasted subagent return written with one space read as zero payload.
+
+**Measured incidence on the frozen 2026-07-03 to 2026-08-07 window: zero and zero.** A probe walked
+the same roots before either fix and counted 0 unparseable string timestamps and 0 messages that a
+whitespace-tolerant fence would catch and the shipped one would miss. Neither fix could therefore
+move a committed number, and the control run proves it did not: the scorer was run over one corpus
+twice, once with the pre-fix code and once with the post-fix code, and all eleven metrics came back
+with identical numerator, denominator and percent. Every corpus population — 407 sessions, 14,787
+main-thread prose messages, 128,622 subagent messages, 842 genuine human messages — was identical
+too. The only field that differed, `records_without_timestamp` at 97,600 against 97,595, differed in
+the direction of run order rather than of the fix: the control ran second, and this live session
+appended five records between the two runs.
+
+This is the same discipline the closing-ask widening was held to earlier in this document, and it
+reached the opposite conclusion — there the detector change moved a frozen metric by five turns and
+the movement is disclosed above; here it moved nothing, and the proof is recorded rather than
+assumed. The distinction matters: "the fix is obviously harmless" is not evidence, and a detector
+change after a baseline is captured is exactly the class of edit that silently breaks a comparison.

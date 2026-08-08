@@ -21,6 +21,26 @@
 
 ## 2026-08-08
 
+### A type check used as a validity check splits into three cases, and the third belongs to neither branch  {#a-type-check-is-not-a-validity-check}
+
+**Context.** `tools/output_style_scorer.py` filters every transcript record against a date window before scoring it. The filter was written as one `if isinstance(stamp, str) / else`, which reads as an exhaustive pair: either the record has a timestamp or it does not.
+
+**Evidence.** It is not a pair, it is a triple — absent, present-and-parseable, and present-and-garbage. A record carrying `timestamp: "not-a-date"` took the `isinstance` branch, failed `datetime.fromisoformat`, and left `when` as `None`. The two remaining statements in that branch were both guarded on `when is not None`, so neither fired. Control fell out of the `if` and straight on into the scoring body: the record entered the corpus **unfiltered by `--since`/`--until`**, and because the `else` branch never ran it did not increment `records_without_timestamp` either. A record outside the measured window could be scored, and nothing anywhere reported it. Found by an automated council reviewer on pull request 705, not by the three human-directed review rounds that preceded it.
+
+**Mechanism.** `isinstance(stamp, str)` was standing in for "this record has a usable timestamp", and those are different questions. The type test answers whether parsing is *worth attempting*; only the parse answers whether it *worked*. Writing the branch on the cheaper question makes the failure of the expensive one land in a gap between branches — and a gap between branches has no code in it, so it has no counter in it either.
+
+**Fix.** Compute `when` first, then branch once on `when is None`, which is the actual question. Both the absent and the garbled case now increment the same counter and skip.
+
+**Validation.** Measured before changing anything: 0 unparseable string timestamps across both roots on the frozen 2026-07-03 to 2026-08-07 window, so no committed number could move. Proven after: the scorer was run twice over one corpus, once with each version of the code, and all eleven metrics returned identical numerator, denominator and percent. `tests/test_output_style_scorer.py::test_a_timestamp_that_is_a_string_but_not_a_date_is_excluded_and_counted` pins it.
+
+**What surprised.** The bug had a counter pointed directly at it that read zero. `records_without_timestamp` exists precisely to make skipped records visible, and a record skipping the skip-counter is invisible in exactly the way the counter was added to prevent. A zero on a diagnostic field is only evidence when you know the field is on every path that should reach it.
+
+**Generalizable rule.** When a branch tests a value's *type* and then tries to *interpret* it, the interpretation can fail inside the branch, and the else-branch will not catch it. Branch on the interpreted result instead of the raw one. The tell is any `if isinstance(x, T):` whose body contains a `try` — that shape has three outcomes and two branches, and the missing one is always the silent one.
+
+**Refs.** `tools/output_style_scorer.py` (`_scan_lines`); `docs/measurements/2026-08-08-extended-metrics.md` ("Two later detector fixes"); [[empty-input-makes-a-guard-vacuous]]; [[test-the-rule-against-its-own-instrument]].
+
+---
+
 ### A comment-only edit to a bridge plugin costs a real external run, because two correct gates compose into one  {#a-docs-only-bridge-edit-costs-an-external-run}
 
 **Context.** Issue #704 copied a presentation contract into 36 agent-definition files. Two of them belong to the `agy` plugin, the fleet's only bridge to an external engine (Antigravity). The added text is inert prose: it changes what a spawned agent is told, and touches no code path in `plugins/agy/scripts/agy_delegate.py`.

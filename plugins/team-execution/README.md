@@ -17,19 +17,17 @@ progression and remain visible through the derived dead-letter view until explic
 Validators are available as a roster. They are selected by task context; they are not spawned
 all at once.
 
-Every worker, reviewer, and validator Agent call is admitted by Saga's installed fleet lease hook.
-Phase B runs the packaged lease preflight before the first call, renews the trusted session at wave
-and result-collection boundaries, and releases only after Step B8 has explicit terminal evidence for
-every child. Missing or protocol-skewed fleet-core installs halt; timeout and silence never free
-capacity. The complete operator contract is in
-[`lease-protocol.md`](skills/team-execution/references/lease-protocol.md).
+Every worker, reviewer, and validator Agent call is scheduled via the file-disjoint
+frontier — no lease broker is consulted. Waves are validated at emit time for file
+disjointness; the coordinator records the run identity and drives the lifecycle without
+a lease preflight, renewal, or release. The complete operator contract is in the
+skill's Phase B orchestration.
 
 Every observed terminal path — success, hard-fail, operator abort, andon — enters the
-non-skippable Step B8 teardown: the run's owner admission closes in the broker, typed
-adapters stop residents and owned subprocesses, release leases, and sweep dead-owner
-worktrees, and only a zero-open receipt lets the run be called complete. A crashed or
-killed coordinator is reclaimed by bounded SessionEnd/SessionStart recovery after lease
-expiry and dead-owner proof. The executable contract is in
+non-skippable Step B8 teardown: typed adapters stop residents and owned subprocesses,
+and only a zero-open receipt lets the run be called complete. A crashed or killed
+coordinator is reclaimed by bounded SessionEnd/SessionStart recovery after a short
+delay. The executable contract is in
 [`teardown-reclamation.md`](skills/team-execution/references/teardown-reclamation.md).
 
 ---
@@ -163,7 +161,6 @@ remediation loops, and final gate status.
 - `team-execution/skills/team-execution/references/validator-evidence-state.md`
 - `team-execution/skills/team-execution/references/validator-spawn-quirks.md`
 - `team-execution/skills/team-execution/references/external-engine-workers.md`
-- `team-execution/skills/team-execution/references/lease-protocol.md`
 - `team-execution/skills/team-execution/references/teardown-reclamation.md`
 - `team-execution/skills/team-execution/references/artifact-pointers.md`
 - `team-execution/skills/team-execution/references/andon-cord.md`
@@ -192,7 +189,6 @@ team-execution/
 │           ├── validator-registry.md
 │           ├── validator-spawn-quirks.md
 │           ├── external-engine-workers.md
-│           ├── lease-protocol.md
 │           └── artifact-pointers.md
 ├── agents/
 │   ├── devils-advocate-reviewer.md

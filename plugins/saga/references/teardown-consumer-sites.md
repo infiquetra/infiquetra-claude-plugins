@@ -15,9 +15,9 @@ closing, lease release, and the sweep reaper — are gone from this surface.
 
 | boundary | run-open | worktree census | terminal driver | action owner | disposition | recovery | proof |
 |---|---|---|---|---|---|---|---|
-| Team Phase B0 | `lease_protocol.py open-run` (resolves `team_teardown.py open-run`) | n/a | n/a | root session | n/a | n/a | `run-opened` fact with session + repository identity digest |
+| Team Phase B0 | file-disjoint run-open (no lease broker) | n/a | n/a | root session | n/a | n/a | `run-opened` fact with session + repository identity digest |
 | Outcome worktree provisioning | outcome dispatch identity | registry entry written by `outcome_worktrees.register` | n/a | outcome coordinator | reported by B8, never removed | out-of-band removal + manual reclamation (#677) | registry entry + `git worktree list` |
-| Every observed terminal (success / hard-fail / operator-abort / andon) | existing run | every registered worktree in this repository | `lease_protocol.py reclaim-all` → `team_teardown.reclaim_all` | root session | `retained` (git lists it) / `already-absent` (git no longer lists it — the re-defined meaning) | armed on retained/failed | `teardown-intent` … `teardown-complete` chain |
+| Every observed terminal (success / hard-fail / operator-abort / andon) | existing run | every registered worktree in this repository | `team_teardown.reclaim_all` | root session | `retained` (git lists it) / `already-absent` (git no longer lists it — the re-defined meaning) | armed on retained/failed | `teardown-intent` … `teardown-complete` chain |
 | SessionEnd | existing run | n/a | `request` only (no actions) | Saga hook (5 s) | none | later pass | `teardown-intent` fact — request evidence, never closure |
 | SessionStart startup/resume | existing runs | `live_worktrees` per outcome registry | `recover --expired-only --max-actions 4` | Saga hook (15 s) | report-only, same adapters | this is the recovery seam; skips runs with git-listed worktrees | `recovery-observation` + absence evidence |
 | Explicit operator CLI | existing runs | same census | `status` / `request` / `reclaim-all` / `recover` | operator | report-only | bounded batches on request | `team_teardown.v1` projection |

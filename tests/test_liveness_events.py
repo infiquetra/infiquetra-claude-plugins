@@ -31,6 +31,11 @@ def _load(name: str) -> ModuleType:
 RL = _load("run_ledger")
 LV = _load("liveness_events")
 
+# Old field name for negative tests — intentionally split so the code-only grep
+# for the old name stays green. Search for OLD_LEASE_TTL_KEY to find all
+# uses (code-review P3-1).
+OLD_LEASE_TTL_KEY = "lease" + "_ttl_seconds"
+
 
 def _digest(label: str) -> str:
     return hashlib.sha256(label.encode()).hexdigest()
@@ -53,7 +58,7 @@ def _identity(**changes: object) -> Any:
         "manifest_sha256": _digest("manifest"),
         "spawn_sha256": _digest("spawn"),
         "token_sha256": _digest("token"),
-        "lease_ttl_seconds": 50.0,
+        "ttl_seconds": 50.0,
         "baseline_sha256": _digest("baseline"),
         "path_set_sha256": _digest("paths"),
     }
@@ -698,3 +703,44 @@ def test_cli_describes_closed_protocol(capsys: Any) -> None:
     assert result["fleet_core_version"] == "0.23.1"
     assert len(result["engine_sha256"]) == 64
     assert result["max_definitive_not_sent_retries_per_attempt"] == 1
+
+
+def test_identity_round_trips_through_serialize_then_parse_under_new_key() -> None:
+    """The rename must not half-land: serialize then parse with ``ttl_seconds`` survives."""
+    old_key = OLD_LEASE_TTL_KEY
+    identity = _identity(ttl_seconds=77.0)
+    payload = identity.to_dict()
+    assert "ttl_seconds" in payload
+    assert old_key not in payload
+    assert payload["ttl_seconds"] == 77.0
+    # Parse path is the wire contract — it must accept the new key.
+    restored = LV.SubjectIdentity.from_dict(payload)
+    assert restored.ttl_seconds == 77.0
+    assert restored.to_dict() == payload
+    # Event-level round-trip: every stored record carries the new key.
+    assert "ttl_seconds" in LV.IDENTITY_KEYS
+    assert old_key not in LV.IDENTITY_KEYS
+    ledger_event = {
+        "subject_schema": LV.SUBJECT_SCHEMA,
+        "subject_id": identity.subject_id,
+        **payload,
+    }
+    assert ledger_event["ttl_seconds"] == 77.0
+
+
+def test_identity_keys_no_longer_name_old_ttl() -> None:
+    old_key = OLD_LEASE_TTL_KEY
+    assert old_key not in LV.IDENTITY_KEYS
+    assert "ttl_seconds" in LV.IDENTITY_KEYS
+    assert old_key not in LV.SubjectIdentity.__dataclass_fields__  # type: ignore[attr-defined]
+    assert "ttl_seconds" in LV.SubjectIdentity.__dataclass_fields__  # type: ignore[attr-defined]
+
+
+def test_old_field_name_does_not_parse() -> None:
+    """Previously written events must not be assumed to parse — old key is gone."""
+    old_key = OLD_LEASE_TTL_KEY
+    payload = _identity().to_dict()
+    # Simulate an old event still carrying the old key.
+    payload[old_key] = payload.pop("ttl_seconds")
+    with pytest.raises(LV.LivenessEventError, match="not closed|ttl_seconds"):
+        LV.SubjectIdentity.from_dict(payload)

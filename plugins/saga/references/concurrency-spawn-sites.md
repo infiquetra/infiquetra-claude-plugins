@@ -38,11 +38,12 @@ cell kept the lease hook's claim seam at that point; U5 retired it with the hook
 
 **#677/U5 re-key:** the lease lifecycle hook and the saga broker wrapper are deleted whole, and
 their manifest registrations are removed in the same commit. Every remaining lease cell in this
-table — the bind cell of the two `execution_spec.py` rows, all four lease cells of the
-`hooks.json` row (its admission governor included), and the reserve/bind cells of the
-team-execution row — becomes `retired:broker-free-(#677/U5)`. Normal Agent/Task spawns carry no
-lease admission at all now; the team-execution row keeps its session-level renewal/release cells
-until U6 retires that protocol. The emergency kill switch retires with the hook: the doc review
+table — the bind cell of the two `execution_spec.py` rows and all four lease cells of the
+`hooks.json` row (its admission governor included) — becomes `retired:broker-free-(#677/U5)`. Normal
+Agent/Task spawns carry no lease admission at all now. **#677/U6 re-key:** the team-execution lease
+protocol is deleted whole — the `lease_protocol.py` row is removed; no team-execution file is
+spawned through the broker. Normal team-execution waves are file-disjoint and carry no renewal or
+teardown lease lifecycle. The emergency kill switch retires with the hook: the doc review
 of #677 measured exactly one reader, and the `INFIQUETRA_FLEET_LEASE_ENFORCEMENT` variable now
 has none in this repository.
 
@@ -51,7 +52,6 @@ has none in this repository.
 | `plugins/saga/scripts/execution_spec.py` | `_emit_panel_reconciliation` | verify-panel verdict agents | `concurrency_governor.ordered_chunks` | `agent` | `retired:broker-free-(#677/U4)` | `retired:broker-free-(#677/U5)` | `retired:broker-free-(#677/U4)` | `retired:broker-free-(#677/U4)` |
 | `plugins/saga/scripts/execution_spec.py` | `emit_workflow_script` | dependency-layer worker agents | `concurrency_chunks` | `agent` | `retired:broker-free-(#677/U4)` | `retired:broker-free-(#677/U5)` | `retired:broker-free-(#677/U4)` | `retired:broker-free-(#677/U4)` |
 | `plugins/saga/hooks/hooks.json` | `Agent|Task` | normal Saga Agent and Task calls | `retired:broker-free-(#677/U5)` | `agent` | `retired:broker-free-(#677/U5)` | `retired:broker-free-(#677/U5)` | `retired:broker-free-(#677/U5)` | `retired:broker-free-(#677/U5)` |
-| `plugins/team-execution/skills/team-execution/scripts/lease_protocol.py` | `team-execution-fan-out` | worker reviewer and validator waves | `concurrency_policy.AdmissionLimits` | `agent` | `retired:broker-free-(#677/U5)` | `retired:broker-free-(#677/U5)` | `lease_protocol.renew` | `lease_protocol.teardown` |
 | `plugins/saga/scripts/engine_dispatch.py` | `_dispatch_once` | registered external-engine runner | `retired:broker-free-(#677/U3)` | `agent` | `retired:broker-free-(#677/U3)` | `not-applicable:in-process-adapter` | `retired:broker-free-(#677/U3)` | `saga.close-receipt.v1:mint` |
 | `plugins/saga/scripts/outcome.py` | `_reconcile_once` | outcome backend dispatch | `retired:broker-free-(#677/U3)` | `agent` | `retired:broker-free-(#677/U3)` | `not-applicable:in-process-adapter` | `retired:broker-free-(#677/U3)` | `retired:broker-free-(#677/U3)` |
 | `plugins/saga/scripts/outcome_worktrees.py` | `ensure_worktree` | outcome-owned git worktree | `WORKTREE_CAP` | `worktree` | `registry.register` | `not-applicable:registry-entry` | `retired:broker-free-(#677/U3)` | `reap_worktree.deregister` |

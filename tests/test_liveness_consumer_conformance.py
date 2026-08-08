@@ -91,12 +91,13 @@ def test_team_skill_has_executable_preflight_event_poll_claim_and_stage_commands
 def test_every_required_poll_boundary_is_in_skill_reference_and_inventory() -> None:
     combined = "\n".join((_read(SKILL), _read(REFERENCE), _read(INVENTORY)))
     for boundary in (
-        "lease renewal",
         "Agent/SendMessage",
         "dependency",
         "B2",
     ):
         assert boundary in combined
+    # U6 retired the lease broker — lease renewal is no longer a poll boundary.
+    assert "lease renewal" not in combined
     assert "no always-on daemon" in combined
 
 

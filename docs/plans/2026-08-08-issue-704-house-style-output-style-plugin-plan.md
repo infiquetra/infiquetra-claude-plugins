@@ -27,14 +27,20 @@ has its own `R1`–`R36`, which this plan always cites as "requirements-document
 
 ## Problem Frame
 
-Two measured facts drive the work, both re-derived from `docs/measurements/2026-08-07-baseline.json`
-rather than carried across document hops.
+Two measured facts drive the work. Both were re-derived here from
+`docs/measurements/2026-08-07-baseline.json` rather than carried across document hops: 11/407 sessions
+is 2.7027%, and 128,622/225,579 assistant messages is 57.0186%.
 
 **Output does not answer the operator's actual question.** The two dominant prompt modes are
 approval-or-continuation and status-check, which are the same question — *is this waiting on me?* Across
-35 days only **2.70%** of sessions end on a line that answers it. All ten responses that drew a
-satisfied reply ended with a single concrete ask; five of nine traced complaints ended on a trailing
-aside. Placement discriminates; length and formatting do not.
+35 days only **2.70%** of sessions end on a line that answers it.
+
+A second, weaker piece of evidence points the same way and is labelled rather than blended in: all ten
+responses that drew a satisfied reply ended with a single concrete ask, and five of nine traced
+complaints ended on a trailing aside. That pair comes from a **hand-labelled sample in the requirements
+document**, not from the baseline file — the baseline's two complaint metrics are explicitly keyword
+proxies, not the hand-labelled rate. Nineteen cases cannot carry a rate. They are read as direction
+only: placement discriminates, length and formatting do not.
 
 **A style reaches less than half the output.** Claude Code's documentation is explicit: "Output styles
 apply to the main conversation only: a subagent runs its own system prompt, so styles don't change how
@@ -59,6 +65,15 @@ assumed. Where a fact contradicts the requirements document, the plan says so.
 | The emitter's prompt funnel | `plugins/saga/scripts/execution_spec.py:3244` | `_agent_prompt(spec, unit)` — the single site, already the home of `BUDGET_RIDER` |
 | Marketplace state | `.claude-plugin/marketplace.json` | 11 plugins, metadata version `3.0.0`; each entry duplicates the plugin's `version` |
 | Existing drift guards | `tests/` | `test_release_surface_parity.py`, `test_agent_registration_drift.py` |
+| Where agent definitions are loaded from | `~/.claude/plugins/installed_plugins.json` | A **versioned cache**, `~/.claude/plugins/cache/infiquetra-plugins/<plugin>/<version>/` — saga is installed at `0.131.0`. Never the working tree |
+| Scorer test count | `pytest --collect-only tests/test_output_style_scorer.py` | 29 collected. A `grep -c "def test_"` undercounts to 21 because tests are parametrized |
+| Baseline metric count | `docs/measurements/2026-08-07-baseline.json` | 9 metrics, so U7's "the nine existing metrics" is exact |
+
+**The load path is the plan's sharpest execution hazard.** A file written to `plugins/<p>/agents/<a>.md`
+in the working tree is *not* a loadable agent. It becomes one only after commit, push, a
+`/plugin marketplace update infiquetra-plugins`, a version bump that installs a new cache directory,
+and a new session. This is the same stale-cache behaviour that has previously left this repository's
+hooks inert while their source sat correct in the working tree. U1's method is written around it.
 
 **One correction the plan carries.** The requirements document's Actors section says a style governs
 only the main thread. The documentation adds an exception it does not mention: *"A fork is the
@@ -130,10 +145,23 @@ here** and recorded as follow-up work, because it changes what the style file as
 and should be decided after the two mechanical levers are proven, not bundled with them. Naming it as
 deferred is the point; absorbing it silently is the failure mode this whole document exists to avoid.
 
-**KTD6 — Release surfaces land in one unit at the end.** The preamble duplication touches 9 plugins, so
-9 `plugin.json` versions, 9 `CHANGELOG.md` files, and 11 `marketplace.json` entries move. Spreading
-that across units puts several agents in `marketplace.json` at once, which the emitter halts on and no
-backend can make safe. *Rejected:* each unit bumping its own surfaces.
+**KTD6 — Release surfaces land in one unit at the end.** The preamble duplication touches 9 plugins,
+which moves 9 `plugin.json` versions and 9 `CHANGELOG.md` files; `house-style`'s own two make 10 of
+each. In `.claude-plugin/marketplace.json`, 9 entries are re-versioned and 1 is added, taking the file
+from 11 entries to 12. Spreading that across units puts several agents in `marketplace.json` at once,
+which the emitter now halts on because every unit declares its files. *Rejected:* each unit bumping its
+own surfaces.
+
+**KTD7 — Exactly one unit carries a verify panel, and it is U5.** A refute-3 majority panel judges the
+emitter stamp and nothing else. The choice is about blast radius rather than difficulty: U5 is the only
+unit whose failure escapes this repository, because `execution_spec.py` composes the prompt for every
+agent every saga workflow spawns everywhere. The panel runs at the unit's own opus/high tier, which is
+saga's documented default and matches the rule that adversarial review is Opus-tier work.
+*Rejected:* a panel on every unit — 254 ordinal spend becomes several times that to scrutinise units
+whose worst failure is a bad Markdown file caught by the next unit's tests. *Rejected:* a cheaper panel
+tier — a verifier below the unit it judges cannot reliably refute it, and the receipt fields exist to
+make that escalation deliberate rather than casual. *Rejected:* a wider panel — refute-3 is the
+operator cap for agents above Haiku, and the emitted script is where that cap is actually honoured.
 
 ## Implementation Units
 
@@ -141,15 +169,46 @@ Nine units. U1 gates everything; U9 closes everything.
 
 ### U1. Prove both levers by experiment
 
-Create a throwaway agent definition carrying a distinctive marker, spawn that agent type, and check
-whether the marker reaches its output. Then add a throwaway rider in `_agent_prompt()`, emit a workflow
-script, run one unit through it, and check the same way. Record both results — including the exact spawn
-invocation and the raw output excerpt — in `docs/evidence/issue-704/lever-experiment.md`.
+**Lever A — does an agent definition file's body govern the agent it defines?** Do **not** write a
+throwaway definition into the working tree and try to spawn it. Grounding established that agent
+definitions load from the versioned plugin cache, so a working-tree file is invisible to the runtime and
+the marker is guaranteed not to appear. That is a false negative, and this unit's own hard stop would
+turn it into a halt for a reason that has nothing to do with the lever.
 
-**Blocking behaviour:** if either marker fails to appear, stop the run, write the finding, and reopen
-the requirements document's R27 blocker. Do not adapt the plan around a lever that does not work.
+Prefer the method that needs no writes at all: pick an installed agent whose definition makes a
+**falsifiable behavioural commitment**, and check whether the agent honours it.
+`saga:mechanical-executor` is the clean case — its definition says it rejects unknown operations with a
+clear error rather than guessing. Dispatch an unknown op. A definition-shaped rejection is direct
+evidence that the definition body reaches the spawned agent, which is exactly the property the R9 lever
+depends on. *Fallback if that is inconclusive:* write the marker into the **installed** copy under
+`~/.claude/plugins/cache/infiquetra-plugins/<plugin>/<version>/agents/`, spawn, observe, and restore the
+file byte-for-byte. Record which method was used.
 
-**Files:** `docs/evidence/issue-704/lever-experiment.md`; throwaway files removed before the unit ends.
+**Lever B — does a rider added at the emitter funnel reach emitted `agent()` prompts?** Add a throwaway
+rider in `_agent_prompt()`, emit a workflow script from any existing spec, and grep the emitted script.
+Do **not** try to execute the emitted workflow: a workflow cannot be launched from inside a workflow
+agent, and the reach claim is about the prompt text reaching the subagent, which the emitted script
+demonstrates directly.
+
+Record both results — the exact invocation, the raw output excerpt, and a PASS/FAIL — in
+`docs/evidence/issue-704/lever-experiment.md`.
+
+**Blocking behaviour, and the one distinction that matters.** If either marker fails to appear, stop the
+run, write the finding, and reopen the requirements document's R27 blocker. Do not adapt the plan around
+a lever that does not work. **But separate a harness failure from a lever failure before halting.** "The
+definition was never loaded", "the agent type could not be resolved", and "this runtime does not permit
+the spawn at all" are all statements about the test, not about the lever. Report those as
+`status: inconclusive` with what was tried, and halt for an operator decision — do not record them as a
+disproof, and do not record them as a pass either.
+
+**Unverified assumption this unit resolves first.** Whether an agent running inside a workflow can spawn
+another agent at all is not documented anywhere in this repository and was not established during
+planning. If it cannot, Lever A's spawn-based methods are unavailable from this backend and the unit
+reports `inconclusive` rather than failure.
+
+**Files:** `docs/evidence/issue-704/lever-experiment.md`. Any throwaway edit — to the emitter or to an
+installed cache copy — is reverted before the unit ends; the evidence document is the only artifact that
+survives.
 
 **Test expectation:** the evidence document is the artifact. No repository test — the experiment
 observes runtime behaviour that no unit test can reach.
@@ -200,7 +259,11 @@ Claude Code expects (`output-styles/` at plugin root, not under `.claude-plugin/
 **Test scenarios:** the file itself is the deliverable; it must fail if the frontmatter, the placard, or
 the tell is removed, which the unit demonstrates by mutating each and observing the failure.
 
-**Depends on:** U3.
+**Depends on:** U3, U5, U6, U8 — and the last three are a real dependency, not scheduling padding. This
+unit proves each assertion by temporarily *stripping* the contract from the style file and confirming
+the test goes red. While that mutation is in place the style file is deliberately broken, so no unit
+that reads it can be in flight. U5, U6 and U8 all consume the canonical preamble beside it, so U4 runs
+after all three land.
 
 ### U5. Stamp the preamble into saga's emitter
 
@@ -218,6 +281,27 @@ repository. A malformed rider degrades all of them. The unit's first action is r
 **Test scenarios:** an emitted script contains the rider in every `agent()` prompt; the rider text is
 byte-identical to the canonical preamble file; the existing `execution_spec.py` suite still passes; a
 spec with zero units emits without error.
+
+**Verified by a refute-3 panel (the only unit that carries one).** Three adversarial verifiers judge
+U5's result under `pass_rule: majority`, so two refutations halt the run before U4 and U9 ever start.
+The panel exists because this unit has the largest blast radius in the plan and because this project has
+already produced two wrong claims from unverified inference. The three questions the panel attacks are
+named in U5's own prompt and each has a dedicated return field, so the unit must answer them with
+evidence rather than assertion:
+
+| Lens | The question | The return field that must carry its evidence |
+| --- | --- | --- |
+| 1. Double-application | Does the rider reach any emitted prompt more than once through the three `_agent_prompt()` call sites at lines 2241, 3215, 3953? | `rider_occurrences_per_call_site` — a per-site count, not an assertion |
+| 2. Panel exclusion | Do verifier prompts change, when they are deliberately excluded? | `verifier_prompts_byte_identical` — a diff of a panel-bearing spec's emission before and after |
+| 3. Unrelated regression | Does the existing suite still pass for workflows with nothing to do with this feature? | `suite_pass_count_before_and_after` — two numbers from two actual runs |
+
+**One limitation, stated rather than papered over.** These are three questions asked of all three
+verifiers, not three specialised verifiers. Saga's emitter builds every verifier prompt from
+`_verifier_prompt(unit)`, whose per-member emitter `_emit_verifier_member(_index)` ignores its index —
+so the N prompts in a panel are byte-identical by construction and a per-verifier lens is not
+expressible in the spec format. Naming the lenses in the unit's return contract buys lens *coverage*;
+lens *specialisation* would need a change to `execution_spec.py`, which is this unit's own target file
+and therefore out of scope while U5 needs a clean baseline of it.
 
 **Depends on:** U3.
 
@@ -277,9 +361,12 @@ annotation's exact text in the repository so it can be reconstructed.
 
 ### U9. Release surfaces, journal, and the ceiling sweep
 
-Bump `plugin.json` and `CHANGELOG.md` for `house-style` and for each of the 9 plugins U6 touched; add
-the `house-style` entry to `.claude-plugin/marketplace.json` with a matching version; write the
-`LEARNINGS` and `DECISIONS` entries; and sweep every artifact for a reach claim above 45.7%.
+Move every release surface, then write the journal, then sweep. **`house-style` is released, not
+bumped:** U2 created it at `0.1.0` and it ships at `0.1.0`, with a CHANGELOG describing that initial
+release. The 9 plugins U6 touched are the ones that get a version *bump* and a new CHANGELOG entry,
+because their agent definitions changed. Add the `house-style` entry to
+`.claude-plugin/marketplace.json` with a version matching its `plugin.json`; write the `LEARNINGS` and
+`DECISIONS` entries; and sweep every artifact for a reach claim above 45.7%.
 
 **Files:** `.claude-plugin/marketplace.json`, 10 `plugin.json` files, 10 `CHANGELOG.md` files,
 `docs/engineering-journal/LEARNINGS.md`, `docs/engineering-journal/DECISIONS.md`.
@@ -293,25 +380,53 @@ labelled as the superseded figure.
 
 ## Dependency waves
 
-| Wave | Units | Concurrency |
-| --- | --- | --- |
-| 1 | U1 | 1 |
-| 2 | U2, U7 | 2 |
-| 3 | U3 | 1 |
-| 4 | U5, U6, U8 | 3 |
-| 5 | U4 | 1 |
-| 6 | U9 | 1 |
+| Wave | Units | Authored concurrency | Emitted concurrency |
+| --- | --- | --- | --- |
+| 1 | U1 | 1 | 1 |
+| 2 | U2, U7 | 2 | 1 |
+| 3 | U3 | 1 | 1 |
+| 4 | U5, U6, U8 | 3 | 1 |
+| 4a | U5's refute-3 panel | 3 | 1 |
+| 5 | U4 | 1 | 1 |
+| 6 | U9 | 1 | 1 |
 
-Maximum concurrent width is 3, at the session cap. No two units in any wave declare the same file: U5
-owns `execution_spec.py`, U6 owns `plugins/*/agents/*.md`, U8 owns `~/.claude/CLAUDE.md` and the
-LEARNINGS provenance entry. U8 and U9 both touch `docs/engineering-journal/LEARNINGS.md` but land in
-different waves.
+**Authored width and emitted width are different numbers, and only the second one runs.** The authored
+maximum is 3, at the session cap of 3 concurrent agents when any is above Haiku. The emitted workflow
+resolves every wave to a width of 1: each unit is its own `await parallel([...])` of a single thunk, and
+the refute-3 panel emits as three sequential chunks (`concurrency chunk 1/3`, `2/3`, `3/3`) rather than
+one wave of three. Nothing in this run ever puts more than one agent in flight, which is under the cap
+rather than at it. Do not read the authored column as a claim about what executes.
+
+The panel is emitted after wave 4 completes, not inside U5's thunk, so no unit is in flight beside a
+verifier. Its refutation gate is a `throw`, so U4 and U9 cannot run on a refuted U5.
+
+**The no-collision claim is machine-checked, and it was not before.** Every unit declares its files in
+the execution spec — 76 paths across the nine units, including all 36 agent definitions enumerated by
+name — and `assert_no_wave_file_conflicts` compares them pairwise within each authored wave at emit
+time. Emission fails rather than warns. The check was previously vacuous: no unit declared any file, so
+the guard compared empty sets and passed for a reason unrelated to safety. It was verified non-vacuous
+by deliberately making U6 and U8 declare a shared path, which failed emission with
+`wave 4: U6 and U8 both declare plugins/saga/agents/readonly-verifier.md`.
+
+The real spec passes: U5 owns `execution_spec.py`, U6 owns the 36 agent definitions, U8 owns
+`~/.claude/CLAUDE.md` and the LEARNINGS provenance entry. U8 and U9 both touch
+`docs/engineering-journal/LEARNINGS.md`, and U2 and U9 both touch house-style's `plugin.json` and
+`CHANGELOG.md`, but each of those pairs lands in different waves.
+
+**Spend.** 254 ordinal, of which U5 accounts for 128 — 32 for the unit and 96 for three opus/high
+verifiers. The panel is 38% of the run's total spend, bought deliberately for the one unit whose failure
+degrades every saga workflow in every repository. No `cost_budget` and no `spend_envelope` are set: the
+runaway guard that matters here is U1's hard stop, which is enforced in the emitted script rather than
+described in prose.
 
 ## Risk Analysis & Mitigation
 
 | Risk | Likelihood | Mitigation |
 | --- | --- | --- |
 | A lever does not work | Real — never observed | U1 gates the run and stops on failure |
+| U1 halts the run on a broken test rather than a broken lever | Was near-certain before the doc-review; the original method wrote to the working tree, which the runtime never loads | U1 tests through the loaded plugin cache, and reports `inconclusive` — never a disproof — when the harness itself fails |
+| A workflow agent cannot spawn another agent, so Lever A is untestable from this backend | Unknown; undocumented in this repository | U1 resolves it as its first action and reports `inconclusive` rather than failing the lever |
+| The change is large for one pull request | Certain — roughly 70 files, mostly the 36 mechanical preamble copies | Accepted deliberately: the bulk is machine-checked by the byte-identity test, and the one genuinely risky edit is isolated in U5 behind a refute-3 panel |
 | The emitter rider degrades every saga workflow everywhere | Low, high impact | U5 establishes a green baseline first; the rider is additive text at one funnel |
 | The 36 copies drift | High over time | The byte-identity test, with an exact expected count so a new agent file cannot slip through |
 | The baseline is overwritten | Low, unrecoverable | R11, a hard stop in U7, and a `git diff --exit-code` check |
@@ -345,3 +460,12 @@ different waves.
   requirements-document R7 and R11 are authored in U3 rather than pre-decided here; they are design
   choices the unit makes and records, not gaps in the plan.
 - Whether forks inherit the style in a way that changes reach is unmeasured. No credit is claimed.
+- **When the two levers actually take effect.** Both edit the working tree, but the runtime loads
+  plugins from a versioned cache. The preamble reaches real subagents only after this work merges, the
+  plugin versions bump, `/plugin marketplace update infiquetra-plugins` runs, and a new session starts.
+  Nothing in this plan is wrong because of that, but "merged" and "in effect" are different events and
+  the after-measurement must be taken after the second one.
+- **Whether the emitter lever should ship separately.** At roughly 70 files this is a large pull
+  request, and the natural split is U5 — the one edit whose blast radius leaves this repository. It is
+  kept together deliberately, because splitting it costs a second round of the same U1 gate. Recorded so
+  the choice is visible rather than implicit.

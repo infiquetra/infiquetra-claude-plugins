@@ -41,6 +41,40 @@
 
 ## 2026-08-07
 
+### The `agents/` directory is a per-agent-type lever, not a global preamble  {#agents-dir-is-per-agent-type-not-a-preamble}
+
+**Context.** The output-styles requirements document (`docs/brainstorms/2026-08-07-output-styles-requirements.md`, requirement R27) proposed reaching the 57.02% of assistant output generated inside subagents by placing "a shared presentation preamble" in the `agents/` directory, reasoning that because `~/.claude-company/agents` symlinks to `~/.claude/agents`, "one edit governs both configurations." The premise is true and the conclusion does not follow.
+
+**Evidence.** `ls -ld ~/.claude-company/agents` → `-> /Users/jefcox/.claude/agents`, so the symlink is real. `ls -la ~/.claude/agents/` → **empty**. Every one of the 36 agent definitions in this repository (`plugins/*/agents/*.md`, frontmatter key census: 36 `name:`, 36 `description:`, 35 `model:`) is a single agent keyed by `name:`; see `plugins/saga/agents/readonly-verifier.md:1`. Every agent offered in a live session is namespaced by its plugin (`saga:readonly-verifier`, `agy:agy-coder`) or built into Claude Code (`Explore`, `general-purpose`, `Plan`) — none is sourced from `~/.claude/agents/`.
+
+**Mechanism.** A `.md` file in an `agents/` directory *registers one named agent*, addressable by `subagent_type`. There is no documented preamble semantic that prepends a file's contents to other agents' system prompts. So the symlink governs **file identity across the two configurations**, which is what was verified, and not **coverage across the subagents that run**, which is what R27 needed. The two are easy to conflate because both are naturally phrased "one edit governs both." Compounding it, the directory is empty, so the lever currently governs zero invocations — a file dropped there would create an agent nothing invokes, and the reach problem would look solved while remaining untouched.
+
+**Fix.** R27 rewritten to state the verified mechanism and its limit; Actor A3 rewritten to distinguish the three subagent levers by reach (`CLAUDE.md` reaches every subagent, an `agents/` file reaches only invocations naming that agent, a spawn prompt reaches only that spawn); the delivery route raised as the document's only *Resolve before planning* blocker with three candidate routes. Ideation's own survivor 10 had already answered it — "the agent preamble duplicates a block across N definition files" — and the requirements document had dropped both that duplication and the byte-identity test meant to police it. Review artifact: `docs/reviews/2026-08-07-output-styles-requirements-doc-review.md`.
+
+**What surprised.** The requirements document listed this fact under **Verified**, and the verification was real — someone did check the symlink. The check simply answered a narrower question than the requirement asked. A "Verified" label is only as strong as the match between the claim and the probe.
+
+**Generalizable rule.** When a document claims a config mechanism gives broad reach, verify the *reach*, not the *plumbing*. "Both configurations see the same file" and "all consumers obey that file" are different propositions, and confirming the first feels like confirming the second. Ask what a consumer must do to be governed: if it must name the file, the lever is opt-in per consumer, not global — and an empty directory is a strong tell that a lever governs nothing today.
+
+**Refs.** `docs/reviews/2026-08-07-output-styles-requirements-doc-review.md`, `docs/brainstorms/2026-08-07-output-styles-requirements.md` R27 + Actor A3, `docs/ideation/2026-08-07-output-styles-ideation.md:373` (survivor 10's downside), DECISIONS `{#output-styles-scorer-lives-at-repo-root}`.
+
+---
+
+### A measured claim escalates as it hops between documents  {#measured-claims-escalate-across-document-hops}
+
+**Context.** The output-styles requirements document opened its cost argument with "The worst single message in the corpus was 12,347 characters of literal unformatted JSON." Tracing it through the `ideate` → `brainstorm` pipeline showed the superlative was manufactured in transit rather than measured.
+
+**Evidence.** Three hops. Source, `docs/ideation/2026-08-07-output-styles-run/frame1-pain.md:137`: "**one of the three worst** was literal unformatted JSON (a subagent findings payload, 12,347 chars)." Synthesis, `docs/ideation/2026-08-07-output-styles-ideation.md:370`: "the **single worst** measured message in the corpus." Requirements: "The **worst single message** in the corpus." Independently, the same ideation document records `max 26,994` characters for response length at line 49 — more than twice 12,347 — so the superlative is refuted by a figure four hundred lines above it in its own file.
+
+**Mechanism.** Each hop compresses, and compression drops qualifiers before it drops nouns. "One of the three worst" carries a hedge that costs words and buys nothing rhetorically, so a summarizer reaching for a punchier opening sheds it. Nothing in the pipeline re-checks a figure against its source once it has been restated in a downstream document, and the restatement reads as more authoritative than the original because it is more confident. The error survives precisely because it is more quotable than the truth.
+
+**Fix.** Corrected to "the worst relay in the corpus … one of the three worst offenders on the mountain-of-text measurement," with the true maximum stated and the distinction made explicit: the fix targets undigested relay, not length. Same pass also labelled median 142 / p90 1,658 as unverified — the committed scorer computes no length percentiles, and the same class of throwaway script produced ideation's mountain-of-text rate of 0.25%, which the instrument later corrected to 1.16%, a factor of 4.7.
+
+**Generalizable rule.** Superlatives are the highest-risk tokens in a derived document — "the worst", "the only", "the first" — because they are the compression artifact a summarizer reaches for and the claim a reader is least likely to challenge. When reviewing a document produced by a pipeline, grep its superlatives and walk each one back to the primary source, not to the intermediate that restated it. A number that arrives without a hedge is not the same as a number that never had one.
+
+**Refs.** `docs/reviews/2026-08-07-output-styles-requirements-doc-review.md` finding D6, `docs/measurements/2026-08-07-baseline.md` (its own reconciliation table records the 0.25% → 1.16% correction of the same shape).
+
+---
+
 ### Acceptance greps must exclude the historical record  {#acceptance-greps-must-exclude-the-historical-record-682}
 
 **Context.** Issue #682 (campaign #677 unit U5) carries the acceptance criterion

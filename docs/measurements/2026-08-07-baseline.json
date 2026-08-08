@@ -1,0 +1,137 @@
+{
+  "schema": 1,
+  "window": {
+    "since": "2026-07-03T00:00:00+00:00",
+    "until": "2026-08-07T00:00:00+00:00"
+  },
+  "roots": [
+    "/Users/jefcox/.claude/projects",
+    "/Users/jefcox/.claude-company/projects"
+  ],
+  "corpus": {
+    "files_scanned": 2655,
+    "sessions": 407,
+    "main_thread_assistant_messages": 96957,
+    "main_thread_assistant_messages_with_prose": 14787,
+    "subagent_assistant_messages": 128622,
+    "genuine_human_messages": 842,
+    "lines_unparsed": 0,
+    "top_cwds": [
+      [
+        "/Users/jefcox/workspace/infiquetra/campps-context-library",
+        3257
+      ],
+      [
+        "/Users/jefcox/workspace/infiquetra/team-norns",
+        3176
+      ],
+      [
+        "/Users/jefcox/workspace/infiquetra/infiquetra-claude-plugins",
+        3019
+      ],
+      [
+        "/Users/jefcox/workspace/infiquetra/talaria",
+        1543
+      ],
+      [
+        "/Users/jefcox/workspace/infiquetra/home-lab",
+        778
+      ],
+      [
+        "/Users/jefcox/workspace/infiquetra/campps-web-app",
+        438
+      ],
+      [
+        "/Users/jefcox/workspace/infiquetra/team-mimir",
+        405
+      ],
+      [
+        "/Users/jefcox/workspace/infiquetra/team-freya",
+        248
+      ],
+      [
+        "/Users/jefcox/workspace/infiquetra/infiquetra-ansible-collections",
+        208
+      ],
+      [
+        "/Users/jefcox/workspace/infiquetra/infiquetra-codex-plugins",
+        195
+      ]
+    ]
+  },
+  "metrics": [
+    {
+      "metric": "subagent_reach_share",
+      "definition": "Assistant messages generated inside a subagent (isSidechain=true) as a share of all assistant messages. This is the fraction of output that no output style can reach, because styles apply to the main thread only.",
+      "numerator": 128622,
+      "denominator": 225579,
+      "percent": 57.019,
+      "main_thread_messages": 96957,
+      "main_thread_messages_with_prose": 14787,
+      "subagent_messages": 128622,
+      "cross_check_by_path_percent": 57.019,
+      "cross_check_agrees": true,
+      "confidence": "exact"
+    },
+    {
+      "metric": "session_closing_ask_rate",
+      "definition": "Sessions whose final main-thread assistant message ends on a line that asks a question, states a pre-committed branch, or explicitly hands control back, as a share of all sessions with at least one main-thread assistant message.",
+      "numerator": 11,
+      "denominator": 407,
+      "percent": 2.703
+    },
+    {
+      "metric": "verdict_first_rate",
+      "definition": "Main-thread assistant messages whose first non-empty line opens with a bolded claim. Markdown headings do not count.",
+      "numerator": 440,
+      "denominator": 14787,
+      "percent": 2.976
+    },
+    {
+      "metric": "turn_closing_ask_rate",
+      "definition": "Every main-thread assistant message, not just the last of a session, that ends on a closing ask. Separates 'we never close sessions' from 'we never close turns'.",
+      "numerator": 818,
+      "denominator": 14787,
+      "percent": 5.532
+    },
+    {
+      "metric": "mountain_of_text_rate",
+      "definition": "Main-thread assistant messages of at least 4000 characters of prose, excluding tool calls and thinking blocks.",
+      "numerator": 172,
+      "denominator": 14787,
+      "percent": 1.163,
+      "threshold_chars": 4000
+    },
+    {
+      "metric": "mermaid_in_terminal_rate",
+      "definition": "Main-thread assistant messages containing a mermaid fence. These render as raw source in the CLI. Does not count mermaid written into files, which is legitimate.",
+      "numerator": 7,
+      "denominator": 14787,
+      "percent": 0.047
+    },
+    {
+      "metric": "bare_identifier_rate",
+      "definition": "Main-thread assistant messages where an issue number, PR number, or short commit SHA opens a sentence with no noun naming what it is. Heuristic: a trend line, not a verdict on any single message.",
+      "numerator": 250,
+      "denominator": 14787,
+      "percent": 1.691,
+      "confidence": "heuristic"
+    },
+    {
+      "metric": "format_complaint_proxy",
+      "definition": "Genuine human messages that name a presentation element AND carry corrective register. A keyword proxy, NOT the hand-labelled rate. Compare proxy to proxy.",
+      "numerator": 7,
+      "denominator": 842,
+      "percent": 0.831,
+      "confidence": "proxy"
+    },
+    {
+      "metric": "clarity_complaint_proxy",
+      "definition": "Genuine human messages signalling that something was not understood AND carrying corrective register. A keyword proxy, NOT the hand-labelled rate.",
+      "numerator": 10,
+      "denominator": 842,
+      "percent": 1.188,
+      "confidence": "proxy"
+    }
+  ]
+}

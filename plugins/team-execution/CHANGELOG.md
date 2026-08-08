@@ -4,6 +4,12 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [3.0.1] - 2026-08-08
+
+### Added - house-style presentation contract across the 25 review and test agents (#704)
+
+- All 25 `team-execution` agent definitions (`ai-usefulness-reviewer` through `ui-regression-tester`) gain a "Presentation contract (Infiquetra house style)" section, copied verbatim from `plugins/house-style/references/subagent-presentation-preamble.md`.
+
 ## [3.0.0] - 2026-08-08
 
 ### Removed

@@ -21,6 +21,229 @@
 
 ## 2026-08-08
 
+### A type check used as a validity check splits into three cases, and the third belongs to neither branch  {#a-type-check-is-not-a-validity-check}
+
+**Context.** `tools/output_style_scorer.py` filters every transcript record against a date window before scoring it. The filter was written as one `if isinstance(stamp, str) / else`, which reads as an exhaustive pair: either the record has a timestamp or it does not.
+
+**Evidence.** It is not a pair, it is a triple — absent, present-and-parseable, and present-and-garbage. A record carrying `timestamp: "not-a-date"` took the `isinstance` branch, failed `datetime.fromisoformat`, and left `when` as `None`. The two remaining statements in that branch were both guarded on `when is not None`, so neither fired. Control fell out of the `if` and straight on into the scoring body: the record entered the corpus **unfiltered by `--since`/`--until`**, and because the `else` branch never ran it did not increment `records_without_timestamp` either. A record outside the measured window could be scored, and nothing anywhere reported it. Found by an automated council reviewer on pull request 705, not by the three human-directed review rounds that preceded it.
+
+**Mechanism.** `isinstance(stamp, str)` was standing in for "this record has a usable timestamp", and those are different questions. The type test answers whether parsing is *worth attempting*; only the parse answers whether it *worked*. Writing the branch on the cheaper question makes the failure of the expensive one land in a gap between branches — and a gap between branches has no code in it, so it has no counter in it either.
+
+**Fix.** Compute `when` first, then branch once on `when is None`, which is the actual question. Both the absent and the garbled case now increment the same counter and skip.
+
+**Validation.** Measured before changing anything: 0 unparseable string timestamps across both roots on the frozen 2026-07-03 to 2026-08-07 window, so no committed number could move. Proven after: the scorer was run twice over one corpus, once with each version of the code, and all eleven metrics returned identical numerator, denominator and percent. `tests/test_output_style_scorer.py::test_a_timestamp_that_is_a_string_but_not_a_date_is_excluded_and_counted` pins it.
+
+**What surprised.** The bug had a counter pointed directly at it that read zero. `records_without_timestamp` exists precisely to make skipped records visible, and a record skipping the skip-counter is invisible in exactly the way the counter was added to prevent. A zero on a diagnostic field is only evidence when you know the field is on every path that should reach it.
+
+**Generalizable rule.** When a branch tests a value's *type* and then tries to *interpret* it, the interpretation can fail inside the branch, and the else-branch will not catch it. Branch on the interpreted result instead of the raw one. The tell is any `if isinstance(x, T):` whose body contains a `try` — that shape has three outcomes and two branches, and the missing one is always the silent one.
+
+**Refs.** `tools/output_style_scorer.py` (`_scan_lines`); `docs/measurements/2026-08-08-extended-metrics.md` ("Two later detector fixes"); [[empty-input-makes-a-guard-vacuous]]; [[test-the-rule-against-its-own-instrument]].
+
+---
+
+### A comment-only edit to a bridge plugin costs a real external run, because two correct gates compose into one  {#a-docs-only-bridge-edit-costs-an-external-run}
+
+**Context.** Issue #704 copied a presentation contract into 36 agent-definition files. Two of them belong to the `agy` plugin, the fleet's only bridge to an external engine (Antigravity). The added text is inert prose: it changes what a spawned agent is told, and touches no code path in `plugins/agy/scripts/agy_delegate.py`.
+
+**Evidence.** That edit turned two independently-correct CI gates into a joint requirement. `tools/release_surface_diff_guard.py` returns `['agy']` for a change to `plugins/agy/agents/agy-coder.md`, so the edit *requires* a marketplace version bump — 0.6.0 to 0.6.1. `scripts/check_delegation_proof.py --mode version-gate` then requires that bump be backed by a `delegation-proof.v1` artifact whose attested transcript records a command matching the bridge discriminator in `marketplace/bridge_plugins.json`. Neither gate can be satisfied by editing the other's input: the diff guard does not exempt prose, and the proof gate does not accept a hand-written artifact, because it re-classifies the attested transcript's own content through `classify_transcript`.
+
+**Mechanism.** The diff guard's rule is "an agent definition is a release surface", which is right — a spawned agent's behaviour changes when its definition does. The proof gate's rule is "a bridge version bump must be backed by evidence the bridge still runs", which is also right, and is the recorded fix for the `#agy-delegate-silent-claude-fallback` failure class. Neither anticipated the other's trigger. Composed, they price *any* edit to a bridge plugin's agent definitions — including one that changes only prose — at one genuine external delegation.
+
+**Resolution.** The run was made genuinely useful rather than a ceremonial ping: a `no-write` adversarial review of `plugins/house-style/references/subagent-presentation-preamble.md`, the canonical source of the very text that caused the bump. Evidence in `docs/delegation-proofs/agy/house-style-preamble-review-0.6.1.proof.json`; the run bundle recorded `real_agy_verdict=real`, 4,246 bytes of delegate output in 67.05s, exit 0, `changed_paths=[]`, and a 0-byte `diff.patch`. Its four findings are queued at [[preamble-findings-from-the-0-6-1-delegation]] rather than folded in, because the branch's review gate had already closed.
+
+**What surprised.** The cost is invisible at authoring time. Adding a paragraph to 36 files reads as one mechanical edit; nothing in the diff signals that two of those files carry a toll the other 34 do not, and the toll is only discovered when CI turns red on a branch that is otherwise finished.
+
+**Generalizable rule.** When a gate keys on "this file is a release surface" and a second gate keys on "this version bump needs external proof", check whether any file matches both before making a bulk edit across the fleet. If it does, either schedule the external run as part of the work, or exclude those files from the bulk edit deliberately — discovering the coupling from a red run means paying it at the worst possible moment. Where the run is unavoidable, give it real work: a mandatory external call that reviews the change which triggered it converts a tax into evidence.
+
+**Refs.** `tools/release_surface_diff_guard.py`; `scripts/check_delegation_proof.py`; `marketplace/bridge_plugins.json`; `docs/delegation-proofs/README.md` (threat model); [[agy-delegate-silent-claude-fallback]].
+
+---
+
+### A behaviour rule and the metric that scores it must be run against each other, or full compliance can read as a regression  {#test-the-rule-against-its-own-instrument}
+
+**Context.** Issue #704 ships an output style plus `tools/output_style_scorer.py`, whose figures are the Success Criteria that decide whether the style worked. Both were reviewed, and both were internally sound. Nothing had ever run one through the other.
+
+**Evidence.** The style's closing block ends with a line reading `Your call: <pre-committed branches>`, and names "Let me know how you want to proceed" as the phrasing that fails its rule. Run against the scorer's `CLOSING_ASK_RE`, all three of the style's prescribed forms returned `False` and the named counter-example returned `True`. Two of the eight Success Criteria — sessions and turns ending with a closing ask, both marked "Up, substantially" — are computed from that detector. The same shape appeared twice more: `VERDICT_FIRST_RE` requires a **bolded** opening line and no style rule asked for bold, and `VISUAL_RE` recognises `-->` but not the single `->` the style's own permitted catalog prescribed, so two of three permitted visuals were invisible.
+
+**Mechanism.** The style was written to stop the main thread asking open questions and start it pre-committing to branches. The detector was written to find asks. Those are near-opposites, and the closer the style got to its goal the fewer asks there were to find. Each artifact was correct against its own spec; the defect lived in the gap between them, which is exactly the region no single-artifact review looks at.
+
+**Fix.** `CLOSING_ASK_RE` widened to cover the pre-committed-branch forms it always claimed to count; the style now prescribes a bolded opening claim and `-->` notation. Both directions were needed — the instrument had a blind spot, and the style had a rule with no observable consequence. Four tests in `tests/test_output_style_scorer.py` now run the style's own prescribed text through each detector.
+
+**Validation.** Re-scored over the frozen 2026-07-03 to 2026-08-07 window, the widened detector catches exactly 5 additional pre-style turns — 3 from "unless you ...", 2 from "your move", **0** from the style's own `Your call:` token. So `turn_closing_ask_rate`'s pre-style value is 823/14787 = 5.566%, disclosed in `docs/measurements/2026-08-08-extended-metrics.md` rather than absorbed, and the other eight baseline metrics are unmoved.
+
+**What surprised.** That the failure was silent in the worst direction. A style that worked perfectly would have driven its two headline criteria toward zero, and the honest reading of that data is "the change made things worse" — so the instrument would have argued for reverting the thing it was built to validate.
+
+**Generalizable rule.** When you ship a behaviour change together with a metric that proves it, write the test that feeds the prescribed behaviour to the detector before shipping either. "Both artifacts are individually correct" is not evidence that one measures the other, and a metric pointed at the opposite of what you asked for is worse than no metric.
+
+**Refs.** `tools/output_style_scorer.py` (`CLOSING_ASK_RE`, `VERDICT_FIRST_RE`, `VISUAL_RE`); `plugins/house-style/output-styles/house-style.md`; `tests/test_output_style_scorer.py::test_the_house_styles_closing_block_registers_as_a_closing_ask`; [[a-test-can-pin-a-defect-in-place]].
+
+---
+
+### A test that asserts the current count without saying why locks the defect in as the specification  {#a-test-can-pin-a-defect-in-place}
+
+**Context.** The same #704 review found that saga's `emit_inline_baseline()` — the renderer for the inline backend, whose units the MAIN THREAD executes itself — was being handed the subagent presentation contract, which says "the operator-facing closing block and the main thread's style tell belong to the main thread alone. Do not write either one."
+
+**Evidence.** `tests/test_execution_spec_presentation_rider.py` carried `test_rider_appears_once_across_call_site_inline_baseline`, asserting `baseline.count("## Presentation contract (Infiquetra house style)") == 2` — one copy per unit. The test was written from the implementation: two units, two copies, the arithmetic checks out. Correcting the defect would have failed the suite, and the failure would have read as a regression in a passing test.
+
+**Mechanism.** The assertion recorded *what the code did* rather than *what the code should do*. The number 2 was derived by counting, and counting cannot distinguish a correct 2 from an incorrect one. Nothing in the test named the reason a copy belonged there, so nothing in it could notice that the reason did not apply.
+
+**Fix.** Replaced with `test_the_inline_baseline_is_not_stamped_at_all`, asserting 0 and stating in its docstring what the old assertion was and why it was wrong; plus `test_the_inline_baseline_and_the_spawned_path_differ_only_by_the_rider`, which stops the fix over-reaching. `_agent_prompt()` gains a keyword-only `subagent` parameter.
+
+**Generalizable rule.** An assertion on a count needs a sentence saying why that count is the right one. If the only justification available is "that is what it currently does", the test is a snapshot, and a snapshot taken of a defect defends the defect.
+
+**Refs.** `plugins/saga/scripts/execution_spec.py` (`_agent_prompt`, `emit_inline_baseline`); [[test-the-rule-against-its-own-instrument]].
+
+---
+
+### A committed measurement artifact is a publication, and a corpus walker will happily publish the corpus  {#a-measurement-artifact-is-a-publication-surface}
+
+**Context.** `tools/output_style_scorer.py` walks the operator's entire Claude Code transcript history and writes a JSON report into `docs/measurements/`, which is committed to `infiquetra-claude-plugins` — a **public** GitHub repository.
+
+**Evidence.** `build_report()` emitted `"top_cwds": corpus.cwds.most_common(10)`, a diagnostic added to answer "how many projects does this corpus span". Both committed artifacts carried the operator's home directory and the names of nine unrelated private repositories, verbatim, including several belonging to other work entirely. `gh repo view --json visibility` confirms `PUBLIC`. Nothing read the field; it was there because it was easy to add.
+
+**Mechanism.** The instrument was reviewed as a measuring tool and the artifact as a record of numbers. Neither review asked the third question — this file goes to a public remote, so what does it contain that is not a number? A corpus walker has the whole corpus in hand, so the default of "emit what might be useful" leaks by construction.
+
+**Fix.** The field is gone from the instrument and from both committed artifacts, replaced by `distinct_project_dirs`, a count. Scanned roots and reproduce commands now write `~` rather than the home directory. `tests/test_output_style_scorer.py::test_no_committed_measurement_artifact_discloses_a_filesystem_path` fails on any `/Users/` in any committed measurement JSON.
+
+**Validation.** Removing the key was proved not to be a re-measurement: the `metrics` array, `window`, `schema` and every other `corpus` field compare byte-identical before and after on both files. The write-once baseline was never re-run.
+
+**Generalizable rule.** Before a tool that reads private data writes a file into a repository, enumerate every field it emits and ask which of them is data about the corpus rather than a measurement of it. Diagnostic fields are the ones that leak, because they are added without a consumer and reviewed as though they had one.
+
+**Refs.** `tools/output_style_scorer.py` (`build_report`, `_tilde`); `docs/measurements/2026-08-07-baseline.json`; `docs/measurements/2026-08-08-extended-metrics.json`.
+
+---
+
+### An agent definition is read once per session, so editing one on disk changes nothing until a restart  {#agent-definitions-are-session-cached}
+
+**Context.** Issue #704 ships a presentation preamble in the body of all 36 plugin agent definition
+files. Two questions had to be answered before that was worth doing: does the **body** of a definition
+reach the agent it defines (the frontmatter demonstrably does — every agent's `description` appears in
+the calling session's own system prompt, but the body is a separate channel with no such observation),
+and when does an edit to a definition actually take effect.
+
+**Evidence.** Both were tested by spawning `saga:mechanical-executor`, whose body specifies an exact
+rejection string for an unapproved operation ending `No work was performed.` — a string verified absent
+from the file's frontmatter, so it can only have come from the body.
+
+1. *Body reaches the agent.* Dispatched `op: verify-checksum` and nothing else. The agent returned the
+   body's three-line block byte-for-byte. The marker appeared nowhere in the dispatch, so leakage
+   through the prompt is excluded by construction.
+2. *An edit does not.* The installed cache copy at
+   `~/.claude/plugins/cache/infiquetra-plugins/saga/0.131.0/agents/mechanical-executor.md` was then
+   edited in its body: an invented sixth operation `quantum-audit` added to the approved list, and a
+   token appended to the `No work was performed.` sentence itself. The next spawn returned the **old**
+   five-operation block verbatim, with neither change.
+
+**Mechanism.** The first edit attempted was a formatting instruction ("begin every response with this
+token"), and its absence was **confounded** — that run also paraphrased the rejection instead of
+reproducing it, so a dropped instruction explained the result as well as a stale definition did. Moving
+the markers *inside content the agent had already reproduced twice* removed the confound: an agent
+reproducing an exact block that lacks a change the file now contains is reading a cached copy, not
+ignoring an instruction. Definitions are loaded at session start and held in the running process.
+
+**Consequence for anything shipped in an agent definition.** "Merged" is three steps from "in effect",
+not one: merge, version bump, `/plugin marketplace update infiquetra-plugins` — and then a **fourth**,
+a new session. The restart is not implied by the other three, and any after-measurement taken before it
+measures the old definition.
+
+**Generalizable rule.** Test the two halves of a definition file separately — frontmatter reaching the
+runtime is not evidence that the body reaches the agent. And when a probe's marker is a *formatting*
+instruction, its absence proves nothing; put the marker inside content the agent already reproduces, so
+that absence can only mean a stale read.
+
+### The emitted workflow gate checks the shape of a unit's answer, never its verdict, so a unit that halts itself does not halt the run  {#gate-validates-shape-not-verdict}
+
+**Context.** Issue #704's plan made unit U1 an absolute gate: prove both subagent-reach levers by
+experiment, and if a lever cannot be observed working, stop the run rather than build on it. When the
+operator considered adding a spend cap, he declined it on the grounds that "the real runaway guard in
+this plan is U1's HARD STOP, which is already enforced in the emitted workflow rather than only
+described in prose." That belief was wrong, and the run proved it: U1 returned
+`status: "inconclusive"`, said so clearly, and units U2 through U9 executed anyway to completion.
+
+**Evidence.** `__gate()` in the emitted script
+(`docs/plans/2026-08-08-issue-704-house-style-output-style-plugin.workflow.js`, emitted by
+`plugins/saga/scripts/execution_spec.py`) throws `__halt` on exactly four conditions: empty or absent
+output, structurally truncated JSON, fewer produced items than a declared `targets` count, and a
+missing or null key from the declared `returns` list. It parses `status` only far enough to see that
+the key exists and is non-null. `"inconclusive"`, `"failed"`, and `"complete"` are indistinguishable
+to it. The run's own log confirms the outcome: `U1: 'inconclusive'` followed by eight further units at
+`'complete'`.
+
+**Mechanism.** A unit's escalation text — "HALT and report if either lever's marker does not reach the
+output" — is compiled into the *agent's prompt*, not into the *script's control flow*. The agent obeyed
+it: it stopped its own work, wrote the evidence document, and reported `inconclusive`. But the only
+thing standing between that answer and the next unit is `__gate`, which was built to catch a subagent
+that returns garbage, not one that returns a well-formed refusal. A refute-N verify panel is the only
+construct in the spec format that halts on the *content* of a result, and panels judge a unit's work
+rather than read its own status. So a unit can declare its premise unproven, in the exact words the
+plan demanded, and the workflow will carry on regardless.
+
+**Fix.** For a genuine gate, do not rely on the unit's prompt. Either put the gate in the script — a
+plain `if (U1.status !== "pass") throw __halt(...)` after the `__gate` call, which the spec format
+cannot currently emit — or make the gating unit the *only* unit in its own workflow and inspect its
+result before launching the rest. The second needs no tooling change and was available here.
+
+**Generalizable rule.** An instruction in a prompt is a request; only code in the control flow is a
+gate. Before calling any stop "enforced", find the line that throws — if the halt exists solely in
+prose an agent reads, the run will pass through it the moment the agent answers in a well-formed way.
+This is the third instance in one project of a safety mechanism believed to be enforced that was not;
+see [[empty-input-makes-a-guard-vacuous]] and
+[[a-gating-experiment-must-test-the-artifact-the-runtime-loads]].
+
+### A safety guard that reads a field nobody filled in reports safety it never checked  {#empty-input-makes-a-guard-vacuous}
+
+**Context.** The execution spec for issue #704 was approved in part on a reassurance the tooling printed at emit time: "No two concurrent units declare the same file, so no write can be lost to a race." That sentence was true. It was also true of a spec in which every unit wrote the same file, because not one of the nine units declared a `files` field at all, and the guard was intersecting empty sets.
+
+**Evidence.** `Unit.files` exists (the `files` field on `Unit` in `plugins/saga/scripts/execution_spec.py`) and `assert_no_wave_file_conflicts` compares declared paths pairwise within each authored wave at emit time, not validate time (called from `emit_workflow_script()`). The original spec declared zero paths across all nine units. Adding a deliberate collision — U6 and U8, both in authored wave 4, sharing `plugins/saga/agents/readonly-verifier.md` — was still accepted by `execution_spec.py validate`, and failed only under `emit` with `SPEC ERROR: units scheduled to run concurrently declare the same file(s) — wave 4: U6 and U8 both declare ...`. After declaring all 76 real paths, the same probe fails and the real spec passes.
+
+**Mechanism.** The guard's answer is a function of its input, and its input was optional. A pass therefore has two indistinguishable causes — "I checked and found nothing" and "I had nothing to check" — and the message is worded for the first. The failure survives review because the reassuring sentence is generated by real tooling running real code; it is the *data* that is absent, not the check. Emit-time-only enforcement compounds it, since a validate-clean spec reads as fully vetted.
+
+**Fix.** All nine units now declare their files (76 paths, including the 36 agent definitions enumerated by name rather than globbed), so the guard has real data and the plan's enumeration doubles as U6's exact expected-file list. The plan records both that the check now runs and that it was verified capable of failing.
+
+**Validation.** The deliberate-collision probe fails emission; the real spec emits and passes `node --check`.
+
+**What surprised.** The guard reasons over *authored* waves, not the emitted script's actual concurrency. This spec emits every wave serialized to width 1, so nothing ever runs concurrently — meaning the guard would have been unable to find a collision even with perfect data. Two independent reasons for a vacuous pass, stacked, each individually sufficient.
+
+**Generalizable rule.** When a tool reports a safety property, check that its input is non-empty before believing it, and prove the check can fail by feeding it a violation you construct. A green check over absent data is worse than no check, because it converts an unexamined risk into a recorded assurance. Prefer guards whose fields are required; when they must be optional, have the tool say how many items it examined rather than only that it found nothing.
+
+**Refs.** `plugins/saga/scripts/execution_spec.py` — the `files` field on `Unit`, `assert_no_wave_file_conflicts`, and its call from `emit_workflow_script()`; `docs/plans/2026-08-08-issue-704-house-style-output-style-plugin-spec.json`; `docs/reviews/2026-08-08-issue-704-plan-doc-review.md`; [[a-gating-experiment-must-test-the-artifact-the-runtime-loads]].
+
+---
+
+### A gating experiment must test the artifact the runtime loads, or its hard stop fires on the harness  {#a-gating-experiment-must-test-the-artifact-the-runtime-loads}
+
+**Context.** Issue #704's plan is gated on one unit, U1, which proves two subagent-reach levers work before anything is built on them, and whose instruction is deliberately absolute: a marker that does not appear halts the run and reopens a blocker, with no adapting around it. Its method for the first lever was to write a throwaway agent definition into `plugins/<p>/agents/` and spawn that agent type. That test cannot pass, for reasons having nothing to do with the lever.
+
+**Evidence.** `~/.claude/plugins/installed_plugins.json` resolves every Infiquetra plugin to a versioned cache directory — `~/.claude/plugins/cache/infiquetra-plugins/saga/0.131.0`, `.../team-execution/3.0.0`, and so on for all ten. `~/.claude/plugins/marketplaces/infiquetra-plugins` is a separate git clone of the same repository pinned at `f6436f6`, with its own 36 agent definitions and a different inode from the working tree. Nothing in either path is the working tree.
+
+**Mechanism.** The working tree is the *source* of an agent definition; the versioned cache is what the runtime *loads*. A file written to the working tree becomes loadable only after commit, push, `/plugin marketplace update`, a version bump that installs a new cache directory, and a new session. So the marker would have been absent, U1 would have read absence as disproof, and the run would have halted and reopened a blocker over a working mechanism. The hard stop that makes the gate valuable is exactly what makes this dangerous: an absolute rule amplifies a bad measurement instead of tolerating it.
+
+**Fix.** U1 now tests through the loaded cache. Its preferred method writes nothing at all — pick an installed agent whose definition makes a falsifiable behavioural commitment (`saga:mechanical-executor` rejects unknown operations) and check whether the agent honours it; the fallback edits the installed cache copy and restores it. The hard stop is unchanged. What was added is a third outcome: a harness failure returns `inconclusive`, never a disproof and never a pass.
+
+**Generalizable rule.** Before writing a gate whose failure is expensive, establish where the runtime reads the thing being tested from, and confirm the test can produce a positive result at all. Then give the gate three outcomes rather than two — pass, fail, and "the test could not run" — because a binary gate silently reclassifies every harness defect as a disproof of the hypothesis, in the direction of stopping work that was fine.
+
+**Refs.** `~/.claude/plugins/installed_plugins.json`; `docs/plans/2026-08-08-issue-704-house-style-output-style-plugin-plan.md` (`### U1.`, Grounding); [[empty-input-makes-a-guard-vacuous]].
+
+---
+
+### An attribution label names the runtime that spawned the agent, not the code that wrote its prompt  {#attribution-labels-name-the-runtime-not-the-author}
+
+**Context.** The output-styles hybrid decision (DECISIONS `{#house-style-hybrid-subagent-route}`) credited saga's workflow emitter with reaching `workflow-subagent`, the largest agent type in the corpus at 76,459 messages / 59.44% of subagent output, and recorded a combined ceiling of 89.4%. That credit rested on an unstated assumption: that `workflow-subagent` traffic is what saga's emitter produces. The label was read as naming an author. It names a runtime.
+
+**Evidence.** Every workflow subagent transcript sits at `projects/<repo>/<session>/subagents/workflows/wf_<runid>/agent-*.jsonl`, so the path names its run, and each run persists `projects/<repo>/<session>/workflows/wf_<runid>.json` containing the full text of the script that ran. `emit_workflow_script()` appends `_JS_GATE_HELPER` unconditionally (`plugins/saga/scripts/execution_spec.py:475`, appended at line 3718); `git log -G"function __gate\("` returns exactly one commit, `b09ad503` on 2026-06-29, so the declaration line is byte-stable from four days before the window opens through its close. Partitioning the 76,459 by that signature: **20,228 emitter-produced (26.46%)** and **56,126 hand-authored (73.41%)**, with 105 (0.14%) in no `wf_` directory. The three rows sum to 76,459 exactly. Across the 216 runs carrying traffic, four independent emitter signatures (`__gate`, `__pulledCords`, `__is429`, `__verifierPrompt`) agree on every run with zero disagreement, and no hand-authored script contains any of the four.
+
+**Mechanism.** `workflow-subagent` is the attribution Claude Code assigns to anything the Workflow runtime spawns, whichever script did the spawning. Saga's emitter produces some of those scripts; the rest are authored inline in the main thread and passed to the Workflow tool as the `script` parameter. A lever that edits the emitter reaches only the first kind. The label is one level of abstraction above the thing the lever acts on — it identifies the executor, and the lever acts on the author — so reading reach off the label overstates it by however much of the traffic has a different author.
+
+**Fix.** R26's reach corrected from 59.44% to **15.73%** of subagent output, the combined ceiling from 89.4% to **45.7%** (20,228 + 38,492 of 128,622), and the residue from 10.6% to 54.3% with the 43.64% hand-authored block named as its largest part. The partition table, its method, and the classifier's stability argument are recorded in the requirements document's subagent-seam section so the figure can be re-derived rather than trusted. Route (c) — the style instructing the main thread to stamp each `agent()` prompt it authors — was reopened as a live planning option, because the reason it was rejected (the emitter covers that traffic) turned out to be false.
+
+**What surprised.** The correction is 44 percentage points, and the assumption that produced it was never written down anywhere — it lived in the step from "the emitter composes `agent()` prompts" (verified, and true) to "so it composes `workflow-subagent` prompts" (never checked, and mostly false). Locating and confirming the emitter felt like verification and was verification of the wrong proposition.
+
+**Generalizable rule.** Before crediting a lever with the traffic under some label, ask what the label is a property of. Telemetry labels tend to name the executor — the runtime, the pool, the transport — while levers act on the author. When the two differ, the label is an upper bound and nothing more; partition it by something the author leaves behind, and prefer a marker whose definition is byte-stable across the whole measurement window, since one that changed mid-window splits a population silently and looks like a trend.
+
+**Refs.** `plugins/saga/scripts/execution_spec.py` — the `_JS_GATE_HELPER` constant and the `lines.append(_JS_GATE_HELPER)` call in `emit_workflow_script()`; commit `b09ad503`; `docs/brainstorms/2026-08-07-output-styles-requirements.md` (emitter partition table), [[measure-the-agent-population-before-choosing-a-lever]], DECISIONS `{#house-style-hybrid-subagent-route}`.
+
+---
+
 ### The re-add guard must scan shim-resolved paths and the test helper must track the live boot_id  {#shim-resolved-guard-and-live-boot-id-684}
 
 **Context.** Campaign #677 unit U7 (issue #684) deletes the fleet lease broker (`lease_broker.py` 4,731 + `orphan_evidence.py` 1,578) and their suites — the 10,203-line payload the seven-unit unwind built toward. Two pre-existing failures made the unit's correctness hard to prove: a stale plugin cache could resurrect the broker via `fleet_commons_shim` rung 3, and a test helper hard-coded a boot_id that production had made live.
@@ -36,6 +259,134 @@
 **Generalizable rule.** A deletion guard must scan every path the runtime's resolver can return, not just the working tree — otherwise a cache hit can hide the deleted artifact on exactly the machine where the resolver's highest rung is a cache. And a test helper that manufactures an identity must call the same source the production code calls for generation fields (boot_id, fencing_sequence, epoch) — a literal that matched yesterday's production becomes a platform-coupled mismatch the day production goes live.
 
 **Refs.** PR #703 (`e2ba7db5`), `tests/test_no_lease_broker_readd.py:60`, `tests/test_team_execution_liveness.py:127`, `plugins/team-execution/skills/team-execution/scripts/liveness_protocol.py:237`, `docs/evidence/issue-684/artifacts/b29725…` (code-review CLEAN, 2 P3 advisories), `docs/plans/2026-07-30-issue-677-lease-broker-retirement-plan.md:771` §U7, `docs/work-sessions/2026-08-08-issue-684-u7.md`.
+
+---
+
+### Measure which agents produce the output before choosing the mechanism that governs them  {#measure-the-agent-population-before-choosing-a-lever}
+
+**Context.** The output-styles document review established that a preamble in the `agents/` directory reaches only subagents that name that agent, and offered three candidate routes for delivering a presentation contract to the 57.02% of assistant output generated inside subagents. All three were reasoned from repository structure. None was reasoned from the population, and the population was measurable the whole time.
+
+**Evidence.** Every subagent transcript record carries an `attributionAgent` field. Counting subagent assistant messages by that field over the baseline's exact window, roots, and exclusion gives a total of 128,622, which equals `subagent_assistant_messages` in `docs/measurements/2026-08-07-baseline.json` exactly — so the census is cross-validated against the committed instrument rather than being a second guess. The distribution: `workflow-subagent` 76,459 (59.44%), `saga:readonly-verifier` 38,345 (29.81%), unnamed 5,795 (4.51%), `general-purpose` 4,740 (3.69%), `Explore` 3,136 (2.44%), `mission-control:sdlc-operator` 84, `codex:codex-reviewer` 41, `agy:agy-reviewer` 22. Only four of those types have a definition file in this repository, totalling 38,492 messages — **29.93%**.
+
+**Mechanism.** The candidate route that looked most faithful to the source material (duplicate the preamble into every agent definition, which is what ideation's survivor 10 proposed) reaches under a third of the surface, because the single largest producer by far is `workflow-subagent` — an agent type spawned by the Workflow runtime that has no definition file to duplicate into. Structural reasoning could establish that a lever *works*; only counting could establish that it works on 29.93% rather than on most of the traffic. The decision flipped from "route (a)" to a hybrid of two levers the moment the population was visible.
+
+**What surprised.** Counting the same corpus by `attributionPlugin` instead of by agent gives 52,607 messages, 40.90%, for the same route — a third higher and entirely wrong. 11,394 of those are `workflow-subagent` records that happen to carry `plugin=saga`; the plugin field records which plugin was in play, not which file governs the agent. The wrong cut is the flattering one, which is exactly the direction an unchecked number drifts.
+
+**Fix.** Requirements R26 and R27 rewritten as a two-lever hybrid — emitter stamp for `workflow-subagent`, definition-file duplication with a byte-identity test at 29.93%, with the residue named (built-in `general-purpose` and `Explore`, plus unclassified records) rather than absorbed. The emitter was located and confirmed: `plugins/saga/scripts/execution_spec.py`, `emit_workflow_script()`, composing per-unit `agent()` calls via `_emit_thunk`, `_emit_parallel_wave` and `_emit_verify_panel`, with the per-unit `prompt` field on `Unit`.
+
+**Superseded figure.** This entry was written crediting the emitter lever with the full 59.44% and a combined ceiling of ~89.4%. Both are wrong. Partitioning `workflow-subagent` by which script spawned it, the next day, gives the emitter 15.73% and the hybrid 45.7% — see [[attribution-labels-name-the-runtime-not-the-author]]. The lesson this entry teaches is unaffected and if anything reinforced: the census was the right move, and it still stopped one level short of the entity the lever acts on.
+
+**Generalizable rule.** When choosing between mechanisms on the basis of reach, check whether reach is directly measurable before reasoning about it — a field on the records usually settles in one query what an architecture argument settles badly. And count by the entity the lever actually acts on, not by a correlated label sitting next to it: if the lever is a file per agent, count agents; counting plugins credits traffic that has no file to act on, and it will always flatter.
+
+**Refs.** `docs/brainstorms/2026-08-07-output-styles-requirements.md` (census table in the subagent-seam section), [[agents-dir-is-per-agent-type-not-a-preamble]], DECISIONS `{#house-style-hybrid-subagent-route}`.
+
+---
+
+### A traversal that skips symlinks fails quietly, and only a known-good total catches it  {#glob-vs-oswalk-symlink-undercount}
+
+**Context.** Re-deriving the subagent agent census to verify it independently before recording it in a requirements document.
+
+**Evidence.** The first census used `os.walk` and returned 124,078 subagent assistant messages against the scorer's 128,622 — a 4,544-message shortfall, 3.5%. Cause: `~/.claude-company/projects` contains symlinked subdirectories. `os.walk` does not follow symlinked directories by default and saw 907 `.jsonl` files there; `followlinks=True` sees 1,136. The scorer uses `glob.glob(os.path.join(root, "**", "*.jsonl"), recursive=True)` at `tools/output_style_scorer.py:181`, which does traverse them. Re-running the census with the scorer's exact glob call reproduced 128,622 exactly, and every per-agent row then matched independently.
+
+**Mechanism.** `os.walk(followlinks=False)` is the default because it protects against cycles; `glob` with `**` traverses into symlinked directories. Two traversals over the same tree therefore return different corpora, and the difference is invisible unless something outside the traversal knows the right answer. The undercount does not raise, does not warn, and produces a plausible distribution — the per-agent shares were within a percentage point of correct, so the shape looked right while every absolute count was low.
+
+**Fix.** Census re-run with the scorer's exact traversal; total cross-validated against `subagent_assistant_messages` before any figure was written into the requirements document.
+
+**Generalizable rule.** When re-deriving a number to check someone else's, mirror the original's traversal primitive exactly rather than reaching for the one you'd normally use — file-walking APIs disagree about symlinks, hidden files, and recursion depth, and each disagreement is a silent undercount. Always re-derive against a known-good total first; without one, a traversal bug presents as a confident finding rather than as an error. This is the same failure shape as the scorer's original 0% subagent share (`docs/measurements/2026-08-07-baseline.md`, "A note on how this instrument first failed") — a broken walk that reads as data.
+
+**Refs.** `tools/output_style_scorer.py:181`, `docs/measurements/2026-08-07-baseline.md` §"A note on how this instrument first failed", [[measure-the-agent-population-before-choosing-a-lever]].
+
+---
+
+### The `agents/` directory is a per-agent-type lever, not a global preamble  {#agents-dir-is-per-agent-type-not-a-preamble}
+
+**Context.** The output-styles requirements document (`docs/brainstorms/2026-08-07-output-styles-requirements.md`, requirement R27) proposed reaching the 57.02% of assistant output generated inside subagents by placing "a shared presentation preamble" in the `agents/` directory, reasoning that because `~/.claude-company/agents` symlinks to `~/.claude/agents`, "one edit governs both configurations." The premise is true and the conclusion does not follow.
+
+**Evidence.** `ls -ld ~/.claude-company/agents` → `-> /Users/jefcox/.claude/agents`, so the symlink is real. `ls -la ~/.claude/agents/` → **empty**. Every one of the 36 agent definitions in this repository (`plugins/*/agents/*.md`, frontmatter key census: 36 `name:`, 36 `description:`, 35 `model:`) is a single agent keyed by `name:`; see `plugins/saga/agents/readonly-verifier.md:1`. Every agent offered in a live session is namespaced by its plugin (`saga:readonly-verifier`, `agy:agy-coder`) or built into Claude Code (`Explore`, `general-purpose`, `Plan`) — none is sourced from `~/.claude/agents/`.
+
+**Mechanism.** A `.md` file in an `agents/` directory *registers one named agent*, addressable by `subagent_type`. There is no documented preamble semantic that prepends a file's contents to other agents' system prompts. So the symlink governs **file identity across the two configurations**, which is what was verified, and not **coverage across the subagents that run**, which is what R27 needed. The two are easy to conflate because both are naturally phrased "one edit governs both." Compounding it, the directory is empty, so the lever currently governs zero invocations — a file dropped there would create an agent nothing invokes, and the reach problem would look solved while remaining untouched.
+
+**Fix.** R27 rewritten to state the verified mechanism and its limit; Actor A3 rewritten to distinguish the three subagent levers by reach (`CLAUDE.md` reaches every subagent, an `agents/` file reaches only invocations naming that agent, a spawn prompt reaches only that spawn); the delivery route raised as the document's only *Resolve before planning* blocker with three candidate routes. Ideation's own survivor 10 had already answered it — "the agent preamble duplicates a block across N definition files" — and the requirements document had dropped both that duplication and the byte-identity test meant to police it. Review artifact: `docs/reviews/2026-08-07-output-styles-requirements-doc-review.md`.
+
+**What surprised.** The requirements document listed this fact under **Verified**, and the verification was real — someone did check the symlink. The check simply answered a narrower question than the requirement asked. A "Verified" label is only as strong as the match between the claim and the probe.
+
+**Generalizable rule.** When a document claims a config mechanism gives broad reach, verify the *reach*, not the *plumbing*. "Both configurations see the same file" and "all consumers obey that file" are different propositions, and confirming the first feels like confirming the second. Ask what a consumer must do to be governed: if it must name the file, the lever is opt-in per consumer, not global — and an empty directory is a strong tell that a lever governs nothing today.
+
+**Refs.** `docs/reviews/2026-08-07-output-styles-requirements-doc-review.md`, `docs/brainstorms/2026-08-07-output-styles-requirements.md` R27 + Actor A3, `docs/ideation/2026-08-07-output-styles-ideation.md:373` (survivor 10's downside), DECISIONS `{#output-styles-scorer-lives-at-repo-root}`.
+
+---
+
+### A measured claim escalates as it hops between documents  {#measured-claims-escalate-across-document-hops}
+
+**Context.** The output-styles requirements document opened its cost argument with "The worst single message in the corpus was 12,347 characters of literal unformatted JSON." Tracing it through the `ideate` → `brainstorm` pipeline showed the superlative was manufactured in transit rather than measured.
+
+**Evidence.** Three hops. Source, `docs/ideation/2026-08-07-output-styles-run/frame1-pain.md:137`: "**one of the three worst** was literal unformatted JSON (a subagent findings payload, 12,347 chars)." Synthesis, `docs/ideation/2026-08-07-output-styles-ideation.md:370`: "the **single worst** measured message in the corpus." Requirements: "The **worst single message** in the corpus." Independently, the same ideation document records `max 26,994` characters for response length at line 49 — more than twice 12,347 — so the superlative is refuted by a figure four hundred lines above it in its own file.
+
+**Mechanism.** Each hop compresses, and compression drops qualifiers before it drops nouns. "One of the three worst" carries a hedge that costs words and buys nothing rhetorically, so a summarizer reaching for a punchier opening sheds it. Nothing in the pipeline re-checks a figure against its source once it has been restated in a downstream document, and the restatement reads as more authoritative than the original because it is more confident. The error survives precisely because it is more quotable than the truth.
+
+**Fix.** Corrected to "the worst relay in the corpus … one of the three worst offenders on the mountain-of-text measurement," with the true maximum stated and the distinction made explicit: the fix targets undigested relay, not length. Same pass also labelled median 142 / p90 1,658 as unverified — the committed scorer computes no length percentiles, and the same class of throwaway script produced ideation's mountain-of-text rate of 0.25%, which the instrument later corrected to 1.16%, a factor of 4.7.
+
+**Generalizable rule.** Superlatives are the highest-risk tokens in a derived document — "the worst", "the only", "the first" — because they are the compression artifact a summarizer reaches for and the claim a reader is least likely to challenge. When reviewing a document produced by a pipeline, grep its superlatives and walk each one back to the primary source, not to the intermediate that restated it. A number that arrives without a hedge is not the same as a number that never had one.
+
+**Refs.** `docs/reviews/2026-08-07-output-styles-requirements-doc-review.md` finding D6, `docs/measurements/2026-08-07-baseline.md` (its own reconciliation table records the 0.25% → 1.16% correction of the same shape).
+
+---
+
+### A workflow-backend agent cannot spawn another agent, so one of two levers went untested by design, not by oversight  {#u1-lever-experiment-workflow-backend-cannot-spawn}
+
+**Context.** Issue #704's `house-style` plugin (a Claude Code output style enforcing Infiquetra's
+presentation rules) proposes reaching subagent output two ways: Lever A duplicates a presentation
+preamble into all 36 plugin agent-definition files, so the text ships with each agent's own
+system prompt; Lever B stamps the same text onto every prompt saga's workflow emitter (`saga`, the
+lifecycle plugin's `execution_spec.py`) composes for an `agent()` call. Plan unit U1 ran both as an
+experiment, with its own evidence artifact and a hard stop rather than a checkbox anyone could tick
+from reasoning alone (KTD1, a Key Technical Decision — a recorded design choice with its rejected
+alternatives).
+
+**What it found.** Lever B: PASS, proven twice. First at emission — a throwaway marker string added
+to `execution_spec.py`'s `_agent_prompt()` function went from 0 occurrences to 3 across 3 emitted
+`agent()` calls in a control spec, with the byte count of the difference (192 bytes = 3 × 64-byte
+marker) confirming no double-application. Second at delivery, observed live in-band on this very
+U1 run: the `RETURN CONTRACT` clause composed by that same function arrived verbatim, with this
+unit's own return-schema keys, in the prompt this unit's own agent actually received. The edit was
+reverted and the revert verified three ways (`git status --porcelain` empty, `git diff --exit-code`
+clean, and a re-emission of the control spec byte-identical to the pre-edit baseline).
+
+Lever A: **INCONCLUSIVE**, not proven and not disproven. Both of the plan's prescribed test methods —
+dispatching an unknown operation to an installed agent and checking its documented rejection
+behavior, or writing a marker into the agent's cached definition file and observing it — require
+spawning an agent to observe the result. Three independent `ToolSearch` probes (`select:Task,Agent`,
+plus two keyword searches) found no agent-spawning tool available to an agent running inside a
+workflow backend, and `ListAgents` confirmed zero in-process subagents alongside six unrelated peer
+sessions. Nothing was modified in testing Lever A — there was no marker to revert, because the
+method that would have needed one was never reachable.
+
+**Mechanism.** The workflow backend that runs plan units (saga's `saga:work` skill, emitting a
+`.workflow.js` script executed by the harness) hands each unit agent a fixed tool inventory —
+`Artifact`, `Bash`, `Edit`, `ListAgents`, `Read`, `ReportFindings`, `SendUserFile`, `Skill`,
+`ToolSearch`, `Write`, `StructuredOutput`, plus deferred tools and MCP servers — and that inventory
+has no `Task` or `Agent` tool. An interactive Claude Code session does carry an agent-spawning tool;
+a workflow-backend agent does not. Lever A's mechanism (an agent definition file's body governing
+the agent it defines) can only be observed by spawning that agent, so the test's availability is a
+property of the *runtime the test happens to run in*, not of the lever itself.
+
+**Fix / resolution.** None needed on the lever — U1 correctly reported `inconclusive` per its own
+rule ("a harness limitation is reported as `inconclusive` and halted for an operator decision — it
+is recorded neither as a pass nor as a disproof") rather than inventing a third test method, which
+the unit's own hard stop forbade. Requirements-document R27 (the requirement Lever A serves) was
+left open, not reopened as a disproof — nothing observed contradicts Lever A, it was simply never
+run.
+
+**Generalizable rule.** Before spending a plan unit's evidence budget proving a mechanism, confirm
+the *runtime that unit will actually execute in* carries the capability the test needs — don't
+assume an interactive session's tool inventory (agent-spawning included) transfers to a workflow
+backend. When it doesn't, `inconclusive` is a more honest evidence state than either forcing a
+result through an unavailable method or silently skipping the test.
+
+**Refs.** `docs/evidence/issue-704/lever-experiment.md` (the full U1 evidence artifact, including
+the byte-accounting table and the emission/delivery chain diagram);
+`_agent_prompt()` in `plugins/saga/scripts/execution_spec.py` (the single funnel Lever B stamps);
+DECISIONS `{#house-style-two-lever-hybrid-and-ktds}`.
 
 ---
 
@@ -4173,6 +4524,8 @@ and harness proof `plugins/agy/docs/harness-proof.md`.
 **Mechanism.** Spawning the delegate via the `agy:runner` path does not guarantee the `agy` CLI runs. In the failure mode the spawned teammate is effectively a **Claude clone** (inherits the parent's full toolset + output style) that reads the task prompt ("implement U1…") and just does it — never shelling out to `agy`. The real-agy path instead spawns a nested `Agent` (the "Teammates cannot spawn other teammates" → recovery) that runs `agy` via Bash. Both were launched the same way, so the *name* of the spawn is NOT a reliable discriminator (the earlier belief that "named spawn = the working path" was disproven — #278/#279 named spawns fell to Claude). The only trustworthy signal is the transcript itself.
 
 **Fix.** (1) Commit provenance corrected — #279 commits say Claude-authored (the "n=4 Pro" data is invalid). (2) Memory + `docs/external-agent-delegation/` (README + next-run-handoff) corrected with the per-run truth and a mandatory **verify-agy-ran** step. (3) The discriminator is now documented: real agy → transcript has `agy --model` Bash call + Claude touches only `prompt.txt`; Claude-clone → Write/Edit on repo files + `★ Insight` + 0 `agy` calls.
+
+**2026-08-08 addendum — a fourth tell for sessions running the `house-style` output style.** The `house-style` plugin (issue #704) suppresses the box-drawn `★ Insight` callout and, on the main thread only, emits a plain-text marker (`::house-style::`) as the first line of its closing block; subagents never emit it. `★ Insight` remains a valid Claude-clone signal on any transcript from before `house-style` was adopted, or from a session not running it — this addendum does not retire it, it only adds a fourth signal for sessions where `house-style` is active: a Claude-clone subagent transcript never carries `::house-style::` (subagents are excluded from emitting it by the style's own rule), so on a `house-style` session the absence of `::house-style::` on a transcript claiming to be the main thread, combined with Write/Edit on repo files and 0 `agy` calls, is the same diagnostic pattern the `★ Insight` signal used to catch.
 
 **What surprised.** My *first* correction over-generalized #279's finding to "agy never ran, n=1/2/3 all suspect." The audit refuted that: #277 was genuinely agy Flash. The validation discipline caught my own over-correction — extrapolating one verified case to all cases is the same error as the original false provenance.
 

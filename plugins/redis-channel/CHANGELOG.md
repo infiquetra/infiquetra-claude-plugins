@@ -5,6 +5,12 @@ All notable changes to the `redis-channel` plugin will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and
 the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] - 2026-08-08
+
+### Added - house-style presentation contract on the channel coach agent (#704)
+
+- `redis-channel-coach` agent definition gains a "Presentation contract (Infiquetra house style)" section, copied verbatim from `plugins/house-style/references/subagent-presentation-preamble.md`.
+
 ## [0.5.1] - 2026-07-05
 
 ### Documented — transport-agnostic gate-approval notice/answer convention (#379)

@@ -1,6 +1,6 @@
 {
   "name": "team-execution",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "Two-phase plan execution with reviewer consensus, resident liveness polling, external advisory convergence diffs, validator gates, chaperone manifests, and guarded nonprod automation.",
   "author": {
     "name": "Infiquetra",

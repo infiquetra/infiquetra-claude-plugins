@@ -1,0 +1,14 @@
+{
+  "schema": "delegation-proof.v1",
+  "plugin": "agy",
+  "version": "0.6.1",
+  "run_id": "agy-0-6-1-proof",
+  "bridge_command": "python3 plugins/agy/scripts/agy_delegate.py --repo-root . --run-id agy-0-6-1-proof --envelope <scratch>/agy-0-6-1-envelope.json --launch-agy",
+  "external_tool_calls": [
+    "~/.local/bin/agy --model 'Gemini 3.1 Pro (High)' --print-timeout 600s --log-file <bundle>/agy.log --add-dir <bundle>/worktree --sandbox --print '<adversarial reviewer packet: subagent-presentation-preamble.md>'"
+  ],
+  "actor": "agy:Gemini 3.1 Pro (High):agy-0-6-1-proof",
+  "transcript": "agy/house-style-preamble-review-0.6.1.transcript.jsonl",
+  "transcript_sha256": "bff21249761127002b48725fd0cb0096ce4621dfa72a1be7b8e5bfee02871e41",
+  "note": "Genuine no-write reviewer delegation backing the 0.6.1 bump, which exists because plugins/agy/agents/agy-coder.md and plugins/agy/agents/agy-reviewer.md each gained the house-style presentation contract (#704). The delegated task was an adversarial review of the canonical source of that same text, plugins/house-style/references/subagent-presentation-preamble.md. Genuineness evidence in the run bundle: run-lease.json real_agy_verdict=real and resolved_agy=~/.local/bin/agy, receipt engine_id=agy transport=cli variant='Gemini 3.1 Pro (High)', 4246 bytes of delegate output in 67.05s under supervised foreground execution, exit 0. The no-write contract held: changed_paths=[], diff.patch is 0 bytes, the clone's remotes were stripped before launch, and the live tree passed its preflight clean. Absolute local paths are collapsed to <repo>/<bundle>/~ because this repository is public. The delegate's verbatim output is preserved at docs/evidence/issue-704/agy-0.6.1-delegated-review.md, because the run bundle under .claude/ is git-ignored; its surviving findings are queued at docs/engineering-journal/QUEUED.md {#preamble-findings-from-the-0-6-1-delegation}."
+}

@@ -2,6 +2,34 @@
 
 ## 2026-08-08
 
+### The house-style build gates on an experiment, authors its preamble once, and leaves the largest block of subagent output deliberately uncovered  {#house-style-build-plan-704}
+
+Issue `infiquetra-claude-plugins#704`, plan `docs/plans/2026-08-08-issue-704-house-style-output-style-plugin-plan.md`, spec `…-spec.json`, backend `cc-workflows-ultracode`, 9 units in 6 waves. The product decisions were settled earlier (DECISIONS `{#house-style-hybrid-subagent-route}` plus its 2026-08-08 amendment); these are the build decisions.
+
+**KTD1 — The lever experiment is a plan unit with a hard stop, not a pre-flight check.** Neither subagent lever has ever been observed working; both are inference from repository structure and transcript fields. That is the exact shape that already cost this project a 44-percentage-point wrong claim, so U1 spawns a marked agent and emits a marked script, records the raw output in `docs/evidence/issue-704/lever-experiment.md`, and halts the whole run on either failure. Rejected: proving each lever inside the unit that uses it, which hides a failed premise inside a unit reporting success on its own terms.
+
+**KTD2 — The presentation preamble is one canonical file consumed twice, never written twice.** `plugins/house-style/references/subagent-presentation-preamble.md` is authored in U3; U5 stamps it into saga's emitter and U6 copies it into the 36 agent definition files, and the byte-identity test compares both against that one file rather than against each other. Rejected: a constant embedded in `execution_spec.py` with the agent files copying from it, which buries the product's own text inside saga's implementation and makes the plugin the derived artifact.
+
+**KTD3 — The emitter stamp lands in `_agent_prompt()` and nowhere else, and reaches two of its three call sites.** Grounding found exactly one funnel — `_agent_prompt()` in `plugins/saga/scripts/execution_spec.py`, already the home of `BUDGET_RIDER` and the fan-out reconciliation rider — called from `_build_emission_routing_context`, from the unattended escalation retry in `_emit_verify_panel`, and from `emit_inline_baseline`. Rejected: stamping at each of `_emit_thunk` / `_emit_parallel_wave` / `_emit_verify_panel` — three edits where one will do, and three places a future code path can be added without the stamp.
+
+**Amendment 2026-08-08 (code review) — the third call site is excluded.** `emit_inline_baseline` renders units the MAIN THREAD executes itself, so it now calls `_agent_prompt(..., subagent=False)`. Stamping a contract that reads "the operator-facing closing block and the main thread's style tell belong to the main thread alone. Do not write either one" into text the main thread runs suppresses the house style's entire visible output, once per unit, on this repository's default backend. The single-funnel decision is unaffected and is what made the exclusion a one-line change; what was wrong was treating "every call site of the funnel" as equivalent to "every spawned agent". LEARNINGS `{#a-test-can-pin-a-defect-in-place}`.
+
+**KTD4 — Verify panels are deliberately not stamped by the emitter.** Saga spawns every verifier as `saga:readonly-verifier`, which has a definition file and is therefore already covered by U6's lever. Stamping them from the emitter as well would double-apply the preamble while adding nothing to reach. What makes this safe to reason about is that the census keys on `attributionAgent` and a message carries exactly one, so the two levers' populations are disjoint by construction.
+
+**KTD5 — The 43.64% of subagent output written by hand stays uncovered in this build.** Route (c) — the style instructing the main thread to stamp each `agent()` prompt it authors — is the only route to the largest single block of subagent output in the corpus, larger than either shipped lever. It is deferred to follow-up work, not cancelled, because it changes what the style file asks of the main thread and that should be decided after the two mechanical levers are proven. Naming it as deferred is the point; absorbing it silently is the failure this project keeps having to correct.
+
+**KTD6 — Every release surface lands in one closing unit.** The preamble duplication touches 9 plugins, so 9 `plugin.json` versions, 9 `CHANGELOG.md` files, and `marketplace.json` all move. Spreading that across units would put several concurrent agents in `marketplace.json`, which `emit` halts on and no backend can make safe — concurrent agents share one working tree and Claude Code has no cross-agent file lock. Rejected: each unit bumping its own surfaces.
+
+**KTD7 — Widest wave is 3, matched to the session concurrency cap.** The first spec put U4, U5, U6, and U8 in one wave of 4. U4's mutation testing temporarily strips the contract from the style file to prove each assertion fails, so it must not run while anything else can read that file — making U4 depend on U5, U6, and U8 is both the honest dependency and the fix that brings the wave to 3.
+
+**Revisit when** the U1 experiment fails on either lever (the requirements document's R27 blocker reopens and the hybrid route needs re-deciding), or when route (c) is taken up and KTD5's deferral is discharged.
+
+**KTD9 — When a style rule and its metric disagree, fix whichever one is wrong, and never tune the style to the instrument.** The code review found the scorer could not see the closing form the style prescribes, could not see two of three permitted visuals, and required a bolded opening no rule asked for. The tempting single-sided fixes were both wrong: writing "Do you want me to..." into a style whose purpose is to stop asking open questions would tailor behaviour to a detector, and loosening `VERDICT_FIRST_RE` to accept any declarative opening would move a frozen baseline metric by an unmeasured amount and destroy the before/after comparison. So the fix went both ways by cause: `CLOSING_ASK_RE` was widened because it had a genuine blind spot against its own stated definition, and the style gained a bolded-opening rule and `-->` notation because those rules had no observable consequence. Rejected: adding a fourth new metric for the style's closing form, which would leave the two existing criteria pointed the wrong way rather than fixing them. Constraint that decided the shape: a detector may only be widened if the resulting movement on the frozen window is measured and disclosed — here 5 turns, attributed alternative by alternative, none of them from the style's own token. **Revisit when** a future style rule is added: it needs a matching scorer test in the same pull request, or it is unmeasurable by construction. LEARNINGS `{#test-the-rule-against-its-own-instrument}`.
+
+**KTD10 — Removing a leaked field from the write-once baseline is a redaction, not a regeneration.** The baseline is write-once because re-running the scorer onto it would replace the only record of pre-style behaviour with a styled measurement. Both committed artifacts carried a `top_cwds` field naming nine private repositories and the operator's home directory, in a public repository, so something had to change. The rule was read for its purpose rather than its letter: nothing was re-measured, one key was deleted, and the claim that nothing else moved was verified rather than asserted — `metrics`, `window`, `schema` and every other `corpus` field compare byte-identical before and after on both files. Rejected: leaving the leak because the file is write-once, which elevates a rule above the reason it exists; and re-running the scorer to regenerate a clean baseline, which is the one thing the rule actually forbids. Guard added so the distinction is enforced rather than remembered: the baseline test now pins all nine numerators, denominators, and percentages, so a genuine regeneration fails the suite while a redaction does not. **Revisit when** any future edit to a write-once artifact is proposed — the test is whether a number changed, not whether the file changed. LEARNINGS `{#a-measurement-artifact-is-a-publication-surface}`.
+
+---
+
 ### U7 deletes the fleet lease broker whole and guards the deletion at the resolver — frozen wires stay frozen  {#u7-deletes-the-fleet-lease-broker-whole-684}
 
 Issue: `infiquetra-claude-plugins#684`, unit U7 (last of 7) of the lease-broker retirement campaign (#677), plan `docs/plans/2026-07-30-issue-677-lease-broker-retirement-plan.md` §U7. `U1–U6` unwound 91 call sites across 12 files and 4 alias idioms; `U5` deleted the saga wrapper + hook; `U6` decoupled `team-execution` and renamed the wire field atomically.
@@ -15,6 +43,106 @@ Issue: `infiquetra-claude-plugins#684`, unit U7 (last of 7) of the lease-broker 
 **KTD4 — Fleet-doctor keeps the `lease-registry` kind as `retired:broker-free` (always absent).** `fleet_doctor.SOURCE_KINDS` still contains `lease-registry` and the scan still emits the kind with verdict `absent` for contract stability — the `test_source_matrix_doc_matches_module_and_scan` parses column 1, so the retired note lives in column 2. The three broker-dependent findings (`ownership-drift` broker-only, `terminal-resource-open`, `lease-without-spawn-fact`) become historical. `--lease-store` stays as a first-class flag with an advisory `retired` note in docs (code-review `b29725` #2) rather than a hard removal that would break existing CLI calls.
 
 **Revisit when** a future outcome worktree reaper is reintroduced (U3's accepted loss is then revisitable), when cross-runtime negotiates a new protocol version that drops `fleet-broker` terms, or when fleet-doctor is ready to hard-delete the `lease-registry` source kind (requires a golden-fixture and `SOURCE_KINDS` bump).
+
+---
+
+### The output-style plugin is `house-style`, and its subagent contract takes a measured two-lever route {#house-style-hybrid-subagent-route}
+
+Three operator decisions on `docs/brainstorms/2026-08-07-output-styles-requirements.md`, settled 2026-08-07 after the document review closed its findings. Together they close the review's only *Resolve before planning* blocker.
+
+**KTD1 — The plugin is named `house-style`.** It names what the thing is without colliding with Claude Code's own "output style" terminology, which would otherwise leave every sentence about the plugin ambiguous between the product and the concept. The name is permanent once published: it appears in the marketplace listing beside `saga`, `deploy`, and `fleet-core`, and it fixes the plugin directory path that scaffolding depends on. Rejected: any name containing "output-style", for the collision above.
+
+**KTD2 — The presentation contract reaches subagents by a two-lever hybrid, chosen by census rather than by argument.** The review offered three routes reasoned from repository structure without knowing which agents produce the 57.02%. Counting subagent assistant messages by `attributionAgent` over the baseline's exact window and roots totals 128,622 — equal to `subagent_assistant_messages` in `docs/measurements/2026-08-07-baseline.json`, so the census is cross-validated against the committed instrument. It shows `workflow-subagent` at 76,459 (59.44%) with no definition file, and only four types carrying a definition file in this repository at 38,492 (29.93%). So both levers ship: the presentation preamble is stamped into spawn prompts by saga's emitter (`plugins/saga/scripts/execution_spec.py`, `emit_workflow_script()`; per-unit `prompt` field on `Unit`), reaching ~~59.44%~~ **(superseded: 15.73% — see the Amendment below)**; and duplicated into the 36 files under `plugins/*/agents/*.md` with the byte-identity test restored to police drift, reaching 29.93%. ~~**Combined reach is ~89.4% and is a binding ceiling on every downstream document**~~ **(superseded: the binding ceiling is 45.7%, not 89.4% — see the Amendment below; no artifact may claim more)**; the ~~10.63%~~ **(superseded: 54.3%)** residue is `general-purpose` (3.69%), `Explore` (2.44%) — built-in types with no definition file — and 4.51% carrying no `attributionAgent`, labelled unclassified and assigned to neither lever. Rejected: route (a), definition files alone, for reaching under a third; route (b), putting the contract in `~/.claude/CLAUDE.md`, which does reach every subagent but contradicts the standing decision that the style is purely additive and `CLAUDE.md` is not growing presentation content; route (c), per-spawn contract alone, whose coverage depends on the main thread remembering each spawn — moving the stamp into the emitter is precisely what fixes that. Also rejected as a *measurement*: counting by `attributionPlugin`, which credits the definition-file route with 40.90% by including 11,394 `workflow-subagent` records that carry `plugin=saga` and have no file to stamp.
+
+**KTD3 — The bare-Default control run is skipped, not deferred.** Every baseline number was recorded under the built-in Explanatory style, so a two-week run on Default would have separated problems that style caused from problems it failed to prevent. Ruled out rather than postponed, with the cost recorded in the requirements document: the after-measurement can show whether shipping the style improved things, but cannot attribute how much of any improvement belongs to the style versus to `~/.claude/CLAUDE.md`. No comparison drawn against the baseline may claim that attribution.
+
+**Amendment 2026-08-08 — KTD2's reach figures are superseded; the decision itself stands.** The revisit-when condition below fired the day after it was written, and was resolved by measurement rather than by revisiting the choice. `workflow-subagent` is the attribution the Workflow runtime assigns to everything it spawns, not to what saga's emitter produces. Partitioning those 76,459 messages by the script that spawned each one — the run id is in the transcript path, the script text is in the run record, and `_JS_GATE_HELPER` classifies it — gives 20,228 emitter-produced (26.46%) and 56,126 hand-authored (73.41%). **The emitter lever reaches 15.73% of subagent output, not 59.44%, and the binding combined ceiling is 45.7%, not 89.4%.** The residue rises to 54.3%, whose largest part is the 43.64% of subagent output produced by hand-authored workflow scripts that neither lever touches. Both levers still work as specified and the hybrid is still the right shape; only the reach arithmetic changed. One consequence for planning: route (c) is no longer rejected on its stated grounds, since "moving the stamp into the emitter is precisely what fixes that" turns out to fix it for a quarter of the traffic, and route (c) is the only route that reaches the rest. Full method and stability argument: LEARNINGS `{#attribution-labels-name-the-runtime-not-the-author}`.
+
+**Revisit when** the experimental gate fails. Neither lever has been verified by observation — the mechanism is inference from repository structure and transcript fields. The plan must create an agent definition carrying a distinctive marker, spawn that type, confirm the marker reaches the output, and do the same for the emitter lever. A failure reopens the blocker rather than being worked around. ~~Revisit KTD2's ceiling separately if it emerges that some `workflow-subagent` traffic comes from ad-hoc workflows rather than saga-emitted scripts~~ — fired 2026-08-08, resolved in the amendment above.
+
+---
+
+### The output-style scorer lives at repo root, and its baseline is write-once {#output-styles-scorer-lives-at-repo-root}
+
+Settled during the document review of `docs/brainstorms/2026-08-07-output-styles-requirements.md` (review artifact `docs/reviews/2026-08-07-output-styles-requirements-doc-review.md`). The output-styles work ships one new plugin carrying one output style; these two decisions govern the verification tooling that ships beside it, not the style itself.
+
+**KTD1 — The scorer, its tests, and the captured baseline live at repo-root `tools/`, `tests/`, and `docs/measurements/`, not inside the new plugin directory.** Requirement R34 originally said "ship inside the new plugin, as the plugin's own verification tooling," which contradicted four other references and the transfer that had already happened. Three grounds decided it: `pyproject.toml:84` sets `testpaths = ["tests", "plugins/*/tests"]`, so repo-root `tests/` is canonical; `docs/measurements/2026-08-07-baseline.md` names `tools/output_style_scorer.py` in both its `instrument:` frontmatter and its recorded reproduce command, so moving the file silently breaks a published reproduction; and the requirements document's own Success Criteria and Sources sections already cite that path. Rejected: the plugin-local layout used by CLI-based plugins (`plugins/<p>/skills/<s>/scripts/`), which is right for a plugin's runtime code but wrong for an instrument whose output is a committed measurement other documents cite by path. Accepted cost, recorded in R34 rather than silently absorbed: continuous integration runs `ruff check .` and `ruff format --check .` repo-wide so `tools/` is linted, but `mypy plugins/ scripts/ tests/` and `bandit -r plugins/ scripts/ tests/` exclude it, and `pytest --cov=plugins` gives the scorer's tests — 29 when this was written, 54 after the #704 code review added the malformed-record and style-versus-instrument suites, 56 after the council review on pull request 705 added one for an unparseable timestamp string and one for a whitespace-separated fence tag — no coverage credit. The scorer type-checks clean when `mypy` is pointed at it by hand, so the gap is enforcement, not correctness.
+
+**KTD2 — `docs/measurements/2026-08-07-baseline.json` is write-once; new metrics are baselined by re-scanning the archived window to a different path.** The file records behaviour before any custom output style existed, and that window closed permanently the moment one ships — regenerating it would overwrite the only record of the unstyled world with a styled measurement and still call it a baseline. This matters because requirements R32 and R33 add two metrics the baseline does not contain, which makes "just re-run it" the obvious and wrong move. The right route costs nothing: transcripts are immutable once written and 2,515 files still carry a modification time inside 2026-07-03 to 2026-08-07, so the extended scorer is pointed at the same window with a new `--out` path and yields genuine pre-style values. Rejected: regenerating in place (destroys the record), and treating R32/R33 as permanently un-baselineable (false — it assumes the corpus is gone when it is on disk). Corollary from the same review: the byte-identity test is retired only for the second style file that the one-style decision disposed of; ideation's survivor 10 wanted the same test for a different artifact, the presentation preamble duplicated across N agent definition files, and that need is untouched.
+
+**Revisit when** the `tools/` coverage gap starts mattering — if the scorer grows enough logic that untyped, unscanned code becomes a real risk, add `tools/` to the `mypy` and `bandit` scopes rather than relocating the file. Revisit KTD2 only if a deliberate second control baseline is captured (the bare-Default two-week run still open in the requirements document), which would be a new dated file alongside this one, never a replacement for it.
+
+---
+
+### Issue #704 (`house-style` output-style plugin) — the plan's Key Technical Decisions  {#house-style-two-lever-hybrid-and-ktds}
+
+The implementation plan for issue #704 (`docs/plans/2026-08-08-issue-704-house-style-output-style-plugin-plan.md`)
+records eight Key Technical Decisions (KTDs). They are captured here as a durable set rather than
+left only in the plan document, which is a point-in-time artifact.
+
+**KTD1 — The lever experiment is a plan unit with its own evidence artifact, not a pre-flight
+checkbox.** Both reach levers (agent-definition duplication and an emitter-stamped preamble) are
+otherwise inference from repository structure. The requirements document had already lost one
+44-percentage-point reach claim to an unverified inference about the same subsystem (LEARNINGS
+`{#agents-dir-is-per-agent-type-not-a-preamble}`), so the experiment runs as unit U1, with a hard
+stop on failure. *Rejected:* proving each lever inside the unit that uses it, which would hide a
+failed premise inside a unit reporting success on its own terms.
+
+**KTD2 — The preamble is one file, consumed twice, not authored twice.** Both levers need identical
+text. Authoring it once at `plugins/house-style/references/subagent-presentation-preamble.md`, with
+the emitter reading it and the 36 agent files copying it, makes the plan's byte-identity test
+meaningful — copies are compared against a canonical source, not against each other. *Rejected:* a
+constant embedded directly in `execution_spec.py` that the agent files copy from, which would bury
+the product's own text inside saga's implementation.
+
+**KTD3 — The emitter stamp lives in exactly one function, `_agent_prompt()`, and nowhere else.**
+Grounding located exactly one funnel, `_agent_prompt()` in `execution_spec.py`, called from three call sites, and
+already the home of the existing `BUDGET_RIDER` pattern. *Rejected:* stamping separately at each of
+`_emit_thunk` / `_emit_parallel_wave` / `_emit_verify_panel` — three edits where one suffices, and
+three places a future code path could add without the stamp.
+
+**KTD4 — Verify panels are deliberately not stamped by the emitter a second time.** Every verify
+agent saga spawns already runs as `saga:readonly-verifier`, which has its own definition file and is
+therefore already covered by the agent-definition lever. Stamping verify panels from the emitter too
+would double-apply the preamble to the same agents without adding any reach.
+
+**KTD5 — The 43.64% of subagent output written directly by the main thread (never relayed through an
+agent definition or the emitter) stays out of scope for this plan.** That population is reached only
+by a third route — the main thread stamping its own `agent()` prompts — which is out of scope here
+and recorded as deferred follow-up work, not silently absorbed or cancelled.
+
+**KTD6 — Release surfaces land in one unit, U9, at the end, not spread across each unit that touches
+a file.** The preamble duplication (Lever A) touches 9 plugins, moving 9 `plugin.json` versions and
+9 `CHANGELOG.md` files; `house-style`'s own two release surfaces make 10 of each. In
+`.claude-plugin/marketplace.json`, 9 entries are re-versioned and 1 (`house-style`) is added, taking
+the file from 11 plugin entries to 12. Spreading that across units would put multiple agents editing
+`marketplace.json` concurrently, which the plan's own emitted-workflow file-conflict guard
+(`assert_no_wave_file_conflicts`) now halts on. *Rejected:* each unit bumping its own release
+surfaces as it lands.
+
+**KTD7 — Exactly one unit, U5 (the emitter stamp), carries an adversarial verify panel.** A refute-3
+majority panel (three independent verifiers, each able to refute the unit's claimed result) judges
+the emitter change and nothing else in the plan. The reasoning is blast radius, not implementation
+difficulty: `execution_spec.py` composes the prompt for every agent every saga workflow spawns in
+every repository, so a defect there escapes this one repository. *Rejected:* a panel on every unit,
+which would multiply the run's spend to scrutinise units whose worst failure is a bad Markdown file
+already caught by that unit's own tests; a cheaper verifier tier, since a verifier below the tier of
+the unit it judges cannot reliably refute it; a wider panel, since refute-3 is the documented
+operator concurrency cap for agents above Haiku.
+
+**KTD8 — One pull request; the emitter unit (U5) does not ship separately.** The plan's own
+doc-review flagged the total change (73 unique paths) as above the sizing rubric's one-pull-request
+threshold and proposed splitting U5 out. The operator resolved this on 2026-08-08: keep it together.
+The path count overstates the review burden — of the 73 paths, 37 are the mechanical U6 preamble
+copies (one identical block into 36 files plus their shared test) and 23 are U9's version and
+`marketplace.json` bookkeeping; the two actually risky files (`execution_spec.py` and its test) are
+U5's alone, and those are exactly the two files behind the KTD7 refute-3 panel. *Rejected:*
+splitting U5 into its own pull request, which the doc-review had proposed and the operator
+overrode.
+
+**Revisit when** route (c) from KTD5 (the main-thread self-stamp) is scheduled, since it changes what
+the style file asks the main thread to do and was deliberately not bundled with the two mechanical
+levers decided here.
 
 ---
 

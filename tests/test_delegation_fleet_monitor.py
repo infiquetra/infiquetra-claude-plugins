@@ -420,8 +420,14 @@ def test_standalone_transcript_matching_no_bridge_reports_once(tmp_path: Path) -
 def test_real_proofs_directory_excludes_examples_and_sweeps_clean() -> None:
     """Examples stay documentation-only while shipped release proofs remain enforced."""
     proofs = cdp.load_proofs(REAL_PROOFS_DIR)
+    # Deliberate allowlist, in `sorted(rglob)` filename order, NOT a count assertion: it names
+    # every genuine delegated run whose proof ships in this repo, so an artifact nobody added on
+    # purpose fails here. It grows by exactly one entry per real bridge run — adding a line when
+    # you land a new proof is expected; a diff that adds one you cannot trace to a run bundle is
+    # the thing this catches.
     assert [proof.data["run_id"] for proof in proofs] == [
         "cmux-bypass-0.5.1-20260719",
+        "agy-0-6-1-proof",
         "issue-355-genuine-20260717",
         "agy-0-6-0-proof",
     ]

@@ -29,7 +29,7 @@ def _frontmatter(path: Path) -> dict[str, str]:
 def test_codex_plugin_json_has_required_fields() -> None:
     plugin_json = json.loads(_read(PLUGIN_ROOT / ".claude-plugin" / "plugin.json"))
     assert plugin_json["name"] == "codex"
-    assert plugin_json["version"] == "0.1.3"
+    assert plugin_json["version"] == "0.1.4"
     assert plugin_json["description"]
     assert plugin_json["author"] == {"name": "Infiquetra", "email": "hello@infiquetra.com"}
     assert plugin_json["repository"] == "https://github.com/infiquetra/infiquetra-claude-plugins"

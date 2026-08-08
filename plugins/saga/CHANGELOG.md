@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.131.1] - 2026-08-08
+
+### Added - house-style presentation contract, on two agents and the emitter (#704)
+
+- `mechanical-executor` and `readonly-verifier` agent definitions each gain a "Presentation contract (Infiquetra house style)" section, copied verbatim from `plugins/house-style/references/subagent-presentation-preamble.md` (Lever A, the agent-definition reach path).
+- `execution_spec.py`'s `_agent_prompt()` now stamps the same preamble text onto every emitted `agent()` prompt (Lever B, the emitter-funnel reach path), proven byte-identical to the canonical source by the plan's U5 unit and its refute-3 verify panel.
+
+### Fixed - the inline backend was being handed a subagent's instructions (#704 code review)
+
+- **`emit_inline_baseline()` no longer stamps the presentation contract.** Its units are executed by the MAIN THREAD, not by a spawned agent, and the contract tells its reader "the operator-facing closing block and the main thread's style tell belong to the main thread alone. Do not write either one." Emitting it there instructed the main thread to suppress the house style's entire visible output, once per unit, on the backend this repository uses by default. `_agent_prompt()` gains a keyword-only `subagent` parameter (default `True`) and the inline renderer passes `subagent=False`; every spawned path is unchanged.
+- **`BUDGET_RIDER` gains an explicit precedence clause.** A cheap-tier unit that declares no `returns` received the presentation contract and the budget rider concatenated into a flat contradiction — "state the finding first, situate before you detail" against "be terse; no human-facing prose" — with the contract's own escape hatch inoperative, because it is conditioned on a stated return shape that such a unit never emits. Terseness now wins on everything except the first sentence, which still states the finding.
+
 ## [0.131.0] - 2026-08-08
 
 ### Removed

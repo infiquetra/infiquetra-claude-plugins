@@ -134,16 +134,28 @@ definitions with the byte-identity test restored for the 29.93% — combined cei
 its attribution cost recorded.
 
 **One correction to this review's own figures.** It reported "the 400 agent files under
-`~/.claude/plugins/cache/`" secondhand. Measured: 226 `.md` files under `agents/` directories in the
-cache, 277 files of all types. The conclusion is unaffected — the cache is overwritten on every plugin
-update and is not a durable lever — but the count is 226, not 400.
+`~/.claude/plugins/cache/`" secondhand, attaching a whole-tree count to a subtree path. Both counts
+are right at their own scope: 226 agent `.md` files under `~/.claude/plugins/cache/`, and 400 under
+all of `~/.claude/plugins/`, which also spans `marketplaces/` and `repos/`. The document now uses 226
+and names the scope. The conclusion is unaffected — neither tree is a durable lever, because both are
+overwritten on plugin update.
+
+**The reach ceiling fell from 89.4% to 45.7%, and the cause was a measurement this Resolution had
+left open.** The paragraph below originally recorded, as an open question, whether all
+`workflow-subagent` traffic comes from saga-emitted scripts. It does not, and the question was
+answerable from the same transcripts: each workflow subagent file sits under a `wf_<runid>` directory
+naming its run, and each run persists the full text of the script that ran. Classifying those scripts
+by an emitter helper that has been byte-stable since before the window opened gives 26.46%
+emitter-produced and 73.41% hand-authored. R26's reach is therefore 15.73% of subagent output rather
+than 59.44%, the combined ceiling is 45.7%, and the largest single block of subagent output in the
+corpus — 43.64%, from workflow scripts written by hand — is reached by neither lever. The hybrid
+decision stands; only its reach figure changed. See LEARNINGS
+`{#attribution-labels-name-the-runtime-not-the-author}`.
 
 **Still unverified, and gating the plan.** Neither lever has been observed working. The mechanism is
 inference from repository structure and transcript fields. The plan must create an agent definition
 carrying a distinctive marker, spawn that type, confirm the marker reaches the output, and repeat for
-the emitter lever. A failure reopens the blocker rather than being routed around. Separately, whether
-*all* `workflow-subagent` traffic originates from saga-emitted scripts is not established; if some
-comes from ad-hoc workflows, R26's reach is below 59.44% and the 89.4% ceiling falls with it.
+the emitter lever. A failure reopens the blocker rather than being routed around.
 
 See DECISIONS `{#house-style-hybrid-subagent-route}` and LEARNINGS
 `{#measure-the-agent-population-before-choosing-a-lever}`.

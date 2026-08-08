@@ -124,7 +124,7 @@ def _identity(baseline: dict[str, object], repo: Path) -> dict[str, object]:
         "resource_sha256": _digest("resource"),
         "broker_epoch": "epoch-1",
         "fencing_sequence": 1,
-        "boot_id": "boot-1",
+        "boot_id": LP._current_boot_id() if hasattr(LP, "_current_boot_id") else "boot-1",
         "manifest_sha256": manifest["this_hash"],
         "spawn_sha256": spawn["this_hash"],
         "token_sha256": _digest("token"),

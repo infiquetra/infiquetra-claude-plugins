@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.131.1] - 2026-08-08
+
+### Added - house-style presentation contract, on two agents and the emitter (#704)
+
+- `mechanical-executor` and `readonly-verifier` agent definitions each gain a "Presentation contract (Infiquetra house style)" section, copied verbatim from `plugins/house-style/references/subagent-presentation-preamble.md` (Lever A, the agent-definition reach path).
+- `execution_spec.py`'s `_agent_prompt()` now stamps the same preamble text onto every emitted `agent()` prompt (Lever B, the emitter-funnel reach path), proven byte-identical to the canonical source by the plan's U5 unit and its refute-3 verify panel.
+
 ## [0.131.0] - 2026-08-08
 
 ### Removed

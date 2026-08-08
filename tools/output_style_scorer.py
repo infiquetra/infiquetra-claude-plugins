@@ -24,6 +24,11 @@ reading 765 messages.  This script computes a keyword-lexicon proxy instead, whi
 reproduce those percentages and is not supposed to.  Compare proxy to proxy across runs; the
 hand-labelled figures are recorded in the baseline document as historical context only.
 
+Two later metrics are heuristic in a third way and say so in their own definitions.
+`visual_gating_rate` can only see two of the four conditions that make a turn an orientation
+turn, so it under-counts that population.  `undigested_relay_rate` infers which turn relayed a
+subagent from the order of tool calls rather than observing it.  Both are trend lines.
+
 Usage
 -----
     python3 tools/output_style_scorer.py --days 35 --out docs/measurements/baseline.json
@@ -47,6 +52,10 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 # Bump when any DEFINITION below changes; baselines with a different schema are not comparable.
+# Adding a NEW metric does not bump it.  An older report simply lacks the new row, and every
+# row it does carry was computed by the same definition, so the two remain comparable for the
+# metrics they share.  Bumping on an addition would falsely mark the 2026-08-07 baseline as
+# incomparable and destroy the only "before" record there is.
 METRIC_SCHEMA = 1
 
 DEFAULT_ROOTS = [
@@ -61,6 +70,18 @@ GENUINE_PROMPT_SOURCES = {"typed", "queued", "suggestion_accepted"}
 # Main-thread assistant messages at or above this many characters count as a wall of text.
 # 4000 is the empirical cutoff from the 2026-08-07 run (the 40 longest messages of 16,029).
 MOUNTAIN_CHARS = 4000
+
+# Tool names that spawn a subagent.  A main-thread turn that calls one of these is followed,
+# sooner or later, by the turn that relays what came back.  `Task` is the older name and is
+# kept so that transcripts from before the rename still classify.
+SPAWN_TOOLS = {"Agent", "Task", "Workflow"}
+
+# A fenced block at or above this many characters, whose first character opens a JSON object
+# or array, is a pasted payload rather than a quotation.
+PAYLOAD_MIN_CHARS = 800
+
+# This many consecutive quoted lines is a payload pasted behind `>` rather than a quotation.
+PAYLOAD_QUOTE_LINES = 8
 
 # --------------------------------------------------------------------------------------
 # Detectors
@@ -84,6 +105,31 @@ CLOSING_ASK_RE = re.compile(
 VERDICT_FIRST_RE = re.compile(r"^\s*\*\*[^*]{4,}?\*\*")
 
 MERMAID_RE = re.compile(r"```\s*mermaid\b", re.IGNORECASE)
+
+# A visual, for the purpose of gating: a markdown table, a mermaid fence, box-drawing
+# characters, or arrow notation of the kind a hand-drawn flow uses.  Prose bullets are not
+# visuals and deliberately do not match.  Heuristic by construction, and it errs generously:
+# `-->` also occurs inside HTML comments and inside quoted code, so a turn can be credited
+# with a visual it did not really draw.  It is a trend line, not a verdict on any one message.
+VISUAL_RE = re.compile(
+    r"^[ \t]*\|[ \t:|-]*-{3,}[ \t:|-]*\|[ \t]*$"  # markdown table separator row
+    r"|```[ \t]*mermaid\b"  # mermaid fence
+    r"|[\u2500-\u257f]"  # box-drawing characters (U+2500 to U+257F)
+    r"|-->|→|⇒",  # arrow notation
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# A fenced block whose body opens a JSON object or array.  Restricting to JSON is what keeps
+# the legitimate verbatim cases out: a diff hunk, an exact error string and raw command output
+# are all correct to reproduce character for character, and none of them starts with { or [.
+PAYLOAD_FENCE_RE = re.compile(r"```[A-Za-z0-9_+-]*\n(.*?)```", re.DOTALL)
+JSON_OPENS_RE = re.compile(r"^\s*[\[{]")
+# `"key":` -- used to recognise a dump that was cut off partway and so will not parse.  Five
+# is deliberately low: the fallback only ever runs on text that already opens a brace or a
+# bracket and already runs past PAYLOAD_MIN_CHARS, and prose meeting both of those still
+# almost never carries five quoted key names.  The real 12,347-character offender carries 12.
+JSON_KEY_RE = re.compile(r'"[^"\n]{1,60}"\s*:')
+JSON_KEYS_FOR_A_DUMP = 5
 
 # A bare identifier used as a noun: an issue/PR number or a short commit SHA that opens a
 # sentence with no preceding common noun naming what it is.  Heuristic by construction --
@@ -128,6 +174,21 @@ class Corpus:
     # Prose-bearing main-thread messages. Shape metrics score these, because a turn that is
     # only a tool call has no prose to have a verdict or a closing ask.
     main_assistant: list[str] = field(default_factory=list)
+    # Two flag lists kept in lockstep with main_assistant, one entry per prose message.
+    # They record the two turn triggers a transcript can actually show: whether this was the
+    # session's first prose turn, and whether it was the first prose turn after a subagent
+    # was spawned. Both are filled by _order_sessions() after the whole walk, never during
+    # it, because a session's records can be spread across files that the glob returns in
+    # any order and a flag assigned in scan order would be wrong.
+    main_is_session_first: list[bool] = field(default_factory=list)
+    main_is_relay: list[bool] = field(default_factory=list)
+    # session id -> the turn events that decide those flags, as
+    # (timestamp, read order, "prose" | "spawn", index into main_assistant).
+    # Sorting by the first two fields puts a session back into real time order; "prose"
+    # sorting before "spawn" makes a turn that both relays one subagent and spawns the next
+    # count as the relay it is.
+    session_events: dict[str, list[tuple[str, int, str, int]]] = field(default_factory=dict)
+    records_read: int = 0
     # Every main-thread assistant message including tool-only turns. The reach metric uses
     # this so both sides of the ratio count the same kind of thing.
     main_assistant_total: int = 0
@@ -160,6 +221,19 @@ def _text_of(message: dict[str, Any]) -> str:
         if isinstance(block, dict) and block.get("type") == "text"
     ]
     return "\n".join(parts)
+
+
+def _spawns_subagent(message: dict[str, Any]) -> bool:
+    """True when this assistant turn called a tool that starts a subagent."""
+    content = message.get("content")
+    if not isinstance(content, list):
+        return False
+    return any(
+        isinstance(block, dict)
+        and block.get("type") == "tool_use"
+        and block.get("name") in SPAWN_TOOLS
+        for block in content
+    )
 
 
 def _iter_transcripts(roots: list[str], since: datetime) -> Iterator[str]:
@@ -203,7 +277,31 @@ def collect(roots: list[str], since: datetime, until: datetime, exclude: set[str
         except OSError:
             continue
 
+    _order_sessions(corpus)
     return corpus
+
+
+def _order_sessions(corpus: Corpus) -> None:
+    """Put every session back into time order and set the two turn flags from it.
+
+    This runs once, after the walk. Doing it during the walk would tie the answer to the
+    order the filesystem happened to hand back a session's transcripts, which is the kind of
+    fault that shows up as a metric reading zero rather than as an error.
+    """
+    count = len(corpus.main_assistant)
+    corpus.main_is_session_first = [False] * count
+    corpus.main_is_relay = [False] * count
+    for events in corpus.session_events.values():
+        awaiting_relay = False
+        seen_prose = False
+        for _stamp, _seq, kind, index in sorted(events):
+            if kind == "prose":
+                corpus.main_is_relay[index] = awaiting_relay
+                corpus.main_is_session_first[index] = not seen_prose
+                awaiting_relay = False
+                seen_prose = True
+            else:
+                awaiting_relay = True
 
 
 def _scan_lines(
@@ -242,18 +340,25 @@ def _scan_lines(
             if sidechain is not False:
                 continue
             corpus.main_assistant_total += 1
-            text = _text_of(record.get("message", {}))
-            if not text.strip():
-                # A tool-call-only turn has no prose and cannot be scored on shape.
-                continue
-            corpus.main_assistant.append(text)
-            if cwd := record.get("cwd"):
-                corpus.cwds[cwd] += 1
+            corpus.records_read += 1
+            seq = corpus.records_read
+            message = record.get("message", {})
+            text = _text_of(message)
             session = record.get("sessionId") or path
-            prev = corpus.session_last_ts.get(session)
-            if prev is None or (isinstance(stamp, str) and stamp >= prev):
-                corpus.session_last_main[session] = text
-                corpus.session_last_ts[session] = stamp or ""
+            events = corpus.session_events.setdefault(session, [])
+            if text.strip():
+                corpus.main_assistant.append(text)
+                events.append((stamp or "", seq, "prose", len(corpus.main_assistant) - 1))
+                if cwd := record.get("cwd"):
+                    corpus.cwds[cwd] += 1
+                prev = corpus.session_last_ts.get(session)
+                if prev is None or (isinstance(stamp, str) and stamp >= prev):
+                    corpus.session_last_main[session] = text
+                    corpus.session_last_ts[session] = stamp or ""
+            # A tool-call-only turn has no prose and cannot be scored on shape, but it can
+            # still be the turn that spawned the subagent, so this runs either way.
+            if _spawns_subagent(message):
+                events.append((stamp or "", seq, "spawn", -1))
 
         elif kind == "user":
             if sidechain is not False or "toolUseResult" in record:
@@ -293,6 +398,57 @@ def _last_line(text: str) -> str:
 def _first_line(text: str) -> str:
     lines = [ln.strip() for ln in text.strip().splitlines() if ln.strip()]
     return lines[0] if lines else ""
+
+
+def _is_json_dump(body: str) -> bool:
+    """A machine-serialised structure, as opposed to prose that happens to start with a brace.
+
+    Parsing is the first test.  The fallback matters because the real offenders are often
+    truncated mid-structure and will never parse: the 12,347-character worst case in the
+    2026-08-07 corpus opens `{"findings":[{"content":"[P1] ...` and runs out of room.
+    """
+    if not JSON_OPENS_RE.match(body):
+        return False
+    try:
+        json.loads(body)
+    except (ValueError, RecursionError):
+        return len(JSON_KEY_RE.findall(body)) >= JSON_KEYS_FOR_A_DUMP
+    return True
+
+
+def _has_pasted_payload(text: str) -> tuple[bool, int]:
+    """Does this message carry a raw payload as its body, and how long is the longest one?
+
+    Three shapes count, and the third is the one that matters most.  A *fenced* block that is
+    a JSON dump of at least PAYLOAD_MIN_CHARS is a subagent return pasted whole.  A run of
+    PAYLOAD_QUOTE_LINES or more consecutive `>` lines is the same thing behind block-quote
+    markers.  And an *unfenced* message that is itself nothing but a JSON dump is the shape
+    the worst case in the 2026-08-07 corpus actually took -- 12,347 characters of literal
+    unformatted JSON with no fence around it at all.  A fence-only detector reads zero on
+    that message, which is why this function checks the bare body too.
+
+    Deliberately NOT counted: diff hunks, exact error strings and raw command output.  Those
+    are correct to reproduce character for character, and none of them is a JSON dump.
+    """
+    longest = 0
+    body = text.strip()
+    if len(body) >= PAYLOAD_MIN_CHARS and _is_json_dump(body):
+        longest = len(body)
+    for fenced in PAYLOAD_FENCE_RE.findall(text):
+        if len(fenced) >= PAYLOAD_MIN_CHARS and _is_json_dump(fenced):
+            longest = max(longest, len(fenced))
+    run = 0
+    quoted_chars = 0
+    for line in text.splitlines():
+        if line.lstrip().startswith(">"):
+            run += 1
+            quoted_chars += len(line)
+            if run >= PAYLOAD_QUOTE_LINES:
+                longest = max(longest, quoted_chars)
+        else:
+            run = 0
+            quoted_chars = 0
+    return longest > 0, longest
 
 
 def score(corpus: Corpus) -> list[dict[str, Any]]:
@@ -425,7 +581,128 @@ def score(corpus: Corpus) -> list[dict[str, Any]]:
         )
     )
 
+    metrics.append(_visual_gating_metric(corpus))
+    metrics.append(_relay_quality_metric(corpus))
+
     return metrics
+
+
+def _orientation_flags(corpus: Corpus) -> list[bool]:
+    """One flag per prose message: is this an orientation turn or a routine one?
+
+    Only two of the style's four orientation triggers leave a mark a transcript can be read
+    for -- the first prose turn of a session, and the turn that follows a subagent spawn.  A
+    topic change and a return from a long tool run do not, so they are not detected and the
+    orientation population is UNDER-counted.  Turns that were really orientation but are not
+    detected land in the routine population, where an appropriate visual is scored as a
+    misfire.  The metric therefore reads pessimistically, which is the safe direction.
+    """
+    n = len(corpus.main_assistant)
+    first = corpus.main_is_session_first
+    relay = corpus.main_is_relay
+    return [(i < len(first) and first[i]) or (i < len(relay) and relay[i]) for i in range(n)]
+
+
+def _visual_gating_metric(corpus: Corpus) -> dict[str, Any]:
+    """R32: do visuals appear on orientation turns and stay absent from routine ones?"""
+    main = corpus.main_assistant
+    orientation = _orientation_flags(corpus)
+    has_visual = [bool(VISUAL_RE.search(t)) for t in main]
+
+    orientation_n = sum(orientation)
+    routine_n = len(main) - orientation_n
+    orientation_with_visual = sum(1 for i in range(len(main)) if orientation[i] and has_visual[i])
+    routine_with_visual = sum(1 for i in range(len(main)) if not orientation[i] and has_visual[i])
+    correctly_gated = orientation_with_visual + (routine_n - routine_with_visual)
+
+    # The headline is dominated by the routine population, which is roughly fifteen times
+    # the orientation population, so most of it is the easy half: a routine turn that drew
+    # nothing. This average weights the two halves equally instead, and is the figure to
+    # compare across runs -- the headline can sit still while both halves move.
+    orientation_right = _rate(orientation_with_visual, orientation_n)
+    routine_right = 100.0 - _rate(routine_with_visual, routine_n)
+    balanced = round((orientation_right + routine_right) / 2, 3)
+
+    return _metric(
+        "visual_gating_rate",
+        "Main-thread prose messages whose visual matches the turn they are on: an orientation "
+        "turn carrying at least one visual, or a routine turn carrying none. Orientation means "
+        "the first prose turn of a session or the first prose turn after a subagent was "
+        "spawned; every other turn is treated as routine. A visual means a markdown table, a "
+        "mermaid fence, box-drawing characters, or arrow notation. HEURISTIC on both axes: two "
+        "of the four orientation triggers (a topic change, a return from a long tool run) leave "
+        "no transcript signal and are not detected, so orientation is under-counted; and the "
+        "visual detector also fires on arrow notation inside quoted code. A trend line, not a "
+        "verdict on any single message. The headline percent is diluted by the routine "
+        "population being far the larger of the two -- compare balanced_gating_percent across "
+        "runs, and read the two component rates below rather than the headline alone.",
+        correctly_gated,
+        len(main),
+        confidence="heuristic",
+        balanced_gating_percent=balanced,
+        orientation_turns=orientation_n,
+        orientation_with_visual=orientation_with_visual,
+        orientation_with_visual_percent=_rate(orientation_with_visual, orientation_n),
+        routine_turns=routine_n,
+        routine_with_visual=routine_with_visual,
+        routine_with_visual_percent=_rate(routine_with_visual, routine_n),
+        undetected_triggers=["topic change", "return from a long tool run"],
+    )
+
+
+def _relay_quality_metric(corpus: Corpus) -> dict[str, Any]:
+    """R33: on a relay turn, is the finding digested or is the payload pasted?"""
+    main = corpus.main_assistant
+    relay_flags = corpus.main_is_relay
+    relays = [main[i] for i in range(len(main)) if i < len(relay_flags) and relay_flags[i]]
+
+    undigested = 0
+    longest_payload = 0
+    verdict_first = 0
+    for text in relays:
+        pasted, longest = _has_pasted_payload(text)
+        if pasted:
+            undigested += 1
+        longest_payload = max(longest_payload, longest)
+        if VERDICT_FIRST_RE.match(_first_line(text)):
+            verdict_first += 1
+
+    # The same payload detector run over every main-thread prose turn, not just the ones
+    # classified as relays. A zero headline must be readable against this: it can mean
+    # "relays are digested", but it can also mean "the payloads are landing on turns this
+    # metric does not classify as relays", and only these two numbers together say which.
+    payload_anywhere = 0
+    longest_anywhere = 0
+    for text in main:
+        pasted, longest = _has_pasted_payload(text)
+        if pasted:
+            payload_anywhere += 1
+        longest_anywhere = max(longest_anywhere, longest)
+
+    return _metric(
+        "undigested_relay_rate",
+        "Relay turns -- the first main-thread prose turn after a subagent was spawned -- that "
+        "carry a raw payload as their body rather than a digested finding. A raw payload means "
+        "a fenced block of at least "
+        f"{PAYLOAD_MIN_CHARS} characters opening a JSON object or array, or a run of at least "
+        f"{PAYLOAD_QUOTE_LINES} consecutive quoted lines. Diff hunks, exact error strings and "
+        "raw command output are deliberately excluded, because reproducing those verbatim is "
+        "correct. HEURISTIC: the relay turn is inferred from tool-call ordering rather than "
+        "observed, and a relay that paraphrases a payload badly still scores as digested. "
+        "Lower is better.",
+        undigested,
+        len(relays),
+        confidence="heuristic",
+        relay_turns=len(relays),
+        relay_verdict_first=verdict_first,
+        relay_verdict_first_percent=_rate(verdict_first, len(relays)),
+        longest_relay_payload_chars=longest_payload,
+        payload_turns_anywhere=payload_anywhere,
+        payload_turns_anywhere_percent=_rate(payload_anywhere, len(main)),
+        longest_payload_chars_anywhere=longest_anywhere,
+        main_prose_turns=len(main),
+        spawn_tools=sorted(SPAWN_TOOLS),
+    )
 
 
 def build_report(

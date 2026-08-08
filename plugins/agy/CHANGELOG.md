@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-08-08
+
+### Added - house-style presentation contract on the delegation bridge agents (#704)
+
+- `agy-coder` and `agy-reviewer` agent definitions each gain a "Presentation contract (Infiquetra house style)" section, copied verbatim from `plugins/house-style/references/subagent-presentation-preamble.md`. The reviewer relaying a delegated result now leads with the answer, situates before detailing, and names identifiers instead of gesturing at them, matching the house-style output style's main-thread rules.
+
 ## [0.6.0] - 2026-07-29
 
 ### Removed - live apply and its lease-broker fence (#671)

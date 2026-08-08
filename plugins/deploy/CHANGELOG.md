@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.1] - 2026-08-08
+
+### Added - house-style presentation contract on the release orchestrator (#704)
+
+- `release-orchestrator` agent definition gains a "Presentation contract (Infiquetra house style)" section, copied verbatim from `plugins/house-style/references/subagent-presentation-preamble.md`.
+
 ## [0.2.0] - 2026-07-12
 
 ### Added - acceptance step at saga handoff boundary, gate-or-auto authorization gating (#395)

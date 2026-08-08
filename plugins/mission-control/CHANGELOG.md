@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.10.2] - 2026-08-08
+
+### Added - house-style presentation contract on the SDLC operator agent (#704)
+
+- `sdlc-operator` agent definition gains a "Presentation contract (Infiquetra house style)" section, copied verbatim from `plugins/house-style/references/subagent-presentation-preamble.md`.
+
 ## [2.10.1] - 2026-07-16
 
 ### Fixed

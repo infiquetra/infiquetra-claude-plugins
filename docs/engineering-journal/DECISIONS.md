@@ -6676,3 +6676,75 @@ behavior is then never worse than pre-#520.
 than session+engine (e.g. per-unit), or when the marker family moves out of the repo tree.
 
 ---
+
+### Issue #704 (`house-style` output-style plugin) — the plan's Key Technical Decisions  {#house-style-two-lever-hybrid-and-ktds}
+
+The implementation plan for issue #704 (`docs/plans/2026-08-08-issue-704-house-style-output-style-plugin-plan.md`)
+records eight Key Technical Decisions (KTDs). They are captured here as a durable set rather than
+left only in the plan document, which is a point-in-time artifact.
+
+**KTD1 — The lever experiment is a plan unit with its own evidence artifact, not a pre-flight
+checkbox.** Both reach levers (agent-definition duplication and an emitter-stamped preamble) are
+otherwise inference from repository structure. The requirements document had already lost one
+44-percentage-point reach claim to an unverified inference about the same subsystem (LEARNINGS
+`{#agents-dir-is-per-agent-type-not-a-preamble}`), so the experiment runs as unit U1, with a hard
+stop on failure. *Rejected:* proving each lever inside the unit that uses it, which would hide a
+failed premise inside a unit reporting success on its own terms.
+
+**KTD2 — The preamble is one file, consumed twice, not authored twice.** Both levers need identical
+text. Authoring it once at `plugins/house-style/references/subagent-presentation-preamble.md`, with
+the emitter reading it and the 36 agent files copying it, makes the plan's byte-identity test
+meaningful — copies are compared against a canonical source, not against each other. *Rejected:* a
+constant embedded directly in `execution_spec.py` that the agent files copy from, which would bury
+the product's own text inside saga's implementation.
+
+**KTD3 — The emitter stamp lives in exactly one function, `_agent_prompt()`, and nowhere else.**
+Grounding located exactly one funnel, `execution_spec.py:3244`, called from three call sites, and
+already the home of the existing `BUDGET_RIDER` pattern. *Rejected:* stamping separately at each of
+`_emit_thunk` / `_emit_parallel_wave` / `_emit_verify_panel` — three edits where one suffices, and
+three places a future code path could add without the stamp.
+
+**KTD4 — Verify panels are deliberately not stamped by the emitter a second time.** Every verify
+agent saga spawns already runs as `saga:readonly-verifier`, which has its own definition file and is
+therefore already covered by the agent-definition lever. Stamping verify panels from the emitter too
+would double-apply the preamble to the same agents without adding any reach.
+
+**KTD5 — The 43.64% of subagent output written directly by the main thread (never relayed through an
+agent definition or the emitter) stays out of scope for this plan.** That population is reached only
+by a third route — the main thread stamping its own `agent()` prompts — which is out of scope here
+and recorded as deferred follow-up work, not silently absorbed or cancelled.
+
+**KTD6 — Release surfaces land in one unit, U9, at the end, not spread across each unit that touches
+a file.** The preamble duplication (Lever A) touches 9 plugins, moving 9 `plugin.json` versions and
+9 `CHANGELOG.md` files; `house-style`'s own two release surfaces make 10 of each. In
+`.claude-plugin/marketplace.json`, 9 entries are re-versioned and 1 (`house-style`) is added, taking
+the file from 11 plugin entries to 12. Spreading that across units would put multiple agents editing
+`marketplace.json` concurrently, which the plan's own emitted-workflow file-conflict guard
+(`assert_no_wave_file_conflicts`) now halts on. *Rejected:* each unit bumping its own release
+surfaces as it lands.
+
+**KTD7 — Exactly one unit, U5 (the emitter stamp), carries an adversarial verify panel.** A refute-3
+majority panel (three independent verifiers, each able to refute the unit's claimed result) judges
+the emitter change and nothing else in the plan. The reasoning is blast radius, not implementation
+difficulty: `execution_spec.py` composes the prompt for every agent every saga workflow spawns in
+every repository, so a defect there escapes this one repository. *Rejected:* a panel on every unit,
+which would multiply the run's spend to scrutinise units whose worst failure is a bad Markdown file
+already caught by that unit's own tests; a cheaper verifier tier, since a verifier below the tier of
+the unit it judges cannot reliably refute it; a wider panel, since refute-3 is the documented
+operator concurrency cap for agents above Haiku.
+
+**KTD8 — One pull request; the emitter unit (U5) does not ship separately.** The plan's own
+doc-review flagged the total change (73 unique paths) as above the sizing rubric's one-pull-request
+threshold and proposed splitting U5 out. The operator resolved this on 2026-08-08: keep it together.
+The path count overstates the review burden — of the 73 paths, 37 are the mechanical U6 preamble
+copies (one identical block into 36 files plus their shared test) and 23 are U9's version and
+`marketplace.json` bookkeeping; the two actually risky files (`execution_spec.py` and its test) are
+U5's alone, and those are exactly the two files behind the KTD7 refute-3 panel. *Rejected:*
+splitting U5 into its own pull request, which the doc-review had proposed and the operator
+overrode.
+
+**Revisit when** route (c) from KTD5 (the main-thread self-stamp) is scheduled, since it changes what
+the style file asks the main thread to do and was deliberately not bundled with the two mechanical
+levers decided here.
+
+---

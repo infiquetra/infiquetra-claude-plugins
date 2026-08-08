@@ -341,3 +341,245 @@ def test_cli_writes_a_report(tmp_path: Path, corpus_root: Path, capsys) -> None:
     assert os.path.exists(out)
     assert json.loads(out.read_text())["schema"] == scorer.METRIC_SCHEMA
     assert "subagent_reach_share" in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------------------
+# The two metrics added after the baseline was captured
+# --------------------------------------------------------------------------------------
+
+# The nine metrics the 2026-08-07 baseline contains, in the order it contains them.  New
+# metrics are appended after these; none of these nine may be renamed, reordered, or
+# redefined, because the committed baseline is the only record of pre-style behaviour.
+BASELINE_NINE = [
+    "subagent_reach_share",
+    "session_closing_ask_rate",
+    "verdict_first_rate",
+    "turn_closing_ask_rate",
+    "mountain_of_text_rate",
+    "mermaid_in_terminal_rate",
+    "bare_identifier_rate",
+    "format_complaint_proxy",
+    "clarity_complaint_proxy",
+]
+
+TABLE = "| repo | state |\n| --- | --- |\n| alpha | green |"
+
+
+def _spawn(session: str, offset: int = 0, tool: str = "Agent", text: str = "") -> dict:
+    """An assistant turn that calls a subagent-spawning tool, with optional prose."""
+    content: list[dict] = []
+    if text:
+        content.append({"type": "text", "text": text})
+    content.append({"type": "tool_use", "name": tool, "input": {}})
+    return {
+        "type": "assistant",
+        "isSidechain": False,
+        "sessionId": session,
+        "timestamp": _stamp(offset),
+        "message": {"content": content},
+    }
+
+
+def _score_one(tmp_path: Path, records: list[dict], name: str) -> dict:
+    root = tmp_path / "projects"
+    _write(root / "-r" / "s.jsonl", records)
+    got = scorer.collect([str(root)], NOW - timedelta(days=1), NOW + timedelta(days=1), set())
+    return next(m for m in scorer.score(got) if m["metric"] == name)
+
+
+def test_visual_gating_scores_a_corpus_with_a_known_answer(tmp_path: Path) -> None:
+    """Three turns, hand-worked: one right orientation, one right routine, one misfire."""
+    metric = _score_one(
+        tmp_path,
+        [
+            _assistant(f"**Where things stand.**\n\n{TABLE}", False, "vg", 0),
+            _assistant("Edited one file and moved on.", False, "vg", 1),
+            _assistant(f"Progress update.\n\n{TABLE}", False, "vg", 2),
+        ],
+        "visual_gating_rate",
+    )
+    assert metric["orientation_turns"] == 1
+    assert metric["orientation_with_visual"] == 1
+    assert metric["routine_turns"] == 2
+    assert metric["routine_with_visual"] == 1, "the unrequested table on a routine turn"
+    assert metric["numerator"] == 2
+    assert metric["denominator"] == 3
+    assert metric["percent"] == 66.667
+
+
+def test_visual_gating_counts_a_bare_orientation_turn_as_a_misfire(tmp_path: Path) -> None:
+    metric = _score_one(
+        tmp_path,
+        [_assistant("Here is where we are, in prose only.", False, "vg", 0)],
+        "visual_gating_rate",
+    )
+    assert metric["orientation_turns"] == 1
+    assert metric["orientation_with_visual"] == 0
+    assert metric["numerator"] == 0
+
+
+def test_visual_detector_fires_on_each_permitted_form_and_not_on_bullets() -> None:
+    assert scorer.VISUAL_RE.search(TABLE)
+    assert scorer.VISUAL_RE.search("```mermaid\ngraph TD\n```")
+    assert scorer.VISUAL_RE.search("plugins/\n└── saga/")
+    assert scorer.VISUAL_RE.search("plan --> code --> review")
+    assert not scorer.VISUAL_RE.search("- one point\n- another point\n\nSome prose.")
+
+
+def test_relay_turn_is_the_first_prose_turn_after_a_spawn(tmp_path: Path) -> None:
+    """A tool-only spawn turn arms the flag; the next prose turn consumes it."""
+    payload = "```json\n" + json.dumps({"findings": ["x"] * 400}) + "\n```"
+    metric = _score_one(
+        tmp_path,
+        [
+            _assistant("Starting the review.", False, "rl", 0),
+            _spawn("rl", 1),
+            _assistant(f"The verifier said:\n\n{payload}", False, "rl", 2),
+            _assistant("Merged and pushed.", False, "rl", 3),
+        ],
+        "undigested_relay_rate",
+    )
+    assert metric["relay_turns"] == 1, "only the first prose turn after the spawn is a relay"
+    assert metric["numerator"] == 1
+    assert metric["percent"] == 100.0
+    assert metric["longest_relay_payload_chars"] > scorer.PAYLOAD_MIN_CHARS
+
+
+def test_a_digested_relay_does_not_count_as_undigested(tmp_path: Path) -> None:
+    metric = _score_one(
+        tmp_path,
+        [
+            _spawn("rl", 0, text="Delegating the audit."),
+            _assistant(
+                "**The audit found one real defect.** The lease broker never releases on "
+                f"delete, so a deleted team keeps its slot.\n\n{TABLE}",
+                False,
+                "rl",
+                1,
+            ),
+        ],
+        "undigested_relay_rate",
+    )
+    assert metric["relay_turns"] == 1
+    assert metric["numerator"] == 0
+    assert metric["relay_verdict_first"] == 1
+    assert metric["longest_relay_payload_chars"] == 0
+
+
+def test_verbatim_carve_outs_are_not_counted_as_pasted_payloads() -> None:
+    """A diff hunk and raw command output are correct verbatim; JSON dumps are not."""
+    diff = "```diff\n" + "\n".join(f"-old line {i}\n+new line {i}" for i in range(60)) + "\n```"
+    assert scorer._has_pasted_payload(diff) == (False, 0)
+    output = "```\n" + "\n".join(f"tests/test_{i}.py PASSED" for i in range(80)) + "\n```"
+    assert scorer._has_pasted_payload(output) == (False, 0)
+    dump = "```json\n" + json.dumps({"k": ["v"] * 400}) + "\n```"
+    assert scorer._has_pasted_payload(dump)[0] is True
+
+
+def test_a_long_block_quote_run_counts_as_a_pasted_payload() -> None:
+    short = "\n".join(f"> line {i}" for i in range(scorer.PAYLOAD_QUOTE_LINES - 1))
+    long = "\n".join(f"> line {i}" for i in range(scorer.PAYLOAD_QUOTE_LINES))
+    assert scorer._has_pasted_payload(short) == (False, 0)
+    assert scorer._has_pasted_payload(long)[0] is True
+
+
+def test_both_new_metrics_are_labelled_heuristic(corpus_root: Path) -> None:
+    """Matching bare_identifier_rate's honesty: a heuristic says so in its own row."""
+    got = scorer.collect(
+        [str(corpus_root)], NOW - timedelta(days=1), NOW + timedelta(days=1), set()
+    )
+    by_name = {m["metric"]: m for m in scorer.score(got)}
+    for name in ("visual_gating_rate", "undigested_relay_rate"):
+        assert by_name[name]["confidence"] == "heuristic"
+        assert "HEURISTIC" in by_name[name]["definition"]
+
+
+def test_the_nine_baseline_metrics_are_unchanged_on_the_same_input(corpus_root: Path) -> None:
+    """The new metrics are appended; none of the nine may move, change, or disappear."""
+    got = scorer.collect(
+        [str(corpus_root)], NOW - timedelta(days=1), NOW + timedelta(days=1), set()
+    )
+    metrics = scorer.score(got)
+    assert [m["metric"] for m in metrics[:9]] == BASELINE_NINE
+    frozen = {
+        "subagent_reach_share": (3, 5),
+        "session_closing_ask_rate": (0, 1),
+        "verdict_first_rate": (1, 2),
+        "turn_closing_ask_rate": (1, 2),
+        "mountain_of_text_rate": (0, 2),
+        "mermaid_in_terminal_rate": (0, 2),
+        "bare_identifier_rate": (0, 2),
+        "format_complaint_proxy": (0, 1),
+        "clarity_complaint_proxy": (0, 1),
+    }
+    assert {m["metric"]: (m["numerator"], m["denominator"]) for m in metrics[:9]} == frozen
+
+
+def test_the_committed_baseline_file_still_holds_the_pre_style_snapshot() -> None:
+    """`2026-08-07-baseline.json` is write-once. If a run ever targets it, this fails.
+
+    The window it records closed the moment a custom style shipped, so a regenerated file
+    would be a styled measurement wearing the name of the unstyled one.
+    """
+    path = (
+        Path(__file__).resolve().parents[1] / "docs" / "measurements" / "2026-08-07-baseline.json"
+    )
+    report = json.loads(path.read_text())
+    assert report["schema"] == 1
+    assert [m["metric"] for m in report["metrics"]] == BASELINE_NINE
+    assert report["window"]["since"].startswith("2026-07-03")
+    assert report["window"]["until"].startswith("2026-08-07")
+    assert report["corpus"]["sessions"] == 407
+
+
+def test_an_unfenced_json_dump_is_a_pasted_payload() -> None:
+    """The worst case in the real corpus had no fence around it at all.
+
+    A fence-only detector reported zero on a 12,347-character JSON message that the
+    requirements document names as the single worst relay in 35 days of transcripts.
+    """
+    dump = json.dumps({"findings": [{"content": "x" * 40} for _ in range(30)]})
+    assert len(dump) >= scorer.PAYLOAD_MIN_CHARS
+    assert scorer._has_pasted_payload(dump)[0] is True
+    truncated = dump[: len(dump) // 2]
+    assert scorer._has_pasted_payload(truncated)[0] is True, "a cut-off dump never parses"
+    prose = "Starting with a brace is not enough. " * 40
+    assert scorer._has_pasted_payload("{" + prose) == (False, 0)
+
+
+def test_relay_flags_do_not_depend_on_the_order_files_are_read(tmp_path: Path) -> None:
+    """A session's records can be split across files the glob returns in any order.
+
+    Assigning the relay flag during the walk made the answer depend on that order, which
+    is the failure shape that shows up as a metric reading zero rather than as an error.
+    """
+    root = tmp_path / "projects"
+    # zzz.jsonl sorts last but holds the earlier half of the session.
+    _write(root / "-r" / "zzz.jsonl", [_spawn("split", 0)])
+    _write(
+        root / "-r" / "aaa.jsonl", [_assistant("The verifier found one defect.", False, "split", 1)]
+    )
+    got = scorer.collect([str(root)], NOW - timedelta(days=1), NOW + timedelta(days=1), set())
+    assert got.main_is_relay == [True], "the spawn precedes the prose turn in time"
+
+
+def test_payloads_outside_relay_turns_are_still_reported(tmp_path: Path) -> None:
+    """A zero relay rate must be readable against the corpus-wide payload count."""
+    dump = json.dumps({"findings": [{"content": "y" * 40} for _ in range(30)]})
+    metric = _score_one(tmp_path, [_assistant(dump, False, "solo", 0)], "undigested_relay_rate")
+    assert metric["relay_turns"] == 0
+    assert metric["percent"] == 0.0
+    assert metric["payload_turns_anywhere"] == 1
+    assert metric["longest_payload_chars_anywhere"] >= scorer.PAYLOAD_MIN_CHARS
+
+
+def test_balanced_gating_weights_the_two_halves_equally(tmp_path: Path) -> None:
+    """The headline is dilutable by the routine population; the balanced figure is not."""
+    records = [_assistant("Where things stand, in prose only.", False, "vg", 0)]
+    records += [_assistant(f"Routine step {i}.", False, "vg", i + 1) for i in range(19)]
+    metric = _score_one(tmp_path, records, "visual_gating_rate")
+    assert metric["orientation_turns"] == 1
+    assert metric["orientation_with_visual"] == 0
+    assert metric["routine_with_visual"] == 0
+    assert metric["percent"] == 95.0, "19 of 20 turns are correctly gated"
+    assert metric["balanced_gating_percent"] == 50.0, "but half the rule is being failed"

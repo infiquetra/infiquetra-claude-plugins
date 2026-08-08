@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.1] - 2026-08-08
+
+### Added - house-style presentation contract on the network-ops agent (#704)
+
+- `unifi-network-ops` agent definition gains a "Presentation contract (Infiquetra house style)" section, copied verbatim from `plugins/house-style/references/subagent-presentation-preamble.md`.
+
 ## [1.2.0] - 2026-07-05
 
 ### Changed

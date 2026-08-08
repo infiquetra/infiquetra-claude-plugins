@@ -21,6 +21,45 @@
 
 ## 2026-08-08
 
+### The emitted workflow gate checks the shape of a unit's answer, never its verdict, so a unit that halts itself does not halt the run  {#gate-validates-shape-not-verdict}
+
+**Context.** Issue #704's plan made unit U1 an absolute gate: prove both subagent-reach levers by
+experiment, and if a lever cannot be observed working, stop the run rather than build on it. When the
+operator considered adding a spend cap, he declined it on the grounds that "the real runaway guard in
+this plan is U1's HARD STOP, which is already enforced in the emitted workflow rather than only
+described in prose." That belief was wrong, and the run proved it: U1 returned
+`status: "inconclusive"`, said so clearly, and units U2 through U9 executed anyway to completion.
+
+**Evidence.** `__gate()` in the emitted script
+(`docs/plans/2026-08-08-issue-704-house-style-output-style-plugin.workflow.js`, emitted by
+`plugins/saga/scripts/execution_spec.py`) throws `__halt` on exactly four conditions: empty or absent
+output, structurally truncated JSON, fewer produced items than a declared `targets` count, and a
+missing or null key from the declared `returns` list. It parses `status` only far enough to see that
+the key exists and is non-null. `"inconclusive"`, `"failed"`, and `"complete"` are indistinguishable
+to it. The run's own log confirms the outcome: `U1: 'inconclusive'` followed by eight further units at
+`'complete'`.
+
+**Mechanism.** A unit's escalation text — "HALT and report if either lever's marker does not reach the
+output" — is compiled into the *agent's prompt*, not into the *script's control flow*. The agent obeyed
+it: it stopped its own work, wrote the evidence document, and reported `inconclusive`. But the only
+thing standing between that answer and the next unit is `__gate`, which was built to catch a subagent
+that returns garbage, not one that returns a well-formed refusal. A refute-N verify panel is the only
+construct in the spec format that halts on the *content* of a result, and panels judge a unit's work
+rather than read its own status. So a unit can declare its premise unproven, in the exact words the
+plan demanded, and the workflow will carry on regardless.
+
+**Fix.** For a genuine gate, do not rely on the unit's prompt. Either put the gate in the script — a
+plain `if (U1.status !== "pass") throw __halt(...)` after the `__gate` call, which the spec format
+cannot currently emit — or make the gating unit the *only* unit in its own workflow and inspect its
+result before launching the rest. The second needs no tooling change and was available here.
+
+**Generalizable rule.** An instruction in a prompt is a request; only code in the control flow is a
+gate. Before calling any stop "enforced", find the line that throws — if the halt exists solely in
+prose an agent reads, the run will pass through it the moment the agent answers in a well-formed way.
+This is the third instance in one project of a safety mechanism believed to be enforced that was not;
+see [[empty-input-makes-a-guard-vacuous]] and
+[[a-gating-experiment-must-test-the-artifact-the-runtime-loads]].
+
 ### A safety guard that reads a field nobody filled in reports safety it never checked  {#empty-input-makes-a-guard-vacuous}
 
 **Context.** The execution spec for issue #704 was approved in part on a reassurance the tooling printed at emit time: "No two concurrent units declare the same file, so no write can be lost to a race." That sentence was true. It was also true of a spec in which every unit wrote the same file, because not one of the nine units declared a `files` field at all, and the guard was intersecting empty sets.
@@ -4298,6 +4337,8 @@ and harness proof `plugins/agy/docs/harness-proof.md`.
 
 **Fix.** (1) Commit provenance corrected — #279 commits say Claude-authored (the "n=4 Pro" data is invalid). (2) Memory + `docs/external-agent-delegation/` (README + next-run-handoff) corrected with the per-run truth and a mandatory **verify-agy-ran** step. (3) The discriminator is now documented: real agy → transcript has `agy --model` Bash call + Claude touches only `prompt.txt`; Claude-clone → Write/Edit on repo files + `★ Insight` + 0 `agy` calls.
 
+**2026-08-08 addendum — a fourth tell for sessions running the `house-style` output style.** The `house-style` plugin (issue #704) suppresses the box-drawn `★ Insight` callout and, on the main thread only, emits a plain-text marker (`::house-style::`) as the first line of its closing block; subagents never emit it. `★ Insight` remains a valid Claude-clone signal on any transcript from before `house-style` was adopted, or from a session not running it — this addendum does not retire it, it only adds a fourth signal for sessions where `house-style` is active: a Claude-clone subagent transcript never carries `::house-style::` (subagents are excluded from emitting it by the style's own rule), so on a `house-style` session the absence of `::house-style::` on a transcript claiming to be the main thread, combined with Write/Edit on repo files and 0 `agy` calls, is the same diagnostic pattern the `★ Insight` signal used to catch.
+
 **What surprised.** My *first* correction over-generalized #279's finding to "agy never ran, n=1/2/3 all suspect." The audit refuted that: #277 was genuinely agy Flash. The validation discipline caught my own over-correction — extrapolating one verified case to all cases is the same error as the original false provenance.
 
 **Generalizable rule.** "Delegated to an external CLI" is a claim to **verify per run from the transcript**, never an assumption from the invocation. After any agy/codex run, grep the transcript for the actual `agy`/`codex` process call and confirm the *external* agent — not a local clone — did the Write/Edit, before attributing authorship or logging an experiment datapoint. And when you correct a provenance error, scope the correction to what you actually verified — don't extrapolate.
@@ -5573,5 +5614,63 @@ Always validate immediately: `python3 -m json.tool .claude-plugin/marketplace.js
 **Generalizable rule.** When using `Edit` on a JSON/YAML file to append into a nested array, the `old_string` MUST include the array's closing bracket. Inserting "before the `]`" is correct; inserting "after the prior entry's `}`" is wrong because edits land on the line *after* the match. Always validate the file with the language's parser immediately after the edit.
 
 **Refs.** Same lesson cached in `~/.claude/projects/.../memory/marketplace_editing_guard.md` for runtime convenience; this file is the durable project record.
+
+---
+
+### A workflow-backend agent cannot spawn another agent, so one of two levers went untested by design, not by oversight  {#u1-lever-experiment-workflow-backend-cannot-spawn}
+
+**Context.** Issue #704's `house-style` plugin (a Claude Code output style enforcing Infiquetra's
+presentation rules) proposes reaching subagent output two ways: Lever A duplicates a presentation
+preamble into all 36 plugin agent-definition files, so the text ships with each agent's own
+system prompt; Lever B stamps the same text onto every prompt saga's workflow emitter (`saga`, the
+lifecycle plugin's `execution_spec.py`) composes for an `agent()` call. Plan unit U1 ran both as an
+experiment, with its own evidence artifact and a hard stop rather than a checkbox anyone could tick
+from reasoning alone (KTD1, a Key Technical Decision — a recorded design choice with its rejected
+alternatives).
+
+**What it found.** Lever B: PASS, proven twice. First at emission — a throwaway marker string added
+to `execution_spec.py`'s `_agent_prompt()` function went from 0 occurrences to 3 across 3 emitted
+`agent()` calls in a control spec, with the byte count of the difference (192 bytes = 3 × 64-byte
+marker) confirming no double-application. Second at delivery, observed live in-band on this very
+U1 run: the `RETURN CONTRACT` clause composed by that same function arrived verbatim, with this
+unit's own return-schema keys, in the prompt this unit's own agent actually received. The edit was
+reverted and the revert verified three ways (`git status --porcelain` empty, `git diff --exit-code`
+clean, and a re-emission of the control spec byte-identical to the pre-edit baseline).
+
+Lever A: **INCONCLUSIVE**, not proven and not disproven. Both of the plan's prescribed test methods —
+dispatching an unknown operation to an installed agent and checking its documented rejection
+behavior, or writing a marker into the agent's cached definition file and observing it — require
+spawning an agent to observe the result. Three independent `ToolSearch` probes (`select:Task,Agent`,
+plus two keyword searches) found no agent-spawning tool available to an agent running inside a
+workflow backend, and `ListAgents` confirmed zero in-process subagents alongside six unrelated peer
+sessions. Nothing was modified in testing Lever A — there was no marker to revert, because the
+method that would have needed one was never reachable.
+
+**Mechanism.** The workflow backend that runs plan units (saga's `saga:work` skill, emitting a
+`.workflow.js` script executed by the harness) hands each unit agent a fixed tool inventory —
+`Artifact`, `Bash`, `Edit`, `ListAgents`, `Read`, `ReportFindings`, `SendUserFile`, `Skill`,
+`ToolSearch`, `Write`, `StructuredOutput`, plus deferred tools and MCP servers — and that inventory
+has no `Task` or `Agent` tool. An interactive Claude Code session does carry an agent-spawning tool;
+a workflow-backend agent does not. Lever A's mechanism (an agent definition file's body governing
+the agent it defines) can only be observed by spawning that agent, so the test's availability is a
+property of the *runtime the test happens to run in*, not of the lever itself.
+
+**Fix / resolution.** None needed on the lever — U1 correctly reported `inconclusive` per its own
+rule ("a harness limitation is reported as `inconclusive` and halted for an operator decision — it
+is recorded neither as a pass nor as a disproof") rather than inventing a third test method, which
+the unit's own hard stop forbade. Requirements-document R27 (the requirement Lever A serves) was
+left open, not reopened as a disproof — nothing observed contradicts Lever A, it was simply never
+run.
+
+**Generalizable rule.** Before spending a plan unit's evidence budget proving a mechanism, confirm
+the *runtime that unit will actually execute in* carries the capability the test needs — don't
+assume an interactive session's tool inventory (agent-spawning included) transfers to a workflow
+backend. When it doesn't, `inconclusive` is a more honest evidence state than either forcing a
+result through an unavailable method or silently skipping the test.
+
+**Refs.** `docs/evidence/issue-704/lever-experiment.md` (the full U1 evidence artifact, including
+the byte-accounting table and the emission/delivery chain diagram);
+`plugins/saga/scripts/execution_spec.py:3244` (`_agent_prompt()`, the single funnel Lever B stamps);
+DECISIONS `{#house-style-two-lever-hybrid-and-ktds}`.
 
 ---

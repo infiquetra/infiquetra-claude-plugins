@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-08-08
+
+### Added - house-style presentation contract on the delegation bridge agents (#704)
+
+- `codex-coder` and `codex-reviewer` agent definitions each gain a "Presentation contract (Infiquetra house style)" section, copied verbatim from `plugins/house-style/references/subagent-presentation-preamble.md`, so a relayed codex result follows the same presentation rules as the rest of the fleet.
+
 ## [0.1.3] - 2026-07-19
 
 ### Fixed - external CLI children bypass terminal workspace wrappers

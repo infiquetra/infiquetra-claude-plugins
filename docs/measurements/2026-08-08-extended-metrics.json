@@ -5,59 +5,20 @@
     "until": "2026-08-07T00:00:00+00:00"
   },
   "roots": [
-    "/Users/jefcox/.claude/projects",
-    "/Users/jefcox/.claude-company/projects"
+    "~/.claude/projects",
+    "~/.claude-company/projects"
   ],
   "corpus": {
-    "files_scanned": 2682,
+    "files_scanned": 2689,
     "sessions": 407,
     "main_thread_assistant_messages": 96957,
     "main_thread_assistant_messages_with_prose": 14787,
     "subagent_assistant_messages": 128622,
     "genuine_human_messages": 842,
     "lines_unparsed": 0,
-    "top_cwds": [
-      [
-        "/Users/jefcox/workspace/infiquetra/campps-context-library",
-        3257
-      ],
-      [
-        "/Users/jefcox/workspace/infiquetra/team-norns",
-        3176
-      ],
-      [
-        "/Users/jefcox/workspace/infiquetra/infiquetra-claude-plugins",
-        3019
-      ],
-      [
-        "/Users/jefcox/workspace/infiquetra/talaria",
-        1543
-      ],
-      [
-        "/Users/jefcox/workspace/infiquetra/home-lab",
-        778
-      ],
-      [
-        "/Users/jefcox/workspace/infiquetra/campps-web-app",
-        438
-      ],
-      [
-        "/Users/jefcox/workspace/infiquetra/team-mimir",
-        405
-      ],
-      [
-        "/Users/jefcox/workspace/infiquetra/team-freya",
-        248
-      ],
-      [
-        "/Users/jefcox/workspace/infiquetra/infiquetra-ansible-collections",
-        208
-      ],
-      [
-        "/Users/jefcox/workspace/infiquetra/infiquetra-codex-plugins",
-        195
-      ]
-    ]
+    "records_without_timestamp": 97365,
+    "distinct_project_dirs": 96,
+    "records_with_unknown_sidechain": 0
   },
   "metrics": [
     {
@@ -90,9 +51,9 @@
     {
       "metric": "turn_closing_ask_rate",
       "definition": "Every main-thread assistant message, not just the last of a session, that ends on a closing ask. Separates 'we never close sessions' from 'we never close turns'.",
-      "numerator": 818,
+      "numerator": 823,
       "denominator": 14787,
-      "percent": 5.532
+      "percent": 5.566
     },
     {
       "metric": "mountain_of_text_rate",

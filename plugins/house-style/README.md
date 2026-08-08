@@ -15,15 +15,43 @@ turn shape, visual formatting, and how subagent work gets relayed back to the op
   workflow emitter and the 36 agent definitions across the other plugins — consume so every spawned
   agent and every saga workflow carries the same presentation rules.
 
+## Deploying this: four steps, and the fourth is the one people miss
+
+**The subagent preamble governs nothing until a NEW SESSION starts.** Claude Code reads every agent
+definition once, at session start, and holds it in the running process. Editing a definition on disk
+— or installing a newer version of a plugin that contains one — changes nothing in a session that is
+already running.
+
+This was measured rather than inferred, on 2026-08-08. The installed copy of
+`saga:mechanical-executor` was edited to add an invented sixth approved operation to the block its
+body tells it to emit on an unknown request. The next spawn in the same session returned the **old
+five-operation block, verbatim**, while the file on disk carried six. The evidence is in
+`docs/evidence/issue-704/lever-experiment.md`.
+
+So the chain from merge to effect is:
+
+1. Merge the pull request.
+2. Bump the plugin versions (already done in the merge commit).
+3. `/plugin marketplace update infiquetra-plugins` — refreshes the installed cache.
+4. **Start a new session.** Until this happens, every subagent spawned is still running the previous
+   definitions.
+
+**Any measurement taken before step 4 is invalid and will understate the effect**, because the levers
+this plugin ships are not yet in force. Re-running `tools/output_style_scorer.py` on a session that
+began before the update measures the old behaviour wearing the new version number. Take the "after"
+measurement only from sessions started after step 4, and write it to a new output path — never to
+`docs/measurements/2026-08-07-baseline.json`, which is the write-once record of behaviour before any
+custom style existed.
+
 ## Status
 
 The style file (`output-styles/house-style.md`) and the canonical preamble
-(`references/subagent-presentation-preamble.md`) are both present. Marketplace registration and the
-version bookkeeping for the `0.1.0` release land in the plan's closing unit.
+(`references/subagent-presentation-preamble.md`) are both present, and the `0.1.0` release is
+registered in the marketplace.
 
 Selecting the style is the operator's choice: this plugin deliberately omits `force-for-plugin`, so
 it never overrides a style selected in `/config`. Changes under `output-styles/` are not picked up
-live — they need `/reload-plugins` or a new session.
+live either — they need `/reload-plugins` or a new session.
 
 Whether the style is active is confirmable rather than assumed: it emits the literal string
 `::house-style::` on the first line of every closing block, so `grep -F '::house-style::'` over a

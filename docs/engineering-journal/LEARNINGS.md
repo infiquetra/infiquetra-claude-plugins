@@ -21,6 +21,60 @@
 
 ## 2026-08-08
 
+### A behaviour rule and the metric that scores it must be run against each other, or full compliance can read as a regression  {#test-the-rule-against-its-own-instrument}
+
+**Context.** Issue #704 ships an output style plus `tools/output_style_scorer.py`, whose figures are the Success Criteria that decide whether the style worked. Both were reviewed, and both were internally sound. Nothing had ever run one through the other.
+
+**Evidence.** The style's closing block ends with a line reading `Your call: <pre-committed branches>`, and names "Let me know how you want to proceed" as the phrasing that fails its rule. Run against the scorer's `CLOSING_ASK_RE`, all three of the style's prescribed forms returned `False` and the named counter-example returned `True`. Two of the eight Success Criteria — sessions and turns ending with a closing ask, both marked "Up, substantially" — are computed from that detector. The same shape appeared twice more: `VERDICT_FIRST_RE` requires a **bolded** opening line and no style rule asked for bold, and `VISUAL_RE` recognises `-->` but not the single `->` the style's own permitted catalog prescribed, so two of three permitted visuals were invisible.
+
+**Mechanism.** The style was written to stop the main thread asking open questions and start it pre-committing to branches. The detector was written to find asks. Those are near-opposites, and the closer the style got to its goal the fewer asks there were to find. Each artifact was correct against its own spec; the defect lived in the gap between them, which is exactly the region no single-artifact review looks at.
+
+**Fix.** `CLOSING_ASK_RE` widened to cover the pre-committed-branch forms it always claimed to count; the style now prescribes a bolded opening claim and `-->` notation. Both directions were needed — the instrument had a blind spot, and the style had a rule with no observable consequence. Four tests in `tests/test_output_style_scorer.py` now run the style's own prescribed text through each detector.
+
+**Validation.** Re-scored over the frozen 2026-07-03 to 2026-08-07 window, the widened detector catches exactly 5 additional pre-style turns — 3 from "unless you ...", 2 from "your move", **0** from the style's own `Your call:` token. So `turn_closing_ask_rate`'s pre-style value is 823/14787 = 5.566%, disclosed in `docs/measurements/2026-08-08-extended-metrics.md` rather than absorbed, and the other eight baseline metrics are unmoved.
+
+**What surprised.** That the failure was silent in the worst direction. A style that worked perfectly would have driven its two headline criteria toward zero, and the honest reading of that data is "the change made things worse" — so the instrument would have argued for reverting the thing it was built to validate.
+
+**Generalizable rule.** When you ship a behaviour change together with a metric that proves it, write the test that feeds the prescribed behaviour to the detector before shipping either. "Both artifacts are individually correct" is not evidence that one measures the other, and a metric pointed at the opposite of what you asked for is worse than no metric.
+
+**Refs.** `tools/output_style_scorer.py` (`CLOSING_ASK_RE`, `VERDICT_FIRST_RE`, `VISUAL_RE`); `plugins/house-style/output-styles/house-style.md`; `tests/test_output_style_scorer.py::test_the_house_styles_closing_block_registers_as_a_closing_ask`; [[a-test-can-pin-a-defect-in-place]].
+
+---
+
+### A test that asserts the current count without saying why locks the defect in as the specification  {#a-test-can-pin-a-defect-in-place}
+
+**Context.** The same #704 review found that saga's `emit_inline_baseline()` — the renderer for the inline backend, whose units the MAIN THREAD executes itself — was being handed the subagent presentation contract, which says "the operator-facing closing block and the main thread's style tell belong to the main thread alone. Do not write either one."
+
+**Evidence.** `tests/test_execution_spec_presentation_rider.py` carried `test_rider_appears_once_across_call_site_inline_baseline`, asserting `baseline.count("## Presentation contract (Infiquetra house style)") == 2` — one copy per unit. The test was written from the implementation: two units, two copies, the arithmetic checks out. Correcting the defect would have failed the suite, and the failure would have read as a regression in a passing test.
+
+**Mechanism.** The assertion recorded *what the code did* rather than *what the code should do*. The number 2 was derived by counting, and counting cannot distinguish a correct 2 from an incorrect one. Nothing in the test named the reason a copy belonged there, so nothing in it could notice that the reason did not apply.
+
+**Fix.** Replaced with `test_the_inline_baseline_is_not_stamped_at_all`, asserting 0 and stating in its docstring what the old assertion was and why it was wrong; plus `test_the_inline_baseline_and_the_spawned_path_differ_only_by_the_rider`, which stops the fix over-reaching. `_agent_prompt()` gains a keyword-only `subagent` parameter.
+
+**Generalizable rule.** An assertion on a count needs a sentence saying why that count is the right one. If the only justification available is "that is what it currently does", the test is a snapshot, and a snapshot taken of a defect defends the defect.
+
+**Refs.** `plugins/saga/scripts/execution_spec.py` (`_agent_prompt`, `emit_inline_baseline`); [[test-the-rule-against-its-own-instrument]].
+
+---
+
+### A committed measurement artifact is a publication, and a corpus walker will happily publish the corpus  {#a-measurement-artifact-is-a-publication-surface}
+
+**Context.** `tools/output_style_scorer.py` walks the operator's entire Claude Code transcript history and writes a JSON report into `docs/measurements/`, which is committed to `infiquetra-claude-plugins` — a **public** GitHub repository.
+
+**Evidence.** `build_report()` emitted `"top_cwds": corpus.cwds.most_common(10)`, a diagnostic added to answer "how many projects does this corpus span". Both committed artifacts carried the operator's home directory and the names of nine unrelated private repositories, verbatim, including several belonging to other work entirely. `gh repo view --json visibility` confirms `PUBLIC`. Nothing read the field; it was there because it was easy to add.
+
+**Mechanism.** The instrument was reviewed as a measuring tool and the artifact as a record of numbers. Neither review asked the third question — this file goes to a public remote, so what does it contain that is not a number? A corpus walker has the whole corpus in hand, so the default of "emit what might be useful" leaks by construction.
+
+**Fix.** The field is gone from the instrument and from both committed artifacts, replaced by `distinct_project_dirs`, a count. Scanned roots and reproduce commands now write `~` rather than the home directory. `tests/test_output_style_scorer.py::test_no_committed_measurement_artifact_discloses_a_filesystem_path` fails on any `/Users/` in any committed measurement JSON.
+
+**Validation.** Removing the key was proved not to be a re-measurement: the `metrics` array, `window`, `schema` and every other `corpus` field compare byte-identical before and after on both files. The write-once baseline was never re-run.
+
+**Generalizable rule.** Before a tool that reads private data writes a file into a repository, enumerate every field it emits and ask which of them is data about the corpus rather than a measurement of it. Diagnostic fields are the ones that leak, because they are added without a consumer and reviewed as though they had one.
+
+**Refs.** `tools/output_style_scorer.py` (`build_report`, `_tilde`); `docs/measurements/2026-08-07-baseline.json`; `docs/measurements/2026-08-08-extended-metrics.json`.
+
+---
+
 ### An agent definition is read once per session, so editing one on disk changes nothing until a restart  {#agent-definitions-are-session-cached}
 
 **Context.** Issue #704 ships a presentation preamble in the body of all 36 plugin agent definition
@@ -102,7 +156,7 @@ see [[empty-input-makes-a-guard-vacuous]] and
 
 **Context.** The execution spec for issue #704 was approved in part on a reassurance the tooling printed at emit time: "No two concurrent units declare the same file, so no write can be lost to a race." That sentence was true. It was also true of a spec in which every unit wrote the same file, because not one of the nine units declared a `files` field at all, and the guard was intersecting empty sets.
 
-**Evidence.** `Unit.files` exists (`plugins/saga/scripts/execution_spec.py:1255`) and `assert_no_wave_file_conflicts` compares declared paths pairwise within each authored wave at emit time, not validate time (`:1888`, called from `:3627`). The original spec declared zero paths across all nine units. Adding a deliberate collision — U6 and U8, both in authored wave 4, sharing `plugins/saga/agents/readonly-verifier.md` — was still accepted by `execution_spec.py validate`, and failed only under `emit` with `SPEC ERROR: units scheduled to run concurrently declare the same file(s) — wave 4: U6 and U8 both declare ...`. After declaring all 76 real paths, the same probe fails and the real spec passes.
+**Evidence.** `Unit.files` exists (the `files` field on `Unit` in `plugins/saga/scripts/execution_spec.py`) and `assert_no_wave_file_conflicts` compares declared paths pairwise within each authored wave at emit time, not validate time (called from `emit_workflow_script()`). The original spec declared zero paths across all nine units. Adding a deliberate collision — U6 and U8, both in authored wave 4, sharing `plugins/saga/agents/readonly-verifier.md` — was still accepted by `execution_spec.py validate`, and failed only under `emit` with `SPEC ERROR: units scheduled to run concurrently declare the same file(s) — wave 4: U6 and U8 both declare ...`. After declaring all 76 real paths, the same probe fails and the real spec passes.
 
 **Mechanism.** The guard's answer is a function of its input, and its input was optional. A pass therefore has two indistinguishable causes — "I checked and found nothing" and "I had nothing to check" — and the message is worded for the first. The failure survives review because the reassuring sentence is generated by real tooling running real code; it is the *data* that is absent, not the check. Emit-time-only enforcement compounds it, since a validate-clean spec reads as fully vetted.
 
@@ -114,7 +168,7 @@ see [[empty-input-makes-a-guard-vacuous]] and
 
 **Generalizable rule.** When a tool reports a safety property, check that its input is non-empty before believing it, and prove the check can fail by feeding it a violation you construct. A green check over absent data is worse than no check, because it converts an unexamined risk into a recorded assurance. Prefer guards whose fields are required; when they must be optional, have the tool say how many items it examined rather than only that it found nothing.
 
-**Refs.** `plugins/saga/scripts/execution_spec.py:1255`, `:1888`, `:3627`; `docs/plans/2026-08-08-issue-704-house-style-output-style-plugin-spec.json`; `docs/reviews/2026-08-08-issue-704-plan-doc-review.md`; [[a-gating-experiment-must-test-the-artifact-the-runtime-loads]].
+**Refs.** `plugins/saga/scripts/execution_spec.py` — the `files` field on `Unit`, `assert_no_wave_file_conflicts`, and its call from `emit_workflow_script()`; `docs/plans/2026-08-08-issue-704-house-style-output-style-plugin-spec.json`; `docs/reviews/2026-08-08-issue-704-plan-doc-review.md`; [[a-gating-experiment-must-test-the-artifact-the-runtime-loads]].
 
 ---
 
@@ -148,7 +202,7 @@ see [[empty-input-makes-a-guard-vacuous]] and
 
 **Generalizable rule.** Before crediting a lever with the traffic under some label, ask what the label is a property of. Telemetry labels tend to name the executor — the runtime, the pool, the transport — while levers act on the author. When the two differ, the label is an upper bound and nothing more; partition it by something the author leaves behind, and prefer a marker whose definition is byte-stable across the whole measurement window, since one that changed mid-window splits a population silently and looks like a trend.
 
-**Refs.** `plugins/saga/scripts/execution_spec.py:475` and `:3718`, commit `b09ad503`, `docs/brainstorms/2026-08-07-output-styles-requirements.md` (emitter partition table), [[measure-the-agent-population-before-choosing-a-lever]], DECISIONS `{#house-style-hybrid-subagent-route}`.
+**Refs.** `plugins/saga/scripts/execution_spec.py` — the `_JS_GATE_HELPER` constant and the `lines.append(_JS_GATE_HELPER)` call in `emit_workflow_script()`; commit `b09ad503`; `docs/brainstorms/2026-08-07-output-styles-requirements.md` (emitter partition table), [[measure-the-agent-population-before-choosing-a-lever]], DECISIONS `{#house-style-hybrid-subagent-route}`.
 
 ---
 
@@ -182,7 +236,7 @@ see [[empty-input-makes-a-guard-vacuous]] and
 
 **What surprised.** Counting the same corpus by `attributionPlugin` instead of by agent gives 52,607 messages, 40.90%, for the same route — a third higher and entirely wrong. 11,394 of those are `workflow-subagent` records that happen to carry `plugin=saga`; the plugin field records which plugin was in play, not which file governs the agent. The wrong cut is the flattering one, which is exactly the direction an unchecked number drifts.
 
-**Fix.** Requirements R26 and R27 rewritten as a two-lever hybrid — emitter stamp for `workflow-subagent`, definition-file duplication with a byte-identity test at 29.93%, with the residue named (built-in `general-purpose` and `Explore`, plus unclassified records) rather than absorbed. The emitter was located and confirmed: `plugins/saga/scripts/execution_spec.py`, `emit_workflow_script()` at line 3590, composing per-unit `agent()` calls via `_emit_thunk` (2967), `_emit_parallel_wave` (2737), `_emit_verify_panel` (3090), with the per-unit `prompt` field at line 1249.
+**Fix.** Requirements R26 and R27 rewritten as a two-lever hybrid — emitter stamp for `workflow-subagent`, definition-file duplication with a byte-identity test at 29.93%, with the residue named (built-in `general-purpose` and `Explore`, plus unclassified records) rather than absorbed. The emitter was located and confirmed: `plugins/saga/scripts/execution_spec.py`, `emit_workflow_script()`, composing per-unit `agent()` calls via `_emit_thunk`, `_emit_parallel_wave` and `_emit_verify_panel`, with the per-unit `prompt` field on `Unit`.
 
 **Superseded figure.** This entry was written crediting the emitter lever with the full 59.44% and a combined ceiling of ~89.4%. Both are wrong. Partitioning `workflow-subagent` by which script spawned it, the next day, gives the emitter 15.73% and the hybrid 45.7% — see [[attribution-labels-name-the-runtime-not-the-author]]. The lesson this entry teaches is unaffected and if anything reinforced: the census was the right move, and it still stopped one level short of the entity the lever acts on.
 
@@ -5708,7 +5762,7 @@ result through an unavailable method or silently skipping the test.
 
 **Refs.** `docs/evidence/issue-704/lever-experiment.md` (the full U1 evidence artifact, including
 the byte-accounting table and the emission/delivery chain diagram);
-`plugins/saga/scripts/execution_spec.py:3244` (`_agent_prompt()`, the single funnel Lever B stamps);
+`_agent_prompt()` in `plugins/saga/scripts/execution_spec.py` (the single funnel Lever B stamps);
 DECISIONS `{#house-style-two-lever-hybrid-and-ktds}`.
 
 ---

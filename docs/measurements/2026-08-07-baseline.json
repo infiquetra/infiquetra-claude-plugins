@@ -5,8 +5,8 @@
     "until": "2026-08-07T00:00:00+00:00"
   },
   "roots": [
-    "/Users/jefcox/.claude/projects",
-    "/Users/jefcox/.claude-company/projects"
+    "~/.claude/projects",
+    "~/.claude-company/projects"
   ],
   "corpus": {
     "files_scanned": 2655,
@@ -16,48 +16,7 @@
     "subagent_assistant_messages": 128622,
     "genuine_human_messages": 842,
     "lines_unparsed": 0,
-    "top_cwds": [
-      [
-        "/Users/jefcox/workspace/infiquetra/campps-context-library",
-        3257
-      ],
-      [
-        "/Users/jefcox/workspace/infiquetra/team-norns",
-        3176
-      ],
-      [
-        "/Users/jefcox/workspace/infiquetra/infiquetra-claude-plugins",
-        3019
-      ],
-      [
-        "/Users/jefcox/workspace/infiquetra/talaria",
-        1543
-      ],
-      [
-        "/Users/jefcox/workspace/infiquetra/home-lab",
-        778
-      ],
-      [
-        "/Users/jefcox/workspace/infiquetra/campps-web-app",
-        438
-      ],
-      [
-        "/Users/jefcox/workspace/infiquetra/team-mimir",
-        405
-      ],
-      [
-        "/Users/jefcox/workspace/infiquetra/team-freya",
-        248
-      ],
-      [
-        "/Users/jefcox/workspace/infiquetra/infiquetra-ansible-collections",
-        208
-      ],
-      [
-        "/Users/jefcox/workspace/infiquetra/infiquetra-codex-plugins",
-        195
-      ]
-    ]
+    "redacted_cwd_entries": 10
   },
   "metrics": [
     {

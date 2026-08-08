@@ -242,3 +242,95 @@ def test_mutation_stripped_tell_fails_tell_check(restore_style_file) -> None:
         "the assertion is not actually load-bearing"
     )
     assert _check_tell_present_as_literal(text)
+
+
+# --------------------------------------------------------------------------------------
+# Coherence: the rules the #704 code review found contradicting each other
+#
+# Nothing else checks whether the style's own rules can all be obeyed at once. A
+# contradiction here is not a typo -- it ships as live behaviour and the writer resolves it
+# differently on different turns, which is worse than either rule alone.
+# --------------------------------------------------------------------------------------
+
+
+def _style() -> str:
+    return STYLE_PATH.read_text()
+
+
+def test_the_visual_gate_is_declared_to_override_turn_shape() -> None:
+    """Delta turns default to no visual; the gate requires one on some delta turns.
+
+    Without an explicit precedence the same turn -- mid-session, operator asks "where do
+    things stand?" -- is both required and forbidden to carry a picture.
+    """
+    text = _style()
+    assert "overrides the turn shape in both directions" in text
+    assert "Turn shape sets the default, the gate sets the answer." in text
+
+
+def test_the_routine_no_visual_rule_carries_the_three_item_carve_out() -> None:
+    """The subagent preamble carries this carve-out; the style dropped it.
+
+    Two writers governed by the two halves of one plugin produced opposite output on the
+    identical turn: a command result comparing three test files.
+    """
+    text = _style()
+    assert "**Routine turns get no unrequested visual**, with one exception." in text
+    assert "three-item comparison" in text
+
+
+def test_the_arrow_chain_uses_the_notation_the_scorer_can_see() -> None:
+    """`->` is invisible to the visual detector; `-->`, `→` and `⇒` are not."""
+    text = _style()
+    assert "written with `-->`" in text
+    assert "written with `->`" not in text
+
+
+def test_both_turn_shapes_are_told_to_open_with_a_bolded_claim() -> None:
+    """Nothing else would move verdict_first_rate, which needs a bolded opening line."""
+    assert "**Both shapes open with a bolded claim.**" in _style()
+
+
+def test_the_delta_turn_does_not_revoke_plain_english_rule_one() -> None:
+    """`~/.claude/CLAUDE.md` rule 1 is unconditional and reaches every subagent.
+
+    The style is additive by decision, so it may add a turn shape but may not narrow a
+    ratified global rule -- that would leave the main thread and its subagents opening turns
+    by different rules, with the divergence invisible from either file alone.
+    """
+    text = _style()
+    assert "No re-establishment of context, no unrequested visual." not in text
+    assert "Anchoring is not a licence to drop the situating clause." in text
+
+
+def test_the_closing_ceremony_has_a_size_exemption() -> None:
+    """Requirement R9 asks for a size threshold; a state-change test alone never fires it.
+
+    "Renamed `foo.py` to `bar.py`." changed state and is 28 characters, so without a size
+    exemption it must carry a three-line closing block that quadruples the turn.
+    """
+    text = _style()
+    assert "The turn is shorter than its ceremony would be" in text
+    assert "whether or\n   not it changed state" in text
+
+
+def test_a_relay_of_a_single_finding_does_not_force_a_visual() -> None:
+    """The operator's standing fan-out is three agents; each return was an orientation turn.
+
+    Three "no findings" verdicts produced three full re-orientations with three required
+    pictures and nothing to draw.
+    """
+    text = _style()
+    assert "A relay turn is always an orientation turn" not in text
+    assert "relaying more than one finding" in text
+
+
+def test_the_abbreviation_rule_does_not_ban_what_claude_md_requires() -> None:
+    """Plain English rule 3 mandates meaning-first expansion on first use.
+
+    The style banned that pattern outright while permitting short forms used three or more
+    times, leaving the writer no legal way to introduce one.
+    """
+    text = _style()
+    assert "the `Full Name (ABC)` introduction pattern is not used" not in text
+    assert "this style narrows\nnothing" in text

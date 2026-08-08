@@ -35,7 +35,7 @@ comparing its SHA-256 against the committed copy.
 ```
 python3 tools/output_style_scorer.py \
   --since 2026-07-03 --until 2026-08-07 \
-  --exclude /Users/jefcox/.claude/projects/-Users-jefcox-bin/ab04a9a4-1357-4d06-a5f7-7e4e390246c2.jsonl \
+  --exclude ~/.claude/projects/-Users-jefcox-bin/ab04a9a4-1357-4d06-a5f7-7e4e390246c2.jsonl \
   --out docs/measurements/2026-08-08-extended-metrics.json --markdown
 ```
 
@@ -57,22 +57,75 @@ the new numbers were measuring behaviour or measuring a bug.
 | subagent_reach_share | 128622 / 225579 = 57.019% | 128622 / 225579 = 57.019% | yes |
 | session_closing_ask_rate | 11 / 407 = 2.703% | 11 / 407 = 2.703% | yes |
 | verdict_first_rate | 440 / 14787 = 2.976% | 440 / 14787 = 2.976% | yes |
-| turn_closing_ask_rate | 818 / 14787 = 5.532% | 818 / 14787 = 5.532% | yes |
+| turn_closing_ask_rate | 818 / 14787 = 5.532% | 823 / 14787 = 5.566% | **no — see below** |
 | mountain_of_text_rate | 172 / 14787 = 1.163% | 172 / 14787 = 1.163% | yes |
 | mermaid_in_terminal_rate | 7 / 14787 = 0.047% | 7 / 14787 = 0.047% | yes |
 | bare_identifier_rate | 250 / 14787 = 1.691% | 250 / 14787 = 1.691% | yes |
 | format_complaint_proxy | 7 / 842 = 0.831% | 7 / 842 = 0.831% | yes |
 | clarity_complaint_proxy | 10 / 842 = 1.188% | 10 / 842 = 1.188% | yes |
 
-All nine rows are identical field for field, including their definition strings, and every corpus
-count matches too: 407 sessions, 96,957 main-thread assistant messages, 14,787 of them carrying
-prose, 128,622 subagent messages, 842 genuine human prompts, 0 unparseable lines.
+Eight of the nine rows are identical field for field, including their definition strings, and every
+corpus count matches too: 407 sessions, 96,957 main-thread assistant messages, 14,787 of them
+carrying prose, 128,622 subagent messages, 842 genuine human prompts, 0 unparseable lines.
 
-**One number does differ and it is not a metric.** Transcripts scanned went from 2,655 to 2,669.
-The scanner uses file modification time as a cheap pre-filter before re-checking every message
-against its own timestamp, so fourteen more files have been touched since the baseline run and now
-pass that pre-filter. None of them contributed a message inside the window — which is exactly what
-the identical corpus counts and identical nine metrics demonstrate.
+### The ninth row moved on purpose, by 5 turns
+
+`turn_closing_ask_rate` reads 823 here against the baseline's 818. The detector was widened on
+2026-08-08 during the code review of this work, because it could not see the closing form the house
+style actually prescribes. The style's closing block ends with a line reading `Your call: <branches>`
+— a pre-committed decision, which is precisely what this detector's own definition says it counts —
+and the old pattern matched none of the three prescribed forms while matching the phrasing the style
+names as its counter-example. Left alone, the better the style was followed the worse this metric
+would have read, and a successful rollout would have arrived as a regression.
+
+What the widening costs, measured rather than assumed:
+
+| added alternative | additional pre-style turns caught |
+| --- | ---: |
+| `Your call:` at the start of the closing line | **0** |
+| "unless you say / tell me / object / stop me / redirect" | 3 |
+| "your move" | 2 |
+
+The style's own literal token appears in **zero** pre-style turns, which is the expected result — it
+did not exist before this work. The 5 that moved are ordinary English that happened to appear in the
+window. So:
+
+- **The comparison figure for `turn_closing_ask_rate` is 5.566%, not 5.532%.** An "after" run uses
+  the widened detector and must be read against the widened pre-style value. Reading it against
+  5.532% would credit the style with 5 turns it did not cause.
+- **`session_closing_ask_rate` is unmoved** at 11/407 = 2.703%, so its comparison figure is unchanged.
+- **The baseline file is untouched** and still records 818 under the narrower detector, which is what
+  that detector saw. It is not wrong; it answers a slightly narrower question.
+- `METRIC_SCHEMA` stays at 1. The thing being measured — does the turn end by handing the reader a
+  decision — is unchanged, and the shift is 0.034 of a percentage point, disclosed here rather than
+  absorbed.
+
+**Two numbers differ that are not metrics at all.** Transcripts scanned went from 2,655 to 2,689, and
+`records_without_timestamp` appears for the first time at 97,365. The scanner uses file modification
+time as a cheap pre-filter before re-checking every message against its own timestamp, so 34 more
+files have been touched since the baseline run and now pass that pre-filter; none of them contributed
+a message inside the window, which is what the identical corpus counts demonstrate. The timestamp
+count is a new field rather than a new fact: records with no usable timestamp were always skipped,
+and are now counted separately from `lines_unparsed` so that skipping them cannot be misread as a
+corpus-integrity problem. None of them is an assistant message, so no metric population is affected.
+
+### What was removed from both artifacts, and why it is not a regeneration
+
+Both JSON files previously carried a `top_cwds` field listing the ten most-visited project
+directories verbatim. This repository is public, and that field wrote the operator's home directory
+and the names of nine unrelated private repositories into version control. It has been removed from
+both committed artifacts and from the instrument, which now reports `distinct_project_dirs` — a
+count — instead. The scanned roots are recorded with `~` in place of the home directory for the same
+reason.
+
+Removing that field is **not** a regeneration of the baseline and does not violate the write-once
+rule, which exists to stop the pre-style measurement being replaced by a styled one. Nothing was
+re-measured: the edit deleted one key. That was verified rather than asserted — the `metrics` array,
+the `window`, the `schema`, and every other `corpus` field compare byte-identical before and after,
+and `tests/test_output_style_scorer.py::test_the_committed_baseline_file_still_holds_the_pre_style_snapshot`
+now pins all nine numerators, denominators, and percentages so that a real regeneration would fail
+the suite. Before this it asserted only the file's shape, and a rewrite that replaced every
+percentage while preserving the shape passed it — confirmed by mutation during the review.
 
 ## The two new metrics
 
@@ -114,6 +167,13 @@ time; when they did not ask for one, one appears about one turn in twelve.
 - "A visual" means a markdown table, a mermaid fence, box-drawing characters, or arrow notation
   (`-->`, `→`, `⇒`). Arrow notation also occurs inside quoted code and HTML comments, so a turn
   can be credited with a visual it did not really draw. That pushes the other way.
+- **One of the three forms the house style permits is invisible here.** The style's permitted catalog
+  for terminal output is an indented file tree, a single-line arrow chain, and a Markdown table. The
+  detector sees the arrow chain and the table; a two-space indented file tree matches nothing, so a
+  turn whose only picture is a tree scores as an orientation turn that drew nothing. This was found
+  during the #704 code review, and the arrow chain was changed from `->` to `-->` in the style at the
+  same time so that at least two of the three forms are measurable. The tree remains a blind spot,
+  and it biases the figure **downward** — the safe direction for a "before" value.
 - An explicit operator request for a visual is supposed to override the gate in either direction.
   This measurement does not read the preceding human message, so it cannot honour that override.
 

@@ -4,13 +4,18 @@ Issue #704 U5. ``execution_spec._agent_prompt`` is the single funnel for every w
 emits, so the canonical presentation contract is appended there once and nowhere else. These tests
 police three properties the refute-3 panel attacks:
 
-1. the rider reaches every emitted ``agent()`` worker prompt EXACTLY once (never twice, through any
-   of the three ``_agent_prompt`` call sites: the routing context, the unattended escalation retry,
-   and the inline-baseline renderer);
+1. the rider reaches every emitted ``agent()`` worker prompt EXACTLY once (never twice, through
+   either spawning ``_agent_prompt`` call site: the routing context and the unattended escalation
+   retry);
 2. the stamped text is byte-identical to
    ``plugins/house-style/references/subagent-presentation-preamble.md``;
 3. verifier prompts are NOT stamped -- saga spawns every verifier as ``saga:readonly-verifier``,
-   whose definition file carries the preamble instead.
+   whose definition file carries the preamble instead;
+4. the inline/serial baseline is NOT stamped either. Its units are executed by the MAIN THREAD,
+   and the presentation contract is addressed to a subagent: it forbids the operator-facing
+   closing block and the style tell outright. Stamping it there would tell the main thread to
+   suppress the very output the house-style plugin ships to produce, once per unit. Found by the
+   #704 code review; the third call site used to receive the rider along with the other two.
 """
 
 from __future__ import annotations
@@ -169,7 +174,12 @@ def test_every_emitted_agent_prompt_carries_the_rider() -> None:
 
 def test_rider_appears_exactly_once_per_emitted_prompt() -> None:
     script = str(ES.emit_workflow_script(_spec([_WORKER_UNIT, _CHEAP_FANOUT_UNIT])))
-    for prompt in _workers(script):
+    workers = _workers(script)
+    # Without this the loop below is vacuous: if prompt extraction ever stopped matching the
+    # emitted script, every assertion inside would simply not run and the test would report
+    # green. A test that iterates a discovered set must first prove the set is not empty.
+    assert len(workers) == 2
+    for prompt in workers:
         assert prompt.count(ES.PRESENTATION_RIDER) == 1
         # The section header is the cheapest independent double-application tell: a second copy
         # spliced in by a downstream emitter would raise this count even if whitespace differed.
@@ -211,10 +221,33 @@ def test_rider_appears_once_across_call_site_unattended_escalation_retry() -> No
         assert prompt.count(ES.PRESENTATION_RIDER) == 1
 
 
-def test_rider_appears_once_across_call_site_inline_baseline() -> None:
-    # Call site 3: emit_inline_baseline renders the same prompts into operator-facing markdown.
+def test_the_inline_baseline_is_not_stamped_at_all() -> None:
+    """The inline/serial baseline is run by the MAIN THREAD, so it must carry no rider.
+
+    This assertion used to read ``== 2`` -- one copy per unit -- which pinned the defect in
+    place as though it were the specification: any correct fix would have failed the suite.
+    The presentation contract tells its reader "the operator-facing closing block and the main
+    thread's style tell belong to the main thread alone. Do not write either one." Handing that
+    to the main thread suppresses the house style's entire visible output, once per unit, on
+    the one execution backend that is also this repository's default.
+    """
     baseline = ES.emit_inline_baseline(_spec([_WORKER_UNIT, _CHEAP_FANOUT_UNIT]))
-    assert baseline.count("## Presentation contract (Infiquetra house style)") == 2
+    assert baseline.count("## Presentation contract (Infiquetra house style)") == 0
+    assert ES.PRESENTATION_RIDER not in baseline
+    assert "No operator ceremony" not in baseline
+    # ...while the units' own prompts still render, so the baseline is not merely empty.
+    assert "do the work" in baseline
+
+
+def test_the_inline_baseline_and_the_spawned_path_differ_only_by_the_rider() -> None:
+    """Guards the fix from over-reaching: nothing but the rider is suppressed inline."""
+    spec = _spec([_WORKER_UNIT])
+    unit = spec.unit_by_id("U1")
+    assert unit is not None
+    spawned = ES._agent_prompt(spec, unit)
+    inline = ES._agent_prompt(spec, unit, subagent=False)
+    assert spawned != inline
+    assert spawned.replace("\n\n" + ES.PRESENTATION_RIDER, "") == inline
 
 
 def test_rider_survives_a_prompt_that_already_mentions_presentation() -> None:

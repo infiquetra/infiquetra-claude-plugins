@@ -520,6 +520,13 @@ def test_the_committed_baseline_file_still_holds_the_pre_style_snapshot() -> Non
 
     The window it records closed the moment a custom style shipped, so a regenerated file
     would be a styled measurement wearing the name of the unstyled one.
+
+    The measured VALUES are asserted, not only the file's shape. An earlier version of this
+    test checked schema, metric names, window dates and session count and nothing else, so a
+    rewrite that preserved the shape and replaced every percentage passed it silently -- the
+    numbers being exactly what the file exists to preserve. Verified by mutation during the
+    #704 code review: setting every numerator and denominator to 999999 left the old test
+    green.
     """
     path = (
         Path(__file__).resolve().parents[1] / "docs" / "measurements" / "2026-08-07-baseline.json"
@@ -530,6 +537,42 @@ def test_the_committed_baseline_file_still_holds_the_pre_style_snapshot() -> Non
     assert report["window"]["since"].startswith("2026-07-03")
     assert report["window"]["until"].startswith("2026-08-07")
     assert report["corpus"]["sessions"] == 407
+
+    # The pre-style numbers themselves, frozen. Every figure quoted by the requirements
+    # document, the plan, and the measurement write-ups traces to this table.
+    assert {
+        m["metric"]: (m["numerator"], m["denominator"], m["percent"]) for m in report["metrics"]
+    } == {
+        "subagent_reach_share": (128622, 225579, 57.019),
+        "session_closing_ask_rate": (11, 407, 2.703),
+        "verdict_first_rate": (440, 14787, 2.976),
+        "turn_closing_ask_rate": (818, 14787, 5.532),
+        "mountain_of_text_rate": (172, 14787, 1.163),
+        "mermaid_in_terminal_rate": (7, 14787, 0.047),
+        "bare_identifier_rate": (250, 14787, 1.691),
+        "format_complaint_proxy": (7, 842, 0.831),
+        "clarity_complaint_proxy": (10, 842, 1.188),
+    }
+    assert report["corpus"]["subagent_assistant_messages"] == 128622
+
+
+def test_no_committed_measurement_artifact_discloses_a_filesystem_path() -> None:
+    """Both measurement JSONs are committed to a PUBLIC repository.
+
+    An earlier version of the report emitted the ten most common `cwd` values verbatim, which
+    wrote the operator's home directory and the names of nine unrelated private repositories
+    into version control. The corpus walk still tracks project directories, because how many
+    a corpus spans is worth knowing; it reports the COUNT and never the values.
+    """
+    measurements = Path(__file__).resolve().parents[1] / "docs" / "measurements"
+    committed = sorted(measurements.glob("*.json"))
+    assert len(committed) >= 2, "the guard is vacuous if it finds no artifacts"
+    for path in committed:
+        raw = path.read_text()
+        assert "/Users/" not in raw, f"{path.name} discloses an absolute home path"
+        assert "top_cwds" not in raw, f"{path.name} still carries the cwd list"
+        report = json.loads(raw)
+        assert isinstance(report["corpus"].get("distinct_project_dirs", 0), int)
 
 
 def test_an_unfenced_json_dump_is_a_pasted_payload() -> None:
@@ -583,3 +626,157 @@ def test_balanced_gating_weights_the_two_halves_equally(tmp_path: Path) -> None:
     assert metric["routine_with_visual"] == 0
     assert metric["percent"] == 95.0, "19 of 20 turns are correctly gated"
     assert metric["balanced_gating_percent"] == 50.0, "but half the rule is being failed"
+
+
+# --------------------------------------------------------------------------------------
+# Malformed-record hardening (#704 code review)
+#
+# Every case below reads ZERO in the real corpus -- measured over the 2026-07-03 to
+# 2026-08-07 window before the fixes landed -- so none of these changes could move a
+# committed number.  They are here because the failure mode is not a wrong metric, it is an
+# uncaught exception that aborts the whole walk and writes no report at all.
+# --------------------------------------------------------------------------------------
+
+
+def test_a_timestamp_without_an_offset_does_not_abort_the_walk(tmp_path: Path) -> None:
+    """A naive ISO timestamp parses fine and then raises TypeError on comparison.
+
+    `datetime.fromisoformat("2026-08-07T10:00:00")` returns a naive datetime; comparing it
+    against the timezone-aware window bounds is a TypeError that no handler catches, so one
+    such record anywhere in 2,689 transcripts loses the entire run.
+    """
+    naive = _assistant("A real message.", False, "s", 0)
+    naive["timestamp"] = "2026-08-07T10:00:00"
+    root = tmp_path / "projects"
+    _write(root / "-r" / "s.jsonl", [naive])
+    got = scorer.collect([str(root)], NOW - timedelta(days=1), NOW + timedelta(days=1), set())
+    assert got.main_assistant == ["A real message."], "treated as UTC and kept, not dropped"
+
+
+def test_a_null_message_does_not_abort_the_walk(tmp_path: Path) -> None:
+    """`record.get("message", {})` returns a stored None rather than the default."""
+    broken = _assistant("ignored", False, "s", 0)
+    broken["message"] = None
+    root = tmp_path / "projects"
+    _write(root / "-r" / "s.jsonl", [broken, _assistant("Kept.", False, "s", 1)])
+    got = scorer.collect([str(root)], NOW - timedelta(days=1), NOW + timedelta(days=1), set())
+    assert got.main_assistant == ["Kept."]
+    assert got.main_assistant_total == 2, "the null-message turn is still a turn"
+
+
+def test_a_record_without_a_timestamp_cannot_steal_the_session_opener(tmp_path: Path) -> None:
+    """An unstamped record sorts before every real one on an empty sort key.
+
+    That would both bypass the window filter entirely and hand it the session's orientation
+    flag, which is the population the visual-gating metric is built from.
+    """
+    stampless = _assistant("No stamp.", False, "s", 0)
+    del stampless["timestamp"]
+    root = tmp_path / "projects"
+    _write(root / "-r" / "s.jsonl", [stampless, _assistant("The real opener.", False, "s", 1)])
+    got = scorer.collect([str(root)], NOW - timedelta(days=1), NOW + timedelta(days=1), set())
+    assert got.main_assistant == ["The real opener."]
+    assert got.records_without_timestamp == 1
+    assert got.lines_unparsed == 0, "it parsed perfectly well; only the window filter cannot run"
+
+
+def test_an_unreadable_sidechain_flag_is_reported_not_absorbed(tmp_path: Path) -> None:
+    """If the schema stops setting isSidechain, both classifiers read zero and 'agree'.
+
+    Agreeing on nothing is the silent-zero failure this whole suite exists to catch, so the
+    reach metric must call it out rather than report `confidence: exact` over an empty count.
+    """
+    records = [_assistant(f"Message {i}.", False, "s", i) for i in range(3)]
+    for record in records:
+        del record["isSidechain"]
+    metric = _score_one(tmp_path, records, "subagent_reach_share")
+    assert metric["confidence"].startswith("SUSPECT")
+    assert metric["cross_check_agrees"] is False
+
+
+def test_an_empty_population_has_no_balanced_score(tmp_path: Path) -> None:
+    """`100.0 - _rate(0, 0)` scores an empty routine half a free 100%.
+
+    Averaged against an empty orientation half scoring 0, an empty corpus would report a
+    balanced 59.6-looking 50.0 -- indistinguishable from a real half-right result.
+    """
+    metric = next(m for m in scorer.score(scorer.Corpus()) if m["metric"] == "visual_gating_rate")
+    assert metric["balanced_gating_percent"] is None
+    assert metric["orientation_turns"] == 0 and metric["routine_turns"] == 0
+
+
+def test_the_report_never_carries_a_filesystem_path_from_the_corpus(tmp_path: Path) -> None:
+    """Project directories are reported as a count. The values never leave the process."""
+    root = tmp_path / "projects"
+    records = [_assistant("One.", False, "s", 0), _assistant("Two.", False, "s", 1)]
+    records[0]["cwd"] = "/Users/someone/workspace/a-private-repo"
+    records[1]["cwd"] = "/Users/someone/workspace/another-private-repo"
+    _write(root / "-r" / "s.jsonl", records)
+    got = scorer.collect([str(root)], NOW - timedelta(days=1), NOW + timedelta(days=1), set())
+    report = scorer.build_report(
+        got, scorer.score(got), NOW - timedelta(days=1), NOW + timedelta(days=1), [str(root)]
+    )
+    assert report["corpus"]["distinct_project_dirs"] == 2
+    assert "a-private-repo" not in json.dumps(report)
+    assert "another-private-repo" not in json.dumps(report)
+
+
+# --------------------------------------------------------------------------------------
+# The style and the instrument have to agree (#704 code review, P0)
+#
+# The scorer is what will show whether the house style worked.  A style rule the scorer
+# cannot see is not measurable, and worse: a style that suppresses a form the scorer counts
+# reads as a REGRESSION when it is working exactly as designed.
+# --------------------------------------------------------------------------------------
+
+
+def test_the_house_styles_closing_block_registers_as_a_closing_ask() -> None:
+    """The style's `Your call:` line is the pre-committed branch this detector wants.
+
+    Before this was fixed the detector matched the phrasing the style names as its
+    counter-example and missed all three of its prescribed forms, so full compliance drove
+    session_closing_ask_rate and turn_closing_ask_rate DOWN and a working rollout would have
+    read as a regression on the two criteria that motivated the work.
+    """
+    compliant = [
+        "Your call: if the suite is green I will merge; if it fails I will bring you the case.",
+        "Your call: none needed - unless you say otherwise I will open the pull request.",
+        "Your call: merge now, or hold for the after-measurement.",
+    ]
+    for line in compliant:
+        assert scorer.CLOSING_ASK_RE.search(line), f"style-compliant close not detected: {line}"
+    # The form the style explicitly names as a failure must still register, because it IS an
+    # ask -- a bad one. This metric counts asks, and the style's job is to make them answerable.
+    assert scorer.CLOSING_ASK_RE.search("Let me know how you want to proceed.")
+    # ...and a plain declarative close still does not.
+    assert not scorer.CLOSING_ASK_RE.search("The suite is green and the branch is merged.")
+
+
+def test_the_closing_detector_extension_is_scoped_to_the_style_forms() -> None:
+    """The extension must not quietly re-score the frozen window.
+
+    Measured over 2026-07-03 to 2026-08-07 it catches 5 additional turns: 3 from
+    "unless you ..." and 2 from "your move", both ordinary English, and 0 from `Your call:`.
+    That delta is disclosed in docs/measurements/2026-08-08-extended-metrics.md rather than
+    absorbed. What this test pins is the shape of the addition, so a later widening cannot
+    slip past: the anchored `Your call:` must not match mid-sentence prose.
+    """
+    assert not scorer.CLOSING_ASK_RE.search("I made your call sign-off explicit in the doc.")
+    assert scorer.CLOSING_ASK_RE.search("Your call: go or hold.")
+
+
+def test_the_permitted_visual_catalog_is_visible_to_the_visual_detector() -> None:
+    """Two of the three catalog forms were invisible; the arrow chain now uses `-->`."""
+    assert scorer.VISUAL_RE.search("emitter --> _agent_prompt --> agent()"), "arrow chain"
+    assert scorer.VISUAL_RE.search("| a | b |\n| --- | --- |\n| 1 | 2 |"), "markdown table"
+    # The indented file tree remains invisible to the detector. That is a KNOWN blind spot,
+    # recorded in the style and in the measurement write-up, and it biases the gating figure
+    # downward -- the safe direction. Asserted so it stays a known limit, not a surprise.
+    assert not scorer.VISUAL_RE.search("plugins/\n  house-style/\n    README.md")
+
+
+def test_a_bolded_opening_claim_is_what_the_verdict_detector_counts() -> None:
+    """The style now prescribes a bolded opening because this is what makes it measurable."""
+    assert scorer.VERDICT_FIRST_RE.match("**The suite is green on Python 3.12.** Details follow.")
+    assert not scorer.VERDICT_FIRST_RE.match("The suite is green on Python 3.12.")
+    assert not scorer.VERDICT_FIRST_RE.match("## The suite is green"), "a heading is not a claim"

@@ -128,10 +128,16 @@ route this review had presented as ideation's own answer.
 
 **Decisions recorded.** The plugin is named `house-style`. R27 takes a hybrid route: the preamble is
 stamped into spawn prompts by saga's emitter (`plugins/saga/scripts/execution_spec.py`,
-`emit_workflow_script()` line 3590) for the 59.44%, and duplicated into the 36 repo-owned agent
-definitions with the byte-identity test restored for the 29.93% — combined ceiling ~89.4%, with the
-10.63% residue named rather than absorbed. The bare-Default control run is skipped, not deferred, with
-its attribution cost recorded.
+`emit_workflow_script()`) for ~~the 59.44%~~ **15.73%**, and duplicated into the 36 repo-owned agent
+definitions with the byte-identity test restored for the 29.93% — combined ceiling ~~89.4%~~
+**45.7%**, with the ~~10.63%~~ **54.3%** residue named rather than absorbed. The bare-Default control
+run is skipped, not deferred, with its attribution cost recorded.
+
+**Every reach figure struck through above was superseded the next day.** The corrected values are
+inline; the full correction, with its method, is recorded further down this document under "The reach
+ceiling fell from 89.4% to 45.7%". The strike-throughs are kept rather than deleted because this is a
+dated review artifact and the record of what was believed at the time is the point of it — but a
+reader skimming for what was settled must not carry away a figure that is nearly double the truth.
 
 **One correction to this review's own figures.** It reported "the 400 agent files under
 `~/.claude/plugins/cache/`" secondhand, attaching a whole-tree count to a subtree path. Both counts

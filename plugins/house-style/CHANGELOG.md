@@ -7,10 +7,13 @@
 Initial release (issue #704). This ships the whole plugin at once — the plan built it across several
 units, but nothing prior to this shipped, so there is no earlier version to diff against.
 
-- `output-styles/house-style.md`, an output style enforcing Infiquetra's house presentation rules on
-  Claude Code's main thread: lead with the answer, report state rather than activity, situate before
-  detailing, name the thing rather than gesturing at a bare identifier, and the other main-thread rules
-  a human operator reads directly. `keep-coding-instructions: true` is set literally; `force-for-plugin`
+- `output-styles/house-style.md`, an output style governing the SHAPE of a main-thread turn: which
+  turns are full orientations and which are deltas, the three-line closing block whose last line is a
+  decision answerable with "go", when a visual is required and when it is forbidden, and how a
+  subagent's return is relayed. It also carries two mechanical enforcement tests — bare identifiers
+  and abbreviations — that sit beside the language rules in `~/.claude/CLAUDE.md` without rewriting
+  them. Word-level rules such as leading with the answer stay in `~/.claude/CLAUDE.md` and in the
+  subagent preamble below; the style does not restate them. `keep-coding-instructions: true` is set literally; `force-for-plugin`
   is not set, so the operator's own style selection is never overridden. A "Placard" section states
   plainly what the style suppresses. A single-line tell, `::house-style::`, is emitted on the main
   thread only (never by subagents) as a machine-checkable marker that the style is active on a given
@@ -32,5 +35,14 @@ units, but nothing prior to this shipped, so there is no earlier version to diff
   written directly by the main thread rather than relayed from a subagent — deferred to follow-up work
   by the plan's KTD5 (a Key Technical Decision, a recorded design choice with its rejected
   alternatives), not cancelled.
-- A concrete size threshold or target reach percentage — both are open questions in the requirements
-  document and are not invented here.
+- Target values for the success criteria. The requirements document carries directions ("up,
+  substantially") and no numbers; picking them is deferred to planning and is not invented here.
+- Any measured effect of this release. The preamble governs no subagent until the plugin cache is
+  updated AND a new session starts, so an "after" measurement taken before that reads the old
+  behaviour. `README.md` states the four-step chain.
+
+### Note on the closing-ceremony size threshold
+
+The style ships a provisional threshold — roughly six lines — set by feel rather than by measurement,
+because requirement R9 asks for one and a state-change test alone never exempts a short turn that did
+work. It is expected to move after first contact.

@@ -45,7 +45,6 @@ import json
 import os
 import re
 import sys
-from collections import Counter
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -58,9 +57,12 @@ from typing import Any
 # incomparable and destroy the only "before" record there is.
 METRIC_SCHEMA = 1
 
+# Both Claude Code configurations this operator runs.  Derived from the running user's home
+# directory rather than written literally, so the tool works for anyone who checks the
+# repository out -- and so no operator's username is baked into tracked source.
 DEFAULT_ROOTS = [
-    "/Users/jefcox/.claude/projects",
-    "/Users/jefcox/.claude-company/projects",
+    os.path.expanduser("~/.claude/projects"),
+    os.path.expanduser("~/.claude-company/projects"),
 ]
 
 # A user message only counts as a real human turn when it came from the keyboard.  Everything
@@ -90,13 +92,34 @@ PAYLOAD_QUOTE_LINES = 8
 # A closing ask: the final non-empty line either asks a question outright, states a
 # pre-committed branch, or explicitly hands control back.  Anything else means the turn
 # ended on a declarative fact and the reader is left to work out whether it is their move.
+#
+# The last three alternatives were added on 2026-08-08 (#704) because the house style
+# prescribes the pre-committed-branch form this detector was always meant to catch and did
+# not: `Your call:`, "unless you say otherwise I will ...", and "your move".  Without them a
+# fully style-compliant turn scores as NOT closing with an ask, so the better the style was
+# followed the worse this metric would read.
+#
+# What that costs, measured rather than assumed.  Re-scored over the frozen 2026-07-03 to
+# 2026-08-07 window, the extension catches 5 additional turns: 3 from "unless you ..." and 2
+# from "your move", both ordinary English that predates the style, and 0 from `Your call:`,
+# which no pre-style turn contains.  So turn_closing_ask_rate's pre-style value is 823/14787
+# = 5.566% under this definition, against the 818/14787 = 5.532% the 2026-08-07 baseline
+# holds under the narrower one; session_closing_ask_rate is unmoved at 11/407.  An "after"
+# run must be compared against 5.566%, and docs/measurements/2026-08-08-extended-metrics.md
+# carries that corrected figure.  The baseline file itself is untouched and still records
+# what the narrower detector saw.  METRIC_SCHEMA stays at 1: the thing being measured -- does
+# the turn end by handing the reader a decision -- is unchanged, and the shift is 0.034 of a
+# percentage point, disclosed rather than absorbed.
 CLOSING_ASK_RE = re.compile(
     r"(\?\s*$)"
     r"|(\b(want|would you like|shall i|should i|do you want|ok to|okay to)\b)"
     r"|(\b(holding|standing by|waiting|blocked) (here |on )?(until|for|on)\b)"
     r"|(\bnothing (is )?needed from you\b)"
     r"|(\bsay (the word|go)\b)"
-    r"|(\bif you (say|confirm|approve)\b)",
+    r"|(\bif you (say|confirm|approve)\b)"
+    r"|((?m:^)\s*your call\s*:)"
+    r"|(\bunless you (say|tell me|object|stop me|redirect)\b)"
+    r"|(\byour move\b)",
     re.IGNORECASE,
 )
 
@@ -205,7 +228,23 @@ class Corpus:
     session_last_ts: dict[str, str] = field(default_factory=dict)
     files_scanned: int = 0
     lines_unparsed: int = 0
-    cwds: Counter[str] = field(default_factory=Counter)
+    # Distinct project directories the corpus spans. Held as a set and reported only as a
+    # COUNT: these are absolute paths on the operator's machine and naming them in a
+    # committed artifact discloses their home directory and their private repository names.
+    project_dirs: set[str] = field(default_factory=set)
+    # Assistant records whose `isSidechain` was neither True nor False. Such a record is
+    # counted by neither classifier, so a schema change that stopped setting the field would
+    # drop every message from both sides of the reach ratio at once and the two classifiers
+    # would still agree -- agreeing on zero. This counter is what makes that visible.
+    unknown_sidechain: int = 0
+    # Records carrying no usable `timestamp`. They parsed fine; they simply cannot be placed
+    # inside or outside the window, so they are skipped. Kept separate from lines_unparsed,
+    # which means a line that failed to parse as JSON at all.
+    records_without_timestamp: int = 0
+
+    @property
+    def distinct_project_dirs(self) -> int:
+        return len(self.project_dirs)
 
 
 def _text_of(message: dict[str, Any]) -> str:
@@ -323,8 +362,24 @@ def _scan_lines(
                 when = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
             except ValueError:
                 when = None
+            # A timestamp carrying no offset parses fine and then raises TypeError on
+            # comparison against the timezone-aware bounds, aborting the whole walk. Treat a
+            # naive stamp as UTC, which is what every Claude Code transcript writes anyway.
+            if when is not None and when.tzinfo is None:
+                when = when.replace(tzinfo=UTC)
             if when is not None and not (since <= when <= until):
                 continue
+        else:
+            # No usable timestamp means the window filter cannot be applied to this record.
+            # Keeping it would let it into the corpus regardless of --since/--until, and its
+            # empty sort key would additionally make it the session's apparent first turn,
+            # stealing the orientation flag from the message that really opened the session.
+            # Counted in its own field, NOT in lines_unparsed -- these lines parsed perfectly
+            # well, and folding them into an "unparsed" count would report a corpus-integrity
+            # problem where there is none.  Over the baseline window this is ~97k records,
+            # none of them assistant messages, so no metric population is affected.
+            corpus.records_without_timestamp += 1
+            continue
 
         kind = record.get("type")
         sidechain = record.get("isSidechain")
@@ -338,11 +393,14 @@ def _scan_lines(
                 corpus.side_assistant_count += 1
                 continue
             if sidechain is not False:
+                corpus.unknown_sidechain += 1
                 continue
             corpus.main_assistant_total += 1
             corpus.records_read += 1
             seq = corpus.records_read
-            message = record.get("message", {})
+            # `record.get("message", {})` returns a stored None rather than the default, and
+            # _text_of would then raise AttributeError on it, aborting the walk.
+            message = record.get("message") or {}
             text = _text_of(message)
             session = record.get("sessionId") or path
             events = corpus.session_events.setdefault(session, [])
@@ -350,7 +408,7 @@ def _scan_lines(
                 corpus.main_assistant.append(text)
                 events.append((stamp or "", seq, "prose", len(corpus.main_assistant) - 1))
                 if cwd := record.get("cwd"):
-                    corpus.cwds[cwd] += 1
+                    corpus.project_dirs.add(cwd)
                 prev = corpus.session_last_ts.get(session)
                 if prev is None or (isinstance(stamp, str) and stamp >= prev):
                     corpus.session_last_main[session] = text
@@ -365,7 +423,7 @@ def _scan_lines(
                 continue
             if record.get("promptSource") not in GENUINE_PROMPT_SOURCES:
                 continue
-            text = _text_of(record.get("message", {}))
+            text = _text_of(record.get("message") or {})
             if text.strip():
                 corpus.human.append(text)
 
@@ -463,7 +521,24 @@ def score(corpus: Corpus) -> list[dict[str, Any]]:
     by_path_total = corpus.side_by_path_count + corpus.main_by_path_count
     by_path_share = _rate(corpus.side_by_path_count, by_path_total)
     by_field_share = _rate(corpus.side_assistant_count, all_assistant)
-    agrees = abs(by_path_share - by_field_share) < 1.0
+    # Comparing the two shares alone is not enough. If the schema stopped setting
+    # `isSidechain`, EVERY record would fall out of the field-based classifier at once, both
+    # shares would read 0.0, and they would "agree" -- on nothing. The two extra conditions
+    # are what make the check load-bearing: the field classifier must have seen messages at
+    # all, and no record may have carried an unrecognised value for the field.
+    agrees = (
+        abs(by_path_share - by_field_share) < 1.0
+        and all_assistant > 0
+        and corpus.unknown_sidechain == 0
+    )
+    if corpus.unknown_sidechain:
+        confidence = f"SUSPECT - {corpus.unknown_sidechain} records with unreadable isSidechain"
+    elif not all_assistant:
+        confidence = "SUSPECT - the isSidechain classifier counted no messages at all"
+    elif not agrees:
+        confidence = "SUSPECT - classifiers disagree"
+    else:
+        confidence = "exact"
 
     metrics.append(
         _metric(
@@ -478,7 +553,7 @@ def score(corpus: Corpus) -> list[dict[str, Any]]:
             subagent_messages=corpus.side_assistant_count,
             cross_check_by_path_percent=by_path_share,
             cross_check_agrees=agrees,
-            confidence="exact" if agrees else "SUSPECT - classifiers disagree",
+            confidence=confidence,
         )
     )
 
@@ -620,8 +695,17 @@ def _visual_gating_metric(corpus: Corpus) -> dict[str, Any]:
     # nothing. This average weights the two halves equally instead, and is the figure to
     # compare across runs -- the headline can sit still while both halves move.
     orientation_right = _rate(orientation_with_visual, orientation_n)
-    routine_right = 100.0 - _rate(routine_with_visual, routine_n)
-    balanced = round((orientation_right + routine_right) / 2, 3)
+    # `100.0 - _rate(...)` would score an EMPTY routine population as a free 100%, because
+    # _rate returns 0.0 on a zero denominator.  Paired with an empty orientation population
+    # scoring 0%, an empty corpus would report a plausible-looking balanced 50% -- a number
+    # indistinguishable from a real half-right result.  A half with no population has no
+    # score, so the average is not computed at all.
+    routine_right = 100.0 - _rate(routine_with_visual, routine_n) if routine_n else None
+    balanced = (
+        round((orientation_right + routine_right) / 2, 3)
+        if orientation_n and routine_right is not None
+        else None
+    )
 
     return _metric(
         "visual_gating_rate",
@@ -709,6 +793,12 @@ def _relay_quality_metric(corpus: Corpus) -> dict[str, Any]:
     )
 
 
+def _tilde(path: str) -> str:
+    """Collapse a leading home directory to `~` so committed reports carry no username."""
+    home = os.path.expanduser("~")
+    return "~" + path[len(home) :] if path.startswith(home) else path
+
+
 def build_report(
     corpus: Corpus,
     metrics: list[dict[str, Any]],
@@ -719,7 +809,10 @@ def build_report(
     return {
         "schema": METRIC_SCHEMA,
         "window": {"since": since.isoformat(), "until": until.isoformat()},
-        "roots": roots,
+        # Written with `~` standing in for the home directory. These reports are committed to a
+        # public repository, and an absolute root discloses the operator's username for no
+        # analytic gain -- `~/.claude/projects` identifies the corpus just as precisely.
+        "roots": [_tilde(r) for r in roots],
         "corpus": {
             "files_scanned": corpus.files_scanned,
             "sessions": len(corpus.session_last_main),
@@ -728,7 +821,19 @@ def build_report(
             "subagent_assistant_messages": corpus.side_assistant_count,
             "genuine_human_messages": len(corpus.human),
             "lines_unparsed": corpus.lines_unparsed,
-            "top_cwds": corpus.cwds.most_common(10),
+            "records_without_timestamp": corpus.records_without_timestamp,
+            # How many distinct project directories the corpus spans, as a COUNT and never as
+            # a list.  An earlier version emitted the ten most common `cwd` values verbatim,
+            # which wrote the operator's home directory and the names of nine private
+            # repositories into a committed artifact in a public repository (#704 review).
+            # The count carries the diagnostic value -- is this corpus one project or thirty --
+            # without disclosing anything about which.
+            "distinct_project_dirs": corpus.distinct_project_dirs,
+            # Assistant records whose `isSidechain` was neither True nor False.  This must
+            # read 0.  Anything else means the transcript schema changed and both sides of
+            # the reach ratio silently lost messages -- see subagent_reach_share, whose
+            # cross-check consumes this.
+            "records_with_unknown_sidechain": corpus.unknown_sidechain,
         },
         "metrics": metrics,
     }
@@ -760,8 +865,14 @@ def main(argv: list[str] | None = None) -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("--days", type=int, default=35, help="window size when --since is absent")
-    parser.add_argument("--since", help="ISO date, inclusive")
-    parser.add_argument("--until", help="ISO date, inclusive")
+    parser.add_argument("--since", help="ISO date; the window opens at 00:00 UTC on this date")
+    parser.add_argument(
+        "--until",
+        help=(
+            "ISO date; the window CLOSES at 00:00 UTC on this date, so that day's own traffic "
+            "is outside it. Pass a bare date and the window ends the instant the date begins."
+        ),
+    )
     parser.add_argument("--roots", nargs="*", default=DEFAULT_ROOTS)
     parser.add_argument(
         "--exclude",

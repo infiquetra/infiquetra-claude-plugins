@@ -463,7 +463,7 @@ against the captured baseline in `docs/measurements/2026-08-07-baseline.md`.
 | Measurement | Baseline, 2026-08-07 | Direction |
 | --- | ---: | --- |
 | Sessions ending with a closing ask | 2.70% | Up, substantially |
-| Turns ending with a closing ask | 5.53% | Up, substantially |
+| Turns ending with a closing ask | 5.57% | Up, substantially |
 | Turns opening with a plain-language verdict | 2.98% | Up |
 | Messages of 4,000+ characters | 1.16% | Down |
 | Main-thread messages containing Mermaid | 0.05% (7 messages) | To zero |
@@ -471,15 +471,29 @@ against the captured baseline in `docs/measurements/2026-08-07-baseline.md`.
 | Relay turns opening with the verdict | 11.85% | Up, substantially |
 | Visual gating, balanced across orientation and routine turns | 59.60% | Up |
 
-Every figure in this table was re-derived from `docs/measurements/2026-08-07-baseline.json` and agrees
-with it to the stated precision. The table carries directions and no target values, which is a
-deliberate gap rather than an omission — but it is a gap, because a direction alone cannot decide
-whether the work succeeded, and "up, substantially" is not a test anything can fail. Picking the
-numbers is listed under Deferred to planning.
+Every figure was re-derived from a committed measurement artifact, but not all from the same one, so
+the source of each is stated rather than assumed:
 
-**The last two rows were added on 2026-08-08**, once the extended scorer had been run over the same
-archived window to `docs/measurements/2026-08-08-extended-metrics.json`. Their pre-style values are
-measured, not estimated, and were re-derived from that file.
+- **Six rows** — both closing-ask rows, verdict-first, 4,000+ characters, Mermaid, and bare identifier
+  — come from `docs/measurements/2026-08-07-baseline.json`, the write-once pre-style snapshot.
+- **The last two rows**, relay verdict-first and balanced visual gating, come from
+  `docs/measurements/2026-08-08-extended-metrics.json`. They were added on 2026-08-08 for metrics the
+  baseline predates, measured over the same archived window rather than estimated. Neither figure
+  appears in the baseline file at all, so looking for them there will not find them.
+
+**One figure is deliberately not the baseline's.** "Turns ending with a closing ask" reads **5.57%**
+here against the baseline file's 5.53%. The detector was widened during the #704 code review so that
+it can see the closing form this style prescribes — without that, a fully compliant turn scored as
+*not* closing with an ask and a successful rollout would have read as a regression. Re-scored over the
+identical frozen window the widening catches 5 more pre-style turns, none of them from the style's own
+`Your call:` token. The comparison figure is therefore 5.566%, and
+`docs/measurements/2026-08-08-extended-metrics.md` carries the attribution turn by turn. The baseline
+file is untouched and still records what the narrower detector saw.
+
+The table carries directions and no target values, which is a deliberate gap rather than an omission —
+but it is a gap, because a direction alone cannot decide whether the work succeeded, and "up,
+substantially" is not a test anything can fail. Picking the numbers is listed under Deferred to
+planning.
 
 **Why the relay row is the verdict-first figure and not the undigested-relay rate.** The relay-quality
 measurement R33 asks for has two components. One of them, `undigested_relay_rate` — relay turns that

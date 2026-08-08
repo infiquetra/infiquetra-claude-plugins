@@ -468,12 +468,15 @@ BUDGET_RIDER = (
     "CONTRACT); never end the turn without it, even if the work is partial (return what you have "
     "+ a note). "
     "(3) SKIM, don't read -- open only the exact lines you need, never whole large files. "
-    "(4) BATCH -- issue independent tool calls in one parallel block, not serially."
+    "(4) BATCH -- issue independent tool calls in one parallel block, not serially. "
+    "(5) PRECEDENCE -- where this conflicts with the presentation contract above, terseness "
+    "wins on everything except the FIRST sentence, which still states the finding outright. "
+    "Leading with the answer costs one sentence and is what makes a terse return usable."
 )
 
 # The canonical Infiquetra house-style presentation contract (#704 R-U5), byte-identical to
 # plugins/house-style/references/subagent-presentation-preamble.md (minus its trailing newline).
-# Stamped unconditionally into every emitted agent() prompt by _agent_prompt(); the copy is
+# Stamped into every emitted SUBAGENT prompt by _agent_prompt(); the copy is
 # policed against the canonical file by tests/test_execution_spec_presentation_rider.py, because
 # this module must load standalone and cannot read a sibling plugin's file at import time.
 PRESENTATION_RIDER = """\
@@ -3290,20 +3293,28 @@ def _emit_verify_panel(
     lines.append("")
 
 
-def _agent_prompt(spec: ExecutionSpec, unit: Unit) -> str:
+def _agent_prompt(spec: ExecutionSpec, unit: Unit, *, subagent: bool = True) -> str:
     """Assemble the prompt text for a unit's emitted ``agent()`` call.
 
-    Stamps the house-style presentation contract into every prompt unconditionally (#704),
-    bakes the budget rider into cheap-tier (haiku) agents (R9 mitigation), and appends
-    the enumerated-target reconciliation instruction for fan-out units (R10).
+    Stamps the house-style presentation contract into every SUBAGENT prompt (#704), bakes the
+    budget rider into cheap-tier (haiku) agents (R9 mitigation), and appends the
+    enumerated-target reconciliation instruction for fan-out units (R10).
 
     This function is the single funnel for worker prompts: ``_build_emission_routing_context``
     renders each unit's prompt here once and every emitter reads it back off ``UnitRouting``,
     so the rider must never be appended again downstream. Verifier prompts are built by
     ``_verifier_prompt`` and are deliberately NOT stamped -- verifiers are spawned as
     ``saga:readonly-verifier``, whose definition file carries the preamble instead.
+
+    ``subagent=False`` is for the inline/serial baseline, whose units are executed by the MAIN
+    THREAD rather than by a spawned agent. The presentation contract is addressed to a
+    subagent -- it forbids the operator-facing closing block and the style tell outright -- so
+    stamping it there would instruct the main thread to suppress the very output the
+    house-style plugin exists to produce, once per unit.
     """
-    parts: list[str] = [unit.prompt, PRESENTATION_RIDER]
+    parts: list[str] = [unit.prompt]
+    if subagent:
+        parts.append(PRESENTATION_RIDER)
     if unit.tier.is_cheap:
         parts.append(BUDGET_RIDER)
     if unit.fanout:
@@ -4006,7 +4017,7 @@ def emit_inline_baseline(spec: ExecutionSpec) -> str:
                 f"(serial, reconcile after -- report any not completed): "
                 f"{', '.join(unit.targets)}"
             )
-        prompt = _agent_prompt(spec, unit)
+        prompt = _agent_prompt(spec, unit, subagent=False)
         lines.append("")
         for prompt_line in prompt.splitlines():
             lines.append(f"  {prompt_line}" if prompt_line else "")

@@ -9,7 +9,7 @@
     "/Users/jefcox/.claude-company/projects"
   ],
   "corpus": {
-    "files_scanned": 2669,
+    "files_scanned": 2682,
     "sessions": 407,
     "main_thread_assistant_messages": 96957,
     "main_thread_assistant_messages_with_prose": 14787,
@@ -154,7 +154,7 @@
     },
     {
       "metric": "undigested_relay_rate",
-      "definition": "Relay turns -- the first main-thread prose turn after a subagent was spawned -- that carry a raw payload as their body rather than a digested finding. A raw payload means a fenced block of at least 800 characters opening a JSON object or array, or a run of at least 8 consecutive quoted lines. Diff hunks, exact error strings and raw command output are deliberately excluded, because reproducing those verbatim is correct. HEURISTIC: the relay turn is inferred from tool-call ordering rather than observed, and a relay that paraphrases a payload badly still scores as digested. Lower is better.",
+      "definition": "Relay turns -- the first main-thread prose turn after a subagent was spawned -- that carry a raw payload as their body rather than a digested finding. A raw payload means a fenced block of at least 800 characters opening a JSON object or array, or a run of at least 8 consecutive quoted lines. Diff hunks, exact error strings and raw command output are deliberately excluded, because reproducing those verbatim is correct. HEURISTIC: the relay turn is inferred from tool-call ordering rather than observed, and a relay that paraphrases a payload badly still scores as digested. Lower is better. REGRESSION GUARD, NOT A TARGET: this reads 0 of 498 (0.00%) on the pre-style window, so it has no headroom and cannot serve as a success criterion -- do not read 0.00% as a target already met. Its job is to catch the behaviour getting worse. The companion figure relay_verdict_first_percent is the one with headroom and is the criterion the requirements document carries.",
       "numerator": 0,
       "denominator": 498,
       "percent": 0.0,

@@ -21,6 +21,44 @@
 
 ## 2026-08-08
 
+### An agent definition is read once per session, so editing one on disk changes nothing until a restart  {#agent-definitions-are-session-cached}
+
+**Context.** Issue #704 ships a presentation preamble in the body of all 36 plugin agent definition
+files. Two questions had to be answered before that was worth doing: does the **body** of a definition
+reach the agent it defines (the frontmatter demonstrably does — every agent's `description` appears in
+the calling session's own system prompt, but the body is a separate channel with no such observation),
+and when does an edit to a definition actually take effect.
+
+**Evidence.** Both were tested by spawning `saga:mechanical-executor`, whose body specifies an exact
+rejection string for an unapproved operation ending `No work was performed.` — a string verified absent
+from the file's frontmatter, so it can only have come from the body.
+
+1. *Body reaches the agent.* Dispatched `op: verify-checksum` and nothing else. The agent returned the
+   body's three-line block byte-for-byte. The marker appeared nowhere in the dispatch, so leakage
+   through the prompt is excluded by construction.
+2. *An edit does not.* The installed cache copy at
+   `~/.claude/plugins/cache/infiquetra-plugins/saga/0.131.0/agents/mechanical-executor.md` was then
+   edited in its body: an invented sixth operation `quantum-audit` added to the approved list, and a
+   token appended to the `No work was performed.` sentence itself. The next spawn returned the **old**
+   five-operation block verbatim, with neither change.
+
+**Mechanism.** The first edit attempted was a formatting instruction ("begin every response with this
+token"), and its absence was **confounded** — that run also paraphrased the rejection instead of
+reproducing it, so a dropped instruction explained the result as well as a stale definition did. Moving
+the markers *inside content the agent had already reproduced twice* removed the confound: an agent
+reproducing an exact block that lacks a change the file now contains is reading a cached copy, not
+ignoring an instruction. Definitions are loaded at session start and held in the running process.
+
+**Consequence for anything shipped in an agent definition.** "Merged" is three steps from "in effect",
+not one: merge, version bump, `/plugin marketplace update infiquetra-plugins` — and then a **fourth**,
+a new session. The restart is not implied by the other three, and any after-measurement taken before it
+measures the old definition.
+
+**Generalizable rule.** Test the two halves of a definition file separately — frontmatter reaching the
+runtime is not evidence that the body reaches the agent. And when a probe's marker is a *formatting*
+instruction, its absence proves nothing; put the marker inside content the agent already reproduces, so
+that absence can only mean a stale read.
+
 ### The emitted workflow gate checks the shape of a unit's answer, never its verdict, so a unit that halts itself does not halt the run  {#gate-validates-shape-not-verdict}
 
 **Context.** Issue #704's plan made unit U1 an absolute gate: prove both subagent-reach levers by

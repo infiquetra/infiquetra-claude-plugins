@@ -468,14 +468,27 @@ against the captured baseline in `docs/measurements/2026-08-07-baseline.md`.
 | Messages of 4,000+ characters | 1.16% | Down |
 | Main-thread messages containing Mermaid | 0.05% (7 messages) | To zero |
 | Messages with a bare identifier as a noun | 1.69% | Down |
+| Relay turns opening with the verdict | 11.85% | Up, substantially |
+| Visual gating, balanced across orientation and routine turns | 59.60% | Up |
 
 Every figure in this table was re-derived from `docs/measurements/2026-08-07-baseline.json` and agrees
 with it to the stated precision. The table carries directions and no target values, which is a
 deliberate gap rather than an omission — but it is a gap, because a direction alone cannot decide
 whether the work succeeded, and "up, substantially" is not a test anything can fail. Picking the
-numbers is listed under Deferred to planning. The two new metrics R32 and R33 add do not appear here,
-because they have no baseline value until the extended scorer is re-run over the archived window as
-R33's note describes.
+numbers is listed under Deferred to planning.
+
+**The last two rows were added on 2026-08-08**, once the extended scorer had been run over the same
+archived window to `docs/measurements/2026-08-08-extended-metrics.json`. Their pre-style values are
+measured, not estimated, and were re-derived from that file.
+
+**Why the relay row is the verdict-first figure and not the undigested-relay rate.** The relay-quality
+measurement R33 asks for has two components. One of them, `undigested_relay_rate` — relay turns that
+paste a subagent's raw payload instead of digesting it — measures **0 of 498, or 0.00%**. It has no
+headroom. A success criterion that cannot move is not a criterion, and a later reader could easily
+misread 0.00% as a target already met. It is kept in the scorer and **relabelled as a regression
+guard**: its job is to catch the behaviour getting worse, which it does well, and it is deliberately
+not a target. The row above carries the other component instead — only **11.85%** of relay turns open
+with the verdict, which has real headroom and measures the complaint the operator actually made.
 
 Two qualitative criteria that no measurement covers:
 

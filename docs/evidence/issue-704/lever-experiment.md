@@ -14,10 +14,11 @@ preamble into saga's workflow emitter so every emitted `agent()` prompt carries 
 Both are assumptions until observed. This unit tries to observe each one directly, before any other
 unit builds on them.
 
-**Overall result: `inconclusive`.** Lever B passes, decisively and twice over. Lever A could not be
-tested at all from this backend, for a reason that is about the test harness and not about the lever.
-Per the plan's own rule, a harness limitation is reported as `inconclusive` and halted for an operator
-decision — it is recorded neither as a pass nor as a disproof.
+**Overall result: `pass`, in two stages.** Lever B passed here, decisively and twice over. Lever A could
+not be tested at all from the workflow backend, for a reason about the test harness and not about the
+lever, and was recorded as `inconclusive` — neither a pass nor a disproof. On operator authorisation it
+was then tested from an interactive session and **passed**; that method, its result, and a separate
+finding about when an edited definition takes effect are recorded at the end of this document.
 
 ---
 
@@ -191,14 +192,67 @@ The throwaway edit is gone. Confirmed by:
 
 | Lever | Result | Basis |
 | --- | --- | --- |
-| A — agent definition body governs the spawned agent | INCONCLUSIVE | No agent-spawning tool exists in the workflow backend; both prescribed methods require a spawn. Harness limitation, not evidence about the lever. |
+| A — agent definition body governs the spawned agent | **PASS** | A spawned `saga:mechanical-executor` reproduced, byte-for-byte, a three-line rejection block that exists only in its definition's body and nowhere in its frontmatter or in the dispatch it was sent. Tested from an interactive session on operator authorisation, after the workflow backend proved unable to spawn. |
 | B — emitter rider reaches emitted `agent()` prompts | PASS | 0 → 3 markers across 3 `agent()` calls, exact byte accounting, plus live in-band confirmation that emitted prompt text arrives verbatim in the running subagent. |
 
-**Halt.** The run stops here for an operator decision on Lever A. Requirements-document R27 is **not**
-reopened, because nothing observed contradicts Lever A — it was never tested. Reopening R27 on a
-harness limitation would record a disproof this experiment did not produce.
+Both levers work. Requirements-document R27 was never reopened and does not reopen now.
 
-Units that depend only on Lever B (notably U5, which stamps the preamble into the emitter) rest on a
-proven premise. Units that depend on Lever A (notably U6, which duplicates the preamble into 36 agent
-definition files) rest on an untested one and should not start until the operator decides how to test
-it.
+---
+
+## Lever A — method and result (added 2026-08-08, interactive session)
+
+**Why this ran separately.** The U1 unit could not test Lever A: a workflow-backend agent has no
+agent-spawning tool, so both prescribed methods were unavailable. The operator authorised the test from
+an interactive session, which does carry the tool.
+
+**Design, against the three ways this test produces a false pass.**
+
+*Marker leakage.* Rather than write a marker, the test used one already present: the
+`saga:mechanical-executor` definition's body specifies an exact rejection string for an unapproved
+operation, ending `No work was performed.` That string was verified absent from the file's frontmatter
+(`sed -n '1,41p' … | grep -c` returns 0) and it appeared nowhere in the dispatch. The dispatch was three
+lines: `op: verify-checksum`, a target path, and an algorithm. Nothing else.
+
+*An unloaded definition reading as a failure.* The agent type resolved and ran — it did not fail to
+spawn and did not fall back to a default. Its answer was on-contract behaviour, so the loaded-definition
+precondition is satisfied by the result itself rather than assumed.
+
+**Result.** The returned text was:
+
+```
+ERROR: unknown op "verify-checksum".
+Approved ops: census, file-exist, json-validate, grep-count, link-check.
+No work was performed.
+```
+
+Byte-identical to the body's fenced block. The body of an agent definition governs the agent it
+defines. **Lever A passes.**
+
+## The restart finding — a definition edited on disk does NOT reach a running session
+
+The operator asked for this either way, and the answer is the more consequential of the two.
+
+**Method.** The installed cache copy at
+`~/.claude/plugins/cache/infiquetra-plugins/saga/0.131.0/agents/mechanical-executor.md` was edited in
+its body only, twice, with progressively stronger markers:
+
+1. A formatting instruction — begin every response with a literal token. The next spawn omitted the
+   token, but also *paraphrased* the rejection rather than reproducing it, so a dropped instruction was
+   as good an explanation as a stale definition. Recorded as confounded, not as a result.
+2. Markers placed inside content the agent had by then reproduced twice: a sixth, invented operation
+   (`quantum-audit`) added to the body's approved-ops list, and the token appended to the sentence
+   `No work was performed.` itself.
+
+**Result.** The next spawn returned the **old** block verbatim — five operations, no invented sixth, no
+token — while the file on disk carried all three changes. That is not an agent ignoring an instruction;
+it is an agent reproducing a stale copy exactly.
+
+**Conclusion.** Agent definitions are read once and cached in the running process. **A session must be
+restarted before an edited definition takes effect.** For this work that means shipping the preamble in
+36 agent definitions governs no subagent until the change merges, versions bump,
+`/plugin marketplace update infiquetra-plugins` runs, *and the operator starts a new session*. The
+restart is a fourth step, not implied by the first three.
+
+**Cleanup.** The cache file was restored from a byte-for-byte backup and its SHA-256 re-verified as
+`385c42290ac8567554faf693e127f45d94dcdd3c3fddc39710ffc4d6c3adb674`, identical to the pre-edit value. A
+recursive search of the plugin cache, `~/.claude/agents/`, and the repository finds no surviving marker.

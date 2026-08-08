@@ -68,6 +68,8 @@ assumed. Where a fact contradicts the requirements document, the plan says so.
 | Where agent definitions are loaded from | `~/.claude/plugins/installed_plugins.json` | A **versioned cache**, `~/.claude/plugins/cache/infiquetra-plugins/<plugin>/<version>/` — saga is installed at `0.131.0`. Never the working tree |
 | Scorer test count | `pytest --collect-only tests/test_output_style_scorer.py` | 29 collected. A `grep -c "def test_"` undercounts to 21 because tests are parametrized |
 | Baseline metric count | `docs/measurements/2026-08-07-baseline.json` | 9 metrics, so U7's "the nine existing metrics" is exact |
+| Does a definition's **body** govern the agent? | Spawned `saga:mechanical-executor` with an unapproved op, 2026-08-08 | **Yes.** It returned a rejection string that exists only in the body, verified absent from the frontmatter and from the dispatch. Lever A's premise |
+| Does an **edited** definition reach a running session? | Same agent, after editing its installed cache copy | **No.** It returned the stale body verbatim. Definitions are read once per session; a restart is required |
 
 **The load path is the plan's sharpest execution hazard.** A file written to `plugins/<p>/agents/<a>.md`
 in the working tree is *not* a loadable agent. It becomes one only after commit, push, a
@@ -445,7 +447,8 @@ described in prose.
 | --- | --- | --- |
 | A lever does not work | Real — never observed | U1 gates the run and stops on failure |
 | U1 halts the run on a broken test rather than a broken lever | Was near-certain before the doc-review; the original method wrote to the working tree, which the runtime never loads | U1 tests through the loaded plugin cache, and reports `inconclusive` — never a disproof — when the harness itself fails |
-| A workflow agent cannot spawn another agent, so Lever A is untestable from this backend | Unknown; undocumented in this repository | U1 resolves it as its first action and reports `inconclusive` rather than failing the lever |
+| A workflow agent cannot spawn another agent, so Lever A is untestable from this backend | **Confirmed 2026-08-08 — it cannot** | Happened as designed: U1 reported `inconclusive` rather than failing the lever, and Lever A was then tested from an interactive session on operator authorisation and **passed** |
+| An edited agent definition does not reach a running session | **Confirmed 2026-08-08 by measurement**, not inferred | Recorded in Open Questions: the preamble governs no subagent until merge, version bump, marketplace update, **and a session restart** — four steps, not three |
 | The change is large for one pull request | Certain — 73 unique paths, of which 37 are the mechanical preamble copies and 23 are version bookkeeping | Accepted deliberately per KTD8: the bulk is machine-checked by the byte-identity test, and the one genuinely risky edit is isolated in U5 behind a refute-3 panel |
 | The emitter rider degrades every saga workflow everywhere | Low, high impact | U5 establishes a green baseline first; the rider is additive text at one funnel |
 | The 36 copies drift | High over time | The byte-identity test, with an exact expected count so a new agent file cannot slip through |
@@ -480,11 +483,16 @@ described in prose.
   requirements-document R7 and R11 are authored in U3 rather than pre-decided here; they are design
   choices the unit makes and records, not gaps in the plan.
 - Whether forks inherit the style in a way that changes reach is unmeasured. No credit is claimed.
-- **When the two levers actually take effect.** Both edit the working tree, but the runtime loads
-  plugins from a versioned cache. The preamble reaches real subagents only after this work merges, the
-  plugin versions bump, `/plugin marketplace update infiquetra-plugins` runs, and a new session starts.
-  Nothing in this plan is wrong because of that, but "merged" and "in effect" are different events and
-  the after-measurement must be taken after the second one.
+- ~~When the two levers actually take effect.~~ **Answered by measurement on 2026-08-08, and the
+  answer is worse than the guess.** This was recorded as an inference from the load path; it is now
+  observed. An agent definition is read once and cached in the running process: a definition edited on
+  disk was re-spawned and returned its *old* body verbatim, including an approved-operations list
+  missing an invented sixth entry the file had already gained. So the preamble reaches real subagents
+  only after four events, not three — this work merges, the plugin versions bump,
+  `/plugin marketplace update infiquetra-plugins` runs, **and the operator starts a new session**. The
+  restart is a separate step and is not implied by the other three. "Merged" and "in effect" are
+  different events, and the after-measurement must be taken after the fourth one. Method and raw output
+  in `docs/evidence/issue-704/lever-experiment.md`.
 - ~~Whether the emitter lever should ship separately.~~ **Resolved by the operator on 2026-08-08: one
   pull request, no split at U5.** The reasoning and the overridden counter-argument are recorded at
   KTD8 above, where a decision belongs, rather than left here as a question.

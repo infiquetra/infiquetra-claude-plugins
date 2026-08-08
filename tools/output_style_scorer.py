@@ -689,7 +689,11 @@ def _relay_quality_metric(corpus: Corpus) -> dict[str, Any]:
         "raw command output are deliberately excluded, because reproducing those verbatim is "
         "correct. HEURISTIC: the relay turn is inferred from tool-call ordering rather than "
         "observed, and a relay that paraphrases a payload badly still scores as digested. "
-        "Lower is better.",
+        "Lower is better. REGRESSION GUARD, NOT A TARGET: this reads 0 of 498 (0.00%) on the "
+        "pre-style window, so it has no headroom and cannot serve as a success criterion -- do "
+        "not read 0.00% as a target already met. Its job is to catch the behaviour getting "
+        "worse. The companion figure relay_verdict_first_percent is the one with headroom and "
+        "is the criterion the requirements document carries.",
         undigested,
         len(relays),
         confidence="heuristic",

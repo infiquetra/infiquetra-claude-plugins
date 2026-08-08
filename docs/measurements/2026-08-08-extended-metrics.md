@@ -119,6 +119,14 @@ time; when they did not ask for one, one appears about one turn in twelve.
 
 ### undigested_relay_rate — is a subagent's finding digested, or is its payload pasted?
 
+**Operator decision, 2026-08-08: this is a regression guard, not an improvement target.** At 0 of 498
+it has no headroom, and a success criterion that cannot move is not a criterion. It stays in the
+scorer, where it does one job well — catching the behaviour if it gets worse — and it is deliberately
+absent from the requirements document's Success Criteria table so that a later reader cannot mistake
+0.00% for a target already met. The criterion that replaced it there is this metric's companion figure,
+`relay_verdict_first_percent`: **11.85%** of relay turns open with the verdict, which has real headroom
+and measures the complaint that motivated the work.
+
 A relay turn is the first main-thread prose turn after a turn that called `Agent`, `Task`, or
 `Workflow`. There were **498** of them in the window. **None** carried a raw payload as its body.
 

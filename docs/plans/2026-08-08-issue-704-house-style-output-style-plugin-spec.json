@@ -1,0 +1,91 @@
+{
+  "name": "house-style-output-style-plugin",
+  "description": "Ship the house-style output-style plugin (#704) and its two subagent reach levers, gated on an experiment that proves both levers work.",
+  "repo": "infiquetra/infiquetra-claude-plugins",
+  "units": [
+    {
+      "unit_id": "U1",
+      "label": "prove-both-levers-by-experiment",
+      "tier": { "model": "opus", "effort": "high" },
+      "worth_it_because": "This unit decides whether the other eight are worth running at all, and the failure it looks for is the exact shape that already cost this project a 44-percentage-point wrong claim: a mechanism inferred from repository structure that nothing has ever observed working.",
+      "cheaper_fallback": { "model": "sonnet", "effort": "high" },
+      "prompt": "U1: Prove BOTH subagent reach levers work by direct experiment, before any other unit runs. Read the plan at docs/plans/2026-08-08-issue-704-house-style-output-style-plugin-plan.md as your authoritative spec; work its `### U1.` section. LEVER A (agent definition files): create a throwaway agent definition under plugins/<some-plugin>/agents/ carrying a distinctive marker string, spawn that agent type, and check whether the marker reaches its output. LEVER B (saga emitter): add a throwaway rider inside _agent_prompt() at plugins/saga/scripts/execution_spec.py:3244, emit a workflow script from any existing spec, and confirm the rider text appears in the emitted agent() prompts. Record the exact spawn invocation, the raw output excerpt, and a PASS/FAIL for each lever in docs/evidence/issue-704/lever-experiment.md. REMOVE every throwaway file and revert the throwaway rider before you finish -- the evidence document is the only artifact that survives. HARD STOP: if either marker fails to appear, do NOT adapt the plan around it and do NOT proceed. Report the failure, state that the requirements document's R27 blocker reopens, and stop. A lever that cannot be observed working is a failed premise, not a smaller number.",
+      "returns": ["status", "lever_a_result", "lever_b_result", "evidence_path", "notes"],
+      "depends_on": [],
+      "escalation": "HALT and report if either lever's marker does not reach the output. Do not substitute a different mechanism, do not lower the reach claim to compensate, and do not proceed to U2."
+    },
+    {
+      "unit_id": "U2",
+      "label": "scaffold-plugin-and-manifest",
+      "tier": { "model": "sonnet", "effort": "medium" },
+      "prompt": "U2: Scaffold the house-style plugin's manifest and documentation, but NOT its style file. Read the plan at docs/plans/2026-08-08-issue-704-house-style-output-style-plugin-plan.md as your authoritative spec; work its `### U2.` section. Create plugins/house-style/.claude-plugin/plugin.json (name house-style, version 0.1.0), plugins/house-style/README.md, and plugins/house-style/CHANGELOG.md, matching the shape of plugins/deploy/.claude-plugin/plugin.json. TWO CONSTRAINTS A NAIVE READING DROPS. (a) Do NOT add an `outputStyles` key -- the default `output-styles/` location is auto-discovered, and that key exists only to OVERRIDE the location. (b) The repository caps plugin.json keywords at 10; exceeding it fails a validator. Do NOT create plugins/house-style/output-styles/ or any file inside it -- U3 owns that path exclusively, and creating it here is a concurrent-write collision.",
+      "returns": ["status", "files_changed", "checks_run", "notes"],
+      "depends_on": ["U1"]
+    },
+    {
+      "unit_id": "U7",
+      "label": "extend-scorer-visual-gating-and-relay-quality",
+      "tier": { "model": "opus", "effort": "high" },
+      "worth_it_because": "Both metrics must detect something no existing metric approximates -- whether a visual was warranted, and whether a relay was digested rather than pasted -- so the unit is designing two heuristics from scratch against a corpus that will punish a naive regex with a plausible but wrong number.",
+      "cheaper_fallback": { "model": "sonnet", "effort": "high" },
+      "prompt": "U7: Add a visual-gating measurement and a relay-quality measurement to tools/output_style_scorer.py, then produce their pre-style values. Read the plan at docs/plans/2026-08-08-issue-704-house-style-output-style-plugin-plan.md as your authoritative spec; work its `### U7.` section. Label each new metric heuristic where it is heuristic, matching the honesty of the existing bare_identifier_rate. Produce pre-style values by running the scorer over the SAME archived window (--since 2026-07-03 --until 2026-08-07) to a NEW output path: docs/measurements/2026-08-08-extended-metrics.json plus a .md companion. THE ONE THING THAT MUST NOT HAPPEN: docs/measurements/2026-08-07-baseline.json is write-once and is NEVER the --out target. It records behaviour before any custom style existed and that window closed permanently. Before you report done, run `git diff --exit-code docs/measurements/2026-08-07-baseline.json` and include its result in your notes. Also confirm the nine existing metrics are unchanged on the same input.",
+      "returns": ["status", "files_changed", "checks_run", "baseline_untouched", "notes"],
+      "depends_on": ["U1"],
+      "escalation": "HALT if either metric cannot be computed without a change to how existing metrics are derived -- a silent shift in the nine committed figures would invalidate the baseline comparison this whole project rests on."
+    },
+    {
+      "unit_id": "U3",
+      "label": "author-style-file-and-canonical-preamble",
+      "tier": { "model": "opus", "effort": "high" },
+      "worth_it_because": "This unit is the product itself -- the actual text of the presentation contract that every downstream unit copies, stamps, or tests -- and its quality is the entire deliverable rather than a step toward one.",
+      "cheaper_fallback": { "model": "sonnet", "effort": "high" },
+      "prompt": "U3: Author the house-style output style file AND the canonical subagent presentation preamble. Read the plan at docs/plans/2026-08-08-issue-704-house-style-output-style-plugin-plan.md as your authoritative spec; work its `### U3.` section, and read docs/brainstorms/2026-08-07-output-styles-requirements.md for the rules themselves (its R1-R16 turn-shape and visual rules, R19-R21 enforcement pointers, R28/R29 contract, R31 tell). Write plugins/house-style/output-styles/house-style.md and plugins/house-style/references/subagent-presentation-preamble.md. FOUR THINGS A NAIVE READING DROPS. (a) `keep-coding-instructions: true` must appear LITERALLY in the frontmatter -- the documented default is false, which silently removes Claude Code's built-in engineering guidance. (b) `force-for-plugin` must be ABSENT, not set to false -- the plugin does not override the operator's own style selection. (c) The tell must contain NO box-drawing characters and must not collide with the existing `★ Insight` marker, which docs/engineering-journal/LEARNINGS.md still uses as one of three conjoined provenance signals. (d) The preamble file is CANONICAL: U5 stamps it into saga's emitter and U6 copies it into 36 agent definition files, and a byte-identity test compares both against this one file -- so write it as standalone text that reads correctly with no surrounding context.",
+      "returns": ["status", "files_changed", "tell_literal", "notes"],
+      "depends_on": ["U2"]
+    },
+    {
+      "unit_id": "U5",
+      "label": "stamp-preamble-into-saga-emitter",
+      "tier": { "model": "opus", "effort": "high" },
+      "worth_it_because": "execution_spec.py composes the prompt for every agent every saga workflow spawns in every repository, so a malformed rider degrades the whole fleet rather than failing one unit, and the file is 4,405 lines with three call sites converging on the funnel being edited.",
+      "cheaper_fallback": { "model": "sonnet", "effort": "high" },
+      "prompt": "U5: Stamp the canonical presentation preamble into every emitted agent() prompt in saga's workflow emitter. Read the plan at docs/plans/2026-08-08-issue-704-house-style-output-style-plugin-plan.md as your authoritative spec; work its `### U5.` section. Add a module-level PRESENTATION_RIDER beside BUDGET_RIDER (plugins/saga/scripts/execution_spec.py:464), sourced from plugins/house-style/references/subagent-presentation-preamble.md, and append it in _agent_prompt() at line 3244 -- unconditionally, the same way BUDGET_RIDER and the fan-out reconciliation rider are appended. THREE THINGS A NAIVE READING DROPS. (a) _agent_prompt() is the SINGLE funnel, called from lines 2241, 3215, and 3953 -- do NOT also stamp _emit_thunk, _emit_parallel_wave, or _emit_verify_panel; that would double-apply the rider. (b) Verify panels are deliberately NOT stamped here: saga spawns every verifier as saga:readonly-verifier, which has a definition file and is covered by U6's lever instead. (c) RUN THE EXISTING execution_spec.py TEST SUITE FIRST to establish a green baseline before you change anything -- this file's blast radius is every workflow in every repository, and you need to know which failures you caused. Write tests/test_execution_spec_presentation_rider.py asserting the rider appears in every emitted agent() prompt and is byte-identical to the canonical preamble file.",
+      "returns": ["status", "files_changed", "checks_run", "baseline_suite_green_before", "notes"],
+      "depends_on": ["U3"],
+      "escalation": "HALT if any existing execution_spec.py test fails after the change and the cause is not obviously the new rider -- do not adjust an existing test to accommodate the stamp."
+    },
+    {
+      "unit_id": "U6",
+      "label": "duplicate-preamble-into-36-agent-definitions",
+      "tier": { "model": "sonnet", "effort": "medium" },
+      "prompt": "U6: Duplicate the canonical presentation preamble into all 36 agent definition files and write the byte-identity test that polices the copies. Read the plan at docs/plans/2026-08-08-issue-704-house-style-output-style-plugin-plan.md as your authoritative spec; work its `### U6.` section. The 36 files are exactly those matching plugins/*/agents/*.md, spread across 9 plugins with 25 of them in team-execution. Source the text from plugins/house-style/references/subagent-presentation-preamble.md. TWO THINGS A NAIVE READING DROPS. (a) The test must assert the file count is EXACTLY 36 against an enumerated expectation -- a test that globs its own population at run time cannot detect a 37th agent file that was never given the preamble, which is the drift the test exists to catch. (b) Each file's existing frontmatter (name, description, tools) is load-bearing for agent registration -- insert the preamble into the body without disturbing frontmatter, and confirm tests/test_agent_registration_drift.py still passes. Write tests/test_agent_preamble_identity.py. Do NOT touch any plugin.json or CHANGELOG.md -- U9 owns every release surface, and editing one here is a concurrent-write collision.",
+      "returns": ["status", "files_changed", "file_count", "checks_run", "notes"],
+      "depends_on": ["U3"]
+    },
+    {
+      "unit_id": "U8",
+      "label": "claude-md-annotation-and-provenance-update",
+      "tier": { "model": "sonnet", "effort": "medium" },
+      "prompt": "U8: Add the reach annotation to ~/.claude/CLAUDE.md and update the provenance procedure for the new tell. Read the plan at docs/plans/2026-08-08-issue-704-house-style-output-style-plugin-plan.md as your authoritative spec; work its `### U8.` section. Add a short annotation to the Communication section of ~/.claude/CLAUDE.md stating that its rules live there rather than in a style because CLAUDE.md reaches every subagent while a style reaches only the main thread, and giving the test for any future move: does this rule mean anything to an agent whose output is read by another agent? THREE THINGS A NAIVE READING DROPS. (a) All seven Plain English rules must be BYTE-IDENTICAL before and after -- the annotation is additive, and nothing in that section is pruned, reworded, or reordered. (b) ~/.claude is NOT a git repository, so also commit the annotation's exact text to plugins/house-style/references/claude-md-annotation.md so it can be reconstructed if lost. (c) Update the provenance entry in docs/engineering-journal/LEARNINGS.md (the entry establishing `★ Insight` as one of three conjoined signals) to reference the new tell U3 authored, so the Claude-clone diagnostic keeps working -- do NOT delete the ★ Insight signal; it is one of three and the other two still stand.",
+      "returns": ["status", "files_changed", "plain_english_rules_unchanged", "notes"],
+      "depends_on": ["U3"]
+    },
+    {
+      "unit_id": "U4",
+      "label": "style-file-contract-tests",
+      "tier": { "model": "sonnet", "effort": "medium" },
+      "prompt": "U4: Write the style-file contract tests. Read the plan at docs/plans/2026-08-08-issue-704-house-style-output-style-plugin-plan.md as your authoritative spec; work its `### U4.` section. Write tests/test_house_style_contract.py asserting: plugins/house-style/output-styles/house-style.md exists at the plugin ROOT (not under .claude-plugin/); its frontmatter sets keep-coding-instructions to the literal true; force-for-plugin is absent; a placard section naming what the style suppresses exists; the tell is present as a single literal string and contains no character in the box-drawing Unicode block (U+2500-U+257F); plugin.json parses, carries the required fields, has at most 10 keywords, and has no outputStyles key. THE THING THAT MAKES THIS TEST WORTH WRITING: demonstrate each assertion actually fails when its target is removed. Mutate the frontmatter, the placard, and the tell one at a time, confirm the corresponding test goes red, and restore. A contract test that passes on a file with the contract stripped out is worse than no test, because it reports safety that is not there. Record the three mutation results in your notes.",
+      "returns": ["status", "files_changed", "mutation_results", "checks_run", "notes"],
+      "depends_on": ["U3", "U5", "U6", "U8"]
+    },
+    {
+      "unit_id": "U9",
+      "label": "release-surfaces-journal-and-ceiling-sweep",
+      "tier": { "model": "sonnet", "effort": "medium" },
+      "prompt": "U9: Land every release surface, write the journal entries, and sweep for inflated reach claims. Read the plan at docs/plans/2026-08-08-issue-704-house-style-output-style-plugin-plan.md as your authoritative spec; work its `### U9.` section. Bump plugin.json version and add a CHANGELOG.md entry for house-style and for each of the 9 plugins U6 touched; add the house-style entry to .claude-plugin/marketplace.json with a version matching its plugin.json. FOUR THINGS A NAIVE READING DROPS. (a) marketplace.json editing footgun: when adding the new entry, the replaced text must include the previous entry's closing brace, the array's closing bracket, AND the trailing top-level version line, so the new entry lands INSIDE the plugins array -- a double-`]` has broken this file's parse more than once. Run `python3 -m json.tool .claude-plugin/marketplace.json` immediately after editing. (b) Plugin count becomes 12, up from 11. (c) Write a LEARNINGS entry for whatever the lever experiment (U1) actually showed, and a DECISIONS entry recording the plan's KTDs -- the journal lands in the SAME commit as the change, never deferred. (d) CEILING SWEEP: grep every artifact this run produced for a subagent-reach claim above 45.7%, and for the literal 89.4. The only permitted occurrences of 89.4 are the ones explicitly labelled as the superseded figure. Then run the full local gate: ruff check, ruff format --check, mypy plugins/ scripts/ tests/ --ignore-missing-imports, bandit -r plugins/, pytest --cov=plugins.",
+      "returns": ["status", "files_changed", "plugin_count", "gate_results", "notes"],
+      "depends_on": ["U2", "U3", "U4", "U5", "U6", "U7", "U8"],
+      "escalation": "HALT if the full local gate does not go green -- a red gate is the finding, not something to route around by narrowing the test scope."
+    }
+  ]
+}

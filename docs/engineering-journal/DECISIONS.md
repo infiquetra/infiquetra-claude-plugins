@@ -2,6 +2,28 @@
 
 ## 2026-08-08
 
+### The house-style build gates on an experiment, authors its preamble once, and leaves the largest block of subagent output deliberately uncovered  {#house-style-build-plan-704}
+
+Issue `infiquetra-claude-plugins#704`, plan `docs/plans/2026-08-08-issue-704-house-style-output-style-plugin-plan.md`, spec `…-spec.json`, backend `cc-workflows-ultracode`, 9 units in 6 waves. The product decisions were settled earlier (DECISIONS `{#house-style-hybrid-subagent-route}` plus its 2026-08-08 amendment); these are the build decisions.
+
+**KTD1 — The lever experiment is a plan unit with a hard stop, not a pre-flight check.** Neither subagent lever has ever been observed working; both are inference from repository structure and transcript fields. That is the exact shape that already cost this project a 44-percentage-point wrong claim, so U1 spawns a marked agent and emits a marked script, records the raw output in `docs/evidence/issue-704/lever-experiment.md`, and halts the whole run on either failure. Rejected: proving each lever inside the unit that uses it, which hides a failed premise inside a unit reporting success on its own terms.
+
+**KTD2 — The presentation preamble is one canonical file consumed twice, never written twice.** `plugins/house-style/references/subagent-presentation-preamble.md` is authored in U3; U5 stamps it into saga's emitter and U6 copies it into the 36 agent definition files, and the byte-identity test compares both against that one file rather than against each other. Rejected: a constant embedded in `execution_spec.py` with the agent files copying from it, which buries the product's own text inside saga's implementation and makes the plugin the derived artifact.
+
+**KTD3 — The emitter stamp lands in `_agent_prompt()` and nowhere else.** Grounding found exactly one funnel — `plugins/saga/scripts/execution_spec.py:3244`, called from lines 2241, 3215, and 3953, already the home of `BUDGET_RIDER` (`:464`) and the fan-out reconciliation rider. Rejected: stamping at each of `_emit_thunk` (2967) / `_emit_parallel_wave` (2737) / `_emit_verify_panel` (3090) — three edits where one will do, and three places a future code path can be added without the stamp.
+
+**KTD4 — Verify panels are deliberately not stamped by the emitter.** Saga spawns every verifier as `saga:readonly-verifier`, which has a definition file and is therefore already covered by U6's lever. Stamping them from the emitter as well would double-apply the preamble while adding nothing to reach. What makes this safe to reason about is that the census keys on `attributionAgent` and a message carries exactly one, so the two levers' populations are disjoint by construction.
+
+**KTD5 — The 43.64% of subagent output written by hand stays uncovered in this build.** Route (c) — the style instructing the main thread to stamp each `agent()` prompt it authors — is the only route to the largest single block of subagent output in the corpus, larger than either shipped lever. It is deferred to follow-up work, not cancelled, because it changes what the style file asks of the main thread and that should be decided after the two mechanical levers are proven. Naming it as deferred is the point; absorbing it silently is the failure this project keeps having to correct.
+
+**KTD6 — Every release surface lands in one closing unit.** The preamble duplication touches 9 plugins, so 9 `plugin.json` versions, 9 `CHANGELOG.md` files, and `marketplace.json` all move. Spreading that across units would put several concurrent agents in `marketplace.json`, which `emit` halts on and no backend can make safe — concurrent agents share one working tree and Claude Code has no cross-agent file lock. Rejected: each unit bumping its own surfaces.
+
+**KTD7 — Widest wave is 3, matched to the session concurrency cap.** The first spec put U4, U5, U6, and U8 in one wave of 4. U4's mutation testing temporarily strips the contract from the style file to prove each assertion fails, so it must not run while anything else can read that file — making U4 depend on U5, U6, and U8 is both the honest dependency and the fix that brings the wave to 3.
+
+**Revisit when** the U1 experiment fails on either lever (the requirements document's R27 blocker reopens and the hybrid route needs re-deciding), or when route (c) is taken up and KTD5's deferral is discharged.
+
+---
+
 ### U7 deletes the fleet lease broker whole and guards the deletion at the resolver — frozen wires stay frozen  {#u7-deletes-the-fleet-lease-broker-whole-684}
 
 Issue: `infiquetra-claude-plugins#684`, unit U7 (last of 7) of the lease-broker retirement campaign (#677), plan `docs/plans/2026-07-30-issue-677-lease-broker-retirement-plan.md` §U7. `U1–U6` unwound 91 call sites across 12 files and 4 alias idioms; `U5` deleted the saga wrapper + hook; `U6` decoupled `team-execution` and renamed the wire field atomically.

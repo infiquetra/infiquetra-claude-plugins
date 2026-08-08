@@ -163,6 +163,26 @@ tier — a verifier below the unit it judges cannot reliably refute it, and the 
 make that escalation deliberate rather than casual. *Rejected:* a wider panel — refute-3 is the
 operator cap for agents above Haiku, and the emitted script is where that cap is actually honoured.
 
+**KTD8 — One pull request. The emitter unit does not ship separately.** The doc-review flagged the
+change as above the sizing rubric's one-pull-request threshold and named U5 as the natural split. The
+operator resolved it on 2026-08-08: keep it together. The rubric counts paths, and paths overstate the
+review burden here by a wide margin, because 73 unique paths are not 73 distinct changes:
+
+| Unit | Unique paths | What they are |
+| --- | --- | --- |
+| U6 | 37 | The 36 agent definitions, each receiving one identical preamble, plus its test |
+| U9 | 23 | Version and marketplace bookkeeping |
+| U5 | 2 | The actual risky change — saga's emitter and its test |
+| The rest | 11 | Everything else |
+
+Three quarters of the diff is one mechanical edit repeated and a version bump. The substantive change is
+two files, and it already carries the refute-3 panel precisely because of its blast radius. Splitting
+would buy a smaller diff at the cost of a second run of U1, the most expensive unit in the plan, to
+re-prove levers a single run already proves for both halves. *Counter-argument, overridden rather than
+dismissed:* U5 modifies saga, a different plugin from the one being created, so a saga regression and a
+`house-style` bug would land together and revert together. Accepted, because this repository already
+ships multi-plugin pull requests as a matter of course.
+
 ## Implementation Units
 
 Nine units. U1 gates everything; U9 closes everything.
@@ -426,7 +446,7 @@ described in prose.
 | A lever does not work | Real — never observed | U1 gates the run and stops on failure |
 | U1 halts the run on a broken test rather than a broken lever | Was near-certain before the doc-review; the original method wrote to the working tree, which the runtime never loads | U1 tests through the loaded plugin cache, and reports `inconclusive` — never a disproof — when the harness itself fails |
 | A workflow agent cannot spawn another agent, so Lever A is untestable from this backend | Unknown; undocumented in this repository | U1 resolves it as its first action and reports `inconclusive` rather than failing the lever |
-| The change is large for one pull request | Certain — roughly 70 files, mostly the 36 mechanical preamble copies | Accepted deliberately: the bulk is machine-checked by the byte-identity test, and the one genuinely risky edit is isolated in U5 behind a refute-3 panel |
+| The change is large for one pull request | Certain — 73 unique paths, of which 37 are the mechanical preamble copies and 23 are version bookkeeping | Accepted deliberately per KTD8: the bulk is machine-checked by the byte-identity test, and the one genuinely risky edit is isolated in U5 behind a refute-3 panel |
 | The emitter rider degrades every saga workflow everywhere | Low, high impact | U5 establishes a green baseline first; the rider is additive text at one funnel |
 | The 36 copies drift | High over time | The byte-identity test, with an exact expected count so a new agent file cannot slip through |
 | The baseline is overwritten | Low, unrecoverable | R11, a hard stop in U7, and a `git diff --exit-code` check |
@@ -465,7 +485,6 @@ described in prose.
   plugin versions bump, `/plugin marketplace update infiquetra-plugins` runs, and a new session starts.
   Nothing in this plan is wrong because of that, but "merged" and "in effect" are different events and
   the after-measurement must be taken after the second one.
-- **Whether the emitter lever should ship separately.** At roughly 70 files this is a large pull
-  request, and the natural split is U5 — the one edit whose blast radius leaves this repository. It is
-  kept together deliberately, because splitting it costs a second round of the same U1 gate. Recorded so
-  the choice is visible rather than implicit.
+- ~~Whether the emitter lever should ship separately.~~ **Resolved by the operator on 2026-08-08: one
+  pull request, no split at U5.** The reasoning and the overridden counter-argument are recorded at
+  KTD8 above, where a decision belongs, rather than left here as a question.

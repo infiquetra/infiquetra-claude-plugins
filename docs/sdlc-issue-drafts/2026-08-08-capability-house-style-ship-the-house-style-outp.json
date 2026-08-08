@@ -1,0 +1,72 @@
+{
+  "approval_state": null,
+  "created_at": "2026-08-08T04:13:27.859250+00:00",
+  "created_issue_number": 704,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/704",
+  "draft_path": "docs/sdlc-issue-drafts/2026-08-08-capability-house-style-ship-the-house-style-outp.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "hermes-task",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Idea"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "docs/brainstorms/2026-08-07-output-styles-requirements.md"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing required H3 sections: ['Objective', 'Intent', 'Out-of-scope / non-goals', 'Files expected to change', 'Tests to add or update', 'Context library links', 'Acceptance criteria']",
+      "'Verification' has no fenced code block (card_validator requires at least one ``` block)",
+      "Missing required H3 sections for capability/unknown-risk: ['Objective', 'Intent', 'Out-of-scope / non-goals', 'Files expected to change', 'Tests to add or update', 'Context library links', 'Acceptance criteria']",
+      "Missing author-visible risk metadata"
+    ],
+    "passed": false,
+    "profile": "campps",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": null,
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-08-08-capability-house-style-ship-the-house-style-outp.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ndate: 2026-08-07\ntopic: output-styles\nmaturity: requirements-ready\nsource: docs/ideation/2026-08-07-output-styles-ideation.md \u2014 all ten ranked survivors\n---\n\n# Custom Claude Code output styles \u2014 requirements\n\n## Summary\n\nShip one Claude Code output style as a new plugin named **`house-style`** in\n`infiquetra-claude-plugins`, distributed through the `infiquetra-plugins` marketplace that both\nconfigurations load, fixing how Claude's terminal output is shaped: every state-changing turn closes\nwith a status declaration and one decision, visuals appear when the reader is being oriented and not\notherwise, and relayed subagent output is rewritten rather than pasted.\n\nSupporting pieces ship outside the style, because a style cannot reach subagents and these must. The\nword-level language rules stay in `~/.claude/CLAUDE.md` with an annotation explaining why. The\npresentation contract reaches subagents by a **hybrid route of two levers, both of them code this\nrepository owns**: stamped into spawn prompts by saga's workflow emitter, which reaches **15.73%**,\nand duplicated into the 36 agent definition files under `plugins/*/agents/*.md` with a byte-identity\ntest policing the copies, which ",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-08-07-output-styles-requirements.md",
+    "ref": "docs/brainstorms/2026-08-07-output-styles-requirements.md",
+    "title": "Custom Claude Code output styles \u2014 requirements",
+    "url": null
+  },
+  "state": "created",
+  "status": "Idea",
+  "team": "campps",
+  "title": "capability(house-style): ship the house-style output-style plugin and its two subagent reach levers",
+  "updated_at": "2026-08-08T04:13:39.608572+00:00"
+}

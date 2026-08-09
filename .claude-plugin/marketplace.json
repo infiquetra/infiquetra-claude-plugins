@@ -240,7 +240,7 @@
     {
       "name": "hermes-profile-evolution",
       "source": "./plugins/hermes-profile-evolution",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "description": "Claude Code request surface for target-sovereign Hermes profile evolution.",
       "author": {
         "name": "Infiquetra",

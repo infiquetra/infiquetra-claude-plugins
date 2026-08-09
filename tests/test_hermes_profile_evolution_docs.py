@@ -52,9 +52,14 @@ def test_cli_help_matches_documented_doctor_boundary() -> None:
     assert "doctor" not in result.stdout
 
 
-def test_released_contract_surfaces_remain_version_011() -> None:
+def test_documentation_release_surfaces_are_version_012() -> None:
     manifest = json.loads((PLUGIN / ".claude-plugin/plugin.json").read_text())
-    assert manifest["version"] == "0.1.1"
+    marketplace = json.loads((ROOT / ".claude-plugin/marketplace.json").read_text())
+    entry = next(
+        plugin for plugin in marketplace["plugins"] if plugin["name"] == "hermes-profile-evolution"
+    )
+    assert manifest["version"] == "0.1.2"
+    assert entry["version"] == manifest["version"]
     assert (PLUGIN / "CHANGELOG.md").is_file()
 
 

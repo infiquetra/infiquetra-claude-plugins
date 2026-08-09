@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.2] - 2026-08-08
+
+### Documentation
+
+- Add comprehensive usage, architecture, development, portability, and
+  troubleshooting guidance for the existing Claude Code profile-evolution
+  front door.
+
 ## [0.1.1] - 2026-08-02
 
 ### Fixed

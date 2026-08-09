@@ -19,6 +19,27 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-08-09
+
+### A renderer command is not a source-to-render receipt  {#renderer-command-is-not-a-receipt}
+
+**Context.** The profile-evolution documentation recorded the command used to
+create its explanatory PNG but did not bind the committed SVG and PNG bytes.
+**Evidence.** A read-only post-implementation review found that either file
+could change while the receipt and documentation test still passed.
+**Mechanism.** A command documents intent; without a renderer version and
+digests, it cannot identify the inputs or output that were actually reviewed.
+**Fix.** Record the renderer version plus both SHA-256 digests and make the docs
+test compare those values with the committed files.
+**Validation.** `rsvg-convert 2.62.3` reproduced the committed PNG byte-for-byte
+before the receipt was recorded.
+**Generalizable rule.** A render receipt must bind tool, source bytes, and
+render bytes; filenames and commands alone are instructions, not evidence.
+**Refs.** `plugins/hermes-profile-evolution/docs/assets/renderer-receipt.md`;
+`tests/test_hermes_profile_evolution_docs.py`.
+
+---
+
 ## 2026-08-08
 
 ### A type check used as a validity check splits into three cases, and the third belongs to neither branch  {#a-type-check-is-not-a-validity-check}

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3] - 2026-08-09
+
+### Fixed
+
+- Bind the explanatory diagram's SVG source and PNG render to checked SHA-256
+  digests and enforce the renderer receipt in the documentation test.
+
 ## [0.1.2] - 2026-08-08
 
 ### Documentation

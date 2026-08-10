@@ -25,6 +25,7 @@ SECRET_LITERAL_RE = re.compile(
     r"(?i)(?:-----BEGIN [A-Z ]*PRIVATE KEY-----|"
     r"(?:api[_-]?key|password|secret|token)\s*[:=]\s*[\"']?[A-Za-z0-9+/=_-]{12,})"
 )
+COMMAND_TIMEOUT_SECONDS = 45
 ENVELOPE_KEYS = {
     "schema_version",
     "record_type",
@@ -211,7 +212,16 @@ def _ssh_command(alias: str, arguments: list[str]) -> list[str]:
 def _run(arguments: list[str], payload: bytes | None = None) -> subprocess.CompletedProcess[bytes]:
     alias = os.environ.get("HERMES_PROFILE_REQUEST_SSH_ALIAS")
     command = _ssh_command(alias, arguments) if alias else ["hermes", "profile-request", *arguments]
-    return subprocess.run(command, input=payload, capture_output=True, check=False, timeout=20)
+    try:
+        return subprocess.run(
+            command,
+            input=payload,
+            capture_output=True,
+            check=False,
+            timeout=COMMAND_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RequestError("Hermes profile-request service is unavailable") from exc
 
 
 def assert_healthy(target: str) -> None:

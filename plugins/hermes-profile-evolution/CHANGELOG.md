@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.4] - 2026-08-09
+
+### Fixed
+
+- Allow the producer's bounded 30-second network request to finish before the
+  Claude Code adapter exits.
+- Convert launch and timeout failures into the existing generic service-unavailable error.
+
 ## [0.1.3] - 2026-08-09
 
 ### Fixed

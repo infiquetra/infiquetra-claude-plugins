@@ -218,6 +218,23 @@ def test_doctor_incompatible_or_unready_fails_closed(
         request.assert_healthy("brokkr")
 
 
+def test_adapter_timeout_does_not_preempt_the_producer_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: dict[str, object] = {}
+
+    def fake_run(*args, **kwargs):
+        observed.update(kwargs)
+        return CompletedProcess(args[0], 0, b"", b"")
+
+    monkeypatch.setattr(request.subprocess, "run", fake_run)
+
+    request._run(["doctor", "--target", "brokkr"])
+
+    assert observed["timeout"] == 45
+    assert request.COMMAND_TIMEOUT_SECONDS > 30
+
+
 def test_read_only_status_and_census_keep_arguments_and_payload_separate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

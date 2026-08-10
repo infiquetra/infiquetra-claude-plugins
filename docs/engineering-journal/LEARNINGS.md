@@ -21,6 +21,26 @@
 
 ## 2026-08-09
 
+### Outer timeouts must contain inner timeouts  {#outer-timeouts-contain-inner-timeouts}
+
+**Context.** The Claude Code profile-evolution adapter launches the canonical
+Hermes producer, whose loopback request has a bounded 30-second timeout.
+**Evidence.** The first live Team Mimir canary showed the adapter terminating
+the subprocess at 20 seconds while the producer was still waiting for its
+bounded result.
+**Mechanism.** Nested timeout budgets were ordered backwards, so the wrapper
+could never observe the producer's own timeout response.
+**Fix.** Give the wrapper 45 seconds and translate launch or timeout failures
+into the existing service-unavailable error.
+**Validation.** A direct regression asserts the outer 45-second budget remains
+greater than the producer's 30-second transport boundary.
+**Generalizable rule.** A wrapper timeout must include the entire bounded inner
+operation plus startup and error-serialization overhead.
+**Refs.** `plugins/hermes-profile-evolution/scripts/profile_request.py`;
+`tests/test_hermes_profile_evolution.py`.
+
+---
+
 ### A renderer command is not a source-to-render receipt  {#renderer-command-is-not-a-receipt}
 
 **Context.** The profile-evolution documentation recorded the command used to

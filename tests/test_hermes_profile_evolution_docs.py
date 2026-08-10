@@ -73,7 +73,7 @@ def test_documentation_release_surfaces_are_version_013() -> None:
     entry = next(
         plugin for plugin in marketplace["plugins"] if plugin["name"] == "hermes-profile-evolution"
     )
-    assert manifest["version"] == "0.1.3"
+    assert manifest["version"] == "0.1.4"
     assert entry["version"] == manifest["version"]
     assert (
         f"source version documented here is `{manifest['version']}`"

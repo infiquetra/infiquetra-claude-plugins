@@ -21,6 +21,53 @@
 
 ## 2026-08-13
 
+### A self-check calibrated by its own author checks nothing  {#gate-completeness-must-derive-from-ci}
+
+**Context.** Local pre-push gating was done by an ad-hoc script rebuilt from memory each session,
+because it lived in a scratch directory that did not survive. It ran ten steps and printed
+`GATE GREEN — 10/10 steps ran, 0 failed`. `CLAUDE.md` documented four commands, and the gap between
+that and CI had been patched one command at a time as each drift was noticed ("CI runs BOTH ruff
+commands", "match CI's mypy scope").
+
+**Evidence.** `.github/workflows/ci.yml` runs **24** substantive pre-merge steps across six jobs.
+Enumerating them showed the local gate omitted thirteen, including `bandit`, the tri-lock
+release-surface parity check, the diff-aware bump guard, both journal ordering lints, and — with some
+irony — `Test-shape lint (fake-only test suites)`, a check that automatically detects the very defect
+class the project had been finding by hand. No merge was harmed: CI ran the full set on every pull
+request. What was wrong was the claim that a clean local run confirmed anything CI would confirm.
+
+**Mechanism.** The gate asserted its own completeness with `EXPECTED_STEPS=10` and compared the number
+of steps it ran against that constant. Both numbers came from the same author. The assertion could
+report a shortfall in *execution* but was structurally incapable of reporting a shortfall in
+*coverage*, which is the only failure that mattered. It had every surface feature of a control — a
+self-check, a loud failure path, a printed completeness claim — and measured nothing.
+
+**Fix.** `scripts/gate.sh`, committed so it stops being rebuilt from memory. It runs all 24 steps and
+derives the expected set by parsing `ci.yml`, so adding a workflow step makes the gate exit `2` with
+`GATE INCOMPLETE` until the step is covered. Verified by a negative test: a deliberately two-step gate
+reports 22 uncovered, where the previous design would have printed `GREEN 2/2`.
+
+**Validation.** Full run on a clean worktree: 24 steps, 0 blocking failures, 0 uncovered, exit 0.
+Two self-tests before that each found a real bug in the gate itself, both of the same shape — a
+missing log directory made all 24 steps report failure, and a worktree synced without the dev extra
+made five report failure. Neither was a code defect; both were the harness failing to check its own
+preconditions. Preconditions now fail at startup with exit `3`, distinct from `1` (a real failure) and
+`2` (incomplete coverage).
+
+**What surprised.** The two directions are not equally dangerous, and the dangerous one is quieter.
+The old gate failed **open** — a subset reporting green, which gets acted on. The new gate's first two
+bugs failed **closed** — noisy phantom failures nobody would ship on. Same underlying defect in all
+three: a harness reporting a number it had not earned the right to report.
+
+**Generalizable rule.** A completeness assertion whose target is a literal in the same file is
+decoration; the target must be derived from the thing being approximated. And any harness that
+aggregates results must verify its own preconditions before running a single step, and report a
+precondition failure with a **different exit code** from a genuine failure — otherwise a broken
+harness impersonates a broken codebase, and the noisier the impersonation the more convincing it is.
+
+**Refs.** `scripts/gate.sh`, `.github/workflows/ci.yml`, `CLAUDE.md` "Running Quality Checks".
+
+
 ### Repair the input class, not only the reported example  {#repair-the-input-class}
 
 **Context.** The orchestrate scope gate failed to observe committed work. The first repair added a

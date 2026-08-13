@@ -113,22 +113,40 @@ plugin-name/
 
 ## Running Quality Checks
 
-```bash
-# Run all checks
-uv run pytest
+**Before pushing, run the whole gate — not a subset:**
 
-# Run specific test file
+```bash
+scripts/gate.sh
+```
+
+CI runs **twenty-four** substantive pre-merge steps across six jobs. This file used to
+document four of them, and the gap was patched one command at a time as each drift was
+discovered ("CI runs BOTH ruff commands", "match CI's mypy scope") — which is a losing
+race, because a hand-maintained list falls behind silently and a shortfall in coverage
+reports green.
+
+`scripts/gate.sh` runs all twenty-four and **checks its own coverage against
+`.github/workflows/ci.yml`**. Add a step to the workflow and the gate fails with
+`GATE INCOMPLETE` until the step is covered. That property is the point of the script;
+do not weaken it. In particular, never mark a step advisory to make the gate pass —
+advisory status is reserved for steps CI itself does not block on (a trailing
+`|| true`, or a live-gated check the runner cannot perform).
+
+Exit codes: `0` green · `1` a blocking step failed · `2` coverage is short of `ci.yml`.
+
+Individual commands, for a fast inner loop only — **a clean run of these is not a
+green gate**:
+
+```bash
+# One test file
 uv run pytest tests/test_deploy_plugin.py -v
 
-# Run linting (CI runs BOTH — a check-clean tree can still fail the format gate)
+# Lint (CI runs BOTH — a check-clean tree can still fail the format gate)
 uv run ruff check .
 uv run ruff format --check .
 
-# Run type checking (match CI scope — CI checks plugins/ scripts/ tests/, not just plugins/)
+# Types (match CI scope — plugins/ scripts/ tests/, not just plugins/)
 uv run mypy plugins/ scripts/ tests/ --ignore-missing-imports
-
-# Run security scan
-uv run bandit -r plugins/
 ```
 
 ## Scaffold New Plugin

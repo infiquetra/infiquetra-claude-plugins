@@ -276,6 +276,27 @@
         "infiquetra"
       ],
       "category": "development"
+    },
+    {
+      "name": "orchestrate",
+      "source": "./plugins/orchestrate",
+      "version": "0.1.0",
+      "description": "Cross-vendor multi-session orchestration over herdr: the register state model for dispatched children, mirror, and subscriber rows.",
+      "author": {
+        "name": "Infiquetra",
+        "email": "hello@infiquetra.com"
+      },
+      "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+      "license": "MIT",
+      "keywords": [
+        "orchestration",
+        "register",
+        "herdr",
+        "multi-vendor",
+        "dispatch",
+        "state-model"
+      ],
+      "category": "development"
     }
   ],
   "version": "3.0.0"

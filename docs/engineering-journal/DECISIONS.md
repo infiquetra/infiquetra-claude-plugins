@@ -2,6 +2,20 @@
 
 ## 2026-08-13
 
+### Session-mined evidence for a public repository is archived operator-local, and the plan says so  {#mined-evidence-stays-operator-local}
+
+`infiquetra/infiquetra-claude-plugins` is a **public** repository. The orchestrate plan's Problem Frame rests on numbers mined from 552 agent transcripts — 243 distinct coordination failures over 477 session-occurrences — and those numbers drive every priority in the 10-unit build. The supporting ledger is 35 files and roughly 830 KB: per-shard ledgers, the merged pain ledger, the dogfood findings, the mining scripts, five adversarial reviews, a herdr protocol excerpt. It lived in a disposable session scratchpad, so the plan cited evidence that was one `rm` away from gone.
+
+**The decision: it is archived at `iCloud Drive/Infiquetra-LLC/Engineering/orchestrate-plugin-evidence-2026-08-13/`, outside the repository, and the plan's Problem Frame names that path and tells its reader the numbers are given rather than re-derivable.** Transcripts of real working sessions carry verbatim operator and agent content, host names, internal project identifiers, and — found during the pre-push pass — five private LAN addresses tied to named machines, which were redacted to stable aliases before archiving because the finding they support ("three sources disagree about which host has which address") reads identically without them.
+
+**Rejected: committing it under `docs/evidence/`.** This was staged and ready — it makes the plan's numbers checkable by anyone reading the plan, which is the property a public plan most wants. The operator declined it, and the exposure argument is sufficient on its own: the value of a public plan does not justify publishing the raw contents of private working sessions to satisfy it. A side effect worth recording, since it will recur wherever verbatim artifacts get archived in a linted repo: the copied mining scripts failed `ruff` (15 lint errors, 4 format failures) and would have turned CI red. The fix taken was a `pyproject.toml` `extend-exclude`, not reformatting — **reformatting an archived artifact falsifies the record of what actually ran.** That exclusion was reverted once the evidence left the tree.
+
+**Rejected: deleting it.** That is where it was headed by default, and it leaves the plan's driving numbers pointing at nothing at all — strictly worse than an operator-local pointer.
+
+**The cost, stated plainly, because it is real.** The numbers are now durable for the operator and unverifiable to everyone else, including a future agent executing this plan — which is the reader that matters most here. The plan carries that admission rather than implying the evidence is reachable. A middle path exists and was not taken: the category summary table at the top of `pain-ledger.md` is seven rows of counts with no verbatim quotes and no session identifiers, it is publishable as-is, and it is the part the plan actually leans on. **Revisit when** a reader needs to check a ranking and cannot — publish that table then.
+
+**Refs.** Plan `docs/plans/2026-08-12-orchestrate-plugin-plan.md` (Problem Frame callout), review finding D23 in `docs/reviews/doc-review-orchestrate-plan-2026-08-13.md`, PR #713 (squash `eeb4d89e`).
+
 ### The orchestrate plan gets a subscriber process, Codex's `execution_classes`, catch-up on reconnect, and same-host handoff  {#orchestrate-plan-revision-2}
 
 A three-engine document review of `docs/plans/2026-08-12-orchestrate-plugin-plan.md` — Claude inline, codex `gpt-5.6-sol` at max effort, grok-4.6 at xhigh, all three read-only and blind to each other — returned four P0 and eleven P1 findings, recorded at `docs/reviews/doc-review-orchestrate-plan-2026-08-13.md`. Revision 2 resolves them. The build grew from 9 units to 10; the added unit is composition, which nothing owned. Two of the four P0s were product decisions and the operator settled them.

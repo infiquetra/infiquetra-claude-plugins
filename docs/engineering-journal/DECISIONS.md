@@ -2,6 +2,20 @@
 
 ## 2026-08-12
 
+### The orchestrate build ports the tier vocabulary first, ships Claude before Codex, and dogfoods itself across six vendors  {#orchestrate-build-plan}
+
+Plan `docs/plans/2026-08-12-orchestrate-plugin-plan.md`, origin `docs/brainstorms/2026-08-12-orchestrate-requirements.md` (merged PR #710, squash `d8a9e6aa`), destination `merge`, backend `inline`, 9 units in 3 phases. The product decisions are recorded above under `{#orchestrate-supersedes-outcome}`; these are the build decisions.
+
+**KTD-B1 — Behaviour lives in skills; Claude adds a ten-line command loader.** Codex invokes skills directly (`$saga:work`, `$saga:brainstorm`, and `$saga:doc-review` all appear in that repo) and has no `commands/` directory; Claude needs a `commands/*.md` entry for `/orchestrate`, and that file is a thin loader — `plugins/saga/commands/plan.md` is frontmatter plus *"Load … and run its phases."* The "two shapes to maintain" objection was overstated: one small file, and 9 of 12 plugins here already carry it. Rejected: skills-only on Claude, which leaves the operator without the invocation he actually uses.
+
+**KTD-B2 — Converge Claude's `models.json` onto the Codex `lineage_models` shape, as the first unit.** Measured, not assumed: Claude's file has `models`/`efforts`; Codex's has `lineage_models`, `lineage_efforts`, `execution_classes`, and `root_orchestration_profiles`. The lineage form is right because a tier name is an *abstraction* each runtime resolves to its own concrete model, so a new vendor is a mapping entry rather than a change to the tier vocabulary. Rejected: `orchestrate` vendoring a third model table (the dead-wiring pattern this journal already warns about), and rejected: reading the sibling repository's file across a checkout path. Known hazard carried into the unit: the Codex file's `lineage_models` maps to `gpt-5.5`/`gpt-5.4` while its own `root_orchestration_profiles` names `gpt-5.6-sol`/`gpt-5.6-terra` — one is stale, and the inconsistency must be resolved rather than ported.
+
+**KTD-B3 — The register is `.orchestrate/register.json`, a new runtime-neutral top-level directory.** Both runtimes must read and write it with the same meaning, which disqualifies `.claude/` and `.codex/` — mirroring per runtime forks the exact file the handoff depends on and adds a sync step that can fail. Rejected: `docs/orchestrations/`, which buys provenance at the cost of turning a prose directory into machine state with churn commits during a live run.
+
+**KTD-B4 — Ship Claude to working before porting to Codex.** The design changed materially three times during requirements; building both runtimes in parallel doubles rework on the next change and makes the port chase a moving target. The shared foundation lands first because both runtimes need it, and Phase 1 must be dogfooded on unrelated real work before Phase 2 opens. Rejected: parallel construction with the round-trip as an early gate.
+
+**KTD-B5 — The build is orchestrated by hand across multi-vendor herdr sessions, and the saga backend is `inline`.** This is deliberate dogfooding: friction encountered while driving the build manually is direct evidence for the tool being built. Native CLIs verified launchable on this host: `claude`, `codex`, `grok`, `muse`, `qwen`, `agy`. `team-execution` is excluded by operator decision. The known risk — this session is both the driver and the thing being replaced — is mitigated by recording friction as evidence rather than silently resolving it. **Revisit when** Phase 1 is usable; from then on `orchestrate` should drive its own remaining units.
+
 ### `orchestrate` supersedes `/outcome`, and is the session half of a requirement `/outcome` already adopted  {#orchestrate-supersedes-outcome}
 
 Requirements: `docs/brainstorms/2026-08-12-orchestrate-requirements.md` and `…-orchestrate-codex-phase-requirements.md`. Evidence base: 552 agent transcripts across three corpora, every one proof-verified read, yielding 243 distinct coordination failures over 477 session-occurrences, plus 19 first-hand findings from running the evidence pass itself as a live orchestration.

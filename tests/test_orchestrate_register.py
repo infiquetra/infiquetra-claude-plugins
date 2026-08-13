@@ -56,7 +56,9 @@ def _full_row(row_id: str = "child-1", run_id: str = "run-a") -> dict:
         "phase": "working",
         "expected_state": "working",
         "observed_state": "working",
+        "observed_state_source": "observed:session_snapshot",
         "dispatched_at": 1000.0,
+        "dispatch_revision_baseline": 42,
         "deadline": None,
         "max_quiet_seconds": 600,
         "last_event_at": 1000.5,
@@ -117,7 +119,20 @@ def test_new_row_always_has_both_hang_detection_time_columns(tmp_path: Path) -> 
 
     # Other, genuinely optional columns are still simply absent rather than seeded — the seeding
     # is specific to this one alternative-strategy pair, not a blanket "every column exists."
+    assert "dispatch_revision_baseline" not in neither
     assert "tokens_observed" not in neither
+
+
+def test_empty_batch_returns_without_taking_the_write_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _unexpected_lock(root: Path):  # noqa: ANN202
+        pytest.fail(f"empty batch tried to lock {root}")
+
+    monkeypatch.setattr(M, "_write_locked", _unexpected_lock)
+
+    assert M.upsert_rows(tmp_path, {}) == {}
+    assert not M.register_path(tmp_path).exists()
 
 
 # --------------------------------------------------------------------------- 3. atomic write

@@ -31,9 +31,56 @@
 
 **Fix.** `register.py`'s `last_event_at` column is documented as fed by `revision`, never by `state_change_seq`; a hang detector built against the wrong counter would false-alarm on a healthy, working child.
 
+A second consequence appears in content subscriptions: `pane.output_matched` searches text that is
+already in scrollback. A unique run-and-child sentinel identifies the intended interaction, but
+identity alone does not prove the text was emitted after dispatch. The register therefore also
+stores `dispatch_revision_baseline`, sampled before dispatch, and accepts a match only when the
+event's pane revision is greater. Tests exercise the real socket decoder path with a sentinel at
+the baseline revision so deleting the comparison makes the stale match wake the orchestrator.
+
 **Generalizable rule.** When a substrate exposes two counters that both look like "did anything happen," check which one is scoped to *state* and which is scoped to *output* before picking a liveness signal — a state-transition counter and an activity counter diverge exactly when something is working hard without changing state, which is the common case, not the edge case.
 
 **Refs.** DECISIONS `{#mined-evidence-stays-operator-local}` (why the originating session evidence itself stays operator-local rather than landing in this public repo); LEARNINGS `{#agent-lifecycle-detectors-lie}` (the sibling finding that a child's own reported status is equally unreliable as a completion signal).
+
+### Schema-backed request tests do not prove the response consumer  {#validate-both-sides-of-socket-contracts}
+
+**Context.** The first orchestrate event client validated its complete `events.subscribe` request
+against Herdr's captured protocol schema. Every request-side spelling and required field was
+correct, but reconnect catch-up still failed before the event loop began.
+
+**Mechanism.** `session.snapshot` returns a typed result wrapper whose snapshot lives at
+`result.snapshot`. Tests hand-authored the already-unwrapped `{panes, agents}` value expected by
+catch-up, bypassing the actual client-to-consumer seam. A correct producer request therefore hid an
+incompatible response consumer.
+
+**Fix.** Response tests now validate a complete success response against the same committed schema,
+send it through a real temporary Unix socket and the ordinary client decoder, then assert that the
+subscriber unwraps the typed result before catch-up. Request and response are separate contract
+boundaries and both must cross their production parser.
+
+**Generalizable rule.** For a schema-backed socket integration, validate both directions and make
+the test traverse each production boundary. A request accepted by the peer says nothing about
+whether the reply is represented at the level the consumer expects.
+
+### Recovery callbacks must not gate the live signal they repair  {#recovery-cannot-gate-events}
+
+**Context.** The orchestrate subscriber runs a snapshot catch-up after each accepted Herdr event
+subscription because protocol 19 has no replay cursor. Catch-up initially ran inside the subscribe
+handshake before the event read loop.
+
+**Mechanism.** Any catch-up exception aborted the accepted socket before its first event. Counting
+only successful catch-ups also made a configured connection bound ineffective precisely when
+recovery was broken. A secondary recovery path therefore disabled the primary live signal and
+could retry forever.
+
+**Fix.** Accepted connections are counted before catch-up. Catch-up exceptions are reported and
+survived, allowing the same socket to enter its event loop. Tests use two real socket connections,
+a catch-up that always fails, and events on both streams to prove delivery and the configured bound
+remain independent of recovery success.
+
+**Generalizable rule.** A recovery mechanism may enrich or reconcile a live signal, but must not be
+a prerequisite for consuming that signal. Bounds and attempt counters must measure the operation
+they claim to bound, including failed recovery work.
 
 ### Predicting another program's configuration is unbounded; set the value and observe the pane  {#do-not-predict-foreign-settings}
 

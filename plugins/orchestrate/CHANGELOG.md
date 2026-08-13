@@ -1,5 +1,60 @@
 # Changelog
 
+## [0.2.2] - 2026-08-13
+
+### Fixed
+
+- Reject output-match subscriptions that cannot produce a complete substring sentinel instead of
+  starting a subscriber that can only discard their events. Multiple valid sentinel interactions
+  for the same pane remain independently matchable.
+- Report catch-up failures without closing an accepted event stream, and count every accepted
+  subscription toward reconnect limits even when its catch-up fails.
+- Record how each lifecycle state was learned, including explicit inference labels for a missing
+  snapshot pane and a closed tab.
+- Avoid register locking for an empty catch-up batch and avoid waking for registered events that
+  make no register change.
+- Exercise schema-valid pane and agent payloads through the response parser and catch-up consumer.
+
+## [0.2.1] - 2026-08-13
+
+### Fixed
+
+- Unwrap `session.snapshot` from Herdr's real `result.snapshot` response shape, now validated
+  end-to-end against the committed success-response schema through a Unix-socket test.
+- Resolve `tab_closed` through registered `tab_id` values, and record pane/tab terminal events as
+  `exited` before waking the orchestrator.
+- Fail fast when the subscriber's first socket connection cannot open; its register row now records
+  `exited` and the command returns non-zero instead of retrying forever as `working`.
+- Compare sentinel purpose and nonce as well as run and child identity, so an earlier dispatch or a
+  readiness marker cannot satisfy a later completion interaction.
+- Batch reconnect catch-up updates into one register rewrite and reset once-only diagnostics at
+  each accepted connection.
+- Clarify that the three subscription-event broadcasts remain dotted even though the 26 general
+  broadcast events are underscored.
+
+## [0.2.0] - 2026-08-13
+
+### Added
+
+- A strict protocol 19 event client for `~/.config/herdr/herdr.sock`. It emits dotted
+  `events.subscribe` request types, rejects underscored broadcast names and malformed entries, and
+  verifies the `subscription_started` acknowledgement before dispatching events.
+- A single-purpose tracked subscriber process that holds the socket across turns and wakes the
+  orchestrator pane through `agent.prompt`.
+- Startup and reconnect catch-up through `session.snapshot`. It records `expected_state` versus
+  `observed_state` disagreement and checks run-bound `artifact_path` presence without adding
+  predicate wiring before predicate evaluation exists.
+- `dispatch_revision_baseline`, the optional register column holding the pane revision sampled at
+  dispatch. Run-and-child sentinels are honoured only at a later revision, preventing stale
+  scrollback from satisfying a new interaction.
+- A schema fixture captured from the installed herdr binary plus real Unix-socket tests for stream
+  closure, reconnect, missed child exit recovery, and the remaining event-client error cases.
+
+### Not in this release
+
+- Session launching, readiness or reap transitions, predicate evaluation, routing, mirror
+  behaviour, spend gating, hang detection, and the `/orchestrate` command.
+
 ## [0.1.0] - 2026-08-13
 
 ### Added

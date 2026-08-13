@@ -33,18 +33,22 @@ Work       -- task, work_shape, scope, artifact_path, predicate, integration_mod
     the orchestrator itself evaluates (KTD6 — the mirror never decides); ``integration_mode`` /
     ``destination`` say how a verified artifact lands (e.g. patch application, PR, direct commit).
 
-Lifecycle  -- phase, expected_state, observed_state
+Lifecycle  -- phase, expected_state, observed_state, observed_state_source
     ``phase`` is the closed, ordered vocabulary in ``PHASES`` below. ``expected_state`` /
     ``observed_state`` exist because a live child's own status report is not a completion signal:
     one measured child reported ``done`` and then returned to ``working`` three times in a single
     dispatch. Disagreement between what the orchestrator expects and what herdr currently reports
     is recorded as *divergence*, not silently resolved by trusting one detector over the other —
-    that resolution is U3/U4's job, not this module's. See
+    that resolution is U3/U4's job, not this module's. ``observed_state_source`` records how the
+    state was learned. Values beginning with ``observed:`` came directly from a process or herdr
+    event; values beginning with ``inferred:`` were concluded from container presence or absence.
+    See
     ``docs/engineering-journal/LEARNINGS.md#agent-lifecycle-detectors-lie`` for the durable,
     publicly readable record of the broader class this belongs to (vendor detectors disagreeing
     in vendor-specific, non-repeating ways).
 
-Time       -- dispatched_at, deadline, max_quiet_seconds, last_event_at
+Time       -- dispatched_at, dispatch_revision_baseline, deadline, max_quiet_seconds,
+              last_event_at
     ``deadline`` and ``max_quiet_seconds`` are alternative hang-detection strategies for a row —
     a caller sets whichever fits that dispatch. :func:`upsert_row` seeds **both** to ``None`` at
     row creation (the other TIME/ACCOUNTING columns stay absent until some later phase transition
@@ -58,6 +62,9 @@ Time       -- dispatched_at, deadline, max_quiet_seconds, last_event_at
     defines the column, U7 is the reader that must honor this. See
     ``docs/engineering-journal/LEARNINGS.md#pane-revision-is-the-liveness-signal`` for the full
     write-up.
+    ``dispatch_revision_baseline`` is the pane ``revision`` counter sampled immediately before
+    dispatch. A ``pane.output_matched`` hit is honoured only when the event's current revision is
+    greater than this baseline, so text left in pre-dispatch scrollback cannot satisfy a new run.
 
 Accounting -- tokens_observed, tokens_reserved
     ``tokens_reserved`` is what U6's spend gate committed before dispatch; ``tokens_observed`` is
@@ -106,8 +113,14 @@ WORK_COLUMNS = (
     "integration_mode",
     "destination",
 )
-LIFECYCLE_COLUMNS = ("phase", "expected_state", "observed_state")
-TIME_COLUMNS = ("dispatched_at", "deadline", "max_quiet_seconds", "last_event_at")
+LIFECYCLE_COLUMNS = ("phase", "expected_state", "observed_state", "observed_state_source")
+TIME_COLUMNS = (
+    "dispatched_at",
+    "dispatch_revision_baseline",
+    "deadline",
+    "max_quiet_seconds",
+    "last_event_at",
+)
 ACCOUNTING_COLUMNS = ("tokens_observed", "tokens_reserved")
 
 ROW_COLUMNS = (
@@ -357,25 +370,42 @@ def upsert_row(root: Path, row_id: str, fields: Mapping[str, Any]) -> dict[str, 
 
     Returns the row exactly as stored, id included.
     """
-    if not row_id:
-        raise RegisterError("row_id must be non-empty")
-    _validate_phase(fields)
+    return upsert_rows(root, {row_id: fields})[row_id]
+
+
+def upsert_rows(root: Path, updates: Mapping[str, Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Create or merge-update several rows in one locked, atomic register rewrite.
+
+    Each entry has the same semantics as :func:`upsert_row`, including new-row ``run_id``
+    validation, optional-column preservation, and the deadline/quiet-time seeding pair. All
+    updates are validated before the register is mutated, then land in one durable replacement.
+    """
+    normalized = {row_id: dict(fields) for row_id, fields in updates.items()}
+    if not normalized:
+        return {}
+    for row_id, fields in normalized.items():
+        if not row_id:
+            raise RegisterError("row_id must be non-empty")
+        _validate_phase(fields)
 
     with _write_locked(root):
         doc = _read_register_unlocked(root)
         rows = doc["rows"]
-        existing = rows.get(row_id, {})
-        is_new_row = not existing
-        if is_new_row and "run_id" not in fields:
-            raise RegisterError(f"new row {row_id!r} requires 'run_id' in fields")
-        merged = {**existing, **dict(fields), "id": row_id}
-        if is_new_row:
-            for column in _TIME_STRATEGY_COLUMNS:
-                merged.setdefault(column, None)
-        rows[row_id] = merged
+        merged_rows: dict[str, dict[str, Any]] = {}
+        for row_id, fields in normalized.items():
+            existing = rows.get(row_id, {})
+            is_new_row = not existing
+            if is_new_row and "run_id" not in fields:
+                raise RegisterError(f"new row {row_id!r} requires 'run_id' in fields")
+            merged = {**existing, **fields, "id": row_id}
+            if is_new_row:
+                for column in _TIME_STRATEGY_COLUMNS:
+                    merged.setdefault(column, None)
+            rows[row_id] = merged
+            merged_rows[row_id] = dict(merged)
         doc["rows"] = rows
         _atomic_write_json(register_path(root), doc)
-        return dict(merged)
+        return merged_rows
 
 
 def retire_run(root: Path, run_id: str) -> Path | None:

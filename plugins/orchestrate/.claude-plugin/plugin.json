@@ -1,7 +1,7 @@
 {
   "name": "orchestrate",
-  "version": "0.1.0",
-  "description": "Cross-vendor multi-session orchestration over herdr: the register state model for dispatched children, mirror, and subscriber rows.",
+  "version": "0.2.0",
+  "description": "Cross-vendor orchestration over herdr with a durable register, tracked event subscriber, revision-safe sentinels, and reconnect catch-up.",
   "author": {
     "name": "Infiquetra",
     "email": "hello@infiquetra.com"
@@ -13,6 +13,8 @@
     "herdr",
     "multi-vendor",
     "dispatch",
-    "state-model"
+    "state-model",
+    "events",
+    "catch-up"
   ]
 }

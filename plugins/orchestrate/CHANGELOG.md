@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.2.0] - 2026-08-13
+
+### Added
+
+- A strict protocol 19 event client for `~/.config/herdr/herdr.sock`. It emits dotted
+  `events.subscribe` request types, rejects underscored broadcast names and malformed entries, and
+  verifies the `subscription_started` acknowledgement before dispatching events.
+- A single-purpose tracked subscriber process that holds the socket across turns and wakes the
+  orchestrator pane through `agent.prompt`.
+- Startup and reconnect catch-up through `session.snapshot`. It records `expected_state` versus
+  `observed_state` disagreement and checks run-bound `artifact_path` presence without adding
+  predicate wiring before predicate evaluation exists.
+- `dispatch_revision_baseline`, the optional register column holding the pane revision sampled at
+  dispatch. Run-and-child sentinels are honoured only at a later revision, preventing stale
+  scrollback from satisfying a new interaction.
+- A schema fixture captured from the installed herdr binary plus real Unix-socket tests for stream
+  closure, reconnect, missed child exit recovery, and the remaining event-client error cases.
+
+### Not in this release
+
+- Session launching, readiness or reap transitions, predicate evaluation, routing, mirror
+  behaviour, spend gating, hang detection, and the `/orchestrate` command.
+
 ## [0.1.0] - 2026-08-13
 
 ### Added

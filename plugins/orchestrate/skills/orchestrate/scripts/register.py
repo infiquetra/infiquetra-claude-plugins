@@ -44,7 +44,8 @@ Lifecycle  -- phase, expected_state, observed_state
     publicly readable record of the broader class this belongs to (vendor detectors disagreeing
     in vendor-specific, non-repeating ways).
 
-Time       -- dispatched_at, deadline, max_quiet_seconds, last_event_at
+Time       -- dispatched_at, dispatch_revision_baseline, deadline, max_quiet_seconds,
+              last_event_at
     ``deadline`` and ``max_quiet_seconds`` are alternative hang-detection strategies for a row —
     a caller sets whichever fits that dispatch. :func:`upsert_row` seeds **both** to ``None`` at
     row creation (the other TIME/ACCOUNTING columns stay absent until some later phase transition
@@ -58,6 +59,9 @@ Time       -- dispatched_at, deadline, max_quiet_seconds, last_event_at
     defines the column, U7 is the reader that must honor this. See
     ``docs/engineering-journal/LEARNINGS.md#pane-revision-is-the-liveness-signal`` for the full
     write-up.
+    ``dispatch_revision_baseline`` is the pane ``revision`` counter sampled immediately before
+    dispatch. A ``pane.output_matched`` hit is honoured only when the event's current revision is
+    greater than this baseline, so text left in pre-dispatch scrollback cannot satisfy a new run.
 
 Accounting -- tokens_observed, tokens_reserved
     ``tokens_reserved`` is what U6's spend gate committed before dispatch; ``tokens_observed`` is
@@ -107,7 +111,13 @@ WORK_COLUMNS = (
     "destination",
 )
 LIFECYCLE_COLUMNS = ("phase", "expected_state", "observed_state")
-TIME_COLUMNS = ("dispatched_at", "deadline", "max_quiet_seconds", "last_event_at")
+TIME_COLUMNS = (
+    "dispatched_at",
+    "dispatch_revision_baseline",
+    "deadline",
+    "max_quiet_seconds",
+    "last_event_at",
+)
 ACCOUNTING_COLUMNS = ("tokens_observed", "tokens_reserved")
 
 ROW_COLUMNS = (

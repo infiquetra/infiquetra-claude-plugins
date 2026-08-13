@@ -57,6 +57,7 @@ def _full_row(row_id: str = "child-1", run_id: str = "run-a") -> dict:
         "expected_state": "working",
         "observed_state": "working",
         "dispatched_at": 1000.0,
+        "dispatch_revision_baseline": 42,
         "deadline": None,
         "max_quiet_seconds": 600,
         "last_event_at": 1000.5,
@@ -117,6 +118,7 @@ def test_new_row_always_has_both_hang_detection_time_columns(tmp_path: Path) -> 
 
     # Other, genuinely optional columns are still simply absent rather than seeded — the seeding
     # is specific to this one alternative-strategy pair, not a blanket "every column exists."
+    assert "dispatch_revision_baseline" not in neither
     assert "tokens_observed" not in neither
 
 

@@ -1,16 +1,18 @@
 ---
 name: orchestrate
-description: The orchestrate register — the durable state model for a herdr-driven multi-vendor run (one row per dispatched child, plus mirror and subscriber rows), with atomic read/write and a documented column schema. Scaffold only in this release: no event subscription, no session launching, no predicate evaluation, no routing. Triggers on "orchestrate register", "the run register", ".orchestrate/register.json".
+description: The orchestrate register and tracked herdr event subscriber for multi-vendor runs, with revision-safe sentinels and reconnect catch-up. No session launching, predicate evaluation, routing, or mirror behavior yet. Triggers on "orchestrate register", "orchestrate subscriber", "herdr event catch-up", "the run register", ".orchestrate/register.json".
 ---
 
-# orchestrate — the register
+# orchestrate — register and event subscriber
 
 `orchestrate` coordinates multi-vendor herdr sessions: Claude, Codex, Grok, Muse, Qwen, and agy
 children dispatched under one operator-driven run, aggregated back through a mirror and woken by a
-subscriber holding herdr's event socket across turns. This skill currently ships **one piece of
-that system: the register** — the whole state model (KTD5) and the Claude↔Codex handoff seam
-(R12). Everything else — the subscriber, session launching, predicate evaluation, spend gating,
-hang detection, routing, the `/orchestrate` command itself — lands in later units of
+subscriber holding herdr's event socket across turns. This skill currently ships **two pieces of
+that system: the register and subscriber**. The register is the whole state model (KTD5) and the
+Claude↔Codex handoff seam (R12). The subscriber holds protocol 19 event streams, wakes the
+orchestrator, and performs reconnect catch-up (KTD3/KTD12). Everything else — session launching,
+predicate evaluation, spend gating, hang detection, routing, the `/orchestrate` command itself —
+lands in later units of
 `docs/plans/2026-08-12-orchestrate-plugin-plan.md` and is deliberately absent here.
 
 ## What the register is
@@ -28,6 +30,10 @@ first-hand while driving this build by hand (`docs/engineering-journal/LEARNINGS
 lifecycle-transition `state_change_seq` counter, which sits still for minutes on a healthy,
 working child; and a child's own reported status is not a completion signal, so `expected_state` /
 `observed_state` exist to record a disagreement rather than resolve it by trusting one side.
+
+`dispatch_revision_baseline` is the pane-output `revision` sampled immediately before dispatch.
+An output-match sentinel is accepted only when its event revision is greater than that baseline;
+this prevents matching a sentinel that was already present in scrollback before the new dispatch.
 
 ## Contract this unit guarantees
 
@@ -80,10 +86,34 @@ python3 plugins/orchestrate/skills/orchestrate/scripts/register.py show --run-id
 python3 plugins/orchestrate/skills/orchestrate/scripts/register.py retire run-abc
 ```
 
+## Event subscription and catch-up
+
+`scripts/herdr_events.py` opens `~/.config/herdr/herdr.sock`, validates every requested
+subscription, and sends the request documented in `references/herdr-event-api.md`. Request event
+types are dotted (`pane.exited`); broadcast event names are underscored (`pane_exited`). A malformed
+or underscored subscription is an error, never an ignored entry.
+
+`scripts/subscriber.py` is the single-purpose process that holds the event stream across turns. It
+creates an ordinary register row with `agent="subscriber"`, wakes the orchestrator through
+`agent.prompt`, and runs one `session.snapshot` catch-up after every accepted subscription,
+including startup. Catch-up updates `observed_state`, reports disagreement with `expected_state`,
+and checks declared `artifact_path` presence. It does not evaluate predicates.
+
+The spawning unit supplies the subscriber pane, orchestrator pane, run identity, and complete JSON
+subscription list:
+
+```bash
+python3 plugins/orchestrate/skills/orchestrate/scripts/subscriber.py \
+  --root "$PWD" \
+  --run-id run-abc \
+  --row-id subscriber-run-abc \
+  --pane-id w1:p2 \
+  --orchestrator-pane w1:p1 \
+  --subscriptions-json '[{"type":"pane.exited"}]'
+```
+
 ## What is deliberately not here
 
 No `commands/` entry (`/orchestrate` lands with the units that need an invocable surface — KTD2),
-no subscriber, no `events.subscribe` client, no session launching via the `agent` wrapper, no
-predicate evaluation, no mirror behaviour beyond the register row it will eventually hold, no
-spend gate, no hang detector. Adding any of those here would make this unit unreviewable against
-its own scope.
+no session launching via the `agent` wrapper, no predicate evaluation, no mirror behaviour beyond
+the register row it will eventually hold, no spend gate, and no hang detector.

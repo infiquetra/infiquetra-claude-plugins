@@ -31,6 +31,13 @@
 
 **Fix.** `register.py`'s `last_event_at` column is documented as fed by `revision`, never by `state_change_seq`; a hang detector built against the wrong counter would false-alarm on a healthy, working child.
 
+A second consequence appears in content subscriptions: `pane.output_matched` searches text that is
+already in scrollback. A unique run-and-child sentinel identifies the intended interaction, but
+identity alone does not prove the text was emitted after dispatch. The register therefore also
+stores `dispatch_revision_baseline`, sampled before dispatch, and accepts a match only when the
+event's pane revision is greater. Tests exercise the real socket decoder path with a sentinel at
+the baseline revision so deleting the comparison makes the stale match wake the orchestrator.
+
 **Generalizable rule.** When a substrate exposes two counters that both look like "did anything happen," check which one is scoped to *state* and which is scoped to *output* before picking a liveness signal — a state-transition counter and an activity counter diverge exactly when something is working hard without changing state, which is the common case, not the edge case.
 
 **Refs.** DECISIONS `{#mined-evidence-stays-operator-local}` (why the originating session evidence itself stays operator-local rather than landing in this public repo); LEARNINGS `{#agent-lifecycle-detectors-lie}` (the sibling finding that a child's own reported status is equally unreliable as a completion signal).

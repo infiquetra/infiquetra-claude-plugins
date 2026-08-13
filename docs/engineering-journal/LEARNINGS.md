@@ -19,6 +19,39 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-08-13
+
+### A reused module can declare a control and never enforce it — check the consumer, not the module  {#reused-module-declares-but-does-not-enforce}
+
+**Context.** A three-engine document review (Claude, codex `gpt-5.6-sol` max, grok-4.6 xhigh) of `docs/plans/2026-08-12-orchestrate-plugin-plan.md` found the same defect three times in one plan. Each instance cited a real, currently-shipping `fleet-core` module accurately, by correct name, for a control the plan promised. All three controls were inert.
+
+**Evidence.**
+- **Spend ceiling.** Plan R9/U6 enforce a budget via `IntentEnvelope`'s `cost_ceiling_tokens`. The field is real. `plugins/fleet-core/scripts/fleet_commons/intent_envelope.py:798-803` states the gate's own honesty stance: *"`None` actuals mean no telemetry has been recorded yet … nothing is measured against the ceiling, so the cost gate does not engage,"* and *"Actuals are leaf-produced and self-attested."* The plan's children are external CLI sessions on five other vendors; nothing made them attest, so `actual_tokens` would be permanently `None`.
+- **Work-in-progress bound.** Plan R10/U6 enforce concurrency via `concurrency_policy.py`. Its module docstring, line 5: *"This module owns only the normalized defaults and the closed value that **the lease broker records and enforces** after resolution."* `lease_broker` is deleted from Claude's `fleet-core` and guarded against re-add by `tests/test_no_lease_broker_readd.py`. The declaring half shipped; the enforcing half was removed under it.
+- **Wake mechanism.** Plan R2/KTD3 keep the orchestrator awake via herdr `events.subscribe`. Subscribing works, verified live. Nothing in the plan held the socket between turns, and Scope Boundaries excluded the only process type that could.
+
+**Mechanism.** Verification stopped at existence. Every check asked *"does this module exist and does it say what the plan claims?"* — and all three passed, because the plan's citations were accurate. The question that fails is one level further: *"who consumes what this module produces?"* A declare/enforce pair split across two modules looks complete from either side alone. Worse, all three fail **open**: the spend gate declines to engage rather than raising, the concurrency module returns limits nobody applies, and a subscription that nobody holds simply delivers to no one. A gate that raises on a missing input is cheap to find; a gate that shrugs is invisible in the diff and in the tests.
+
+**Fix.** Plan revised to revision 2 (`docs/reviews/doc-review-orchestrate-plan-2026-08-13.md`): U6 now owns token accounting from observed per-child actuals with a fail-closed reservation, U6 owns per-vendor admission as register-owned state, and U3 owns a subscriber process that holds the socket and carries a register row. Every reuse claim in the revised plan names its consumer, not just the module.
+
+**Validation.** Verified against source, not summary: `intent_envelope.py:798-803`, `concurrency_policy.py:1-6`, `tests/test_no_lease_broker_readd.py` present, `herdr api schema --json` protocol 19.
+
+**Generalizable rule.** When a plan reuses an existing module, "the module exists and is cited correctly" is not evidence the control works. Find the consumer of its output and confirm something applies it; then ask what the mechanism does when its input is absent. Prefer controls that fail closed, and treat any control whose absent-input behaviour is "do nothing" as unimplemented until a producer is named.
+
+### herdr event delivery has no replay, so any reconnect loses the gap  {#herdr-events-have-no-replay}
+
+**Context.** Follow-on to `{#herdr-event-subscribe-api}`, which established that herdr pushes events over its socket and made that the wake mechanism for the `orchestrate` design. A document review then asked what happens when the socket drops — the case the design had treated as merely a reconnect.
+
+**Evidence.** `herdr api schema --json` (protocol 19) has no subscription cursor, no `since` parameter, no replay request, and no event id. Every `seq` in the schema is either a write-side optimistic-concurrency token — `PaneClearAgentAuthorityParams.seq`, `PaneReleaseAgentParams.seq`, `PaneReportAgentParams.seq`, `PaneReportAgentSessionParams.seq`, `PaneReportMetadataParams.seq`, `WorkspaceReportMetadataParams.seq` — or the read-side `AgentInfo.state_change_seq`. None of them addresses a position in an event stream.
+
+**Mechanism.** `events.subscribe` registers interest in **future** deliveries. Re-subscribing after a disconnect restores future delivery and nothing else, so every event between the drop and the re-subscribe is gone permanently. A design that treats the event stream as a durable source of truth therefore has a guaranteed hole at every restart, compaction, or socket blip — and the resulting failure is silent, because a watcher that missed a completion looks exactly like a watcher whose child is still running.
+
+**Fix.** Revision 2 of the orchestrate plan adds KTD12: the subscriber runs a bounded catch-up pass at startup and after every reconnect — read the live herdr snapshot for each registered handle, compare expected against observed state, re-evaluate run-bound predicates. Edge-triggered, once per reconnect, which preserves the design's rejection of a polling reconcile loop.
+
+**What surprised.** The plan's own U3 test asserted that "a socket close mid-stream triggers reconnect without losing the subscription set" — which is true, passes, and is exactly the wrong property. The subscription set surviving is not the same as the events surviving, and testing the first reads as having tested the second.
+
+**Generalizable rule.** Before treating a push stream as a source of truth, look for a cursor. No cursor means no replay, which means the stream is a *hint to go look*, not a record — so pair it with a snapshot reconciliation at every connection boundary.
+
 ## 2026-08-12
 
 ### herdr pushes lifecycle events over its socket; we polled for a year without noticing  {#herdr-event-subscribe-api}
@@ -34,6 +67,8 @@
 **Validation.** Live subscription confirmed against real tab lifecycle and a regex content match, in this repository's own herdr workspace.
 
 **What surprised.** `pane.output_matched` matches **content**, not agent status — so it works on a vendor whose lifecycle detector is entirely broken. It is strictly better than the polling predicate loop it replaced, and it removes the argument for a separate controller process entirely.
+
+> **Partly superseded 2026-08-13** by `{#herdr-events-have-no-replay}`. The discovery above is correct; two conclusions drawn from it are not. (1) The subscribe-request namespace is **dotted** (`tab.closed`, `pane.exited`) while the broadcast envelope is **underscored** (`tab_closed`, `pane_exited`); the evidence line above quotes envelope names while describing the request shape, and that transcription error propagated into a plan. (2) "Removes the argument for a separate controller process" is wrong — a subscription needs a process holding it, and an agent session executes only during turns, so a small subscriber is required rather than optional.
 
 **Generalizable rule.** Two confident reviewers agreeing on a capability claim is evidence about their shared priors, not about the substrate. Before accepting *"the platform cannot do X"* — especially when it drives a build-a-daemon decision — read the platform's own schema. Convergence is not verification.
 

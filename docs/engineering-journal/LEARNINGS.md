@@ -21,6 +21,20 @@
 
 ## 2026-08-13
 
+### herdr's liveness signal is the pane-output counter, not the lifecycle-state counter  {#pane-revision-is-the-liveness-signal}
+
+**Context.** U2's register needs a `last_event_at` column a later hang detector (U7) can trust. herdr exposes two counters on a pane: `state_change_seq` (increments on a lifecycle transition) and `revision` (increments on pane output). Driving a real build by hand, one child's session showed these two counters disagree sharply while the child was genuinely, continuously working.
+
+**Evidence.** Over one measured dispatch window, `state_change_seq` moved twice and then sat still for minutes while the child kept working; `revision` moved roughly 47 times over that same window.
+
+**Mechanism.** `state_change_seq` only increments on a discrete lifecycle transition (e.g. idle→working), so a child that has already transitioned into `working` and then stays there for a long, productive turn produces zero further `state_change_seq` movement — it is a state-machine edge counter, not an activity counter. `revision` increments on every unit of pane output, so it tracks activity continuously regardless of whether a lifecycle transition occurred.
+
+**Fix.** `register.py`'s `last_event_at` column is documented as fed by `revision`, never by `state_change_seq`; a hang detector built against the wrong counter would false-alarm on a healthy, working child.
+
+**Generalizable rule.** When a substrate exposes two counters that both look like "did anything happen," check which one is scoped to *state* and which is scoped to *output* before picking a liveness signal — a state-transition counter and an activity counter diverge exactly when something is working hard without changing state, which is the common case, not the edge case.
+
+**Refs.** DECISIONS `{#mined-evidence-stays-operator-local}` (why the originating session evidence itself stays operator-local rather than landing in this public repo); LEARNINGS `{#agent-lifecycle-detectors-lie}` (the sibling finding that a child's own reported status is equally unreliable as a completion signal).
+
 ### Predicting another program's configuration is unbounded; set the value and observe the pane  {#do-not-predict-foreign-settings}
 
 **Context.** U1's qwen routing had no launch-time effort flag. Three successive repairs tried to *predict* the child's effort by reading qwen's settings files (layer precedence, folder trust, `$VAR` expansion, `.env` discovery, system defaults, then the child's `cwd` instead of the orchestrator's). Each repair closed the hole the previous review named and opened a new one.

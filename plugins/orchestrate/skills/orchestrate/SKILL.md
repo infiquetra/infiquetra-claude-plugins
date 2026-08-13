@@ -22,7 +22,8 @@ under `.orchestrate/runs/<run-id>/`.
 
 The implementation is `scripts/register.py`. Read its module docstring before writing to the
 register from any later unit — it documents every column's meaning, including two facts measured
-first-hand while driving this build by hand (`.orchestrate/friction-log.md`, `F3` and `F4a`):
+first-hand while driving this build by hand (`docs/engineering-journal/LEARNINGS.md`,
+`#pane-revision-is-the-liveness-signal` and `#agent-lifecycle-detectors-lie`):
 `last_event_at` must be fed by herdr's pane-output `revision` counter, never by the
 lifecycle-transition `state_change_seq` counter, which sits still for minutes on a healthy,
 working child; and a child's own reported status is not a completion signal, so `expected_state` /

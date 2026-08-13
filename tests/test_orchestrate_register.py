@@ -1,9 +1,8 @@
 """Tests for the orchestrate register (U2): the whole state model for a herdr-driven run and the
 Claude<->Codex handoff seam (R12).
 
-Each of the seven scenarios from `.orchestrate/briefs/U2.md` gets its own test, named for the
-scenario, asserting exactly what that scenario states — not something weaker that would still
-report green.
+Each of the unit's seven required scenarios gets its own test, named for the scenario, asserting
+exactly what that scenario states — not something weaker that would still report green.
 """
 
 from __future__ import annotations
@@ -97,10 +96,44 @@ def test_row_round_trips_every_column(tmp_path: Path) -> None:
         assert column in reread, f"column {column!r} missing after round trip"
 
 
+def test_new_row_always_has_both_hang_detection_time_columns(tmp_path: Path) -> None:
+    # Repair round 1 (R7): the module docstring claims deadline/max_quiet_seconds "always exist"
+    # on a row regardless of which hang-detection strategy it uses. That was previously false —
+    # upsert_row only wrote what a caller passed. Fixed by seeding both to None at row creation.
+    M.upsert_row(tmp_path, "only-deadline", {"run_id": "run-a", "deadline": 12345.0})
+    only_deadline = M.read_rows(tmp_path)["only-deadline"]
+    assert only_deadline["deadline"] == 12345.0
+    assert only_deadline["max_quiet_seconds"] is None
+
+    M.upsert_row(tmp_path, "only-quiet", {"run_id": "run-a", "max_quiet_seconds": 600})
+    only_quiet = M.read_rows(tmp_path)["only-quiet"]
+    assert only_quiet["max_quiet_seconds"] == 600
+    assert only_quiet["deadline"] is None
+
+    M.upsert_row(tmp_path, "neither", {"run_id": "run-a"})
+    neither = M.read_rows(tmp_path)["neither"]
+    assert neither["deadline"] is None
+    assert neither["max_quiet_seconds"] is None
+
+    # Other, genuinely optional columns are still simply absent rather than seeded — the seeding
+    # is specific to this one alternative-strategy pair, not a blanket "every column exists."
+    assert "tokens_observed" not in neither
+
+
 # --------------------------------------------------------------------------- 3. atomic write
+#
+# Repair round 1 (R3): the original test here stubbed ``os.replace`` to raise *after* the temp
+# file had already been written in full, then asserted the live register was untouched. That is a
+# real, worth-keeping property, but it is a **failed replace**, not an **interrupted write** — the
+# temp file it produces is complete, never torn, so nothing in the old test ever created a partial
+# file and asked whether one remained. Picking option (a) from the repair brief: the test below
+# genuinely produces a torn temp file (a truncated write, the way a real crash mid-``os.write``
+# would leave one) and asks the real question — does a torn *sibling* file ever leak into or
+# affect the live register. The old, still-valid failed-replace property is kept under an honest
+# name rather than dropped.
 
 
-def test_atomic_write_leaves_no_partial_file_when_interrupted(
+def test_failed_replace_leaves_live_register_untouched(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Establish a known-good register first.
@@ -111,7 +144,7 @@ def test_atomic_write_leaves_no_partial_file_when_interrupted(
 
     def _boom(src, dst):  # noqa: ANN001
         if Path(dst) == M.register_path(tmp_path):
-            raise OSError("simulated crash mid-write")
+            raise OSError("simulated crash just before replace")
         return real_replace(src, dst)
 
     monkeypatch.setattr(M.os, "replace", _boom)
@@ -119,18 +152,40 @@ def test_atomic_write_leaves_no_partial_file_when_interrupted(
     with pytest.raises(OSError, match="simulated crash"):
         M.upsert_row(tmp_path, "child-2", {"run_id": "run-a", "phase": "planned"})
 
-    # The live register file is untouched — still exactly the pre-interruption content, never a
-    # half-written mixture of old and new.
+    # The live register file is untouched — still exactly the pre-failure content, never a
+    # half-written mixture of old and new. A failed replace never reaches the real path at all.
     assert M.register_path(tmp_path).read_text() == before
-    # And no stray full-length file was left at the real path under a different name that a
-    # careless reader might mistake for the register.
-    leftover_final_names = [
-        p for p in tmp_path.glob("**/register.json*") if p != M.register_path(tmp_path)
-    ]
-    # Only the lock file (created by the locking context) and this call's now-orphaned temp file
-    # (cleaned up by the finally-unlink) may remain; the *contents* of register.json itself must
-    # never have moved.
-    assert all(p.suffix in (".lock", ".tmp") or ".tmp" in p.name for p in leftover_final_names)
+    # And the orphaned temp this attempt wrote (its finally-unlink runs, but only after the
+    # monkeypatched os.replace already raised) is never mistaken for the live register: nothing
+    # non-temp, non-lock is left beside it.
+    leftovers = [p for p in tmp_path.glob("**/register.json*") if p != M.register_path(tmp_path)]
+    assert all(p.suffix == ".lock" or ".tmp" in p.name for p in leftovers)
+
+
+def test_a_genuinely_torn_temp_file_never_reaches_or_affects_the_live_register(
+    tmp_path: Path,
+) -> None:
+    # Establish a known-good register first.
+    M.upsert_row(tmp_path, "child-1", {"run_id": "run-a", "phase": "planned"})
+    before = M.register_path(tmp_path).read_text()
+
+    # Simulate a real interrupted write: a process dying mid-``os.write`` leaves a truncated,
+    # invalid-JSON sibling at a ``*.tmp`` path — this is exactly what ``_unique_tmp``'s naming
+    # scheme exists to isolate, since a real crash can land at any byte offset. No register.py
+    # function ever reads from or replaces a live path out of a ``*.tmp`` file, so this orphan is
+    # inert by construction, not by luck.
+    torn = M.register_path(tmp_path).with_name("register.json.99999.1.999999.tmp")
+    torn.write_bytes(b'{"schema_version": 1, "rows": {"child-9": {"id": "child-9", "rows')
+
+    # The live register is completely unaffected by the torn sibling sitting right next to it.
+    assert M.register_path(tmp_path).read_text() == before
+    assert M.read_register(tmp_path)["rows"]["child-1"]["phase"] == "planned"
+    assert "child-9" not in M.read_rows(tmp_path)
+
+    # And an ordinary subsequent write proceeds normally, ignoring the orphan entirely.
+    M.upsert_row(tmp_path, "child-1", {"phase": "working"})
+    assert M.read_register(tmp_path)["rows"]["child-1"]["phase"] == "working"
+    assert torn.exists()  # the orphan itself is never cleaned up by an unrelated write
 
 
 # --------------------------------------------------------------------------- 4. nested unknown key
@@ -153,6 +208,24 @@ def test_unknown_key_nested_in_child_row_is_preserved_on_write(tmp_path: Path) -
     # The nested key neither runtime's write explicitly re-sent survives — this is the C4
     # requirement, and it is specifically about a key *inside* a row, not a top-level key.
     assert reread["codex_execution_class"] == "review-max"
+
+
+def test_unknown_key_at_document_root_is_preserved_on_write(tmp_path: Path) -> None:
+    # Repair round 1 (R2): the brief's scenario 4 says "not only an unknown top-level key" —
+    # meaning both the nested case above AND this one must survive. A document-root key, e.g. a
+    # handoff cursor one runtime writes that the other's register.py has never heard of, must
+    # equally survive an ordinary write by the other runtime.
+    M.upsert_row(tmp_path, "child-1", {"run_id": "run-a", "phase": "planned"})
+    path = M.register_path(tmp_path)
+    doc = json.loads(path.read_text())
+    doc["handoff_token"] = "abc123"  # unknown to this module, added directly on disk
+    path.write_text(json.dumps(doc))
+
+    M.upsert_row(tmp_path, "child-1", {"phase": "working"})
+
+    on_disk = json.loads(path.read_text())
+    assert on_disk["handoff_token"] == "abc123"
+    assert on_disk["rows"]["child-1"]["phase"] == "working"
 
 
 # --------------------------------------------------------------------------- 5. unsupported schema
@@ -239,6 +312,23 @@ def test_retiring_a_run_moves_its_rows_and_leaves_other_runs_intact(tmp_path: Pa
     assert set(live) == {"b1"}
     assert live["b1"]["phase"] == "working"
 
-    # Retiring run-a a second time is a harmless no-op (nothing left to retire).
-    M.retire_run(tmp_path, "run-a")
+    # Repair round 1 (R1): retiring run-a a SECOND time — after it already succeeded — must not
+    # destroy the archive the first call just wrote. The live register no longer has run-a's
+    # rows, so a naive re-retire recomputes an empty set and would overwrite the archive with it.
+    second_final_path = M.retire_run(tmp_path, "run-a")
+    assert second_final_path == final_path
+    archive_after_second_retire = json.loads(final_path.read_text())
+    assert set(archive_after_second_retire["rows"]) == {"a1", "a2"}  # NOT emptied
+    # Other runs are still untouched.
     assert set(M.read_rows(tmp_path)) == {"b1"}
+
+
+def test_retiring_a_run_with_nothing_live_and_no_prior_archive_writes_nothing(
+    tmp_path: Path,
+) -> None:
+    # A run_id that was never registered (or whose rows were already retired by a run that never
+    # wrote an archive in this test's tmp_path) has nothing to retire. This is not an error;
+    # nothing is written, and None signals "there was no archive to point at."
+    result = M.retire_run(tmp_path, "run-never-registered")
+    assert result is None
+    assert not M.final_register_path(tmp_path, "run-never-registered").exists()

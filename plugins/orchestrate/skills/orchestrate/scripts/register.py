@@ -35,22 +35,29 @@ Work       -- task, work_shape, scope, artifact_path, predicate, integration_mod
 
 Lifecycle  -- phase, expected_state, observed_state
     ``phase`` is the closed, ordered vocabulary in ``PHASES`` below. ``expected_state`` /
-    ``observed_state`` exist because a live child's own status report is not a completion signal
-    (F4a, ``.orchestrate/friction-log.md``): one child reported ``done`` and then returned to
-    ``working`` three times in a single dispatch. Disagreement between what the orchestrator
-    expects and what herdr currently reports is recorded as *divergence*, not silently resolved by
-    trusting one detector over the other — that resolution is U3/U4's job, not this module's.
+    ``observed_state`` exist because a live child's own status report is not a completion signal:
+    one measured child reported ``done`` and then returned to ``working`` three times in a single
+    dispatch. Disagreement between what the orchestrator expects and what herdr currently reports
+    is recorded as *divergence*, not silently resolved by trusting one detector over the other —
+    that resolution is U3/U4's job, not this module's. See
+    ``docs/engineering-journal/LEARNINGS.md#agent-lifecycle-detectors-lie`` for the durable,
+    publicly readable record of the broader class this belongs to (vendor detectors disagreeing
+    in vendor-specific, non-repeating ways).
 
 Time       -- dispatched_at, deadline, max_quiet_seconds, last_event_at
     ``deadline`` and ``max_quiet_seconds`` are alternative hang-detection strategies for a row —
-    a caller sets whichever fits that dispatch, and the other stays ``None``; both columns always
-    exist so every row round-trips identically regardless of which strategy it uses.
+    a caller sets whichever fits that dispatch. :func:`upsert_row` seeds **both** to ``None`` at
+    row creation (the other TIME/ACCOUNTING columns stay absent until some later phase transition
+    sets them — see the forward-compatibility note below), so this pair specifically always
+    round-trips identically regardless of which strategy a row uses.
     ``last_event_at`` **must be fed by pane output (herdr's ``revision`` counter), never by
-    lifecycle state (``state_change_seq``)** (F3, ``.orchestrate/friction-log.md``): observed
-    over one dispatch window, ``state_change_seq`` moved twice and then sat still for minutes
-    while the child worked hard, and ``revision`` moved roughly 47 times over the same window. A
-    hang detector reading ``last_event_at`` from ``state_change_seq`` false-alarms on a healthy
-    child; this module only defines the column, U7 is the reader that must honor this.
+    lifecycle state (``state_change_seq``)**: measured over one real dispatch window,
+    ``state_change_seq`` moved twice and then sat still for minutes while the child worked hard,
+    while ``revision`` moved roughly 47 times over the same window. A hang detector reading
+    ``last_event_at`` from ``state_change_seq`` false-alarms on a healthy child; this module only
+    defines the column, U7 is the reader that must honor this. See
+    ``docs/engineering-journal/LEARNINGS.md#pane-revision-is-the-liveness-signal`` for the full
+    write-up.
 
 Accounting -- tokens_observed, tokens_reserved
     ``tokens_reserved`` is what U6's spend gate committed before dispatch; ``tokens_observed`` is
@@ -176,18 +183,37 @@ def _unique_tmp(path: Path) -> Path:
 
 
 def _atomic_write_json(path: Path, doc: Mapping[str, Any]) -> None:
-    """Write ``doc`` to ``path`` atomically: temp file + ``os.replace``.
+    """Write ``doc`` to ``path`` atomically: temp file + ``fsync`` + ``os.replace``.
 
     A reader never observes a partially written file — ``os.replace`` is atomic within a POSIX
     filesystem, so the file at ``path`` is either the previous complete content or the new
-    complete content, never a torn mixture.
+    complete content, never a torn mixture. The write into the temp file happens inside the same
+    ``try``/``finally`` that cleans it up, so a failed write (e.g. disk full) cannot leave an
+    orphan temp behind either.
+
+    fsync before replace matters on top of that: ``Path.write_text`` only closes the file
+    descriptor, it does not persist dirty pages, so a machine crash immediately after a
+    *successful* replace could otherwise leave ``path`` present but empty. `run_ledger.py` and
+    `manifest_store.py` elsewhere in this repository both fsync for the same reason before their
+    own ``os.replace`` — this matches that idiom rather than only borrowing their temp-naming
+    scheme.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = _unique_tmp(path)
-    tmp.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    payload = json.dumps(doc, indent=2, sort_keys=True).encode("utf-8") + b"\n"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
+        view = memoryview(payload)
+        while view:
+            written = os.write(fd, view)
+            view = view[written:]
+        os.fsync(fd)
+        os.close(fd)
+        fd = -1
         os.replace(tmp, path)
     finally:
+        if fd >= 0:
+            os.close(fd)
         with contextlib.suppress(FileNotFoundError):
             tmp.unlink()
 
@@ -247,6 +273,14 @@ def _write_halt_receipt(root: Path, *, found: Any) -> Path:
 def _read_register_unlocked(root: Path) -> dict[str, Any]:
     """Load the register, or a fresh in-memory document if none exists yet.
 
+    Returns the loaded document **as loaded** — every top-level key the file on disk carries,
+    not a reconstructed ``{"schema_version", "rows"}`` envelope. This is the document-root half
+    of C4: a key one runtime writes at the document root (e.g. a handoff cursor neither Claude's
+    nor Codex's register.py necessarily knows about yet) must survive a write by the other, the
+    same way an unknown key nested inside a child row already does. Only ``rows`` is normalized
+    (defaulted to ``{}`` and type-checked) because every other function in this module indexes
+    into it directly.
+
     Raises :class:`UnsupportedSchemaVersionError` — after writing a halt receipt and without
     touching ``register.json`` itself — if the file on disk carries a ``schema_version`` this
     code does not support (C3).
@@ -271,13 +305,21 @@ def _read_register_unlocked(root: Path) -> dict[str, Any]:
     rows = raw.get("rows", {})
     if not isinstance(rows, dict):
         raise RegisterError(f"{path}: 'rows' must be a JSON object keyed by row id")
-    return {"schema_version": version, "rows": rows}
+    raw["rows"] = rows
+    return raw
 
 
 def _validate_phase(fields: Mapping[str, Any]) -> None:
     phase = fields.get("phase")
     if phase is not None and phase not in PHASES:
         raise RegisterError(f"phase {phase!r} is not one of {PHASES}")
+
+
+# The two alternative hang-detection strategies (see the Time group docstring above). Both are
+# seeded to None at row creation so this pair — and only this pair — always round-trips
+# identically regardless of which strategy a given row uses; every other optional column stays
+# genuinely absent until some later phase transition sets it.
+_TIME_STRATEGY_COLUMNS = ("deadline", "max_quiet_seconds")
 
 
 # --------------------------------------------------------------------------- public read API
@@ -309,7 +351,9 @@ def upsert_row(root: Path, row_id: str, fields: Mapping[str, Any]) -> dict[str, 
     wholesale — so a caller that only knows a subset of columns (its own runtime's, say) can never
     erase columns it has never heard of (C4). A brand-new row requires ``run_id`` in ``fields`` (or
     already present in an existing row of the same id); every other column is optional and simply
-    absent until some later phase transition sets it.
+    absent until some later phase transition sets it, **except** ``deadline`` /
+    ``max_quiet_seconds``, which are seeded to ``None`` on row creation (not merely left absent) so
+    that pair specifically always round-trips (see the Time group docstring above).
 
     Returns the row exactly as stored, id included.
     """
@@ -321,33 +365,51 @@ def upsert_row(root: Path, row_id: str, fields: Mapping[str, Any]) -> dict[str, 
         doc = _read_register_unlocked(root)
         rows = doc["rows"]
         existing = rows.get(row_id, {})
-        if not existing and "run_id" not in fields:
+        is_new_row = not existing
+        if is_new_row and "run_id" not in fields:
             raise RegisterError(f"new row {row_id!r} requires 'run_id' in fields")
         merged = {**existing, **dict(fields), "id": row_id}
+        if is_new_row:
+            for column in _TIME_STRATEGY_COLUMNS:
+                merged.setdefault(column, None)
         rows[row_id] = merged
         doc["rows"] = rows
         _atomic_write_json(register_path(root), doc)
         return dict(merged)
 
 
-def retire_run(root: Path, run_id: str) -> Path:
+def retire_run(root: Path, run_id: str) -> Path | None:
     """Move every row belonging to ``run_id`` out of the live register and into
     ``.orchestrate/runs/<run_id>/register-final.json``. Rows belonging to any other run are left
     untouched in the live register.
 
     The durable copy under ``runs/<run_id>/`` is written **before** the live register is
     rewritten: a crash between the two steps leaves the run's rows present in both places
-    (recoverable — retiring is idempotent), never in neither (a crash the other way round would
-    lose them outright).
+    (recoverable by re-running: the live rows are still there, so a retry recomputes and rewrites
+    the same archive), never in neither.
+
+    Genuinely idempotent, including the case that matters most — retrying **after** a fully
+    successful retirement, not just recovering from a crash mid-retirement:
+
+    - No live rows for ``run_id`` and an archive already exists at
+      ``runs/<run_id>/register-final.json`` -> that archive is left untouched and its path is
+      returned. Nothing is recomputed from the (now-empty) live set, so a second, third, or Nth
+      call after success can never overwrite the one durable record of that run with ``{}``.
+    - No live rows and no archive either -> there is nothing to retire (``run_id`` was never
+      registered, or every row for it was already archived by someone else). This is not an
+      error; ``None`` is returned and nothing is written.
     """
     _safe_run_id(run_id)
     with _write_locked(root):
         doc = _read_register_unlocked(root)
         rows: dict[str, dict[str, Any]] = doc["rows"]
         retiring = {rid: row for rid, row in rows.items() if row.get("run_id") == run_id}
-        remaining = {rid: row for rid, row in rows.items() if row.get("run_id") != run_id}
-
         final_path = final_register_path(root, run_id)
+
+        if not retiring:
+            return final_path if final_path.exists() else None
+
+        remaining = {rid: row for rid, row in rows.items() if row.get("run_id") != run_id}
         final_doc = {
             "schema_version": doc["schema_version"],
             "run_id": run_id,
@@ -372,7 +434,7 @@ def _cli_show(root: Path, run_id: str | None) -> int:
 
 def _cli_retire(root: Path, run_id: str) -> int:
     final_path = retire_run(root, run_id)
-    print(str(final_path))
+    print(str(final_path) if final_path is not None else "nothing to retire")
     return 0
 
 

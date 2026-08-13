@@ -42,6 +42,26 @@ the baseline revision so deleting the comparison makes the stale match wake the 
 
 **Refs.** DECISIONS `{#mined-evidence-stays-operator-local}` (why the originating session evidence itself stays operator-local rather than landing in this public repo); LEARNINGS `{#agent-lifecycle-detectors-lie}` (the sibling finding that a child's own reported status is equally unreliable as a completion signal).
 
+### Schema-backed request tests do not prove the response consumer  {#validate-both-sides-of-socket-contracts}
+
+**Context.** The first orchestrate event client validated its complete `events.subscribe` request
+against Herdr's captured protocol schema. Every request-side spelling and required field was
+correct, but reconnect catch-up still failed before the event loop began.
+
+**Mechanism.** `session.snapshot` returns a typed result wrapper whose snapshot lives at
+`result.snapshot`. Tests hand-authored the already-unwrapped `{panes, agents}` value expected by
+catch-up, bypassing the actual client-to-consumer seam. A correct producer request therefore hid an
+incompatible response consumer.
+
+**Fix.** Response tests now validate a complete success response against the same committed schema,
+send it through a real temporary Unix socket and the ordinary client decoder, then assert that the
+subscriber unwraps the typed result before catch-up. Request and response are separate contract
+boundaries and both must cross their production parser.
+
+**Generalizable rule.** For a schema-backed socket integration, validate both directions and make
+the test traverse each production boundary. A request accepted by the peer says nothing about
+whether the reply is represented at the level the consumer expects.
+
 ### Predicting another program's configuration is unbounded; set the value and observe the pane  {#do-not-predict-foreign-settings}
 
 **Context.** U1's qwen routing had no launch-time effort flag. Three successive repairs tried to *predict* the child's effort by reading qwen's settings files (layer precedence, folder trust, `$VAR` expansion, `.env` discovery, system defaults, then the child's `cwd` instead of the orchestrator's). Each repair closed the hole the previous review named and opened a new one.

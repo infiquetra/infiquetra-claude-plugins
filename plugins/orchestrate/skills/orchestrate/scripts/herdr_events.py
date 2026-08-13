@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Small newline-delimited JSON client for herdr's event socket.
 
-Subscription names use herdr's dotted request vocabulary. Broadcast envelopes use a separate,
-underscored vocabulary; callers must not translate one into the other. The committed schema
-fixture is captured from ``herdr api schema --output`` and the tests validate requests against it.
+Subscription names use herdr's dotted request vocabulary. The 26 general broadcast events use a
+separate, underscored vocabulary; the three subscription-event broadcasts remain dotted. The
+committed schema fixture is captured from ``herdr api schema --output`` and the tests validate
+requests and snapshot responses against it.
 """
 
 from __future__ import annotations
@@ -265,8 +266,8 @@ class HerdrEventClient:
 
             def _connected_catch_up() -> None:
                 nonlocal connected
-                connected += 1
                 catch_up()
+                connected += 1
 
             try:
                 self.subscribe_once(
@@ -278,7 +279,7 @@ class HerdrEventClient:
             except HerdrEventError as exc:
                 if diagnostic is not None:
                     diagnostic(str(exc))
-                if connected == 0 and isinstance(exc, SubscriptionError):
+                if connected == 0 and isinstance(exc, (SocketUnavailableError, SubscriptionError)):
                     raise
 
             if max_connections is not None and connected >= max_connections:

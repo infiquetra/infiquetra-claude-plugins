@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.2.1] - 2026-08-13
+
+### Fixed
+
+- Unwrap `session.snapshot` from Herdr's real `result.snapshot` response shape, now validated
+  end-to-end against the committed success-response schema through a Unix-socket test.
+- Resolve `tab_closed` through registered `tab_id` values, and record pane/tab terminal events as
+  `exited` before waking the orchestrator.
+- Fail fast when the subscriber's first socket connection cannot open; its register row now records
+  `exited` and the command returns non-zero instead of retrying forever as `working`.
+- Compare sentinel purpose and nonce as well as run and child identity, so an earlier dispatch or a
+  readiness marker cannot satisfy a later completion interaction.
+- Batch reconnect catch-up updates into one register rewrite and reset once-only diagnostics at
+  each accepted connection.
+- Clarify that the three subscription-event broadcasts remain dotted even though the 26 general
+  broadcast events are underscored.
+
 ## [0.2.0] - 2026-08-13
 
 ### Added

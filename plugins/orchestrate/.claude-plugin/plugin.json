@@ -1,6 +1,6 @@
 {
   "name": "orchestrate",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Cross-vendor orchestration over herdr with a durable register, tracked event subscriber, revision-safe sentinels, and reconnect catch-up.",
   "author": {
     "name": "Infiquetra",

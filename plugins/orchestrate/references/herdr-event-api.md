@@ -45,24 +45,27 @@ A successful subscription acknowledgement is:
 
 ## Two event vocabularies
 
-Subscription request types are dotted. Broadcast envelope names are underscored. They are separate
-schema definitions and are not interchangeable:
+Subscription request types are dotted. The 26 general broadcast-event names are underscored. They
+are separate schema definitions and are not interchangeable:
 
 | Subscribe with | Receive broadcast envelope |
 |---|---|
 | `tab.closed` | `tab_closed` |
 | `pane.exited` | `pane_exited` |
 
-`pane.output_matched`, `pane.agent_status_changed`, and `pane.scroll_changed` are the three dotted
-subscription-event names. `pane.output_matched` carries `matched_line` and a full `read` value,
-including the pane's current `revision`.
+The exception is the three `SubscriptionEventKind` broadcasts: `pane.output_matched`,
+`pane.agent_status_changed`, and `pane.scroll_changed` remain dotted when received. In particular,
+`pane.output_matched` carries `matched_line` and a full `read` value, including the pane's current
+`revision`.
 
 ## Sentinel and revision guard
 
 `make_sentinel()` creates a unique marker containing `run_id`, `child_id`, purpose, and nonce. The
-subscriber verifies both identities, then reads the row's `dispatch_revision_baseline`. It honours
-the match only when `read.revision` is greater than that baseline. A matching marker already present
-in scrollback remains at or before the sampled revision and cannot wake the orchestrator.
+subscriber compares all four fields with the sentinel in the active pane subscription, then reads
+the row's `dispatch_revision_baseline`. It honours the match only when `read.revision` is greater
+than that baseline. A matching marker already present in scrollback remains at or before the sampled
+revision and cannot wake the orchestrator. A marker from an earlier dispatch or for a different
+readiness/completion purpose is rejected even after the revision advances.
 
 ## Reconnect catch-up
 
@@ -72,6 +75,10 @@ registered pane with the live `panes` and `agents` arrays. It writes the current
 reports disagreement with `expected_state`, and checks whether each declared `artifact_path`
 exists. A missing pane is recorded as `exited`.
 
+Herdr returns the snapshot inside `result.snapshot`; `result.type` is `session_snapshot`. Tests
+validate that complete response against the committed `success_response` schema and cross a real
+Unix socket before catch-up consumes the inner snapshot.
+
 The subscriber itself is an ordinary foreground process, not a coding agent, so its row uses pane
 presence as the live `working` signal instead of Herdr's coding-agent detector. The process records
 its own `observed_state` as `exited` when its event loop terminates.
@@ -80,4 +87,7 @@ Catch-up runs once per connection boundary. It is not a scheduled reconciliation
 evaluate predicates; predicate evaluation is added only when its producer and consumer exist.
 
 An event for an unregistered `pane_id` changes no row and produces one diagnostic for that pane.
-A missing socket error names the socket path and directs the operator to `herdr status server`.
+A `tab_closed` event resolves registered rows through their `tab_id`; pane and tab terminal events
+record `observed_state: exited` before waking. Once-only diagnostics reset at each reconnect. A
+missing socket on the first attempt fails the subscriber process non-zero, leaves its row at
+`observed_state: exited`, names the socket path, and directs the operator to `herdr status server`.

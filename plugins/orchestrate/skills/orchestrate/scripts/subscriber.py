@@ -60,15 +60,13 @@ def make_sentinel(
 def output_match_subscription(
     pane_id: str,
     sentinel: str,
-    *,
-    match_type: str = "substring",
 ) -> dict[str, Any]:
     """Build herdr's four-field output subscription using the socket API's source spelling."""
     subscription = {
         "type": "pane.output_matched",
         "pane_id": pane_id,
         "source": "recent_unwrapped",
-        "match": {"type": match_type, "value": sentinel},
+        "match": {"type": "substring", "value": sentinel},
     }
     herdr_events.validate_subscription(subscription)
     return subscription
@@ -120,6 +118,7 @@ def catch_up(
             live.setdefault(live_pane_id, {}).update(item)
 
     records: list[CatchUpRecord] = []
+    updates: dict[str, dict[str, str]] = {}
     for row_id, row in register_store.read_rows(root, run_id=run_id).items():
         pane_id = row.get("pane_id")
         if not isinstance(pane_id, str) or not pane_id:
@@ -151,7 +150,7 @@ def catch_up(
 
         expected = row.get("expected_state")
         expected_state = expected if isinstance(expected, str) else None
-        register_store.upsert_row(root, row_id, {"observed_state": observed_state})
+        updates[row_id] = {"observed_state": observed_state}
         artifact_path, artifact_exists = _artifact_presence(root, row.get("artifact_path"))
         records.append(
             CatchUpRecord(
@@ -165,6 +164,7 @@ def catch_up(
                 artifact_exists=artifact_exists,
             )
         )
+    register_store.upsert_rows(root, updates)
     return records
 
 
@@ -196,6 +196,23 @@ class Subscriber:
         self.wake_sender = wake_sender or self._send_wake
         self.diagnostic_sink = diagnostic_sink or self._print_diagnostic
         self._reported_once: set[tuple[str, str]] = set()
+        self._sentinel_expectations = self._read_sentinel_expectations()
+
+    def _read_sentinel_expectations(self) -> dict[str, dict[str, Any]]:
+        expectations: dict[str, dict[str, Any]] = {}
+        for subscription in self.subscriptions:
+            if subscription.get("type") != "pane.output_matched":
+                continue
+            pane_id = subscription.get("pane_id")
+            match = subscription.get("match")
+            if not isinstance(pane_id, str) or not isinstance(match, Mapping):
+                continue
+            if match.get("type") != "substring" or not isinstance(match.get("value"), str):
+                continue
+            payload = _sentinel_payload(str(match["value"]))
+            if payload is not None:
+                expectations[pane_id] = payload
+        return expectations
 
     @staticmethod
     def _print_diagnostic(payload: dict[str, Any]) -> None:
@@ -225,7 +242,13 @@ class Subscriber:
         )
 
     def _read_snapshot(self) -> Mapping[str, Any]:
-        return self.client.request("orchestrate-snapshot", "session.snapshot", {})
+        result = self.client.request("orchestrate-snapshot", "session.snapshot", {})
+        snapshot = result.get("snapshot")
+        if not isinstance(snapshot, Mapping):
+            raise herdr_events.ProtocolError(
+                "session.snapshot response requires an object result.snapshot"
+            )
+        return snapshot
 
     def _send_wake(self, text: str) -> None:
         self.client.request(
@@ -252,6 +275,7 @@ class Subscriber:
 
     def run_catch_up(self) -> None:
         """Run the one bounded recovery pass associated with the current connection."""
+        self._reported_once.clear()
         records = catch_up(self.root, self.snapshot_reader(), run_id=self.run_id)
         attention = [
             record for record in records if record.diverged or record.artifact_exists is False
@@ -269,26 +293,22 @@ class Subscriber:
                 "Re-read the run register before continuing."
             )
 
-    def _registered_row_for_pane(self, pane_id: str) -> tuple[str, dict[str, Any]] | None:
-        for row_id, row in register_store.read_rows(self.root, run_id=self.run_id).items():
-            if row.get("pane_id") == pane_id:
-                return row_id, row
-        return None
-
-    def handle_event(self, event: herdr_events.HerdrEvent) -> None:
-        """Update the matching row and wake only for registered, current-run pane events."""
+    def _registered_rows_for_event(
+        self, event: herdr_events.HerdrEvent
+    ) -> list[tuple[str, dict[str, Any]]]:
         pane_id = event.pane_id
-        if pane_id is None:
-            self._diagnostic(
-                "event_without_pane",
-                "received an event without a pane_id",
-                key=event.name,
-                once=True,
-                event=event.name,
-            )
-            return
-        registered = self._registered_row_for_pane(pane_id)
-        if registered is None:
+        tab_id = event.data.get("tab_id")
+        rows = register_store.read_rows(self.root, run_id=self.run_id)
+        if pane_id is not None:
+            return [(row_id, row) for row_id, row in rows.items() if row.get("pane_id") == pane_id]
+        if isinstance(tab_id, str):
+            return [(row_id, row) for row_id, row in rows.items() if row.get("tab_id") == tab_id]
+        return []
+
+    def _report_unregistered_event(self, event: herdr_events.HerdrEvent) -> None:
+        pane_id = event.pane_id
+        tab_id = event.data.get("tab_id")
+        if pane_id is not None:
             self._diagnostic(
                 "unregistered_pane",
                 f"ignored event for unregistered pane_id {pane_id}",
@@ -298,22 +318,49 @@ class Subscriber:
                 event=event.name,
             )
             return
-        row_id, row = registered
+        if isinstance(tab_id, str):
+            self._diagnostic(
+                "unregistered_tab",
+                f"ignored event for unregistered tab_id {tab_id}",
+                key=tab_id,
+                once=True,
+                tab_id=tab_id,
+                event=event.name,
+            )
+            return
+        self._diagnostic(
+            "event_without_handle",
+            "received an event without a registered pane_id or tab_id",
+            key=event.name,
+            once=True,
+            event=event.name,
+        )
 
+    def _sentinel_matches_active_subscription(
+        self, pane_id: str, payload: Mapping[str, Any] | None
+    ) -> bool:
+        expected = self._sentinel_expectations.get(pane_id)
+        if expected is None or payload is None:
+            return False
+        fields = ("run_id", "child_id", "purpose", "nonce")
+        return all(payload.get(field) == expected.get(field) for field in fields)
+
+    def _handle_registered_event(
+        self, event: herdr_events.HerdrEvent, row_id: str, row: Mapping[str, Any]
+    ) -> bool:
+        pane_id = event.pane_id
         if event.name == "pane.output_matched":
+            if pane_id is None:
+                return False
             payload = _sentinel_payload(event.matched_line or "")
-            if (
-                payload is None
-                or payload.get("run_id") != self.run_id
-                or payload.get("child_id") != row_id
-            ):
+            if not self._sentinel_matches_active_subscription(pane_id, payload):
                 self._diagnostic(
                     "sentinel_mismatch",
-                    "ignored output match whose sentinel does not identify this run and child",
+                    "ignored output match whose sentinel is not the active run-child interaction",
                     pane_id=pane_id,
                     row_id=row_id,
                 )
-                return
+                return False
             baseline = row.get("dispatch_revision_baseline")
             if not isinstance(baseline, int) or isinstance(baseline, bool):
                 self._diagnostic(
@@ -322,7 +369,7 @@ class Subscriber:
                     pane_id=pane_id,
                     row_id=row_id,
                 )
-                return
+                return False
             if event.revision is None or event.revision <= baseline:
                 self._diagnostic(
                     "stale_output_match",
@@ -332,21 +379,34 @@ class Subscriber:
                     baseline=baseline,
                     revision=event.revision,
                 )
-                return
+                return False
             register_store.upsert_row(
                 self.root, row_id, {"last_event_at": herdr_events.unix_time()}
             )
-        elif event.name == "pane_exited":
+        elif event.name in {"pane_exited", "pane_closed", "tab_closed"}:
             register_store.upsert_row(self.root, row_id, {"observed_state": "exited"})
         elif event.name == "pane_agent_status_changed":
             observed = event.data.get("agent_status")
             if isinstance(observed, str):
                 register_store.upsert_row(self.root, row_id, {"observed_state": observed})
+        return True
 
-        self.wake_sender(
-            f"Orchestrate event {event.name} for run {self.run_id}, row {row_id}. "
-            "Re-read the run register before continuing."
-        )
+    def handle_event(self, event: herdr_events.HerdrEvent) -> None:
+        """Update matching current-run rows before waking the orchestrator."""
+        registered = self._registered_rows_for_event(event)
+        if not registered:
+            self._report_unregistered_event(event)
+            return
+        handled_rows: list[str] = []
+        for row_id, row in registered:
+            if self._handle_registered_event(event, row_id, row):
+                handled_rows.append(row_id)
+        if handled_rows:
+            rows = ", ".join(handled_rows)
+            self.wake_sender(
+                f"Orchestrate event {event.name} for run {self.run_id}, rows {rows}. "
+                "Re-read the run register before continuing."
+            )
 
     def run(self) -> None:
         """Register this process, then hold and recover the subscription indefinitely."""

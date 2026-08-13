@@ -367,25 +367,41 @@ def upsert_row(root: Path, row_id: str, fields: Mapping[str, Any]) -> dict[str, 
 
     Returns the row exactly as stored, id included.
     """
-    if not row_id:
-        raise RegisterError("row_id must be non-empty")
-    _validate_phase(fields)
+    return upsert_rows(root, {row_id: fields})[row_id]
+
+
+def upsert_rows(root: Path, updates: Mapping[str, Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Create or merge-update several rows in one locked, atomic register rewrite.
+
+    Each entry has the same semantics as :func:`upsert_row`, including new-row ``run_id``
+    validation, optional-column preservation, and the deadline/quiet-time seeding pair. All
+    updates are validated before the register is mutated, then land in one durable replacement.
+    """
+    normalized = {row_id: dict(fields) for row_id, fields in updates.items()}
+    for row_id, fields in normalized.items():
+        if not row_id:
+            raise RegisterError("row_id must be non-empty")
+        _validate_phase(fields)
 
     with _write_locked(root):
         doc = _read_register_unlocked(root)
         rows = doc["rows"]
-        existing = rows.get(row_id, {})
-        is_new_row = not existing
-        if is_new_row and "run_id" not in fields:
-            raise RegisterError(f"new row {row_id!r} requires 'run_id' in fields")
-        merged = {**existing, **dict(fields), "id": row_id}
-        if is_new_row:
-            for column in _TIME_STRATEGY_COLUMNS:
-                merged.setdefault(column, None)
-        rows[row_id] = merged
+        merged_rows: dict[str, dict[str, Any]] = {}
+        for row_id, fields in normalized.items():
+            existing = rows.get(row_id, {})
+            is_new_row = not existing
+            if is_new_row and "run_id" not in fields:
+                raise RegisterError(f"new row {row_id!r} requires 'run_id' in fields")
+            merged = {**existing, **fields, "id": row_id}
+            if is_new_row:
+                for column in _TIME_STRATEGY_COLUMNS:
+                    merged.setdefault(column, None)
+            rows[row_id] = merged
+            merged_rows[row_id] = dict(merged)
         doc["rows"] = rows
-        _atomic_write_json(register_path(root), doc)
-        return dict(merged)
+        if normalized:
+            _atomic_write_json(register_path(root), doc)
+        return merged_rows
 
 
 def retire_run(root: Path, run_id: str) -> Path | None:

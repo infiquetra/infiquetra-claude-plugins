@@ -4,9 +4,10 @@ Cross-vendor multi-session orchestration over [herdr](https://github.com/infique
 work to Claude, Codex, Grok, Muse, Qwen, and agy children as tracked herdr sessions, aggregate
 their results, and hold the operator's conversation steady while they run.
 
-**This release ships the register plus the tracked herdr event subscriber and reconnect
-catch-up** — see `skills/orchestrate/SKILL.md` for the full contract and `CHANGELOG.md` for what
-is and is not implemented yet. The full design lives in
+**This release ships the register, tracked herdr event subscriber, and child session lifecycle** —
+including write-ahead launch, interaction readiness, scoped worktrees, and recorded reaping. See
+`skills/orchestrate/SKILL.md` for the full contract and `CHANGELOG.md` for what is and is not
+implemented yet. The full design lives in
 `docs/plans/2026-08-12-orchestrate-plugin-plan.md`.
 
 ## Register
@@ -27,3 +28,19 @@ every reconnect. Catch-up records lifecycle disagreement and checks whether each
 
 See `references/herdr-event-api.md` for the exact request shape, dotted-versus-underscored event
 vocabularies, sentinel revision guard, and subscriber command-line interface.
+
+## Session lifecycle
+
+`scripts/session_lifecycle.py` previews and launches children through the `agent` wrapper's
+control-only path. It records launch intent before the side effect, recovers interrupted launches
+by their run-bound task label, and records the wrapper's returned workspace, tab, pane, and actual
+agent name.
+
+Readiness is a bounded interaction, not a lifecycle-status guess: the child must assemble and emit
+a unique nonce-bound sentinel that never appears whole in the echoed prompt. Mutating work gets a
+branch worktree and an explicit environment setup; read-only work stays in the ambient checkout.
+Every child records a launch commit. Committed and repository-visible uncommitted changes are
+compared with the declared scope even when the work predicate passes, and any attributed ambient
+checkout change violates a mutating child's isolated landing boundary. Git-ignored paths are an
+explicit limitation, not silently described as covered. U4 fixes launch and observation to Herdr's
+default session. See `references/substrate-contract.md` for the adapter and failure contract.

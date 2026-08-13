@@ -1,4 +1,4 @@
-"""Herdr event client, tracked subscriber, revision guard, and reconnect catch-up tests."""
+"""Herdr event client, tracked subscriber, sentinel identity, and reconnect catch-up tests."""
 
 from __future__ import annotations
 
@@ -20,6 +20,9 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_DIR = ROOT / "plugins" / "orchestrate" / "skills" / "orchestrate" / "scripts"
 SCHEMA = ROOT / "plugins" / "orchestrate" / "tests" / "fixtures" / "herdr-api-schema.json"
+OUTPUT_MATCH_CAPTURE = (
+    ROOT / "plugins" / "orchestrate" / "tests" / "fixtures" / "captured-output-matched.json"
+)
 
 
 def _load(name: str, path: Path) -> ModuleType:
@@ -337,8 +340,8 @@ def test_subscriber_rejects_output_matches_it_cannot_represent(
 # --------------------------------------------------------------------------- scenario 5
 
 
-def test_sentinel_in_pre_dispatch_scrollback_does_not_satisfy_match(tmp_path: Path) -> None:
-    sentinel = SUBSCRIBER.make_sentinel("run-a", "child-a", "complete", nonce="old")
+def test_live_zero_revision_output_match_is_honoured_by_identity(tmp_path: Path) -> None:
+    sentinel = SUBSCRIBER.make_sentinel("run-a", "child-a", "complete", nonce="live-zero")
     REGISTER.upsert_row(
         tmp_path,
         "child-a",
@@ -346,7 +349,6 @@ def test_sentinel_in_pre_dispatch_scrollback_does_not_satisfy_match(tmp_path: Pa
             "run_id": "run-a",
             "pane_id": "pane-a",
             "phase": "working",
-            "dispatch_revision_baseline": 41,
         },
     )
     diagnostics: list[dict[str, Any]] = []
@@ -357,10 +359,10 @@ def test_sentinel_in_pre_dispatch_scrollback_does_not_satisfy_match(tmp_path: Pa
     )
     socket_path = _short_socket_path()
 
-    # The fake herdr peer searches already-present text and returns the hit at the exact revision
-    # sampled before dispatch. This crosses the actual socket/decoder/dispatcher path.
+    # The live daemon capture reports read.revision=0 even for a real content match. This socket
+    # path proves identity, not an unrelated pane counter, is the accepted freshness boundary.
     with _SubscriptionServer(
-        socket_path, [[_output_event("pane-a", sentinel, revision=41)]]
+        socket_path, [[_output_event("pane-a", sentinel, revision=0)]]
     ) as peer:
         EVENTS.HerdrEventClient(socket_path).subscribe_once(
             [subscription],
@@ -368,10 +370,57 @@ def test_sentinel_in_pre_dispatch_scrollback_does_not_satisfy_match(tmp_path: Pa
         )
 
     row = REGISTER.read_rows(tmp_path)["child-a"]
-    assert "last_event_at" not in row
-    assert wakes == []
-    assert [item["code"] for item in diagnostics] == ["stale_output_match"]
+    assert isinstance(row["last_event_at"], float)
+    assert len(wakes) == 1
+    assert diagnostics == []
     assert len(peer.requests) == 1
+
+
+def test_pre_dispatch_prompt_echo_cannot_satisfy_sentinel_match(tmp_path: Path) -> None:
+    sentinel = SUBSCRIBER.make_sentinel("run-a", "child-a", "complete", nonce="echo-safe")
+    prompt = SUBSCRIBER.sentinel_assembly_instructions(
+        sentinel, when="the completion predicate has passed"
+    )
+    assert sentinel not in prompt
+    REGISTER.upsert_row(
+        tmp_path,
+        "child-a",
+        {"run_id": "run-a", "pane_id": "pane-a", "phase": "working"},
+    )
+    diagnostics: list[dict[str, Any]] = []
+    wakes: list[str] = []
+    subscription = SUBSCRIBER.output_match_subscription("pane-a", sentinel)
+    subscriber = _subscriber(
+        tmp_path, diagnostics=diagnostics, wakes=wakes, subscriptions=[subscription]
+    )
+    envelope = _output_event("pane-a", sentinel, revision=0)
+    envelope["data"]["matched_line"] = prompt
+    envelope["data"]["read"]["text"] = prompt
+    socket_path = _short_socket_path()
+
+    with _SubscriptionServer(socket_path, [[envelope]]):
+        EVENTS.HerdrEventClient(socket_path).subscribe_once([subscription], subscriber.handle_event)
+
+    assert wakes == []
+    assert [item["code"] for item in diagnostics] == ["sentinel_mismatch"]
+    assert "last_event_at" not in REGISTER.read_rows(tmp_path)["child-a"]
+
+
+def test_live_output_match_capture_validates_and_decodes_zero_revision() -> None:
+    captured = json.loads(OUTPUT_MATCH_CAPTURE.read_text(encoding="utf-8"))
+    assert isinstance(captured, list) and len(captured) == 1
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+    envelope_schema = {
+        "$schema": schema["$schema"],
+        "schemas": schema["schemas"],
+        "$ref": "#/schemas/subscription_event",
+    }
+    jsonschema.Draft202012Validator(envelope_schema).validate(captured[0])
+    event = EVENTS.decode_event(captured[0])
+    assert event.name == "pane.output_matched"
+    assert event.revision == 0
+    assert captured[0]["data"]["read"]["text"] == "captured pane output\nmatched substring\n"
+    assert "dispatch_revision_baseline" not in captured[0]["data"]["read"]["text"]
 
 
 # --------------------------------------------------------------------------- scenario 6
@@ -639,12 +688,12 @@ def test_main_returns_nonzero_and_registers_exit_when_socket_start_fails(
 # --------------------------------------------------------------------------- supporting unit contracts
 
 
-def test_current_sentinel_revision_updates_liveness_and_wakes(tmp_path: Path) -> None:
+def test_identity_matched_sentinel_updates_liveness_and_wakes(tmp_path: Path) -> None:
     sentinel = SUBSCRIBER.make_sentinel("run-a", "child-a", "ready", nonce="new")
     REGISTER.upsert_row(
         tmp_path,
         "child-a",
-        {"run_id": "run-a", "pane_id": "pane-a", "dispatch_revision_baseline": 41},
+        {"run_id": "run-a", "pane_id": "pane-a"},
     )
     wakes: list[str] = []
     subscriber = _subscriber(
@@ -666,7 +715,7 @@ def test_multiple_sentinel_interactions_for_one_pane_are_each_honoured(tmp_path:
     REGISTER.upsert_row(
         tmp_path,
         "child-a",
-        {"run_id": "run-a", "pane_id": "pane-a", "dispatch_revision_baseline": 10},
+        {"run_id": "run-a", "pane_id": "pane-a"},
     )
     wakes: list[str] = []
     subscriber = _subscriber(
@@ -801,7 +850,7 @@ def test_sentinel_identity_mismatch_rejects_event_before_liveness_update(tmp_pat
     REGISTER.upsert_row(
         tmp_path,
         "child-a",
-        {"run_id": "run-a", "pane_id": "pane-a", "dispatch_revision_baseline": 4},
+        {"run_id": "run-a", "pane_id": "pane-a"},
     )
     diagnostics: list[dict[str, Any]] = []
     wakes: list[str] = []
@@ -819,7 +868,7 @@ def test_sentinel_identity_mismatch_rejects_event_before_liveness_update(tmp_pat
     assert wakes == []
 
 
-def test_output_match_without_revision_baseline_is_rejected(tmp_path: Path) -> None:
+def test_output_match_needs_no_cross_counter_revision_baseline(tmp_path: Path) -> None:
     sentinel = SUBSCRIBER.make_sentinel("run-a", "child-a", "complete", nonce="expected")
     REGISTER.upsert_row(tmp_path, "child-a", {"run_id": "run-a", "pane_id": "pane-a"})
     diagnostics: list[dict[str, Any]] = []
@@ -833,9 +882,9 @@ def test_output_match_without_revision_baseline_is_rejected(tmp_path: Path) -> N
 
     subscriber.handle_event(EVENTS.decode_event(_output_event("pane-a", sentinel, revision=5)))
 
-    assert [item["code"] for item in diagnostics] == ["missing_revision_baseline"]
-    assert "last_event_at" not in REGISTER.read_rows(tmp_path)["child-a"]
-    assert wakes == []
+    assert diagnostics == []
+    assert isinstance(REGISTER.read_rows(tmp_path)["child-a"]["last_event_at"], float)
+    assert len(wakes) == 1
 
 
 @pytest.mark.parametrize(
@@ -850,7 +899,7 @@ def test_output_match_requires_active_purpose_and_nonce(
     REGISTER.upsert_row(
         tmp_path,
         "child-a",
-        {"run_id": "run-a", "pane_id": "pane-a", "dispatch_revision_baseline": 4},
+        {"run_id": "run-a", "pane_id": "pane-a"},
     )
     diagnostics: list[dict[str, Any]] = []
     wakes: list[str] = []

@@ -1,18 +1,19 @@
 ---
 name: orchestrate
-description: The orchestrate register and tracked herdr event subscriber for multi-vendor runs, with revision-safe sentinels and reconnect catch-up. No session launching, predicate evaluation, routing, or mirror behavior yet. Triggers on "orchestrate register", "orchestrate subscriber", "herdr event catch-up", "the run register", ".orchestrate/register.json".
+description: The orchestrate register, tracked herdr subscriber, and write-ahead child session lifecycle for multi-vendor runs, with interaction readiness, scoped worktrees, nonce-bound sentinels, reconnect catch-up, and recorded reaping. No predicate implementations, integration gate, or mirror behavior yet. Triggers on "orchestrate register", "orchestrate subscriber", "orchestrate session lifecycle", "herdr event catch-up", "the run register".
 ---
 
-# orchestrate — register and event subscriber
+# orchestrate — register, event subscriber, and session lifecycle
 
 `orchestrate` coordinates multi-vendor herdr sessions: Claude, Codex, Grok, Muse, Qwen, and agy
 children dispatched under one operator-driven run, aggregated back through a mirror and woken by a
-subscriber holding herdr's event socket across turns. This skill currently ships **two pieces of
-that system: the register and subscriber**. The register is the whole state model (KTD5) and the
+subscriber holding herdr's event socket across turns. This skill currently ships **three pieces of
+that system: the register, subscriber, and child session lifecycle**. The register is the whole state model (KTD5) and the
 Claude↔Codex handoff seam (R12). The subscriber holds protocol 19 event streams, wakes the
-orchestrator, and performs reconnect catch-up (KTD3/KTD12). Everything else — session launching,
-predicate evaluation, spend gating, hang detection, routing, the `/orchestrate` command itself —
-lands in later units of
+orchestrator, and performs reconnect catch-up (KTD3/KTD12). The session lifecycle owns write-ahead
+launch, recovery, interaction readiness, landing isolation, scope checks, and recorded reaping.
+Predicate implementations, spend gating, hang detection, mirror behavior, and the `/orchestrate`
+command itself land in later units of
 `docs/plans/2026-08-12-orchestrate-plugin-plan.md` and is deliberately absent here.
 
 ## What the register is
@@ -31,9 +32,10 @@ lifecycle-transition `state_change_seq` counter, which sits still for minutes on
 working child; and a child's own reported status is not a completion signal, so `expected_state` /
 `observed_state` exist to record a disagreement rather than resolve it by trusting one side.
 
-`dispatch_revision_baseline` is the pane-output `revision` sampled immediately before dispatch.
-An output-match sentinel is accepted only when its event revision is greater than that baseline;
-this prevents matching a sentinel that was already present in scrollback before the new dispatch.
+`pane.output_matched` reports `read.revision=0` while the pane's own counter is positive and
+advancing, so those counters are never compared. The subscriber instead checks complete run,
+child, purpose, and nonce identity. All sentinel producers use the public split-assembly helper so
+the assembled marker stays out of echoed dispatch input.
 
 ## Contract this unit guarantees
 
@@ -119,8 +121,34 @@ python3 plugins/orchestrate/skills/orchestrate/scripts/subscriber.py \
   --subscriptions-json '[{"type":"pane.exited"}]'
 ```
 
+## Child session lifecycle
+
+`scripts/session_lifecycle.py` launches through `agent --herdr-control-only` only after a dry-run
+confirms the exact absolute working directory and intended Herdr workspace. A run-bound task label
+and `launching` register phase are durable before the launch side effect. A retry discovers that
+label before launching, so a crash after process creation cannot duplicate the child.
+
+The wrapper's JSON response is the only source for workspace, tab, pane, reused-workspace status,
+and the actual uniquified agent name. Readiness subscribes before dispatch and requires the child
+to assemble and emit a nonce-bound sentinel that never appears whole in the echoed prompt. Pane
+content is checked for a trust prompt first. The lifecycle never treats `agent_status` alone as
+readiness. Qwen receives its resolved `/effort` command in-session and must emit its own
+acknowledgement before work is dispatched.
+
+Mutating children receive a branch worktree plus an explicit environment setup; read-only children
+stay in the ambient checkout. The lifecycle is fixed to Herdr's default session. Vendor permission
+flags are applied where they express a real read-only or workspace-write posture. The scope control
+records a launch commit for every child and unions committed changes with uncommitted tracked and
+non-ignored changes. A mutating child's declared scope applies only to its isolated landing; every
+attributed ambient-checkout change violates that boundary. Git-ignored paths remain an explicit
+limitation requiring a separate filesystem boundary. Reaping records the transition before closing
+the tab. Live reaping remains gated on the later integration unit.
+
+See `references/substrate-contract.md` for the adapter, recovery, residual readiness risk, and
+failure contract.
+
 ## What is deliberately not here
 
 No `commands/` entry (`/orchestrate` lands with the units that need an invocable surface — KTD2),
-no session launching via the `agent` wrapper, no predicate evaluation, no mirror behaviour beyond
-the register row it will eventually hold, no spend gate, and no hang detector.
+no predicate implementations or integration gate, no mirror behaviour beyond the register row it
+will eventually hold, no spend gate, and no hang detector.

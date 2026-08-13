@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.3.0] - 2026-08-13
+
+### Added
+
+- Launch children through the `agent` wrapper's control-only path after validating its dry-run
+  working directory and Herdr workspace. Launch intent and a run-bound task label are durable
+  before the side effect, interrupted launches recover by discovering that label, and executable
+  adapter tests pin every Herdr command to the default session and the installed argument grammar.
+- Resolve model and effort through fleet-core's runtime adapter. Qwen's in-session effort command
+  is sent after launch and accepted only after its own acknowledgement is observed; a timeout or
+  disabled-thinking acknowledgement records a distinct not-ready source.
+- Classify readiness through a nonce-bound `pane.output_matched` interaction whose complete
+  sentinel never appears in echoed dispatch input. Trust prompts are surfaced before dispatch,
+  dry-run routing mismatches fail before launch, and silent or continuously chatty panes remain
+  bounded by the readiness deadline.
+- Repair the subscriber's inert cross-counter revision guard. A captured live output-match event
+  proves protocol 19 reports `read.revision=0`; the event envelope is now schema-validated through
+  the production decoder instead of being discarded as stale.
+- Provision mutating children in branch worktrees with an explicit environment-setup step; keep
+  read-only children in the ambient checkout. Every child records a launch commit. Isolated child
+  changes are compared with the current upstream merge base after merges or rebases, and any
+  attributed ambient-checkout change by a mutating child violates the landing boundary regardless
+  of its relative path. Shared-checkout violations state that authorship is not established, and the
+  Git repository must contain a commit so committed-change observation cannot silently disable.
+  Repository-visible changes are checked independently of predicate success; Git-ignored paths are
+  documented as outside this control.
+- Record reaping before closing a Herdr tab and distinguish a recorded reap from an unexplained
+  disappearance.
+
+### Not in this release
+
+- Predicate implementations, the integration gate that authorizes live reaping, spend and
+  concurrency admission, hang detection, mirror behavior, and the `/orchestrate` command.
+
 ## [0.2.2] - 2026-08-13
 
 ### Fixed

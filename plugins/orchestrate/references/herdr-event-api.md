@@ -63,14 +63,22 @@ The exception is the three `SubscriptionEventKind` broadcasts: `pane.output_matc
 `pane.output_matched` carries `matched_line` and a full `read` value, including the pane's current
 `revision`.
 
-## Sentinel and revision guard
+## Sentinel identity and prompt echo
 
 `make_sentinel()` creates a unique marker containing `run_id`, `child_id`, purpose, and nonce. The
-subscriber compares all four fields with the sentinel in the active pane subscription, then reads
-the row's `dispatch_revision_baseline`. It honours the match only when `read.revision` is greater
-than that baseline. A matching marker already present in scrollback remains at or before the sampled
-revision and cannot wake the orchestrator. A marker from an earlier dispatch or for a different
-readiness/completion purpose is rejected even after the revision advances.
+subscriber compares all four fields with the sentinel in the active pane subscription. A marker
+from another run, child, purpose, or dispatch is rejected.
+
+Do not compare `pane.output_matched`'s `read.revision` with the pane's revision. A live protocol-19
+capture reports `read.revision=0` on a real content match while `pane get` reports a positive,
+advancing counter. They are different counters. The captured envelope is committed beside the
+schema fixture and validated through the decoder in tests.
+
+The dispatch prompt must also avoid containing the complete sentinel, because terminal echo is
+searchable immediately. Every sentinel producer calls `sentinel_assembly_instructions()`, which
+sends the marker prefix and JSON payload as separate parts and asks the child to join them. This
+prevents prompt echo from matching. It does not prevent a child from assembling the sentinel too
+early while reasoning; readiness proves the interaction, not task completion or predicate success.
 
 ## Reconnect catch-up
 

@@ -280,8 +280,8 @@
     {
       "name": "orchestrate",
       "source": "./plugins/orchestrate",
-      "version": "0.2.2",
-      "description": "Cross-vendor orchestration over herdr with a durable register, tracked event subscriber, revision-safe sentinels, and reconnect catch-up.",
+      "version": "0.3.0",
+      "description": "Cross-vendor orchestration over herdr with durable state, write-ahead launches, interaction readiness, scoped worktrees, event catch-up, and recorded reaping.",
       "author": {
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"

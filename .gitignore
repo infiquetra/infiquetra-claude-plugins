@@ -78,3 +78,6 @@ docs/engineering-journal/canary-log.jsonl
 graphify-out/
 .mcp.json
 .serena
+
+# orchestrate plugin runtime state (KTD10 — gitignored here; force-add for provenance)
+.orchestrate/

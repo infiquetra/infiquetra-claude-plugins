@@ -39,6 +39,30 @@ weakest) — the two run in *opposite* directions. That is exactly why callers m
    halts at `Tier.validate()` rather than running an un-runnable tier.
 3. Run the guard suite.
 
+## Execution classes (portable version-2 subset)
+
+`models.json` also carries `schema_version`, `scalar_efforts`, `execution_classes`, and
+`root_orchestration_profiles`. Those keys are the portable Codex version-2 subset (KTD7).
+They are **additive**. Do not rename `models` / `efforts` to `lineage_models` /
+`lineage_efforts`, and do not port those lineage tables as the live router.
+
+`resolve()` still reads `tier_policy.json` and the Claude `models` / `efforts` vocabulary.
+The sibling `resolve_for_runtime(work_shape, runtime)` keys on an execution-class name
+(`review-max`, `review-high`, `test-medium`, `scan-low`, `monitor-low`, `work-high`,
+`work-medium`) and returns a runtime-owned
+`{model, effort, fallbacks, workspace_boundary, effort_application}`.
+`adapt_runtime_argv` maps that pair to the vendor CLI's real flags for all six plugin
+runtimes (`claude`, `codex`, `grok`, `muse`, `qwen`, `agy`). `effort_application` is
+the executable directive: `{"mode": "argv"}` or
+`{"mode": "in_session", "command": "/effort <rung>"}`. This unit produces the
+directive; U4 (session lifecycle) executes it and confirms it took via
+`pane.output_matched`. Effort collapse for a vendor that cannot represent `max` is
+an explicit table, not a silent clamp (`{#effort-collapse-max}`). Do not read
+another program's configuration files to guess what it will do.
+
+`SCALAR_EFFORTS` is derived from `scalar_efforts` the same way `EFFORTS` is derived from
+`efforts`. It includes `max`. It does not include Codex `ultra`.
+
 ## What you do NOT touch
 
 - The `/plan` tier table and the team-execution worker table are **rendered/validated against the

@@ -15,6 +15,14 @@ for a future v2 (unused today — v1 resolves purely from ``work_shape``). A ``r
 frontmatter value (KTD7) is a small alias that maps onto a ``work_shape`` registry row before
 lookup, so migrated team-execution agents resolve through the same registry as everything else.
 
+``resolve_for_runtime`` is a sibling, not a replacement: it keys on execution-class names from
+``models.json`` and returns a runtime-owned
+``{model, effort, fallbacks, workspace_boundary, effort_application}``.
+``adapt_runtime_argv`` is the only place a resolved pair becomes vendor CLI flags.
+``effort_application`` is the directive for *how* the collapsed effort is applied (launch
+argv, or an in-session command). Confirming the directive took is U4 (session lifecycle,
+``pane.output_matched``), not this unit. ``resolve()``'s signature and meaning are unchanged.
+
 ``cheaper_fallback`` steps exactly one rung down the ordered ladder (KTD3, ``{#tier-vocab-ordering}``):
 weaken the model one ``MODELS`` rung first; once already at the weakest model, drop effort one
 ``EFFORTS`` rung instead. At the ladder floor (weakest model, lowest effort) the fallback equals
@@ -61,6 +69,90 @@ ROLE_TIER_ALIASES: dict[str, str] = {
     "mechanical-scan": "purely-mechanical",
 }
 
+MODELS_JSON_PATH = Path(__file__).resolve().parent / "models.json"
+SUPPORTED_RUNTIMES: tuple[str, ...] = (
+    "claude",
+    "codex",
+    "grok",
+    "muse",
+    "qwen",
+    "agy",
+)
+STRONGEST_SUPPORTED = "strongest-supported"
+
+# Runtime-owned translation of the portable execution_classes model names.
+# Rank correspondence: sol = strongest, terra = default worker, 5.5 = older fallback.
+# Verified on this host 2026-08-13 from each CLI's own catalog/config, not inferred
+# across vendors. Two-rung catalogs share the weaker id for terra and 5.5.
+_RUNTIME_MODELS: dict[str, dict[str, str]] = {
+    "codex": {
+        "gpt-5.6-sol": "gpt-5.6-sol",
+        "gpt-5.6-terra": "gpt-5.6-terra",
+        "gpt-5.5": "gpt-5.5",
+    },
+    "claude": {
+        "gpt-5.6-sol": "fable",
+        "gpt-5.6-terra": "opus",
+        "gpt-5.5": "sonnet",
+    },
+    "grok": {
+        "gpt-5.6-sol": "grok-4.6",
+        "gpt-5.6-terra": "grok-4.5",
+        "gpt-5.5": "grok-4.5",
+    },
+    "muse": {
+        "gpt-5.6-sol": "muse-spark-1.2-contributor",
+        "gpt-5.6-terra": "muse-spark-1.2-contributor",
+        "gpt-5.5": "muse-spark-1.2-contributor",
+    },
+    "qwen": {
+        "gpt-5.6-sol": "qwen3.8-max-preview",
+        "gpt-5.6-terra": "qwen3.7-plus",
+        "gpt-5.5": "qwen3.6-plus",
+    },
+    "agy": {
+        "gpt-5.6-sol": "gemini-3.1-pro-high",
+        "gpt-5.6-terra": "gemini-3.6-flash-high",
+        "gpt-5.5": "gemini-3.5-flash-high",
+    },
+}
+
+# Per-vendor accepted effort rungs, verified on this host 2026-08-13.
+# These are the values collapse may emit. See DECISIONS {#effort-collapse-max}.
+_RUNTIME_ACCEPTED_EFFORTS: dict[str, tuple[str, ...]] = {
+    "claude": ("low", "medium", "high", "xhigh", "max"),
+    "codex": ("low", "medium", "high", "xhigh", "max"),
+    "grok": ("low", "medium", "high", "xhigh"),
+    "muse": ("low", "medium", "high", "xhigh"),
+    "qwen": ("low", "medium", "high", "xhigh", "max"),
+    "agy": ("low", "medium", "high"),
+}
+
+# Explicit effort-collapse policy. A vendor with no row passes the scalar through.
+# Muse accepts `ultra` on the CLI; it is never emitted (not a leaf scalar).
+# See DECISIONS {#effort-collapse-max}.
+_EFFORT_COLLAPSE: dict[str, dict[str, str]] = {
+    "grok": {"max": "xhigh"},
+    "muse": {"max": "xhigh"},
+    "agy": {"max": "high", "xhigh": "high"},
+}
+
+# How the collapsed effort is applied. Verified 2026-08-13 from each runtime's
+# own surface, not inferred. Four runtimes support both a launch flag and an
+# in-session /effort; this resolver chooses argv so the first turn already uses
+# the requested rung. Qwen has no launch flag (qwen --effort is "Unknown
+# argument"), so it is the only in_session runtime. Confirming the directive
+# took is U4 (session lifecycle, pane.output_matched), not this unit.
+# See DECISIONS {#effort-collapse-max}.
+_EFFORT_APPLICATION_MODE: dict[str, str] = {
+    "claude": "argv",
+    "codex": "argv",
+    "grok": "argv",
+    "muse": "argv",
+    "agy": "argv",
+    "qwen": "in_session",
+}
+
 
 class TierResolverError(ValueError):
     """Raised for an unresolvable work_shape/role_kind or an invalid override/ceiling."""
@@ -73,6 +165,25 @@ class Resolution:
     because: str
     cheaper_fallback: tuple[str, str]
     needs_confirm: bool
+
+
+@dataclass(frozen=True)
+class RuntimeResolution:
+    """Runtime-owned resolution of one execution class.
+
+    ``fallbacks`` preserves declared order after translating each candidate through
+    the same runtime policy as the preferred pair. ``workspace_boundary`` is copied
+    from the class and is not runtime-specific. ``effort_application`` is the
+    executable directive (``{"mode": "argv"}`` or
+    ``{"mode": "in_session", "command": "/effort <rung>"}``). This unit produces
+    the directive; U4 executes it and confirms it took.
+    """
+
+    model: str
+    effort: str
+    fallbacks: tuple[dict[str, str], ...]
+    workspace_boundary: str
+    effort_application: dict[str, str]
 
 
 def load_policy(path: Path | None = None) -> dict[str, dict[str, str]]:
@@ -165,6 +276,155 @@ def resolve(
         cheaper_fallback=cheaper_fallback(model, effort),
         needs_confirm=needs_confirm,
     )
+
+
+def _load_models_registry(path: Path | None = None) -> dict[str, Any]:
+    """Load ``models.json``; used by the execution-class sibling, not by ``resolve()``."""
+    registry_path = path if path is not None else MODELS_JSON_PATH
+    data: Any = json.loads(registry_path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise TierResolverError(f"models registry at {registry_path} must be a JSON object")
+    return data
+
+
+def _execution_classes(registry: dict[str, Any] | None = None) -> dict[str, Any]:
+    data = registry if registry is not None else _load_models_registry()
+    classes = data.get("execution_classes")
+    if not isinstance(classes, dict) or not classes:
+        raise TierResolverError("models.json is missing a non-empty execution_classes object")
+    return classes
+
+
+def _translate_model(runtime: str, model: str) -> str:
+    mapping = _RUNTIME_MODELS.get(runtime)
+    if mapping is None:
+        raise TierResolverError(
+            f"unknown runtime {runtime!r}; expected one of {list(SUPPORTED_RUNTIMES)}"
+        )
+    try:
+        return mapping[model]
+    except KeyError:
+        raise TierResolverError(
+            f"runtime {runtime!r} has no mapping for portable model {model!r}"
+        ) from None
+
+
+def collapse_effort_for_runtime(runtime: str, effort: str) -> str:
+    """Map an authoritative scalar (or ``strongest-supported``) onto a vendor CLI rung.
+
+    This is the documented collapse. It is not a clamp buried in a lookup: an effort
+    the vendor cannot represent becomes that vendor's strongest accepted rung, named
+    in ``_EFFORT_COLLAPSE``, or raises if even that rung is absent.
+    """
+    if runtime not in _RUNTIME_ACCEPTED_EFFORTS:
+        raise TierResolverError(
+            f"unknown runtime {runtime!r}; expected one of {list(SUPPORTED_RUNTIMES)}"
+        )
+    accepted = _RUNTIME_ACCEPTED_EFFORTS[runtime]
+    if effort == STRONGEST_SUPPORTED:
+        return accepted[-1]
+    collapsed = _EFFORT_COLLAPSE.get(runtime, {}).get(effort, effort)
+    if collapsed not in accepted:
+        raise TierResolverError(
+            f"runtime {runtime!r} cannot represent effort {effort!r} "
+            f"(collapsed to {collapsed!r}; accepted {accepted})"
+        )
+    return collapsed
+
+
+def _effort_application(runtime: str, effort: str) -> dict[str, str]:
+    """Return the executable effort directive for ``runtime`` at collapsed ``effort``.
+
+    Confirming the directive took is U4, not this unit.
+    """
+    mode = _EFFORT_APPLICATION_MODE.get(runtime)
+    if mode is None:
+        raise TierResolverError(
+            f"unknown runtime {runtime!r}; expected one of {list(SUPPORTED_RUNTIMES)}"
+        )
+    if mode == "in_session":
+        return {"mode": "in_session", "command": f"/effort {effort}"}
+    return {"mode": "argv"}
+
+
+def resolve_for_runtime(work_shape: str, runtime: str) -> RuntimeResolution:
+    """Resolve an execution class to a runtime-owned ``{model, effort, fallbacks}``.
+
+    ``work_shape`` is an ``execution_classes`` name (the portable vocabulary).
+    Existing ``tier_policy.json`` work shapes stay on ``resolve()``. Unknown class
+    or runtime raises; nothing defaults.
+    """
+    if runtime not in SUPPORTED_RUNTIMES:
+        raise TierResolverError(
+            f"unknown runtime {runtime!r}; expected one of {list(SUPPORTED_RUNTIMES)}"
+        )
+    classes = _execution_classes()
+    if work_shape not in classes:
+        raise TierResolverError(
+            f"unknown work_shape {work_shape!r}; expected one of {sorted(classes)}"
+        )
+    row = classes[work_shape]
+    if not isinstance(row, dict):
+        raise TierResolverError(f"execution class {work_shape!r} must be an object")
+    preferred = row.get("preferred")
+    if not isinstance(preferred, dict) or "model" not in preferred or "effort" not in preferred:
+        raise TierResolverError(f"execution class {work_shape!r} is missing preferred model/effort")
+    fallbacks_raw = row.get("fallbacks")
+    if not isinstance(fallbacks_raw, list):
+        raise TierResolverError(f"execution class {work_shape!r} fallbacks must be a list")
+    workspace_boundary = row.get("workspace_boundary")
+    if not isinstance(workspace_boundary, str) or not workspace_boundary:
+        raise TierResolverError(f"execution class {work_shape!r} is missing workspace_boundary")
+
+    preferred_effort = collapse_effort_for_runtime(runtime, str(preferred["effort"]))
+    translated: list[dict[str, str]] = []
+    for index, candidate in enumerate(fallbacks_raw):
+        if not isinstance(candidate, dict) or "model" not in candidate or "effort" not in candidate:
+            raise TierResolverError(
+                f"execution class {work_shape!r} fallbacks[{index}] must have model and effort"
+            )
+        translated.append(
+            {
+                "model": _translate_model(runtime, str(candidate["model"])),
+                "effort": collapse_effort_for_runtime(runtime, str(candidate["effort"])),
+            }
+        )
+
+    return RuntimeResolution(
+        model=_translate_model(runtime, str(preferred["model"])),
+        effort=preferred_effort,
+        fallbacks=tuple(translated),
+        workspace_boundary=workspace_boundary,
+        effort_application=_effort_application(runtime, preferred_effort),
+    )
+
+
+def adapt_runtime_argv(runtime: str, model: str, effort: str) -> list[str]:
+    """Map a resolved ``{model, effort}`` to the vendor CLI's real flags.
+
+    The ``agent`` wrapper passes tool arguments through unchanged, so this adapter
+    is the only thing standing between a resolved tier and a malformed command line.
+    Flags were verified on this host 2026-08-13 from each binary's own ``--help``.
+    Qwen effort is not a launch flag; the caller executes
+    ``RuntimeResolution.effort_application`` after launch. Confirming either
+    path took is U4, not this unit.
+    """
+    if runtime not in SUPPORTED_RUNTIMES:
+        raise TierResolverError(
+            f"unknown runtime {runtime!r}; expected one of {list(SUPPORTED_RUNTIMES)}"
+        )
+    safe_effort = collapse_effort_for_runtime(runtime, effort)
+    if runtime == "claude":
+        return ["--model", model, "--effort", safe_effort]
+    if runtime == "grok":
+        return ["--model", model, "--reasoning-effort", safe_effort]
+    if runtime == "muse":
+        return ["--model", model, "--reasoning-effort", safe_effort]
+    if runtime == "agy":
+        return ["--model", model, "--effort", safe_effort]
+    if runtime == "qwen":
+        return ["--model", model]
+    return ["--model", model, "-c", f"model_reasoning_effort={safe_effort}"]
 
 
 def _cli_resolve(args: argparse.Namespace) -> int:

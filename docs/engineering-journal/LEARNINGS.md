@@ -21,6 +21,20 @@
 
 ## 2026-08-13
 
+### Predicting another program's configuration is unbounded; set the value and observe the pane  {#do-not-predict-foreign-settings}
+
+**Context.** U1's qwen routing had no launch-time effort flag. Three successive repairs tried to *predict* the child's effort by reading qwen's settings files (layer precedence, folder trust, `$VAR` expansion, `.env` discovery, system defaults, then the child's `cwd` instead of the orchestrator's). Each repair closed the hole the previous review named and opened a new one.
+
+**Evidence.** Operator verified the installed bundle carries `packages/cli/src/ui/commands/effort-command.ts` (`/effort [low|medium|high|xhigh|max]`, built-in, interactive / non-interactive / acp). `qwen --effort max` is still `Unknown argument: effort`. The prediction stack lived in `tier_resolver.py` (`qwen_ambient_effort` and everything under it) and is now deleted.
+
+**Mechanism.** Another program owns its merge. A model of that merge is always incomplete, because the next unmodeled layer is a valid finding. An in-session command that *sets* the value produces pane output, so a later unit can confirm it via `pane.output_matched` (plan R3). Argv is assert-and-hope; `/effort` is set-then-observe.
+
+**Fix.** `RuntimeResolution.effort_application` is structured data. Qwen is `{"mode": "in_session", "command": "/effort <rung>"}`. The five runtimes with a launch flag are `{"mode": "argv"}`. Confirming the directive took is U4, not U1. Recorded in DECISIONS `{#effort-collapse-max}`.
+
+**Generalizable rule.** Do not read another program's configuration files to guess what it will do. If the program exposes a command that sets the value and emits output, emit that command as data and let the session-lifecycle unit execute and observe it.
+
+**Refs.** DECISIONS `{#effort-collapse-max}`, plan U1 / U4 / R3.
+
 ### A reused module can declare a control and never enforce it — check the consumer, not the module  {#reused-module-declares-but-does-not-enforce}
 
 **Context.** A three-engine document review (Claude, codex `gpt-5.6-sol` max, grok-4.6 xhigh) of `docs/plans/2026-08-12-orchestrate-plugin-plan.md` found the same defect three times in one plan. Each instance cited a real, currently-shipping `fleet-core` module accurately, by correct name, for a control the plan promised. All three controls were inert.

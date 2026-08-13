@@ -82,8 +82,15 @@ class ChildSpec:
     """One child launch request.
 
     ``scope`` contains repository-relative files or directory prefixes.  Mutating children receive
-    a dedicated branch worktree.  ``environment_command`` is run in a newly created worktree;
-    the default makes a uv-managed Python worktree independently runnable.
+    a dedicated branch worktree.  ``environment_command`` is run in a newly created worktree; the
+    default makes a uv-managed Python worktree independently runnable.
+
+    The default carries ``--locked --extra dev`` because that is what this repository's CI
+    provisions with (``.github/workflows/ci.yml``), and the whole reason the field exists is that
+    a fresh worktree does not inherit the repository's ``.venv``, so a child in one cannot run its
+    predicate at all.  A bare ``uv sync`` installs the runtime dependency set only: the resulting
+    environment has no pytest, no ruff and no mypy, which is exactly the set of programs a
+    predicate is most likely to be.
     """
 
     run_id: str
@@ -95,7 +102,7 @@ class ChildSpec:
     mutating: bool
     workspace: str
     readiness_timeout: float = 30.0
-    environment_command: tuple[str, ...] = ("uv", "sync")
+    environment_command: tuple[str, ...] = ("uv", "sync", "--locked", "--extra", "dev")
 
 
 @dataclass(frozen=True)
@@ -150,35 +157,35 @@ def task_label(run_id: str, row_id: str) -> str:
     return f"orchestrate-{run_id}-{row_id}"
 
 
-def permission_argv(runtime: str, *, mutating: bool) -> list[str]:
-    """Apply real vendor read/write posture flags where the CLI exposes one.
+def permission_argv(runtime: str) -> list[str]:
+    """Apply the vendor's workspace-write posture where the CLI exposes one.
 
-    These flags are defence in depth.  They do not replace the final Git boundary check, because
-    none of the supported CLIs accepts a repository-relative path allowlist. For mutating work,
-    Codex, Grok, Qwen, and Agy expose sandbox flags. Claude exposes no cwd-write boundary flag.
-    Muse's sandbox is on by default and its existing-worktree binding is applied separately.
+    Every child gets the same posture, mutating or not, and the ``mutating`` distinction is
+    deliberately **not** expressed as a flag any more.  A read-only child must still write exactly
+    one thing -- its own deliverable -- and none of the supported CLIs accepts a repository-relative
+    path allowlist, so there is no flag that permits that write and forbids every other one.  A
+    read-only posture flag therefore never contained a read-only child; it only stopped it
+    producing the artifact it was dispatched to produce, which is a launch that cannot succeed
+    rather than a launch that is safe.
+
+    What this posture **does** contain: writes outside the workspace the child was launched in.
+    What it does **not** contain: any particular path inside that workspace.  Containment inside
+    the workspace is :func:`check_completion_scope`, whose repository write allowlist for a
+    read-only child is empty, so any repository-visible write fails that child's completion.
+    Git-ignored paths are outside that check -- see ``IGNORED_PATHS_LIMITATION`` -- which is why
+    the durable dispatch receipt is authenticated rather than merely stored (``completion.py``).
+
+    Claude and Muse expose no positive flag: Claude has no cwd-write boundary flag at all, and
+    Muse's sandbox is already on by default.  Qwen's boolean ``--sandbox`` is its
+    write-within-project profile on this host.
     """
-    if mutating:
-        return {
-            # Claude has no CLI flag that constrains writes to the launch cwd.
-            "claude": [],
-            "codex": ["--sandbox", "workspace-write"],
-            "grok": ["--sandbox", "workspace"],
-            # Muse enables its sandbox by default; _runtime_resolution also binds its existing
-            # worktree. There is no positive CLI flag to enable a narrower write posture.
-            "muse": [],
-            # Qwen's boolean sandbox uses its write-within-project profile on this host.
-            "qwen": ["--sandbox"],
-            "agy": ["--sandbox"],
-        }.get(runtime, [])
     return {
-        "claude": ["--permission-mode", "plan"],
-        "codex": ["--sandbox", "read-only"],
-        "grok": ["--permission-mode", "plan"],
-        "muse": ["--disable-write"],
-        "agy": ["--mode", "plan"],
-        # Qwen's --sandbox is not a read-only mode, so it would overstate the control.
-        "qwen": [],
+        "claude": [],
+        "codex": ["--sandbox", "workspace-write"],
+        "grok": ["--sandbox", "workspace"],
+        "muse": [],
+        "qwen": ["--sandbox"],
+        "agy": ["--sandbox"],
     }.get(runtime, [])
 
 
@@ -535,8 +542,23 @@ class GitLanding:
         )
         return result.stdout.strip() or None
 
-    def is_ignored(self, root: Path, relative: str) -> bool:
-        """Whether Git ignores ``relative`` -- i.e. whether it is outside this boundary's view."""
+    def is_invisible_to_boundary(self, root: Path, relative: str) -> bool:
+        """Whether ``relative`` is genuinely outside what this boundary observes.
+
+        Two independent conditions, because an ignore rule on its own answers a different
+        question than the one the caller is asking.  ``git check-ignore`` reports whether the
+        *rules* cover a path; a path that is already **tracked** stays visible to ``git status``
+        and to the committed-diff comparison no matter what ``.gitignore`` says.  An operator who
+        force-adds an artifact directory would otherwise get a check that still answers "ignored"
+        while every write under that directory is reported as a change -- which is how a control
+        ends up firing on the orchestrator's own correct work rather than on a child's.
+
+        Answering "no" here is a refusal to dispatch, not a failure of the child, and the caller
+        says how to clear it.
+        """
+        tracked = self._git(root, ["ls-files", "-z", "--", relative]).stdout
+        if tracked.replace("\0", "").strip():
+            return False
         result = _run_command(
             ["git", "check-ignore", "--quiet", "--no-index", "--", relative],
             cwd=root,
@@ -693,7 +715,7 @@ class GitLanding:
 def _runtime_resolution(spec: ChildSpec, landing: Landing) -> tuple[Any, list[str]]:
     resolution = tier_resolver.resolve_for_runtime(spec.work_shape, spec.runtime)
     argv = tier_resolver.adapt_runtime_argv(spec.runtime, resolution.model, resolution.effort)
-    argv.extend(permission_argv(spec.runtime, mutating=spec.mutating))
+    argv.extend(permission_argv(spec.runtime))
     if spec.runtime == "muse" and spec.mutating:
         argv.extend(["--worktree", "existing", "--worktree-existing", str(landing.cwd)])
     return resolution, argv

@@ -4,10 +4,12 @@ Cross-vendor multi-session orchestration over [herdr](https://github.com/infique
 work to Claude, Codex, Grok, Muse, Qwen, and agy children as tracked herdr sessions, aggregate
 their results, and hold the operator's conversation steady while they run.
 
-**This release ships the register, tracked herdr event subscriber, and child session lifecycle** —
-including write-ahead launch, interaction readiness, scoped worktrees, and recorded reaping. See
-`skills/orchestrate/SKILL.md` for the full contract and `CHANGELOG.md` for what is and is not
-implemented yet. The full design lives in
+**This release ships the register, tracked herdr event subscriber, child session lifecycle, and
+completion** — write-ahead launch, interaction readiness, scoped worktrees, recorded reaping, and
+the only path a child reaches `verified`: a bounded predicate run on a settled, run-bound artifact,
+inside its boundary, with its destination actually changed and, for judgment work, an independent
+verifier's depth sample on record. See `skills/orchestrate/SKILL.md` for the full contract and
+`CHANGELOG.md` for what is and is not implemented yet. The full design lives in
 `docs/plans/2026-08-12-orchestrate-plugin-plan.md`.
 
 ## Register
@@ -24,7 +26,10 @@ for the full column reference.
 `~/.config/herdr/herdr.sock`. `scripts/subscriber.py` carries its own ordinary register row, wakes
 the orchestrator with `agent.prompt`, and runs one bounded snapshot catch-up at startup and after
 every reconnect. Catch-up records lifecycle disagreement and checks whether each declared
-`artifact_path` exists; predicate evaluation is not part of this release.
+`artifact_path` exists. That column is written only once an artifact has actually settled, and as an
+absolute path: declaring it at dispatch would make every reconnect of every in-flight child ask the
+operator for attention about a file that is not supposed to exist yet, and a relative path would be
+resolved against the ambient checkout while a mutating child's artifact lives in its worktree.
 
 See `references/herdr-event-api.md` for the exact request shape, dotted-versus-underscored event
 vocabularies, sentinel revision guard, and subscriber command-line interface.
@@ -42,5 +47,25 @@ branch worktree and an explicit environment setup; read-only work stays in the a
 Every child records a launch commit. Committed and repository-visible uncommitted changes are
 compared with the declared scope even when the work predicate passes, and any attributed ambient
 checkout change violates a mutating child's isolated landing boundary. Git-ignored paths are an
-explicit limitation, not silently described as covered. U4 fixes launch and observation to Herdr's
-default session. See `references/substrate-contract.md` for the adapter and failure contract.
+explicit limitation, not silently described as covered. Every child is launched with its runtime's
+ordinary workspace-write posture — a read-only flag would have forbidden the artifact every child is
+required to write, and no supported CLI accepts a path allowlist — so containment inside the
+workspace is the boundary check, whose repository write allowlist for a read-only child is empty.
+Launch and observation are fixed to Herdr's default session. See
+`references/substrate-contract.md` for the adapter and failure contract.
+
+## Completion
+
+`scripts/completion.py` is the only place a child reaches `verified`. The orchestrator establishes
+the expected evidence identity *before* dispatch — run-binding token, destination pre-state,
+predicate dependency closure and content digest — then settles the artifact by renaming the child's
+in-flight file itself, runs the bounded predicate, checks the boundary, verifies the destination
+changed, and for judgment work requires an independent verifier's depth sample.
+
+Because the register is Git-ignored and therefore writable by any child without the boundary check
+seeing it, the durable dispatch receipt and settlement record each carry a keyed digest under a
+per-run secret held outside the repository. Evaluation is safe to re-run for one dispatch, and a
+row's phase is `verified` if and only if its latest verdict is a pass.
+
+`references/predicates.md` states what each control establishes and — control by control, with the
+closure walk enumerated member by member — what it does not.

@@ -139,8 +139,10 @@ readiness. Qwen receives its resolved `/effort` command in-session and must emit
 acknowledgement before work is dispatched.
 
 Mutating children receive a branch worktree plus an explicit environment setup; read-only children
-stay in the ambient checkout. The lifecycle is fixed to Herdr's default session. Vendor permission
-flags are applied where they express a real read-only or workspace-write posture. The scope control
+stay in the ambient checkout. The lifecycle is fixed to Herdr's default session. Every child gets
+its runtime's ordinary workspace-write posture, mutating or not: each is dispatched with an artifact
+it must write and no supported CLI accepts a path allowlist, so a read-only flag would forbid the
+one write the protocol requires. The scope control
 records a launch commit for every child and unions committed changes with uncommitted tracked and
 non-ignored changes. A mutating child's declared scope applies only to its isolated landing; every
 attributed ambient-checkout change violates that boundary. Git-ignored paths remain an explicit
@@ -162,16 +164,30 @@ its deliverable, the destination's exact pre-dispatch state, and a digest over t
 resolved dependency closure. A predicate whose closure lives where the child can write is rejected
 before evaluation, and a closure that changes between dispatch and evaluation fails as tampered.
 
+The receipt must belong to the child being evaluated: the specification, landing, baseline and
+receipt arrive as independent arguments, so run, row and landing are checked against it first.
+
 Settlement is performed, not inferred. The child writes only an in-flight sibling of its
 destination; the orchestrator requires the destination to be untouched and then renames the
-in-flight file into place itself, so the predicate only ever reads a renamed path. Every child's
-deliverable lands in a directory that is exclusively its own and invisible to the repository
-boundary, which is what lets concurrent read-only children in one checkout each complete cleanly.
+in-flight file into place itself, so the predicate only ever reads a renamed path. That rename is
+one-shot, so it is recorded and replayed — which is what makes re-evaluation after a restart, and
+the two-step sequence judgment work needs, reachable at all. Every child's deliverable lands in a
+directory that is exclusively its own and invisible to the repository boundary, which is what lets
+concurrent read-only children in one checkout each complete cleanly.
+
+The register is not a trusted store. It is Git-ignored, it sits inside every child's landing, and
+every child can write files there — so the durable receipt and settlement record each carry a keyed
+digest under a per-run secret held outside the repository. A record the orchestrator did not write
+authenticates against nothing.
 
 Integration to the recorded destination is verified before `verified` is written, so a child whose
 change never landed cannot be reaped. Judgment-shaped work additionally requires an independent
-verifier's depth sample bound by digest to the settled artifact. A failed completion never moves
-`phase`; its verdict is recorded in the row's own `completion` key.
+verifier's depth sample, bound by digest to the settled artifact, naming a verifier session that
+actually exists in the register with the vendor and model it claims, and supporting at least one
+sampled claim — all of it persisted, so a sampled child and an unsampled one are not the same green
+row. A row's phase is `verified` if and only if its latest verdict is a pass: a failing
+re-evaluation demotes a previously verified row rather than leaving a contradiction the reap gate
+would read as a pass.
 
 See `references/predicates.md` for the full contract, including what each control does **not**
 establish.

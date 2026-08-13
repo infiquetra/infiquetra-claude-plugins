@@ -8,8 +8,23 @@
   closure is unchanged, its artifact was settled by the orchestrator's own rename, that artifact
   carries this dispatch's pre-established run binding, the predicate passes, the repository
   boundary is clean, the recorded destination has actually changed, and — for judgment-shaped work
-  — an independent verifier's depth sample is on record. Any failure records a verdict and leaves
-  the phase alone.
+  — an independent verifier's depth sample is on record. Any failure records a verdict, and a row's
+  phase is `verified` if and only if its latest verdict is a pass: a first failure leaves the phase
+  alone, and a failing re-evaluation demotes a previously verified row so the reap gate cannot
+  consume a contradiction as a pass.
+- The receipt must belong to the child it verifies. The specification, landing, baseline and receipt
+  arrive as independent arguments and every outcome is recorded under the specification's row, so
+  run, row and landing are required to agree with the receipt before anything else is read.
+- The durable records the register holds are authenticated. `.orchestrate/` is Git-ignored and
+  therefore invisible to the boundary check, and every child can write files in its landing, so the
+  dispatch receipt and settlement record each carry a keyed digest under a per-run orchestrator
+  secret held outside the repository. A record the orchestrator did not write authenticates against
+  nothing and is refused, an added field is a mismatch rather than an ignored key, and a secret
+  directory inside the repository is refused outright.
+- Evaluation is safe to re-run for one dispatch. Settlement is recorded and replayed rather than
+  re-attempted, which is what makes the restart path and judgment work reachable at all: the rename
+  is one-shot, so without a record a second evaluation of a correct child fails as though it had
+  written its destination directly.
 - Predicates are a typed, closed schema: a fixed argument vector with a bounded timeout and output
   cap. Shell text, an `argv` string, a shell program, an inline-source flag, an unknown key, and an
   out-of-range limit are all rejected rather than clamped or ignored. The check runs inline in the
@@ -20,8 +35,11 @@
   its entry-point path — must lie outside everything the child may write, and a digest over that
   closure's contents is captured before dispatch and re-checked before evaluation, so a change to
   any statically known dependency fails even when that file sits outside the child's declared
-  scope. The analysis is bounded and fails closed; what it does not follow is stated in
-  `references/predicates.md`.
+  scope. The closure includes every parent package initializer along a dotted import, because Python
+  executes those before the leaf module. The analysis is bounded and fails closed, and every route
+  to other code it does *not* follow — dynamic import, `sys.path` insertion, installed distributions,
+  native extensions' own imports, data files, non-Python entry points — is enumerated member by
+  member in `references/predicates.md`.
 - Settlement is performed rather than inferred, because a file on disk does not record whether it
   arrived by rename or by direct write. The child writes only an in-flight sibling of its
   destination; the orchestrator requires the destination to be byte-for-byte its pre-dispatch state
@@ -32,22 +50,33 @@
   file beside the artifact. An artifact from another run, another child, or another attempt is
   rejected, and the failure names the binding it does carry.
 - Every child's deliverable lands in a directory that is exclusively its own and required to be
-  invisible to the repository boundary; a repository that does not ignore the orchestrate state
-  directory fails closed. A read-only child's declared scope is a read scope, not a repository
+  invisible to the repository boundary. That is asked as the stronger question than "matched by an
+  ignore rule": a tracked path stays visible to the boundary whatever the ignore rules say, so an
+  artifact tree someone force-added is refused at dispatch with an actionable message rather than
+  failing every later child on a control firing on the orchestrator's own rename. A read-only child's declared scope is a read scope, not a repository
   write allowlist. Concurrent read-only children with disjoint scopes therefore both complete
   cleanly, which they previously did not, while a read-only child that does write into the shared
   checkout still fails.
-- The completion evaluator is held to the same boundary it enforces: the landing is snapshotted
-  immediately before the predicate runs, and a predicate that changes the landing fails as a
-  predicate defect rather than being attributed to the child.
+- The completion evaluator is held to the same boundary it enforces. Three surfaces are snapshotted
+  immediately before the predicate runs and compared after it: the landing, the ambient checkout,
+  and the artifact directory itself. The third is not redundant — that directory is required to be
+  invisible to Git, so a predicate that rewrote the settled artifact after its digest was taken was
+  previously a clean pass with a recorded digest that no longer matched the file. Any
+  predicate-authored change fails as a predicate defect rather than being attributed to the child.
 - Integration to the recorded destination is verified before reaping is possible — a `branch` tip
   that has not advanced and a `path` whose content has not changed both block verification, while
   `none` states that read-only work integrates nowhere instead of silently skipping the check.
 - Judgment-shaped work, classified through fleet-core's authoritative work-shape vocabulary
   including its role-tier aliases, cannot reach `verified` on mechanical coverage alone. A depth
   sample records verifier identity, the digest binding it to this artifact, sampled claims, evidence
-  locations, and dispositions from a closed set; a sample from the child itself, one recorded
-  against another artifact, one with no claims, and any unsupported claim each block verification.
+  locations, and dispositions from a closed set, and all of it is persisted to the register so a
+  child that was genuinely sampled and one whose sample certified nothing are not the same green row.
+  The named verifier must be a real session: a row that exists, belongs to this run, reached a phase
+  past launching, and carries the vendor and model the sample claims for it. A sample from the child
+  itself, one recorded against another artifact, one with no claims, any unsupported claim, and a
+  sample with no supported claim at all each block verification. Malformed external depth data is
+  recorded as a closed failure rather than raised, because a control that raises instead of recording
+  leaves the register showing a working child with no verdict.
 - `references/predicates.md` states the completion contract, including for every control what it
   does **not** establish — notably that settlement does not prove how the child produced its
   in-flight file, that closure analysis does not follow dynamic imports, and that a depth sample
@@ -55,9 +84,18 @@
 
 ### Changed
 
+- Every child is launched with its runtime's ordinary workspace-write posture, mutating or not.
+  A read-only flag forbade the artifact every child is required to write, and no supported CLI
+  accepts a repository-relative path allowlist, so it never contained a read-only child — it only
+  made its dispatch impossible to satisfy. Containment inside the workspace is the boundary check,
+  whose repository write allowlist for a read-only child is empty.
 - `GitLanding` answers two further boundary questions it already owned: whether a revision exists,
-  and whether a path is ignored by the repository. The scope helpers it shares with completion are
-  now part of its public surface.
+  and whether a path is genuinely invisible to the boundary — ignored *and* untracked. The scope
+  helpers it shares with completion are now part of its public surface.
+- A child's default environment command is `uv sync --locked --extra dev`, matching how this
+  repository's CI provisions. A bare `uv sync` leaves a fresh worktree with no pytest, ruff or mypy,
+  which is the set of programs a predicate is most likely to be, and that field exists precisely
+  because a worktree cannot otherwise run its predicate at all.
 
 ### Not in this release
 

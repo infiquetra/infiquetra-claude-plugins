@@ -54,16 +54,25 @@ A read-only child runs in the ambient checkout with `integration_mode=none` and
 `destination=none`. A mutating child receives a deterministic branch worktree with
 `integration_mode=branch` and the branch name as its destination. Creating the worktree is not the
 whole provisioning step: a newly created worktree has no checkout-local virtual environment, so
-the child specification also carries an environment command. The default is `uv sync`. A failed
+the child specification also carries an environment command. The default is
+`uv sync --locked --extra dev`, matching how this repository's CI provisions: a bare `uv sync`
+installs the runtime dependency set only, leaving the worktree with no pytest, ruff or mypy — which
+is the set of programs a predicate is most likely to be, and the reason this field exists. A failed
 environment command raises a landing error before launch; retrying reuses the worktree and retries
 the missing setup.
 
-Supported runtimes receive real read-only or workspace-write flags where their command-line
-interfaces expose those postures. Mutating Codex uses `workspace-write`, Grok uses its `workspace`
-sandbox, Qwen enables its project sandbox, and Agy enables its terminal-restrictions sandbox. Muse's
-sandbox is enabled by default and its existing-worktree arguments bind the landing. Claude exposes
-no command-line flag that limits writes to the launch working directory. These controls do not
-express the declared path allowlist and remain defence in depth.
+Every child receives its runtime's ordinary workspace-write posture, **mutating or not**. Codex uses
+`workspace-write`, Grok uses its `workspace` sandbox, Qwen enables its project sandbox, and Agy
+enables its terminal-restrictions sandbox. Muse's sandbox is enabled by default and its
+existing-worktree arguments bind the landing. Claude exposes no command-line flag that limits writes
+to the launch working directory.
+
+Read-only children are deliberately **not** given a no-write flag. Every child, of either kind, is
+dispatched with an artifact it is required to write, and none of these command-line interfaces
+accepts a repository-relative path allowlist — so a read-only posture flag never contained a
+read-only child, it only made its dispatch impossible to satisfy. What these flags contain is writes
+outside the launch workspace. What contains a child *inside* the workspace is the boundary check
+below, whose repository write allowlist for a read-only child is empty.
 
 Enforcement is observational. Every child records the ambient checkout's immutable commit before
 provisioning. U4 therefore requires a landing in a Git repository with at least one commit; a
@@ -94,9 +103,12 @@ the resolution has two halves.
 
 First, **every child's deliverable lands in a directory that is exclusively its own**, inside its
 own landing, at `.orchestrate/artifacts/<run-id>/<row-id>/`. That directory is required to be
-ignored by the repository; the requirement is checked when the dispatch receipt is issued and fails
-closed in a repository that does not ignore the orchestrate state directory, because the whole
-attribution argument depends on it. The directory sits inside the landing rather than beside the
+*invisible to the boundary*; the requirement is checked when the dispatch receipt is issued and
+fails closed, because the whole attribution argument depends on it. Invisibility is asked as the
+stronger question than "matched by an ignore rule": a tracked path stays visible to Git status and
+to the committed-diff comparison whatever `.gitignore` says, so an artifact tree an operator
+force-added is refused at dispatch — with the command that clears it — rather than causing every
+later settle of that path to be read as a repository change. The directory sits inside the landing rather than beside the
 repository so a sandboxed mutating child can write to it at all. The child writes an in-flight
 sibling there and the orchestrator renames it into place.
 
@@ -115,15 +127,26 @@ either. Detecting deliberate cross-child writes requires a per-child filesystem 
 the same missing control named for Git-ignored paths below.
 
 The completion evaluator is also held to this boundary. It runs the predicate inline in the child's
-landing after the child has stopped, so the landing is snapshotted immediately before the predicate
-runs and any predicate-authored change is recorded as a failure of the predicate rather than
-attributed to the child.
+landing after the child has stopped, so three surfaces are snapshotted immediately before the
+predicate runs and compared afterwards — the landing, the ambient checkout, and the artifact
+directory itself — and any predicate-authored change is recorded as a failure of the predicate
+rather than attributed to the child. The artifact directory is observed by content digest rather
+than by Git, because it is required to be invisible to Git: an observer that cannot see the evidence
+is not observing the evidence.
 
 **Git-ignored paths are outside U4 scope observation.** Git status deliberately omits them, and the
 ambient runtime state changes as the orchestrator records lifecycle transitions, so this control
 cannot reliably attribute ignored control-plane writes to one child. Protecting ignored paths such
 as runtime state requires a separate filesystem boundary. This exclusion is explicit rather than a
 claim that Git observes every filesystem write.
+
+That exclusion is why the register is **not treated as a trusted store**. `.orchestrate/` is
+Git-ignored, the register lives inside every child's landing, and every child can write files there,
+so a child that rewrites its own dispatch receipt is observed by nothing. The durable dispatch
+receipt and settlement record therefore each carry a keyed digest under a per-run orchestrator secret
+held outside the repository; a record that does not authenticate establishes nothing. This does not
+replace the missing filesystem boundary — a child can still destroy those records, after which
+nothing verifies, which is the correct failure rather than a false pass.
 
 ## Reaping and disappearance
 
@@ -139,9 +162,16 @@ verifier's depth sample is on record. The integration clause is what makes reapi
 work: a child whose change never landed cannot reach `verified`, so it cannot be reaped and its
 worktree cannot be discarded with the change still in it.
 
-A failed completion does not move `phase`. `PHASES` is closed and has no member meaning "evaluated
-and failed", so the verdict is recorded in the row's own `completion` key instead, and never in
-`observed_state` — that column is rewritten by the subscriber's snapshot catch-up for every row with
-a live pane, so a failure recorded there would be erased while the child's pane is still open. The
-full completion contract, including what each control does and does not establish, is in
-[`predicates.md`](predicates.md).
+A row's phase is `verified` **if and only if** its latest completion verdict is a pass. `PHASES` is
+closed and has no member meaning "evaluated and failed", so a first failing evaluation leaves the
+phase where it was and the verdict is recorded in the row's own `completion` key. A *re*-evaluation
+that fails demotes a previously verified row back to `working`: evaluation is re-run on every
+startup and reconnect, and a row left at `verified` carrying a failed verdict would be reaped as a
+pass. Demotion invents no phase — "evaluated and failed" is already `working` plus a recorded
+failure, which is what `is_working_not_failed()` and `failed_rows()` read. A `reaped` row is past
+this question and is left alone.
+
+The verdict never lives in `observed_state` — that column is rewritten by the subscriber's snapshot
+catch-up for every row with a live pane, so a failure recorded there would be erased while the
+child's pane is still open. The full completion contract, including what each control does and does
+not establish, is in [`predicates.md`](predicates.md).

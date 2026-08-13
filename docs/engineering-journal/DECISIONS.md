@@ -2,6 +2,108 @@
 
 ## 2026-08-13
 
+### Read-only children are launched write-capable, and the durable receipt is authenticated instead  {#read-only-children-are-write-capable}
+
+Every orchestrate child, read-only or not, is dispatched with one artifact it is required to write.
+Read-only children were launched with an absolute no-write flag — `--sandbox read-only`,
+`--permission-mode plan`, `--disable-write`, `--mode plan` — so in the product path they could not
+produce the deliverable at all, and the test that should have caught it wrote the deliverable from
+the pytest process (see LEARNINGS `{#test-the-real-execution-context}`).
+
+**Decision.** `permission_argv` returns one posture for every child: the runtime's ordinary
+workspace-write mode. The `mutating` parameter is dropped rather than kept as a branch that returns
+the same thing, because a parameter that changes nothing is the same defect this round was
+convened to fix. **Conditional on** the durable dispatch receipt and settlement record being
+authenticated (below), which is what the flag had been standing in for.
+
+**Why not a scoped write.** No supported CLI accepts a repository-relative path allowlist; the
+function's own docstring said so before this change. There is no flag that permits the artifact and
+forbids everything else, so the choice was never "scoped or unscoped" — it was "write-capable, or a
+dispatch that cannot succeed".
+
+**What actually contains a child.** Writes outside the workspace: the launch posture. Writes inside
+the workspace: the Git boundary check, whose repository write allowlist for a read-only child is
+empty, so any repository-visible write fails its completion. A review child that helpfully edits a
+source file was caught before this change and is still caught.
+
+**What this gives up, stated.** Git-ignored paths are observed by neither control. That gap already
+existed for mutating children and was exploited against shipped code; the read-only flag was not
+protecting the run, it was protecting the half of the population that happened to be covered.
+Removing it makes the gap uniform, which is what forced it to be closed properly.
+
+**Revisit when** any supported runtime ships a real path allowlist, or when a per-child filesystem
+boundary (mount namespace, sandbox profile) becomes available on the host — either would let the
+launch posture carry weight the boundary check currently carries alone.
+
+**Refs.** `{#authenticated-durable-records}`, LEARNINGS `{#gitignored-is-untrusted}`.
+
+### The register is authenticated, not trusted  {#authenticated-durable-records}
+
+The register is Git-ignored, it lives inside every child's landing, and every child can write files
+there. A reviewer produced two working forgeries against shipped code — a planted binding token and
+a substituted always-passing predicate with a recomputed closure digest — both reaching `verified`.
+
+**Decision.** The dispatch receipt and the settlement record each carry an HMAC-SHA-256 digest over
+exactly the fields they store, keyed by a per-run secret at `~/.orchestrate/run-secrets/<run>.key`
+(mode `0600`, relocatable by `ORCHESTRATE_RUN_SECRET_DIR`). `read_receipt` and `settlement_record`
+refuse a record that does not authenticate. The digest covers the stored mapping as stored, so an
+added key is a mismatch rather than a quietly ignored field, and a secret directory that resolves
+inside the repository is refused outright.
+
+**Threat model, stated.** Defeats: a child forging or editing a durable record it can write. Does
+not defeat: a child *deleting* the record — after which nothing verifies, which is the correct
+failure rather than a false pass. Rests on: "outside the workspace" being the one containment the
+supported CLIs express. Weaker for Claude and Muse, which expose no write-posture flag at all; for
+those the separation rests on the child never being pointed at the secret, and that is written down
+rather than papered over.
+
+**Rejected: a filesystem boundary per child** (mount namespace or sandbox profile covering
+`.orchestrate/`). It is the right long-term control and would close the whole ignored-path class
+rather than these two records, but it is host-specific, unavailable on this platform without
+elevated privileges, and far outside a completion unit's scope.
+
+**Rejected: keeping the receipt in memory only.** The receipt is persisted precisely so a restarted
+orchestrator can read it; in-memory-only deletes the requirement instead of meeting it.
+
+**Revisit when** a per-child filesystem boundary exists, which would make the keyed digest a
+belt-and-braces measure rather than the primary control.
+
+### Evaluation is idempotent, and a row is `verified` only while its latest verdict says so  {#evaluation-is-idempotent}
+
+Settlement is a one-shot rename, so a second evaluation of a perfectly correct child found the
+in-flight file gone and the destination present — indistinguishable from a child that wrote its
+destination directly — and failed `artifact_unsettled`. Two consequences followed. Judgment work had
+no reachable path at all, because its verifier must read the *settled* artifact and the evaluation
+that settles it is the one that would have to be repeated. And the catch-up contract, which
+re-evaluates run-bound artifacts on every startup and reconnect, could leave a row at
+`phase=verified` with `completion.result=failed` — a contradiction the reap gate reads as a pass.
+
+**Decision.** Settlement writes a durable authenticated record and replays it, conditional on the
+destination still holding the digest that was settled. Evaluation is therefore safe to re-run for
+one dispatch, and re-running it re-runs the mechanical controls rather than returning a cached
+verdict. Judgment work becomes a two-step sequence: evaluate (artifact settles, verdict is
+`depth_sample_missing`), dispatch the verifier against the settled path, evaluate again with the
+sample. Separately, `_record` maintains the invariant **`phase == "verified"` if and only if the
+latest verdict is a pass**: a failing re-evaluation demotes a previously verified row to `working`,
+and a `reaped` row is left alone.
+
+**Why demotion invents no phase.** `PHASES` is closed and operator-approved, with no member meaning
+"evaluated and failed" — and it does not need one, because that state is already representable as
+`phase="working"` plus a recorded failure, which is exactly what `is_working_not_failed()` and
+`failed_rows()` were built to read. Demotion reuses the shipped representation rather than extending
+a vocabulary this unit does not own.
+
+**Rejected: refuse re-evaluation of a verified row.** Simplest, and wrong: the catch-up contract
+specifies re-evaluation, so refusing it deletes a requirement rather than satisfying it, and it
+would leave tampering after a pass permanently invisible.
+
+**Rejected: hand the verifier the in-flight path.** It would keep settlement one-shot, but the
+verifier's whole contract is that it reads the artifact the predicate read; sampling a file that is
+still being written back to is a different, weaker claim wearing the same name.
+
+**Revisit when** a phase for "evaluated and failed" is added by the unit that owns `PHASES`, which
+would let demotion carry the reason rather than only the negation.
+
 ### A read-only child's declared scope is a read scope, and its deliverable leaves the shared checkout  {#read-only-exclusive-landing}
 
 Orchestrate's boundary check could not tell a child's changes from a sibling's in one working tree.

@@ -3,6 +3,12 @@
 Every test here crosses the boundaries this unit actually owns: a real Git repository, real
 files, and real subprocesses for predicate execution. The only hand-authored boundary is Herdr,
 which this unit touches solely through U4's already-tested reap path.
+
+The *child* boundary is real too, and that is not a detail. A test that produces the deliverable
+from the pytest process certifies the settlement protocol under the permissions of the process
+running the tests, which is not the permission posture a dispatched child has. Wherever the claim
+under test is about what a child can do, the deliverable is written by a separate process --
+:meth:`_Prepared.run_child_process` -- not by this one.
 """
 
 from __future__ import annotations
@@ -10,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import time
@@ -43,6 +50,33 @@ COMPLETION = _load("completion")
 
 
 # --------------------------------------------------------------------------- fixtures
+
+
+@pytest.fixture(autouse=True)
+def _orchestrator_secret_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep every test's per-run orchestrator secret out of the operator's home directory.
+
+    The location is deliberately a sibling of the test repository rather than a path inside it:
+    the module refuses a secret directory inside the repository, because every child's landing is
+    inside the repository.
+    """
+    monkeypatch.setenv(COMPLETION.RUN_SECRET_DIR_ENV, str(tmp_path / "orchestrator-secrets"))
+
+
+#: A stand-in child. It receives the same dispatch text a real child receives and does exactly
+#: what that text asks: it writes the in-flight sibling, and nothing else.
+_CHILD_SOURCE = """\
+import json
+import pathlib
+import sys
+
+indented = [line.strip() for line in sys.argv[1].splitlines() if line.startswith("  ")]
+inflight, destination, token = indented
+assert not pathlib.Path(destination).exists(), "the child must never see its destination"
+pathlib.Path(inflight).write_text(
+    json.dumps({"binding": token, "conclusion": "done"}), encoding="utf-8"
+)
+"""
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -120,6 +154,24 @@ class _Prepared:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps(document), encoding="utf-8")
         return target
+
+    def run_child_process(self) -> subprocess.CompletedProcess[str]:
+        """Produce the deliverable from a separate process, given only the dispatch text.
+
+        This is the boundary the rest of the suite cannot cross by writing files itself: the
+        deliverable is authored by a different process, in the landing, from
+        :func:`artifact_instructions` and nothing else. The script lives outside the repository
+        so its presence is not itself a boundary change.
+        """
+        script = self.repo.parent / f"child-{self.spec.row_id}.py"
+        script.write_text(_CHILD_SOURCE, encoding="utf-8")
+        return subprocess.run(
+            [sys.executable, str(script), COMPLETION.artifact_instructions(self.receipt)],
+            cwd=self.landing.cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
 
     def evaluate(self, **kwargs: Any) -> Any:
         return COMPLETION.evaluate_completion(
@@ -738,13 +790,37 @@ def test_a_judgment_shaped_child_cannot_reach_verified_on_mechanical_coverage_al
     assert result.predicate is not None and result.predicate.passed is True
 
 
-def _sample(prepared: _Prepared, **overrides: Any) -> Any:
-    digest = "sha256:" + hashlib.sha256(prepared.receipt.inflight_path.read_bytes()).hexdigest()
+def _verifier_row(
+    repo: Path,
+    row_id: str = "verifier-1",
+    *,
+    run_id: str = "run-a",
+    vendor: str = "grok",
+    model: str = "grok-4.6",
+    phase: str = "working",
+) -> None:
+    """Register a verifier session, because a depth sample must name one that exists."""
+    REGISTER.upsert_row(
+        repo, row_id, {"run_id": run_id, "vendor": vendor, "model": model, "phase": phase}
+    )
+
+
+def _artifact_digest(prepared: _Prepared) -> str:
+    """Digest whichever side of the settlement the deliverable is currently on."""
+    path = prepared.receipt.artifact_path
+    if not path.is_file():
+        path = prepared.receipt.inflight_path
+    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _sample(prepared: _Prepared, *, register: bool = True, **overrides: Any) -> Any:
+    if register:
+        _verifier_row(prepared.repo, run_id=prepared.spec.run_id)
     values: dict[str, Any] = {
         "verifier_row_id": "verifier-1",
         "verifier_vendor": "grok",
         "verifier_model": "grok-4.6",
-        "artifact_digest": digest,
+        "artifact_digest": _artifact_digest(prepared),
         "claims": (
             COMPLETION.SampledClaim("the migration is reversible", "report.json:12", "supported"),
         ),
@@ -825,13 +901,200 @@ def test_a_depth_sample_with_no_claims_is_rejected(tmp_path: Path) -> None:
     assert result.reason == "depth_sample_invalid"
 
 
-def test_a_depth_sample_round_trips_through_its_register_mapping(tmp_path: Path) -> None:
+def test_a_depth_sample_round_trips_through_the_register_it_is_recorded_in(
+    tmp_path: Path,
+) -> None:
+    """The record the operator can actually see, not a mapping that never left memory."""
     repo = tmp_path / "repo"
     _init_repo(repo)
     prepared = _prepare(repo, work_shape="judgment")
-    prepared.write_deliverable()
+    prepared.run_child_process()
     sample = _sample(prepared)
-    assert COMPLETION.DepthSample.from_mapping(sample.to_mapping()) == sample
+
+    assert prepared.evaluate(depth_sample=sample).verified is True
+    stored = REGISTER.read_rows(repo)["child-a"]["completion"]["depth_sample"]
+    assert COMPLETION.DepthSample.from_mapping(stored) == sample
+
+
+def test_a_verified_judgment_child_has_its_verifier_and_claims_on_record(
+    tmp_path: Path,
+) -> None:
+    """A sampled child and a child whose sample certified nothing must not be the same green row.
+
+    Everything the plan requires durably -- verifier identity, the claims, where each was checked,
+    and how each was disposed -- is read back out of the register here, not out of the in-memory
+    result object.
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo, work_shape="judgment")
+    prepared.run_child_process()
+
+    assert prepared.evaluate(depth_sample=_sample(prepared)).verified is True
+    recorded = REGISTER.read_rows(repo)["child-a"]["completion"]["depth_sample"]
+    assert recorded["verifier_row_id"] == "verifier-1"
+    assert recorded["verifier_vendor"] == "grok"
+    assert recorded["verifier_model"] == "grok-4.6"
+    assert recorded["claims"] == [
+        {
+            "claim": "the migration is reversible",
+            "evidence_location": "report.json:12",
+            "disposition": "supported",
+        }
+    ]
+
+
+def test_a_depth_sample_naming_a_verifier_that_never_existed_is_rejected(
+    tmp_path: Path,
+) -> None:
+    """An unchecked string is not an independent verifier session."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo, work_shape="judgment")
+    prepared.run_child_process()
+
+    result = prepared.evaluate(
+        depth_sample=_sample(prepared, register=False, verifier_row_id="verifier-that-never-was")
+    )
+    assert result.verified is False
+    assert result.reason == "depth_sample_invalid"
+    assert "no row in the register" in result.detail
+
+
+def test_a_depth_sample_naming_a_verifier_that_never_ran_is_rejected(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo, work_shape="judgment")
+    prepared.run_child_process()
+    _verifier_row(repo, phase="planned")
+
+    result = prepared.evaluate(depth_sample=_sample(prepared, register=False))
+    assert result.verified is False
+    assert result.reason == "depth_sample_invalid"
+    assert "never reached a running session" in result.detail
+
+
+def test_a_depth_sample_from_another_run_is_not_this_runs_verifier(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo, work_shape="judgment")
+    prepared.run_child_process()
+    _verifier_row(repo, run_id="run-elsewhere")
+
+    result = prepared.evaluate(depth_sample=_sample(prepared, register=False))
+    assert result.verified is False
+    assert result.reason == "depth_sample_invalid"
+    assert "belongs to run" in result.detail
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("verifier_vendor", "codex"), ("verifier_model", "a-more-credible-model")],
+)
+def test_a_depth_sample_misattributing_the_verifier_is_rejected(
+    tmp_path: Path, field: str, value: str
+) -> None:
+    """A sample cannot credit its read to a different session than the one that performed it."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo, work_shape="judgment")
+    prepared.run_child_process()
+
+    misattributed: dict[str, Any] = {field: value}
+    result = prepared.evaluate(depth_sample=_sample(prepared, **misattributed))
+    assert result.verified is False
+    assert result.reason == "depth_sample_invalid"
+    assert "the register records" in result.detail
+
+
+def test_an_inconclusive_only_depth_sample_does_not_certify_judgment_work(
+    tmp_path: Path,
+) -> None:
+    """Absence of a refutation is not a confirmation."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo, work_shape="judgment")
+    prepared.run_child_process()
+
+    inconclusive = COMPLETION.SampledClaim("no data is lost", "report.json:40", "inconclusive")
+    result = prepared.evaluate(depth_sample=_sample(prepared, claims=(inconclusive,)))
+    assert result.verified is False
+    assert result.reason == "depth_sample_inconclusive"
+    assert REGISTER.read_rows(repo)["child-a"]["phase"] == "working"
+
+
+@pytest.mark.parametrize(
+    "mapping",
+    [
+        {"claims": []},
+        {"verifier_row_id": "v", "verifier_vendor": "grok", "verifier_model": "m"},
+        {
+            "verifier_row_id": "v",
+            "verifier_vendor": "grok",
+            "verifier_model": "m",
+            "artifact_digest": "sha256:0",
+            "claims": [{"claim": "", "evidence_location": "x", "disposition": "supported"}],
+        },
+        {
+            "verifier_row_id": "v",
+            "verifier_vendor": "grok",
+            "verifier_model": "m",
+            "artifact_digest": "sha256:0",
+            "claims": [
+                {"claim": "a", "evidence_location": "x", "disposition": "supported"},
+                "not a claim at all",
+            ],
+        },
+    ],
+)
+def test_a_malformed_depth_mapping_records_a_closed_failure_instead_of_raising(
+    tmp_path: Path, mapping: dict[str, Any]
+) -> None:
+    """A control that raises instead of recording is a fail-open one level up.
+
+    The register would otherwise still show a working child with no verdict, and neither
+    ``failed_rows`` nor the next catch-up pass would list it.
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo, work_shape="judgment")
+    prepared.run_child_process()
+
+    result = prepared.evaluate(depth_sample=mapping)
+    assert result.verified is False
+    assert result.reason == "depth_sample_invalid"
+    assert REGISTER.read_rows(repo)["child-a"]["completion"]["result"] == "failed"
+    assert COMPLETION.is_working_not_failed(repo, "child-a") is False
+
+
+def test_a_verifier_reads_the_settled_artifact_and_the_second_evaluation_verifies(
+    tmp_path: Path,
+) -> None:
+    """The reachable sequence for judgment work, end to end.
+
+    The verifier contract requires a read of the *settled* artifact, and settlement happens
+    inside evaluation -- so the first evaluation must leave the artifact settled and the child
+    unverified, and the second must accept a sample taken against what is now on disk. This is
+    the ordering that was previously unreachable: the second evaluation used to fail
+    ``artifact_unsettled`` before it ever looked at the new sample.
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo, work_shape="judgment")
+    prepared.run_child_process()
+
+    first = prepared.evaluate()
+    assert first.verified is False
+    assert first.reason == "depth_sample_missing"
+    settled = prepared.receipt.artifact_path
+    assert settled.is_file()
+    assert not prepared.receipt.inflight_path.exists()
+
+    # The verifier now reads the settled path -- the only artifact that exists at this point.
+    digest = "sha256:" + hashlib.sha256(settled.read_bytes()).hexdigest()
+    second = prepared.evaluate(depth_sample=_sample(prepared, artifact_digest=digest))
+    assert second.verified is True, second.detail
+    assert REGISTER.read_rows(repo)["child-a"]["phase"] == "verified"
 
 
 # ----------------------------------------------------- carried requirement: read-only landings
@@ -1008,12 +1271,27 @@ def test_the_git_adapter_reports_a_missing_revision_rather_than_raising(tmp_path
     assert git.rev_parse(repo, "main") == git.base_commit(repo)
 
 
-def test_the_git_adapter_answers_the_ignore_question(tmp_path: Path) -> None:
+def test_the_git_adapter_answers_the_invisibility_question_not_the_ignore_rule_question(
+    tmp_path: Path,
+) -> None:
+    """An ignore rule and invisibility to the boundary are different questions.
+
+    A tracked path stays visible to ``git status`` and to the committed-diff comparison whatever
+    the ignore rules say, so an artifact tree someone force-added is *not* outside the boundary
+    even though ``git check-ignore`` still matches it.
+    """
     repo = tmp_path / "repo"
     _init_repo(repo)
     git = LIFECYCLE.GitLanding()
-    assert git.is_ignored(repo, ".orchestrate/artifacts") is True
-    assert git.is_ignored(repo, "src/thing.py") is False
+    assert git.is_invisible_to_boundary(repo, ".orchestrate/artifacts") is True
+    assert git.is_invisible_to_boundary(repo, "src/thing.py") is False
+
+    forced = repo / ".orchestrate" / "artifacts" / "run-a" / "child-a" / "report.json"
+    forced.parent.mkdir(parents=True)
+    forced.write_text("{}\n", encoding="utf-8")
+    _git(repo, "add", "-f", ".orchestrate/artifacts")
+    _git(repo, "commit", "-q", "-m", "an operator archives an artifact")
+    assert git.is_invisible_to_boundary(repo, ".orchestrate/artifacts") is False
 
 
 def test_a_receipt_round_trips_through_its_register_mapping(tmp_path: Path) -> None:
@@ -1202,3 +1480,596 @@ def test_every_recorded_failure_reason_is_in_the_closed_vocabulary(tmp_path: Pat
     result = prepared.evaluate()
     assert result.reason in COMPLETION.FAILURE_REASONS
     assert len(set(COMPLETION.FAILURE_REASONS)) == len(COMPLETION.FAILURE_REASONS)
+
+
+# ------------------------------------------------- R1: the child process boundary and its posture
+
+
+def test_no_runtimes_launch_posture_forbids_the_write_its_dispatch_requires(
+    tmp_path: Path,
+) -> None:
+    """Every child is told to write an artifact, so no child may be launched unable to write.
+
+    The launch posture is composed here the way the product composes it, from the specification
+    through ``_runtime_resolution``, not by reading the table directly.
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    git = LIFECYCLE.GitLanding()
+    forbidding = {"read-only", "plan", "--disable-write"}
+    for runtime in ("claude", "codex", "grok", "muse", "qwen", "agy"):
+        spec = _spec(runtime=runtime, row_id=f"child-{runtime}", work_shape="scan-low")
+        landing = git.provision(repo, spec)
+        _, argv = LIFECYCLE._runtime_resolution(spec, landing)
+        assert not forbidding.intersection(argv), (runtime, argv)
+    assert LIFECYCLE.permission_argv("codex") == ["--sandbox", "workspace-write"]
+    assert LIFECYCLE.permission_argv("grok") == ["--sandbox", "workspace"]
+    assert LIFECYCLE.permission_argv("qwen") == ["--sandbox"]
+    assert LIFECYCLE.permission_argv("agy") == ["--sandbox"]
+    # Claude and Muse expose no positive flag at all; the empty list is the honest answer, not a
+    # missing case, and the boundary check is what contains them.
+    assert LIFECYCLE.permission_argv("claude") == []
+    assert LIFECYCLE.permission_argv("muse") == []
+    assert LIFECYCLE.permission_argv("unknown-runtime") == []
+
+
+def test_a_deliverable_written_by_a_real_child_process_settles_and_verifies(
+    tmp_path: Path,
+) -> None:
+    """The settlement protocol, executed by a process that is not the one asserting about it.
+
+    What this does not establish: that a particular vendor's sandbox permits the write. No
+    supported CLI is invoked here and none should be from a test. What it does establish is that
+    a separate process, given only the dispatch text, produces something this module settles and
+    verifies -- and the companion test below shows what happens when that process cannot write.
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo)
+
+    completed = prepared.run_child_process()
+    assert completed.returncode == 0, completed.stderr
+    assert prepared.receipt.inflight_path.is_file()
+
+    result = prepared.evaluate()
+    assert result.verified is True, result.detail
+    assert prepared.receipt.artifact_path.is_file()
+
+
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root ignores file modes")
+def test_a_child_process_that_cannot_write_its_artifact_directory_fails_completion(
+    tmp_path: Path,
+) -> None:
+    """The failure a no-write launch posture produces, reproduced from a real child process.
+
+    This is the shape of the defect the read-only posture caused: a well-behaved child, doing
+    exactly what it was told, unable to create the file the protocol requires, and a completion
+    that fails ``artifact_unsettled`` for a child that did nothing wrong.
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo)
+    artifacts = prepared.receipt.artifact_path.parent
+    artifacts.chmod(0o500)
+    try:
+        completed = prepared.run_child_process()
+        assert completed.returncode != 0
+        assert not prepared.receipt.inflight_path.exists()
+        result = prepared.evaluate()
+    finally:
+        artifacts.chmod(0o700)
+    assert result.verified is False
+    assert result.reason == "artifact_unsettled"
+
+
+def test_two_read_only_children_both_produce_their_deliverables_from_their_own_processes(
+    tmp_path: Path,
+) -> None:
+    """The carried U4 requirement, with the child boundary crossed rather than assumed."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    first = _prepare(repo, row_id="child-a", scope=("reports/a",))
+    second = _prepare(repo, row_id="child-b", scope=("reports/b",))
+    assert first.run_child_process().returncode == 0
+    assert second.run_child_process().returncode == 0
+
+    first_result = first.evaluate()
+    second_result = second.evaluate()
+    assert first_result.verified is True, first_result.detail
+    assert second_result.verified is True, second_result.detail
+    assert first_result.scope is not None and first_result.scope.outside_scope == frozenset()
+    assert second_result.scope is not None and second_result.scope.outside_scope == frozenset()
+
+
+# ----------------------------------------------------------------- R2: the receipt's own identity
+
+
+def test_a_receipt_issued_for_another_child_cannot_verify_this_one(tmp_path: Path) -> None:
+    """A correctly bound artifact for one child must not become another child's pass."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    first = _prepare(repo, row_id="child-a")
+    second = _prepare(repo, row_id="child-b")
+    second.run_child_process()
+
+    result = COMPLETION.evaluate_completion(
+        repo, first.spec, second.landing, second.baseline, second.receipt, git=second.git
+    )
+    assert result.verified is False
+    assert result.reason == "receipt_mismatch"
+    assert "row_id" in result.detail
+    assert REGISTER.read_rows(repo)["child-a"].get("phase") == "working"
+
+
+def test_a_receipt_from_another_run_cannot_verify_this_child(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo)
+    prepared.run_child_process()
+    other_run = replace(prepared.spec, run_id="run-b")
+
+    result = COMPLETION.evaluate_completion(
+        repo, other_run, prepared.landing, prepared.baseline, prepared.receipt, git=prepared.git
+    )
+    assert result.verified is False
+    assert result.reason == "receipt_mismatch"
+    assert "run_id" in result.detail
+
+
+# ------------------------------------------------------- R3: the durable receipt is authenticated
+
+
+def _stored_receipt(repo: Path, row_id: str = "child-a") -> dict[str, Any]:
+    return dict(REGISTER.read_rows(repo)[row_id]["dispatch_receipt"])
+
+
+def test_a_restarted_orchestrator_evaluates_through_the_durable_receipt(
+    tmp_path: Path,
+) -> None:
+    """The path the receipt is persisted for, exercised rather than assumed.
+
+    Every other evaluation in this suite passes the in-memory receipt object, which is the one
+    path a restart does not have.
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo)
+    prepared.run_child_process()
+
+    reloaded = COMPLETION.read_receipt(repo, "child-a")
+    assert reloaded == prepared.receipt
+    result = COMPLETION.evaluate_completion(
+        repo, prepared.spec, prepared.landing, prepared.baseline, reloaded, git=prepared.git
+    )
+    assert result.verified is True, result.detail
+
+
+def test_a_planted_binding_token_in_the_register_does_not_authenticate(tmp_path: Path) -> None:
+    """Forgery one: a child rewrites the expected identity to one it already holds."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo)
+    stored = _stored_receipt(repo)
+    stored["binding_token"] = "ORCHESTRATE-ARTIFACT-BINDING:run-previous:child-a:old"
+    REGISTER.upsert_row(repo, "child-a", {"dispatch_receipt": stored})
+    prepared.receipt.inflight_path.write_text(
+        json.dumps({"binding": stored["binding_token"], "conclusion": "done"}), encoding="utf-8"
+    )
+
+    with pytest.raises(COMPLETION.ReceiptAuthenticationError, match="did not authenticate"):
+        COMPLETION.read_receipt(repo, "child-a")
+
+
+def test_a_replaced_predicate_in_the_register_does_not_authenticate(tmp_path: Path) -> None:
+    """Forgery two: a child swaps in a predicate that always passes and fixes up the digest."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo)
+    stored = _stored_receipt(repo)
+    always_true = {"argv": ["/usr/bin/true"], "timeout_seconds": 5.0, "max_output_bytes": 1024}
+    spec = COMPLETION.PredicateSpec.from_mapping(always_true)
+    closure = COMPLETION.predicate_closure(Path(prepared.landing.cwd), spec)
+    stored["predicate"] = always_true
+    stored["predicate_closure"] = list(closure)
+    stored["predicate_digest"] = COMPLETION.closure_digest(
+        Path(prepared.landing.cwd), spec, closure
+    )
+    REGISTER.upsert_row(repo, "child-a", {"dispatch_receipt": stored})
+    prepared.run_child_process()
+
+    with pytest.raises(COMPLETION.ReceiptAuthenticationError, match="did not authenticate"):
+        COMPLETION.read_receipt(repo, "child-a")
+
+
+def test_a_receipt_with_an_added_field_does_not_authenticate(tmp_path: Path) -> None:
+    """The digest covers the record as stored, so a smuggled key is a mismatch, not a no-op."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _prepare(repo)
+    stored = _stored_receipt(repo)
+    stored["smuggled"] = "ignored on the way back into the dataclass"
+    REGISTER.upsert_row(repo, "child-a", {"dispatch_receipt": stored})
+
+    with pytest.raises(COMPLETION.ReceiptAuthenticationError):
+        COMPLETION.read_receipt(repo, "child-a")
+
+
+def test_a_receipt_stripped_of_its_authentication_is_refused(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _prepare(repo)
+    stored = _stored_receipt(repo)
+    stored.pop(COMPLETION.AUTHENTICATION_KEY)
+    REGISTER.upsert_row(repo, "child-a", {"dispatch_receipt": stored})
+
+    with pytest.raises(COMPLETION.ReceiptAuthenticationError, match="no authentication"):
+        COMPLETION.read_receipt(repo, "child-a")
+
+
+def test_a_receipt_naming_a_run_this_host_never_issued_is_refused(tmp_path: Path) -> None:
+    """Naming another run changes which secret the digest must match, never whether one is needed."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _prepare(repo)
+    stored = _stored_receipt(repo)
+    stored["run_id"] = "run-invented"
+    REGISTER.upsert_row(repo, "child-a", {"dispatch_receipt": stored})
+
+    with pytest.raises(COMPLETION.RunSecretError, match="no orchestrator secret"):
+        COMPLETION.read_receipt(repo, "child-a")
+
+
+def test_a_forged_settlement_record_cannot_replay_a_direct_write(tmp_path: Path) -> None:
+    """The settlement record is authenticated for the same reason the receipt is.
+
+    Without that, a child writes the destination directly, plants a settlement record whose
+    digest matches what it wrote, and this module replays a settlement that never happened.
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo)
+    destination = prepared.receipt.artifact_path
+    destination.write_text(
+        json.dumps({"binding": prepared.receipt.binding_token, "conclusion": "done"}),
+        encoding="utf-8",
+    )
+    REGISTER.upsert_row(
+        repo,
+        "child-a",
+        {
+            "settlement": {
+                "nonce": prepared.receipt.nonce,
+                "artifact_relpath": prepared.receipt.artifact_relpath,
+                "artifact_path": str(destination),
+                "digest": "sha256:" + hashlib.sha256(destination.read_bytes()).hexdigest(),
+                "settled_at": time.time(),
+                COMPLETION.AUTHENTICATION_KEY: "hmac-sha256:" + "0" * 64,
+            }
+        },
+    )
+
+    result = prepared.evaluate()
+    assert result.verified is False
+    assert result.reason == "artifact_unsettled"
+    assert "did not authenticate" in result.detail
+
+
+def test_a_run_secret_inside_the_repository_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every child's landing is inside the repository, so a secret there is a child-writable key."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    monkeypatch.setenv(COMPLETION.RUN_SECRET_DIR_ENV, str(repo / ".orchestrate" / "secrets"))
+    with pytest.raises(COMPLETION.RunSecretError, match="inside the repository"):
+        COMPLETION.run_secret(repo, "run-a")
+
+
+def test_a_run_secret_readable_beyond_its_owner_is_refused(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    COMPLETION.run_secret(repo, "run-a")
+    key = COMPLETION.run_secret_dir() / "run-a.key"
+    key.chmod(0o644)
+    with pytest.raises(COMPLETION.RunSecretError, match="accessible beyond its owner"):
+        COMPLETION.run_secret(repo, "run-a")
+
+
+def test_the_run_secret_is_stable_for_a_run_and_distinct_between_runs(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    first = COMPLETION.run_secret(repo, "run-a")
+    assert COMPLETION.run_secret(repo, "run-a") == first
+    assert COMPLETION.run_secret(repo, "run-b") != first
+    assert len(first) == COMPLETION.RUN_SECRET_BYTES
+
+
+# ------------------------------------------- R4: the artifact path the catch-up consumer reads
+
+
+def test_catch_up_does_not_ask_for_attention_before_the_child_has_settled(
+    tmp_path: Path,
+) -> None:
+    """At issue time the artifact is required to be absent, so declaring it then is a false alarm.
+
+    The shipped subscriber treats a declared artifact path that does not exist as an
+    operator-attention signal. Every reconnect of every in-flight child would raise one.
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo)
+    REGISTER.upsert_row(repo, "child-a", {"pane_id": "pane-a"})
+
+    records = SUBSCRIBER.catch_up(
+        repo,
+        {"panes": [{"pane_id": "pane-a", "agent_status": "working"}], "agents": []},
+        run_id="run-a",
+    )
+    assert [record.artifact_exists for record in records] == [None]
+
+    prepared.run_child_process()
+    assert prepared.evaluate().verified is True
+    records = SUBSCRIBER.catch_up(
+        repo,
+        {"panes": [{"pane_id": "pane-a", "agent_status": "working"}], "agents": []},
+        run_id="run-a",
+    )
+    assert [record.artifact_exists for record in records] == [True]
+
+
+def test_catch_up_finds_a_mutating_childs_artifact_in_its_worktree(tmp_path: Path) -> None:
+    """The consumer resolves a relative path against the ambient checkout; a worktree is not it."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _mutating_prepared(repo)
+    worktree = Path(prepared.landing.cwd)
+    (worktree / "src").mkdir()
+    (worktree / "src" / "landed.py").write_text("VALUE = 1\n", encoding="utf-8")
+    _git(worktree, "add", "src/landed.py")
+    _git(worktree, "commit", "-q", "-m", "child work")
+    prepared.run_child_process()
+    assert prepared.evaluate().verified is True
+    REGISTER.upsert_row(repo, "child-m", {"pane_id": "pane-m"})
+
+    records = SUBSCRIBER.catch_up(
+        repo,
+        {"panes": [{"pane_id": "pane-m", "agent_status": "working"}], "agents": []},
+        run_id="run-a",
+    )
+    assert [record.artifact_exists for record in records] == [True]
+
+
+# ------------------------------------------------------- R9: re-evaluation and the phase invariant
+
+
+def test_re_evaluating_an_unchanged_verified_child_reaches_the_same_verdict(
+    tmp_path: Path,
+) -> None:
+    """Restart catch-up re-evaluates. Settlement is one-shot, so it must replay, not re-consume."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo)
+    prepared.run_child_process()
+
+    assert prepared.evaluate().verified is True
+    second = prepared.evaluate()
+    assert second.verified is True, second.detail
+    assert REGISTER.read_rows(repo)["child-a"]["phase"] == "verified"
+
+
+def test_a_failing_re_evaluation_removes_the_verified_phase(tmp_path: Path) -> None:
+    """A failed verdict must never coexist with a phase the reap gate reads as a pass."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo)
+    prepared.run_child_process()
+    REGISTER.upsert_row(repo, "child-a", {"tab_id": "tab-a"})
+    assert prepared.evaluate().verified is True
+    assert REGISTER.read_rows(repo)["child-a"]["phase"] == "verified"
+
+    prepared.receipt.artifact_path.write_text("tampered after the pass\n", encoding="utf-8")
+    second = prepared.evaluate()
+    assert second.verified is False
+    row = REGISTER.read_rows(repo)["child-a"]
+    assert row["completion"]["result"] == "failed"
+    assert row["phase"] == "working"
+    with pytest.raises(LIFECYCLE.SessionLifecycleError, match="must be verified before reap"):
+        LIFECYCLE.reap_verified(repo, "child-a", herdr=FakeHerdr())
+
+
+def test_a_reaped_row_is_not_demoted_by_a_later_evaluation(tmp_path: Path) -> None:
+    """``reaped`` is past this question; the invariant is about ``verified``, not about history."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo)
+    prepared.run_child_process()
+    REGISTER.upsert_row(repo, "child-a", {"tab_id": "tab-a"})
+    assert prepared.evaluate().verified is True
+    LIFECYCLE.reap_verified(repo, "child-a", herdr=FakeHerdr())
+
+    prepared.receipt.artifact_path.write_text("tampered after the reap\n", encoding="utf-8")
+    assert prepared.evaluate().verified is False
+    assert REGISTER.read_rows(repo)["child-a"]["phase"] == "reaped"
+
+
+# --------------------------------------------------------- R11: what Python executes on an import
+
+
+def _package_repo(repo: Path) -> None:
+    _init_repo(repo)
+    (repo / "pkg").mkdir()
+    (repo / "pkg" / "__init__.py").write_text("MARKER = 'genuine'\n", encoding="utf-8")
+    (repo / "pkg" / "oracle.py").write_text("VERDICT = True\n", encoding="utf-8")
+    (repo / "checks" / "package_check.py").write_text(
+        "import sys\nimport pkg.oracle\nsys.exit(0 if pkg.oracle.VERDICT else 1)\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", "pkg", "checks")
+    _git(repo, "commit", "-q", "-m", "package")
+
+
+def test_a_parent_package_initializer_is_in_the_closure(tmp_path: Path) -> None:
+    """Python executes ``pkg/__init__.py`` before ``pkg/oracle.py``; the closure must say so."""
+    repo = tmp_path / "repo"
+    _package_repo(repo)
+    predicate = COMPLETION.PredicateSpec(argv=(sys.executable, "checks/package_check.py"))
+
+    closure = COMPLETION.predicate_closure(repo, predicate)
+    assert "pkg/__init__.py" in closure
+    assert "pkg/oracle.py" in closure
+
+
+def test_a_child_that_may_rewrite_a_parent_initializer_cannot_be_certified_by_that_predicate(
+    tmp_path: Path,
+) -> None:
+    """The initializer decides what the imported module resolves to, so it is predicate code."""
+    repo = tmp_path / "repo"
+    _package_repo(repo)
+    spec = _spec(mutating=True, environment_command=(), scope=("pkg/__init__.py",))
+    git = LIFECYCLE.GitLanding()
+    landing = git.provision(repo, spec)
+    predicate = COMPLETION.PredicateSpec(argv=(sys.executable, "checks/package_check.py"))
+
+    with pytest.raises(COMPLETION.PredicateScopeError, match="pkg/__init__.py"):
+        COMPLETION.issue_receipt(
+            repo, spec, landing, predicate, artifact_name="report.json", git=git
+        )
+
+
+def test_a_namespace_package_without_an_initializer_still_resolves(tmp_path: Path) -> None:
+    """A missing initializer is not an error; PEP 420 packages simply contribute no such file."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "ns").mkdir()
+    (repo / "ns" / "leaf.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (repo / "checks" / "ns_check.py").write_text("import ns.leaf\n", encoding="utf-8")
+    predicate = COMPLETION.PredicateSpec(argv=(sys.executable, "checks/ns_check.py"))
+
+    closure = COMPLETION.predicate_closure(repo, predicate)
+    assert "ns/leaf.py" in closure
+
+
+# --------------------------------------------- R12: the observer can see the evidence it protects
+
+
+def test_a_predicate_that_rewrites_the_settled_artifact_fails_as_a_side_effect(
+    tmp_path: Path,
+) -> None:
+    """The artifact directory is invisible to Git by design, so Git status cannot police it.
+
+    Before this, a predicate could rewrite the settled file after its digest was taken and still
+    return a pass, leaving a recorded digest that no longer matched the bytes on disk.
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "checks" / "rewriter.py").write_text(
+        "import pathlib, sys\npathlib.Path(sys.argv[1]).write_text('FORGED-AFTER-BIND')\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", "checks/rewriter.py")
+    _git(repo, "commit", "-q", "-m", "rewriting predicate")
+    spec = _spec()
+    git = LIFECYCLE.GitLanding()
+    landing = git.provision(repo, spec)
+    REGISTER.upsert_row(repo, "child-a", {"run_id": "run-a", "phase": "working"})
+    artifacts = COMPLETION.artifact_landing(Path(landing.cwd), "run-a", "child-a")
+    relative = (artifacts.relative_to(Path(landing.cwd).resolve()) / "report.json").as_posix()
+    predicate = COMPLETION.PredicateSpec(argv=(sys.executable, "checks/rewriter.py", relative))
+    receipt = COMPLETION.issue_receipt(
+        repo, spec, landing, predicate, artifact_name="report.json", git=git
+    )
+    prepared = _Prepared(repo, spec, landing, git, receipt)
+    prepared.run_child_process()
+
+    result = prepared.evaluate()
+    assert result.verified is False
+    assert result.reason == "predicate_side_effect"
+    assert "report.json" in result.detail
+    assert prepared.receipt.artifact_path.read_text(encoding="utf-8") == "FORGED-AFTER-BIND"
+
+
+# ------------------------------------------------- R13: tracked artifacts are refused at dispatch
+
+
+def test_a_force_added_artifact_tree_is_refused_at_issue_not_blamed_on_the_child(
+    tmp_path: Path,
+) -> None:
+    """An operator's ``git add -f`` used to fail every later child on the boundary check.
+
+    Refusing at issue time makes it one actionable message before dispatch instead of a control
+    firing on the orchestrator's own rename.
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo)
+    prepared.run_child_process()
+    assert prepared.evaluate().verified is True
+    _git(repo, "add", "-f", ".orchestrate/artifacts")
+    _git(repo, "commit", "-q", "-m", "an operator archives the artifact")
+
+    with pytest.raises(COMPLETION.LandingNotExclusiveError, match="git rm -r --cached"):
+        _prepare(repo, row_id="child-a")
+
+
+# --------------------------------------------------- R15: the default nobody was exercising
+
+
+def test_the_default_environment_command_installs_what_a_predicate_needs(tmp_path: Path) -> None:
+    """A default nothing exercises is untested, and the default is what most callers get.
+
+    ``uv sync`` without ``--extra dev`` produces a worktree with no pytest, ruff or mypy -- the
+    exact programs a predicate is most likely to be -- and this field exists precisely because a
+    fresh worktree cannot otherwise run the predicate at all.
+    """
+    spec = LIFECYCLE.ChildSpec(
+        run_id="run-a",
+        row_id="child-a",
+        runtime="codex",
+        work_shape="mechanical",
+        instruction="Produce the deliverable.",
+        scope=("src",),
+        mutating=True,
+        workspace="workspace-a",
+    )
+    assert spec.environment_command == ("uv", "sync", "--locked", "--extra", "dev")
+    # The same helper that masked the environment default masks this one: every lifecycle test
+    # overrides it. Pinning the value is the minimum a default in a public signature deserves.
+    assert spec.readiness_timeout == 30.0
+
+    invoked: list[list[str]] = []
+
+    def runner(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        invoked.append(list(argv))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    real = LIFECYCLE.GitLanding()
+
+    def recording(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if argv[:1] == ["git"]:
+            return subprocess.run(argv, **kwargs)
+        return runner(argv, **kwargs)
+
+    real.runner = recording
+    real.provision(repo, spec)
+    assert ["uv", "sync", "--locked", "--extra", "dev"] in invoked
+
+
+def test_the_unfiltered_failed_rows_view_spans_every_run(tmp_path: Path) -> None:
+    """``run_id=None`` is the default, and it was the one shape no test constructed.
+
+    The operator's "what stalled" view is most useful unfiltered -- several runs can hold live
+    rows in one register at once -- so the default is the call most real callers make.
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    first = _prepare(repo, row_id="child-a")
+    first.write_deliverable({"binding": first.receipt.binding_token})
+    first.evaluate()
+    second = _prepare(repo, row_id="child-b", run_id="run-b")
+    second.write_deliverable({"binding": second.receipt.binding_token})
+    second.evaluate()
+
+    assert sorted(COMPLETION.failed_rows(repo)) == ["child-a", "child-b"]
+    assert sorted(COMPLETION.failed_rows(repo, run_id="run-b")) == ["child-b"]

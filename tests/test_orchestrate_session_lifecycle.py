@@ -1225,19 +1225,25 @@ def test_dispatch_echo_never_contains_the_assembled_readiness_sentinel(tmp_path:
     assert row["phase"] == "ready"
 
 
-def test_permission_argv_uses_real_read_only_flags_without_claiming_qwen_scope() -> None:
-    assert LIFECYCLE.permission_argv("codex", mutating=False) == ["--sandbox", "read-only"]
-    assert LIFECYCLE.permission_argv("claude", mutating=False) == [
-        "--permission-mode",
-        "plan",
-    ]
-    assert LIFECYCLE.permission_argv("qwen", mutating=False) == []
-    assert LIFECYCLE.permission_argv("codex", mutating=True) == [
-        "--sandbox",
-        "workspace-write",
-    ]
-    assert LIFECYCLE.permission_argv("grok", mutating=True) == ["--sandbox", "workspace"]
-    assert LIFECYCLE.permission_argv("qwen", mutating=True) == ["--sandbox"]
-    assert LIFECYCLE.permission_argv("agy", mutating=True) == ["--sandbox"]
-    assert LIFECYCLE.permission_argv("claude", mutating=True) == []
-    assert LIFECYCLE.permission_argv("muse", mutating=True) == []
+def test_permission_argv_is_the_workspace_write_posture_for_every_child() -> None:
+    """One posture, not two, and the read-only distinction is not expressed as a flag.
+
+    Every child -- mutating or not -- is dispatched with an artifact it must write, and no
+    supported CLI accepts a repository-relative path allowlist, so a read-only flag never
+    contained a read-only child; it only made its dispatch impossible to satisfy. Containment
+    inside the workspace is the Git boundary check, whose repository write allowlist for a
+    read-only child is empty.
+    """
+    assert LIFECYCLE.permission_argv("codex") == ["--sandbox", "workspace-write"]
+    assert LIFECYCLE.permission_argv("grok") == ["--sandbox", "workspace"]
+    assert LIFECYCLE.permission_argv("qwen") == ["--sandbox"]
+    assert LIFECYCLE.permission_argv("agy") == ["--sandbox"]
+    # No overstated control: Claude has no cwd-write boundary flag, and Muse's sandbox is already
+    # on by default. An empty list is the honest answer, not an unhandled runtime.
+    assert LIFECYCLE.permission_argv("claude") == []
+    assert LIFECYCLE.permission_argv("muse") == []
+    assert LIFECYCLE.permission_argv("unknown-runtime") == []
+    for runtime in ("claude", "codex", "grok", "muse", "qwen", "agy"):
+        argv = LIFECYCLE.permission_argv(runtime)
+        assert "read-only" not in argv and "plan" not in argv
+        assert "--disable-write" not in argv

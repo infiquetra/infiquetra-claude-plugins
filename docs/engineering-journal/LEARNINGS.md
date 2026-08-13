@@ -21,6 +21,109 @@
 
 ## 2026-08-13
 
+### A test must run where the thing it certifies runs  {#test-the-real-execution-context}
+
+**Context.** The orchestrate completion unit carried a requirement from the previous unit: two
+read-only children with disjoint scopes must both complete cleanly. A test was written that used
+two children, both completed, and it passed. Two independent reviewers then reproduced a failure in
+which neither child could complete at all.
+
+**Evidence.** `tests/test_orchestrate_completion.py::test_two_read_only_children_with_disjoint_scopes_both_complete_cleanly`
+used a helper that wrote both deliverables with `Path.write_text` from the pytest process. The
+product launched those same children with `--sandbox read-only` / `--permission-mode plan`
+(`plugins/orchestrate/skills/orchestrate/scripts/session_lifecycle.py:permission_argv`), under which
+neither child could create the file the settlement protocol requires. Fixed by
+`_Prepared.run_child_process`, which produces the deliverable from a separate process given only
+the dispatch text, plus
+`::test_a_child_process_that_cannot_write_its_artifact_directory_fails_completion`, which reproduces
+the no-write posture with a real child and an unwritable directory.
+
+**Mechanism.** The test satisfied the *description* of the scenario — two children, disjoint scopes,
+both verified — while running the load-bearing step in a process with permissions no child has. The
+count was right and the context was wrong, and the count is what the test name talks about. Reading
+the test tells you nothing is missing, because what is missing is not in the test; it is in where the
+test runs.
+
+**Fix.** `541b36b9` + repair round 1: a child-process writer used by the pass path and by the
+carried multi-child requirement, and a launch posture that permits the write every child is
+required to make.
+
+**What surprised.** The reviewer's phrasing was the whole diagnosis: *"this probe does use two
+children; the miss is the child process boundary, not the child count."* The defect was invisible
+to a reading that checks whether the scenario is present, and obvious to one that asks which process
+performs each step.
+
+**Generalizable rule.** For every test, ask which process, which permissions, and which working
+directory the certified step actually runs under, and whether that matches production. A privileged
+test process silently supplies capability the real actor does not have, and the resulting green is
+indistinguishable from a real one. This generalizes past permissions: same question for the network,
+the clock, the environment, and the filesystem.
+
+**Refs.** [[gitignored-is-untrusted]], DECISIONS `{#read-only-children-are-write-capable}`.
+
+### Git-ignored means unobserved, which means untrusted  {#gitignored-is-untrusted}
+
+**Context.** The orchestrate register — the whole durable state model for a run — lives at
+`.orchestrate/register.json`. The plugin's only integrity control over child behaviour is a Git
+boundary check. The completion unit persisted the dispatch receipt, the expected evidence identity
+a restarted orchestrator must read, into that register.
+
+**Evidence.** A reviewer reproduced two forgeries against the shipped code, both reaching
+`verified`: overwrite `dispatch_receipt.binding_token` with a previous run's token and produce an
+artifact carrying it; or replace the stored predicate with `{"argv": ["/usr/bin/true"]}` and
+recompute `predicate_closure` / `predicate_digest` so the tamper check agrees. Both are now refused
+by `completion.read_receipt`, pinned by
+`::test_a_planted_binding_token_in_the_register_does_not_authenticate` and
+`::test_a_replaced_predicate_in_the_register_does_not_authenticate`.
+
+**Mechanism.** `git status` deliberately omits ignored paths, so a child writing the register is
+observed by nothing. The receipt was being *stored* rather than *protected*, and storage in a
+location the adversary can write is not storage — it is a suggestion. Every check downstream then
+compared the child's evidence against a value the child chose.
+
+**Fix.** Each durable record carries an HMAC-SHA-256 digest over exactly its own fields, keyed by a
+per-run secret held outside the repository (`completion.run_secret`), with the secret directory
+refused if it resolves inside the repository — because every child's landing is inside the
+repository.
+
+**What surprised.** The read-only launch flag had been quietly doing the work of a trust boundary
+for half the population. Removing it (see DECISIONS `{#read-only-children-are-write-capable}`) did
+not create the hole; it revealed that the hole had always existed for mutating children and made it
+impossible to keep ignoring.
+
+**Generalizable rule.** Before persisting a value that a later check compares against, ask who else
+can write that location. If the answer includes the party the check is about, inspection cannot fix
+it — a forged record and a real one are the same bytes in the same place — and the value must be
+authenticated with a key that party cannot reach. Corollary: an exclusion in one control ("ignored
+paths are outside this boundary") is a specification of exactly where to put an attack.
+
+### A deletion proof only proves what has a single writer  {#deletion-proof-needs-one-writer}
+
+**Context.** Nineteen mutations were run against the completion repairs, each removing one
+load-bearing behaviour and requiring its pinning test to fail. Eighteen were killed. One survived:
+storing the settled artifact's path as a landing-relative string instead of an absolute one left the
+test that exists to catch exactly that still passing.
+
+**Evidence.** `completion.settle_artifact` wrote the `artifact_path` column, and `completion._record`
+wrote it again moments later from the same value. Mutating the first writer changed nothing, because
+the second writer overwrote the mutation before any assertion ran. Fixed by giving the column one
+owner — settlement, the moment the fact becomes true — after which the mutation was killed.
+
+**Mechanism.** A mutation tests the causal path from one piece of code to one observable outcome.
+Two writers of one column mean two causal paths, so removing either leaves the outcome intact and
+the proof reports coverage that is not there. The duplicate write was itself harmless; what it
+damaged was the ability to *verify* anything about that column.
+
+**What surprised.** The unit had already recorded [[one-owner-per-column]] as a learning, about a
+different column, in the same file, in the previous round. The rule was known and written down and
+still violated three functions away — which is an argument for mutation testing over recall.
+
+**Generalizable rule.** A surviving mutation is at least as often a defect in the *system's* shape as
+in the test's: before strengthening the test, check whether some other code path is masking the
+change. And a value with two writers cannot be pinned by deleting either one.
+
+**Refs.** [[one-owner-per-column]], [[test-the-real-execution-context]].
+
 ### A property a file cannot carry must be produced, not inspected  {#produce-dont-inspect}
 
 **Context.** The orchestrate plan requires a child's artifact to be *settled* — written to a

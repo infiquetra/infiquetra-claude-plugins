@@ -31,20 +31,35 @@ working child; and a child's own reported status is not a completion signal, so 
 
 ## Contract this unit guarantees
 
-- **Atomic durability.** Every write is temp-file-plus-`os.replace`; no reader ever observes a
+- **Atomic, durable writes.** Every write is temp-sibling-file, `fsync`, then `os.replace` (not
+  just temp-plus-`os.replace` — `fsync` before the replace is what keeps a machine crash right
+  after a successful replace from leaving `register.json` present but empty, matching
+  `run_ledger.py` / `manifest_store.py` elsewhere in this repository). No reader ever observes a
   torn file. Concurrent read-modify-write cycles are serialized with an exclusive advisory lock
   (`fcntl.flock`) around the register's own `.lock` sidecar, so two sequential writers never lose
   each other's row.
-- **Forward compatibility (C4).** A row is always a plain `dict`, never reconstructed through a
-  fixed-field type. `upsert_row` merges the fields a caller supplies into whatever already exists
-  at that row id rather than replacing the row — a key nested inside a child row that one runtime
-  wrote and the other does not know about survives a write by the other.
+- **Forward compatibility (C4), at both levels.** A row is always a plain `dict`, never
+  reconstructed through a fixed-field type: `upsert_row` merges the fields a caller supplies into
+  whatever already exists at that row id rather than replacing the row, so a key nested inside a
+  child row that one runtime wrote and the other does not know about survives a write by the
+  other. The same holds at the **document root** — the loader returns the document exactly as it
+  read it (only normalizing `rows`) rather than rebuilding a known `{schema_version, rows}`
+  envelope, so a document-root key one runtime writes (a handoff cursor, say) survives an ordinary
+  write by the other, on both the `upsert_row` and the `retire_run` path.
 - **A schema version this code does not support halts loudly (C3).** `register.py` writes a halt
   receipt to `.orchestrate/halt-receipt.json` and raises, without ever touching
   `register.json` itself.
-- **Retiring a run only touches that run's own rows.** `retire_run` moves every row whose
-  `run_id` matches into `.orchestrate/runs/<run-id>/register-final.json`, durably, before the live
-  register is rewritten — every other run's rows are left exactly as they were.
+- **Retiring a run only touches that run's own rows, and is genuinely idempotent.** `retire_run`
+  moves every row whose `run_id` matches into `.orchestrate/runs/<run-id>/register-final.json`,
+  durably, before the live register is rewritten — every other run's rows are left exactly as
+  they were. Retiring the same run again after it already succeeded returns the existing archive
+  path unchanged rather than recomputing an empty set and overwriting it; retiring a run with
+  nothing live and no prior archive writes nothing and returns `None`.
+- **Both hang-detection time columns always exist on a row.** `deadline` and `max_quiet_seconds`
+  are alternative strategies — a caller sets whichever fits a given dispatch — and `upsert_row`
+  seeds whichever one a caller didn't set to `None` at row creation, so this pair specifically
+  always round-trips regardless of which strategy a row uses. Every other optional column stays
+  genuinely absent until some later phase transition sets it.
 
 ## Using the register from Python
 

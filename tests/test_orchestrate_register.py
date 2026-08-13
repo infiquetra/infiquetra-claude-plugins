@@ -162,30 +162,47 @@ def test_failed_replace_leaves_live_register_untouched(
     assert all(p.suffix == ".lock" or ".tmp" in p.name for p in leftovers)
 
 
-def test_a_genuinely_torn_temp_file_never_reaches_or_affects_the_live_register(
-    tmp_path: Path,
+def test_a_genuinely_interrupted_write_never_reaches_the_live_register_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Establish a known-good register first.
+    # Repair round 2 (P2): the prior version of this test planted an already-torn file at a
+    # ``*.tmp`` path and asserted readers ignore it — a test of path selection, not of an
+    # interrupted write (it would still pass with the write loop deleted). This version makes
+    # ``_atomic_write_json``'s own ``os.write`` loop produce the interruption: the first call
+    # transfers a real partial write (a legitimate ``os.write`` outcome on its own), the second
+    # raises mid-write, the way a real crash could land between two calls. If register.py's write
+    # loop were ever replaced with something that doesn't call ``os.write`` at all, this stub
+    # would simply never fire and the test would fail to observe the interruption it expects.
     M.upsert_row(tmp_path, "child-1", {"run_id": "run-a", "phase": "planned"})
     before = M.register_path(tmp_path).read_text()
 
-    # Simulate a real interrupted write: a process dying mid-``os.write`` leaves a truncated,
-    # invalid-JSON sibling at a ``*.tmp`` path — this is exactly what ``_unique_tmp``'s naming
-    # scheme exists to isolate, since a real crash can land at any byte offset. No register.py
-    # function ever reads from or replaces a live path out of a ``*.tmp`` file, so this orphan is
-    # inert by construction, not by luck.
-    torn = M.register_path(tmp_path).with_name("register.json.99999.1.999999.tmp")
-    torn.write_bytes(b'{"schema_version": 1, "rows": {"child-9": {"id": "child-9", "rows')
+    real_write = __import__("os").write
+    calls = {"n": 0}
 
-    # The live register is completely unaffected by the torn sibling sitting right next to it.
+    def _torn_write(fd, data):  # noqa: ANN001
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # A real partial write: only a third of the requested bytes actually land on disk,
+            # which is a legitimate os.write outcome by itself, not yet a failure.
+            return real_write(fd, data[: max(1, len(data) // 3)])
+        raise OSError("simulated crash mid-write, after a partial write already landed")
+
+    monkeypatch.setattr(M.os, "write", _torn_write)
+
+    with pytest.raises(OSError, match="simulated crash mid-write"):
+        M.upsert_row(tmp_path, "child-2", {"run_id": "run-a", "phase": "planned"})
+
+    # The live register path was never replaced into — it is byte-identical to its
+    # pre-interruption content, and the row from before the interrupted write is still readable.
     assert M.register_path(tmp_path).read_text() == before
     assert M.read_register(tmp_path)["rows"]["child-1"]["phase"] == "planned"
-    assert "child-9" not in M.read_rows(tmp_path)
+    assert "child-2" not in M.read_rows(tmp_path)
 
-    # And an ordinary subsequent write proceeds normally, ignoring the orphan entirely.
+    # And an ordinary subsequent write (write restored to the real implementation) proceeds
+    # normally, unaffected by the interrupted attempt that preceded it.
+    monkeypatch.setattr(M.os, "write", real_write)
     M.upsert_row(tmp_path, "child-1", {"phase": "working"})
     assert M.read_register(tmp_path)["rows"]["child-1"]["phase"] == "working"
-    assert torn.exists()  # the orphan itself is never cleaned up by an unrelated write
 
 
 # --------------------------------------------------------------------------- 4. nested unknown key
@@ -332,3 +349,26 @@ def test_retiring_a_run_with_nothing_live_and_no_prior_archive_writes_nothing(
     result = M.retire_run(tmp_path, "run-never-registered")
     assert result is None
     assert not M.final_register_path(tmp_path, "run-never-registered").exists()
+
+
+def test_retiring_a_run_preserves_a_document_root_key_in_the_live_register(
+    tmp_path: Path,
+) -> None:
+    # Repair round 2 (P2): upsert_row's preservation of an unknown document-root key (R2) was
+    # covered; retire_run's was not, even though it rewrites the live register through the exact
+    # same _read_register_unlocked -> mutate -> _atomic_write_json path. A future edit that
+    # reintroduces envelope reconstruction inside retire_run specifically would break the
+    # Claude<->Codex handoff on every retirement while leaving every existing test green.
+    M.upsert_row(tmp_path, "a1", {"run_id": "run-a", "phase": "verified"})
+    M.upsert_row(tmp_path, "b1", {"run_id": "run-b", "phase": "working"})
+
+    path = M.register_path(tmp_path)
+    doc = json.loads(path.read_text())
+    doc["handoff_token"] = "still-here"  # unknown to this module, added directly on disk
+    path.write_text(json.dumps(doc))
+
+    M.retire_run(tmp_path, "run-a")
+
+    live_on_disk = json.loads(path.read_text())
+    assert live_on_disk["handoff_token"] == "still-here"
+    assert set(live_on_disk["rows"]) == {"b1"}

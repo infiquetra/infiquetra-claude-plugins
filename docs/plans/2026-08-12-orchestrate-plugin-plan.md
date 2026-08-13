@@ -28,7 +28,17 @@ eleven P1 findings are resolved below; the operator settled the two that were pr
 ## Problem Frame
 
 An evidence pass over 552 agent transcripts (100% proof-verified read) found 243 distinct
-coordination failures across 477 session-occurrences. Ranked by `cost × silence` rather than count,
+coordination failures across 477 session-occurrences.
+
+> **Where the evidence lives.** The ledger, its 15 per-shard inputs, the mining scripts, the five
+> adversarial reviews, and the second-instrument re-mine that recovered 17 findings from 138
+> sessions previously reported empty are archived **outside this repository**, at
+> `iCloud Drive/Infiquetra-LLC/Engineering/orchestrate-plugin-evidence-2026-08-13/` (35 files,
+> ~830 KB, `README.md` orients it). It is operator-local by decision: the material is mined from
+> working sessions across every Infiquetra project and this repository is public. An agent executing
+> this plan cannot open it and should treat the numbers above as given rather than re-deriving them.
+
+Ranked by `cost × silence` rather than count,
 the top categories are evidence (51 entries), boundary (39), notification (27), and model-routing
 (20) — all failures that present as success. `lifecycle` leads on raw count (130 occurrences) and
 ranks near the bottom on severity, because the operator objects out loud every time and it
@@ -342,8 +352,10 @@ match requires an output revision later than the pre-dispatch baseline recorded 
 `plugins/orchestrate/references/herdr-event-api.md`.
 
 **Test scenarios** — `tests/test_orchestrate_herdr_events.py`:
-a subscribe request serialises with the dotted types, checked against a committed excerpt of
-`herdr api schema --json` rather than against hand-written strings; an underscored subscribe type is
+a subscribe request serialises with the dotted types, checked against a schema fixture the unit
+commits under `plugins/orchestrate/tests/fixtures/`, captured from `herdr api schema --json` at
+build time and carrying the `Subscription`, `SubscriptionEventKind`, `EventKind`, and `OutputMatch`
+definitions — never against hand-written strings; an underscored subscribe type is
 a hard error, not an ignored unknown kind; a malformed subscription is reported rather than silently
 dropped; `pane.output_matched` with a regex decodes `matched_line`; a sentinel present in
 pre-dispatch scrollback does **not** satisfy the match; a socket close mid-stream triggers reconnect
@@ -623,8 +635,6 @@ is built by the runtime it targets.
   a Codex operator would type `$saga:plan`.
 - **`tools/create-plugin.sh` modernisation.** It emits an obsolete shape (U2). Fixing it is separate
   work.
-- **The evidence ledger.** The 552-transcript corpus behind the Problem Frame currently lives only
-  in a session scratchpad; commit it or cite a durable location.
 - **`/outcome` cull.** Deprecated here, deleted later, on a condition the operator sets after real
   use.
 

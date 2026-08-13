@@ -2,6 +2,43 @@
 
 ## 2026-08-13
 
+### `max` collapses to a vendor's strongest accepted CLI rung, and only where that vendor cannot represent it  {#effort-collapse-max}
+
+`execution_classes` in `plugins/fleet-core/scripts/fleet_commons/models.json` names `max` as an authoritative scalar (review-max prefers `gpt-5.6-sol` at `max`). The six runtimes the plugin must route to — `claude`, `codex`, `grok`, `muse`, `qwen`, `agy` — do not share that ladder. The build roster excluding muse/qwen/agy is a cost choice about who *builds* this plan, not about who the plugin must launch. Verified on this host 2026-08-13 from each binary's own `--help`, slash-command surface, and config, not inferred across vendors:
+
+- `claude` 2.1.229: both `--effort (low, medium, high, xhigh, max)` (`claude --help`) and in-session `/effort` (changelog: "Added `/effort` slash command"; operator-verified). Pass `max` through. **Chose argv** so the first turn already uses the requested rung.
+- `codex-cli` 0.147.0: `--model`, no `--effort`. Effort rides `-c model_reasoning_effort=<rung>`. `~/.codex/config.toml` defaults that field to `max`. Binary strings expose TUI `increase_reasoning_effort` / `decrease_reasoning_effort` keymaps, not a `/effort` command. Pass `max` through. `ultra` is never emitted — it is not in `scalar_efforts`. **Chose argv** (`-c`); it is the only launch-time mechanism.
+- `grok` 1.0.3: both `--reasoning-effort` / `--effort` (`grok --help`) and in-session `/effort` (`~/.grok/docs/user-guide/04-slash-commands.md`: `low`, `medium`, `high`, `xhigh`). Headless docs list `max` as a parser token and say a model only accepts the levels its menu advertises. `grok models` is only `grok-4.6` and `grok-4.5`. Collapse `max` → `xhigh`. **Chose argv** so the first turn already uses the requested rung.
+- `muse` 0.1.0-R708.1: both `--reasoning-effort none|minimal|low|medium|high|xhigh|ultra` (`muse --help`, default `high`) and in-session `/effort` (bundled `manage-settings` skill: "`/models`, `/effort`, and `/settings` are user-side controls"). No `max`. Collapse `max` → `xhigh`. Do **not** emit `ultra`: `root_orchestration_profiles.root.ultra.leaf_allowed` is false, and `ultra` is not a leaf scalar. **Chose argv** so the first turn already uses the requested rung.
+- `qwen` 0.21.10: `--model` / `-m` only. `qwen --effort max` is `Unknown argument: effort`. In-session `/effort` is a built-in (`packages/cli/src/ui/commands/effort-command.ts` in the installed bundle, `argumentHint: "[low|medium|high|xhigh|max]"`, `supportedModes: ["interactive", "non_interactive", "acp"]`; also `qc-helper/docs/features/commands.md`). **Chose in_session** because there is no launch flag. The directive is `{"mode": "in_session", "command": "/effort <collapsed>"}`.
+- `agy` 1.1.12: both `--effort (low|medium|high)` (`agy --help`) and in-session `/effort` (antigravity changelog 1.1.5: "Added a `/effort` command" and "Added an `--effort` flag"). Collapse `max` and `xhigh` → `high`. A live `agy --print --effort not-a-rung` did not reject; that makes a silent wrong flag worse, not better. **Chose argv** so the first turn already uses the requested rung.
+
+**The decision that still holds: collapse is an explicit per-vendor table (`_EFFORT_COLLAPSE` in `tier_resolver.py`), not a silent clamp.** The table is `{grok: {max: xhigh}, muse: {max: xhigh}, agy: {max: high, xhigh: high}}`. Claude, Codex, and Qwen pass `max` through. `strongest-supported` becomes that vendor's last accepted rung.
+
+**The correction, recorded because three rounds solved the wrong problem.** Qwen has no launch-time effort flag. The first response omitted the flag and still returned `effort: max`. The next two rounds tried to *predict* what qwen would do by reading its settings files: layer precedence, folder trust, `$VAR` / `${VAR}` expansion, `.env` discovery, system defaults, and a required `cwd` so the guard would not validate the orchestrator's directory. That approach is unbounded. Every missing layer was a new hole; every hole invited a more complete model of another program's configuration. Predicting another program's config can never close — the other program owns the merge, and we do not.
+
+**The replacement: set, then observe.** `RuntimeResolution.effort_application` is structured data a later unit can execute, not a docstring. Claude, Codex, grok, muse, and agy are `{"mode": "argv"}`. Qwen is `{"mode": "in_session", "command": "/effort <collapsed>"}`. An in-session command produces pane output, so U4 (session lifecycle) can confirm the effort took via `pane.output_matched` (plan R3). This unit produces the directive. Confirming it took is not this unit's job. All settings-layer prediction, the `cwd` threading that existed only to feed it, and the tests that exercised it are deleted.
+
+**Rejected: always collapse `max` to `xhigh` on every non-Codex vendor.** That ignores Claude's live `--effort` list and Qwen's `/effort` argument hint.
+
+**Rejected: pass `max` through to grok because the headless parser lists it.** Parser-canonical is not model-advertised.
+
+**Rejected: emit `muse --reasoning-effort ultra` as the collapse of `max`.** Ultra is on the CLI and is stronger, but it is not a leaf scalar and the root profile forbids it on leaves.
+
+**Rejected: invent a qwen launch flag (`--effort` / `--reasoning-effort`) from another vendor or from `/review --effort`.** The top-level CLI rejects both names.
+
+**Rejected: omit qwen's effort flag and still return `effort: max` with no application directive.** That is the original defect. Host ambient was `low`. The register would have recorded a max-tier child that ran at low.
+
+**Rejected: predict qwen's ambient `model.reasoningEffort` from settings files and fail closed on mismatch.** Three rounds of that. Settings-layer completeness is not a property this plugin can finish. The other program's `/effort` command is the surface that sets the value and produces output.
+
+**Rejected: default qwen `cwd` to `Path.cwd()` so a settings guard can run.** The `cwd` parameter existed only to feed that guard. With the guard gone, the parameter is gone.
+
+**Rejected: add `max` to the existing `efforts` key.** That key is load-bearing for `tier_palette.EFFORTS`.
+
+**Revisit when** a live grok-4.6 menu advertises `max`, Claude's `--effort` help drops `max`, muse ships a current non-contributor model or documents `max`, qwen grows a launch-time effort flag (then consider switching its `effort_application` mode to `argv` so the first turn is covered), or agy documents `xhigh`/`max`.
+
+**Refs.** Brief `.orchestrate/briefs/U1.md` (three-CLI error repaired against plan lines 233 and 277), plan `docs/plans/2026-08-12-orchestrate-plugin-plan.md` U1 / U4 / R3 / KTD7, Codex source `infiquetra-codex-plugins/plugins/fleet-core/scripts/fleet_commons/models.json`.
+
 ### Session-mined evidence for a public repository is archived operator-local, and the plan says so  {#mined-evidence-stays-operator-local}
 
 `infiquetra/infiquetra-claude-plugins` is a **public** repository. The orchestrate plan's Problem Frame rests on numbers mined from 552 agent transcripts — 243 distinct coordination failures over 477 session-occurrences — and those numbers drive every priority in the 10-unit build. The supporting ledger is 35 files and roughly 830 KB: per-shard ledgers, the merged pain ledger, the dogfood findings, the mining scripts, five adversarial reviews, a herdr protocol excerpt. It lived in a disposable session scratchpad, so the plan cited evidence that was one `rm` away from gone.

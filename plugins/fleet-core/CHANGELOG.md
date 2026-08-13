@@ -5,6 +5,12 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.0] - 2026-08-13
+
+### Added
+
+- **Portable execution-class vocabulary and a runtime sibling of `resolve()`.** `models.json` grows `schema_version`, `scalar_efforts`, `execution_classes`, and `root_orchestration_profiles` (Codex version-2 shape). Existing `models` / `efforts` keys are unchanged. `resolve_for_runtime(work_shape, runtime)` maps an execution class onto a runtime-owned `{model, effort, fallbacks, workspace_boundary, effort_application}` for all six plugin runtimes (`claude`, `codex`, `grok`, `muse`, `qwen`, `agy`). `adapt_runtime_argv` is the only place that pair becomes vendor CLI flags. Collapse: grok/muse `max`→`xhigh`; agy `max`/`xhigh`→`high`. Effort application is structured data: argv for the five runtimes that take a launch flag; qwen is `{"mode": "in_session", "command": "/effort <rung>"}`. Confirming the directive took is U4, not this unit. See DECISIONS `{#effort-collapse-max}`.
+
 ## [0.24.0] - 2026-08-08
 
 ### Removed

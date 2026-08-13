@@ -85,6 +85,10 @@ MODELS = _derive_ordered(_REGISTRY["models"], "rank", "model")
 # Closed effort vocabulary, weakest-first — derived from models.json ``rung``.
 EFFORTS = _derive_ordered(_REGISTRY["efforts"], "rung", "effort")
 
+# Portable scalar ladder from the version-2 subset. Includes ``max``; does not
+# include Codex ``ultra``. Existing ``EFFORTS`` stays the four-rung Claude set.
+SCALAR_EFFORTS = _derive_ordered(_REGISTRY["scalar_efforts"], "rung", "scalar effort")
+
 # Per-model effort ceiling: the strongest effort the model actually runs. haiku
 # clamps below xhigh; the ladder ops and Tier.validate() consult this (#370).
 _EFFORT_CEILINGS = _derive_effort_ceilings(_REGISTRY, EFFORTS)

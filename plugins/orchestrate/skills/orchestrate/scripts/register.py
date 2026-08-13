@@ -62,9 +62,12 @@ Time       -- dispatched_at, dispatch_revision_baseline, deadline, max_quiet_sec
     defines the column, U7 is the reader that must honor this. See
     ``docs/engineering-journal/LEARNINGS.md#pane-revision-is-the-liveness-signal`` for the full
     write-up.
-    ``dispatch_revision_baseline`` is the pane ``revision`` counter sampled immediately before
-    dispatch. A ``pane.output_matched`` hit is honoured only when the event's current revision is
-    greater than this baseline, so text left in pre-dispatch scrollback cannot satisfy a new run.
+    ``dispatch_revision_baseline`` remains in the version-1 schema for forward compatibility but
+    is not a valid output-match guard. Live protocol-19 measurements show the pane counter and
+    ``pane.output_matched``'s ``read.revision`` are different counters: the event reports zero while
+    the pane counter is positive and advancing. U4 therefore does not write or compare this field.
+    Sentinel freshness comes from complete run/child/purpose/nonce identity and keeping the
+    assembled sentinel out of echoed dispatch input.
 
 Accounting -- tokens_observed, tokens_reserved
     ``tokens_reserved`` is what U6's spend gate committed before dispatch; ``tokens_observed`` is

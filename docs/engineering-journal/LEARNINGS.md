@@ -21,6 +21,25 @@
 
 ## 2026-08-13
 
+### A Git worktree does not carry the checkout-local environment  {#worktree-needs-environment}
+
+**Context.** The orchestrate session lifecycle isolates every mutating child in a branch worktree.
+The child still needs to run the repository's ordinary checks, including commands routed through
+the checkout-local virtual environment.
+
+**Mechanism.** Git materializes tracked files and its own worktree metadata. A virtual environment
+is untracked, checkout-local state, so the new worktree cannot inherit the ambient checkout's
+`.venv`. A child that immediately runs `uv run pytest` can therefore fail dependency setup rather
+than the assigned work, even though worktree creation itself succeeded.
+
+**Fix.** Worktree provisioning now includes an explicit environment command, defaulting to
+`uv sync`, and fails before agent launch when setup fails. Retry reuses the worktree and repeats the
+missing setup. The landing test creates a real Git worktree and makes its environment marker inside
+that checkout; deleting the environment step leaves the marker absent and fails the test.
+
+**Generalizable rule.** Treat a worktree as source isolation, not as an executable environment.
+Provision checkout-local dependencies before attributing a test failure to the child running there.
+
 ### herdr's liveness signal is the pane-output counter, not the lifecycle-state counter  {#pane-revision-is-the-liveness-signal}
 
 **Context.** U2's register needs a `last_event_at` column a later hang detector (U7) can trust. herdr exposes two counters on a pane: `state_change_seq` (increments on a lifecycle transition) and `revision` (increments on pane output). Driving a real build by hand, one child's session showed these two counters disagree sharply while the child was genuinely, continuously working.
@@ -31,14 +50,17 @@
 
 **Fix.** `register.py`'s `last_event_at` column is documented as fed by `revision`, never by `state_change_seq`; a hang detector built against the wrong counter would false-alarm on a healthy, working child.
 
-A second consequence appears in content subscriptions: `pane.output_matched` searches text that is
-already in scrollback. A unique run-and-child sentinel identifies the intended interaction, but
-identity alone does not prove the text was emitted after dispatch. The register therefore also
-stores `dispatch_revision_baseline`, sampled before dispatch, and accepts a match only when the
-event's pane revision is greater. Tests exercise the real socket decoder path with a sentinel at
-the baseline revision so deleting the comparison makes the stale match wake the orchestrator.
+**Correction from the first consumer.** The pane revision above comes from `pane get` and session
+snapshots. It is not the revision carried by `pane.output_matched`. Three live matches across two
+panes, including a control probe, all carried `data.read.revision=0` while the pane counter read 1
+or 3. Comparing them made every match look stale. The subscriber no longer compares those counters.
+Its identity guard checks run, child, purpose, and nonce; the lifecycle keeps the complete sentinel
+out of echoed input by sending its prefix and payload as separate assembly parts. A schema-validated
+live capture now exercises the output-match response through the production decoder.
 
-**Generalizable rule.** When a substrate exposes two counters that both look like "did anything happen," check which one is scoped to *state* and which is scoped to *output* before picking a liveness signal — a state-transition counter and an activity counter diverge exactly when something is working hard without changing state, which is the common case, not the edge case.
+**Generalizable rule.** When a substrate exposes two counters that both look like "did anything
+happen," measure both at the exact producer and consumer boundary before comparing them. Matching
+field names and types do not prove shared identity or ordering.
 
 **Refs.** DECISIONS `{#mined-evidence-stays-operator-local}` (why the originating session evidence itself stays operator-local rather than landing in this public repo); LEARNINGS `{#agent-lifecycle-detectors-lie}` (the sibling finding that a child's own reported status is equally unreliable as a completion signal).
 

@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.3.0] - 2026-08-13
+
+### Added
+
+- Launch children through the `agent` wrapper's control-only path after validating its dry-run
+  working directory and Herdr workspace. Launch intent and a run-bound task label are durable
+  before the side effect, and interrupted launches recover by discovering that label.
+- Resolve model and effort through fleet-core's runtime adapter. Qwen's in-session effort command
+  is sent after launch and accepted only after its own acknowledgement is observed.
+- Classify readiness through a nonce-bound `pane.output_matched` interaction whose complete
+  sentinel never appears in echoed dispatch input. Trust prompts are surfaced before dispatch,
+  and a launch without a child-produced sentinel remains not-ready.
+- Repair the subscriber's inert cross-counter revision guard. A captured live output-match event
+  proves protocol 19 reports `read.revision=0`; the event envelope is now schema-validated through
+  the production decoder instead of being discarded as stale.
+- Provision mutating children in branch worktrees with an explicit environment-setup step; keep
+  read-only children in the ambient checkout. Final Git changed paths are checked in full against
+  the declared scope, independently of predicate success.
+- Record reaping before closing a Herdr tab and distinguish a recorded reap from an unexplained
+  disappearance.
+
+### Not in this release
+
+- Predicate implementations, the integration gate that authorizes live reaping, spend and
+  concurrency admission, hang detection, mirror behavior, and the `/orchestrate` command.
+
 ## [0.2.2] - 2026-08-13
 
 ### Fixed

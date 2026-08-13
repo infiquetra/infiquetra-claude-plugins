@@ -4,7 +4,7 @@
 Subscription names use herdr's dotted request vocabulary. The 26 general broadcast events use a
 separate, underscored vocabulary; the three subscription-event broadcasts remain dotted. The
 committed schema fixture is captured from ``herdr api schema --output`` and the tests validate
-requests and snapshot responses against it.
+requests, snapshot responses, and a live output-match event against it.
 """
 
 from __future__ import annotations

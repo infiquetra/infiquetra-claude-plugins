@@ -391,25 +391,10 @@ class Subscriber:
                     row_id=row_id,
                 )
                 return False
-            baseline = row.get("dispatch_revision_baseline")
-            if not isinstance(baseline, int) or isinstance(baseline, bool):
-                self._diagnostic(
-                    "missing_revision_baseline",
-                    "ignored output match because the row has no dispatch revision baseline",
-                    pane_id=pane_id,
-                    row_id=row_id,
-                )
-                return False
-            if event.revision is None or event.revision <= baseline:
-                self._diagnostic(
-                    "stale_output_match",
-                    "ignored output match at or before the pre-dispatch revision baseline",
-                    pane_id=pane_id,
-                    row_id=row_id,
-                    baseline=baseline,
-                    revision=event.revision,
-                )
-                return False
+            # Protocol 19's live pane.output_matched envelope reports read.revision=0 even when
+            # pane.get reports a positive, advancing pane revision. They are not comparable
+            # counters. Freshness comes from the complete run/child/purpose/nonce identity above;
+            # the producer must keep the assembled sentinel out of echoed dispatch input.
             register_store.upsert_row(
                 self.root, row_id, {"last_event_at": herdr_events.unix_time()}
             )

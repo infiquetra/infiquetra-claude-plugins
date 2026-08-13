@@ -280,8 +280,8 @@
     {
       "name": "orchestrate",
       "source": "./plugins/orchestrate",
-      "version": "0.3.0",
-      "description": "Cross-vendor orchestration over herdr with durable state, write-ahead launches, interaction readiness, scoped worktrees, event catch-up, and recorded reaping.",
+      "version": "0.4.0",
+      "description": "Cross-vendor orchestration over herdr with durable state, write-ahead launches, interaction readiness, scoped landings, event catch-up, and bounded predicates on settled artifacts.",
       "author": {
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"
@@ -296,7 +296,9 @@
         "dispatch",
         "state-model",
         "events",
-        "catch-up"
+        "catch-up",
+        "predicate",
+        "verification"
       ],
       "category": "development"
     }

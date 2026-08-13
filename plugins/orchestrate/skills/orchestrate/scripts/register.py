@@ -64,6 +64,19 @@ Time       -- dispatched_at, deadline, max_quiet_seconds, last_event_at
     defines the column, U7 is the reader that must honor this. See
     ``docs/engineering-journal/LEARNINGS.md#pane-revision-is-the-liveness-signal`` for the full
     write-up.
+Completion -- dispatch_receipt, completion
+    Written by U5 through the same merge-update API, and named here so the operator's view of the
+    table is documented in one place. ``dispatch_receipt`` is the expected evidence identity the
+    orchestrator establishes *before* a child is dispatched: the run-binding token, the artifact's
+    destination and its pre-dispatch state, and the predicate's dependency closure and content
+    digest. ``completion`` is the durable verdict: result, a reason from a closed failure
+    vocabulary, the artifact digest, and the predicate outcome. The verdict deliberately does not
+    live in ``observed_state`` -- that column is owned by the liveness detectors and is rewritten by
+    the subscriber's snapshot catch-up for every row with a live pane, so a failure recorded there
+    would be erased while the child's pane is still open. ``PHASES`` has no member meaning
+    "evaluated and failed", so a failed completion leaves ``phase`` untouched and this key is what
+    keeps a failed child distinguishable from a working one.
+
 Accounting -- tokens_observed, tokens_reserved
     ``tokens_reserved`` is what U6's spend gate committed before dispatch; ``tokens_observed`` is
     the running actual, updated as events arrive. The gap between them is what the gate checks.

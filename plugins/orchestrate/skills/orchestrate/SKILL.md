@@ -1,18 +1,21 @@
 ---
 name: orchestrate
-description: The orchestrate register, tracked herdr subscriber, and write-ahead child session lifecycle for multi-vendor runs, with interaction readiness, scoped worktrees, nonce-bound sentinels, reconnect catch-up, and recorded reaping. No predicate implementations, integration gate, or mirror behavior yet. Triggers on "orchestrate register", "orchestrate subscriber", "orchestrate session lifecycle", "herdr event catch-up", "the run register".
+description: The orchestrate register, tracked herdr subscriber, write-ahead child session lifecycle, and completion gate for multi-vendor runs, with interaction readiness, scoped worktrees, nonce-bound sentinels, reconnect catch-up, bounded predicates on settled run-bound artifacts, verified integration, and recorded reaping. No routing, spend gate, or mirror behavior yet. Triggers on "orchestrate register", "orchestrate subscriber", "orchestrate session lifecycle", "orchestrate completion", "orchestrate predicate", "herdr event catch-up", "the run register".
 ---
 
-# orchestrate — register, event subscriber, and session lifecycle
+# orchestrate — register, event subscriber, session lifecycle, and completion
 
 `orchestrate` coordinates multi-vendor herdr sessions: Claude, Codex, Grok, Muse, Qwen, and agy
 children dispatched under one operator-driven run, aggregated back through a mirror and woken by a
-subscriber holding herdr's event socket across turns. This skill currently ships **three pieces of
-that system: the register, subscriber, and child session lifecycle**. The register is the whole state model (KTD5) and the
+subscriber holding herdr's event socket across turns. This skill currently ships **four pieces of
+that system: the register, subscriber, child session lifecycle, and completion gate**. The register is the whole state model (KTD5) and the
 Claude↔Codex handoff seam (R12). The subscriber holds protocol 19 event streams, wakes the
 orchestrator, and performs reconnect catch-up (KTD3/KTD12). The session lifecycle owns write-ahead
 launch, recovery, interaction readiness, landing isolation, scope checks, and recorded reaping.
-Predicate implementations, spend gating, hang detection, mirror behavior, and the `/orchestrate`
+Completion is the only path to `verified` (R5): a bounded, typed predicate run inline by the
+orchestrator on a settled, run-bound artifact, inside a clean boundary, with integration to the
+recorded destination verified before a child can be reaped.
+Routing, spend gating, hang detection, mirror behavior, and the `/orchestrate`
 command itself land in later units of
 `docs/plans/2026-08-12-orchestrate-plugin-plan.md` and is deliberately absent here.
 
@@ -142,13 +145,39 @@ records a launch commit for every child and unions committed changes with uncomm
 non-ignored changes. A mutating child's declared scope applies only to its isolated landing; every
 attributed ambient-checkout change violates that boundary. Git-ignored paths remain an explicit
 limitation requiring a separate filesystem boundary. Reaping records the transition before closing
-the tab. Live reaping remains gated on the later integration unit.
+the tab.
 
 See `references/substrate-contract.md` for the adapter, recovery, residual readiness risk, and
 failure contract.
 
+## Completion — the only path to `verified`
+
+`scripts/completion.py` decides whether a child is done, and records why either way. A predicate is
+a typed, closed schema: a fixed argument vector with a bounded timeout and output cap, rejected
+rather than clamped when it exceeds either, and rejected outright when it is shell text. It runs
+inline in the orchestrator's own process tree — the mirror never decides (KTD6).
+
+Before dispatch the orchestrator issues a receipt: a run-binding token the child must carry inside
+its deliverable, the destination's exact pre-dispatch state, and a digest over the predicate's
+resolved dependency closure. A predicate whose closure lives where the child can write is rejected
+before evaluation, and a closure that changes between dispatch and evaluation fails as tampered.
+
+Settlement is performed, not inferred. The child writes only an in-flight sibling of its
+destination; the orchestrator requires the destination to be untouched and then renames the
+in-flight file into place itself, so the predicate only ever reads a renamed path. Every child's
+deliverable lands in a directory that is exclusively its own and invisible to the repository
+boundary, which is what lets concurrent read-only children in one checkout each complete cleanly.
+
+Integration to the recorded destination is verified before `verified` is written, so a child whose
+change never landed cannot be reaped. Judgment-shaped work additionally requires an independent
+verifier's depth sample bound by digest to the settled artifact. A failed completion never moves
+`phase`; its verdict is recorded in the row's own `completion` key.
+
+See `references/predicates.md` for the full contract, including what each control does **not**
+establish.
+
 ## What is deliberately not here
 
 No `commands/` entry (`/orchestrate` lands with the units that need an invocable surface — KTD2),
-no predicate implementations or integration gate, no mirror behaviour beyond the register row it
+no planning or vendor routing, no admission control, no mirror behaviour beyond the register row it
 will eventually hold, no spend gate, and no hang detector.

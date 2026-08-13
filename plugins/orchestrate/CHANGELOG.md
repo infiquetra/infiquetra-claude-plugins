@@ -1,5 +1,69 @@
 # Changelog
 
+## [0.4.0] - 2026-08-13
+
+### Added
+
+- Completion is the only path to `verified`. A child reaches it when its predicate's dependency
+  closure is unchanged, its artifact was settled by the orchestrator's own rename, that artifact
+  carries this dispatch's pre-established run binding, the predicate passes, the repository
+  boundary is clean, the recorded destination has actually changed, and — for judgment-shaped work
+  — an independent verifier's depth sample is on record. Any failure records a verdict and leaves
+  the phase alone.
+- Predicates are a typed, closed schema: a fixed argument vector with a bounded timeout and output
+  cap. Shell text, an `argv` string, a shell program, an inline-source flag, an unknown key, and an
+  out-of-range limit are all rejected rather than clamped or ignored. The check runs inline in the
+  orchestrator's process tree; a non-zero exit, a hang, an unlaunchable program, and output past
+  the cap are each a failure and never a pass, with output streamed so an unbounded predicate is
+  killed while still writing rather than buffered.
+- A predicate cannot be weakened by the child it certifies. Its resolved import closure — not only
+  its entry-point path — must lie outside everything the child may write, and a digest over that
+  closure's contents is captured before dispatch and re-checked before evaluation, so a change to
+  any statically known dependency fails even when that file sits outside the child's declared
+  scope. The analysis is bounded and fails closed; what it does not follow is stated in
+  `references/predicates.md`.
+- Settlement is performed rather than inferred, because a file on disk does not record whether it
+  arrived by rename or by direct write. The child writes only an in-flight sibling of its
+  destination; the orchestrator requires the destination to be byte-for-byte its pre-dispatch state
+  and then renames the in-flight file into place itself. The predicate therefore reads only a
+  renamed path. A directly written artifact, a missing deliverable, and an in-flight symlink are
+  each refused with a real observation.
+- Run binding is established before the child runs and stored in the register, never read from a
+  file beside the artifact. An artifact from another run, another child, or another attempt is
+  rejected, and the failure names the binding it does carry.
+- Every child's deliverable lands in a directory that is exclusively its own and required to be
+  invisible to the repository boundary; a repository that does not ignore the orchestrate state
+  directory fails closed. A read-only child's declared scope is a read scope, not a repository
+  write allowlist. Concurrent read-only children with disjoint scopes therefore both complete
+  cleanly, which they previously did not, while a read-only child that does write into the shared
+  checkout still fails.
+- The completion evaluator is held to the same boundary it enforces: the landing is snapshotted
+  immediately before the predicate runs, and a predicate that changes the landing fails as a
+  predicate defect rather than being attributed to the child.
+- Integration to the recorded destination is verified before reaping is possible — a `branch` tip
+  that has not advanced and a `path` whose content has not changed both block verification, while
+  `none` states that read-only work integrates nowhere instead of silently skipping the check.
+- Judgment-shaped work, classified through fleet-core's authoritative work-shape vocabulary
+  including its role-tier aliases, cannot reach `verified` on mechanical coverage alone. A depth
+  sample records verifier identity, the digest binding it to this artifact, sampled claims, evidence
+  locations, and dispositions from a closed set; a sample from the child itself, one recorded
+  against another artifact, one with no claims, and any unsupported claim each block verification.
+- `references/predicates.md` states the completion contract, including for every control what it
+  does **not** establish — notably that settlement does not prove how the child produced its
+  in-flight file, that closure analysis does not follow dynamic imports, and that a depth sample
+  cannot prove the verifier was blind.
+
+### Changed
+
+- `GitLanding` answers two further boundary questions it already owned: whether a revision exists,
+  and whether a path is ignored by the repository. The scope helpers it shares with completion are
+  now part of its public surface.
+
+### Not in this release
+
+- Planning and vendor routing, admission control, spend and concurrency bounds, hang detection,
+  mirror behavior, and the `/orchestrate` command.
+
 ## [0.3.0] - 2026-08-13
 
 ### Added

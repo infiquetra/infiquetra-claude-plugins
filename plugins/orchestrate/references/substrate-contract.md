@@ -82,11 +82,42 @@ directory, and a boundary violation fails completion even when the predicate pas
 Shared-tree enforcement is observational and cannot identify which concurrent actor made a change.
 For a mutating child, an operator or overlapping child that changes the ambient checkout during its
 dispatch window can cause it to fail closed. For a read-only child, the shared checkout is the child
-landing, and every change observed there since its baseline is attributed to that child for the scope
-check even though authorship is not established. Concurrent read-only children with disjoint scopes
-therefore fail each other's boundary check. This is a present U4 limitation; U5 owns the structural
-landing change needed by the first completion-scope consumer. Worktree isolation prevents collisions
-only when writers remain inside their assigned landing.
+landing, so every change observed there since its baseline is attributed to that child even though
+authorship is not established. Worktree isolation prevents collisions only when writers remain
+inside their assigned landing.
+
+**The read-only sibling repair.** U4 left one consequence of that open: two read-only children with
+disjoint scopes, each writing only its own declared artifact into the shared checkout, each failed
+the other's boundary check. A control that fails every child in the product's ordinary multi-child
+configuration is not a usable control. U5 resolves it structurally rather than by suppression, and
+the resolution has two halves.
+
+First, **every child's deliverable lands in a directory that is exclusively its own**, inside its
+own landing, at `.orchestrate/artifacts/<run-id>/<row-id>/`. That directory is required to be
+ignored by the repository; the requirement is checked when the dispatch receipt is issued and fails
+closed in a repository that does not ignore the orchestrate state directory, because the whole
+attribution argument depends on it. The directory sits inside the landing rather than beside the
+repository so a sandboxed mutating child can write to it at all. The child writes an in-flight
+sibling there and the orchestrator renames it into place.
+
+Second, **a read-only child's declared scope is a read scope, not a repository write allowlist.**
+Its repository write allowlist is empty, so any repository-visible change during its window fails
+the boundary check regardless of which child made it — and a correct read-only child now makes none,
+because its deliverable is outside Git's view. Concurrent read-only children with disjoint scopes
+therefore complete cleanly, which is the ordinary case, while a read-only child that does write into
+the shared checkout still fails, with the existing message stating that authorship is not
+established.
+
+What this repair does **not** provide: the exclusive artifact directory is exclusive by assignment,
+not by enforcement. Nothing in the filesystem stops a child from writing into a sibling's artifact
+directory, and because that directory is invisible to Git the boundary check cannot observe it
+either. Detecting deliberate cross-child writes requires a per-child filesystem boundary, which is
+the same missing control named for Git-ignored paths below.
+
+The completion evaluator is also held to this boundary. It runs the predicate inline in the child's
+landing after the child has stopped, so the landing is snapshotted immediately before the predicate
+runs and any predicate-authored change is recorded as a failure of the predicate rather than
+attributed to the child.
 
 **Git-ignored paths are outside U4 scope observation.** Git status deliberately omits them, and the
 ambient runtime state changes as the orchestrator records lifecycle transitions, so this control
@@ -98,5 +129,19 @@ claim that Git observes every filesystem write.
 
 Only a row already in `verified` may be reaped. The lifecycle writes `phase=reaped` and an expected
 `exited` state before asking Herdr to close the tab. A missing tab without that recorded transition
-is an unexplained disappearance and raises. A missing tab after the transition is expected. The
-later integration gate owns authorization to exercise reaping on real work.
+is an unexplained disappearance and raises. A missing tab after the transition is expected.
+
+`verified` is now written in exactly one place: a completion evaluation in which the predicate's
+dependency closure is unchanged, the artifact was settled by the orchestrator's own rename, the
+artifact carries this dispatch's pre-established run binding, the predicate passed, the boundary is
+clean, the recorded destination actually changed, and — for judgment-shaped work — an independent
+verifier's depth sample is on record. The integration clause is what makes reaping safe on real
+work: a child whose change never landed cannot reach `verified`, so it cannot be reaped and its
+worktree cannot be discarded with the change still in it.
+
+A failed completion does not move `phase`. `PHASES` is closed and has no member meaning "evaluated
+and failed", so the verdict is recorded in the row's own `completion` key instead, and never in
+`observed_state` — that column is rewritten by the subscriber's snapshot catch-up for every row with
+a live pane, so a failure recorded there would be erased while the child's pane is still open. The
+full completion contract, including what each control does and does not establish, is in
+[`predicates.md`](predicates.md).

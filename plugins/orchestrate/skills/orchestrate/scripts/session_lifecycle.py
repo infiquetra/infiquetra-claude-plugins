@@ -522,6 +522,30 @@ class GitLanding:
             raise LandingError("git rev-parse HEAD returned no commit")
         return value
 
+    def rev_parse(self, root: Path, rev: str) -> str | None:
+        """Resolve one revision to a commit, or ``None`` when it does not exist.
+
+        ``base_commit`` cannot express "this branch may not exist yet", which is exactly the
+        question the completion integration gate asks about a child's destination branch.
+        """
+        result = _run_command(
+            ["git", "rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}"],
+            cwd=root,
+            runner=self.runner,
+        )
+        return result.stdout.strip() or None
+
+    def is_ignored(self, root: Path, relative: str) -> bool:
+        """Whether Git ignores ``relative`` -- i.e. whether it is outside this boundary's view."""
+        result = _run_command(
+            ["git", "check-ignore", "--quiet", "--no-index", "--", relative],
+            cwd=root,
+            runner=self.runner,
+        )
+        if result.returncode not in (0, 1):
+            raise LandingError(result.stderr.strip() or "git check-ignore failed")
+        return result.returncode == 0
+
     def provision(self, root: Path, spec: ChildSpec, *, base_commit: str | None = None) -> Landing:
         root = root.resolve()
         resolved_base = base_commit or self.base_commit(root)
@@ -931,7 +955,7 @@ def _accept_effort_acknowledgement(
     return text.count(acknowledgement) > previous_counts[0]
 
 
-def _normalize_scope(scope: Sequence[str]) -> tuple[str, ...]:
+def normalize_scope(scope: Sequence[str]) -> tuple[str, ...]:
     normalized: list[str] = []
     for item in scope:
         path = PurePosixPath(item)
@@ -941,7 +965,7 @@ def _normalize_scope(scope: Sequence[str]) -> tuple[str, ...]:
     return tuple(normalized)
 
 
-def _in_scope(path: str, scope: Sequence[str]) -> bool:
+def path_in_scope(path: str, scope: Sequence[str]) -> bool:
     return any(path == allowed or path.startswith(f"{allowed}/") for allowed in scope)
 
 
@@ -1003,8 +1027,8 @@ def check_completion_scope(
             changed_paths_baseline.ambient_fingerprints,
             git,
         )
-    scope = _normalize_scope(spec.scope)
-    landing_outside = {path for path in landing_changed if not _in_scope(path, scope)}
+    scope = normalize_scope(spec.scope)
+    landing_outside = {path for path in landing_changed if not path_in_scope(path, scope)}
     outside = frozenset(landing_outside | ambient_changed)
     new_changed = landing_changed | ambient_changed
     result = ScopeCheck(predicate_passed, final | ambient_final, frozenset(new_changed), outside)

@@ -2,6 +2,71 @@
 
 ## 2026-08-13
 
+### A read-only child's declared scope is a read scope, and its deliverable leaves the shared checkout  {#read-only-exclusive-landing}
+
+Orchestrate's boundary check could not tell a child's changes from a sibling's in one working tree.
+Read-only children share the ambient checkout by design (U4's accepted cut), so two well-behaved
+read-only children with disjoint scopes each attributed the other's artifact to itself and each
+failed. Reproduced with a control that isolated the cause to sibling activity rather than to the
+child.
+
+**Decision.** Two halves, both structural. Every child's deliverable lands in a directory that is
+exclusively its own, inside its own landing, at `.orchestrate/artifacts/<run-id>/<row-id>/`, and
+that directory must be ignored by the repository — checked when the dispatch receipt is issued, and
+failing closed otherwise, because the whole attribution argument rests on it. And a read-only
+child's declared scope is treated as a **read** scope: its repository write allowlist is empty, so
+any repository-visible change during its window is a real finding rather than a sibling's ordinary
+output. Recorded in `plugins/orchestrate/references/substrate-contract.md` and
+`references/predicates.md`; pinned by
+`tests/test_orchestrate_completion.py::test_two_read_only_children_with_disjoint_scopes_both_complete_cleanly`
+and `::test_a_read_only_child_writing_into_the_repository_still_fails_the_boundary`.
+
+**Rejected: narrow what read-only completion asserts** — check only the declared artifact path and
+its digest, and state that a read-only child's wider scope is unenforced. Honest, and it would have
+closed the false positive, but it trades a control away permanently to fix an attribution problem
+that had a structural answer. The chosen route *strengthens* the repository assertion (empty
+allowlist) while removing the thing that made it fire, which is strictly better than weakening it.
+
+**Rejected: give read-only children their own worktree.** It contradicts U4's shipped and reviewed
+landing model, costs a worktree and an environment provision per read-only child, and gives a
+read-only reviewer a checkout it must not modify anyway. The exclusive *output* directory is the
+part of worktree isolation this problem actually needed.
+
+**Residual, stated rather than hidden.** The artifact directory is exclusive by assignment, not by
+enforcement: nothing in the filesystem stops a child writing into a sibling's directory, and because
+that directory is invisible to Git the boundary check cannot see it either. Detecting deliberate
+cross-child writes needs a per-child filesystem boundary — the same missing control already named
+for Git-ignored paths.
+
+**Revisit when** a per-child filesystem boundary exists (a sandbox profile or a per-child mount),
+at which point exclusivity can be enforced rather than assigned; or when a read-only child has a
+legitimate reason to produce a repository-visible artifact, which would mean it is not read-only.
+
+### A failed predicate leaves the phase alone and records its verdict in its own key  {#failed-completion-has-no-phase}
+
+`PHASES` in orchestrate's register is a closed, validated vocabulary — `planned`, `launching`,
+`launched`, `ready`, `working`, `verified`, `reaped` — with no member meaning *evaluated and
+failed*. U5 needed a failed child to be distinguishable from a working one in the operator's only
+view.
+
+**Decision.** A failed completion does not move `phase`; `verified` is written only on a full pass;
+and the verdict lives in the row's own `completion` key, carrying the result, a reason from a closed
+failure vocabulary, the artifact digest, and the predicate outcome. `failed_rows()` is the
+operator's "what stalled" view.
+
+**Rejected: add a phase.** `_validate_phase` rejects unknown values, and the closed vocabulary is an
+operator-approved decision from U2, not an oversight for a later unit to widen.
+
+**Rejected: record the failure in `observed_state` / `observed_state_source`,** which is what U4 uses
+for trust prompts and readiness timeouts. Those columns are owned by the liveness detectors: the
+subscriber's snapshot catch-up rewrites `observed_state` for every row with a live pane, so a
+verdict recorded there is erased the next time catch-up runs while the child's pane is still open.
+Demonstrated against the shipped consumer, not assumed — see LEARNINGS `{#one-owner-per-column}`.
+
+**Revisit when** the register gains a general per-column ownership rule, or when an operator surface
+needs failed children ordered alongside phase transitions in one timeline, which would argue for a
+transition log rather than a new phase.
+
 ### `max` collapses to a vendor's strongest accepted CLI rung, and only where that vendor cannot represent it  {#effort-collapse-max}
 
 `execution_classes` in `plugins/fleet-core/scripts/fleet_commons/models.json` names `max` as an authoritative scalar (review-max prefers `gpt-5.6-sol` at `max`). The six runtimes the plugin must route to — `claude`, `codex`, `grok`, `muse`, `qwen`, `agy` — do not share that ladder. The build roster excluding muse/qwen/agy is a cost choice about who *builds* this plan, not about who the plugin must launch. Verified on this host 2026-08-13 from each binary's own `--help`, slash-command surface, and config, not inferred across vendors:
@@ -37,7 +102,7 @@
 
 **Revisit when** a live grok-4.6 menu advertises `max`, Claude's `--effort` help drops `max`, muse ships a current non-contributor model or documents `max`, qwen grows a launch-time effort flag (then consider switching its `effort_application` mode to `argv` so the first turn is covered), or agy documents `xhigh`/`max`.
 
-**Refs.** Brief `.orchestrate/briefs/U1.md` (three-CLI error repaired against plan lines 233 and 277), plan `docs/plans/2026-08-12-orchestrate-plugin-plan.md` U1 / U4 / R3 / KTD7, Codex source `infiquetra-codex-plugins/plugins/fleet-core/scripts/fleet_commons/models.json`.
+**Refs.** Plan `docs/plans/2026-08-12-orchestrate-plugin-plan.md` U1 / U4 / R3 / KTD7 (the three-CLI error was repaired against plan lines 233 and 277), Codex source `infiquetra-codex-plugins/plugins/fleet-core/scripts/fleet_commons/models.json`.
 
 ### Session-mined evidence for a public repository is archived operator-local, and the plan says so  {#mined-evidence-stays-operator-local}
 

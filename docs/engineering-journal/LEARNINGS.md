@@ -21,6 +21,77 @@
 
 ## 2026-08-13
 
+### A property a file cannot carry must be produced, not inspected  {#produce-dont-inspect}
+
+**Context.** The orchestrate plan requires a child's artifact to be *settled* — written to a
+temporary path and renamed into place, with the predicate accepting only the renamed path. The
+obvious implementation inspects the finished artifact and decides whether it was renamed.
+
+**Evidence.** `plugins/orchestrate/skills/orchestrate/scripts/completion.py:settle_artifact`, pinned
+by `tests/test_orchestrate_completion.py::test_an_artifact_written_directly_to_the_destination_is_not_settled`
+and `::test_settlement_does_not_claim_to_detect_delete_then_recreate`. Deleting the destination-state
+comparison and the in-flight requirement each fail a distinct test (M3, M4 of the unit's deletion
+proofs).
+
+**Mechanism.** A file on disk does not record how it arrived. `stat` carries no provenance and
+content carries none, so no amount of reading the artifact distinguishes `rename(2)` from a direct
+write. Every inspection-shaped implementation of this requirement is therefore either a weaker
+adjacent claim wearing the stronger claim's name, or an outright fiction. The way to obtain the
+property is to **perform the operation yourself**: the child writes only an in-flight sibling, the
+orchestrator verifies the destination is untouched since a pre-dispatch snapshot, and the
+orchestrator does the rename. The sibling also settles the cross-filesystem hazard by construction —
+`os.replace` is atomic only within one filesystem, and a sibling is always on the destination's.
+
+**Generalizable rule.** When a requirement names a property the evidence cannot carry, stop trying
+to detect it and restructure the protocol so your own code is the thing that establishes it. If that
+is impossible, state the weaker property you actually enforce, in the same words the contract uses.
+
+### The controls that pin a behaviour are the ones whose deletion breaks a test  {#deletion-proof-finds-gaps}
+
+**Context.** U5 of the orchestrate plan shipped 22 named controls and 76 tests, all green. A
+mechanical deletion pass over the implementation — remove one control, run its pinning test, restore
+— found two controls no test actually pinned.
+
+**Evidence.** Deleting `settle_artifact`'s in-flight-file requirement left every test green, because
+the only test that exercised it wrote directly to the destination and was caught one line earlier by
+the destination-state comparison. Deleting the in-loop output cap in `run_predicate` also left every
+test green, because the predicate under test exited on its own and was caught by the post-exit size
+check. Both gaps were closed by tests naming the uncovered case:
+`test_a_child_that_produced_nothing_fails_with_a_recorded_verdict` and
+`test_a_predicate_that_never_stops_spewing_is_killed_at_the_cap_not_at_the_deadline`.
+
+**Mechanism.** Layered controls mask each other. When two checks can both reject an input, a test
+written against that input pins only whichever fires first, and the second becomes untested while
+looking covered — the coverage report counts the line as executed. Green tests plus complete-looking
+coverage is exactly the state in which a later refactor deletes a real control silently. The failure
+each survivor hid was severe in both cases: an unhandled `FileNotFoundError` instead of a recorded
+verdict when a child produced nothing, and an unbounded predicate bounded only by its deadline.
+
+**Generalizable rule.** For each control, ask what input reaches *it* and nothing else, and write
+that test. A control whose deletion leaves the suite green is untested regardless of coverage.
+
+### `observed_state` has an owner, and it is not whoever writes last  {#one-owner-per-column}
+
+**Context.** U5 needed a failed predicate to be visible to the operator, whose only view is the
+register. `observed_state` / `observed_state_source` are the columns U4 uses for exactly this kind
+of signal, so recording the failure there was the obvious choice.
+
+**Evidence.** `plugins/orchestrate/skills/orchestrate/scripts/subscriber.py:catch_up` rewrites
+`observed_state` for every row carrying a `pane_id`, from the live snapshot's `agent_status`.
+Demonstrated against the shipped consumer rather than asserted, in
+`tests/test_orchestrate_completion.py::test_a_snapshot_catch_up_pass_does_not_erase_a_recorded_completion_failure`:
+after a recorded failure, one catch-up pass restores `observed_state` to `working` while the
+verdict survives in its own key.
+
+**Mechanism.** A column written by two subsystems on different schedules belongs to whichever writes
+most often, not to whichever writes most meaningfully. Catch-up runs on every reconnect for the
+whole lifetime of a live pane; a completion verdict is written once. The verdict would have been
+correct at the instant it was written and wrong from the next reconnect onward — the worst shape of
+wrong, because the record exists and is stale rather than absent.
+
+**Generalizable rule.** Before recording a durable conclusion in an existing column, find every
+writer of that column and its cadence. If a higher-frequency writer owns it, give the conclusion its
+own key rather than joining a race you lose.
 ### A self-check calibrated by its own author checks nothing  {#gate-completeness-must-derive-from-ci}
 
 **Context.** Local pre-push gating was done by an ad-hoc script rebuilt from memory each session,

@@ -1011,10 +1011,18 @@ def check_completion_scope(
     if outside:
         details: list[str] = []
         if landing_outside:
-            details.append("outside declared scope: " + ", ".join(sorted(landing_outside)))
+            if has_distinct_ambient:
+                details.append(
+                    "isolated landing outside declared scope: " + ", ".join(sorted(landing_outside))
+                )
+            else:
+                details.append(
+                    "shared-checkout landing outside declared scope; attribution to this child "
+                    "is not established: " + ", ".join(sorted(landing_outside))
+                )
         if ambient_changed:
             details.append("ambient checkout: " + ", ".join(sorted(ambient_changed)))
-        raise ScopeViolationError("child changed " + "; ".join(details))
+        raise ScopeViolationError("child boundary violation: " + "; ".join(details))
     return result
 
 

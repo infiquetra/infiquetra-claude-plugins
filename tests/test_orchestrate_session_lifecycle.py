@@ -399,6 +399,59 @@ def test_modifying_a_preexisting_dirty_path_is_attributed_to_the_child(tmp_path:
         )
 
 
+def test_scope_violation_distinguishes_shared_and_isolated_landings(tmp_path: Path) -> None:
+    shared_repo = tmp_path / "shared"
+    _init_repo(shared_repo)
+    git = LIFECYCLE.GitLanding()
+    shared_spec = _spec(scope=("reports/a",), mutating=False)
+    shared_landing = git.provision(shared_repo, shared_spec)
+    shared_baseline = git.changed_paths_baseline(
+        shared_landing.cwd,
+        base_commit=shared_landing.base_commit,
+        ambient_root=shared_landing.ambient_root,
+    )
+    sibling_report = shared_repo / "reports" / "b" / "report.md"
+    sibling_report.parent.mkdir(parents=True)
+    sibling_report.write_text("sibling output\n", encoding="utf-8")
+
+    with pytest.raises(LIFECYCLE.ScopeViolationError) as shared_error:
+        LIFECYCLE.check_completion_scope(
+            shared_spec,
+            shared_landing,
+            shared_baseline,
+            predicate_passed=True,
+            git=git,
+        )
+
+    isolated_repo = tmp_path / "isolated"
+    _init_repo(isolated_repo)
+    isolated_spec = _spec(mutating=True, environment_command=())
+    isolated_landing = git.provision(isolated_repo, isolated_spec)
+    isolated_baseline = git.changed_paths_baseline(
+        isolated_landing.cwd,
+        base_commit=isolated_landing.base_commit,
+        ambient_root=isolated_landing.ambient_root,
+    )
+    (isolated_landing.cwd / "outside.txt").write_text("child output\n", encoding="utf-8")
+
+    with pytest.raises(LIFECYCLE.ScopeViolationError) as isolated_error:
+        LIFECYCLE.check_completion_scope(
+            isolated_spec,
+            isolated_landing,
+            isolated_baseline,
+            predicate_passed=True,
+            git=git,
+        )
+
+    shared_message = str(shared_error.value)
+    isolated_message = str(isolated_error.value)
+    assert "shared-checkout landing" in shared_message
+    assert "attribution to this child is not established" in shared_message
+    assert "reports/b/report.md" in shared_message
+    assert "isolated landing outside declared scope: outside.txt" in isolated_message
+    assert "attribution to this child is not established" not in isolated_message
+
+
 @pytest.mark.parametrize("mutating", [False, True])
 @pytest.mark.parametrize("committed", [False, True])
 def test_in_scope_change_is_allowed_in_each_child_landing(
@@ -561,6 +614,47 @@ def test_child_history_excludes_upstream_paths_after_sync(tmp_path: Path, sync_m
         landing.base_commit,
         upstream_commit=upstream_commit,
     ) == frozenset({"src/ok.py"})
+
+
+@pytest.mark.parametrize("sync_method", ["merge", "rebase"])
+def test_completion_scope_accepts_child_sync_when_upstream_is_in_dispatch_baseline(
+    tmp_path: Path, sync_method: str
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    git = LIFECYCLE.GitLanding()
+    child = _spec(mutating=True, environment_command=())
+    landing = git.provision(repo, child)
+
+    (repo / "docs").mkdir()
+    (repo / "docs" / "upstream.md").write_text("operator change\n", encoding="utf-8")
+    _git(repo, "add", "docs/upstream.md")
+    _git(repo, "commit", "-q", "-m", "upstream change before dispatch")
+    baseline = git.changed_paths_baseline(
+        landing.cwd,
+        base_commit=landing.base_commit,
+        ambient_root=landing.ambient_root,
+    )
+
+    (landing.cwd / "src").mkdir()
+    (landing.cwd / "src" / "ok.py").write_text("child change\n", encoding="utf-8")
+    _git(landing.cwd, "add", "src/ok.py")
+    _git(landing.cwd, "commit", "-q", "-m", "child change")
+    if sync_method == "merge":
+        _git(landing.cwd, "merge", "-q", "main", "-m", "merge upstream")
+    else:
+        _git(landing.cwd, "rebase", "-q", "main")
+
+    result = LIFECYCLE.check_completion_scope(
+        child,
+        landing,
+        baseline,
+        predicate_passed=True,
+        git=git,
+    )
+
+    assert result.new_changed_paths == frozenset({"src/ok.py"})
+    assert result.outside_scope == frozenset()
 
 
 def test_child_history_keeps_both_sides_of_an_amended_rename(tmp_path: Path) -> None:

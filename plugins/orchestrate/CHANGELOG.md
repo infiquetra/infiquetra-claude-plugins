@@ -22,8 +22,10 @@
   read-only children in the ambient checkout. Every child records a launch commit. Isolated child
   changes are compared with the current upstream merge base after merges or rebases, and any
   attributed ambient-checkout change by a mutating child violates the landing boundary regardless
-  of its relative path. Repository-visible changes are checked independently of predicate success;
-  Git-ignored paths are documented as outside this control.
+  of its relative path. Shared-checkout violations state that authorship is not established, and the
+  Git repository must contain a commit so committed-change observation cannot silently disable.
+  Repository-visible changes are checked independently of predicate success; Git-ignored paths are
+  documented as outside this control.
 - Record reaping before closing a Herdr tab and distinguish a recorded reap from an unexplained
   disappearance.
 

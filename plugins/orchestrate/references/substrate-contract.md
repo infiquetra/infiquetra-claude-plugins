@@ -66,21 +66,27 @@ no command-line flag that limits writes to the launch working directory. These c
 express the declared path allowlist and remain defence in depth.
 
 Enforcement is observational. Every child records the ambient checkout's immutable commit before
-provisioning. A read-only child lands in that checkout, so completion compares its committed and
-uncommitted tracked and non-ignored changes with the launch baseline and applies its declared path
-scope there. A mutating child lands in a separate branch worktree. Its committed tree is compared
-with the merge base of the child tip and the ambient checkout's current tip, which excludes upstream
-changes after a merge or rebase, and that result is unioned with uncommitted tracked and non-ignored
-status in the child landing. The ambient checkout is observed separately from its dispatch baseline;
-any attributed ambient change violates a mutating child's landing boundary even when its relative
-path is declared in scope. SHA-256 fingerprints retain attribution when a path was already dirty at
-dispatch. A landing path must equal a declared scope path or live below a declared directory, and a
-boundary violation fails completion even when the predicate passed.
+provisioning. U4 therefore requires a landing in a Git repository with at least one commit; a
+non-repository or an unborn repository fails loudly instead of disabling committed-change
+observation. A read-only child lands in the ambient checkout, so completion compares its committed
+and uncommitted tracked and non-ignored changes with the launch baseline and applies its declared
+path scope there. A mutating child lands in a separate branch worktree. Its committed tree is
+compared with the merge base of the child tip and the ambient checkout's current tip, which excludes
+upstream changes after a merge or rebase, and that result is unioned with uncommitted tracked and
+non-ignored status in the child landing. The ambient checkout is observed separately from its
+dispatch baseline; any attributed ambient change violates a mutating child's landing boundary even
+when its relative path is declared in scope. SHA-256 fingerprints retain attribution when a path was
+already dirty at dispatch. A landing path must equal a declared scope path or live below a declared
+directory, and a boundary violation fails completion even when the predicate passed.
 
-Because ambient enforcement is observational, it cannot identify which concurrent actor changed
-the shared checkout. An operator or overlapping child that changes the ambient checkout during a
-mutating child's dispatch window can therefore cause that child to fail closed. Worktree isolation
-prevents collisions only when writers remain inside their assigned landing.
+Shared-tree enforcement is observational and cannot identify which concurrent actor made a change.
+For a mutating child, an operator or overlapping child that changes the ambient checkout during its
+dispatch window can cause it to fail closed. For a read-only child, the shared checkout is the child
+landing, and every change observed there since its baseline is attributed to that child for the scope
+check even though authorship is not established. Concurrent read-only children with disjoint scopes
+therefore fail each other's boundary check. This is a present U4 limitation; U5 owns the structural
+landing change needed by the first completion-scope consumer. Worktree isolation prevents collisions
+only when writers remain inside their assigned landing.
 
 **Git-ignored paths are outside U4 scope observation.** Git status deliberately omits them, and the
 ambient runtime state changes as the orchestrator records lifecycle transitions, so this control

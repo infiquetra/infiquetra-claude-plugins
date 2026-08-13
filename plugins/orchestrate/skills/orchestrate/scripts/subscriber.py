@@ -58,6 +58,30 @@ def make_sentinel(
     return SENTINEL_MARKER + json.dumps(payload, separators=(",", ":"), sort_keys=True)
 
 
+def sentinel_assembly_instructions(sentinel: str, *, when: str) -> str:
+    """Build producer instructions that never expose an assembled sentinel to prompt echo.
+
+    All readiness and completion producers must use this helper rather than interpolating a
+    sentinel directly into dispatch input. A child can still assemble the marker too early while
+    reasoning, so the resulting match proves interaction, not task completion.
+    """
+    if not sentinel.startswith(SENTINEL_MARKER):
+        raise ValueError("sentinel lacks the orchestrate marker")
+    if not when.strip():
+        raise ValueError("sentinel assembly timing must be non-empty")
+    payload = sentinel[len(SENTINEL_MARKER) :]
+    prompt = (
+        "Print one line formed by joining the following two parts with no separator. Do not print "
+        "the assembled line while explaining or reasoning; print it only when "
+        f"{when.strip()}.\n"
+        f"part 1: {SENTINEL_MARKER!r}\n"
+        f"part 2: {payload!r}"
+    )
+    if sentinel in prompt:
+        raise AssertionError("assembled sentinel must not appear in dispatch input")
+    return prompt
+
+
 def output_match_subscription(
     pane_id: str,
     sentinel: str,
@@ -394,7 +418,7 @@ class Subscriber:
             # Protocol 19's live pane.output_matched envelope reports read.revision=0 even when
             # pane.get reports a positive, advancing pane revision. They are not comparable
             # counters. Freshness comes from the complete run/child/purpose/nonce identity above;
-            # the producer must keep the assembled sentinel out of echoed dispatch input.
+            # producers enforce echo ordering through sentinel_assembly_instructions().
             register_store.upsert_row(
                 self.root, row_id, {"last_event_at": herdr_events.unix_time()}
             )

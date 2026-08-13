@@ -376,6 +376,36 @@ def test_live_zero_revision_output_match_is_honoured_by_identity(tmp_path: Path)
     assert len(peer.requests) == 1
 
 
+def test_pre_dispatch_prompt_echo_cannot_satisfy_sentinel_match(tmp_path: Path) -> None:
+    sentinel = SUBSCRIBER.make_sentinel("run-a", "child-a", "complete", nonce="echo-safe")
+    prompt = SUBSCRIBER.sentinel_assembly_instructions(
+        sentinel, when="the completion predicate has passed"
+    )
+    assert sentinel not in prompt
+    REGISTER.upsert_row(
+        tmp_path,
+        "child-a",
+        {"run_id": "run-a", "pane_id": "pane-a", "phase": "working"},
+    )
+    diagnostics: list[dict[str, Any]] = []
+    wakes: list[str] = []
+    subscription = SUBSCRIBER.output_match_subscription("pane-a", sentinel)
+    subscriber = _subscriber(
+        tmp_path, diagnostics=diagnostics, wakes=wakes, subscriptions=[subscription]
+    )
+    envelope = _output_event("pane-a", sentinel, revision=0)
+    envelope["data"]["matched_line"] = prompt
+    envelope["data"]["read"]["text"] = prompt
+    socket_path = _short_socket_path()
+
+    with _SubscriptionServer(socket_path, [[envelope]]):
+        EVENTS.HerdrEventClient(socket_path).subscribe_once([subscription], subscriber.handle_event)
+
+    assert wakes == []
+    assert [item["code"] for item in diagnostics] == ["sentinel_mismatch"]
+    assert "last_event_at" not in REGISTER.read_rows(tmp_path)["child-a"]
+
+
 def test_live_output_match_capture_validates_and_decodes_zero_revision() -> None:
     captured = json.loads(OUTPUT_MATCH_CAPTURE.read_text(encoding="utf-8"))
     assert isinstance(captured, list) and len(captured) == 1
@@ -389,6 +419,8 @@ def test_live_output_match_capture_validates_and_decodes_zero_revision() -> None
     event = EVENTS.decode_event(captured[0])
     assert event.name == "pane.output_matched"
     assert event.revision == 0
+    assert captured[0]["data"]["read"]["text"] == "captured pane output\nmatched substring\n"
+    assert "dispatch_revision_baseline" not in captured[0]["data"]["read"]["text"]
 
 
 # --------------------------------------------------------------------------- scenario 6

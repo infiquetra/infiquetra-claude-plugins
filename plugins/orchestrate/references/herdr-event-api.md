@@ -75,10 +75,10 @@ advancing counter. They are different counters. The captured envelope is committ
 schema fixture and validated through the decoder in tests.
 
 The dispatch prompt must also avoid containing the complete sentinel, because terminal echo is
-searchable immediately. The session lifecycle sends the marker prefix and JSON payload as separate
-parts and asks the child to join them. This prevents prompt echo from matching. It does not prevent
-a child from assembling the sentinel too early while reasoning; readiness proves the interaction,
-not task completion or predicate success.
+searchable immediately. Every sentinel producer calls `sentinel_assembly_instructions()`, which
+sends the marker prefix and JSON payload as separate parts and asks the child to join them. This
+prevents prompt echo from matching. It does not prevent a child from assembling the sentinel too
+early while reasoning; readiness proves the interaction, not task completion or predicate success.
 
 ## Reconnect catch-up
 

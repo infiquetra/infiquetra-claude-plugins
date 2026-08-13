@@ -34,6 +34,11 @@ TRUST_PROMPT_PATTERNS = (
     re.compile(r"trust (?:this|the) (?:folder|workspace|directory|project)", re.IGNORECASE),
     re.compile(r"workspace trust", re.IGNORECASE),
 )
+DEFAULT_HERDR_SESSION = "default"
+IGNORED_PATHS_LIMITATION = (
+    "Git-ignored paths are outside U4 scope observation; repository control-plane protection "
+    "requires a separate filesystem boundary."
+)
 
 
 class SessionLifecycleError(RuntimeError):
@@ -85,7 +90,6 @@ class ChildSpec:
     scope: tuple[str, ...]
     mutating: bool
     workspace: str
-    herdr_session: str = "default"
     readiness_timeout: float = 30.0
     environment_command: tuple[str, ...] = ("uv", "sync")
 
@@ -95,6 +99,8 @@ class Landing:
     cwd: Path
     integration_mode: str
     destination: str
+    base_commit: str | None = None
+    ambient_root: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -117,6 +123,9 @@ class ReadyChild:
 class ChangedPathsBaseline:
     paths: frozenset[str]
     fingerprints: tuple[tuple[str, str], ...]
+    ambient_paths: frozenset[str] = frozenset()
+    ambient_fingerprints: tuple[tuple[str, str], ...] = ()
+    ambient_base_commit: str | None = None
 
 
 @dataclass(frozen=True)
@@ -141,10 +150,23 @@ def permission_argv(runtime: str, *, mutating: bool) -> list[str]:
     """Apply real vendor read/write posture flags where the CLI exposes one.
 
     These flags are defence in depth.  They do not replace the final Git boundary check, because
-    none of the supported CLIs accepts a repository-relative path allowlist.
+    none of the supported CLIs accepts a repository-relative path allowlist. For mutating work,
+    Codex, Grok, Qwen, and Agy expose sandbox flags. Claude exposes no cwd-write boundary flag.
+    Muse's sandbox is on by default and its existing-worktree binding is applied separately.
     """
     if mutating:
-        return ["--sandbox", "workspace-write"] if runtime == "codex" else []
+        return {
+            # Claude has no CLI flag that constrains writes to the launch cwd.
+            "claude": [],
+            "codex": ["--sandbox", "workspace-write"],
+            "grok": ["--sandbox", "workspace"],
+            # Muse enables its sandbox by default; _runtime_resolution also binds its existing
+            # worktree. There is no positive CLI flag to enable a narrower write posture.
+            "muse": [],
+            # Qwen's boolean sandbox uses its write-within-project profile on this host.
+            "qwen": ["--sandbox"],
+            "agy": ["--sandbox"],
+        }.get(runtime, [])
     return {
         "claude": ["--permission-mode", "plan"],
         "codex": ["--sandbox", "read-only"],
@@ -210,7 +232,7 @@ class AgentWrapper:
             "--herdr",
             "--herdr-control-only",
             "--herdr-session",
-            spec.herdr_session,
+            DEFAULT_HERDR_SESSION,
             "--workspace",
             spec.workspace,
             "--task",
@@ -287,7 +309,11 @@ class HerdrControl:
         self.runner = runner
 
     def _json(self, args: Sequence[str], *, cwd: Path) -> dict[str, Any]:
-        result = _run_command([self.binary, *args], cwd=cwd, runner=self.runner)
+        result = _run_command(
+            [self.binary, "--session", DEFAULT_HERDR_SESSION, *args],
+            cwd=cwd,
+            runner=self.runner,
+        )
         if result.returncode != 0:
             raise LaunchProtocolError(result.stderr.strip() or f"herdr {' '.join(args)} failed")
         try:
@@ -350,7 +376,16 @@ class HerdrControl:
 
     def pane_text(self, pane_id: str, *, cwd: Path) -> str:
         result = _run_command(
-            [self.binary, "pane", "read", "--source", "recent-unwrapped", pane_id],
+            [
+                self.binary,
+                "--session",
+                DEFAULT_HERDR_SESSION,
+                "pane",
+                "read",
+                pane_id,
+                "--source",
+                "recent-unwrapped",
+            ],
             cwd=cwd,
             runner=self.runner,
         )
@@ -358,17 +393,9 @@ class HerdrControl:
             raise LaunchProtocolError(result.stderr.strip() or "herdr pane read failed")
         return result.stdout
 
-    def pane_revision(self, pane_id: str, *, cwd: Path) -> int:
-        result = self._json(["pane", "get", pane_id], cwd=cwd)
-        pane = result.get("pane")
-        revision = pane.get("revision") if isinstance(pane, Mapping) else None
-        if not isinstance(revision, int) or isinstance(revision, bool):
-            raise LaunchProtocolError("herdr pane get lacks an integer pane.revision")
-        return revision
-
     def send_line(self, pane_id: str, text: str, *, cwd: Path) -> None:
         result = _run_command(
-            [self.binary, "pane", "run", pane_id, text],
+            [self.binary, "--session", DEFAULT_HERDR_SESSION, "pane", "run", pane_id, text],
             cwd=cwd,
             runner=self.runner,
         )
@@ -382,7 +409,11 @@ class HerdrControl:
         return any(isinstance(tab, Mapping) and tab.get("tab_id") == tab_id for tab in tabs)
 
     def close_tab(self, tab_id: str, *, cwd: Path) -> None:
-        result = _run_command([self.binary, "tab", "close", tab_id], cwd=cwd, runner=self.runner)
+        result = _run_command(
+            [self.binary, "--session", DEFAULT_HERDR_SESSION, "tab", "close", tab_id],
+            cwd=cwd,
+            runner=self.runner,
+        )
         if result.returncode != 0:
             raise LaunchProtocolError(result.stderr.strip() or "herdr tab close failed")
 
@@ -464,7 +495,12 @@ class HerdrInteraction:
 
 
 class GitLanding:
-    """Real Git worktree and changed-path boundary."""
+    """Real Git worktree and repository-visible changed-path boundary.
+
+    The boundary observes committed branch and ambient-checkout changes plus uncommitted tracked
+    and non-ignored files in both working trees.
+    Git-ignored paths are deliberately outside this control; see ``IGNORED_PATHS_LIMITATION``.
+    """
 
     def __init__(self, *, runner: Runner | None = None) -> None:
         self.runner = runner
@@ -475,10 +511,18 @@ class GitLanding:
             raise LandingError(result.stderr.strip() or f"git {' '.join(args)} failed")
         return result
 
-    def provision(self, root: Path, spec: ChildSpec) -> Landing:
+    def base_commit(self, root: Path) -> str:
+        """Return the committed reference used to create a mutating child's branch."""
+        value = self._git(root, ["rev-parse", "HEAD"]).stdout.strip()
+        if not value:
+            raise LandingError("git rev-parse HEAD returned no commit")
+        return value
+
+    def provision(self, root: Path, spec: ChildSpec, *, base_commit: str | None = None) -> Landing:
         root = root.resolve()
         if not spec.mutating:
-            return Landing(root, "none", "none")
+            return Landing(root, "none", "none", ambient_root=root)
+        resolved_base = base_commit or self.base_commit(root)
         branch = task_label(spec.run_id, spec.row_id)
         path = root / ".orchestrate" / "worktrees" / spec.run_id / spec.row_id
         listed = self._git(root, ["worktree", "list", "--porcelain"]).stdout
@@ -490,7 +534,7 @@ class GitLanding:
         created = path.resolve() not in live_paths
         if created:
             path.parent.mkdir(parents=True, exist_ok=True)
-            self._git(root, ["worktree", "add", "-b", branch, str(path), "HEAD"])
+            self._git(root, ["worktree", "add", "-b", branch, str(path), resolved_base])
         if spec.environment_command and (created or not (path / ".venv").exists()):
             result = _run_command(
                 spec.environment_command, cwd=path, runner=self.runner, timeout=600
@@ -500,9 +544,10 @@ class GitLanding:
                     f"environment setup failed in {path}: "
                     f"{result.stderr.strip() or result.stdout.strip()}"
                 )
-        return Landing(path.resolve(), "branch", branch)
+        return Landing(path.resolve(), "branch", branch, resolved_base, root)
 
     def changed_paths(self, cwd: Path) -> frozenset[str]:
+        """Return uncommitted tracked and non-ignored paths reported by Git status."""
         result = self._git(cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=all"])
         raw = result.stdout.encode("utf-8", errors="surrogateescape")
         entries = raw.split(b"\0")
@@ -522,8 +567,34 @@ class GitLanding:
             index += 1
         return frozenset(paths)
 
+    def committed_paths(self, cwd: Path, base_commit: str | None) -> frozenset[str]:
+        """Return both sides of every committed path change since ``base_commit``."""
+        if base_commit is None:
+            return frozenset()
+        result = self._git(cwd, ["diff", "--name-status", "-z", base_commit, "HEAD"])
+        entries = result.stdout.encode("utf-8", errors="surrogateescape").split(b"\0")
+        paths: set[str] = set()
+        index = 0
+        while index < len(entries) and entries[index]:
+            status = entries[index]
+            index += 1
+            if index >= len(entries) or not entries[index]:
+                raise LandingError("git diff name-status entry lacks its path")
+            paths.add(entries[index].decode("utf-8", errors="surrogateescape"))
+            index += 1
+            if status.startswith((b"R", b"C")):
+                if index >= len(entries) or not entries[index]:
+                    raise LandingError("git diff rename/copy entry lacks its destination path")
+                paths.add(entries[index].decode("utf-8", errors="surrogateescape"))
+                index += 1
+        return frozenset(paths)
+
+    def observed_paths(self, cwd: Path, *, base_commit: str | None) -> frozenset[str]:
+        """Union committed branch changes with uncommitted repository-visible changes."""
+        return self.committed_paths(cwd, base_commit) | self.changed_paths(cwd)
+
     @staticmethod
-    def _fingerprint(cwd: Path, relative: str) -> str:
+    def fingerprint(cwd: Path, relative: str) -> str:
         path = cwd / relative
         if path.is_symlink():
             return "symlink:" + os.readlink(path)
@@ -537,11 +608,32 @@ class GitLanding:
                 digest.update(chunk)
         return "file:" + digest.hexdigest()
 
-    def changed_paths_baseline(self, cwd: Path) -> ChangedPathsBaseline:
-        paths = self.changed_paths(cwd)
+    def changed_paths_baseline(
+        self,
+        cwd: Path,
+        *,
+        base_commit: str | None = None,
+        ambient_root: Path | None = None,
+    ) -> ChangedPathsBaseline:
+        paths = self.observed_paths(cwd, base_commit=base_commit)
+        observe_ambient = ambient_root is not None and ambient_root.resolve() != cwd.resolve()
+        ambient_cwd = ambient_root if observe_ambient else None
+        ambient_base_commit = self.base_commit(ambient_cwd) if ambient_cwd is not None else None
+        ambient = (
+            self.observed_paths(ambient_cwd, base_commit=ambient_base_commit)
+            if ambient_cwd is not None
+            else frozenset()
+        )
         return ChangedPathsBaseline(
             paths,
-            tuple((path, self._fingerprint(cwd, path)) for path in sorted(paths)),
+            tuple((path, self.fingerprint(cwd, path)) for path in sorted(paths)),
+            ambient,
+            tuple(
+                (path, self.fingerprint(ambient_cwd, path))
+                for path in sorted(ambient)
+                if ambient_cwd is not None
+            ),
+            ambient_base_commit,
         )
 
 
@@ -574,7 +666,7 @@ def launch_child(
     """Write the launch intent, recover an existing label, or launch one child.
 
     Identifier fields are written immediately after the launcher returns, while the phase remains
-    ``launching``.  The dispatch-time revision sample later moves it to ``launched`` atomically.
+    ``launching``. Dispatch later moves the row to ``launched`` before sending the task.
     """
     root = root.resolve()
     label = task_label(spec.run_id, spec.row_id)
@@ -588,12 +680,22 @@ def launch_child(
                 recovery_cwd,
                 str(existing.get("integration_mode", "none")),
                 str(existing.get("destination", "none")),
+                str(existing["base_commit"])
+                if isinstance(existing.get("base_commit"), str)
+                else None,
+                root,
             )
             resolution, _ = _runtime_resolution(spec, landing)
             return recovered, landing, resolution
 
-    landing = git.provision(root, spec)
-    resolution, runtime_argv = _runtime_resolution(spec, landing)
+    base_commit_value = existing.get("base_commit") if existing else None
+    base_commit = (
+        str(base_commit_value)
+        if isinstance(base_commit_value, str)
+        else git.base_commit(root)
+        if spec.mutating
+        else None
+    )
     register_store.upsert_row(
         root,
         spec.row_id,
@@ -601,16 +703,26 @@ def launch_child(
             "run_id": spec.run_id,
             "agent": spec.runtime,
             "vendor": spec.runtime,
-            "model": resolution.model,
-            "effort": resolution.effort,
-            "cwd": str(landing.cwd),
+            "herdr_session": DEFAULT_HERDR_SESSION,
             "task": label,
             "work_shape": spec.work_shape,
             "scope": list(spec.scope),
-            "integration_mode": landing.integration_mode,
-            "destination": landing.destination,
+            **({"base_commit": base_commit} if base_commit is not None else {}),
             "phase": "planned",
             "expected_state": "ready",
+        },
+    )
+    landing = git.provision(root, spec, base_commit=base_commit)
+    resolution, runtime_argv = _runtime_resolution(spec, landing)
+    register_store.upsert_row(
+        root,
+        spec.row_id,
+        {
+            "model": resolution.model,
+            "effort": resolution.effort,
+            "cwd": str(landing.cwd),
+            "integration_mode": landing.integration_mode,
+            "destination": landing.destination,
         },
     )
     wrapper.preview(spec, landing, label, runtime_argv)
@@ -658,16 +770,27 @@ def confirm_ready(
             f"Reasoning effort: {resolution.effort} "
             "(requested; the effective tier depends on the active provider/model)."
         )
+        disabled_acknowledgement = (
+            f"Reasoning effort set to {resolution.effort}, but thinking is currently disabled"
+        )
         interaction.observe(
             pane_id=identity.pane_id,
-            match=acknowledgement,
+            match="Reasoning effort",
             timeout=spec.readiness_timeout,
             dispatch=lambda: _count_and_send(
-                herdr, identity.pane_id, landing.cwd, command, acknowledgement
+                herdr,
+                identity.pane_id,
+                landing.cwd,
+                command,
+                (acknowledgement, disabled_acknowledgement),
             ),
-            accept=lambda _event, previous_count: (
-                herdr.pane_text(identity.pane_id, cwd=landing.cwd).count(acknowledgement)
-                > previous_count
+            accept=lambda _event, previous_counts: _accept_effort_acknowledgement(
+                herdr,
+                identity.pane_id,
+                landing.cwd,
+                acknowledgement,
+                disabled_acknowledgement,
+                previous_counts,
             ),
         )
     elif effort_application.get("mode") != "argv":
@@ -678,7 +801,11 @@ def confirm_ready(
 
     def _dispatch() -> int:
         nonlocal baseline_paths
-        baseline_paths = git.changed_paths_baseline(landing.cwd)
+        baseline_paths = git.changed_paths_baseline(
+            landing.cwd,
+            base_commit=landing.base_commit,
+            ambient_root=landing.ambient_root,
+        )
         register_store.upsert_row(
             root,
             spec.row_id,
@@ -688,7 +815,11 @@ def confirm_ready(
                 "expected_state": "working",
             },
         )
-        prompt = _sentinel_assembly_prompt(sentinel) + "\n\n" + spec.instruction
+        prompt = (
+            subscriber.sentinel_assembly_instructions(sentinel, when="you are ready to begin")
+            + "\n\n"
+            + spec.instruction
+        )
         herdr.send_line(identity.pane_id, prompt, cwd=landing.cwd)
         return 0
 
@@ -721,38 +852,37 @@ def confirm_ready(
     return ReadyChild(identity, baseline_paths, sentinel)
 
 
-def _sentinel_assembly_prompt(sentinel: str) -> str:
-    """Describe how to assemble ``sentinel`` without putting it in echoed dispatch input.
-
-    A child can still assemble and print the marker too early while reasoning. The marker proves
-    that the child followed the interaction, not that arbitrary work or a later predicate passed.
-    """
-    marker = subscriber.SENTINEL_MARKER
-    if not sentinel.startswith(marker):
-        raise ValueError("readiness sentinel lacks the orchestrate marker")
-    payload = sentinel[len(marker) :]
-    prompt = (
-        "Before beginning the task, prove readiness by printing one line formed by joining the "
-        "following two parts with no separator. Do not print the assembled line while explaining "
-        "or reasoning; print it only when you are ready to begin.\n"
-        f"part 1: {marker!r}\n"
-        f"part 2: {payload!r}"
-    )
-    if sentinel in prompt:
-        raise AssertionError("assembled sentinel must not appear in dispatch input")
-    return prompt
-
-
 def _count_and_send(
     herdr: HerdrControl,
     pane_id: str,
     cwd: Path,
     text: str,
-    acknowledgement: str,
-) -> int:
-    previous_count = herdr.pane_text(pane_id, cwd=cwd).count(acknowledgement)
+    acknowledgements: tuple[str, str],
+) -> tuple[int, int]:
+    text_before = herdr.pane_text(pane_id, cwd=cwd)
+    previous_counts = (
+        text_before.count(acknowledgements[0]),
+        text_before.count(acknowledgements[1]),
+    )
     herdr.send_line(pane_id, text, cwd=cwd)
-    return previous_count
+    return previous_counts
+
+
+def _accept_effort_acknowledgement(
+    herdr: HerdrControl,
+    pane_id: str,
+    cwd: Path,
+    acknowledgement: str,
+    disabled_acknowledgement: str,
+    previous_counts: tuple[int, int],
+) -> bool:
+    text = herdr.pane_text(pane_id, cwd=cwd)
+    if text.count(disabled_acknowledgement) > previous_counts[1]:
+        raise NotReadyError(
+            "Qwen acknowledged the effort request but thinking is disabled; "
+            "re-enable thinking before dispatch"
+        )
+    return text.count(acknowledgement) > previous_counts[0]
 
 
 def _normalize_scope(scope: Sequence[str]) -> tuple[str, ...]:
@@ -769,6 +899,23 @@ def _in_scope(path: str, scope: Sequence[str]) -> bool:
     return any(path == allowed or path.startswith(f"{allowed}/") for allowed in scope)
 
 
+def _paths_changed_since_baseline(
+    cwd: Path,
+    final: frozenset[str],
+    baseline_paths: frozenset[str],
+    baseline_fingerprints: tuple[tuple[str, str], ...],
+    git: GitLanding,
+) -> set[str]:
+    previous_fingerprints = dict(baseline_fingerprints)
+    return {
+        path
+        for path in final | baseline_paths
+        if path not in baseline_paths
+        or path not in final
+        or git.fingerprint(cwd, path) != previous_fingerprints[path]
+    }
+
+
 def check_completion_scope(
     spec: ChildSpec,
     landing: Landing,
@@ -777,19 +924,33 @@ def check_completion_scope(
     predicate_passed: bool,
     git: GitLanding,
 ) -> ScopeCheck:
-    """Evaluate the predicate result and the total final Git changed-path set independently."""
-    final = git.changed_paths(landing.cwd)
-    previous_fingerprints = dict(changed_paths_baseline.fingerprints)
-    new_changed = {
-        path
-        for path in final | changed_paths_baseline.paths
-        if path not in changed_paths_baseline.paths
-        or path not in final
-        or git._fingerprint(landing.cwd, path) != previous_fingerprints[path]
-    }
+    """Evaluate predicate and all repository-visible landing/ambient changes independently."""
+    final = git.observed_paths(landing.cwd, base_commit=landing.base_commit)
+    new_changed = _paths_changed_since_baseline(
+        landing.cwd,
+        final,
+        changed_paths_baseline.paths,
+        changed_paths_baseline.fingerprints,
+        git,
+    )
+    ambient_final: frozenset[str] = frozenset()
+    if landing.ambient_root is not None and landing.ambient_root.resolve() != landing.cwd.resolve():
+        ambient_final = git.observed_paths(
+            landing.ambient_root,
+            base_commit=changed_paths_baseline.ambient_base_commit,
+        )
+        new_changed.update(
+            _paths_changed_since_baseline(
+                landing.ambient_root,
+                ambient_final,
+                changed_paths_baseline.ambient_paths,
+                changed_paths_baseline.ambient_fingerprints,
+                git,
+            )
+        )
     scope = _normalize_scope(spec.scope)
     outside = frozenset(path for path in new_changed if not _in_scope(path, scope))
-    result = ScopeCheck(predicate_passed, final, frozenset(new_changed), outside)
+    result = ScopeCheck(predicate_passed, final | ambient_final, frozenset(new_changed), outside)
     if outside:
         raise ScopeViolationError(
             "child changed paths outside its declared scope: " + ", ".join(sorted(outside))

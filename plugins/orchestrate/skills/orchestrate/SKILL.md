@@ -32,10 +32,10 @@ lifecycle-transition `state_change_seq` counter, which sits still for minutes on
 working child; and a child's own reported status is not a completion signal, so `expected_state` /
 `observed_state` exist to record a disagreement rather than resolve it by trusting one side.
 
-`dispatch_revision_baseline` remains a forward-compatible column, but the live daemon proved it
-cannot guard output matches: `pane.output_matched` reports `read.revision=0` while the pane's own
-counter is positive and advancing. The subscriber instead checks complete run, child, purpose, and
-nonce identity. The lifecycle keeps the assembled sentinel out of echoed dispatch input.
+`pane.output_matched` reports `read.revision=0` while the pane's own counter is positive and
+advancing, so those counters are never compared. The subscriber instead checks complete run,
+child, purpose, and nonce identity. All sentinel producers use the public split-assembly helper so
+the assembled marker stays out of echoed dispatch input.
 
 ## Contract this unit guarantees
 
@@ -136,11 +136,12 @@ readiness. Qwen receives its resolved `/effort` command in-session and must emit
 acknowledgement before work is dispatched.
 
 Mutating children receive a branch worktree plus an explicit environment setup; read-only children
-stay in the ambient checkout. Vendor permission flags are applied where they express a real
-read/write posture, as defence in depth. The enforcing boundary is the final, complete Git
-changed-path comparison against the declared repository-relative scope, which runs independently
-of the work predicate. Reaping records the transition before closing the tab. Live reaping remains
-gated on the later integration unit.
+stay in the ambient checkout. The lifecycle is fixed to Herdr's default session. Vendor permission
+flags are applied where they express a real read-only or workspace-write posture. The scope control
+unions committed branch and ambient-checkout changes with uncommitted tracked and non-ignored
+changes in both trees, and can fail a child whose predicate passed. Git-ignored paths remain
+an explicit limitation requiring a separate filesystem boundary. Reaping records the transition
+before closing the tab. Live reaping remains gated on the later integration unit.
 
 See `references/substrate-contract.md` for the adapter, recovery, residual readiness risk, and
 failure contract.

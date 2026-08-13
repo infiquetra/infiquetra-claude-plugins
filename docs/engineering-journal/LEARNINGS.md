@@ -21,6 +21,29 @@
 
 ## 2026-08-13
 
+### Git status is not a branch change set  {#git-status-is-not-a-branch-diff}
+
+**Context.** The orchestrate scope gate originally compared pre-dispatch and final
+`git status --porcelain` output for a child in a branch worktree.
+
+**Evidence.** In a temporary repository, an out-of-scope file appeared in porcelain before commit
+and disappeared immediately after `git add` plus `git commit`, although `git show --stat` still
+proved the branch contained it. A write in the ambient checkout was likewise absent from status
+run inside the child worktree.
+
+**Mechanism.** Git status describes uncommitted state in one working tree. It does not describe
+commits relative to a base, and one worktree cannot report another worktree's status. Git-ignored
+paths are omitted by design.
+
+**Fix.** A mutating child now records its base commit before worktree creation. Completion unions
+the committed base-to-tip name-status diff with uncommitted child-worktree status and separately
+compares the ambient checkout's commit and status changes. Tests commit outside paths in both the
+child branch and ambient checkout. Git-ignored paths are documented and tested as outside this
+observational control rather than described as covered.
+
+**Generalizable rule.** Use a commit diff to answer what a branch changed, and observe each working
+tree separately for uncommitted state. Never describe Git status as a filesystem audit.
+
 ### A Git worktree does not carry the checkout-local environment  {#worktree-needs-environment}
 
 **Context.** The orchestrate session lifecycle isolates every mutating child in a branch worktree.

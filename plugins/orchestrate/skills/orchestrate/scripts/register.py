@@ -27,11 +27,14 @@ Substrate  -- herdr_session, workspace_id, tab_id, pane_id, cwd
     subscriber re-attaches to on every reconnect (KTD12); it is the join key between this row and
     the herdr socket's events, so it must be recorded before the row is trusted as "launched".
 
-Work       -- task, work_shape, scope, artifact_path, predicate, integration_mode, destination
+Work       -- task, work_shape, scope, artifact_path, predicate, integration_mode, destination,
+              base_commit
     What the child was asked to do and how its result gets back in: ``work_shape`` feeds U1's
     ``resolve_for_runtime`` tier routing; ``predicate`` is the bounded, inline-run validity check
     the orchestrator itself evaluates (KTD6 — the mirror never decides); ``integration_mode`` /
     ``destination`` say how a verified artifact lands (e.g. patch application, PR, direct commit).
+    ``base_commit`` is the immutable Git reference used to create a branch-integrating child and
+    is the committed-diff reference for its final scope check.
 
 Lifecycle  -- phase, expected_state, observed_state, observed_state_source
     ``phase`` is the closed, ordered vocabulary in ``PHASES`` below. ``expected_state`` /
@@ -47,8 +50,7 @@ Lifecycle  -- phase, expected_state, observed_state, observed_state_source
     publicly readable record of the broader class this belongs to (vendor detectors disagreeing
     in vendor-specific, non-repeating ways).
 
-Time       -- dispatched_at, dispatch_revision_baseline, deadline, max_quiet_seconds,
-              last_event_at
+Time       -- dispatched_at, deadline, max_quiet_seconds, last_event_at
     ``deadline`` and ``max_quiet_seconds`` are alternative hang-detection strategies for a row —
     a caller sets whichever fits that dispatch. :func:`upsert_row` seeds **both** to ``None`` at
     row creation (the other TIME/ACCOUNTING columns stay absent until some later phase transition
@@ -62,13 +64,6 @@ Time       -- dispatched_at, dispatch_revision_baseline, deadline, max_quiet_sec
     defines the column, U7 is the reader that must honor this. See
     ``docs/engineering-journal/LEARNINGS.md#pane-revision-is-the-liveness-signal`` for the full
     write-up.
-    ``dispatch_revision_baseline`` remains in the version-1 schema for forward compatibility but
-    is not a valid output-match guard. Live protocol-19 measurements show the pane counter and
-    ``pane.output_matched``'s ``read.revision`` are different counters: the event reports zero while
-    the pane counter is positive and advancing. U4 therefore does not write or compare this field.
-    Sentinel freshness comes from complete run/child/purpose/nonce identity and keeping the
-    assembled sentinel out of echoed dispatch input.
-
 Accounting -- tokens_observed, tokens_reserved
     ``tokens_reserved`` is what U6's spend gate committed before dispatch; ``tokens_observed`` is
     the running actual, updated as events arrive. The gap between them is what the gate checks.
@@ -115,11 +110,11 @@ WORK_COLUMNS = (
     "predicate",
     "integration_mode",
     "destination",
+    "base_commit",
 )
 LIFECYCLE_COLUMNS = ("phase", "expected_state", "observed_state", "observed_state_source")
 TIME_COLUMNS = (
     "dispatched_at",
-    "dispatch_revision_baseline",
     "deadline",
     "max_quiet_seconds",
     "last_event_at",

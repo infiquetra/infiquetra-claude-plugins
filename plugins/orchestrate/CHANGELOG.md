@@ -16,10 +16,22 @@
   proves protocol 19 reports `read.revision=0`; the event envelope is now schema-validated through
   the production decoder instead of being discarded as stale.
 - Provision mutating children in branch worktrees with an explicit environment-setup step; keep
-  read-only children in the ambient checkout. Final Git changed paths are checked in full against
-  the declared scope, independently of predicate success.
+  read-only children in the ambient checkout. Committed branch and ambient-checkout changes plus
+  repository-visible uncommitted changes are checked against scope independently of predicate
+  success; Git-ignored paths are documented as outside this control.
 - Record reaping before closing a Herdr tab and distinguish a recorded reap from an unexplained
   disappearance.
+
+### Fixed
+
+- Correct Herdr pane-read argument ordering and pin every command-line adapter shape with an
+  argv-validating executable test double.
+- Fix launch, command-line observation, socket observation, and register state to the same default
+  Herdr session instead of exposing a partly routed named-session option.
+- Record the branch base before worktree creation, detect committed and ambient-checkout escapes,
+  and write the planned register row before worktree or environment side effects.
+- Centralize echo-safe sentinel instructions, enforce dry-run preview mismatches, diagnose Qwen's
+  disabled-thinking acknowledgement, and remove the withdrawn revision-baseline schema wiring.
 
 ### Not in this release
 

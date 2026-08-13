@@ -39,5 +39,7 @@ agent name.
 Readiness is a bounded interaction, not a lifecycle-status guess: the child must assemble and emit
 a unique nonce-bound sentinel that never appears whole in the echoed prompt. Mutating work gets a
 branch worktree and an explicit environment setup; read-only work stays in the ambient checkout.
-Final Git changed paths are compared in full with the declared scope even when the work predicate
-passes. See `references/substrate-contract.md` for the adapter and failure contract.
+Committed branch and ambient-checkout changes plus repository-visible uncommitted changes are compared
+with the declared scope even when the work predicate passes. Git-ignored paths are an explicit
+limitation, not silently described as covered. U4 fixes launch and observation to Herdr's default
+session. See `references/substrate-contract.md` for the adapter and failure contract.

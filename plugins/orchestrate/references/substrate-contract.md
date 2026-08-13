@@ -17,6 +17,10 @@ source for `agent_name`, `workspace_id`, `tab_id`, `pane_id`, and `reused`. `reu
 workspace, not the new pane. The identifiers are written immediately while the phase remains
 `launching`.
 
+U4 intentionally supports only Herdr's `default` session. Launch, command-line control, socket
+observation, and the register all use that same fixed session; named sessions require a later
+end-to-end routing contract and cannot be selected through the child specification.
+
 If a retry finds a `launching` row without identifiers, it searches the live Herdr snapshot for one
 tab carrying the stored task label. One exact tab with one pane is recoverable; no match permits a
 new launch, and more than one match is an error. Recovery therefore does not predict identifiers or
@@ -55,12 +59,26 @@ environment command raises a landing error before launch; retrying reuses the wo
 the missing setup.
 
 Supported runtimes receive real read-only or workspace-write flags where their command-line
-interfaces expose those postures. Those flags do not express a file allowlist and are only defence
-in depth. Enforcement is observational: after the child predicate runs, Git enumerates every
-tracked and untracked changed path with the null-delimited porcelain format. The final set is
-compared with the pre-dispatch set, and every newly changed path must equal a declared scope path or
-live below a declared directory. An out-of-scope path fails completion even when the predicate
-passed.
+interfaces expose those postures. Mutating Codex uses `workspace-write`, Grok uses its `workspace`
+sandbox, Qwen enables its project sandbox, and Agy enables its terminal-restrictions sandbox. Muse's
+sandbox is enabled by default and its existing-worktree arguments bind the landing. Claude exposes
+no command-line flag that limits writes to the launch working directory. These controls do not
+express the declared path allowlist and remain defence in depth.
+
+Enforcement is observational. A branch child records the immutable base commit before its worktree
+is created. Completion unions the committed `base_commit..HEAD` name-status diff with uncommitted
+tracked and non-ignored status in the child landing. It separately records the ambient checkout's
+commit and status baseline, then compares its committed and uncommitted tracked and non-ignored
+changes too. A child therefore cannot evade the check by writing or committing a normal repository
+path outside its worktree. SHA-256 fingerprints retain attribution when a path was already dirty at
+dispatch. Every attributed path must equal a declared scope path or live below a declared directory,
+and an outside path fails completion even when the predicate passed.
+
+**Git-ignored paths are outside U4 scope observation.** Git status deliberately omits them, and the
+ambient runtime state changes as the orchestrator records lifecycle transitions, so this control
+cannot reliably attribute ignored control-plane writes to one child. Protecting ignored paths such
+as runtime state requires a separate filesystem boundary. This exclusion is explicit rather than a
+claim that Git observes every filesystem write.
 
 ## Reaping and disappearance
 

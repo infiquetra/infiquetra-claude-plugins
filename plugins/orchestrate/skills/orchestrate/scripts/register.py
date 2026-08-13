@@ -33,13 +33,16 @@ Work       -- task, work_shape, scope, artifact_path, predicate, integration_mod
     the orchestrator itself evaluates (KTD6 — the mirror never decides); ``integration_mode`` /
     ``destination`` say how a verified artifact lands (e.g. patch application, PR, direct commit).
 
-Lifecycle  -- phase, expected_state, observed_state
+Lifecycle  -- phase, expected_state, observed_state, observed_state_source
     ``phase`` is the closed, ordered vocabulary in ``PHASES`` below. ``expected_state`` /
     ``observed_state`` exist because a live child's own status report is not a completion signal:
     one measured child reported ``done`` and then returned to ``working`` three times in a single
     dispatch. Disagreement between what the orchestrator expects and what herdr currently reports
     is recorded as *divergence*, not silently resolved by trusting one detector over the other —
-    that resolution is U3/U4's job, not this module's. See
+    that resolution is U3/U4's job, not this module's. ``observed_state_source`` records how the
+    state was learned. Values beginning with ``observed:`` came directly from a process or herdr
+    event; values beginning with ``inferred:`` were concluded from container presence or absence.
+    See
     ``docs/engineering-journal/LEARNINGS.md#agent-lifecycle-detectors-lie`` for the durable,
     publicly readable record of the broader class this belongs to (vendor detectors disagreeing
     in vendor-specific, non-repeating ways).
@@ -110,7 +113,7 @@ WORK_COLUMNS = (
     "integration_mode",
     "destination",
 )
-LIFECYCLE_COLUMNS = ("phase", "expected_state", "observed_state")
+LIFECYCLE_COLUMNS = ("phase", "expected_state", "observed_state", "observed_state_source")
 TIME_COLUMNS = (
     "dispatched_at",
     "dispatch_revision_baseline",
@@ -378,6 +381,8 @@ def upsert_rows(root: Path, updates: Mapping[str, Mapping[str, Any]]) -> dict[st
     updates are validated before the register is mutated, then land in one durable replacement.
     """
     normalized = {row_id: dict(fields) for row_id, fields in updates.items()}
+    if not normalized:
+        return {}
     for row_id, fields in normalized.items():
         if not row_id:
             raise RegisterError("row_id must be non-empty")
@@ -399,8 +404,7 @@ def upsert_rows(root: Path, updates: Mapping[str, Mapping[str, Any]]) -> dict[st
             rows[row_id] = merged
             merged_rows[row_id] = dict(merged)
         doc["rows"] = rows
-        if normalized:
-            _atomic_write_json(register_path(root), doc)
+        _atomic_write_json(register_path(root), doc)
         return merged_rows
 
 

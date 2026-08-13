@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.2.2] - 2026-08-13
+
+### Fixed
+
+- Reject output-match subscriptions that cannot produce a complete substring sentinel instead of
+  starting a subscriber that can only discard their events. Multiple valid sentinel interactions
+  for the same pane remain independently matchable.
+- Report catch-up failures without closing an accepted event stream, and count every accepted
+  subscription toward reconnect limits even when its catch-up fails.
+- Record how each lifecycle state was learned, including explicit inference labels for a missing
+  snapshot pane and a closed tab.
+- Avoid register locking for an empty catch-up batch and avoid waking for registered events that
+  make no register change.
+- Exercise schema-valid pane and agent payloads through the response parser and catch-up consumer.
+
 ## [0.2.1] - 2026-08-13
 
 ### Fixed

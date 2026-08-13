@@ -32,6 +32,7 @@ class CatchUpRecord:
     pane_id: str
     expected_state: str | None
     observed_state: str
+    observed_state_source: str
     diverged: bool
     revision: int | None
     artifact_path: str | None
@@ -83,6 +84,37 @@ def _sentinel_payload(line: str) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+def _sentinel_expectations(
+    subscriptions: Sequence[Mapping[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    expectations: dict[str, list[dict[str, Any]]] = {}
+    identity_fields = ("run_id", "child_id", "purpose", "nonce")
+    for subscription in subscriptions:
+        if subscription.get("type") != "pane.output_matched":
+            continue
+        pane_id = subscription.get("pane_id")
+        match = subscription.get("match")
+        if not isinstance(pane_id, str) or not isinstance(match, Mapping):
+            raise herdr_events.SubscriptionError(
+                "pane.output_matched requires pane_id and a match object"
+            )
+        if match.get("type") != "substring" or not isinstance(match.get("value"), str):
+            raise herdr_events.SubscriptionError(
+                "the orchestrate subscriber requires pane.output_matched to use a substring "
+                "sentinel match"
+            )
+        payload = _sentinel_payload(str(match["value"]))
+        if payload is None or any(
+            not isinstance(payload.get(field), str) or not payload[field]
+            for field in identity_fields
+        ):
+            raise herdr_events.SubscriptionError(
+                "pane.output_matched substring must contain a complete orchestrate sentinel"
+            )
+        expectations.setdefault(pane_id, []).append(payload)
+    return expectations
+
+
 def _artifact_presence(root: Path, value: Any) -> tuple[str | None, bool | None]:
     if not isinstance(value, str) or not value:
         return None, None
@@ -126,12 +158,14 @@ def catch_up(
         pane = live.get(pane_id)
         if pane is None:
             observed_state = "exited"
+            observed_state_source = "inferred:snapshot_absence"
             revision = None
         elif row.get("agent") == "subscriber":
             # The subscriber is an ordinary foreground process, not a coding agent. Its liveness
             # is pane presence; herdr's coding-agent detector correctly reports this pane as
             # unknown and must not create an immediate false divergence.
             observed_state = "working"
+            observed_state_source = "inferred:pane_presence"
             raw_revision = pane.get("revision")
             revision = (
                 raw_revision
@@ -141,6 +175,7 @@ def catch_up(
         else:
             raw_state = pane.get("agent_status", "unknown")
             observed_state = raw_state if isinstance(raw_state, str) else "unknown"
+            observed_state_source = "observed:session_snapshot"
             raw_revision = pane.get("revision")
             revision = (
                 raw_revision
@@ -150,7 +185,10 @@ def catch_up(
 
         expected = row.get("expected_state")
         expected_state = expected if isinstance(expected, str) else None
-        updates[row_id] = {"observed_state": observed_state}
+        updates[row_id] = {
+            "observed_state": observed_state,
+            "observed_state_source": observed_state_source,
+        }
         artifact_path, artifact_exists = _artifact_presence(root, row.get("artifact_path"))
         records.append(
             CatchUpRecord(
@@ -158,6 +196,7 @@ def catch_up(
                 pane_id=pane_id,
                 expected_state=expected_state,
                 observed_state=observed_state,
+                observed_state_source=observed_state_source,
                 diverged=expected_state is not None and expected_state != observed_state,
                 revision=revision,
                 artifact_path=artifact_path,
@@ -198,21 +237,8 @@ class Subscriber:
         self._reported_once: set[tuple[str, str]] = set()
         self._sentinel_expectations = self._read_sentinel_expectations()
 
-    def _read_sentinel_expectations(self) -> dict[str, dict[str, Any]]:
-        expectations: dict[str, dict[str, Any]] = {}
-        for subscription in self.subscriptions:
-            if subscription.get("type") != "pane.output_matched":
-                continue
-            pane_id = subscription.get("pane_id")
-            match = subscription.get("match")
-            if not isinstance(pane_id, str) or not isinstance(match, Mapping):
-                continue
-            if match.get("type") != "substring" or not isinstance(match.get("value"), str):
-                continue
-            payload = _sentinel_payload(str(match["value"]))
-            if payload is not None:
-                expectations[pane_id] = payload
-        return expectations
+    def _read_sentinel_expectations(self) -> dict[str, list[dict[str, Any]]]:
+        return _sentinel_expectations(self.subscriptions)
 
     @staticmethod
     def _print_diagnostic(payload: dict[str, Any]) -> None:
@@ -270,6 +296,7 @@ class Subscriber:
                 "phase": "working",
                 "expected_state": "working",
                 "observed_state": "working",
+                "observed_state_source": "observed:subscriber_start",
             },
         )
 
@@ -339,11 +366,14 @@ class Subscriber:
     def _sentinel_matches_active_subscription(
         self, pane_id: str, payload: Mapping[str, Any] | None
     ) -> bool:
-        expected = self._sentinel_expectations.get(pane_id)
-        if expected is None or payload is None:
+        expected_values = self._sentinel_expectations.get(pane_id)
+        if expected_values is None or payload is None:
             return False
         fields = ("run_id", "child_id", "purpose", "nonce")
-        return all(payload.get(field) == expected.get(field) for field in fields)
+        return any(
+            all(payload.get(field) == expected.get(field) for field in fields)
+            for expected in expected_values
+        )
 
     def _handle_registered_event(
         self, event: herdr_events.HerdrEvent, row_id: str, row: Mapping[str, Any]
@@ -383,13 +413,31 @@ class Subscriber:
             register_store.upsert_row(
                 self.root, row_id, {"last_event_at": herdr_events.unix_time()}
             )
+            return True
         elif event.name in {"pane_exited", "pane_closed", "tab_closed"}:
-            register_store.upsert_row(self.root, row_id, {"observed_state": "exited"})
+            source_prefix = "inferred" if event.name == "tab_closed" else "observed"
+            register_store.upsert_row(
+                self.root,
+                row_id,
+                {
+                    "observed_state": "exited",
+                    "observed_state_source": f"{source_prefix}:{event.name}",
+                },
+            )
+            return True
         elif event.name == "pane_agent_status_changed":
             observed = event.data.get("agent_status")
             if isinstance(observed, str):
-                register_store.upsert_row(self.root, row_id, {"observed_state": observed})
-        return True
+                register_store.upsert_row(
+                    self.root,
+                    row_id,
+                    {
+                        "observed_state": observed,
+                        "observed_state_source": "observed:pane_agent_status_changed",
+                    },
+                )
+                return True
+        return False
 
     def handle_event(self, event: herdr_events.HerdrEvent) -> None:
         """Update matching current-run rows before waking the orchestrator."""
@@ -419,7 +467,14 @@ class Subscriber:
                 diagnostic=lambda message: self._diagnostic("socket", message),
             )
         finally:
-            register_store.upsert_row(self.root, self.row_id, {"observed_state": "exited"})
+            register_store.upsert_row(
+                self.root,
+                self.row_id,
+                {
+                    "observed_state": "exited",
+                    "observed_state_source": "observed:subscriber_stop",
+                },
+            )
 
 
 def _parse_subscriptions(raw: str) -> list[dict[str, Any]]:
@@ -431,7 +486,11 @@ def _parse_subscriptions(raw: str) -> list[dict[str, Any]]:
         raise argparse.ArgumentTypeError("subscriptions must be a JSON array of objects")
     subscriptions = [dict(item) for item in value]
     # Build once before process startup so malformed entries fail before the register says working.
-    herdr_events.build_subscribe_request("orchestrate-validate", subscriptions)
+    try:
+        herdr_events.build_subscribe_request("orchestrate-validate", subscriptions)
+        _sentinel_expectations(subscriptions)
+    except herdr_events.SubscriptionError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
     return subscriptions
 
 

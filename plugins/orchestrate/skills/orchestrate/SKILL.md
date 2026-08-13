@@ -97,7 +97,14 @@ or underscored subscription is an error, never an ignored entry.
 creates an ordinary register row with `agent="subscriber"`, wakes the orchestrator through
 `agent.prompt`, and runs one `session.snapshot` catch-up after every accepted subscription,
 including startup. Catch-up updates `observed_state`, reports disagreement with `expected_state`,
-and checks declared `artifact_path` presence. It does not evaluate predicates.
+and checks declared `artifact_path` presence. Its `observed_state_source` records whether the value
+was directly observed or inferred from pane/tab presence. A catch-up failure is reported but does
+not close the accepted event stream. It does not evaluate predicates.
+
+The subscriber only accepts `pane.output_matched` entries built from a complete substring sentinel;
+a regex or ordinary-text output match is valid for Herdr generally but is a startup error here
+because it cannot satisfy the subscriber's identity guard. More than one sentinel subscription may
+target the same pane, so readiness and completion interactions can both remain active.
 
 The spawning unit supplies the subscriber pane, orchestrator pane, run identity, and complete JSON
 subscription list:

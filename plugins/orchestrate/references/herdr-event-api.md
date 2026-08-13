@@ -37,6 +37,11 @@ The client writes one newline-delimited JSON request and keeps the connection op
 API source is `recent_unwrapped` with an underscore. The `herdr pane read` command spells the same
 source `recent-unwrapped` with a hyphen, which is not valid in the socket request.
 
+That is the general Herdr protocol. The orchestrate subscriber deliberately accepts only substring
+output matches containing a complete sentinel. Regex and ordinary-text matches must use the lower
+level event client; passing either to the sentinel-bound subscriber is a startup error, never a
+silently inactive subscription. Multiple complete sentinel subscriptions may target one pane.
+
 A successful subscription acknowledgement is:
 
 ```json
@@ -73,7 +78,8 @@ Protocol 19 has no cursor or replay. After the first accepted subscription and a
 reconnect, the subscriber sends `session.snapshot` on a short-lived socket and compares every
 registered pane with the live `panes` and `agents` arrays. It writes the current `observed_state`,
 reports disagreement with `expected_state`, and checks whether each declared `artifact_path`
-exists. A missing pane is recorded as `exited`.
+exists. `observed_state_source` records `observed:session_snapshot` for reported agent state and
+`inferred:snapshot_absence` when a missing pane is recorded as `exited`.
 
 Herdr returns the snapshot inside `result.snapshot`; `result.type` is `session_snapshot`. Tests
 validate that complete response against the committed `success_response` schema and cross a real
@@ -83,11 +89,14 @@ The subscriber itself is an ordinary foreground process, not a coding agent, so 
 presence as the live `working` signal instead of Herdr's coding-agent detector. The process records
 its own `observed_state` as `exited` when its event loop terminates.
 
-Catch-up runs once per connection boundary. It is not a scheduled reconciliation loop and does not
-evaluate predicates; predicate evaluation is added only when its producer and consumer exist.
+Catch-up is attempted once per accepted connection boundary. A catch-up exception is reported but
+does not close the accepted event stream, and reconnect limits count accepted connections rather
+than successful catch-ups. It is not a scheduled reconciliation loop and does not evaluate
+predicates; predicate evaluation is added only when its producer and consumer exist.
 
 An event for an unregistered `pane_id` changes no row and produces one diagnostic for that pane.
 A `tab_closed` event resolves registered rows through their `tab_id`; pane and tab terminal events
-record `observed_state: exited` before waking. Once-only diagnostics reset at each reconnect. A
+record `observed_state: exited` before waking. Direct pane terminal events use an `observed:` state
+source, while a tab close uses `inferred:tab_closed`. Once-only diagnostics reset at each reconnect. A
 missing socket on the first attempt fails the subscriber process non-zero, leaves its row at
 `observed_state: exited`, names the socket path, and directs the operator to `herdr status server`.

@@ -259,15 +259,24 @@ class HerdrEventClient:
         max_connections: int | None = None,
         diagnostic: Callable[[str], None] | None = None,
     ) -> None:
-        """Reconnect after every close and run exactly one catch-up per accepted connection."""
+        """Reconnect after every close and attempt one catch-up per accepted connection.
+
+        Catch-up is recovery assistance, not a prerequisite for event delivery. Its failures are
+        reported while the accepted stream continues, and ``max_connections`` counts accepted
+        subscriptions whether or not their catch-up succeeds.
+        """
         stop = stop_event or threading.Event()
         connected = 0
         while not stop.is_set():
 
             def _connected_catch_up() -> None:
                 nonlocal connected
-                catch_up()
                 connected += 1
+                try:
+                    catch_up()
+                except Exception as exc:  # noqa: BLE001 - a caller callback cannot kill the stream
+                    if diagnostic is not None:
+                        diagnostic(f"catch-up failed after subscription was accepted: {exc}")
 
             try:
                 self.subscribe_once(

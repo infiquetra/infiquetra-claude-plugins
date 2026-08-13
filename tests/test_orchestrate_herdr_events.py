@@ -307,6 +307,33 @@ def test_pane_output_matched_regex_decodes_matched_line() -> None:
     assert received[0].revision == 12
 
 
+@pytest.mark.parametrize(
+    ("match", "message"),
+    [
+        (
+            {
+                "type": "regex",
+                "value": SUBSCRIBER.make_sentinel("run-a", "child-a", "complete", nonce="regex"),
+            },
+            "substring sentinel",
+        ),
+        ({"type": "substring", "value": "Ready."}, "complete orchestrate sentinel"),
+    ],
+)
+def test_subscriber_rejects_output_matches_it_cannot_represent(
+    tmp_path: Path, match: Mapping[str, Any], message: str
+) -> None:
+    subscription = {
+        "type": "pane.output_matched",
+        "pane_id": "pane-a",
+        "source": "recent_unwrapped",
+        "match": dict(match),
+    }
+
+    with pytest.raises(EVENTS.SubscriptionError, match=message):
+        _subscriber(tmp_path, subscriptions=[subscription])
+
+
 # --------------------------------------------------------------------------- scenario 5
 
 
@@ -371,6 +398,40 @@ def test_socket_close_mid_stream_triggers_reconnect_and_catch_up(tmp_path: Path)
     assert len(peer.requests) == 2
 
 
+def test_catch_up_failure_is_reported_while_events_continue_and_connections_are_bounded() -> None:
+    socket_path = _short_socket_path()
+    received: list[str] = []
+    diagnostics: list[str] = []
+    catch_up_calls: list[int] = []
+    first = {"event": "tab_closed", "data": {"type": "tab_closed", "tab_id": "t1"}}
+    second = {"event": "tab_closed", "data": {"type": "tab_closed", "tab_id": "t2"}}
+
+    def _broken_catch_up() -> None:
+        catch_up_calls.append(len(catch_up_calls) + 1)
+        raise EVENTS.ProtocolError("unsupported snapshot shape")
+
+    with _SubscriptionServer(socket_path, [[first], [second]]) as peer:
+        EVENTS.HerdrEventClient(socket_path).run_forever(
+            [{"type": "tab.closed"}],
+            lambda event: received.append(event.data["tab_id"]),
+            _broken_catch_up,
+            reconnect_delay=0,
+            max_connections=2,
+            diagnostic=diagnostics.append,
+        )
+
+    assert received == ["t1", "t2"]
+    assert catch_up_calls == [1, 2]
+    assert diagnostics == [
+        "catch-up failed after subscription was accepted: unsupported snapshot shape",
+        "catch-up failed after subscription was accepted: unsupported snapshot shape",
+    ]
+    assert [request["id"] for request in peer.requests] == [
+        "orchestrate-subscribe-1",
+        "orchestrate-subscribe-2",
+    ]
+
+
 # --------------------------------------------------------------------------- scenario 7
 
 
@@ -417,7 +478,9 @@ def test_child_exit_during_disconnect_is_detected_by_reconnect_catch_up(
         )
 
     assert snapshot_calls == [0, 1]
-    assert REGISTER.read_rows(tmp_path)["child-a"]["observed_state"] == "exited"
+    row = REGISTER.read_rows(tmp_path)["child-a"]
+    assert row["observed_state"] == "exited"
+    assert row["observed_state_source"] == "inferred:snapshot_absence"
     assert len(wakes) == 1
     assert "child-a" in wakes[0]
     assert len(peer.requests) == 2
@@ -468,7 +531,17 @@ def test_missing_socket_fails_with_actionable_message(tmp_path: Path) -> None:
 def test_session_snapshot_response_validates_against_fixture_and_is_unwrapped(
     tmp_path: Path,
 ) -> None:
-    response = _session_snapshot_response()
+    pane = {
+        "pane_id": "pane-a",
+        "terminal_id": "terminal-a",
+        "workspace_id": "workspace-a",
+        "tab_id": "tab-a",
+        "focused": False,
+        "agent_status": "working",
+        "revision": 8,
+    }
+    agent = {**pane, "agent_status": "done", "revision": 9}
+    response = _session_snapshot_response(panes=[pane], agents=[agent])
     captured = json.loads(SCHEMA.read_text(encoding="utf-8"))
     response_schema = {
         "$schema": captured["$schema"],
@@ -479,6 +552,11 @@ def test_session_snapshot_response_validates_against_fixture_and_is_unwrapped(
     socket_path = _short_socket_path()
     client = EVENTS.HerdrEventClient(socket_path)
     subscriber = _subscriber(tmp_path, client=client)
+    REGISTER.upsert_row(
+        tmp_path,
+        "child-a",
+        {"run_id": "run-a", "pane_id": "pane-a", "expected_state": "done"},
+    )
 
     with _RequestServer(socket_path, response) as server:
         snapshot = subscriber._read_snapshot()
@@ -489,6 +567,9 @@ def test_session_snapshot_response_validates_against_fixture_and_is_unwrapped(
         "method": "session.snapshot",
         "params": {},
     }
+    records = SUBSCRIBER.catch_up(tmp_path, snapshot, run_id="run-a")
+    assert records[0].observed_state == "done"
+    assert records[0].revision == 9
 
 
 def test_session_snapshot_response_without_snapshot_is_a_protocol_error(tmp_path: Path) -> None:
@@ -579,6 +660,30 @@ def test_current_sentinel_revision_updates_liveness_and_wakes(tmp_path: Path) ->
     assert "child-a" in wakes[0]
 
 
+def test_multiple_sentinel_interactions_for_one_pane_are_each_honoured(tmp_path: Path) -> None:
+    ready = SUBSCRIBER.make_sentinel("run-a", "child-a", "ready", nonce="ready")
+    complete = SUBSCRIBER.make_sentinel("run-a", "child-a", "complete", nonce="complete")
+    REGISTER.upsert_row(
+        tmp_path,
+        "child-a",
+        {"run_id": "run-a", "pane_id": "pane-a", "dispatch_revision_baseline": 10},
+    )
+    wakes: list[str] = []
+    subscriber = _subscriber(
+        tmp_path,
+        wakes=wakes,
+        subscriptions=[
+            SUBSCRIBER.output_match_subscription("pane-a", ready),
+            SUBSCRIBER.output_match_subscription("pane-a", complete),
+        ],
+    )
+
+    subscriber.handle_event(EVENTS.decode_event(_output_event("pane-a", ready, revision=11)))
+    subscriber.handle_event(EVENTS.decode_event(_output_event("pane-a", complete, revision=12)))
+
+    assert len(wakes) == 2
+
+
 def test_registered_pane_exited_event_records_exit_before_wake(tmp_path: Path) -> None:
     REGISTER.upsert_row(
         tmp_path,
@@ -603,7 +708,9 @@ def test_registered_pane_exited_event_records_exit_before_wake(tmp_path: Path) -
     subscriber.handle_event(event)
 
     assert states_at_wake == ["exited"]
-    assert REGISTER.read_rows(tmp_path)["child-a"]["observed_state"] == "exited"
+    row = REGISTER.read_rows(tmp_path)["child-a"]
+    assert row["observed_state"] == "exited"
+    assert row["observed_state_source"] == "observed:pane_exited"
 
 
 def test_registered_pane_closed_event_records_exit_before_wake(tmp_path: Path) -> None:
@@ -627,6 +734,9 @@ def test_registered_pane_closed_event_records_exit_before_wake(tmp_path: Path) -
     subscriber.handle_event(event)
 
     assert states_at_wake == ["exited"]
+    assert (
+        REGISTER.read_rows(tmp_path)["child-a"]["observed_state_source"] == "observed:pane_closed"
+    )
 
 
 def test_registered_tab_closed_events_resolve_rows_and_each_wake_with_exit(
@@ -660,6 +770,29 @@ def test_registered_tab_closed_events_resolve_rows_and_each_wake_with_exit(
 
     assert states_at_wake == ["exited", "exited"]
     assert diagnostics == []
+    assert REGISTER.read_rows(tmp_path)["child-a"]["observed_state_source"] == "inferred:tab_closed"
+
+
+def test_registered_non_state_event_does_not_send_an_empty_wake(tmp_path: Path) -> None:
+    REGISTER.upsert_row(
+        tmp_path,
+        "child-a",
+        {"run_id": "run-a", "pane_id": "pane-a", "observed_state": "working"},
+    )
+    before = REGISTER.read_rows(tmp_path)["child-a"]
+    wakes: list[str] = []
+    subscriber = _subscriber(tmp_path, wakes=wakes)
+    event = EVENTS.decode_event(
+        {
+            "event": "pane_updated",
+            "data": {"type": "pane_updated", "pane_id": "pane-a", "workspace_id": "w1"},
+        }
+    )
+
+    subscriber.handle_event(event)
+
+    assert REGISTER.read_rows(tmp_path)["child-a"] == before
+    assert wakes == []
 
 
 def test_sentinel_identity_mismatch_rejects_event_before_liveness_update(tmp_path: Path) -> None:
@@ -792,8 +925,14 @@ def test_catch_up_batches_all_row_updates_into_one_register_write(
 
     assert batches == [
         {
-            "child-a": {"observed_state": "working"},
-            "child-b": {"observed_state": "blocked"},
+            "child-a": {
+                "observed_state": "working",
+                "observed_state_source": "observed:session_snapshot",
+            },
+            "child-b": {
+                "observed_state": "blocked",
+                "observed_state_source": "observed:session_snapshot",
+            },
         }
     ]
     rows = REGISTER.read_rows(tmp_path)
@@ -844,6 +983,7 @@ def test_subscriber_carries_an_ordinary_register_row(tmp_path: Path) -> None:
     assert row["pane_id"] == "subscriber-pane"
     assert row["expected_state"] == "working"
     assert row["observed_state"] == "working"
+    assert row["observed_state_source"] == "observed:subscriber_start"
 
 
 def test_subscriber_row_uses_pane_presence_and_records_process_exit(tmp_path: Path) -> None:
@@ -876,3 +1016,4 @@ def test_subscriber_row_uses_pane_presence_and_records_process_exit(tmp_path: Pa
     row = REGISTER.read_rows(tmp_path)["subscriber-a"]
     assert row["expected_state"] == "working"
     assert row["observed_state"] == "exited"
+    assert row["observed_state_source"] == "observed:subscriber_stop"

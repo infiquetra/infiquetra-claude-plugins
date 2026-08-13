@@ -62,6 +62,26 @@ boundaries and both must cross their production parser.
 the test traverse each production boundary. A request accepted by the peer says nothing about
 whether the reply is represented at the level the consumer expects.
 
+### Recovery callbacks must not gate the live signal they repair  {#recovery-cannot-gate-events}
+
+**Context.** The orchestrate subscriber runs a snapshot catch-up after each accepted Herdr event
+subscription because protocol 19 has no replay cursor. Catch-up initially ran inside the subscribe
+handshake before the event read loop.
+
+**Mechanism.** Any catch-up exception aborted the accepted socket before its first event. Counting
+only successful catch-ups also made a configured connection bound ineffective precisely when
+recovery was broken. A secondary recovery path therefore disabled the primary live signal and
+could retry forever.
+
+**Fix.** Accepted connections are counted before catch-up. Catch-up exceptions are reported and
+survived, allowing the same socket to enter its event loop. Tests use two real socket connections,
+a catch-up that always fails, and events on both streams to prove delivery and the configured bound
+remain independent of recovery success.
+
+**Generalizable rule.** A recovery mechanism may enrich or reconcile a live signal, but must not be
+a prerequisite for consuming that signal. Bounds and attempt counters must measure the operation
+they claim to bound, including failed recovery work.
+
 ### Predicting another program's configuration is unbounded; set the value and observe the pane  {#do-not-predict-foreign-settings}
 
 **Context.** U1's qwen routing had no launch-time effort flag. Three successive repairs tried to *predict* the child's effort by reading qwen's settings files (layer precedence, folder trust, `$VAR` expansion, `.env` discovery, system defaults, then the child's `cwd` instead of the orchestrator's). Each repair closed the hole the previous review named and opened a new one.

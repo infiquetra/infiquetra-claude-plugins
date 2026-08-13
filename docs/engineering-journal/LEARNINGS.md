@@ -19,6 +19,42 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-08-12
+
+### herdr pushes lifecycle events over its socket; we polled for a year without noticing  {#herdr-event-subscribe-api}
+
+**Context.** Designing the `orchestrate` plugin, the blocking question was how an orchestrator learns that a child session finished without either polling or blocking. Two independent adversarial reviewers (codex `gpt-5.6-sol` max, muse xhigh) concluded it could not: *"agent sessions run only during turns... a repository file cannot wake them."* That premise drove a proposal to build a separate daemon, or to abandon autonomy and make the operator's turn the tick.
+
+**Evidence.** `herdr api schema --json` (protocol 19, socket `~/.config/herdr/herdr.sock`) exposes `events.subscribe` and `events.wait` across **26 event kinds**. Verified live by opening the socket and subscribing: `{"id":"ev1","result":{"type":"subscription_started"}}`, followed by real `tab_created` / `tab_closed` pushes and a `pane.output_matched` event carrying both `matched_line` and a full `read` payload. Request shape is `{"id", "method", "params"}`; global subscriptions need only `type`, pane subscriptions require `pane_id`. Two schema gotchas cost a round each: the API spells the read source `recent_unwrapped` where the CLI spells it `recent-unwrapped`, and `match` is a tagged enum `{"type":"substring"|"regex","value":...}`, not a bare string.
+
+**Mechanism.** The `herdr` skill documents the `agent` and `pane` command groups thoroughly, and every prior session lived inside them — `agent wait`, `pane read`, `pane wait-output`. All of those are pull or block. The push API lives under `herdr api`, described in top-level help only as *"Inspect socket API metadata and live runtime state"*, which reads like introspection rather than a subscription transport. A well-documented subset became the assumed boundary of the tool.
+
+**Fix (or queued).** Folded into `docs/brainstorms/2026-08-12-orchestrate-requirements.md` §4.2 as the wake mechanism, replacing a polling design. Requirements R21a/R21b now mandate subscription over polling.
+
+**Validation.** Live subscription confirmed against real tab lifecycle and a regex content match, in this repository's own herdr workspace.
+
+**What surprised.** `pane.output_matched` matches **content**, not agent status — so it works on a vendor whose lifecycle detector is entirely broken. It is strictly better than the polling predicate loop it replaced, and it removes the argument for a separate controller process entirely.
+
+**Generalizable rule.** Two confident reviewers agreeing on a capability claim is evidence about their shared priors, not about the substrate. Before accepting *"the platform cannot do X"* — especially when it drives a build-a-daemon decision — read the platform's own schema. Convergence is not verification.
+
+**Refs.** LEARNINGS `{#agent-lifecycle-detectors-lie}`; DECISIONS `{#orchestrate-supersedes-outcome}`.
+
+### Per-agent lifecycle detectors are wrong in vendor-specific, non-agreeing ways  {#agent-lifecycle-detectors-lie}
+
+**Context.** An orchestrator deciding when a child is ready, working, or done reads `agent_status` from herdr. Across one day of driving nine child sessions on four vendors, that field was wrong three separate times, in three different directions.
+
+**Evidence.** `agy` reported `idle` while working (recorded in an operator transcript: *"herdr agent status unreliable for agy pane (shows idle while internal task runs) → watch for the deliverable instead"*). A `claude` miner reported `working` after it had written and verified a complete 140-file ledger. `muse` via the locally built `muse-herdr` adapter reported settled from launch through completion — `state_change_seq` was 297 at launch and 297 after the review finished, so it never transitioned at all. `herdr agent` lists **22 agent kinds**; `command -v <kind>-herdr` shows exactly one locally owned adapter (`muse-herdr`), so 21 detectors are upstream.
+
+**Mechanism.** Each detector infers lifecycle independently — scraping output, reading an event log, watching a screen. There is no shared oracle, so there is no reason the errors would agree. A permanently-constant status is the worst case: it is indistinguishable from a genuinely idle agent, and it also drives the operator's sidebar dot, which has no predicate to fall back on.
+
+**Fix (or queued).** `orchestrate` subscribes to `pane.output_matched` (content) rather than `pane.agent_status_changed` (inferred state) — requirements R21b. Detector coverage is a separate herdr-integration concern; `herdr integration install <agent>` currently lists neither `muse` nor `agy`.
+
+**What surprised.** The requirement written *before* muse was ever launched ("done means the validity predicate passes, never a lifecycle state") correctly predicted the failure of a detector it had never seen. That is the strongest confirmation available: a rule derived from one vendor's failures anticipating a fourth vendor's on first contact.
+
+**Generalizable rule.** Adding vendors multiplies detector bugs, and vendor diversity is usually the point. Never let a completion decision rest on inferred state; subscribe to what a child *emits*, not to what something *says about* the child.
+
+**Refs.** LEARNINGS `{#herdr-event-subscribe-api}`.
+
 ## 2026-08-09
 
 ### Outer timeouts must contain inner timeouts  {#outer-timeouts-contain-inner-timeouts}

@@ -21,6 +21,51 @@
 
 ## 2026-08-13
 
+### Repair the input class, not only the reported example  {#repair-the-input-class}
+
+**Context.** The orchestrate scope gate failed to observe committed work. The first repair added a
+launch commit for mutating children, which were the example under review, while leaving read-only
+children without one.
+
+**Evidence.** The launch path computed a base commit behind an `if spec.mutating` conditional, and
+read-only provisioning returned a landing with `base_commit=None`. A real-repository test then showed
+that a read-only child could commit an out-of-scope path, leave `git status` clean, and pass the scope
+check. The sibling mutating-child test already failed correctly.
+
+**Mechanism.** The defect belonged to children that can create commits, not to worktree-backed
+children. Mutability changes the landing location and permission posture; it does not make a Git
+commit impossible. Repairing only the named member left the same control fail-open at the other
+branch of the conditional.
+
+**Fix.** Every child now records the ambient commit before provisioning, and both landing modes
+retain it. The regression suite checks committed escapes for read-only and mutating children, plus
+the separate ambient tree used by mutating children.
+
+**Generalizable rule.** Before closing a defect, name its input class, enumerate every conditional
+member, and run the repaired invariant against each one. A test for the reported example proves the
+case; sibling tests prove the repair boundary.
+
+### A command's help synopsis is not its parser grammar  {#cli-help-is-not-parser-grammar}
+
+**Context.** The Herdr adapter originally placed pane-read options before the pane identifier because
+that order matched the installed command's help synopsis.
+
+**Evidence.** The live Herdr parser rejected that order and accepted the pane identifier before the
+options. The original permissive subprocess double returned success for either argv shape, while an
+argv-validating executable double immediately failed when the production adapter was reverted.
+
+**Mechanism.** Help output summarizes arguments for a person; it does not necessarily expose the
+parser's exact positional grammar. A permissive test double checks only that a process was invoked,
+so it encodes the adapter author's assumption instead of the external program's boundary.
+
+**Fix.** The executable test double now matches every Herdr invocation by exact argument list and
+returns non-zero for every other shape. Side-effect-free forms were also checked against the installed
+binary.
+
+**Generalizable rule.** Test an external command adapter with a rejecting argv grammar, and verify at
+least one safe invocation against the real parser. Treat help text as documentation, not execution
+proof.
+
 ### Git status is not a branch change set  {#git-status-is-not-a-branch-diff}
 
 **Context.** The orchestrate scope gate originally compared pre-dispatch and final
@@ -35,13 +80,16 @@ run inside the child worktree.
 commits relative to a base, and one worktree cannot report another worktree's status. Git-ignored
 paths are omitted by design.
 
-**Fix.** A mutating child now records its base commit before worktree creation. Completion unions
-the committed base-to-tip name-status diff with uncommitted child-worktree status and separately
-compares the ambient checkout's commit and status changes. Tests commit outside paths in both the
-child branch and ambient checkout. Git-ignored paths are documented and tested as outside this
+**Fix.** Every child now records its launch commit before provisioning. A read-only child remains
+relative to that commit. An isolated child compares its tip with the merge base of the current
+ambient tip, so upstream changes brought in by merge or rebase are not attributed to the child.
+Completion unions that committed comparison with uncommitted child-worktree status and separately
+compares the ambient checkout's commit and status changes. Tests commit outside paths in both child
+classes and the ambient checkout. Git-ignored paths are documented and tested as outside this
 observational control rather than described as covered.
 
-**Generalizable rule.** Use a commit diff to answer what a branch changed, and observe each working
+**Generalizable rule.** Choose the comparison commit that answers the ownership question; an old
+branch point alone also includes later upstream history after synchronization. Observe each working
 tree separately for uncommitted state. Never describe Git status as a filesystem audit.
 
 ### A Git worktree does not carry the checkout-local environment  {#worktree-needs-environment}

@@ -57,6 +57,10 @@ class NotReadyError(SessionLifecycleError):
     """A launched child did not prove readiness within the bounded window."""
 
 
+class EffortNotAppliedError(NotReadyError):
+    """A runtime acknowledged effort without applying it."""
+
+
 class TrustPromptError(NotReadyError):
     """A child is parked on a trust prompt and must not receive work."""
 
@@ -512,7 +516,7 @@ class GitLanding:
         return result
 
     def base_commit(self, root: Path) -> str:
-        """Return the committed reference used to create a mutating child's branch."""
+        """Return the committed reference used as a child's launch baseline."""
         value = self._git(root, ["rev-parse", "HEAD"]).stdout.strip()
         if not value:
             raise LandingError("git rev-parse HEAD returned no commit")
@@ -520,9 +524,9 @@ class GitLanding:
 
     def provision(self, root: Path, spec: ChildSpec, *, base_commit: str | None = None) -> Landing:
         root = root.resolve()
-        if not spec.mutating:
-            return Landing(root, "none", "none", ambient_root=root)
         resolved_base = base_commit or self.base_commit(root)
+        if not spec.mutating:
+            return Landing(root, "none", "none", resolved_base, root)
         branch = task_label(spec.run_id, spec.row_id)
         path = root / ".orchestrate" / "worktrees" / spec.run_id / spec.row_id
         listed = self._git(root, ["worktree", "list", "--porcelain"]).stdout
@@ -567,11 +571,28 @@ class GitLanding:
             index += 1
         return frozenset(paths)
 
-    def committed_paths(self, cwd: Path, base_commit: str | None) -> frozenset[str]:
-        """Return both sides of every committed path change since ``base_commit``."""
+    def committed_paths(
+        self,
+        cwd: Path,
+        base_commit: str | None,
+        *,
+        upstream_commit: str | None = None,
+    ) -> frozenset[str]:
+        """Return both sides of committed changes relative to the applicable branch base.
+
+        An isolated child worktree is compared with the merge base of its current tip and the
+        ambient checkout's current tip. This excludes upstream commits after either a merge or a
+        rebase while retaining the child's resulting tree changes. A child in the ambient checkout
+        has no separate upstream and remains relative to its launch commit.
+        """
         if base_commit is None:
             return frozenset()
-        result = self._git(cwd, ["diff", "--name-status", "-z", base_commit, "HEAD"])
+        comparison_base = base_commit
+        if upstream_commit is not None:
+            comparison_base = self._git(cwd, ["merge-base", upstream_commit, "HEAD"]).stdout.strip()
+            if not comparison_base:
+                raise LandingError("git merge-base returned no commit")
+        result = self._git(cwd, ["diff", "--name-status", "-z", comparison_base, "HEAD"])
         entries = result.stdout.encode("utf-8", errors="surrogateescape").split(b"\0")
         paths: set[str] = set()
         index = 0
@@ -589,9 +610,17 @@ class GitLanding:
                 index += 1
         return frozenset(paths)
 
-    def observed_paths(self, cwd: Path, *, base_commit: str | None) -> frozenset[str]:
+    def observed_paths(
+        self,
+        cwd: Path,
+        *,
+        base_commit: str | None,
+        upstream_commit: str | None = None,
+    ) -> frozenset[str]:
         """Union committed branch changes with uncommitted repository-visible changes."""
-        return self.committed_paths(cwd, base_commit) | self.changed_paths(cwd)
+        return self.committed_paths(
+            cwd, base_commit, upstream_commit=upstream_commit
+        ) | self.changed_paths(cwd)
 
     @staticmethod
     def fingerprint(cwd: Path, relative: str) -> str:
@@ -690,11 +719,7 @@ def launch_child(
 
     base_commit_value = existing.get("base_commit") if existing else None
     base_commit = (
-        str(base_commit_value)
-        if isinstance(base_commit_value, str)
-        else git.base_commit(root)
-        if spec.mutating
-        else None
+        str(base_commit_value) if isinstance(base_commit_value, str) else git.base_commit(root)
     )
     register_store.upsert_row(
         root,
@@ -773,26 +798,47 @@ def confirm_ready(
         disabled_acknowledgement = (
             f"Reasoning effort set to {resolution.effort}, but thinking is currently disabled"
         )
-        interaction.observe(
-            pane_id=identity.pane_id,
-            match="Reasoning effort",
-            timeout=spec.readiness_timeout,
-            dispatch=lambda: _count_and_send(
-                herdr,
-                identity.pane_id,
-                landing.cwd,
-                command,
-                (acknowledgement, disabled_acknowledgement),
-            ),
-            accept=lambda _event, previous_counts: _accept_effort_acknowledgement(
-                herdr,
-                identity.pane_id,
-                landing.cwd,
-                acknowledgement,
-                disabled_acknowledgement,
-                previous_counts,
-            ),
-        )
+        try:
+            interaction.observe(
+                pane_id=identity.pane_id,
+                match="Reasoning effort",
+                timeout=spec.readiness_timeout,
+                dispatch=lambda: _count_and_send(
+                    herdr,
+                    identity.pane_id,
+                    landing.cwd,
+                    command,
+                    (acknowledgement, disabled_acknowledgement),
+                ),
+                accept=lambda _event, previous_counts: _accept_effort_acknowledgement(
+                    herdr,
+                    identity.pane_id,
+                    landing.cwd,
+                    acknowledgement,
+                    disabled_acknowledgement,
+                    previous_counts,
+                ),
+            )
+        except EffortNotAppliedError:
+            register_store.upsert_row(
+                root,
+                spec.row_id,
+                {
+                    "observed_state": "not_ready",
+                    "observed_state_source": "inferred:effort_not_applied",
+                },
+            )
+            raise
+        except NotReadyError:
+            register_store.upsert_row(
+                root,
+                spec.row_id,
+                {
+                    "observed_state": "not_ready",
+                    "observed_state_source": "inferred:effort_timeout",
+                },
+            )
+            raise
     elif effort_application.get("mode") != "argv":
         raise LaunchProtocolError(f"unsupported effort application {effort_application!r}")
 
@@ -878,7 +924,7 @@ def _accept_effort_acknowledgement(
 ) -> bool:
     text = herdr.pane_text(pane_id, cwd=cwd)
     if text.count(disabled_acknowledgement) > previous_counts[1]:
-        raise NotReadyError(
+        raise EffortNotAppliedError(
             "Qwen acknowledged the effort request but thinking is disabled; "
             "re-enable thinking before dispatch"
         )
@@ -925,8 +971,18 @@ def check_completion_scope(
     git: GitLanding,
 ) -> ScopeCheck:
     """Evaluate predicate and all repository-visible landing/ambient changes independently."""
-    final = git.observed_paths(landing.cwd, base_commit=landing.base_commit)
-    new_changed = _paths_changed_since_baseline(
+    has_distinct_ambient = (
+        landing.ambient_root is not None and landing.ambient_root.resolve() != landing.cwd.resolve()
+    )
+    upstream_commit = None
+    if has_distinct_ambient and landing.ambient_root is not None:
+        upstream_commit = git.base_commit(landing.ambient_root)
+    final = git.observed_paths(
+        landing.cwd,
+        base_commit=landing.base_commit,
+        upstream_commit=upstream_commit,
+    )
+    landing_changed = _paths_changed_since_baseline(
         landing.cwd,
         final,
         changed_paths_baseline.paths,
@@ -934,27 +990,31 @@ def check_completion_scope(
         git,
     )
     ambient_final: frozenset[str] = frozenset()
-    if landing.ambient_root is not None and landing.ambient_root.resolve() != landing.cwd.resolve():
+    ambient_changed: set[str] = set()
+    if has_distinct_ambient and landing.ambient_root is not None:
         ambient_final = git.observed_paths(
             landing.ambient_root,
             base_commit=changed_paths_baseline.ambient_base_commit,
         )
-        new_changed.update(
-            _paths_changed_since_baseline(
-                landing.ambient_root,
-                ambient_final,
-                changed_paths_baseline.ambient_paths,
-                changed_paths_baseline.ambient_fingerprints,
-                git,
-            )
+        ambient_changed = _paths_changed_since_baseline(
+            landing.ambient_root,
+            ambient_final,
+            changed_paths_baseline.ambient_paths,
+            changed_paths_baseline.ambient_fingerprints,
+            git,
         )
     scope = _normalize_scope(spec.scope)
-    outside = frozenset(path for path in new_changed if not _in_scope(path, scope))
+    landing_outside = {path for path in landing_changed if not _in_scope(path, scope)}
+    outside = frozenset(landing_outside | ambient_changed)
+    new_changed = landing_changed | ambient_changed
     result = ScopeCheck(predicate_passed, final | ambient_final, frozenset(new_changed), outside)
     if outside:
-        raise ScopeViolationError(
-            "child changed paths outside its declared scope: " + ", ".join(sorted(outside))
-        )
+        details: list[str] = []
+        if landing_outside:
+            details.append("outside declared scope: " + ", ".join(sorted(landing_outside)))
+        if ambient_changed:
+            details.append("ambient checkout: " + ", ".join(sorted(ambient_changed)))
+        raise ScopeViolationError("child changed " + "; ".join(details))
     return result
 
 

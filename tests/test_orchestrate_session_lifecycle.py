@@ -81,7 +81,13 @@ class FakeGit:
     def changed_paths(self, _cwd: Path) -> frozenset[str]:
         return self.paths.pop(0) if len(self.paths) > 1 else self.paths[0]
 
-    def observed_paths(self, cwd: Path, *, base_commit: str | None) -> frozenset[str]:
+    def observed_paths(
+        self,
+        cwd: Path,
+        *,
+        base_commit: str | None,
+        upstream_commit: str | None = None,
+    ) -> frozenset[str]:
         return self.changed_paths(cwd)
 
     def fingerprint(self, _cwd: Path, _path: str) -> str:
@@ -336,6 +342,7 @@ def test_mutating_child_gets_worktree_and_environment_read_only_child_does_not(
         "from pathlib import Path; Path('.venv').mkdir()",
     )
     git = LIFECYCLE.GitLanding()
+    launch_base = git.base_commit(repo)
     mutating = git.provision(
         repo,
         _spec(mutating=True, environment_command=setup),
@@ -347,7 +354,7 @@ def test_mutating_child_gets_worktree_and_environment_read_only_child_does_not(
     assert (mutating.cwd / ".venv").is_dir()
     assert mutating.integration_mode == "branch"
     assert read_only == LIFECYCLE.Landing(
-        repo.resolve(), "none", "none", ambient_root=repo.resolve()
+        repo.resolve(), "none", "none", launch_base, repo.resolve()
     )
 
 
@@ -392,6 +399,39 @@ def test_modifying_a_preexisting_dirty_path_is_attributed_to_the_child(tmp_path:
         )
 
 
+@pytest.mark.parametrize("mutating", [False, True])
+@pytest.mark.parametrize("committed", [False, True])
+def test_in_scope_change_is_allowed_in_each_child_landing(
+    tmp_path: Path, mutating: bool, committed: bool
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    child = _spec(mutating=mutating, environment_command=())
+    git = LIFECYCLE.GitLanding()
+    landing = git.provision(repo, child)
+    baseline = git.changed_paths_baseline(
+        landing.cwd,
+        base_commit=landing.base_commit,
+        ambient_root=landing.ambient_root,
+    )
+    (landing.cwd / "src").mkdir()
+    (landing.cwd / "src" / "ok.py").write_text("allowed\n", encoding="utf-8")
+    if committed:
+        _git(landing.cwd, "add", "src/ok.py")
+        _git(landing.cwd, "commit", "-q", "-m", "allowed child change")
+
+    result = LIFECYCLE.check_completion_scope(
+        child,
+        landing,
+        baseline,
+        predicate_passed=True,
+        git=git,
+    )
+
+    assert result.outside_scope == frozenset()
+    assert result.new_changed_paths == frozenset({"src/ok.py"})
+
+
 def test_committed_out_of_scope_change_is_compared_with_branch_base(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)
@@ -416,6 +456,34 @@ def test_committed_out_of_scope_change_is_compared_with_branch_base(tmp_path: Pa
         )
 
 
+def test_read_only_child_commit_is_compared_with_its_launch_base(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    child = _spec(mutating=False)
+    git = LIFECYCLE.GitLanding()
+    _identity, landing, _resolution = _launch(repo, child, git=git)
+    baseline = git.changed_paths_baseline(
+        landing.cwd,
+        base_commit=landing.base_commit,
+        ambient_root=landing.ambient_root,
+    )
+    (repo / "outside.txt").write_text("committed escape\n", encoding="utf-8")
+    _git(repo, "add", "outside.txt")
+    _git(repo, "commit", "-q", "-m", "read-only child commit")
+
+    with pytest.raises(LIFECYCLE.ScopeViolationError, match="outside.txt"):
+        LIFECYCLE.check_completion_scope(
+            child,
+            landing,
+            baseline,
+            predicate_passed=True,
+            git=git,
+        )
+
+    assert landing.base_commit is not None
+    assert REGISTER.read_rows(repo)[child.row_id]["base_commit"] == landing.base_commit
+
+
 def test_committed_ambient_checkout_change_is_included_in_scope_check(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)
@@ -438,6 +506,85 @@ def test_committed_ambient_checkout_change_is_included_in_scope_check(tmp_path: 
             predicate_passed=True,
             git=git,
         )
+
+
+def test_in_scope_ambient_checkout_change_is_outside_a_mutating_child_landing(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    git = LIFECYCLE.GitLanding()
+    landing = git.provision(repo, _spec(mutating=True, environment_command=()))
+    baseline = git.changed_paths_baseline(
+        landing.cwd,
+        base_commit=landing.base_commit,
+        ambient_root=landing.ambient_root,
+    )
+    (repo / "src").mkdir()
+    (repo / "src" / "ok.py").write_text("wrong tree\n", encoding="utf-8")
+
+    with pytest.raises(LIFECYCLE.ScopeViolationError, match=r"ambient checkout: src/ok\.py"):
+        LIFECYCLE.check_completion_scope(
+            _spec(mutating=True),
+            landing,
+            baseline,
+            predicate_passed=True,
+            git=git,
+        )
+
+
+@pytest.mark.parametrize("sync_method", ["merge", "rebase"])
+def test_child_history_excludes_upstream_paths_after_sync(tmp_path: Path, sync_method: str) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    git = LIFECYCLE.GitLanding()
+    landing = git.provision(repo, _spec(mutating=True, environment_command=()))
+    assert landing.base_commit is not None
+
+    (repo / "docs").mkdir()
+    (repo / "docs" / "upstream.md").write_text("operator change\n", encoding="utf-8")
+    _git(repo, "add", "docs/upstream.md")
+    _git(repo, "commit", "-q", "-m", "upstream change")
+    upstream_commit = git.base_commit(repo)
+
+    (landing.cwd / "src").mkdir()
+    (landing.cwd / "src" / "ok.py").write_text("child change\n", encoding="utf-8")
+    _git(landing.cwd, "add", "src/ok.py")
+    _git(landing.cwd, "commit", "-q", "-m", "child change")
+    if sync_method == "merge":
+        _git(landing.cwd, "merge", "-q", "main", "-m", "merge upstream")
+    else:
+        _git(landing.cwd, "rebase", "-q", "main")
+
+    assert git.committed_paths(
+        landing.cwd,
+        landing.base_commit,
+        upstream_commit=upstream_commit,
+    ) == frozenset({"src/ok.py"})
+
+
+def test_child_history_keeps_both_sides_of_an_amended_rename(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "src").mkdir()
+    (repo / "src" / "old.py").write_text("old\n", encoding="utf-8")
+    _git(repo, "add", "src/old.py")
+    _git(repo, "commit", "-q", "-m", "add old path")
+    git = LIFECYCLE.GitLanding()
+    landing = git.provision(repo, _spec(mutating=True, environment_command=()))
+    assert landing.base_commit is not None
+
+    _git(landing.cwd, "mv", "src/old.py", "src/new.py")
+    _git(landing.cwd, "commit", "-q", "-m", "rename child path")
+    (landing.cwd / "src" / "new.py").write_text("amended\n", encoding="utf-8")
+    _git(landing.cwd, "add", "src/new.py")
+    _git(landing.cwd, "commit", "-q", "--amend", "--no-edit")
+
+    assert git.committed_paths(
+        landing.cwd,
+        landing.base_commit,
+        upstream_commit=git.base_commit(repo),
+    ) == frozenset({"src/old.py", "src/new.py"})
 
 
 def test_gitignored_paths_are_explicitly_outside_scope_observation(tmp_path: Path) -> None:
@@ -467,6 +614,25 @@ def test_gitignored_paths_are_explicitly_outside_scope_observation(tmp_path: Pat
         ROOT / "plugins" / "orchestrate" / "references" / "substrate-contract.md"
     ).read_text(encoding="utf-8")
     assert "Git-ignored paths are outside U4 scope observation" in contract
+
+
+def test_unreleased_changelog_describes_the_final_release_state() -> None:
+    changelog = (ROOT / "plugins" / "orchestrate" / "CHANGELOG.md").read_text(encoding="utf-8")
+    release = changelog.split("## [0.3.0]", 1)[1].split("## [0.2.2]", 1)[0]
+
+    assert "### Fixed" not in release
+    assert "Every child records a launch commit" in release
+    assert "continuously chatty panes remain" in release
+
+
+def test_scope_and_cli_boundary_lessons_are_recorded_in_the_journal() -> None:
+    learnings = (ROOT / "docs" / "engineering-journal" / "LEARNINGS.md").read_text(encoding="utf-8")
+
+    assert "{#repair-the-input-class}" in learnings
+    assert "name its input class" in learnings
+    assert "enumerate every conditional" in learnings
+    assert "{#cli-help-is-not-parser-grammar}" in learnings
+    assert "Test an external command adapter with a rejecting argv grammar" in learnings
 
 
 # Scenario 7: write-ahead reap ---------------------------------------------------------------
@@ -594,6 +760,55 @@ class _SilentOutputMatchServer(_OutputMatchServer):
             self.path.unlink(missing_ok=True)
 
 
+class _ChattyOutputMatchServer(_OutputMatchServer):
+    def _run(self) -> None:
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+                server.bind(str(self.path))
+                server.listen()
+                self.ready.set()
+                conn, _ = server.accept()
+                with conn, conn.makefile("rwb") as stream:
+                    self.request = json.loads(stream.readline())
+                    pane_id = self.request["params"]["subscriptions"][0]["pane_id"]
+                    stream.write(
+                        json.dumps(
+                            {
+                                "id": "orchestrate-interaction",
+                                "result": {"type": "subscription_started"},
+                            }
+                        ).encode()
+                        + b"\n"
+                    )
+                    stream.flush()
+                    while True:
+                        try:
+                            stream.write(
+                                json.dumps(
+                                    {
+                                        "event": "pane.output_matched",
+                                        "data": {
+                                            "pane_id": pane_id,
+                                            "matched_line": "still working",
+                                            "read": {"revision": 0},
+                                        },
+                                    }
+                                ).encode()
+                                + b"\n"
+                            )
+                            stream.flush()
+                        except (BrokenPipeError, ConnectionResetError):
+                            break
+                        time.sleep(0.005)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        except BaseException as exc:  # noqa: BLE001
+            self.error = exc
+            self.ready.set()
+        finally:
+            self.path.unlink(missing_ok=True)
+
+
 def test_readiness_uses_output_match_and_never_agent_status_alone(tmp_path: Path) -> None:
     child = _spec()
     identity, landing, resolution = _launch(tmp_path, child)
@@ -648,6 +863,35 @@ def test_real_socket_readiness_timeout_is_bounded_and_records_not_ready(tmp_path
     assert row["observed_state_source"] == "inferred:readiness_timeout"
 
 
+def test_chatty_socket_readiness_still_honors_the_outer_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    child = _spec(readiness_timeout=0.05)
+    identity, landing, resolution = _launch(tmp_path, child)
+    socket_path = Path("/tmp") / f"orchestrate-u4-{uuid.uuid4().hex}.sock"
+    moments = iter((0.0, 0.0, 1.0))
+    monkeypatch.setattr(LIFECYCLE.time, "monotonic", lambda: next(moments, 1.0))
+    with (
+        _ChattyOutputMatchServer(socket_path),
+        pytest.raises(LIFECYCLE.NotReadyError, match="within 0.05s"),
+    ):
+        LIFECYCLE.confirm_ready(
+            tmp_path,
+            child,
+            identity,
+            landing,
+            resolution,
+            herdr=FakeHerdr(),
+            interaction=LIFECYCLE.HerdrInteraction(socket_path),
+            git=FakeGit(tmp_path),
+            sentinel_nonce="chatty-bounded",
+        )
+
+    row = REGISTER.read_rows(tmp_path)["child-a"]
+    assert row["observed_state"] == "not_ready"
+    assert row["observed_state_source"] == "inferred:readiness_timeout"
+
+
 # Additional contract seams -----------------------------------------------------------------
 
 
@@ -690,6 +934,33 @@ def test_qwen_disabled_thinking_has_an_actionable_effort_error(tmp_path: Path) -
             interaction=FakeInteraction(),
             git=FakeGit(tmp_path),
         )
+
+    row = REGISTER.read_rows(tmp_path)["child-a"]
+    assert row["observed_state"] == "not_ready"
+    assert row["observed_state_source"] == "inferred:effort_not_applied"
+
+
+def test_qwen_effort_timeout_is_recorded_before_readiness_dispatch(tmp_path: Path) -> None:
+    child = _spec(runtime="qwen")
+    identity, landing, resolution = _launch(tmp_path, child)
+    interaction = FakeInteraction(fail=True)
+
+    with pytest.raises(LIFECYCLE.NotReadyError, match="bounded readiness timeout"):
+        LIFECYCLE.confirm_ready(
+            tmp_path,
+            child,
+            identity,
+            landing,
+            resolution,
+            herdr=FakeHerdr(),
+            interaction=interaction,
+            git=FakeGit(tmp_path),
+        )
+
+    row = REGISTER.read_rows(tmp_path)["child-a"]
+    assert interaction.matches == ["Reasoning effort"]
+    assert row["observed_state"] == "not_ready"
+    assert row["observed_state_source"] == "inferred:effort_timeout"
 
 
 def test_agent_wrapper_adapter_crosses_subprocess_and_parses_returned_ids(tmp_path: Path) -> None:

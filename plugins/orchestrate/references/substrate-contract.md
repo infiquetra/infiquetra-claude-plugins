@@ -65,14 +65,22 @@ sandbox is enabled by default and its existing-worktree arguments bind the landi
 no command-line flag that limits writes to the launch working directory. These controls do not
 express the declared path allowlist and remain defence in depth.
 
-Enforcement is observational. A branch child records the immutable base commit before its worktree
-is created. Completion unions the committed `base_commit..HEAD` name-status diff with uncommitted
-tracked and non-ignored status in the child landing. It separately records the ambient checkout's
-commit and status baseline, then compares its committed and uncommitted tracked and non-ignored
-changes too. A child therefore cannot evade the check by writing or committing a normal repository
-path outside its worktree. SHA-256 fingerprints retain attribution when a path was already dirty at
-dispatch. Every attributed path must equal a declared scope path or live below a declared directory,
-and an outside path fails completion even when the predicate passed.
+Enforcement is observational. Every child records the ambient checkout's immutable commit before
+provisioning. A read-only child lands in that checkout, so completion compares its committed and
+uncommitted tracked and non-ignored changes with the launch baseline and applies its declared path
+scope there. A mutating child lands in a separate branch worktree. Its committed tree is compared
+with the merge base of the child tip and the ambient checkout's current tip, which excludes upstream
+changes after a merge or rebase, and that result is unioned with uncommitted tracked and non-ignored
+status in the child landing. The ambient checkout is observed separately from its dispatch baseline;
+any attributed ambient change violates a mutating child's landing boundary even when its relative
+path is declared in scope. SHA-256 fingerprints retain attribution when a path was already dirty at
+dispatch. A landing path must equal a declared scope path or live below a declared directory, and a
+boundary violation fails completion even when the predicate passed.
+
+Because ambient enforcement is observational, it cannot identify which concurrent actor changed
+the shared checkout. An operator or overlapping child that changes the ambient checkout during a
+mutating child's dispatch window can therefore cause that child to fail closed. Worktree isolation
+prevents collisions only when writers remain inside their assigned landing.
 
 **Git-ignored paths are outside U4 scope observation.** Git status deliberately omits them, and the
 ambient runtime state changes as the orchestrator records lifecycle transitions, so this control

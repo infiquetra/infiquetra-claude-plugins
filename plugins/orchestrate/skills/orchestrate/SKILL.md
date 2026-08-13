@@ -138,10 +138,11 @@ acknowledgement before work is dispatched.
 Mutating children receive a branch worktree plus an explicit environment setup; read-only children
 stay in the ambient checkout. The lifecycle is fixed to Herdr's default session. Vendor permission
 flags are applied where they express a real read-only or workspace-write posture. The scope control
-unions committed branch and ambient-checkout changes with uncommitted tracked and non-ignored
-changes in both trees, and can fail a child whose predicate passed. Git-ignored paths remain
-an explicit limitation requiring a separate filesystem boundary. Reaping records the transition
-before closing the tab. Live reaping remains gated on the later integration unit.
+records a launch commit for every child and unions committed changes with uncommitted tracked and
+non-ignored changes. A mutating child's declared scope applies only to its isolated landing; every
+attributed ambient-checkout change violates that boundary. Git-ignored paths remain an explicit
+limitation requiring a separate filesystem boundary. Reaping records the transition before closing
+the tab. Live reaping remains gated on the later integration unit.
 
 See `references/substrate-contract.md` for the adapter, recovery, residual readiness risk, and
 failure contract.

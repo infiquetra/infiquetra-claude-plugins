@@ -6,32 +6,26 @@
 
 - Launch children through the `agent` wrapper's control-only path after validating its dry-run
   working directory and Herdr workspace. Launch intent and a run-bound task label are durable
-  before the side effect, and interrupted launches recover by discovering that label.
+  before the side effect, interrupted launches recover by discovering that label, and executable
+  adapter tests pin every Herdr command to the default session and the installed argument grammar.
 - Resolve model and effort through fleet-core's runtime adapter. Qwen's in-session effort command
-  is sent after launch and accepted only after its own acknowledgement is observed.
+  is sent after launch and accepted only after its own acknowledgement is observed; a timeout or
+  disabled-thinking acknowledgement records a distinct not-ready source.
 - Classify readiness through a nonce-bound `pane.output_matched` interaction whose complete
   sentinel never appears in echoed dispatch input. Trust prompts are surfaced before dispatch,
-  and a launch without a child-produced sentinel remains not-ready.
+  dry-run routing mismatches fail before launch, and silent or continuously chatty panes remain
+  bounded by the readiness deadline.
 - Repair the subscriber's inert cross-counter revision guard. A captured live output-match event
   proves protocol 19 reports `read.revision=0`; the event envelope is now schema-validated through
   the production decoder instead of being discarded as stale.
 - Provision mutating children in branch worktrees with an explicit environment-setup step; keep
-  read-only children in the ambient checkout. Committed branch and ambient-checkout changes plus
-  repository-visible uncommitted changes are checked against scope independently of predicate
-  success; Git-ignored paths are documented as outside this control.
+  read-only children in the ambient checkout. Every child records a launch commit. Isolated child
+  changes are compared with the current upstream merge base after merges or rebases, and any
+  attributed ambient-checkout change by a mutating child violates the landing boundary regardless
+  of its relative path. Repository-visible changes are checked independently of predicate success;
+  Git-ignored paths are documented as outside this control.
 - Record reaping before closing a Herdr tab and distinguish a recorded reap from an unexplained
   disappearance.
-
-### Fixed
-
-- Correct Herdr pane-read argument ordering and pin every command-line adapter shape with an
-  argv-validating executable test double.
-- Fix launch, command-line observation, socket observation, and register state to the same default
-  Herdr session instead of exposing a partly routed named-session option.
-- Record the branch base before worktree creation, detect committed and ambient-checkout escapes,
-  and write the planned register row before worktree or environment side effects.
-- Centralize echo-safe sentinel instructions, enforce dry-run preview mismatches, diagnose Qwen's
-  disabled-thinking acknowledgement, and remove the withdrawn revision-baseline schema wiring.
 
 ### Not in this release
 

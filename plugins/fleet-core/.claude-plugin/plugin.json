@@ -1,7 +1,7 @@
 {
   "name": "fleet-core",
   "version": "0.25.0",
-  "description": "Fleet-commons library plugin: shared primitives, liveness decisions, execution-class routing, bridge receipts, attestations, and the delegation audit store. Scripts-only - no skills, commands, or agents.",
+  "description": "Fleet-commons library: shared primitives, liveness decisions, execution-class routing, bridge receipts, attestations, and the delegation audit store. Scripts-only - no skills, commands, or agents.",
   "author": {
     "name": "Infiquetra",
     "email": "hello@infiquetra.com"

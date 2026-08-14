@@ -354,20 +354,33 @@ model.
 child and must be issued a receipt like any other.** A verifier without one cannot be told apart
 from a planted row.
 
-**What this check establishes, exactly: a verifier was dispatched for this run, with this vendor.**
-It does not establish that the verifier ran. Two of the four things checked come from the sealed
-receipt; the other two are register columns that any write-capable actor can set:
+**What this check establishes, exactly: a verifier was dispatched in this repository, for this run,
+with this vendor.** It does not establish that the verifier ran. Two of the four things checked come
+from the sealed receipt; the other two are register columns that any write-capable actor can set:
 
 | Checked | Source | Survives an adversary? |
 | --- | --- | --- |
-| the dispatch exists, and its run | sealed receipt | yes |
+| the dispatch exists, its run, and the repository it was issued in | sealed receipt | yes |
 | the verifier's vendor | sealed receipt | yes |
-| `phase` is past launch | register column | **no** — moving it from `planned` to `working` presents a receipt-bearing verifier that never read anything |
+| `phase` is one of the phases past launch | register column | **no** — moving it from `planned` to `working` presents a receipt-bearing verifier that never read anything |
 | `model` matches the sample | register column | **no** — the model is resolved at launch and is not on the receipt |
+
+The repository half is not incidental. The verifier's receipt is the one this module fetches by row
+id instead of receiving as an argument, and the run secret is shared by run id across repositories,
+so without it a genuine verifier dispatch copied out of another checkout of the same run
+authenticates here and satisfies the gate. `read_receipt` enforces it.
 
 The `phase` check is still worth having: it refuses the *honest* never-started case, which is what a
 verifier dispatch that failed to launch actually looks like. It is not a proof of execution, and
 nothing here should be read as one.
+
+It asks for **membership** in the phases past launch — `launched`, `ready`, `working`, `verified`,
+`reaped` — rather than refusing `planned` and `launching` by name. A refusal written as exclusions
+accepts everything nobody thought of: the empty string and a value that is not a phase at all both
+mean no dispatch was observed to start, and both read as started under a name-based refusal. The
+supported write path validates the phase, so those values arrive only by writing `register.json`
+directly — which is the access a child actually has, and the premise the receipt is sealed against.
+This does not make the column trustworthy. It makes the check refuse the class it says it refuses.
 
 Sealing `phase` is out of this unit's reach. The only evidence that separates "dispatched" from
 "ran" is observed *after* launch, and both observers live elsewhere — the launch transition is U4's
@@ -395,6 +408,11 @@ clean one-claim sample.
 its disposition are written into the row's `completion.depth_sample`. Without that, a child that was
 genuinely sampled and one whose sample certified nothing are the same green row, and the pass
 becomes its own evidence — the exact failure this unit exists to prevent.
+
+What is on record there is a *claim*: the verifier's own report, with an authenticated dispatch
+standing behind who was asked to produce it. A later unit reading `completion.depth_sample` should
+read it as that and not as a proven independent read, which is why the type itself is named for the
+smaller thing.
 
 ### The sequence for judgment work
 
@@ -448,22 +466,26 @@ distinguishable from "still working" without a new phase.
 
 ## Evaluation order
 
-0. **Identity — every input the verdict depends on, not just the labels.** The repository root, the
-   child specification, the landing, the changed-path baseline and the receipt arrive as five
-   independent arguments, and every outcome is recorded under the *specification's* row in the
-   *root's* register. Nothing further down would notice if they described different dispatches. The
-   bound set is the mechanical answer to "what does the evaluator read before deciding?", and taking
-   that answer needs two passes in this order: **enumerate the signature, then the attribute reads.**
-   Collecting `spec.`/`landing.` reads finds everything hanging off an object and is structurally
-   blind to a plain parameter — which is how `root`, the first argument, stayed off this list while
-   the list was being called complete.
+0. **Identity — every input the verdict depends on, not just the labels.** The child specification,
+   the landing, the changed-path baseline and the receipt arrive as four independent arguments, and
+   every outcome is recorded under the *specification's* row in the *receipt's own* register.
+   Nothing further down would notice if they described different dispatches. The bound set is the
+   mechanical answer to "what does the evaluator read before deciding?", and taking that answer
+   needs two passes in this order: **enumerate the signature, then the attribute reads.** Collecting
+   `spec.`/`landing.` reads finds everything hanging off an object and is structurally blind to a
+   plain parameter — which is how the repository root, then the first argument, stayed off this list
+   while the list was being called complete.
+
+   The root is no longer on the list because it is no longer an argument, and that is the more
+   durable answer of the two. The enumeration has to be redone correctly every time the signature
+   changes; the deletion holds on its own.
 
    **Deciding inputs** — something downstream branches on them, so substituting one changes the
    verdict:
 
    | Input | What it decides | How it is bound |
    | --- | --- | --- |
-   | repository root | which register receives the settlement record, the verdict and the phase | sealed label, checked first |
+   | repository root | which register receives the settlement record, the verdict and the phase | **derived, not supplied** — see below |
    | `run_id`, `row_id` | which row the verdict lands on; the artifact landing; the token | sealed label |
    | landing path | where the predicate runs, what the boundary observes | sealed label |
    | `work_shape` | **whether the depth gate runs at all** | sealed label |
@@ -490,15 +512,30 @@ distinguishable from "still working" without a new phase.
    two writers of one register column. One producer, one binder, one comparison. Any disagreement is
    `receipt_mismatch`, before anything else is read.
 
-   The root is the one member of the class that **raises** instead of recording a `receipt_mismatch`
-   verdict. Every other refusal is recorded rather than raised, because raising leaves the register
-   showing a working child with no verdict — but that argument assumes there is a right register to
-   record into, and a receipt from another repository is precisely the case where there is not.
-   Recording the verdict would file one repository's answer in another's store and demote whatever
-   unrelated row happened to share the row id. The same comparison is made a second time, lower
-   down, at the settlement record: that function and `settle_artifact` take the root and the receipt
-   as two independent arguments and are reachable without going through evaluation at all. `_record`
-   cannot make the check — it is handed a row id, not a receipt — so it is protected by its caller.
+   The root is the one member of the class that is **not compared at all**, because it is not
+   supplied. Comparing it was tried and it does not work: every such comparison put a value the
+   caller passed beside the copy the receipt made from that same value at issue time. That catches
+   a caller who changes the repository between issuing and evaluating, and it cannot, even in
+   principle, catch one that was wrong when it was copied — and the copy is made at issue time,
+   which is the *first* observation of the repository and so has nothing to compare against. A
+   check of X against a copy of X is not a check of X.
+
+   So the parameter is gone from `issue_receipt`, `evaluate_completion`, `settle_artifact` and
+   `settlement_record`. Issuing derives the repository from `landing.ambient_root`, which
+   `GitLanding.provision` sets to the repository for both landing kinds — the ambient checkout for
+   a read-only child, and the checkout a mutating child's worktree was cut from. Everything after
+   issuing reads `receipt.root`. A landing that does not name its repository is refused rather than
+   defaulted to its working directory, because that default would seal a mutating child's worktree
+   as its repository and file the verdict where nothing else about the run is recorded.
+
+   `read_receipt` is the exception and it keeps the check. It is handed a repository and a row id
+   and has no receipt yet, so the repository genuinely has to be supplied; there the two values
+   have independent origins and comparing them is real. It matters most for the **verifier's**
+   receipt, which the depth gate loads by row id rather than receiving as an argument: the run
+   secret is named for the run alone and lives outside every repository, so two checkouts running
+   one run id share it and an authentic verifier dispatch from one authenticates in the other.
+   `_record` cannot make any check — it is handed a row id, not a receipt — and it does not need
+   one: its caller derives the repository from the receipt rather than accepting it.
 1. **Predicate tamper check** — the closure digest, before anything is executed.
 2. **Settlement** — destination unchanged, in-flight present, rename; or a replay of the recorded
    settlement for this dispatch.

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import inspect
 import json
 import os
 import subprocess
@@ -183,7 +184,6 @@ class _Prepared:
 
     def evaluate(self, **kwargs: Any) -> Any:
         return COMPLETION.evaluate_completion(
-            self.repo,
             self.spec,
             self.landing,
             self.baseline,
@@ -212,7 +212,6 @@ def _prepare(
         predicate = _predicate(relative.as_posix())
     baseline = _baseline(git, landing)
     receipt = COMPLETION.issue_receipt(
-        repo,
         spec,
         landing,
         predicate,
@@ -299,7 +298,6 @@ def test_predicate_entry_point_inside_the_write_scope_is_rejected(tmp_path: Path
 
     with pytest.raises(COMPLETION.PredicateScopeError, match="src/self_check.py"):
         COMPLETION.issue_receipt(
-            repo,
             spec,
             landing,
             predicate,
@@ -328,7 +326,6 @@ def test_predicate_importing_a_module_inside_the_write_scope_is_rejected(tmp_pat
 
     with pytest.raises(COMPLETION.PredicateScopeError, match="src/oracle.py"):
         COMPLETION.issue_receipt(
-            repo,
             spec,
             landing,
             predicate,
@@ -726,7 +723,6 @@ def test_reaping_is_refused_while_a_path_destination_is_unchanged(tmp_path: Path
     artifacts = COMPLETION.artifact_landing(repo.resolve(), "run-a", "child-p")
     relative = artifacts.relative_to(repo.resolve()) / "report.json"
     receipt = COMPLETION.issue_receipt(
-        repo,
         spec,
         landing,
         _predicate(relative.as_posix()),
@@ -1008,7 +1004,51 @@ def test_a_depth_sample_naming_a_verifier_that_never_started_is_rejected(tmp_pat
     result = prepared.evaluate(depth_sample=_sample(prepared, register=False))
     assert result.verified is False
     assert result.reason == "depth_sample_invalid"
-    assert "is not past launch" in result.detail
+    assert "is not one of the phases past launch" in result.detail
+
+
+def test_a_verifier_phase_outside_the_register_vocabulary_is_not_a_started_dispatch(
+    tmp_path: Path,
+) -> None:
+    """The check is membership of the started phases, not the absence of three known strings.
+
+    Refusing ``planned`` and ``launching`` by name accepts everything nobody thought of. The empty
+    string and a value that is not a phase at all both mean the same thing this check exists to
+    refuse -- no dispatch was observed to start -- and a name-based refusal reads both as started.
+    A phase column is writable, so the values reaching this check are not limited to the ones the
+    lifecycle writes.
+
+    This does not make the column trustworthy. A planted ``working`` still passes, and that is the
+    named residual. It makes the check refuse the class it says it refuses.
+
+    The values are written straight into ``register.json`` rather than through ``upsert_row``,
+    which validates the phase and would refuse them. That is not a way around the test: the
+    register is Git-ignored and sits inside every child's landing, so a direct file write is the
+    access a child actually has, and it is the premise the dispatch receipt is sealed against.
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo, work_shape="judgment")
+    prepared.run_child_process()
+
+    def plant_phase(value: str) -> None:
+        path = REGISTER.register_path(repo)
+        document = json.loads(path.read_text(encoding="utf-8"))
+        document["rows"]["verifier-1"]["phase"] = value
+        path.write_text(json.dumps(document), encoding="utf-8")
+
+    _verifier_row(repo, phase="working")
+    for phase in ("", "garbage", "launchd"):
+        plant_phase(phase)
+        assert REGISTER.read_rows(repo)["verifier-1"]["phase"] == phase
+        result = prepared.evaluate(depth_sample=_sample(prepared, register=False))
+        assert result.verified is False, phase
+        assert result.reason == "depth_sample_invalid", phase
+        assert "is not one of the phases past launch" in result.detail, phase
+
+    assert COMPLETION.PHASES_PAST_LAUNCH == ("launched", "ready", "working", "verified", "reaped")
+    assert "planned" not in COMPLETION.PHASES_PAST_LAUNCH
+    assert "launching" not in COMPLETION.PHASES_PAST_LAUNCH
 
 
 def test_a_depth_sample_from_another_run_is_not_this_runs_verifier(tmp_path: Path) -> None:
@@ -1210,7 +1250,6 @@ def test_a_repository_that_does_not_ignore_the_state_directory_fails_closed(
     landing = git.provision(repo, spec)
     with pytest.raises(COMPLETION.LandingNotExclusiveError, match="not ignored"):
         COMPLETION.issue_receipt(
-            repo,
             spec,
             landing,
             _predicate("x"),
@@ -1478,7 +1517,6 @@ def _path_mode_prepared(repo: Path, row_id: str) -> _Prepared:
     relative = artifacts.relative_to(repo.resolve()) / "report.json"
     baseline = _baseline(git, landing)
     receipt = COMPLETION.issue_receipt(
-        repo,
         spec,
         landing,
         _predicate(relative.as_posix()),
@@ -1648,7 +1686,7 @@ def test_a_receipt_issued_for_another_child_cannot_verify_this_one(tmp_path: Pat
     second.run_child_process()
 
     result = COMPLETION.evaluate_completion(
-        repo, first.spec, second.landing, second.baseline, second.receipt, git=second.git
+        first.spec, second.landing, second.baseline, second.receipt, git=second.git
     )
     assert result.verified is False
     assert result.reason == "receipt_mismatch"
@@ -1664,7 +1702,7 @@ def test_a_receipt_from_another_run_cannot_verify_this_child(tmp_path: Path) -> 
     other_run = replace(prepared.spec, run_id="run-b")
 
     result = COMPLETION.evaluate_completion(
-        repo, other_run, prepared.landing, prepared.baseline, prepared.receipt, git=prepared.git
+        other_run, prepared.landing, prepared.baseline, prepared.receipt, git=prepared.git
     )
     assert result.verified is False
     assert result.reason == "receipt_mismatch"
@@ -1694,7 +1732,7 @@ def test_a_restarted_orchestrator_evaluates_through_the_durable_receipt(
     reloaded = COMPLETION.read_receipt(repo, "child-a")
     assert reloaded == prepared.receipt
     result = COMPLETION.evaluate_completion(
-        repo, prepared.spec, prepared.landing, prepared.baseline, reloaded, git=prepared.git
+        prepared.spec, prepared.landing, prepared.baseline, reloaded, git=prepared.git
     )
     assert result.verified is True, result.detail
 
@@ -1912,6 +1950,39 @@ def test_re_evaluating_an_unchanged_verified_child_reaches_the_same_verdict(
     assert REGISTER.read_rows(repo)["child-a"]["phase"] == "verified"
 
 
+def test_re_evaluating_a_mutating_child_replays_the_settlement_from_its_repository(
+    tmp_path: Path,
+) -> None:
+    """The settlement record lives in the repository's register, never in the child's worktree.
+
+    A mutating child's landing is a worktree, so the landing path and the repository are two
+    different directories and only one of them has a register. Reading the settlement from the
+    landing finds nothing, the replay never happens, and the second evaluation sees a destination
+    that changed during the dispatch window -- a correct child failing on its second look, which is
+    the restart path and the one judgment work depends on.
+
+    Every other replay test uses a read-only child, where the two paths are the same and the
+    distinction cannot be observed. This one exists because that made a wrong path invisible.
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _mutating_prepared(repo)
+    worktree = Path(prepared.landing.cwd)
+    assert worktree != repo.resolve()
+    (worktree / "src").mkdir()
+    (worktree / "src" / "landed.py").write_text("VALUE = 1\n", encoding="utf-8")
+    _git(worktree, "add", "src/landed.py")
+    _git(worktree, "commit", "-q", "-m", "child work")
+    prepared.run_child_process()
+
+    assert prepared.evaluate().verified is True
+    assert "settlement" in REGISTER.read_rows(repo)["child-m"]
+
+    second = prepared.evaluate()
+    assert second.verified is True, second.detail
+    assert REGISTER.read_rows(repo)["child-m"]["phase"] == "verified"
+
+
 def test_a_failing_re_evaluation_removes_the_verified_phase(tmp_path: Path) -> None:
     """A failed verdict must never coexist with a phase the reap gate reads as a pass."""
     repo = tmp_path / "repo"
@@ -1987,7 +2058,6 @@ def test_a_child_that_may_rewrite_a_parent_initializer_cannot_be_certified_by_th
 
     with pytest.raises(COMPLETION.PredicateScopeError, match="pkg/__init__.py"):
         COMPLETION.issue_receipt(
-            repo,
             spec,
             landing,
             predicate,
@@ -2037,7 +2107,6 @@ def test_a_predicate_that_rewrites_the_settled_artifact_fails_as_a_side_effect(
     relative = (artifacts.relative_to(Path(landing.cwd).resolve()) / "report.json").as_posix()
     predicate = COMPLETION.PredicateSpec(argv=(sys.executable, "checks/rewriter.py", relative))
     receipt = COMPLETION.issue_receipt(
-        repo,
         spec,
         landing,
         predicate,
@@ -2206,7 +2275,7 @@ def test_every_deciding_input_is_bound_to_the_receipt(tmp_path: Path, label: str
     spec, landing, baseline = _substitute(prepared, label)
 
     result = COMPLETION.evaluate_completion(
-        repo, spec, landing, baseline, prepared.receipt, git=prepared.git
+        spec, landing, baseline, prepared.receipt, git=prepared.git
     )
     assert result.verified is False
     assert result.reason == "receipt_mismatch"
@@ -2226,7 +2295,7 @@ def test_a_widened_scope_cannot_excuse_a_write_the_dispatch_forbade(tmp_path: Pa
 
     widened = replace(prepared.spec, mutating=True, scope=("reports",))
     result = COMPLETION.evaluate_completion(
-        repo, widened, prepared.landing, prepared.baseline, prepared.receipt, git=prepared.git
+        widened, prepared.landing, prepared.baseline, prepared.receipt, git=prepared.git
     )
     assert result.verified is False
     assert result.reason == "receipt_mismatch"
@@ -2254,7 +2323,7 @@ def test_a_baseline_taken_after_the_write_it_would_excuse_is_refused(tmp_path: P
     # refused before the boundary check ever runs.
     laundered = _baseline(prepared.git, prepared.landing)
     result = COMPLETION.evaluate_completion(
-        repo, prepared.spec, prepared.landing, laundered, prepared.receipt, git=prepared.git
+        prepared.spec, prepared.landing, laundered, prepared.receipt, git=prepared.git
     )
     assert result.verified is False
     assert result.reason == "receipt_mismatch"
@@ -2329,7 +2398,6 @@ def _descendant_prepared(repo: Path, delay: str) -> _Prepared:
     )
     baseline = _baseline(git, landing)
     receipt = COMPLETION.issue_receipt(
-        repo,
         spec,
         landing,
         predicate,
@@ -2547,7 +2615,7 @@ def test_a_relaundered_baseline_is_caught_when_only_a_fingerprint_moved(tmp_path
     assert COMPLETION.baseline_digest(laundered) != COMPLETION.baseline_digest(prepared.baseline)
 
     result = COMPLETION.evaluate_completion(
-        repo, prepared.spec, prepared.landing, laundered, prepared.receipt, git=prepared.git
+        prepared.spec, prepared.landing, laundered, prepared.receipt, git=prepared.git
     )
     assert result.verified is False
     assert result.reason == "receipt_mismatch"
@@ -2593,7 +2661,7 @@ def test_no_surface_calls_the_boundary_check_containment() -> None:
     assert "the only *containment* in the word's real sense" in posture
 
 
-# ---- the root is what selects the register that receives the answer ------------------------
+# ---- the repository is derived, never supplied beside the receipt --------------------------
 
 
 def _second_repository(tmp_path: Path, prepared: _Prepared, **columns: Any) -> Path:
@@ -2604,87 +2672,189 @@ def _second_repository(tmp_path: Path, prepared: _Prepared, **columns: Any) -> P
     return other
 
 
-def test_evidence_from_one_repository_cannot_record_a_verdict_in_another(tmp_path: Path) -> None:
-    """Everything identical except the root: the specification, landing, baseline and receipt.
+def test_the_repository_is_not_an_argument_a_caller_can_supply(tmp_path: Path) -> None:
+    """The deletion itself, pinned on the signature.
 
-    The root is the input that selects the register, so it decides where the settlement record,
-    the verdict and the phase land. It arrives as a plain argument that no other comparison
-    mentions, and the per-run secret does not cover it either -- the secret is named for the run
-    alone and lives outside every repository, so it authenticates the same receipt under any root.
+    Successive rounds added a comparison here, and each caught the case it was written for while
+    the class stayed open, because every one of them compared a supplied repository against the
+    copy made from that same supplied value at issue time. That catches a caller who changes it
+    between issuing and evaluating. It cannot catch one that was wrong when it was copied -- and
+    the copy is made at issuance, which is the first observation and therefore has nothing to
+    compare against at all.
+
+    So the parameter is gone rather than checked: issuance derives the repository from the
+    landing, and every later control takes the sealed value off the receipt. A value that cannot
+    be supplied separately cannot be supplied wrongly, and unlike a comparison, that property is
+    readable straight off the signature and cannot be true for the cases someone thought of and
+    false for the rest.
+    """
+    for name in ("issue_receipt", "evaluate_completion", "settle_artifact", "settlement_record"):
+        parameters = inspect.signature(getattr(COMPLETION, name)).parameters
+        assert "root" not in parameters, f"{name} takes a repository a caller could disagree with"
+
+    # One exception, and it is why ``assert_receipt_root`` still exists: this function is handed a
+    # repository and a row id and has no receipt yet, so the repository has to be supplied. There
+    # the two values have independent origins, which is what makes comparing them a real check.
+    assert "root" in inspect.signature(COMPLETION.read_receipt).parameters
+
+
+def test_a_receipt_records_the_repository_of_the_landing_it_was_issued_against(
+    tmp_path: Path,
+) -> None:
+    """Issuance has one source for the repository, so the receipt cannot be sealed against another.
+
+    A second repository stands beside this one, carrying a row under the same id, and the only
+    thing that decides where the dispatch is filed is the landing the receipt is issued against.
+    The verdict follows it there and nothing lands in the other repository at any point.
     """
     repo = tmp_path / "repo-a"
     _init_repo(repo)
     prepared = _prepare(repo)
-    prepared.run_child_process()
     other = _second_repository(tmp_path, prepared, phase="working", expected_state="working")
 
-    with pytest.raises(COMPLETION.ReceiptRootError) as raised:
-        COMPLETION.evaluate_completion(
-            other,
-            prepared.spec,
-            prepared.landing,
-            prepared.baseline,
-            prepared.receipt,
-            git=prepared.git,
-        )
-    assert "receives the verdict" in str(raised.value)
+    assert prepared.receipt.root == str(repo.resolve())
+    assert prepared.receipt.root == str(Path(prepared.landing.ambient_root).resolve())
+
+    # The sealed receipt went into its own repository's register; the other one has no dispatch.
+    assert COMPLETION.read_receipt(repo, prepared.spec.row_id).nonce == prepared.receipt.nonce
+    assert "dispatch_receipt" not in REGISTER.read_rows(other)[prepared.spec.row_id]
+
+    prepared.run_child_process()
+    result = prepared.evaluate()
+    assert result.verified is True, result.detail
+    assert REGISTER.read_rows(repo)[prepared.spec.row_id]["phase"] == "verified"
 
     foreign = REGISTER.read_rows(other)[prepared.spec.row_id]
-    assert "completion" not in foreign
     assert foreign["phase"] == "working"
-    assert REGISTER.read_rows(repo)[prepared.spec.row_id]["phase"] == "working"
-    assert not prepared.receipt.artifact_path.exists()
-
-
-def test_a_foreign_root_is_refused_before_any_verdict_is_recorded(tmp_path: Path) -> None:
-    """The check is above the recording, not beside it.
-
-    Every other refusal is recorded rather than raised, and recording under a foreign root is
-    itself the harm: the verdict lands in a store it does not belong to, and demotes whatever
-    unrelated row happened to share the row id. This case reaches a refusal that is recorded
-    *before* settlement, so only a check above the recorder can keep it out of the wrong register.
-    """
-    repo = tmp_path / "repo-a"
-    _init_repo(repo)
-    prepared = _prepare(repo)
-    prepared.run_child_process()
-    other = _second_repository(tmp_path, prepared, phase="verified", expected_state="verified")
-    (repo / "checks" / "helpers.py").write_text("REQUIRED_KEYS = ('binding',)\n", encoding="utf-8")
-
-    with pytest.raises(COMPLETION.ReceiptRootError):
-        COMPLETION.evaluate_completion(
-            other,
-            prepared.spec,
-            prepared.landing,
-            prepared.baseline,
-            prepared.receipt,
-            git=prepared.git,
-        )
-
-    foreign = REGISTER.read_rows(other)[prepared.spec.row_id]
-    assert foreign["phase"] == "verified"
     assert "completion" not in foreign
+    assert "settlement" not in foreign
 
 
-def test_settling_an_artifact_under_a_foreign_repository_is_refused(tmp_path: Path) -> None:
-    """Settlement takes the root and the receipt as two independent arguments.
+def test_a_mutating_childs_receipt_records_the_repository_and_not_its_worktree(
+    tmp_path: Path,
+) -> None:
+    """The landing carries two paths and only one of them has a register.
 
-    It is a public entry point, so evaluation is not the only way to reach it, and it both reads
-    and writes the register. A check that lives only in the evaluator would leave this path open
-    to a later unit that calls it directly.
+    ``cwd`` is where the child works, which for a mutating child is a worktree under
+    ``.orchestrate/`` that no other part of the run reads. ``ambient_root`` is the checkout the run
+    is actually tracked in. Deriving from the nearer path would be the original defect in a new
+    place: the verdict filed where nothing else about the run is recorded.
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo, mutating=True, environment_command=())
+
+    assert Path(prepared.landing.cwd) != repo.resolve()
+    assert prepared.receipt.root == str(repo.resolve())
+    assert COMPLETION.landing_root(prepared.landing) == repo.resolve()
+
+
+def test_a_landing_that_does_not_name_its_repository_cannot_be_issued_a_receipt(
+    tmp_path: Path,
+) -> None:
+    """Refused at issuance rather than defaulted to the working directory.
+
+    ``ambient_root`` is optional on the landing type, so a hand-built landing can omit it. A
+    fallback to ``cwd`` would look harmless on a read-only landing, where the two paths are the
+    same, and would quietly seal a mutating child's worktree as its repository. A refusal is the
+    only answer to "which repository is this?" that cannot be wrong.
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    spec = _spec()
+    git = LIFECYCLE.GitLanding()
+    landing = git.provision(repo, spec)
+    anonymous = LIFECYCLE.Landing(
+        landing.cwd, landing.integration_mode, landing.destination, landing.base_commit
+    )
+    assert anonymous.ambient_root is None
+
+    with pytest.raises(COMPLETION.ReceiptRootError) as raised:
+        COMPLETION.issue_receipt(
+            spec,
+            anonymous,
+            _predicate("x"),
+            artifact_name="report.json",
+            git=git,
+            changed_paths_baseline=_baseline(git, landing),
+        )
+    assert "does not name the repository" in str(raised.value)
+
+
+def test_a_receipt_copied_into_another_repositorys_register_is_refused_when_it_is_read(
+    tmp_path: Path,
+) -> None:
+    """The seal is intact and it is still the wrong register.
+
+    Reading is the one place a repository must be supplied, because the receipt is being fetched
+    rather than handed over. The per-run secret does not close this on its own: it is named for
+    the run alone and stored outside every repository, so two checkouts running one run id share
+    it and a receipt sealed under either authenticates under both. Nothing else in the unseal path
+    mentions a repository, which is why the sealed one has to be checked against the register it
+    came out of.
     """
     repo = tmp_path / "repo-a"
     _init_repo(repo)
+    other = tmp_path / "repo-b"
+    _init_repo(other)
     prepared = _prepare(repo)
+    sealed = REGISTER.read_rows(repo)[prepared.spec.row_id]["dispatch_receipt"]
+    REGISTER.upsert_row(
+        other,
+        prepared.spec.row_id,
+        {"run_id": prepared.spec.run_id, "dispatch_receipt": sealed},
+    )
+
+    with pytest.raises(COMPLETION.ReceiptRootError) as raised:
+        COMPLETION.read_receipt(other, prepared.spec.row_id)
+    assert "issued under" in str(raised.value)
+
+    # The same bytes read out of the register that issued them are accepted, so the refusal is
+    # about which repository asked and not about the record being damaged by the copy.
+    assert COMPLETION.read_receipt(repo, prepared.spec.row_id).nonce == prepared.receipt.nonce
+
+
+def test_a_verifier_dispatched_in_another_repository_does_not_satisfy_the_depth_gate(
+    tmp_path: Path,
+) -> None:
+    """The verifier's receipt is the one this module fetches rather than receives.
+
+    Every other receipt arrives as an argument and carries the repository the verdict lands in.
+    The verifier's is loaded by row id out of whatever register is being evaluated, so a genuine
+    verifier dispatch from another checkout of the same run authenticates here -- the seal proves
+    the orchestrator issued it, and the secret is shared by run id across repositories.
+    """
+    repo = tmp_path / "repo-a"
+    _init_repo(repo)
+    other = tmp_path / "repo-b"
+    _init_repo(other)
+
+    # Repository A dispatches a real verifier and holds an authentic sealed receipt for it.
+    _verifier_row(repo, "verifier-1", dispatched=True, phase="working")
+    foreign = REGISTER.read_rows(repo)["verifier-1"]["dispatch_receipt"]
+
+    # Repository B runs the same run and has no verifier of its own, so it borrows A's.
+    prepared = _prepare(other, work_shape="judgment")
     prepared.run_child_process()
-    other = _second_repository(tmp_path, prepared, phase="working")
+    REGISTER.upsert_row(
+        other,
+        "verifier-1",
+        {
+            "run_id": prepared.spec.run_id,
+            "vendor": "grok",
+            "model": "grok-4.6",
+            "phase": "working",
+            "dispatch_receipt": foreign,
+        },
+    )
 
-    with pytest.raises(COMPLETION.ReceiptRootError):
-        COMPLETION.settle_artifact(other, prepared.receipt)
-
-    assert prepared.receipt.inflight_path.exists()
-    assert not prepared.receipt.artifact_path.exists()
-    assert "settlement" not in REGISTER.read_rows(other)[prepared.spec.row_id]
+    result = prepared.evaluate(
+        depth_sample=_sample(prepared, register=False, verifier_row_id="verifier-1")
+    )
+    assert result.verified is False
+    assert result.reason == "depth_sample_invalid"
+    assert "issued under" in result.detail
+    assert REGISTER.read_rows(other)[prepared.spec.row_id]["phase"] != "verified"
 
 
 # ---- what the verifier check establishes, and where it stops -------------------------------
@@ -2716,7 +2886,7 @@ def test_moving_the_unsealed_verifier_phase_presents_a_verifier_that_never_ran(
     )
     assert refused.verified is False
     assert refused.reason == "depth_sample_invalid"
-    assert "is not past launch" in refused.detail
+    assert "is not one of the phases past launch" in refused.detail
 
     REGISTER.upsert_row(repo, "verifier-1", {"phase": "working"})
     accepted = prepared.evaluate(
@@ -2726,21 +2896,101 @@ def test_moving_the_unsealed_verifier_phase_presents_a_verifier_that_never_ran(
     assert REGISTER.read_rows(repo)["child-a"]["completion"]["depth_sample"] is not None
 
 
+#: Sentences that would be false about the verifier check, in any file that mentions it.
+#:
+#: These are bans rather than requirements because a *presence* assertion cannot detect a
+#: contradiction. Requiring a disclaimer somewhere in a file is satisfied by one honest paragraph,
+#: and leaves every overclaiming sentence elsewhere in that same file green -- which is exactly
+#: how a class docstring four hundred lines from the disclaimer went on calling the persisted
+#: sample a proven blind read while the test that exists to catch that passed.
+_VERIFIER_OVERCLAIMS = (
+    "verifier's blind read",
+    "a blind read of",
+    "proves the verifier ran",
+    "proof that the verifier ran",
+    "establishes that the verifier ran",
+    "confirms that the verifier ran",
+)
+
+
 def test_no_surface_claims_the_verifier_check_proves_the_verifier_ran() -> None:
-    """The columns the check reads are named as columns, wherever the check is described."""
-    for relative in (
+    """The columns the check reads are named as columns, wherever the check is described.
+
+    Two halves, and only the first can catch a contradiction. The bans say the overclaim is
+    absent from every surface that could carry it; the presence assertions say the honest
+    statement is still there on the surfaces that describe the check. Deleting the honest
+    paragraph fails the second half; adding a contradiction beside it fails the first.
+
+    The ban list has a known weakness, and it is the same one twice over: it catches the phrasings
+    someone thought of. It is a floor, not a proof.
+    """
+    described_in = (
         "plugins/orchestrate/references/predicates.md",
         "plugins/orchestrate/CHANGELOG.md",
         "plugins/orchestrate/skills/orchestrate/SKILL.md",
         "plugins/orchestrate/skills/orchestrate/scripts/completion.py",
-    ):
+    )
+    for relative in (*described_in, *_SURFACES):
+        text = _flowed(relative)
+        for phrase in _VERIFIER_OVERCLAIMS:
+            assert phrase not in text, f"{relative} claims {phrase!r}"
+
+    # One sentence, worded identically everywhere, so the four surfaces cannot drift into four
+    # different sizes of the same claim. Three of them said something slightly smaller or larger
+    # than the others at some point in this build, and each difference had to be found by reading.
+    established = "a verifier was dispatched in this repository, for this run, with this vendor"
+    for relative in described_in:
         text = _flowed(relative)
         assert "not that it ran" in text or "does not establish that the verifier ran" in text, (
             relative
         )
+        assert established in text, relative
     contract = _flowed("plugins/orchestrate/references/predicates.md")
-    assert "a verifier was dispatched for this run, with this vendor" in contract
     assert "the same defect against two different columns of the same untrusted store" in contract
+
+
+def test_every_identity_paragraph_describes_the_argument_list_the_evaluator_takes() -> None:
+    """Three paragraphs describe the same list and one of them was updated at a time.
+
+    The module's opening contract is the first thing a reader of ``completion.py`` meets, the
+    skill paragraph is what a later unit implements from, and the reference is what a reviewer
+    checks against. When one is edited and its siblings are not, the file that is wrong is
+    whichever one the next person happens to read -- and a later unit implementing the stale
+    paragraph would pass a repository the evaluator no longer accepts.
+
+    So the count and the deletion are asserted on all three, together, rather than left to a
+    reading pass that has to be repeated whenever the signature moves.
+    """
+    module_doc = " ".join((COMPLETION.__doc__ or "").split())
+    skill = _flowed("plugins/orchestrate/skills/orchestrate/SKILL.md")
+    contract = _flowed("plugins/orchestrate/references/predicates.md")
+
+    for text, label in (
+        (module_doc, "completion.py module docstring"),
+        (skill, "SKILL.md"),
+        (contract, "predicates.md"),
+    ):
+        assert "four independent arguments" in text, label
+    for text, label in ((module_doc, "completion.py module docstring"), (skill, "SKILL.md")):
+        assert "specification, landing, baseline and receipt" in text, label
+        assert "not a fifth" in text, label
+    assert "**derived, not supplied**" in contract
+
+
+def test_the_persisted_depth_sample_type_describes_a_claim_and_not_a_proven_read() -> None:
+    """The object a later unit actually reads is the one whose name has to be honest.
+
+    A downstream unit reading ``completion.depth_sample`` off a verified row does not read the
+    reference document or the check's docstring; it reads this type. Naming it a blind read tells
+    that unit two things the module does not establish -- that the read happened, and that it was
+    blind -- and blindness is a named non-enforcement in this same module.
+    """
+    doc = " ".join((COMPLETION.DepthSample.__doc__ or "").split())
+    assert doc, "the persisted sample type carries no description at all"
+    assert "claimed" in doc
+    assert "does not establish that the verifier ran" in doc
+    for phrase in _VERIFIER_OVERCLAIMS:
+        assert phrase not in doc, phrase
 
 
 # ---- the group kill covers the group, and the prose says so --------------------------------
@@ -2752,6 +3002,11 @@ def test_no_surface_claims_the_group_kill_ends_everything_the_predicate_started(
     The residual table already says so. The sentences introducing it claimed a totality the table
     denies, which is the more dangerous half: a reader who stops at the claim never reaches the
     table.
+
+    The third phrasing was an internal comment two lines above the kill, which the first two bans
+    could not see. That is this test's standing weakness and it is worth saying out loud: banning
+    the sentences someone wrote is not the same as establishing that no sentence overclaims. Each
+    ban is a phrasing that was actually in the file and had to be narrowed, not a guess.
     """
     for relative in (
         "plugins/orchestrate/references/predicates.md",
@@ -2760,6 +3015,7 @@ def test_no_surface_claims_the_group_kill_ends_everything_the_predicate_started(
         text = _flowed(relative)
         assert "after the kill there is nothing left to write" not in text, relative
         assert "nothing the predicate started is still able to write" not in text, relative
+        assert "nothing the predicate started may outlive it" not in text, relative
     contract = _flowed("plugins/orchestrate/references/predicates.md")
     assert "group membership is the whole of the claim" in contract
     assert 'narrower than "nothing can still write"' in contract

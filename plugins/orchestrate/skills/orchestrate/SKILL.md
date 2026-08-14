@@ -165,7 +165,13 @@ resolved dependency closure. A predicate whose closure lives where the child can
 before evaluation, and a closure that changes between dispatch and evaluation fails as tampered.
 
 The receipt must belong to the child being evaluated: the specification, landing, baseline and
-receipt arrive as independent arguments, so run, row and landing are checked against it first.
+receipt arrive as four independent arguments, so run, row and landing are checked against it first.
+The repository is deliberately not a fifth. Issuing derives it from the landing, and every control
+after that takes it from the sealed receipt, so no caller can name a second repository for one
+verdict — do not add a root parameter back when you wire this up. A repository that cannot be
+supplied separately cannot be supplied wrongly, which is a stronger property than any comparison
+between two supplied values, because the comparison at issue time would have nothing to compare
+against.
 
 Settlement is performed, not inferred. The child writes only an in-flight sibling of its
 destination; the orchestrator requires the destination to be untouched and then renames the
@@ -186,12 +192,13 @@ verifier's depth sample, bound by digest to the settled artifact and supporting 
 claim — all of it persisted, so a sampled child and an unsampled one are not the same green row.
 
 **Dispatch a verifier the way you dispatch any other child: issue it a receipt.** The named verifier
-must carry an authenticated dispatch receipt for this run, and its vendor is compared against that
-sealed receipt rather than against a register column — so a verifier that is only *registered*, with
-no receipt issued, is refused and every judgment child that names it stays unverified. What this
-establishes is that a verifier was dispatched for this run with this vendor; it does not establish
-that the verifier ran, because the phase and model it is checked against are register columns any
-write-capable actor can set. `references/predicates.md` sets out where that stops.
+must carry an authenticated dispatch receipt for this run, sealed under this repository, and its
+vendor is compared against that sealed receipt rather than against a register column — so a verifier
+that is only *registered*, with no receipt issued, is refused and every judgment child that names it
+stays unverified. What this establishes is that a verifier was dispatched in this repository, for
+this run, with this vendor; it does not establish that the verifier ran, because the phase and model
+it is checked against are register columns any write-capable actor can set.
+`references/predicates.md` sets out where that stops.
 
 A row's phase is `verified` if and only if its latest verdict is a pass: a failing re-evaluation
 demotes a previously verified row rather than leaving a contradiction the reap gate would read as a

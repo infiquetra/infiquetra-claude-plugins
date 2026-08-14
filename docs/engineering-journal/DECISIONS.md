@@ -2,7 +2,49 @@
 
 ## 2026-08-13
 
+### The repository is derived from the landing and the receipt, never supplied  {#repository-is-derived}
+
+Four consecutive review rounds found a false pass in the same class — evidence from one repository
+producing a durable verdict in another — and each round closed the named case by adding one more
+comparison. The fifth round found two more. The comparisons were not wrong; they were the wrong
+*kind* of answer. Every one of them put a repository the caller supplied beside the copy the
+receipt made from that same supplied value at issue time, which catches a caller who changes it
+between issuing and evaluating and cannot catch one that was wrong when it was copied. The copy is
+made at issue time, which is the first observation, so at the one point where the value could be
+wrong there was nothing to compare it against (LEARNINGS `{#check-against-a-copy}`).
+
+**Decision.** Delete the parameter instead of checking it. `issue_receipt` derives the repository
+from `landing.ambient_root`, which `GitLanding.provision` sets to the repository for both landing
+kinds; `evaluate_completion`, `settle_artifact` and `settlement_record` take it from the sealed
+receipt. None of the four accepts it as an argument, so no caller can supply a second, disagreeing
+value. A landing that does not name its repository is refused rather than defaulted to its working
+directory, because that default would seal a mutating child's worktree as its repository and file
+the verdict where nothing else about the run is recorded.
+
+**`read_receipt` keeps the check, and it is the only one that does.** It is handed a repository and
+a row id and has no receipt yet, so the repository genuinely has to be supplied; there the two
+values have independent origins and comparing them is real. It is also the only place a receipt is
+fetched rather than received, which is exactly the verifier's receipt — and the per-run secret is
+named for the run alone and lives outside every repository, so two checkouts running one run id
+share it and an authentic verifier dispatch from one authenticated in the other.
+
+**Rejected: a fifth comparison, at issue time, between the supplied root and the landing.** It
+would have closed the reproduction and left the class open, which is what the four previous rounds
+already demonstrate. **Rejected: deriving from `landing.cwd`.** Correct for read-only children and
+wrong for mutating ones, and the two are indistinguishable in any test that uses only the first.
+
+**Revisit when** a caller genuinely has a repository but no landing and no receipt. That caller
+needs `read_receipt`'s shape — supply the repository, check the seal against it — not a new
+parameter on the evaluator.
+
 ### The repository root is a deciding input, and it refuses by raising  {#root-is-a-deciding-input}
+
+**Superseded on 2026-08-13 by `{#repository-is-derived}`**, in the following round of the same
+review. The reasoning below about *where the harm is* still holds and is why the replacement
+derives rather than defaults. What it got wrong is the shape of the remedy: a comparison against a
+copy of the supplied value cannot detect a value that was wrong when it was copied, so the
+comparisons described here were removed along with the parameter they compared. `assert_receipt_root`
+survives at `read_receipt` only.
 
 `evaluate_completion` takes the repository root as its first argument, and the root selects the
 register that receives the settlement record, the verdict and the phase. It was absent from the

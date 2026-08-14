@@ -21,6 +21,60 @@
 
 ## 2026-08-13
 
+### A check of a value against a copy of that value is not a check  {#check-against-a-copy}
+
+**Context.** Four review rounds on one unit each found a false pass in the same class, and each was
+closed by adding a comparison. The fifth round found two more in that class. The pattern to notice
+is not that a case was missed — it is that adding a comparison had failed four times and was still
+the reflex.
+
+**Evidence.** `completion.py`, the repository root that selects which register receives a verdict.
+It arrived as a caller-supplied argument and was sealed into the dispatch receipt at issue time.
+Every check added afterwards compared a supplied root against `receipt.root` — that is, against the
+copy made from that same supplied argument. Two reproductions survived all of them: a receipt
+*issued* under repository B while carrying a landing in repository A, and a verifier's receipt read
+out of a foreign register. Both were wrong at the moment the copy was made, and the copy is the
+thing every check compared against.
+
+**Mechanism.** A comparison can only detect a change *between two observations*. At the first
+observation there is no second value, so a value that is wrong on arrival passes every downstream
+comparison in the system — and passes it while producing a coverage report that says the input is
+bound. The check does not merely fail to catch the case; it actively certifies it, because the two
+sides agree. The producer is therefore never protected by comparisons against what it produced, no
+matter how many of them there are.
+
+**Generalizable rule.** When a value is checked against something derived from it, the check is
+vacuous at the producer. Either compare it against something with *independent provenance*, or
+delete the input and derive it — a value that cannot be supplied separately cannot be supplied
+wrongly, and unlike a comparison, that property is readable off the signature rather than
+established one test case at a time. See DECISIONS `{#repository-is-derived}`.
+
+### A presence assertion cannot detect a contradiction  {#presence-cannot-detect-contradiction}
+
+**Context.** A test named `test_no_surface_claims_the_verifier_check_proves_the_verifier_ran`
+existed specifically to keep an honesty repair honest, and it was green over a file that made the
+overclaim it was named after.
+
+**Evidence.** The test asserted that each surface *contains* a disclaimer somewhere in it —
+`"not that it ran" in text or "does not establish that the verifier ran" in text`. `completion.py`
+contains that disclaimer in `_assert_verifier_session`, and four hundred lines away the dataclass
+that *is* the persisted evidence said `"""One independent verifier's blind read of a
+judgment-shaped child's artifact."""`. Both statements, same file, test green. Restoring the
+overclaiming docstring and re-scoring both forms of the assertion: the presence form still passes,
+the absence form fails and names the file.
+
+**Mechanism.** "Contains X" is satisfied by one occurrence anywhere. A contradiction is two
+statements coexisting, so no requirement that one of them be present can rule the other out. The
+honest paragraph is what makes the test green, which means the test measures whether the repair was
+*made*, never whether it was *undermined* — and the surface a downstream consumer actually reads
+may be the undermining one.
+
+**Generalizable rule.** A prose guard needs both halves: ban the sentences that would be false, and
+require the one that is true. Bans catch only the phrasings someone thought of, so they are a floor
+and should say so; but a presence assertion alone has no floor at all. Check the claim on the
+object a consumer actually reads — here, the type in the persisted record, not the reference
+document.
+
 ### Enumerate the signature before the attribute reads  {#signature-before-attributes}
 
 **Context.** The previous entry replaced a categorical class enumeration ("the identity labels")
@@ -53,7 +107,13 @@ evaluation. Pinned by three tests: the reproduction, a case where the refusal wo
 the attribute reads are the inner one. A tool that only sees attribute reads will report a complete
 answer to a different question.
 
-**Refs.** [[name-the-class-mechanically]], DECISIONS `{#root-is-a-deciding-input}`.
+**Later.** The fix described above was the wrong shape and was replaced in the next round: the
+parameter was deleted rather than compared, so `root` is no longer in any of these signatures. The
+enumeration lesson stands on its own — it is why the input was found at all — but see
+`{#check-against-a-copy}` for why comparing it could not close the class.
+
+**Refs.** [[name-the-class-mechanically]], [[check-against-a-copy]], DECISIONS
+`{#root-is-a-deciding-input}`, `{#repository-is-derived}`.
 
 ### An unsealed column cannot answer a question about execution  {#unsealed-column-cannot-prove-execution}
 

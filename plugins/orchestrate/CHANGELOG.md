@@ -13,10 +13,10 @@
   alone, and a failing re-evaluation demotes a previously verified row so the reap gate cannot
   consume a contradiction as a pass.
 - The receipt binds **every input the verdict depends on**, not the labels that name the dispatch.
-  The repository root, specification, landing, baseline and receipt arrive as independent arguments
-  and every outcome is recorded under the specification's row in the root's register, so the root,
-  run, row, landing, work shape, mutability, declared scope, base commit, ambient root and
-  changed-paths baseline must all agree with the receipt before anything else is read. Otherwise a
+  The specification, landing, baseline and receipt arrive as four independent arguments and every
+  outcome is recorded under the specification's row in the receipt's own register, so the run, row,
+  landing, work shape, mutability, declared scope, base commit, ambient root and changed-paths
+  baseline must all agree with the receipt before anything else is read. Otherwise a
   receipt issued for judgment work verified under a mechanical shape, which skips the depth gate
   entirely, and an out-of-scope write verified under a widened scope. `runtime`, `integration_mode`
   and `destination` are also compared, but as consistency fields rather than deciding inputs:
@@ -24,14 +24,21 @@
   muddled caller rather than a substitution. `write_scope` is sealed and deliberately **not**
   compared — it is a pure function of inputs that are each compared individually, so a comparison
   against it could never be the check that catches anything.
-- The repository root is bound too, and it is checked before anything is read or written. The root
-  selects the register that receives the settlement record, the verdict and the phase, and it
-  arrives as a plain argument that no other comparison mentions — so a complete, authentic receipt
-  for one repository could record a pass in a second one while the artifact settled in the first,
-  leaving the row whose work actually ran at `working`. The per-run secret does not cover this: it
-  is named for the run alone and lives outside every repository. This is the one comparison in the
-  class that raises rather than recording a verdict, because a receipt from another repository is
-  exactly the case where there is no right register to record into.
+- **The repository is derived, not supplied.** It selects the register that receives the settlement
+  record, the verdict and the phase, so a caller who could name it separately could file one
+  repository's answer in another's store while the artifact settled in the first, leaving the row
+  whose work actually ran at `working`. The per-run secret does not cover this: it is named for the
+  run alone and lives outside every repository, so two checkouts running one run id share it.
+  Comparing a supplied root against the receipt was not enough, because the receipt's copy was made
+  from that same supplied value at issue time — that catches a caller who changes it in between and
+  cannot catch one that was wrong to begin with. So `issue_receipt` derives it from
+  `landing.ambient_root`, and `evaluate_completion`, `settle_artifact` and `settlement_record` take
+  it from the sealed receipt; none of the four accepts it as an argument. A landing that does not
+  name its repository is refused rather than defaulted to its working directory. `read_receipt` is
+  the one function that still takes a repository, because it is handed one with a row id and has no
+  receipt yet — it checks the sealed root against the register it read, which is what stops an
+  authentic verifier dispatch copied from another checkout of the same run from satisfying the
+  depth gate here.
 - The changed-paths baseline is bound by digest, because it is the one deciding input with no label:
   a baseline is repository state at an instant, and the same landing has different valid snapshots
   before and after a write, so binding the landing says nothing about when the snapshot was taken.
@@ -107,15 +114,18 @@
   locations, and dispositions from a closed set, and all of it is persisted to the register so a
   child that was genuinely sampled and one whose sample certified nothing are not the same green row.
   The named verifier must be a dispatch this orchestrator issued: an authenticated receipt for the
-  verifier row, whose run matches and whose sealed runtime matches the sample's vendor, plus a phase
-  that is not still waiting to start and a matching recorded model. A register row alone is something
-  a child can write. **What that establishes is that a verifier was dispatched for this run with this
-  vendor — not that it ran.** The phase and model are register columns, not sealed fields, so moving
-  a receipt-bearing verifier's phase from `planned` to `working` presents a session that never read
-  anything; the phase check refuses the honest never-started case and not a planted one. Sealing it
-  needs post-launch evidence that lives in other units, and it is the same defect as the accepted
-  residual on a child's own `phase` column, against a different column of the same untrusted store.
-  A sample from the child
+  verifier row, sealed under this repository, whose run matches and whose sealed runtime matches the
+  sample's vendor, plus a phase that is one of the phases past launch and a matching recorded model.
+  A register row alone is something a child can write. **What that establishes is that a verifier was
+  dispatched in this repository, for this run, with this vendor — not that it ran.** The phase and
+  model are register columns, not sealed fields, so moving a receipt-bearing verifier's phase from
+  `planned` to `working` presents a session that never read anything; the phase check refuses the
+  honest never-started case and not a planted one. It asks for membership in `launched`, `ready`,
+  `working`, `verified`, `reaped` rather than refusing `planned` and `launching` by name, because a
+  refusal written as exclusions accepts every value nobody thought of, including ones that are not
+  phases at all. Sealing it needs post-launch evidence that lives in other units, and it is the same
+  defect as the accepted residual on a child's own `phase` column, against a different column of the
+  same untrusted store. A sample from the child
   itself, one recorded against another artifact, one with no claims, any unsupported claim, and a
   sample with no supported claim at all each block verification. Malformed external depth data is
   recorded as a closed failure rather than raised, because a control that raises instead of recording

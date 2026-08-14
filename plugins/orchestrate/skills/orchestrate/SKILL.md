@@ -21,10 +21,12 @@ command itself land in later units of
 
 ## What the register is
 
-A single flat JSON document, global across a repository (not per-run), at
-`.orchestrate/register.json`. One row per tracked entity: one per dispatched child, one for the
-mirror, one for the subscriber. Per-run material — retired rows, run-scoped artifacts — lives
-under `.orchestrate/runs/<run-id>/`.
+A single flat JSON document **per run**, addressed by `run_id` alone, held outside every
+working tree (default `~/.orchestrate/registers/<run_id>.json`, relocatable by
+`ORCHESTRATE_REGISTER_DIR`). One row per tracked entity: one per dispatched child, one for the
+mirror, one for the subscriber. A `run_id` is host-global: two callers that name the same id
+share one live document. `retire_run` archives the document into the repository at
+`.orchestrate/runs/<run-id>/register-final.json` and deletes the live file, which frees the id.
 
 The implementation is `scripts/register.py`. Read its module docstring before writing to the
 register from any later unit — it documents every column's meaning, including two facts measured
@@ -44,7 +46,7 @@ the assembled marker stays out of echoed dispatch input.
 
 - **Atomic, durable writes.** Every write is temp-sibling-file, `fsync`, then `os.replace` (not
   just temp-plus-`os.replace` — `fsync` before the replace is what keeps a machine crash right
-  after a successful replace from leaving `register.json` present but empty, matching
+  after a successful replace from leaving the live register present but empty, matching
   `run_ledger.py` / `manifest_store.py` elsewhere in this repository). No reader ever observes a
   torn file. Concurrent read-modify-write cycles are serialized with an exclusive advisory lock
   (`fcntl.flock`) around the register's own `.lock` sidecar, so two sequential writers never lose
@@ -58,14 +60,13 @@ the assembled marker stays out of echoed dispatch input.
   envelope, so a document-root key one runtime writes (a handoff cursor, say) survives an ordinary
   write by the other, on both the `upsert_row` and the `retire_run` path.
 - **A schema version this code does not support halts loudly (C3).** `register.py` writes a halt
-  receipt to `.orchestrate/halt-receipt.json` and raises, without ever touching
-  `register.json` itself.
-- **Retiring a run only touches that run's own rows, and is genuinely idempotent.** `retire_run`
-  moves every row whose `run_id` matches into `.orchestrate/runs/<run-id>/register-final.json`,
-  durably, before the live register is rewritten — every other run's rows are left exactly as
-  they were. Retiring the same run again after it already succeeded returns the existing archive
-  path unchanged rather than recomputing an empty set and overwriting it; retiring a run with
-  nothing live and no prior archive writes nothing and returns `None`.
+  receipt beside the live file (`<run_id>.halt-receipt.json`) and raises, without ever touching
+  the live register itself.
+- **Retiring a run archives that run's document and frees the id.** `retire_run` writes
+  `.orchestrate/runs/<run-id>/register-final.json` in the repository, durably, then deletes the
+  live host-local file. Retiring the same run again after it already succeeded returns the
+  existing archive path unchanged rather than recomputing an empty set and overwriting it;
+  retiring a run with nothing live and no prior archive writes nothing and returns `None`.
 - **Both hang-detection time columns always exist on a row.** `deadline` and `max_quiet_seconds`
   are alternative strategies — a caller sets whichever fits a given dispatch — and `upsert_row`
   seeds whichever one a caller didn't set to `None` at row creation, so this pair specifically
@@ -188,10 +189,11 @@ the two-step sequence judgment work needs, reachable at all. Every child's deliv
 directory that is exclusively its own and invisible to the repository boundary, which is what lets
 concurrent read-only children in one checkout each complete cleanly.
 
-The register is not a trusted store. It is Git-ignored, it sits inside every child's landing, and
-every child can write files there — so the durable receipt and settlement record each carry a keyed
-digest under a per-run secret held outside the repository. A record the orchestrator did not write
-authenticates against nothing.
+The live register sits outside every landing, addressed by `run_id`. A sandboxed child cannot
+write it by working in its landing. Claude and Muse expose no workspace-write flag, so those
+runtimes can still reach the host-local directory if they know the path — the durable receipt
+and settlement record each carry a keyed digest under a per-run secret held outside every
+landing. A record the orchestrator did not write authenticates against nothing.
 
 Integration to the recorded destination is verified before `verified` is written, so a child whose
 change never landed cannot be reaped. Judgment-shaped work additionally requires a claimed independent

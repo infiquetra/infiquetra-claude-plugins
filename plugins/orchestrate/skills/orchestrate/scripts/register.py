@@ -2,12 +2,15 @@
 """The orchestrate register: the whole state model for a run (KTD5) and the Claude<->Codex
 handoff seam (R12).
 
-One flat JSON document per repository at ``.orchestrate/register.json``, holding one row per
-tracked entity — one per dispatched child, plus one for the mirror and one for the subscriber
-(there is nothing structurally different about those two; they are ordinary rows with
-``agent="mirror"`` / ``agent="subscriber"``). The register is global and keyed by ``run_id``, not
-per-run: several runs can have live rows in the same file at once, and retiring one run
-(:func:`retire_run`) only ever touches that run's own rows.
+One flat JSON document **per run**, addressed by ``run_id`` alone, held outside every working
+tree (default ``~/.orchestrate/registers/<run_id>.json``, relocatable by
+``ORCHESTRATE_REGISTER_DIR``). One row per tracked entity — one per dispatched child, plus
+one for the mirror and one for the subscriber (there is nothing structurally different about
+those two; they are ordinary rows with ``agent="mirror"`` / ``agent="subscriber"``). A
+``run_id`` is host-global: two callers that name the same id share one live document, which
+is what same-host Claude↔Codex handoff needs, and what two unrelated projects that pick the
+same label collide on. :func:`retire_run` archives the document into the repository and
+deletes the live file, which frees the id.
 
 This module implements exactly two responsibilities: atomic durability (a reader never sees a
 torn file, a lost update, or output from a corrupt state) and the row schema (the columns below).
@@ -161,26 +164,46 @@ class UnsupportedSchemaVersionError(RegisterError):
 # --------------------------------------------------------------------------- paths
 
 
+REGISTER_DIR_ENV = "ORCHESTRATE_REGISTER_DIR"
+DEFAULT_REGISTER_DIR = Path("~/.orchestrate/registers")
+
+
 def orchestrate_dir(root: Path) -> Path:
     return root / ".orchestrate"
 
 
-def register_path(root: Path) -> Path:
-    return orchestrate_dir(root) / "register.json"
-
-
-def halt_receipt_path(root: Path) -> Path:
-    return orchestrate_dir(root) / "halt-receipt.json"
-
-
-def runs_dir(root: Path) -> Path:
-    return orchestrate_dir(root) / "runs"
+def register_dir() -> Path:
+    """Where this host keeps live per-run registers, outside every working tree."""
+    override = os.environ.get(REGISTER_DIR_ENV)
+    return (
+        Path(override).expanduser().resolve()
+        if override
+        else DEFAULT_REGISTER_DIR.expanduser().resolve()
+    )
 
 
 def _safe_run_id(run_id: str) -> str:
     if not run_id or not _SAFE_ID_RE.match(run_id):
         raise RegisterError(f"run_id {run_id!r} must be a non-empty [A-Za-z0-9._-]+ token")
     return run_id
+
+
+def register_path(run_id: str) -> Path:
+    """The live register for one run.
+
+    Addressed by run identity, not by a repository root. A child cannot write this file by
+    working in its landing: the path is not inside any landing. Two calls with the same
+    ``run_id`` share one document.
+    """
+    return register_dir() / f"{_safe_run_id(run_id)}.json"
+
+
+def halt_receipt_path(run_id: str) -> Path:
+    return register_dir() / f"{_safe_run_id(run_id)}.halt-receipt.json"
+
+
+def runs_dir(root: Path) -> Path:
+    return orchestrate_dir(root) / "runs"
 
 
 def run_dir(root: Path, run_id: str) -> Path:
@@ -191,8 +214,28 @@ def final_register_path(root: Path, run_id: str) -> Path:
     return run_dir(root, run_id) / "register-final.json"
 
 
-def _lock_path(root: Path) -> Path:
-    return register_path(root).with_suffix(".json.lock")
+def _lock_path(run_id: str) -> Path:
+    return register_path(run_id).with_suffix(".json.lock")
+
+
+def _same_dir(left: Path, right: Path) -> bool:
+    """Filesystem identity, not text equality of resolved strings."""
+    try:
+        return left.resolve().samefile(right.resolve())
+    except OSError:
+        return left.resolve() == right.resolve()
+
+
+def iter_live_run_ids() -> tuple[str, ...]:
+    directory = register_dir()
+    if not directory.is_dir():
+        return ()
+    ids: list[str] = []
+    for path in directory.glob("*.json"):
+        if path.name.endswith(".halt-receipt.json"):
+            continue
+        ids.append(path.stem)
+    return tuple(sorted(ids))
 
 
 # --------------------------------------------------------------------------- atomic write primitive
@@ -243,7 +286,7 @@ def _atomic_write_json(path: Path, doc: Mapping[str, Any]) -> None:
 
 
 @contextmanager
-def _write_locked(root: Path) -> Iterator[None]:
+def _write_locked(run_id: str) -> Iterator[None]:
     """Serialize register read-modify-write cycles with one exclusive advisory lock.
 
     A single atomic write already guarantees no reader sees a torn file, but it does not by
@@ -251,7 +294,7 @@ def _write_locked(root: Path) -> Iterator[None]:
     landing in between (a lost-update race). This lock is what makes "two sequential writers do
     not lose the first writer's row" true even when the writers run concurrently.
     """
-    lock_path = _lock_path(root)
+    lock_path = _lock_path(run_id)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
     try:
@@ -263,10 +306,10 @@ def _write_locked(root: Path) -> Iterator[None]:
 
 
 @contextmanager
-def _read_locked(root: Path) -> Iterator[None]:
+def _read_locked(run_id: str) -> Iterator[None]:
     """Shared lock for reads; lock-free if no writer has ever taken the lock file yet."""
     try:
-        fd = os.open(_lock_path(root), os.O_RDONLY)
+        fd = os.open(_lock_path(run_id), os.O_RDONLY)
     except FileNotFoundError:
         yield
         return
@@ -281,20 +324,20 @@ def _read_locked(root: Path) -> Iterator[None]:
 # --------------------------------------------------------------------------- schema-version gate
 
 
-def _write_halt_receipt(root: Path, *, found: Any) -> Path:
+def _write_halt_receipt(run_id: str, *, found: Any) -> Path:
     receipt = {
         "reason": "unsupported_schema_version",
         "found_schema_version": found,
         "supported_schema_versions": sorted(SUPPORTED_SCHEMA_VERSIONS),
-        "register_path": str(register_path(root)),
+        "register_path": str(register_path(run_id)),
         "detected_at": time.time(),
     }
-    path = halt_receipt_path(root)
+    path = halt_receipt_path(run_id)
     _atomic_write_json(path, receipt)
     return path
 
 
-def _read_register_unlocked(root: Path) -> dict[str, Any]:
+def _read_register_unlocked(run_id: str) -> dict[str, Any]:
     """Load the register, or a fresh in-memory document if none exists yet.
 
     Returns the loaded document **as loaded** — every top-level key the file on disk carries,
@@ -306,12 +349,12 @@ def _read_register_unlocked(root: Path) -> dict[str, Any]:
     into it directly.
 
     Raises :class:`UnsupportedSchemaVersionError` — after writing a halt receipt and without
-    touching ``register.json`` itself — if the file on disk carries a ``schema_version`` this
+    touching the live register — if the file on disk carries a ``schema_version`` this
     code does not support (C3).
     """
-    path = register_path(root)
+    path = register_path(run_id)
     if not path.exists():
-        return {"schema_version": SCHEMA_VERSION, "rows": {}}
+        return {"schema_version": SCHEMA_VERSION, "run_id": _safe_run_id(run_id), "rows": {}}
 
     raw = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
@@ -319,7 +362,7 @@ def _read_register_unlocked(root: Path) -> dict[str, Any]:
 
     version = raw.get("schema_version")
     if version not in SUPPORTED_SCHEMA_VERSIONS:
-        _write_halt_receipt(root, found=version)
+        _write_halt_receipt(run_id, found=version)
         raise UnsupportedSchemaVersionError(
             f"register schema_version {version!r} is not supported "
             f"(supported: {sorted(SUPPORTED_SCHEMA_VERSIONS)}); halted without mutating "
@@ -349,20 +392,33 @@ _TIME_STRATEGY_COLUMNS = ("deadline", "max_quiet_seconds")
 # --------------------------------------------------------------------------- public read API
 
 
-def read_register(root: Path) -> dict[str, Any]:
-    """Read the whole register document (schema_version + rows), shared-locked."""
-    with _read_locked(root):
-        return _read_register_unlocked(root)
+def read_register(run_id: str) -> dict[str, Any]:
+    """Read the whole register document for one run, shared-locked."""
+    with _read_locked(run_id):
+        return _read_register_unlocked(run_id)
 
 
 def read_rows(root: Path, *, run_id: str | None = None) -> dict[str, dict[str, Any]]:
-    """All rows, optionally filtered to one ``run_id``. Each row is returned as stored, including
-    any keys this module does not know about (C4)."""
-    doc = read_register(root)
-    rows: dict[str, dict[str, Any]] = doc["rows"]
-    if run_id is None:
-        return {rid: dict(row) for rid, row in rows.items()}
-    return {rid: dict(row) for rid, row in rows.items() if row.get("run_id") == run_id}
+    """Rows for one run, or every run stamped against ``root``.
+
+    The live file is addressed by ``run_id``, not by ``root``. Pass ``run_id`` when you know
+    it. ``root`` without ``run_id`` returns rows whose document was stamped against that
+    directory — the compatibility view for callers that have a checkout and not a run id.
+    Each row is returned as stored, including any keys this module does not know about (C4).
+    """
+    if run_id is not None:
+        doc = read_register(run_id)
+        return {rid: dict(row) for rid, row in doc["rows"].items()}
+    target = Path(root).resolve()
+    merged: dict[str, dict[str, Any]] = {}
+    for live_id in iter_live_run_ids():
+        doc = read_register(live_id)
+        stamped = doc.get("repo_root")
+        if not isinstance(stamped, str):
+            continue
+        if _same_dir(Path(stamped), target):
+            merged.update({rid: dict(row) for rid, row in doc["rows"].items()})
+    return merged
 
 
 # --------------------------------------------------------------------------- public write API
@@ -399,8 +455,12 @@ def upsert_rows(root: Path, updates: Mapping[str, Mapping[str, Any]]) -> dict[st
             raise RegisterError("row_id must be non-empty")
         _validate_phase(fields)
 
-    with _write_locked(root):
-        doc = _read_register_unlocked(root)
+    run_id = _run_id_for_updates(normalized)
+    with _write_locked(run_id):
+        doc = _read_register_unlocked(run_id)
+        if "repo_root" not in doc:
+            doc["repo_root"] = str(Path(root).resolve())
+        doc["run_id"] = run_id
         rows = doc["rows"]
         merged_rows: dict[str, dict[str, Any]] = {}
         for row_id, fields in normalized.items():
@@ -415,52 +475,68 @@ def upsert_rows(root: Path, updates: Mapping[str, Mapping[str, Any]]) -> dict[st
             rows[row_id] = merged
             merged_rows[row_id] = dict(merged)
         doc["rows"] = rows
-        _atomic_write_json(register_path(root), doc)
+        _atomic_write_json(register_path(run_id), doc)
         return merged_rows
 
 
+def _run_id_for_updates(updates: Mapping[str, Mapping[str, Any]]) -> str:
+    named = {str(fields["run_id"]) for fields in updates.values() if "run_id" in fields}
+    if len(named) > 1:
+        raise RegisterError(f"one write cannot address more than one run: {sorted(named)}")
+    if named:
+        return _safe_run_id(named.pop())
+    for row_id in updates:
+        for live_id in iter_live_run_ids():
+            if row_id in _read_register_unlocked(live_id)["rows"]:
+                return live_id
+    raise RegisterError("new rows require 'run_id' in fields")
+
+
 def retire_run(root: Path, run_id: str) -> Path | None:
-    """Move every row belonging to ``run_id`` out of the live register and into
-    ``.orchestrate/runs/<run_id>/register-final.json``. Rows belonging to any other run are left
-    untouched in the live register.
+    """Archive this run's live register into the repository and delete the live file.
 
-    The durable copy under ``runs/<run_id>/`` is written **before** the live register is
-    rewritten: a crash between the two steps leaves the run's rows present in both places
-    (recoverable by re-running: the live rows are still there, so a retry recomputes and rewrites
-    the same archive), never in neither.
+    The live document is ``register_path(run_id)``. The durable copy is written to
+    ``.orchestrate/runs/<run_id>/register-final.json`` **in the repository** before the live
+    file is removed: a crash between the two steps leaves the rows present in both places
+    (recoverable by re-running: the live file is still there), never in neither.
 
-    Genuinely idempotent, including the case that matters most — retrying **after** a fully
-    successful retirement, not just recovering from a crash mid-retirement:
+    Deleting the live file is what frees the host-global ``run_id``. Genuinely idempotent:
 
-    - No live rows for ``run_id`` and an archive already exists at
-      ``runs/<run_id>/register-final.json`` -> that archive is left untouched and its path is
-      returned. Nothing is recomputed from the (now-empty) live set, so a second, third, or Nth
-      call after success can never overwrite the one durable record of that run with ``{}``.
-    - No live rows and no archive either -> there is nothing to retire (``run_id`` was never
-      registered, or every row for it was already archived by someone else). This is not an
-      error; ``None`` is returned and nothing is written.
+    - No live file and an archive already exists -> that archive is left untouched and its
+      path is returned.
+    - No live file and no archive -> ``None``, nothing is written.
     """
-    _safe_run_id(run_id)
-    with _write_locked(root):
-        doc = _read_register_unlocked(root)
-        rows: dict[str, dict[str, Any]] = doc["rows"]
-        retiring = {rid: row for rid, row in rows.items() if row.get("run_id") == run_id}
-        final_path = final_register_path(root, run_id)
-
-        if not retiring:
+    run_id = _safe_run_id(run_id)
+    live = register_path(run_id)
+    final_path = final_register_path(root, run_id)
+    with _write_locked(run_id):
+        if not live.exists():
             return final_path if final_path.exists() else None
 
-        remaining = {rid: row for rid, row in rows.items() if row.get("run_id") != run_id}
+        doc = _read_register_unlocked(run_id)
+        rows: dict[str, dict[str, Any]] = doc["rows"]
+        if not rows and final_path.exists():
+            live.unlink(missing_ok=True)
+            with contextlib.suppress(FileNotFoundError):
+                _lock_path(run_id).unlink()
+            return final_path
+
         final_doc = {
             "schema_version": doc["schema_version"],
             "run_id": run_id,
             "retired_at": time.time(),
-            "rows": retiring,
+            "rows": rows,
         }
+        for key, value in doc.items():
+            if key not in final_doc and key != "rows":
+                final_doc[key] = value
         _atomic_write_json(final_path, final_doc)
-
-        doc["rows"] = remaining
-        _atomic_write_json(register_path(root), doc)
+        live.unlink(missing_ok=True)
+        with contextlib.suppress(FileNotFoundError):
+            _lock_path(run_id).unlink()
+        sidecar = register_dir() / f"{run_id}.root"
+        with contextlib.suppress(FileNotFoundError):
+            sidecar.unlink()
         return final_path
 
 

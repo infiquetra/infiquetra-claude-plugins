@@ -76,6 +76,9 @@ def _orchestrator_secret_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setenv(
         "ORCHESTRATE_RUN_SECRET_DIR", str(tmp_path.parent / f"{tmp_path.name}-run-secrets")
     )
+    monkeypatch.setenv(
+        "ORCHESTRATE_REGISTER_DIR", str(tmp_path.parent / f"{tmp_path.name}-registers")
+    )
 
 
 class FakeGit:

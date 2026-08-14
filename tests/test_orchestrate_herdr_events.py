@@ -42,6 +42,11 @@ REGISTER = _load("register", SCRIPT_DIR / "register.py")
 SUBSCRIBER = _load("orchestrate_subscriber", SCRIPT_DIR / "subscriber.py")
 
 
+@pytest.fixture(autouse=True)
+def _register_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(REGISTER.REGISTER_DIR_ENV, str(tmp_path / "registers"))
+
+
 def _schema_ref(name: str, group: str = "request") -> dict[str, Any]:
     captured = json.loads(SCHEMA.read_text(encoding="utf-8"))
     return {
@@ -544,7 +549,7 @@ def test_unregistered_pane_event_mutates_no_row_and_reports_once(tmp_path: Path)
         "child-a",
         {"run_id": "run-a", "pane_id": "pane-a", "observed_state": "working"},
     )
-    before = REGISTER.register_path(tmp_path).read_bytes()
+    before = REGISTER.register_path("run-a").read_bytes()
     diagnostics: list[dict[str, Any]] = []
     wakes: list[str] = []
     subscriber = _subscriber(tmp_path, diagnostics=diagnostics, wakes=wakes)
@@ -558,7 +563,7 @@ def test_unregistered_pane_event_mutates_no_row_and_reports_once(tmp_path: Path)
     subscriber.handle_event(event)
     subscriber.handle_event(event)
 
-    assert REGISTER.register_path(tmp_path).read_bytes() == before
+    assert REGISTER.register_path("run-a").read_bytes() == before
     assert wakes == []
     assert [item["code"] for item in diagnostics] == ["unregistered_pane"]
 

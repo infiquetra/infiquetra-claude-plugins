@@ -153,33 +153,33 @@ row issues a new nonce, so the previous attempt's record cannot satisfy it.
 ## The register is not a trusted store
 
 Everything durable this unit writes — the dispatch receipt and the settlement record — lives in
-`.orchestrate/register.json`. Three facts about that file, together, are the problem:
+the live register, one JSON document per `run_id` at
+`~/.orchestrate/registers/<run_id>.json` (relocatable by `ORCHESTRATE_REGISTER_DIR`). That
+path is not inside any landing, so a sandboxed child cannot rewrite it by working in its
+working directory.
 
-1. Every child can write files in its landing. There is no launch flag that permits the artifact
-   write and forbids everything else (see *The launch posture* below).
-2. The register is inside every child's landing. A read-only child's landing *is* the ambient
-   checkout.
-3. `.orchestrate/` is Git-ignored, and Git-ignored means invisible to the boundary check. A child
-   that rewrites the register is observed by nothing.
+Two working forgeries were demonstrated when the live file still sat inside the landing,
+both reaching `verified`: replace the stored binding token with one from a previous run and
+produce an artifact carrying it; or replace the stored predicate with `/usr/bin/true` and
+recompute the closure digest so the tamper check agrees.
 
-Two working forgeries followed from that, both reaching `verified`: replace the stored binding token
-with one from a previous run and produce an artifact carrying it; or replace the stored predicate
-with `/usr/bin/true` and recompute the closure digest so the tamper check agrees.
+Inspection cannot close that, because a forged record and a genuine one are the same bytes in
+the same place. **Authentication can.** Each durable record carries an HMAC-SHA-256 digest
+over exactly the fields it stores, keyed by a per-run orchestrator secret. A record that does
+not authenticate establishes nothing and is refused; an added key is a mismatch rather than a
+silently ignored field.
 
-Inspection cannot close this, because a forged record and a genuine one are the same bytes in the
-same place. **Authentication can.** Each durable record carries an HMAC-SHA-256 digest over exactly
-the fields it stores, keyed by a per-run orchestrator secret. A record that does not authenticate
-establishes nothing and is refused; an added key is a mismatch rather than a silently ignored field.
+The secret lives **outside the repository** — `~/.orchestrate/run-secrets/<run_id>.key`, mode
+`0600`, relocatable with `ORCHESTRATE_RUN_SECRET_DIR`. A secret directory inside the
+repository is refused outright, because every child's landing is inside the repository.
+"Outside the workspace" is the one boundary the supported CLIs genuinely express.
 
-The secret lives **outside the repository** — `~/.orchestrate/run-secrets/<run_id>.key`, mode `0600`,
-relocatable with `ORCHESTRATE_RUN_SECRET_DIR`. A secret directory inside the repository is refused
-outright, because every child's landing is inside the repository. "Outside the workspace" is the one
-boundary the supported CLIs genuinely express, which is what the separation rests on.
-
-**Stated rather than assumed:** for Claude and Muse the CLI exposes no write-posture flag at all, so
-for those runtimes the separation rests on the child never being pointed at the secret rather than
-on a sandbox refusing it. And a child can always *destroy* a record rather than forge one — after
-which nothing verifies, which is the correct failure, not a false pass.
+**Stated rather than assumed:** for Claude and Muse the CLI exposes no write-posture flag at
+all, so those runtimes can still reach the host-local register and secret directories if they
+know the path. The seal is what remains against that residual. A child that can reach the
+host path can still *destroy* a record rather than forge one — after which nothing verifies,
+which is the correct failure, not a false pass. A JSON document planted at the historical
+repo-local path is not the live register.
 
 ## The launch posture
 
@@ -307,10 +307,11 @@ Well-behaved Python predicates are additionally kept from writing bytecode into 
   filesystem stops a child from writing into a sibling's artifact directory, and because that
   directory is invisible to Git the boundary check cannot see it either. Detecting deliberate
   cross-child writes needs a per-child filesystem boundary, which this unit does not provide.
-- Git-ignored paths *outside* the artifact directory — `.orchestrate/register.json` above all — are
-  not covered by the side-effect observation. A predicate that rewrites the register is caught by
-  the register's records being authenticated, which is a different control with a different
-  mechanism, not by this one.
+- Git-ignored paths *outside* the artifact directory — including a planted repo-local
+  register file — are not covered by the side-effect observation. A predicate that rewrites
+  the live host-local register is caught by the file sitting outside the landing and by the
+  register's records being authenticated, which are different controls with different
+  mechanisms, not by this one.
 
 ## Integration before reaping
 
@@ -378,8 +379,9 @@ It asks for **membership** in the phases past launch — `launched`, `ready`, `w
 `reaped` — rather than refusing `planned` and `launching` by name. A refusal written as exclusions
 accepts everything nobody thought of: the empty string and a value that is not a phase at all both
 mean no dispatch was observed to start, and both read as started under a name-based refusal. The
-supported write path validates the phase, so those values arrive only by writing `register.json`
-directly — which is the access a child actually has, and the premise the receipt is sealed against.
+supported write path validates the phase, so those values arrive only by writing the live
+register file directly — which is the residual Claude and Muse still have, and the premise
+the receipt is sealed against.
 This does not make the column trustworthy. It makes the check refuse the class it says it refuses.
 
 Sealing `phase` is out of this unit's reach. The only evidence that separates "dispatched" from

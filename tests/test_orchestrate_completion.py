@@ -62,6 +62,7 @@ def _orchestrator_secret_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     inside the repository.
     """
     monkeypatch.setenv(COMPLETION.RUN_SECRET_DIR_ENV, str(tmp_path / "orchestrator-secrets"))
+    monkeypatch.setenv(REGISTER.REGISTER_DIR_ENV, str(tmp_path / "orchestrator-registers"))
 
 
 #: A stand-in child. It receives the same dispatch text a real child receives and does exactly
@@ -1032,10 +1033,10 @@ def test_a_verifier_phase_outside_the_register_vocabulary_is_not_a_started_dispa
     This does not make the column trustworthy. A planted ``working`` still passes, and that is the
     named residual. It makes the check refuse the class it says it refuses.
 
-    The values are written straight into ``register.json`` rather than through ``upsert_row``,
+    The values are written straight into the live register rather than through ``upsert_row``,
     which validates the phase and would refuse them. That is not a way around the test: the
-    register is Git-ignored and sits inside every child's landing, so a direct file write is the
-    access a child actually has, and it is the premise the dispatch receipt is sealed against.
+    supported write path never produces these values, so a direct file write is the only way
+    they reach the check, and it is the residual the dispatch receipt is sealed against.
     """
     repo = tmp_path / "repo"
     _init_repo(repo)
@@ -1043,7 +1044,7 @@ def test_a_verifier_phase_outside_the_register_vocabulary_is_not_a_started_dispa
     prepared.run_child_process()
 
     def plant_phase(value: str) -> None:
-        path = REGISTER.register_path(repo)
+        path = REGISTER.register_path(prepared.spec.run_id)
         document = json.loads(path.read_text(encoding="utf-8"))
         document["rows"]["verifier-1"]["phase"] = value
         path.write_text(json.dumps(document), encoding="utf-8")
@@ -1063,11 +1064,30 @@ def test_a_verifier_phase_outside_the_register_vocabulary_is_not_a_started_dispa
 
 
 def test_a_depth_sample_from_another_run_is_not_this_runs_verifier(tmp_path: Path) -> None:
+    """A verifier issued under another run is not this run's verifier, even if copied in.
+
+    Addressing is by run id, so a verifier that lives only in another run's document is
+    already absent. The load-bearing case is an authentic foreign receipt planted into
+    *this* run's document: the row exists, the seal authenticates against the other
+    run's secret, and the run id on the receipt is what refuses it.
+    """
     repo = tmp_path / "repo"
     _init_repo(repo)
     prepared = _prepare(repo, work_shape="judgment")
     prepared.run_child_process()
-    _verifier_row(repo, run_id="run-elsewhere")
+    _verifier_row(repo, run_id="run-elsewhere", record_root=False)
+    foreign = REGISTER.read_rows(repo, run_id="run-elsewhere")["verifier-1"]
+    REGISTER.upsert_row(
+        repo,
+        "verifier-1",
+        {
+            "run_id": prepared.spec.run_id,
+            "vendor": foreign["vendor"],
+            "model": foreign["model"],
+            "phase": "working",
+            "dispatch_receipt": foreign["dispatch_receipt"],
+        },
+    )
 
     result = prepared.evaluate(depth_sample=_sample(prepared, register=False))
     assert result.verified is False
@@ -2846,14 +2866,13 @@ def test_a_landing_cannot_name_a_repository_it_does_not_belong_to(tmp_path: Path
 def test_evaluating_with_another_repositorys_receipt_raises_and_writes_neither_register(
     tmp_path: Path,
 ) -> None:
-    """A receipt from another repository cannot select that repository's register.
+    """A receipt from another repository cannot select a store this pairing may write.
 
-    Repository A holds an honest verified child. Repository B holds a child with the same row
-    id, evaluated with A's authentic receipt. The false pass is already refused. The remaining
-    harm is the false write: recording the mismatch under A demotes A's verified row, and
-    recording it under B still writes a verdict into a store this pairing has no business
-    touching once the two arguments disagree about the repository. The caller sees the
-    exception. A's verified row stays verified. B stays working and has no completion record.
+    Repository A holds an honest verified child. A landing in repository B is evaluated
+    with A's authentic receipt. The false pass is already refused. The remaining harm is
+    the false write: recording the mismatch would demote A's verified row. There is one
+    live document per run id, so there is no second register to write either. The caller
+    sees the exception. The run's verified row stays verified.
     """
     repo_a = tmp_path / "repo-a"
     repo_b = tmp_path / "repo-b"
@@ -2883,14 +2902,9 @@ def test_evaluating_with_another_repositorys_receipt_raises_and_writes_neither_r
     prepared_a.run_child_process()
     first = COMPLETION.evaluate_completion(spec, landing_a, baseline_a, receipt_a, git=git)
     assert first.verified is True, first.detail
-    assert REGISTER.read_rows(repo_a)[spec.row_id]["phase"] == "verified"
+    assert REGISTER.read_rows(repo_a, run_id=spec.run_id)[spec.row_id]["phase"] == "verified"
 
     landing_b = git.provision(repo_b, spec)
-    REGISTER.upsert_row(
-        repo_b,
-        spec.row_id,
-        {"run_id": spec.run_id, "phase": "working", "expected_state": "working"},
-    )
     baseline_b = _baseline(git, landing_b)
     prepared_b = _Prepared(repo_b, spec, landing_b, git, receipt_a, baseline_b)
     prepared_b.run_child_process()
@@ -2901,12 +2915,11 @@ def test_evaluating_with_another_repositorys_receipt_raises_and_writes_neither_r
         COMPLETION.evaluate_completion(spec, landing_b, baseline_b, receipt_a, git=git)
     assert str(Path(receipt_a.root).resolve()) in str(raised.value)
 
-    row_a = REGISTER.read_rows(repo_a)[spec.row_id]
-    row_b = REGISTER.read_rows(repo_b)[spec.row_id]
-    assert row_a["phase"] == "verified"
-    assert (row_a.get("completion") or {}).get("result") == "verified"
-    assert row_b["phase"] == "working"
-    assert "completion" not in row_b
+    # One run id is one live document. The pairing is refused and that document is not
+    # written with a failure or a demotion.
+    row = REGISTER.read_rows(repo_a, run_id=spec.run_id)[spec.row_id]
+    assert row["phase"] == "verified"
+    assert (row.get("completion") or {}).get("result") == "verified"
 
 
 def _nested_repositories(tmp_path: Path) -> tuple[Path, Path]:
@@ -2960,12 +2973,12 @@ def test_a_nested_repository_is_not_the_checkout_that_contains_it(tmp_path: Path
 def test_evaluating_a_nested_repository_with_the_containing_checkouts_receipt_writes_neither(
     tmp_path: Path,
 ) -> None:
-    """A nested checkout's landing must not select the containing checkout's register.
+    """A nested checkout's landing must not write the containing checkout's run.
 
-    The outer repository holds an honest verified child. The nested repository holds a child
-    with the same row id, evaluated with the outer receipt. Path ancestry lets that pairing
-    through and the mismatch refusal demotes the outer row. Membership refuses; the outer
-    verified row stays verified; the nested row gains no completion.
+    The outer repository holds an honest verified child. A nested landing is evaluated
+    with the outer receipt. Path ancestry lets that pairing through and a recorded
+    mismatch would demote the outer row. Membership refuses; the one live document
+    stays verified.
     """
     outer, nested = _nested_repositories(tmp_path)
     spec = _spec()
@@ -2991,39 +3004,19 @@ def test_evaluating_a_nested_repository_with_the_containing_checkouts_receipt_wr
         spec, landing_outer, baseline_outer, receipt_outer, git=git
     )
     assert first.verified is True, first.detail
-    assert REGISTER.read_rows(outer)[spec.row_id]["phase"] == "verified"
+    assert REGISTER.read_rows(outer, run_id=spec.run_id)[spec.row_id]["phase"] == "verified"
 
     landing_nested = git.provision(nested, spec)
-    REGISTER.upsert_row(
-        nested,
-        spec.row_id,
-        {"run_id": spec.run_id, "phase": "working", "expected_state": "working"},
-    )
-    artifacts_nested = COMPLETION.artifact_landing(
-        Path(landing_nested.cwd), spec.run_id, spec.row_id
-    )
-    rel_nested = artifacts_nested.relative_to(Path(landing_nested.cwd).resolve()) / "report.json"
     baseline_nested = _baseline(git, landing_nested)
-    COMPLETION.issue_receipt(
-        spec,
-        landing_nested,
-        _predicate(rel_nested.as_posix()),
-        artifact_name="report.json",
-        git=git,
-        changed_paths_baseline=baseline_nested,
-    )
 
     with pytest.raises(COMPLETION.ReceiptRootError, match="does not belong to the repository"):
         COMPLETION.evaluate_completion(
             spec, landing_nested, baseline_nested, receipt_outer, git=git
         )
 
-    row_outer = REGISTER.read_rows(outer)[spec.row_id]
-    row_nested = REGISTER.read_rows(nested)[spec.row_id]
-    assert row_outer["phase"] == "verified"
-    assert (row_outer.get("completion") or {}).get("result") == "verified"
-    assert row_nested["phase"] == "working"
-    assert "completion" not in row_nested
+    row = REGISTER.read_rows(outer, run_id=spec.run_id)[spec.row_id]
+    assert row["phase"] == "verified"
+    assert (row.get("completion") or {}).get("result") == "verified"
 
 
 def test_a_linked_worktree_belongs_to_the_repository_it_was_cut_from(tmp_path: Path) -> None:
@@ -3238,6 +3231,66 @@ def test_a_read_only_child_still_verifies_against_the_recorded_root(tmp_path: Pa
     assert result.verified is True, result.detail
 
 
+def test_a_child_cannot_address_the_live_register_from_its_landing(tmp_path: Path) -> None:
+    """A child writing the historical repo-local path does not touch the live document.
+
+    The live file is addressed by run id in an orchestrator-owned directory. Planting
+    a JSON document where the register used to live is not a write of this run's
+    register.
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo)
+    live = REGISTER.register_path(prepared.spec.run_id).resolve()
+    landing = Path(prepared.landing.cwd).resolve()
+    assert not live.is_relative_to(landing)
+    before = live.read_bytes()
+    planted = landing / ".orchestrate" / "register.json"
+    planted.parent.mkdir(parents=True, exist_ok=True)
+    planted.write_text('{"schema_version": 1, "rows": {}}\n', encoding="utf-8")
+    prepared.run_child_process()
+    assert live.read_bytes() == before
+    row = REGISTER.read_rows(repo, run_id=prepared.spec.run_id)[prepared.spec.row_id]
+    assert "dispatch_receipt" in row
+    result = prepared.evaluate()
+    assert result.verified is True, result.detail
+
+
+def _filesystem_alias(path: Path) -> Path | None:
+    """Another Path that names the same directory but does not compare equal after resolve()."""
+    resolved = path.resolve()
+    text = str(resolved)
+    if text.startswith("/private/"):
+        alias = Path("/PRIVATE") / Path(*resolved.parts[2:])
+        if alias.exists() and alias.resolve() != resolved:
+            return alias
+    if text.startswith("/PRIVATE/"):
+        alias = Path("/private") / Path(*resolved.parts[2:])
+        if alias.exists() and alias.resolve() != resolved:
+            return alias
+    return None
+
+
+def test_a_recorded_root_compares_by_filesystem_identity(tmp_path: Path) -> None:
+    """Two paths that name the same directory are the same recorded root.
+
+    Text equality of resolved strings refuses a legitimate resume when one path is a
+    case-folded alias of the other. A symlink is not enough: ``Path.resolve()``
+    follows it and the strings agree.
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    COMPLETION.record_run_root(repo, "run-a")
+    alias = _filesystem_alias(repo)
+    if alias is None:
+        pytest.skip("this host has no filesystem alias whose resolve() string differs")
+    COMPLETION.assert_store_is_this_runs_register(alias, "run-a")
+    other = tmp_path / "other"
+    _init_repo(other)
+    with pytest.raises(COMPLETION.ReceiptRootError, match="not the register directory recorded"):
+        COMPLETION.assert_store_is_this_runs_register(other, "run-a")
+
+
 def test_membership_probes_ignore_an_inherited_git_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3254,37 +3307,32 @@ def test_membership_probes_ignore_an_inherited_git_directory(
     assert COMPLETION._same_repository(git, nested, outer) is False
 
 
-def test_a_receipt_copied_into_another_repositorys_register_is_refused_when_it_is_read(
-    tmp_path: Path,
-) -> None:
-    """The seal is intact and it is still the wrong register.
+def test_a_receipt_is_refused_when_read_under_a_different_repository(tmp_path: Path) -> None:
+    """The seal is intact and the claimed work location is still wrong.
 
-    Reading is the one place a repository must be supplied, because the receipt is being fetched
-    rather than handed over. The per-run secret does not close this on its own: it is named for
-    the run alone and stored outside every repository, so two checkouts running one run id share
-    it and a receipt sealed under either authenticates under both. Nothing else in the unseal path
-    mentions a repository, which is why the sealed one has to be checked against the register it
-    came out of.
+    Addressing is by run id, so there is no second live file to copy into. Reading is the
+    one place a repository must be supplied, because the receipt is being fetched rather
+    than handed over. The per-run secret does not close this on its own: it is named for
+    the run alone, so two checkouts running one run id share it and a receipt sealed under
+    either authenticates under both. The sealed root has to be checked against the
+    location the caller named.
     """
     repo = tmp_path / "repo-a"
     _init_repo(repo)
     other = tmp_path / "repo-b"
     _init_repo(other)
     prepared = _prepare(repo)
-    sealed = REGISTER.read_rows(repo)[prepared.spec.row_id]["dispatch_receipt"]
-    REGISTER.upsert_row(
-        other,
-        prepared.spec.row_id,
-        {"run_id": prepared.spec.run_id, "dispatch_receipt": sealed},
-    )
 
     with pytest.raises(COMPLETION.ReceiptRootError) as raised:
-        COMPLETION.read_receipt(other, prepared.spec.row_id)
+        COMPLETION.read_receipt(other, prepared.spec.row_id, run_id=prepared.spec.run_id)
     assert "issued under" in str(raised.value)
 
-    # The same bytes read out of the register that issued them are accepted, so the refusal is
-    # about which repository asked and not about the record being damaged by the copy.
-    assert COMPLETION.read_receipt(repo, prepared.spec.row_id).nonce == prepared.receipt.nonce
+    # The same bytes read under the repository that issued them are accepted, so the
+    # refusal is about which repository asked and not about the record being damaged.
+    assert (
+        COMPLETION.read_receipt(repo, prepared.spec.row_id, run_id=prepared.spec.run_id).nonce
+        == prepared.receipt.nonce
+    )
 
 
 def test_a_verifier_dispatched_in_another_repository_does_not_satisfy_the_depth_gate(
@@ -3327,7 +3375,10 @@ def test_a_verifier_dispatched_in_another_repository_does_not_satisfy_the_depth_
     assert result.verified is False
     assert result.reason == "depth_sample_invalid"
     assert "issued under" in result.detail
-    assert REGISTER.read_rows(other)[prepared.spec.row_id]["phase"] != "verified"
+    assert (
+        REGISTER.read_rows(other, run_id=prepared.spec.run_id)[prepared.spec.row_id]["phase"]
+        != "verified"
+    )
 
 
 # ---- what the verifier check establishes, and where it stops -------------------------------

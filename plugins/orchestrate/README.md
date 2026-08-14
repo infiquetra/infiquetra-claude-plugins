@@ -14,11 +14,12 @@ independent verifier's depth sample on record. See `skills/orchestrate/SKILL.md`
 
 ## Register
 
-`.orchestrate/register.json` is the whole state model for a run: one row per dispatched child,
-one for the mirror, one for the subscriber. It is global (not per-run), keyed by `run_id`, with
-atomic read/write and forward-compatible rows so Claude and Codex sessions can hand a run off to
-each other without losing state either one wrote. See `scripts/register.py`'s module docstring
-for the full column reference.
+The live register is the whole state model for a run: one row per dispatched child, one for the
+mirror, one for the subscriber. It is one JSON document per `run_id`, held outside every
+working tree (default `~/.orchestrate/registers/<run_id>.json`). A `run_id` is host-global, so
+two runtimes on one host that name the same id share one live document. `retire_run` archives
+into the repository and deletes the live file, which frees the id. See
+`scripts/register.py`'s module docstring for the full column reference.
 
 ## Event subscriber
 

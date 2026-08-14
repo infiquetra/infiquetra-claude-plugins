@@ -21,6 +21,30 @@
 
 ## 2026-08-13
 
+### A file's address is a capability  {#file-address-is-a-capability}
+
+**Context.** Eight repairs each defended one field of a sealed receipt against a landing
+that can name anything. The module said why the receipt existed at all: the register lived
+inside every child's landing, so the durable copy sat where the child it binds can rewrite
+it.
+**Evidence.** Every `upsert_row` call in the plugin is orchestrator-side. No child writes
+the register through any code path. A child's designed output is one artifact, written to
+a temp path and renamed. The location was decided in one function (`register_path`). The
+Codex repository at the current `origin/main` has no orchestrate plugin and no references
+to the live register path.
+**Mechanism.** Child-writability was not a feature anyone would lose. It was an ambient
+consequence of putting orchestrator-private state at a path the child can write.
+Relocation alone does not close addressing: a file keyed by repository root at a new
+directory still maps a poisoned root to a different host-local file. The address has to
+be a pure function of an identifier the orchestrator already owns. This host already
+keyed the run secret by `run_id` alone.
+**Fix.** Live register at `~/.orchestrate/registers/<run_id>.json`. R4 amended. Retirement
+archive stays in the repository.
+**Generalizable rule.** If the only reason a control exists is that a file sits where an
+untrusted party can write it, move the file. Then ask whether the *key* is still a value
+that party can name.
+**Refs.** DECISIONS `{#register-addressed-by-run-id}`.
+
 ### A git failure that never ran is not a LandingError  {#git-failure-is-not-landing-error}
 
 **Context.** The membership probe converted `LandingError` into `ReceiptRootError` so a path

@@ -4,6 +4,14 @@
 
 ### Added
 
+- The live register is one JSON document per run, addressed by `run_id` in an
+  orchestrator-owned host-local directory (default `~/.orchestrate/registers/<run_id>.json`,
+  relocatable by `ORCHESTRATE_REGISTER_DIR`). A child cannot write it by working in its
+  landing. A `run_id` is host-global: two callers that name the same id share one live
+  document. `retire_run` archives the document into the repository at
+  `.orchestrate/runs/<run_id>/register-final.json` and deletes the live file, which frees
+  the id. Claude and Muse have no workspace-write flag, so the dispatch receipt and
+  settlement record stay authenticated against that residual.
 - Completion is the only path to `verified`. A child reaches it when its predicate's dependency
   closure is unchanged, its artifact was settled by the orchestrator's own rename, that artifact
   carries this dispatch's pre-established run binding, the predicate passes, the repository
@@ -40,8 +48,8 @@
   landing. `evaluate_completion`, `settle_artifact` and `settlement_record` take it from the
   sealed receipt; none of the four accepts it as an argument. Git identity and containment are
   two properties: a nested repository shares ancestry and not identity; a sibling worktree
-  shares identity and not ancestry. A git repository has as many registers as it has working
-  trees. Evaluation raises rather than records when the landing does not belong in the receipt's
+  shares identity and not ancestry. The live register is addressed by run id, not by working
+  tree. Evaluation raises rather than records when the landing does not belong in the receipt's
   store.
   A landing that does not name its repository is refused rather than defaulted to its working
   directory. `read_receipt` is
@@ -67,12 +75,13 @@
   re-evaluation already worked; a *passing* re-evaluation wrote `verified` over `reaped`, and needed
   no forgery to do it — catch-up re-evaluates run-bound artifacts on startup and settlement replays
   cleanly, so a closed tab returned as a live verified child.
-- The durable records the register holds are authenticated. `.orchestrate/` is Git-ignored and
-  therefore invisible to the boundary check, and every child can write files in its landing, so the
-  dispatch receipt and settlement record each carry a keyed digest under a per-run orchestrator
-  secret held outside the repository. A record the orchestrator did not write authenticates against
-  nothing and is refused, an added field is a mismatch rather than an ignored key, and a secret
-  directory inside the repository is refused outright.
+- The durable records the register holds are authenticated. The live file sits outside every
+  landing, so a sandboxed child cannot rewrite it by address. Claude and Muse have no
+  workspace-write flag, so the dispatch receipt and settlement record each carry a keyed
+  digest under a per-run orchestrator secret held outside every landing. A record the
+  orchestrator did not write authenticates against nothing and is refused, an added field
+  is a mismatch rather than an ignored key, and a secret directory inside the repository is
+  refused outright.
 - Evaluation is safe to re-run for one dispatch. Settlement is recorded and replayed rather than
   re-attempted, which is what makes the restart path and judgment work reachable at all: the rename
   is one-shot, so without a record a second evaluation of a correct child fails as though it had

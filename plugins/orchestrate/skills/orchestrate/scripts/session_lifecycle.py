@@ -792,14 +792,14 @@ def launch_child(
     ``launching``. Dispatch later moves the row to ``launched`` before sending the task.
     """
     root = root.resolve()
-    # The run's register directory is this argument, not a value derived from the
+    # The run's work location is this argument, not a value derived from the
     # landing. Issuance compares the claimed store against the record this writes.
     # Imported lazily: completion already imports this module.
     import completion as completion_mod
 
     completion_mod.record_run_root(root, spec.run_id)
     label = task_label(spec.run_id, spec.row_id)
-    existing = register_store.read_rows(root).get(spec.row_id)
+    existing = register_store.read_rows(root, run_id=spec.run_id).get(spec.row_id)
     if existing and existing.get("phase") == "launching" and not existing.get("pane_id"):
         recovery_cwd = Path(str(existing.get("cwd", root)))
         recovered = herdr.discover_by_label(label, cwd=recovery_cwd)

@@ -2,6 +2,48 @@
 
 ## 2026-08-13
 
+### The live register is addressed by run identity, not by repository root  {#register-addressed-by-run-id}
+
+Requirement R4 said the register is "persisted as a plain JSON file in the repository."
+That location put orchestrator-private state inside every child's landing. Child-writability
+was not a feature: every `upsert_row` call is orchestrator-side, and a child's designed
+output is one artifact. The seal existed to survive an address, not to grant the child a
+write.
+
+**Decision.** The live register is one JSON document per `run_id` at
+`~/.orchestrate/registers/<run_id>.json` (relocatable by `ORCHESTRATE_REGISTER_DIR`). A
+`run_id` is host-global, the same undocumented namespace the run secret already used.
+`retire_run` archives the document into the repository at
+`.orchestrate/runs/<run_id>/register-final.json` and deletes the live file, which frees
+the id. R4 is amended. Interoperability on one host (R12) is unchanged: two runtimes
+already share `~/.orchestrate/run-secrets`. Provenance is the retirement archive, which
+was always the repo-local file.
+
+The recorded run root (`record_run_root`) stays. It is no longer the live address. It is
+the work location and the collision detector for two orchestrators that reuse one
+`run_id` against different checkouts. Git identity, containment, and
+`assert_store_is_this_runs_register` stay as work-location checks. The seal stays because
+Claude and Muse have no workspace-write flag.
+
+**Rejected: relocate but key by repository root.** A poisoned root still maps to a
+different host-local file. Addressing is unchanged; R4 is not worth amending for that.
+**Rejected: keep the repo-local file and refuse the unrecorded-root fallback.** Cheaper,
+closes one executed member, leaves child-writability intact.
+**Rejected: mint a UUID instance identity and map `run_id` onto it.** Same-host handoff
+wants one `run_id` to be one register. A second name is an extra latch.
+**Rejected: delete the seal because the file moved.** Claude and Muse can still reach
+`~/.orchestrate` if they know the path. A control kept without a live threat is the
+`write_scope` lesson; this one still has a threat.
+
+**What was given up.** A reader of a checkout can no longer find the *live* register by
+opening a file in that checkout. They can still find the retirement archive, and they
+can still inspect the live file in the host-local directory. Two independent projects
+that pick the same `run_id` share one live document until one of them retires it. That
+collision already existed for the run secret.
+
+**Revisit when** a second host must share a live run (R12 deferred that), or when Claude
+or Muse grows a workspace-write flag that can refuse `~/.orchestrate`.
+
 ### A landing must sit inside the repository that will receive its verdict  {#landing-sits-in-its-repository}
 
 Deleting the repository parameter closed the two named false-pass paths and left two adjacent

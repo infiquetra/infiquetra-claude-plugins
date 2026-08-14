@@ -21,6 +21,27 @@
 
 ## 2026-08-13
 
+### A generation is more than the live register  {#generation-is-more-than-the-live-file}
+
+**Context.** Retirement held the register lock across its own observation and
+deletion. The sidecar used a different lock. The key was created under neither.
+A concurrent mint completed after the key was forgotten and before retirement
+returned; a later reuse inherited that key. `record_run_root` returned success
+while retirement deleted the file it had just written.
+**Evidence.** Two runtimes on one host and one checkout share one `run_id` (R12).
+That is two actors on one generation, not an exotic reuse.
+**Mechanism.** Excluding `run_secret` from work-location *binding* is not a reason
+to exclude its create from generation serialization. `fcntl.flock` is not
+reentrant: the holder must unlink the key, not call the public forget that takes
+the same lock.
+**Fix.** The register write lock is the generation lock. Sidecar `.root.lock` is
+gone. One sidecar reader, with symlink and mode checks, on every provenance
+decision. Both sides of a work-location comparison are canonicalized.
+**Generalizable rule.** The files that define a generation must observe one lock,
+and a lock the caller already holds cannot be taken again.
+**Refs.** DECISIONS `{#register-addressed-by-run-id}`, LEARNINGS
+`{#stale-observation-is-not-a-generation}`.
+
 ### A stale observation is not a generation  {#stale-observation-is-not-a-generation}
 
 **Context.** Making retirement's no-live-file branch unconditionally forget the key

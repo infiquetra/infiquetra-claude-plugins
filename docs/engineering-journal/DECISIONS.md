@@ -15,20 +15,23 @@ write.
 `run_id` is host-global, the same undocumented namespace the run secret already used.
 `retire_run` forgets the per-run secret first, then archives the document into the
 repository at `.orchestrate/runs/<run_id>/register-final.json`, then deletes the live
-file and the recorded-root sidecar, which frees the id. Forgetting the key requires
-the coordinator-recorded work location. R4 is amended. Interoperability on one host
-(R12) is one checkout: two runtimes in the same working tree share one live document
-and already share `~/.orchestrate/run-secrets`. Two checkouts of one `run_id` are a
-collision. Provenance is the retirement archive, which was always the repo-local file.
+file and the recorded-root sidecar, which frees that generation. Sidecar create, key
+mint, key delete, and retirement share the register write lock. Forgetting the key
+requires the coordinator-recorded work location. R4 is amended. Interoperability on
+one host (R12) is one checkout: two runtimes in the same working tree share one live
+document and already share `~/.orchestrate/run-secrets`. Two checkouts of one `run_id`
+are a collision. Provenance is the retirement archive, which was always the repo-local
+file.
 
 The recorded run root (`record_run_root`) stays. It is no longer the live address. It is
 the work location and the collision detector for two orchestrators that reuse one
-`run_id` against different checkouts. A work-location `root` is canonicalized to the
-git top level before it is recorded or compared. Git identity, containment, and
+`run_id` against different checkouts. Both sides of a work-location comparison are
+canonicalized to the git top level. Git identity, containment, and
 `assert_store_is_this_runs_register` stay as work-location checks. The seal stays because
 Claude and Muse have no workspace-write flag. `run_secret` stays unbound because its
 `root` means "keep the key outside this tree", not because a second checkout must be
-able to write.
+able to write. Its *create* is serialized with retirement; that is lifecycle, not
+binding.
 
 **Rejected: relocate but key by repository root.** A poisoned root still maps to a
 different host-local file. Addressing is unchanged; R4 is not worth amending for that.

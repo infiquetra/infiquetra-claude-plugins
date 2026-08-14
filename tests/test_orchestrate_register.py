@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import stat
 import subprocess
 import sys
 import threading
@@ -642,10 +643,99 @@ def test_a_recorded_root_rewrites_a_disagreeing_stamp(tmp_path: Path) -> None:
     path.write_text(json.dumps(doc), encoding="utf-8")
     _record(repo, "run-a")
     M.reconcile_stamp("run-a", repo)
-    stamped = json.loads(path.read_text())["repo_root"]
-    assert Path(stamped).resolve() == repo.resolve()
+    # A package stamp and a repository record are the same work location after
+    # canonicalize. The operator view must list the run at the repository.
+    assert ("run-a", "child-1") in M.rows_stamped_against(repo)
     M.upsert_row(package, "child-1", {"phase": "working"}, run_id="run-a")
     assert Path(json.loads(path.read_text())["repo_root"]).resolve() == repo.resolve()
+
+
+def test_a_noncanonical_stored_root_is_reachable_from_the_repository(
+    tmp_path: Path,
+) -> None:
+    """A value written before canonicalize still compares as the repository."""
+    repo = tmp_path / "repo"
+    package = repo / "packages" / "tool"
+    package.mkdir(parents=True)
+    _git_init(repo)
+    M.upsert_row(repo, "child-1", {"phase": "planned"}, run_id="run-a")
+    sidecar = _record(package, "run-a")
+    assert sidecar.read_text(encoding="utf-8").strip() == str(package.resolve())
+    assert M.read_rows(repo, run_id="run-a")["child-1"]["phase"] == "planned"
+    assert M.read_rows(package, run_id="run-a")["child-1"]["phase"] == "planned"
+    M.upsert_row(repo, "child-1", {"phase": "working"}, run_id="run-a")
+    assert M.read_rows(package, run_id="run-a")["child-1"]["phase"] == "working"
+
+
+def test_a_package_path_stored_on_disk_compares_as_the_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The comparison canonicalizes the stored side, not only the caller.
+
+    Sidecar and stamp hold a package subdirectory (mode 0600). The stored
+    value is handed to the comparison resolved, not as a git top level, so
+    a comparison that only resolves the expected side cannot agree.
+    """
+    repo = tmp_path / "repo"
+    package = repo / "packages" / "tool"
+    package.mkdir(parents=True)
+    _git_init(repo)
+    M.upsert_row(repo, "child-1", {"phase": "planned"}, run_id="run-a")
+    path = M.register_path("run-a")
+    doc = json.loads(path.read_text())
+    doc["repo_root"] = str(package.resolve())
+    path.write_text(json.dumps(doc), encoding="utf-8")
+    sidecar = _record(package, "run-a")
+    assert stat.S_IMODE(sidecar.stat().st_mode) == 0o600
+    assert sidecar.read_text(encoding="utf-8").strip() == str(package.resolve())
+    stored = package.resolve()
+
+    def resolve_only(file_path: Path) -> Path:
+        info = file_path.lstat()
+        if stat.S_ISLNK(info.st_mode):
+            raise M.RegisterError(f"run root {file_path} is a symlink; it must be a regular file")
+        if info.st_mode & 0o077:
+            raise M.RegisterError(
+                f"run root {file_path} is accessible beyond its owner "
+                f"(mode {stat.S_IMODE(info.st_mode):04o})"
+            )
+        material = file_path.read_bytes().decode("utf-8").strip()
+        return Path(material).resolve()
+
+    monkeypatch.setattr(M, "_read_recorded_root_file", resolve_only)
+    monkeypatch.setattr(M, "run_work_location", lambda _run_id: stored)
+
+    for claimed in (repo, package):
+        recorded = M.assert_root_belongs_to_run(claimed, "run-a", require_recorded=True)
+        assert recorded is not None
+        assert recorded.resolve() == repo.resolve()
+        bound = M.assert_root_belongs_to_run(claimed, "run-a")
+        assert bound is not None
+        assert bound.resolve() == repo.resolve()
+
+
+def test_a_recorded_root_readable_beyond_its_owner_is_refused(tmp_path: Path) -> None:
+    """The register's sidecar reader refuses a widened mode, not only the completion reader."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    sidecar = _record(repo, "run-a")
+    sidecar.chmod(0o644)
+    with pytest.raises(M.RegisterError, match="accessible beyond its owner"):
+        M.recorded_work_location("run-a")
+    with pytest.raises(M.RegisterError, match="accessible beyond its owner"):
+        M.assert_root_belongs_to_run(repo, "run-a", require_recorded=True)
+
+
+def test_a_nonexistent_package_directory_stamps_the_repository(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _git_init(repo)
+    future = repo / "packages" / "future-tool"
+    M.upsert_row(future, "child-1", {"phase": "planned"}, run_id="run-a")
+    stamped = json.loads(M.register_path("run-a").read_text())["repo_root"]
+    assert Path(stamped).resolve() == repo.resolve()
+    future.mkdir(parents=True)
+    M.upsert_row(future, "child-1", {"phase": "working"}, run_id="run-a")
+    assert M.read_rows(repo, run_id="run-a")["child-1"]["phase"] == "working"
 
 
 def _git_init(repo: Path) -> None:

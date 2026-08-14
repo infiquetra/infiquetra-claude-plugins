@@ -75,7 +75,8 @@ brainstorm IDs are given in parentheses.
   secret first, then archives the document into the repository at
   `.orchestrate/runs/<run_id>/register-final.json` and deletes the live file and the
   recorded-root sidecar. Forgetting the key requires the coordinator-recorded work
-  location. A second retire repairs a leftover key only when that record is still there
+  location. Sidecar create, key mint, key delete, and retirement share one per-run lock.
+  A second retire repairs a leftover key only when that record is still there
   to name the generation, so a reused id is a new authentication identity.
   *(Amended 2026-08-14: the live file is no longer repo-local.
   Repo-locality of the live register put orchestrator-private state inside every child's

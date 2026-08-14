@@ -14,7 +14,10 @@ collision, not a handoff. :func:`retire_run` forgets the per-run secret first, t
 archives the document and deletes the live file and the recorded-root sidecar. Forgetting
 the key requires the coordinator-recorded work location, including on the no-live-file
 branch; a second retire repairs a leftover key only when that record is still there to
-name the generation. Every decision and mutation API takes ``run_id`` as a required
+name the generation. Sidecar create, key create, key delete, and retirement share the
+register write lock, so a mint cannot complete while retirement still holds it. When
+retirement returns, that generation's key and sidecar are gone. A mint that waited is
+a new generation. Every decision and mutation API takes ``run_id`` as a required
 argument; a row cannot be named without naming its run. A repository argument constrains
 the operation to a work location whose provenance matches the operation, or it is refused.
 
@@ -108,6 +111,7 @@ import fcntl
 import json
 import os
 import re
+import stat as stat_module
 import subprocess  # nosec B404 -- fixed argv, no shell
 import threading
 import time
@@ -271,37 +275,52 @@ def _same_dir(left: Path, right: Path) -> bool:
         return left.resolve() == right.resolve()
 
 
+def _nearest_existing(path: Path) -> Path:
+    """The nearest existing ancestor of ``path``, or ``path`` resolved if it exists."""
+    current = Path(path)
+    for candidate in (current, *current.parents):
+        if candidate.exists():
+            return candidate.resolve()
+    return current.resolve()
+
+
 def canonical_work_location(root: Path) -> Path:
-    """The git top level that contains ``root``, or ``root`` resolved if git cannot name one.
+    """The git top level that contains ``root``.
 
     A user-facing directory is often a package subdirectory. The run's work location is
-    the repository, not the package. Failure to resolve (bare repo, not a repo, git
-    missing) is not an error: the resolved path is used as-is so a temporary directory
-    and a non-repository ``--root`` keep working.
+    the repository, not the package.
+
+    ``root`` need not exist. Git is asked from the nearest existing ancestor, so
+    ``repo/packages/future-tool`` and ``repo/packages/tool`` name the same repository.
+    If git cannot answer (bare repo, not a repo, git missing), the nearest existing
+    ancestor is used. That is deliberate, not a silent degrade: a temporary directory
+    used as a test root is not a repository, and a nonexistent descendant of one must
+    not stamp a path that later canonicalizes to something else.
     """
-    claimed = Path(root).resolve()
+    intended = Path(root)
+    existing = _nearest_existing(intended)
     env = {key: value for key, value in os.environ.items() if key not in _GIT_IDENTITY_ENV}
     try:
         result = subprocess.run(  # nosec B603 -- fixed argv, no shell
-            ["git", "-C", str(claimed), "rev-parse", "--show-toplevel"],
+            ["git", "-C", str(existing), "rev-parse", "--show-toplevel"],
             check=False,
             capture_output=True,
             text=True,
             env=env,
         )
     except OSError:
-        return claimed
+        return existing
     toplevel = result.stdout.strip()
     if result.returncode != 0 or not toplevel:
-        return claimed
+        return existing
     resolved = Path(toplevel).resolve()
     try:
-        claimed.relative_to(resolved)
+        intended.resolve().relative_to(resolved)
     except ValueError:
         # git walked up to a repository that does not contain this directory
         # (a pytest tmp next to an unrelated checkout). That is not a work
         # location for this caller.
-        return claimed
+        return existing
     return resolved
 
 
@@ -366,12 +385,14 @@ def _atomic_write_json(path: Path, doc: Mapping[str, Any]) -> None:
 
 @contextmanager
 def _write_locked(run_id: str) -> Iterator[None]:
-    """Serialize register read-modify-write cycles with one exclusive advisory lock.
+    """Serialize this run's generation: live register, recorded root, and key.
 
     A single atomic write already guarantees no reader sees a torn file, but it does not by
     itself protect a *sequence* of read-then-write against a second writer's read-then-write
-    landing in between (a lost-update race). This lock is what makes "two sequential writers do
-    not lose the first writer's row" true even when the writers run concurrently.
+    landing in between (a lost-update race). The same lock covers sidecar create-and-check,
+    key create-and-delete, and retirement, so those acts observe one generation. It is not
+    reentrant: a holder must call unlocked helpers, not the public functions that take it
+    again.
     """
     lock_path = _lock_path(run_id)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -382,6 +403,9 @@ def _write_locked(run_id: str) -> Iterator[None]:
     finally:
         fcntl.flock(fd, fcntl.LOCK_UN)
         os.close(fd)
+
+
+generation_locked = _write_locked
 
 
 @contextmanager
@@ -502,17 +526,32 @@ def recorded_work_location(run_id: str) -> Path | None:
     return _recorded_root(_safe_run_id(run_id))
 
 
+def _read_recorded_root_file(path: Path) -> Path:
+    """The one reader for the coordinator sidecar.
+
+    Rejects symbolic links and owner-access violations. Canonicalizes the stored
+    path so a value written by an older revision still compares as the repository.
+    """
+    info = path.lstat()
+    if stat_module.S_ISLNK(info.st_mode):
+        raise RegisterError(f"run root {path} is a symlink; it must be a regular file")
+    if info.st_mode & 0o077:
+        raise RegisterError(
+            f"run root {path} is accessible beyond its owner (mode "
+            f"{stat_module.S_IMODE(info.st_mode):04o}); refusing to trust a record another "
+            "account can read or replace"
+        )
+    material = path.read_bytes().decode("utf-8").strip()
+    if not material:
+        raise RegisterError(f"run root {path} is empty")
+    return canonical_work_location(Path(material))
+
+
 def _recorded_root(run_id: str) -> Path | None:
     path = register_dir() / f"{run_id}.root"
     if not path.exists():
         return None
-    try:
-        material = path.read_text(encoding="utf-8").strip()
-    except OSError:
-        return None
-    if not material:
-        return None
-    return Path(material).resolve()
+    return _read_recorded_root_file(path)
 
 
 def _live_document_has_rows(run_id: str) -> bool:
@@ -547,6 +586,8 @@ def assert_root_belongs_to_run(
     claimed = canonical_work_location(root)
     if require_recorded:
         expected = _recorded_root(run_id)
+        if expected is not None:
+            expected = canonical_work_location(expected)
         if expected is None:
             raise RegisterError(
                 f"run {run_id!r} has no recorded work location; refusing to "
@@ -560,6 +601,8 @@ def assert_root_belongs_to_run(
         return expected
 
     expected = run_work_location(run_id)
+    if expected is not None:
+        expected = canonical_work_location(expected)
     if expected is None:
         if require_binding or _live_document_has_rows(run_id):
             raise RegisterError(
@@ -603,7 +646,7 @@ def rows_stamped_against(root: Path) -> dict[tuple[str, str], dict[str, Any]]:
         stamped = doc.get("repo_root")
         if not isinstance(stamped, str):
             continue
-        if _same_dir(Path(stamped), target):
+        if _same_dir(canonical_work_location(Path(stamped)), target):
             for rid, row in doc["rows"].items():
                 merged[(live_id, rid)] = dict(row)
     return merged
@@ -695,10 +738,10 @@ def _expected_archive_root(run_id: str, doc: Mapping[str, Any]) -> Path | None:
     """Work location from orchestrator-private state: sidecar first, then stamped root."""
     recorded = _recorded_root(run_id)
     if recorded is not None:
-        return recorded
+        return canonical_work_location(recorded)
     stamped = doc.get("repo_root")
     if isinstance(stamped, str) and stamped:
-        return Path(stamped).resolve()
+        return canonical_work_location(Path(stamped))
     return None
 
 
@@ -711,12 +754,13 @@ def retire_run(root: Path, run_id: str) -> Path | None:
     filesystem identity. A mismatch raises and leaves the live file, sidecar, and key
     untouched.
 
-    Observation and destruction share one lock. *"The live file is absent"* is not
-    proof the key belongs to a retired generation: a later caller can record a root,
-    mint a key, and write a live row in the gap. The no-live branch therefore forgets
-    the key only when the recorded root is still present and matches. No recorded
-    root is a true no-op — a leftover key is left alone, because it may belong to a
-    newly minted generation.
+    Observation and destruction of this generation share the register write lock
+    with sidecar create and key create. *"The live file is absent"* is not proof the
+    key belongs to a retired generation. The no-live branch therefore forgets the
+    key only when the recorded root is still present and matches. No recorded root
+    is a true no-op — a leftover key is left alone, because it may belong to a newly
+    minted generation. A concurrent mint cannot complete while this function holds
+    the lock; when it returns, this generation's key and sidecar are gone.
 
     The per-run secret is forgotten **before** the live file is removed. A crash after
     that point leaves a live register whose receipts no longer unseal — this module
@@ -753,7 +797,7 @@ def retire_run(root: Path, run_id: str) -> Path | None:
                     f"with {claimed}; the archive destination is the recorded work "
                     "location, so a mismatch leaves the key and sidecar untouched"
                 )
-            _forget_run_secret(claimed, run_id)
+            _unlink_run_secret(run_id)
             with contextlib.suppress(FileNotFoundError):
                 sidecar.unlink()
             existing = final_register_path(recorded, run_id)
@@ -773,7 +817,7 @@ def retire_run(root: Path, run_id: str) -> Path | None:
 
         doc = _read_register_unlocked(run_id)
         doc["repo_root"] = str(recorded)
-        _forget_run_secret(claimed, run_id)
+        _unlink_run_secret(run_id)
         rows: dict[str, dict[str, Any]] = doc["rows"]
         final_path = final_register_path(recorded, run_id)
         if not rows and final_path.exists():
@@ -798,34 +842,43 @@ def retire_run(root: Path, run_id: str) -> Path | None:
         return final_path
 
 
-def reconcile_stamp(run_id: str, recorded: Path) -> None:
+def reconcile_stamp(run_id: str, recorded: Path, *, already_locked: bool = False) -> None:
     """Rewrite a disagreeing first-writer stamp to the recorded work location.
 
     Called from :func:`completion.record_run_root` after the sidecar is written so
     the operator view does not keep listing the run under a package directory.
-    Missing live files are ignored.
+    Missing live files are ignored. ``already_locked`` is for a caller that already
+    holds :func:`generation_locked`; the lock is not reentrant.
     """
     run_id = _safe_run_id(run_id)
-    expected = Path(recorded).resolve()
+    expected = canonical_work_location(recorded)
+    if already_locked:
+        _reconcile_stamp_unlocked(run_id, expected)
+        return
     with _write_locked(run_id):
-        if not register_path(run_id).exists():
-            return
-        doc = _read_register_unlocked(run_id)
-        stamped = doc.get("repo_root")
-        if not isinstance(stamped, str) or not stamped:
-            return
-        if _same_dir(Path(stamped), expected):
-            return
-        doc["repo_root"] = str(expected)
-        _atomic_write_json(register_path(run_id), doc)
+        _reconcile_stamp_unlocked(run_id, expected)
 
 
-def _forget_run_secret(root: Path, run_id: str) -> None:
+def _reconcile_stamp_unlocked(run_id: str, expected: Path) -> None:
+    if not register_path(run_id).exists():
+        return
+    doc = _read_register_unlocked(run_id)
+    stamped = doc.get("repo_root")
+    if not isinstance(stamped, str) or not stamped:
+        return
+    if _same_dir(canonical_work_location(Path(stamped)), expected):
+        return
+    doc["repo_root"] = str(expected)
+    _atomic_write_json(register_path(run_id), doc)
+
+
+def _unlink_run_secret(run_id: str) -> None:
+    """Delete the key. Caller already holds the generation lock and has validated."""
     try:
         import completion as completion_mod
     except ImportError:
         return
-    completion_mod.forget_run_secret(root, run_id)
+    completion_mod.unlink_run_secret(run_id)
 
 
 # --------------------------------------------------------------------------- thin CLI

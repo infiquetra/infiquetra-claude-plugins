@@ -12,9 +12,11 @@
   decision and mutation API requires `run_id`. `retire_run` forgets the per-run secret
   first, then archives the document into the recorded work location, then deletes the
   live file and the recorded-root sidecar, so a reused id is a new authentication
-  identity. Forgetting the key requires the coordinator-recorded work location, including
-  when the live file is already gone. A user-facing `--root` is canonicalized to the git
-  top level before it is validated or stamped. Claude and Muse have no
+  identity. Sidecar create, key mint, key delete, and retirement share one per-run lock,
+  so a concurrent mint cannot complete while retirement still holds it. Forgetting the
+  key requires the coordinator-recorded work location, including when the live file is
+  already gone. Both sides of a work-location comparison are canonicalized to the git
+  top level. Claude and Muse have no
   workspace-write flag; mode `0600` does not exclude a child running as this account, so
   the seal does not defend that residual.
 - Completion is the only path to `verified`. A child reaches it when its predicate's dependency

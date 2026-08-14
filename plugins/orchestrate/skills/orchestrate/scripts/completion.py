@@ -77,7 +77,6 @@ from __future__ import annotations
 
 import ast
 import contextlib
-import fcntl
 import hashlib
 import hmac
 import json
@@ -548,27 +547,35 @@ def run_secret_dir() -> Path:
     return directory
 
 
+def unlink_run_secret(run_id: str) -> None:
+    """Delete the key file. The caller already holds the generation lock."""
+    path = run_secret_dir() / f"{_safe_component(run_id, label='run_id')}.key"
+    with contextlib.suppress(FileNotFoundError):
+        path.unlink()
+
+
 def forget_run_secret(root: Path, run_id: str) -> None:
     """Delete this run's host-local secret so a later reuse does not inherit identity.
 
     ``root`` must be the coordinator-recorded work location. A first-writer stamp is
     not enough, and a missing record is a refusal: the key may belong to a generation
-    that has already reused this id.
+    that has already reused this id. Validation and unlink share the generation lock
+    so a stale check cannot delete a newer generation's key.
     """
-    recorded = read_run_root(run_id)
-    if recorded is None:
-        raise RunRootError(
-            f"run {run_id!r} has no recorded work location; refusing to forget its secret"
-        )
-    claimed = register_store.canonical_work_location(root)
-    if not _same_recorded_root(claimed, recorded):
-        raise RunRootError(
-            f"run {run_id!r} is recorded against {recorded} and forget_run_secret was "
-            f"called with {claimed}; refusing to forget a key the caller cannot bind"
-        )
-    path = run_secret_dir() / f"{_safe_component(run_id, label='run_id')}.key"
-    with contextlib.suppress(FileNotFoundError):
-        path.unlink()
+    run_id = _safe_component(run_id, label="run_id")
+    with register_store.generation_locked(run_id):
+        recorded = read_run_root(run_id)
+        if recorded is None:
+            raise RunRootError(
+                f"run {run_id!r} has no recorded work location; refusing to forget its secret"
+            )
+        claimed = register_store.canonical_work_location(root)
+        if not _same_recorded_root(claimed, recorded):
+            raise RunRootError(
+                f"run {run_id!r} is recorded against {recorded} and forget_run_secret was "
+                f"called with {claimed}; refusing to forget a key the caller cannot bind"
+            )
+        unlink_run_secret(run_id)
 
 
 def run_secret(root: Path, run_id: str, *, create: bool = True) -> bytes:
@@ -606,36 +613,42 @@ def run_secret(root: Path, run_id: str, *, create: bool = True) -> bytes:
         )
     path = directory / f"{_safe_component(run_id, label='run_id')}.key"
     if path.exists():
-        info = path.lstat()
-        if stat_module.S_ISLNK(info.st_mode):
-            raise RunSecretError(f"run secret {path} is a symlink; it must be a regular file")
-        if info.st_mode & 0o077:
-            raise RunSecretError(
-                f"run secret {path} is accessible beyond its owner (mode "
-                f"{stat_module.S_IMODE(info.st_mode):04o}); refusing to authenticate against a "
-                "secret another account can read or replace"
-            )
-        material = path.read_bytes()
-        if len(material) < RUN_SECRET_BYTES:
-            raise RunSecretError(f"run secret {path} is shorter than {RUN_SECRET_BYTES} bytes")
-        return material
+        return _load_run_secret(path)
     if not create:
         raise RunSecretError(
             f"no orchestrator secret exists for run {run_id!r} at {path}; a durable record "
             "claiming that run cannot be authenticated"
         )
-    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-    material = secrets.token_bytes(RUN_SECRET_BYTES)
-    try:
-        handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError:
-        # A concurrent orchestrator minted it first; its secret is the run's secret.
-        return run_secret(root, run_id, create=False)
-    try:
-        os.write(handle, material)
-        os.fsync(handle)
-    finally:
-        os.close(handle)
+    with register_store.generation_locked(_safe_component(run_id, label="run_id")):
+        if path.exists():
+            return _load_run_secret(path)
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        material = secrets.token_bytes(RUN_SECRET_BYTES)
+        try:
+            handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            return _load_run_secret(path)
+        try:
+            os.write(handle, material)
+            os.fsync(handle)
+        finally:
+            os.close(handle)
+        return material
+
+
+def _load_run_secret(path: Path) -> bytes:
+    info = path.lstat()
+    if stat_module.S_ISLNK(info.st_mode):
+        raise RunSecretError(f"run secret {path} is a symlink; it must be a regular file")
+    if info.st_mode & 0o077:
+        raise RunSecretError(
+            f"run secret {path} is accessible beyond its owner (mode "
+            f"{stat_module.S_IMODE(info.st_mode):04o}); refusing to authenticate against a "
+            "secret another account can read or replace"
+        )
+    material = path.read_bytes()
+    if len(material) < RUN_SECRET_BYTES:
+        raise RunSecretError(f"run secret {path} is shorter than {RUN_SECRET_BYTES} bytes")
     return material
 
 
@@ -661,10 +674,10 @@ def record_run_root(root: Path, run_id: str) -> Path:
     launch from a package subdirectory still names the repository.
 
     The file lives next to the live register, outside every repository, with the same
-    permission rules as the run secret.  Writers of the same path share one exclusive
-    lock and see a complete file or none; there is no empty-file window.  A second
-    writer of a different path is a conflict, not a race.  Comparison is filesystem
-    identity, not text equality of resolved strings.
+    permission rules as the run secret.  Writers share the generation lock with
+    retirement and key minting; they see a complete file or none.  A second writer
+    of a different path is a conflict, not a race.  Comparison is filesystem identity
+    after both sides are canonicalized.
     """
     directory = register_store.register_dir()
     root_resolved = register_store.canonical_work_location(root)
@@ -676,11 +689,8 @@ def record_run_root(root: Path, run_id: str) -> Path:
         )
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     path = _run_root_path(run_id)
-    lock_path = path.with_name(f"{path.name}.lock")
-    lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
-    recorded: Path | None = None
-    try:
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+    run_id = _safe_component(run_id, label="run_id")
+    with register_store.generation_locked(run_id):
         if path.exists():
             existing = _read_run_root_file(path)
             if not _same_recorded_root(existing, root_resolved):
@@ -706,12 +716,8 @@ def record_run_root(root: Path, run_id: str) -> Path:
                 with contextlib.suppress(FileNotFoundError):
                     tmp.unlink()
             recorded = root_resolved
-    finally:
-        fcntl.flock(lock_fd, fcntl.LOCK_UN)
-        os.close(lock_fd)
-    assert recorded is not None
-    register_store.reconcile_stamp(run_id, recorded)
-    return recorded
+        register_store.reconcile_stamp(run_id, recorded, already_locked=True)
+        return recorded
 
 
 def _same_recorded_root(left: Path, right: Path) -> bool:
@@ -722,19 +728,10 @@ def _same_recorded_root(left: Path, right: Path) -> bool:
 
 
 def _read_run_root_file(path: Path) -> Path:
-    info = path.lstat()
-    if stat_module.S_ISLNK(info.st_mode):
-        raise RunRootError(f"run root {path} is a symlink; it must be a regular file")
-    if info.st_mode & 0o077:
-        raise RunRootError(
-            f"run root {path} is accessible beyond its owner (mode "
-            f"{stat_module.S_IMODE(info.st_mode):04o}); refusing to trust a record another "
-            "account can read or replace"
-        )
-    material = path.read_bytes().decode("utf-8").strip()
-    if not material:
-        raise RunRootError(f"run root {path} is empty")
-    return Path(material).resolve()
+    try:
+        return register_store._read_recorded_root_file(path)
+    except register_store.RegisterError as exc:
+        raise RunRootError(str(exc)) from exc
 
 
 def read_run_root(run_id: str) -> Path | None:
@@ -1344,11 +1341,12 @@ def assert_receipt_root(root: Path, receipt: DispatchReceipt) -> None:
     regardless of which directory the caller named -- the sealed root still has to be
     checked against the location the caller named.
     """
-    resolved = str(Path(root).resolve())
-    if resolved != receipt.root:
+    claimed = register_store.canonical_work_location(root)
+    sealed = register_store.canonical_work_location(Path(receipt.root))
+    if not register_store._same_dir(claimed, sealed):
         raise ReceiptRootError(
             f"the dispatch receipt for {receipt.row_id!r} was issued under {receipt.root!r} and is "
-            f"being used under {resolved!r}; the root is the work location this receipt binds, "
+            f"being used under {claimed}; the root is the work location this receipt binds, "
             "so evidence from one repository cannot be presented as belonging to another"
         )
 

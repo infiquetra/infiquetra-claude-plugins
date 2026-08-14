@@ -20,9 +20,10 @@ working tree (default `~/.orchestrate/registers/<run_id>.json`). A `run_id` is h
 two runtimes on one host and one checkout that name the same id share one live document.
 Two checkouts of one `run_id` are a collision. `retire_run` forgets the per-run secret
 first, then archives into the recorded work location, then deletes the live file and the
-recorded-root sidecar, so a reused id is a new authentication identity. Forgetting the
-key requires that recorded location, including when the live file is already gone. See
-`scripts/register.py`'s module docstring for the full column reference.
+recorded-root sidecar. Sidecar create, key mint, key delete, and retirement share one
+per-run lock, so when retirement returns that generation's key and sidecar are gone.
+Forgetting the key requires that recorded location, including when the live file is
+already gone. See `scripts/register.py`'s module docstring for the full column reference.
 
 ## Event subscriber
 

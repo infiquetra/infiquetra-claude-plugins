@@ -20,6 +20,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -3462,6 +3463,94 @@ def test_record_run_root_from_a_package_directory_names_the_repository(
     recorded = COMPLETION.record_run_root(package, "run-a")
     assert recorded == repo.resolve()
     assert COMPLETION.read_run_root("run-a") == repo.resolve()
+
+
+def test_a_concurrent_mint_does_not_complete_before_retirement_returns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A mint that races retirement cannot finish while retirement still holds the lock."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo)
+    key_path = COMPLETION.run_secret_dir() / f"{prepared.spec.run_id}.key"
+    minted_during: list[bytes] = []
+    mint_thread: list[threading.Thread] = []
+    real_unlink = COMPLETION.unlink_run_secret
+
+    def hooked(run_id: str) -> None:
+        real_unlink(run_id)
+
+        def _mint() -> None:
+            minted_during.append(COMPLETION.run_secret(repo, run_id, create=True))
+
+        worker = threading.Thread(target=_mint)
+        mint_thread.append(worker)
+        worker.start()
+        worker.join(0.3)
+
+    monkeypatch.setattr(COMPLETION, "unlink_run_secret", hooked)
+    REGISTER.retire_run(repo, prepared.spec.run_id)
+    assert minted_during == []
+    assert not key_path.exists()
+    assert mint_thread
+    mint_thread[0].join(2)
+    assert mint_thread[0].is_alive() is False
+
+
+def test_record_run_root_takes_the_generation_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Recording the root uses the same lock retirement holds, through the write."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    held: list[str] = []
+    real = COMPLETION.register_store.generation_locked
+
+    def wrapped(run_id: str) -> object:
+        held.append("enter")
+        ctx = real(run_id)
+
+        class _Wrap:
+            def __enter__(self) -> None:
+                ctx.__enter__()
+
+            def __exit__(self, *args: object) -> None:
+                ctx.__exit__(*args)
+                held.append("exit")
+
+        return _Wrap()
+
+    monkeypatch.setattr(COMPLETION.register_store, "generation_locked", wrapped)
+    recorded = COMPLETION.record_run_root(repo, "run-a")
+    assert recorded == repo.resolve()
+    assert held == ["enter", "exit"]
+    assert COMPLETION.read_run_root("run-a") == repo.resolve()
+
+
+def test_a_symlinked_recorded_root_is_refused_by_both_readers(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    COMPLETION.record_run_root(repo, "run-a")
+    sidecar = REGISTER.register_dir() / "run-a.root"
+    payload = sidecar.read_bytes()
+    sidecar.unlink()
+    target = tmp_path / "planted.root"
+    target.write_bytes(payload)
+    sidecar.symlink_to(target)
+    with pytest.raises(REGISTER.RegisterError, match="symlink"):
+        REGISTER.recorded_work_location("run-a")
+    with pytest.raises(COMPLETION.RunRootError, match="symlink"):
+        COMPLETION.read_run_root("run-a")
+
+
+def test_a_receipt_is_accepted_from_a_package_directory(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    package = repo / "packages" / "tool"
+    package.mkdir(parents=True)
+    prepared = _prepare(repo)
+    receipt = COMPLETION.read_receipt(package, prepared.spec.row_id, run_id=prepared.spec.run_id)
+    assert receipt.nonce == prepared.receipt.nonce
 
 
 def test_membership_probes_ignore_an_inherited_git_directory(

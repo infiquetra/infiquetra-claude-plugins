@@ -68,11 +68,14 @@ the assembled marker stays out of echoed dispatch input.
 - **A schema version this code does not support halts loudly (C3).** `register.py` writes a halt
   receipt beside the live file (`<run_id>.halt-receipt.json`) and raises, without ever touching
   the live register itself.
-- **Retiring a run archives that run's document and frees the identity.** `retire_run`
+- **Retiring a run archives that run's document and frees that generation.** `retire_run`
   forgets the per-run secret first, then writes `.orchestrate/runs/<run-id>/register-final.json`
   in the coordinator-recorded work location (verified against the caller-supplied root by
-  filesystem identity, after canonicalizing that root to the git top level), then deletes
-  the live host-local file and the recorded-root sidecar. A first-writer stamp is not
+  filesystem identity, after canonicalizing both sides to the git top level), then deletes
+  the live host-local file and the recorded-root sidecar. Sidecar create, key mint, key
+  delete, and retirement share one per-run lock, so a concurrent mint cannot complete
+  while retirement still holds it. When retirement returns, that generation's key and
+  sidecar are gone. A mint that waited is a new generation. A first-writer stamp is not
   enough to authorize retirement or key deletion. A crash after the secret is gone leaves
   receipts that no longer unseal; a second `retire_run` repairs a leftover key only when
   the recorded root is still there to name the generation. No recorded root and no live

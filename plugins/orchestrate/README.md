@@ -7,8 +7,8 @@ their results, and hold the operator's conversation steady while they run.
 **This release ships the register, tracked herdr event subscriber, child session lifecycle, and
 completion** — write-ahead launch, interaction readiness, scoped worktrees, recorded reaping, and
 the only path a child reaches `verified`: a bounded predicate run on a settled, run-bound artifact,
-inside its boundary, with its destination actually changed and, for judgment work, an independent
-verifier's depth sample on record. See `skills/orchestrate/SKILL.md` for the full contract and
+inside its boundary, with its destination actually changed and, for judgment work, a claimed
+independent verifier's depth sample on record. See `skills/orchestrate/SKILL.md` for the full contract and
 `CHANGELOG.md` for what is and is not implemented yet. The full design lives in
 `docs/plans/2026-08-12-orchestrate-plugin-plan.md`.
 
@@ -64,7 +64,7 @@ Launch and observation are fixed to Herdr's default session. See
 the expected evidence identity *before* dispatch — run-binding token, destination pre-state,
 predicate dependency closure and content digest — then settles the artifact by renaming the child's
 in-flight file itself, runs the bounded predicate, checks the boundary, verifies the destination
-changed, and for judgment work requires an independent verifier's depth sample.
+changed, and for judgment work requires a claimed independent verifier's depth sample.
 
 Because the register is Git-ignored and therefore writable by any child without the boundary check
 seeing it, the durable dispatch receipt and settlement record each carry a keyed digest under a

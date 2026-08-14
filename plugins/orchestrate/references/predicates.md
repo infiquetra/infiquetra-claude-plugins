@@ -2,7 +2,7 @@
 
 A child is `verified` when a bounded mechanical check passes on a settled, run-bound artifact,
 inside its declared boundary, with its recorded destination actually changed — and, for judgment
-work, with an independent verifier's depth sample on record. Every one of those clauses is a
+work, with a claimed independent verifier's depth sample on record. Every one of those clauses is a
 refusal point. There is no partial pass.
 
 This document states what each control actually establishes and, just as importantly, what it does
@@ -468,7 +468,8 @@ distinguishable from "still working" without a new phase.
 
 0. **Identity — every input the verdict depends on, not just the labels.** The child specification,
    the landing, the changed-path baseline and the receipt arrive as four independent arguments, and
-   every outcome is recorded under the *specification's* row in the *receipt's own* register.
+   a landing that sits inside the receipt's repository has its outcome recorded under the
+   *specification's* row in that register. A landing that does not raises rather than records.
    Nothing further down would notice if they described different dispatches. The bound set is the
    mechanical answer to "what does the evaluator read before deciding?", and taking that answer
    needs two passes in this order: **enumerate the signature, then the attribute reads.** Collecting
@@ -512,21 +513,31 @@ distinguishable from "still working" without a new phase.
    two writers of one register column. One producer, one binder, one comparison. Any disagreement is
    `receipt_mismatch`, before anything else is read.
 
-   The root is the one member of the class that is **not compared at all**, because it is not
-   supplied. Comparing it was tried and it does not work: every such comparison put a value the
-   caller passed beside the copy the receipt made from that same value at issue time. That catches
-   a caller who changes the repository between issuing and evaluating, and it cannot, even in
-   principle, catch one that was wrong when it was copied — and the copy is made at issue time,
-   which is the *first* observation of the repository and so has nothing to compare against. A
-   check of X against a copy of X is not a check of X.
+   The root is **derived, not supplied**. Comparing a supplied root against the receipt was tried
+   and it does not work: every such comparison put a value the caller passed beside the copy the
+   receipt made from that same value at issue time. That catches a caller who changes the
+   repository between issuing and evaluating, and it cannot, even in principle, catch one that was
+   wrong when it was copied — and the copy is made at issue time, which is the *first* observation
+   of the repository and so has nothing to compare against. A check of X against a copy of X is not
+   a check of X.
 
    So the parameter is gone from `issue_receipt`, `evaluate_completion`, `settle_artifact` and
    `settlement_record`. Issuing derives the repository from `landing.ambient_root`, which
    `GitLanding.provision` sets to the repository for both landing kinds — the ambient checkout for
-   a read-only child, and the checkout a mutating child's worktree was cut from. Everything after
-   issuing reads `receipt.root`. A landing that does not name its repository is refused rather than
-   defaulted to its working directory, because that default would seal a mutating child's worktree
-   as its repository and file the verdict where nothing else about the run is recorded.
+   a read-only child, and the checkout a mutating child's worktree was cut from — and refuses a
+   landing that does not sit inside that repository. `cwd` and `ambient_root` are independently
+   settable; a receipt sealed from a working directory in one repository and a claimed root in
+   another is internally consistent and would pass every later comparison. Containment against the
+   filesystem is a fact with a provenance independent of either field.
+
+   Evaluation still has two objects that name a repository. It takes the store from `receipt.root`
+   only after the landing is shown to sit inside that repository, and raises rather than records
+   when it does not: there is then no register this evaluation may write. `settlement_record` and
+   `settle_artifact` receive a receipt and no second opinion, so they read the sealed root as the
+   authority on where that receipt's own settlement belongs. A landing that does not name its
+   repository is refused rather than defaulted to its working directory, because that default
+   would seal a mutating child's worktree as its repository and file the verdict where nothing
+   else about the run is recorded.
 
    `read_receipt` is the exception and it keeps the check. It is handed a repository and a row id
    and has no receipt yet, so the repository genuinely has to be supplied; there the two values

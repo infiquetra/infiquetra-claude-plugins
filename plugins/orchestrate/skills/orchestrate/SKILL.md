@@ -166,12 +166,13 @@ before evaluation, and a closure that changes between dispatch and evaluation fa
 
 The receipt must belong to the child being evaluated: the specification, landing, baseline and
 receipt arrive as four independent arguments, so run, row and landing are checked against it first.
-The repository is deliberately not a fifth. Issuing derives it from the landing, and every control
-after that takes it from the sealed receipt, so no caller can name a second repository for one
-verdict — do not add a root parameter back when you wire this up. A repository that cannot be
-supplied separately cannot be supplied wrongly, which is a stronger property than any comparison
-between two supplied values, because the comparison at issue time would have nothing to compare
-against.
+The repository is deliberately not a fifth. Issuing derives it from the landing and refuses a
+landing whose working directory does not sit inside the repository it names. Evaluation takes the
+store from the sealed receipt only after the landing is shown to sit inside that repository, and
+raises rather than records when it does not — do not add a root parameter back when you wire this
+up. A landing can still name any repository; it cannot do so and remain internally consistent.
+`ambient_root` is not a register column. Reconstruct it from the orchestrator's own resolved
+root — the same value `GitLanding.provision` sets — never from a child's working directory.
 
 Settlement is performed, not inferred. The child writes only an in-flight sibling of its
 destination; the orchestrator requires the destination to be untouched and then renames the
@@ -187,7 +188,7 @@ digest under a per-run secret held outside the repository. A record the orchestr
 authenticates against nothing.
 
 Integration to the recorded destination is verified before `verified` is written, so a child whose
-change never landed cannot be reaped. Judgment-shaped work additionally requires an independent
+change never landed cannot be reaped. Judgment-shaped work additionally requires a claimed independent
 verifier's depth sample, bound by digest to the settled artifact and supporting at least one sampled
 claim — all of it persisted, so a sampled child and an unsampled one are not the same green row.
 

@@ -2683,10 +2683,9 @@ def test_the_repository_is_not_an_argument_a_caller_can_supply(tmp_path: Path) -
     compare against at all.
 
     So the parameter is gone rather than checked: issuance derives the repository from the
-    landing, and every later control takes the sealed value off the receipt. A value that cannot
-    be supplied separately cannot be supplied wrongly, and unlike a comparison, that property is
-    readable straight off the signature and cannot be true for the cases someone thought of and
-    false for the rest.
+    landing and refuses a landing that does not sit inside it, and every later control takes the
+    sealed value off the receipt. Evaluation still has two objects that name a repository; it
+    raises rather than records when the landing does not sit inside the receipt's.
     """
     for name in ("issue_receipt", "evaluate_completion", "settle_artifact", "settlement_record"):
         parameters = inspect.signature(getattr(COMPLETION, name)).parameters
@@ -2779,6 +2778,119 @@ def test_a_landing_that_does_not_name_its_repository_cannot_be_issued_a_receipt(
             changed_paths_baseline=_baseline(git, landing),
         )
     assert "does not name the repository" in str(raised.value)
+
+
+def test_a_landing_cannot_name_a_repository_it_does_not_sit_in(tmp_path: Path) -> None:
+    """cwd and ambient_root are independently settable; issuance refuses when they disagree.
+
+    Deriving the repository from ambient_root removed the parameter and left the pair on the
+    type. A receipt sealed from those two fields is internally consistent, so every later
+    comparison agrees -- a check of a value against a copy of that value. Containment against
+    the filesystem is a fact with a provenance independent of either field.
+
+    The after-state of the ambient-root reproduction: issuance raises, neither register gains a
+    receipt or a completion, and the artifact is not settled.
+    """
+    repo_a = tmp_path / "repo-a"
+    repo_b = tmp_path / "repo-b"
+    _init_repo(repo_a)
+    _init_repo(repo_b)
+    spec = _spec()
+    git = LIFECYCLE.GitLanding()
+    honest = git.provision(repo_a, spec)
+    poisoned = replace(honest, ambient_root=repo_b.resolve())
+    REGISTER.upsert_row(
+        repo_b,
+        spec.row_id,
+        {"run_id": spec.run_id, "phase": "working", "expected_state": "working"},
+    )
+    artifacts = COMPLETION.artifact_landing(Path(poisoned.cwd), spec.run_id, spec.row_id)
+    relative = artifacts.relative_to(Path(poisoned.cwd).resolve()) / "report.json"
+
+    with pytest.raises(COMPLETION.ReceiptRootError, match="does not sit inside") as raised:
+        COMPLETION.issue_receipt(
+            spec,
+            poisoned,
+            _predicate(relative.as_posix()),
+            artifact_name="report.json",
+            git=git,
+            changed_paths_baseline=_baseline(git, poisoned),
+        )
+    assert str(repo_b.resolve()) in str(raised.value)
+
+    with pytest.raises(COMPLETION.ReceiptRootError, match="does not sit inside"):
+        COMPLETION.landing_root(poisoned)
+
+    assert spec.row_id not in REGISTER.read_rows(repo_a)
+    row_b = REGISTER.read_rows(repo_b)[spec.row_id]
+    assert row_b["phase"] == "working"
+    assert "dispatch_receipt" not in row_b
+    assert "completion" not in row_b
+    assert not (artifacts / "report.json").exists()
+
+
+def test_evaluating_with_another_repositorys_receipt_raises_and_writes_neither_register(
+    tmp_path: Path,
+) -> None:
+    """A receipt from another repository cannot select that repository's register.
+
+    Repository A holds an honest verified child. Repository B holds a child with the same row
+    id, evaluated with A's authentic receipt. The false pass is already refused. The remaining
+    harm is the false write: recording the mismatch under A demotes A's verified row, and
+    recording it under B still writes a verdict into a store this pairing has no business
+    touching once the two arguments disagree about the repository. The caller sees the
+    exception. A's verified row stays verified. B stays working and has no completion record.
+    """
+    repo_a = tmp_path / "repo-a"
+    repo_b = tmp_path / "repo-b"
+    _init_repo(repo_a)
+    _init_repo(repo_b)
+    spec = _spec()
+    git = LIFECYCLE.GitLanding()
+
+    landing_a = git.provision(repo_a, spec)
+    REGISTER.upsert_row(
+        repo_a,
+        spec.row_id,
+        {"run_id": spec.run_id, "phase": "working", "expected_state": "working"},
+    )
+    artifacts_a = COMPLETION.artifact_landing(Path(landing_a.cwd), spec.run_id, spec.row_id)
+    rel_a = artifacts_a.relative_to(Path(landing_a.cwd).resolve()) / "report.json"
+    baseline_a = _baseline(git, landing_a)
+    receipt_a = COMPLETION.issue_receipt(
+        spec,
+        landing_a,
+        _predicate(rel_a.as_posix()),
+        artifact_name="report.json",
+        git=git,
+        changed_paths_baseline=baseline_a,
+    )
+    prepared_a = _Prepared(repo_a, spec, landing_a, git, receipt_a, baseline_a)
+    prepared_a.run_child_process()
+    first = COMPLETION.evaluate_completion(spec, landing_a, baseline_a, receipt_a, git=git)
+    assert first.verified is True, first.detail
+    assert REGISTER.read_rows(repo_a)[spec.row_id]["phase"] == "verified"
+
+    landing_b = git.provision(repo_b, spec)
+    REGISTER.upsert_row(
+        repo_b,
+        spec.row_id,
+        {"run_id": spec.run_id, "phase": "working", "expected_state": "working"},
+    )
+    baseline_b = _baseline(git, landing_b)
+    prepared_b = _Prepared(repo_b, spec, landing_b, git, receipt_a, baseline_b)
+    prepared_b.run_child_process()
+
+    with pytest.raises(COMPLETION.ReceiptRootError, match="not inside the repository") as raised:
+        COMPLETION.evaluate_completion(spec, landing_b, baseline_b, receipt_a, git=git)
+    assert str(Path(receipt_a.root).resolve()) in str(raised.value)
+
+    row_a = REGISTER.read_rows(repo_a)[spec.row_id]
+    row_b = REGISTER.read_rows(repo_b)[spec.row_id]
+    assert row_a["phase"] == "verified"
+    assert (row_a.get("completion") or {}).get("result") == "verified"
+    assert row_b["phase"] == "working"
+    assert "completion" not in row_b
 
 
 def test_a_receipt_copied_into_another_repositorys_register_is_refused_when_it_is_read(
@@ -2910,6 +3022,7 @@ _VERIFIER_OVERCLAIMS = (
     "proof that the verifier ran",
     "establishes that the verifier ran",
     "confirms that the verifier ran",
+    "an independent verifier's depth sample",
 )
 
 
@@ -2971,6 +3084,7 @@ def test_every_identity_paragraph_describes_the_argument_list_the_evaluator_take
         (contract, "predicates.md"),
     ):
         assert "four independent arguments" in text, label
+        assert "raises rather than records" in text, label
     for text, label in ((module_doc, "completion.py module docstring"), (skill, "SKILL.md")):
         assert "specification, landing, baseline and receipt" in text, label
         assert "not a fifth" in text, label

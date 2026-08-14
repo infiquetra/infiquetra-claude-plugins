@@ -2,6 +2,50 @@
 
 ## 2026-08-13
 
+### A landing must sit inside the repository that will receive its verdict  {#landing-sits-in-its-repository}
+
+Deleting the repository parameter closed the two named false-pass paths and left two adjacent
+ones: a foreign receipt's *refusal* wrote into the foreign register, and a landing whose
+`cwd` and `ambient_root` named different repositories issued a self-consistent receipt that
+verified in the claimed one while the work happened in the other.
+
+**Decision.** Two checks, at the two producers, neither of which compares a value to a copy of
+itself.
+
+*At issue.* `landing_root` refuses a landing whose working directory does not sit inside the
+repository it names. The two legitimate shapes `GitLanding.provision` produces — `cwd ==
+ambient_root`, and `cwd == ambient_root/.orchestrate/worktrees/<run>/<row>` — both satisfy
+containment. Containment, not the exact worktree path, because a future landing shape that is
+still inside the repository should issue, and the property that closes the reproduction is
+"these two fields do not describe different repositories", not "this landing was produced by
+`provision`".
+
+*At evaluation.* `assert_landing_in_receipt_repository` runs before any register is selected.
+A landing whose working directory is not inside `receipt.root` raises. Every other refusal in
+the evaluator is recorded, because a recorded refusal is durable evidence; this one has no
+register it may write. Same-repository mismatches, including an `ambient_root` substituted to
+a subdirectory of the same checkout, still record as `receipt_mismatch` — that case has a
+store this evaluation may write.
+
+`settlement_record` and `settle_artifact` receive a receipt and no second opinion about the
+repository. They keep reading the sealed root. After the issue-time containment check they
+cannot be handed a production receipt whose `landing_cwd` and `root` disagree.
+
+**Rejected: treating both findings as one ordering defect.** The foreign-refusal path is
+"the store was chosen from the receipt before asking whether the landing belongs there."
+The ambient-root path is not: the receipt is internally consistent, evaluation has nothing
+to reconcile, and the producer that was wrong is issuance. An ordering fix at evaluation
+leaves that path open. **Rejected: recording the refusal in the landing's claimed
+repository.** That would close the honest-landing case and write a verdict into a store the
+landing merely *claimed* when the landing is the one that lies. **Rejected: requiring the
+exact worktree layout at issue.** Stronger than the property, and it would refuse a landing
+shape this unit does not yet have.
+
+**Revisit when** a later unit persists `cwd` and reconstructs `Landing`. `ambient_root` is
+not a register column; that reconstructor must take it from the orchestrator's own resolved
+root, the same value `provision` sets, and the issue-time containment check is what fails
+closed if they do not.
+
 ### The repository is derived from the landing and the receipt, never supplied  {#repository-is-derived}
 
 Four consecutive review rounds found a false pass in the same class — evidence from one repository
@@ -36,6 +80,12 @@ wrong for mutating ones, and the two are indistinguishable in any test that uses
 **Revisit when** a caller genuinely has a repository but no landing and no receipt. That caller
 needs `read_receipt`'s shape — supply the repository, check the seal against it — not a new
 parameter on the evaluator.
+
+**Later.** Deleting the parameter did not delete the pair. `Landing.cwd` and
+`Landing.ambient_root` remain independently settable, evaluation still receives a landing and
+a receipt that can name different repositories, and binding every refusal to `receipt.root`
+before asking whether the landing belongs there demoted an unrelated `verified` row. The
+parameter stays deleted. The two remaining pairs are closed by `{#landing-sits-in-its-repository}`.
 
 ### The repository root is a deciding input, and it refuses by raising  {#root-is-a-deciding-input}
 

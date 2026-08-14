@@ -8,13 +8,16 @@
   closure is unchanged, its artifact was settled by the orchestrator's own rename, that artifact
   carries this dispatch's pre-established run binding, the predicate passes, the repository
   boundary is clean, the recorded destination has actually changed, and — for judgment-shaped work
-  — an independent verifier's depth sample is on record. Any failure records a verdict, and a row's
-  phase is `verified` if and only if its latest verdict is a pass: a first failure leaves the phase
-  alone, and a failing re-evaluation demotes a previously verified row so the reap gate cannot
-  consume a contradiction as a pass.
+  — a claimed independent verifier's depth sample is on record. A failure records a verdict when
+  the landing sits inside the receipt's repository; a landing in a different repository raises
+  rather than records, because neither register is then a store this evaluation may write. A
+  row's phase is `verified` if and only if its latest verdict is a pass: a first failure leaves
+  the phase alone, and a failing re-evaluation demotes a previously verified row so the reap
+  gate cannot consume a contradiction as a pass.
 - The receipt binds **every input the verdict depends on**, not the labels that name the dispatch.
-  The specification, landing, baseline and receipt arrive as four independent arguments and every
-  outcome is recorded under the specification's row in the receipt's own register, so the run, row,
+  The specification, landing, baseline and receipt arrive as four independent arguments. A landing
+  that sits inside the receipt's repository has its outcome recorded under the specification's
+  row in that register; a landing that does not raises rather than records. So the run, row,
   landing, work shape, mutability, declared scope, base commit, ambient root and changed-paths
   baseline must all agree with the receipt before anything else is read. Otherwise a
   receipt issued for judgment work verified under a mechanical shape, which skips the depth gate
@@ -32,9 +35,12 @@
   Comparing a supplied root against the receipt was not enough, because the receipt's copy was made
   from that same supplied value at issue time — that catches a caller who changes it in between and
   cannot catch one that was wrong to begin with. So `issue_receipt` derives it from
-  `landing.ambient_root`, and `evaluate_completion`, `settle_artifact` and `settlement_record` take
-  it from the sealed receipt; none of the four accepts it as an argument. A landing that does not
-  name its repository is refused rather than defaulted to its working directory. `read_receipt` is
+  `landing.ambient_root` and refuses a landing that does not sit inside that repository, and
+  `evaluate_completion`, `settle_artifact` and `settlement_record` take it from the sealed receipt;
+  none of the four accepts it as an argument. Evaluation still has two objects that name a
+  repository: it raises rather than records when the landing does not sit inside the receipt's.
+  A landing that does not name its repository is refused rather than defaulted to its working
+  directory. `read_receipt` is
   the one function that still takes a repository, because it is handed one with a row id and has no
   receipt yet — it checks the sealed root against the register it read, which is what stops an
   authentic verifier dispatch copied from another checkout of the same run from satisfying the

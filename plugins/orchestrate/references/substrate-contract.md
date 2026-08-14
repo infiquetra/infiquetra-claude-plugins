@@ -162,7 +162,7 @@ is an unexplained disappearance and raises. A missing tab after the transition i
 `verified` is now written in exactly one place: a completion evaluation in which the predicate's
 dependency closure is unchanged, the artifact was settled by the orchestrator's own rename, the
 artifact carries this dispatch's pre-established run binding, the predicate passed, the boundary is
-clean, the recorded destination actually changed, and — for judgment-shaped work — an independent
+clean, the recorded destination actually changed, and — for judgment-shaped work — a claimed independent
 verifier's depth sample is on record. The integration clause is what makes reaping safe on real
 work: a child whose change never landed cannot reach `verified`, so it cannot be reaped and its
 worktree cannot be discarded with the change still in it.

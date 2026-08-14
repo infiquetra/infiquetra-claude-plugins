@@ -54,8 +54,11 @@ Ordering
 --------
 Identity first: the specification, landing, baseline and receipt arrive as four independent
 arguments, and a receipt that belongs to a different child is refused before anything else is
-read.  The repository is deliberately not a fifth: evaluation takes it from the sealed receipt,
-which took it from the landing it was issued against, so no caller can name a second one.
+read.  The repository is deliberately not a fifth: issuing derives it from the landing and
+refuses a landing that does not sit inside the repository it names; evaluation takes the store
+from the sealed receipt only after the landing is shown to sit inside that repository, and
+raises rather than records when it does not -- there is then no register this evaluation may
+write.
 
 Then evidence integrity, short-circuiting (tamper, settlement, binding), because an unsettled or
 unbound artifact is not evidence and there is nothing to evaluate.  Then the predicate outcome and
@@ -876,6 +879,11 @@ def assert_landing_is_invisible_to_git(
         )
 
 
+def _sits_inside(path: Path, root: Path) -> bool:
+    """True when ``path`` is ``root`` or a descendant, after resolving both."""
+    return path.resolve().is_relative_to(root.resolve())
+
+
 def landing_root(landing: session_lifecycle.Landing) -> Path:
     """The repository a landing belongs to, which is the only place its verdict may be recorded.
 
@@ -886,6 +894,12 @@ def landing_root(landing: session_lifecycle.Landing) -> Path:
     A landing built by hand with no ``ambient_root`` is refused rather than defaulted to ``cwd``.
     Defaulting would silently seal a mutating child's *worktree* as its repository, and a worktree
     has its own register: the verdict would be recorded where nothing else about the run is.
+
+    A landing whose working directory does not sit inside the repository it names is also refused.
+    ``cwd`` and ``ambient_root`` are independently settable; a receipt sealed from a working
+    directory in one repository and a claimed root in another is internally consistent and would
+    pass every later comparison. Containment against the filesystem is a fact with a provenance
+    independent of either field.
     """
     if landing.ambient_root is None:
         raise ReceiptRootError(
@@ -893,7 +907,15 @@ def landing_root(landing: session_lifecycle.Landing) -> Path:
             "records where its own verdict lands, so it cannot be issued against a landing whose "
             "repository is unknown"
         )
-    return Path(landing.ambient_root).resolve()
+    root = Path(landing.ambient_root).resolve()
+    cwd = Path(landing.cwd).resolve()
+    if not _sits_inside(cwd, root):
+        raise ReceiptRootError(
+            f"the landing at {cwd} does not sit inside the repository it names ({root}); a "
+            "receipt sealed from those two fields would agree with itself and record the verdict "
+            "where the work did not happen"
+        )
+    return root
 
 
 def issue_receipt(
@@ -934,7 +956,9 @@ def issue_receipt(
     that same value here, which is not a check of it.  A separate root parameter could therefore be
     wrong in the one place no later control could ever notice: a receipt sealed under repository B
     carrying a landing in repository A passed every comparison and recorded the pass in B while the
-    work happened in A.  Deriving it removes the pair rather than adding a fifth comparison.
+    work happened in A.  Deriving it removes that parameter.  It does not remove the pair on the
+    landing itself -- ``cwd`` and ``ambient_root`` remain independently settable -- so
+    :func:`landing_root` also refuses a landing that does not sit inside the repository it names.
     """
     root = landing_root(landing)
     landing_cwd = Path(landing.cwd).resolve()
@@ -1071,9 +1095,11 @@ def assert_receipt_root(root: Path, receipt: DispatchReceipt) -> None:
     Everywhere else the pair was deleted instead of compared.  A comparison between a supplied root
     and the copy made from that same supplied root at issue time can only catch a caller who
     changed it in between; it cannot, even in principle, catch one that was wrong when it was
-    copied.  So :func:`issue_receipt` derives the repository from the landing and
-    :func:`settle_artifact`, :func:`settlement_record` and :func:`evaluate_completion` take it from
-    the sealed receipt.  A value that cannot be supplied separately cannot be supplied wrongly.
+    copied.  So :func:`issue_receipt` derives the repository from the landing -- and refuses a
+    landing that does not sit inside it -- and :func:`settle_artifact`, :func:`settlement_record`
+    and :func:`evaluate_completion` take it from the sealed receipt.  Evaluation still has two
+    objects that name a repository; it raises rather than records when the landing does not sit
+    inside the receipt's.
 
     The per-run secret cannot stand in for this check: it is named for the run alone and lives
     outside every repository, so two checkouts running one run id share it and a receipt authentic
@@ -1085,6 +1111,31 @@ def assert_receipt_root(root: Path, receipt: DispatchReceipt) -> None:
             f"the dispatch receipt for {receipt.row_id!r} was issued under {receipt.root!r} and is "
             f"being used under {resolved!r}; the root selects the register that receives the "
             "verdict, so evidence from one repository cannot record a result in another"
+        )
+
+
+def assert_landing_in_receipt_repository(
+    landing: session_lifecycle.Landing, receipt: DispatchReceipt
+) -> None:
+    """Refuse a landing that does not sit inside the repository the receipt was issued under.
+
+    Evaluation receives the landing and the receipt as independent arguments.  The receipt names
+    a store; the landing names a place of work.  The store is chosen only after they are shown
+    to describe the same repository.  Choosing first is how a foreign receipt's mismatch refusal
+    demoted an unrelated ``verified`` row that shared the row id.
+
+    When they disagree there is no register this evaluation may write: the receipt's store is
+    another child's, and the landing's claimed repository is not known to be where the work
+    actually sits.  Every other refusal in this module is recorded, because a recorded refusal is
+    durable evidence.  This one cannot be.
+    """
+    root = Path(receipt.root).resolve()
+    cwd = Path(landing.cwd).resolve()
+    if not _sits_inside(cwd, root):
+        raise ReceiptRootError(
+            f"the landing at {cwd} is not inside the repository the receipt was issued under "
+            f"({root}); a refusal cannot be recorded in either register without writing a "
+            "verdict about one child into another's store"
         )
 
 
@@ -1776,16 +1827,22 @@ def evaluate_completion(
     at a recorded digest; dispatch an independent verifier against that settled path; evaluate
     again with its sample.  The second call re-runs the mechanical controls rather than trusting
     the first call's verdict, so the answer is a fresh one, not a cached one.
-    """
-    # The register is the receipt's own. It is not an argument, so there is no second repository a
-    # caller could name and nothing to compare: the sealed receipt is the authority on where its
-    # verdict belongs, and it got that value from the landing it was issued against. The previous
-    # shape took a root here and compared it with the copy the receipt made from that same argument
-    # at issue time -- which catches a caller who changes it in between, and cannot catch one that
-    # was wrong to begin with.
-    root = Path(receipt.root)
 
+    A landing that does not sit inside the receipt's repository raises rather than recording a
+    ``receipt_mismatch``.  Every other refusal in this function is recorded, because a recorded
+    refusal is durable evidence; this one has no register it may write.
+    """
+    # The receipt names a store and the landing names a place of work. Those are independent
+    # arguments. The store is chosen only after they are shown to describe the same repository:
+    # a landing that does not sit inside the receipt's root raises, and nothing is written.
+    # Choosing first is how a foreign receipt's mismatch refusal demoted an unrelated verified
+    # row that shared the row id. The previous comment here said there was no second repository
+    # a caller could name and nothing to compare; that was false -- the landing is the second
+    # repository, whether or not a root parameter exists.
     landing_cwd = Path(landing.cwd)
+    assert_landing_in_receipt_repository(landing, receipt)
+    root = Path(receipt.root).resolve()
+
     state: dict[str, Any] = {}
 
     def fail(reason: str, detail: str, **fields: Any) -> CompletionResult:
@@ -1796,8 +1853,10 @@ def evaluate_completion(
         )
 
     # The receipt, the specification, the landing and the baseline arrive as four independent
-    # arguments and every outcome is recorded under the specification's row in the receipt's own
-    # register. Nothing further down would notice if they described different dispatches.
+    # arguments. A landing that sits inside the receipt's repository has its outcome recorded
+    # under the specification's row in that register; a landing that does not raises, because
+    # there is then no register this evaluation may write. Nothing further down would notice
+    # if they described different dispatches.
     #
     # The list below is not a category ("the identity labels") -- it is the mechanical answer to
     # "what does this function read before deciding?". Taking that answer needs two passes and the
@@ -2040,7 +2099,7 @@ def _depth_verdict(
         return None, (
             "depth_sample_missing",
             f"work shape {spec.work_shape!r} is judgment-shaped, so a passing mechanical "
-            "predicate is not sufficient; an independent verifier's depth sample is required",
+            "predicate is not sufficient; a claimed independent verifier's depth sample is required",
         )
     try:
         sample = (

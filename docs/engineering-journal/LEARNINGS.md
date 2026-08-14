@@ -21,6 +21,55 @@
 
 ## 2026-08-13
 
+### Two independently settable fields on one object are still a pair  {#pair-on-the-type}
+
+**Context.** The previous round deleted the repository parameter from issuance, settlement and
+evaluation so a caller could not name a second, disagreeing store. The next review constructed
+the same disagreement through `Landing.ambient_root`, which any caller can set independently of
+`Landing.cwd`.
+**Evidence.** Against `3ba61a6c`: an honest landing in repository A,
+`dataclasses.replace(honest, ambient_root=repo_b)`, then `issue_receipt` with no `root`
+argument. The sealed receipt had `root=B` and `landing_cwd=A`, evaluation returned `verified`,
+repository B's row went to `phase=verified`, and the artifact settled under A. Pinned by
+`test_a_landing_cannot_name_a_repository_it_does_not_sit_in`.
+**Mechanism.** Deleting a parameter removes one pair. It does not remove a pair that lives on a
+public type. `cwd` and `ambient_root` are both fields of `Landing`; a receipt sealed from both
+is internally consistent, so every later comparison of landing against receipt is a check of a
+value against a copy of that value — the same vacuous check `{#check-against-a-copy}` already
+named, one field over. The three production producers keep the fields tied; the public
+constructor does not.
+**Fix.** `landing_root` refuses a landing whose working directory does not sit inside the
+repository it names. The check is containment against the filesystem, not a comparison of one
+field to a copy of the other.
+**Generalizable rule.** A value that cannot be supplied as a parameter can still be supplied as
+a field. After deleting a pair from a signature, ask which remaining public type carries both
+sides, and test those two fields against something neither of them produced.
+**Refs.** DECISIONS `{#landing-sits-in-its-repository}`, `{#check-against-a-copy}`.
+
+### Selecting the store from the receipt writes the refusal to the wrong child  {#store-from-the-receipt}
+
+**Context.** After the repository parameter was deleted, `evaluate_completion` bound every
+refusal to `receipt.root` before comparing the landing to the receipt. A foreign receipt's
+mismatch refusal therefore wrote into the foreign register.
+**Evidence.** Against `3ba61a6c`: repository A holds an honest `verified` child; repository B
+is evaluated with A's authentic receipt. The false pass is refused (`receipt_mismatch`). A's
+row is demoted from `verified` to `working`. B gains no completion record. Pinned by
+`test_evaluating_with_another_repositorys_receipt_raises_and_writes_neither_register`.
+**Mechanism.** The evaluation is of the landing and the specification. The receipt is the
+claim about what the evidence should look like. When those arguments name different
+repositories, the receipt's store is another child's. Binding `fail` to that store before
+asking whether the landing belongs there makes the refusal itself the write that destroys
+unrelated durable state. The defect is not only *when* the store is chosen; it is *which
+argument* is treated as the authority on the write target when the arguments disagree.
+**Fix.** `assert_landing_in_receipt_repository` runs before any register is selected. A landing
+whose working directory is not inside `receipt.root` raises. Neither register is written. Same-
+repository mismatches still record as `receipt_mismatch`, because that case has a store this
+evaluation may write.
+**Generalizable rule.** When two arguments can disagree about which store to write, do not
+select the store from the argument that may belong to someone else. If neither argument is
+known to be the right store, raise rather than record.
+**Refs.** DECISIONS `{#landing-sits-in-its-repository}`, `{#root-is-a-deciding-input}`.
+
 ### A check of a value against a copy of that value is not a check  {#check-against-a-copy}
 
 **Context.** Four review rounds on one unit each found a false pass in the same class, and each was

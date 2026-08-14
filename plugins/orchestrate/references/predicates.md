@@ -555,8 +555,11 @@ distinguishable from "still working" without a new phase.
    and has no receipt yet, so the repository genuinely has to be supplied; there the two values
    have independent origins and comparing them is real. It matters most for the **verifier's**
    receipt, which the depth gate loads by row id rather than receiving as an argument: the run
-   secret is named for the run alone and lives outside every repository, so two checkouts running
-   one run id share it and an authentic verifier dispatch from one authenticates in the other.
+   secret is named for the run alone and lives outside every repository, so it is shared
+   by `run_id` on this host. R12 is one checkout and a second checkout cannot write; the
+   secret is still shared, so an authentic verifier dispatch from this run authenticates
+   under this run regardless of which directory the caller named. The sealed root still
+   has to be checked against the location the caller named.
    `_record` cannot make any check — it is handed a row id, not a receipt — and it does not need
    one: its caller derives the repository from the receipt rather than accepting it.
 1. **Predicate tamper check** — the closure digest, before anything is executed.

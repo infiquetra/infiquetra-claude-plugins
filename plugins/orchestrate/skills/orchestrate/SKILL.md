@@ -25,10 +25,14 @@ A single flat JSON document **per run**, addressed by `run_id` alone, held outsi
 working tree (default `~/.orchestrate/registers/<run_id>.json`, relocatable by
 `ORCHESTRATE_REGISTER_DIR`). One row per tracked entity: one per dispatched child, one for the
 mirror, one for the subscriber. A `run_id` is host-global: two callers that name the same id
-share one live document. `retire_run` archives the document into the repository at
-`.orchestrate/runs/<run-id>/register-final.json`, deletes the live file, and forgets the
-per-run secret, so a reused id is a new authentication identity. Every decision and
-mutation API requires `run_id`; a row cannot be named without naming its run.
+share one live document in **one checkout**. Two checkouts of one `run_id` are a
+collision, not a handoff. `retire_run` forgets the per-run secret first, then archives
+the document into the repository at `.orchestrate/runs/<run-id>/register-final.json`,
+then deletes the live file and the recorded-root sidecar, so a reused id is a new
+authentication identity. Forgetting the key requires the coordinator-recorded work
+location, including when the live file is already gone. Every decision and mutation
+API requires `run_id`; a row cannot be named without naming its run. A user-facing
+`--root` is canonicalized to the git top level before it is validated or stamped.
 
 The implementation is `scripts/register.py`. Read its module docstring before writing to the
 register from any later unit — it documents every column's meaning, including two facts measured
@@ -66,11 +70,15 @@ the assembled marker stays out of echoed dispatch input.
   the live register itself.
 - **Retiring a run archives that run's document and frees the identity.** `retire_run`
   forgets the per-run secret first, then writes `.orchestrate/runs/<run-id>/register-final.json`
-  in the recorded work location (verified against the caller-supplied root by filesystem
-  identity), then deletes the live host-local file and the recorded-root sidecar. A crash
-  after the secret is gone leaves receipts that no longer unseal; a second `retire_run`
-  repairs that state by forgetting any leftover key. A reused id therefore mints a new
-  key. A root that does not match the recorded work location raises and leaves both files.
+  in the coordinator-recorded work location (verified against the caller-supplied root by
+  filesystem identity, after canonicalizing that root to the git top level), then deletes
+  the live host-local file and the recorded-root sidecar. A first-writer stamp is not
+  enough to authorize retirement or key deletion. A crash after the secret is gone leaves
+  receipts that no longer unseal; a second `retire_run` repairs a leftover key only when
+  the recorded root is still there to name the generation. No recorded root and no live
+  file is a true no-op — the key is not touched. A reused id therefore mints a new key.
+  A root that does not match the recorded work location raises and leaves the live file,
+  sidecar, and key untouched.
 - **Both hang-detection time columns always exist on a row.** `deadline` and `max_quiet_seconds`
   are alternative strategies — a caller sets whichever fits a given dispatch — and `upsert_row`
   seeds whichever one a caller didn't set to `None` at row creation, so this pair specifically
@@ -83,7 +91,7 @@ the assembled marker stays out of echoed dispatch input.
 from pathlib import Path
 import register  # scripts/register.py, on sys.path for the invoking skill/command
 
-root = Path.cwd()
+root = register.canonical_work_location(Path.cwd())
 register.upsert_row(
     root, "child-1", {"phase": "planned", "agent": "claude"}, run_id="run-abc"
 )
@@ -130,6 +138,11 @@ python3 plugins/orchestrate/skills/orchestrate/scripts/subscriber.py \
   --orchestrator-pane w1:p1 \
   --subscriptions-json '[{"type":"pane.exited"}]'
 ```
+
+`--root` may be the current working directory, including a package subdirectory of a
+monorepo. The process canonicalizes it to the git top level before the first validation
+and the first stamp, so the documented invocation from `packages/tool` still names the
+repository `launch_child` records.
 
 ## Child session lifecycle
 

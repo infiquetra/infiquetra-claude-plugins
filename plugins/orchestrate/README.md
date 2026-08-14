@@ -17,10 +17,12 @@ independent verifier's depth sample on record. See `skills/orchestrate/SKILL.md`
 The live register is the whole state model for a run: one row per dispatched child, one for the
 mirror, one for the subscriber. It is one JSON document per `run_id`, held outside every
 working tree (default `~/.orchestrate/registers/<run_id>.json`). A `run_id` is host-global, so
-two runtimes on one host that name the same id share one live document. `retire_run` archives
-into the repository, deletes the live file, and forgets the per-run secret, so a reused id
-is a new authentication identity. See `scripts/register.py`'s module docstring for the full
-column reference.
+two runtimes on one host and one checkout that name the same id share one live document.
+Two checkouts of one `run_id` are a collision. `retire_run` forgets the per-run secret
+first, then archives into the recorded work location, then deletes the live file and the
+recorded-root sidecar, so a reused id is a new authentication identity. Forgetting the
+key requires that recorded location, including when the live file is already gone. See
+`scripts/register.py`'s module docstring for the full column reference.
 
 ## Event subscriber
 

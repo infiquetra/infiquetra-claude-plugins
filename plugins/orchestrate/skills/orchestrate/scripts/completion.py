@@ -548,8 +548,24 @@ def run_secret_dir() -> Path:
     return directory
 
 
-def forget_run_secret(run_id: str) -> None:
-    """Delete this run's host-local secret so a later reuse does not inherit identity."""
+def forget_run_secret(root: Path, run_id: str) -> None:
+    """Delete this run's host-local secret so a later reuse does not inherit identity.
+
+    ``root`` must be the coordinator-recorded work location. A first-writer stamp is
+    not enough, and a missing record is a refusal: the key may belong to a generation
+    that has already reused this id.
+    """
+    recorded = read_run_root(run_id)
+    if recorded is None:
+        raise RunRootError(
+            f"run {run_id!r} has no recorded work location; refusing to forget its secret"
+        )
+    claimed = register_store.canonical_work_location(root)
+    if not _same_recorded_root(claimed, recorded):
+        raise RunRootError(
+            f"run {run_id!r} is recorded against {recorded} and forget_run_secret was "
+            f"called with {claimed}; refusing to forget a key the caller cannot bind"
+        )
     path = run_secret_dir() / f"{_safe_component(run_id, label='run_id')}.key"
     with contextlib.suppress(FileNotFoundError):
         path.unlink()
@@ -581,7 +597,7 @@ def run_secret(root: Path, run_id: str, *, create: bool = True) -> bytes:
     against those runtimes reading the key.
     """
     directory = run_secret_dir().resolve()
-    root_resolved = root.resolve()
+    root_resolved = register_store.canonical_work_location(root)
     if directory == root_resolved or root_resolved in directory.parents:
         raise RunSecretError(
             f"the run-secret directory {directory} is inside the repository at {root_resolved}; "
@@ -637,7 +653,12 @@ def record_run_root(root: Path, run_id: str) -> Path:
 
     The live register is addressed by ``run_id``, not by this path.  This record is the
     work location (where git runs, where retirement archives) and the collision detector
-    for two orchestrators that reuse one ``run_id`` against different checkouts.
+    for two orchestrators that reuse one ``run_id`` against different checkouts.  R12
+    is one host and one checkout: two runtimes in the same working tree share one
+    live document. Two checkouts of one ``run_id`` are a collision.
+
+    ``root`` is canonicalized to the git top level before it is recorded, so a
+    launch from a package subdirectory still names the repository.
 
     The file lives next to the live register, outside every repository, with the same
     permission rules as the run secret.  Writers of the same path share one exclusive
@@ -646,7 +667,7 @@ def record_run_root(root: Path, run_id: str) -> Path:
     identity, not text equality of resolved strings.
     """
     directory = register_store.register_dir()
-    root_resolved = Path(root).resolve()
+    root_resolved = register_store.canonical_work_location(root)
     if directory == root_resolved or root_resolved in directory.parents:
         raise RunSecretError(
             f"the register directory {directory} is inside the repository at {root_resolved}; "
@@ -657,6 +678,7 @@ def record_run_root(root: Path, run_id: str) -> Path:
     path = _run_root_path(run_id)
     lock_path = path.with_name(f"{path.name}.lock")
     lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    recorded: Path | None = None
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
         if path.exists():
@@ -666,26 +688,30 @@ def record_run_root(root: Path, run_id: str) -> Path:
                     f"run {run_id!r} is already recorded against {existing} and a second "
                     f"orchestrator claimed {root_resolved}; one run id has one register"
                 )
-            return existing
-        tmp = path.with_name(f"{path.name}.{os.getpid()}.{time.monotonic_ns()}.tmp")
-        payload = str(root_resolved).encode("utf-8")
-        handle = -1
-        handle = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        try:
-            os.write(handle, payload)
-            os.fsync(handle)
-            os.close(handle)
+            recorded = existing
+        else:
+            tmp = path.with_name(f"{path.name}.{os.getpid()}.{time.monotonic_ns()}.tmp")
+            payload = str(root_resolved).encode("utf-8")
             handle = -1
-            os.replace(tmp, path)
-        finally:
-            if handle >= 0:
+            handle = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            try:
+                os.write(handle, payload)
+                os.fsync(handle)
                 os.close(handle)
-            with contextlib.suppress(FileNotFoundError):
-                tmp.unlink()
-        return root_resolved
+                handle = -1
+                os.replace(tmp, path)
+            finally:
+                if handle >= 0:
+                    os.close(handle)
+                with contextlib.suppress(FileNotFoundError):
+                    tmp.unlink()
+            recorded = root_resolved
     finally:
         fcntl.flock(lock_fd, fcntl.LOCK_UN)
         os.close(lock_fd)
+    assert recorded is not None
+    register_store.reconcile_stamp(run_id, recorded)
+    return recorded
 
 
 def _same_recorded_root(left: Path, right: Path) -> bool:
@@ -1311,9 +1337,12 @@ def assert_receipt_root(root: Path, receipt: DispatchReceipt) -> None:
     receipt.  Evaluation still has two objects that name a store; it raises rather than records
     when the landing does not belong there.
 
-    The per-run secret cannot stand in for this check: it is named for the run alone and lives
-    outside every repository, so two checkouts running one run id share it and a receipt authentic
-    under one authenticates under the other.
+    The per-run secret cannot stand in for this check: it is named for the run alone and
+    lives outside every repository, so it is shared by ``run_id`` on this host. R12 is
+    one checkout: a second checkout cannot write the register. The secret is still
+    shared, which is why a receipt sealed under this run authenticates under this run
+    regardless of which directory the caller named -- the sealed root still has to be
+    checked against the location the caller named.
     """
     resolved = str(Path(root).resolve())
     if resolved != receipt.root:
@@ -2367,11 +2396,11 @@ def read_receipt(root: Path, row_id: str, *, run_id: str) -> DispatchReceipt:
     The live register is addressed by ``run_id``, not by ``root``.  Pass ``run_id`` when you
     know it.  ``root`` is the claimed work location: this is the one place a supplied
     repository and a sealed one meet as two independently produced values, and the sealed
-    one is checked against the location the caller named.  Without that, an authentic
-    receipt from another checkout of the same run authenticates here -- the seal proves the
-    orchestrator issued it, and the per-run secret is shared by run id across repositories.
-    That is reachable for the *verifier's* receipt in particular, which the depth gate
-    loads by row id rather than receiving as an argument.
+    one is checked against the location the caller named.  The per-run secret is named for
+    the run alone, so it does not distinguish checkouts; R12 is one checkout and a second
+    checkout cannot write, but a reader can still present an authentic receipt under the
+    wrong directory. That is reachable for the *verifier's* receipt in particular, which
+    the depth gate loads by row id rather than receiving as an argument.
     """
     row = register_store.read_rows(root, run_id=run_id).get(row_id)
     if row is None:

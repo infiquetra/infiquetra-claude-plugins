@@ -525,14 +525,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--socket", type=Path, default=herdr_events.DEFAULT_SOCKET_PATH)
     parser.add_argument("--subscriptions-json", required=True, type=_parse_subscriptions)
     args = parser.parse_args(argv)
+    root = register_store.canonical_work_location(args.root)
     try:
-        register_store.assert_root_belongs_to_run(args.root, args.run_id, require_binding=False)
+        register_store.assert_root_belongs_to_run(root, args.run_id, require_binding=False)
     except register_store.RegisterError as exc:
         print(f"error: {exc}", file=sys.stderr, flush=True)
         return 1
 
     subscriber = Subscriber(
-        root=args.root,
+        root=root,
         run_id=args.run_id,
         row_id=args.row_id,
         pane_id=args.pane_id,

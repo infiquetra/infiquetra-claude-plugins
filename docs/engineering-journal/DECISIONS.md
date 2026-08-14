@@ -13,17 +13,22 @@ write.
 **Decision.** The live register is one JSON document per `run_id` at
 `~/.orchestrate/registers/<run_id>.json` (relocatable by `ORCHESTRATE_REGISTER_DIR`). A
 `run_id` is host-global, the same undocumented namespace the run secret already used.
-`retire_run` archives the document into the repository at
-`.orchestrate/runs/<run_id>/register-final.json` and deletes the live file, which frees
-the id. R4 is amended. Interoperability on one host (R12) is unchanged: two runtimes
-already share `~/.orchestrate/run-secrets`. Provenance is the retirement archive, which
-was always the repo-local file.
+`retire_run` forgets the per-run secret first, then archives the document into the
+repository at `.orchestrate/runs/<run_id>/register-final.json`, then deletes the live
+file and the recorded-root sidecar, which frees the id. Forgetting the key requires
+the coordinator-recorded work location. R4 is amended. Interoperability on one host
+(R12) is one checkout: two runtimes in the same working tree share one live document
+and already share `~/.orchestrate/run-secrets`. Two checkouts of one `run_id` are a
+collision. Provenance is the retirement archive, which was always the repo-local file.
 
 The recorded run root (`record_run_root`) stays. It is no longer the live address. It is
 the work location and the collision detector for two orchestrators that reuse one
-`run_id` against different checkouts. Git identity, containment, and
+`run_id` against different checkouts. A work-location `root` is canonicalized to the
+git top level before it is recorded or compared. Git identity, containment, and
 `assert_store_is_this_runs_register` stay as work-location checks. The seal stays because
-Claude and Muse have no workspace-write flag.
+Claude and Muse have no workspace-write flag. `run_secret` stays unbound because its
+`root` means "keep the key outside this tree", not because a second checkout must be
+able to write.
 
 **Rejected: relocate but key by repository root.** A poisoned root still maps to a
 different host-local file. Addressing is unchanged; R4 is not worth amending for that.
@@ -124,8 +129,10 @@ the verdict where nothing else about the run is recorded.
 a row id and has no receipt yet, so the repository genuinely has to be supplied; there the two
 values have independent origins and comparing them is real. It is also the only place a receipt is
 fetched rather than received, which is exactly the verifier's receipt — and the per-run secret is
-named for the run alone and lives outside every repository, so two checkouts running one run id
-share it and an authentic verifier dispatch from one authenticated in the other.
+named for the run alone and lives outside every repository, so it is shared by `run_id` on
+this host. R12 is one checkout and a second checkout cannot write the register; the secret
+is still shared, which is why an authentic verifier dispatch can still be presented under
+the wrong directory and the sealed root still has to be checked.
 
 **Rejected: a fifth comparison, at issue time, between the supplied root and the landing.** It
 would have closed the reproduction and left the class open, which is what the four previous rounds

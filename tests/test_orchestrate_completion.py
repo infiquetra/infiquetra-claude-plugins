@@ -3185,8 +3185,13 @@ def test_a_store_that_is_not_the_run_register_is_refused_at_evaluation(
     with pytest.raises(COMPLETION.ReceiptRootError):
         COMPLETION.evaluate_completion(spec, landing_work, baseline_work, receipt, git=git)
     assert "completion" not in REGISTER.read_rows(store, run_id="run-a").get(spec.row_id, {})
-    with pytest.raises(REGISTER.RegisterError, match="bound to"):
-        REGISTER.read_rows(repo, run_id="run-a")
+    if store_kind == "subdirectory":
+        # A subdirectory of the checkout is the same work location after
+        # canonicalize. The live document is stamped against the repository.
+        assert spec.row_id in REGISTER.read_rows(repo, run_id="run-a")
+    else:
+        with pytest.raises(REGISTER.RegisterError, match="bound to"):
+            REGISTER.read_rows(repo, run_id="run-a")
 
 
 def test_a_recorded_run_root_that_disagrees_with_the_claimed_store_is_refused(
@@ -3266,17 +3271,79 @@ def test_a_read_only_child_still_verifies_against_the_recorded_root(tmp_path: Pa
     assert result.verified is True, result.detail
 
 
-def test_a_second_retire_forgets_a_key_the_first_call_left_behind(tmp_path: Path) -> None:
-    """The no-live-file branch must still free the identity."""
+def test_a_second_retire_forgets_a_key_only_when_the_root_is_still_recorded(
+    tmp_path: Path,
+) -> None:
+    """A leftover key is forgotten only when the sidecar still names this generation."""
     repo = tmp_path / "repo"
     _init_repo(repo)
     prepared = _prepare(repo)
     REGISTER.retire_run(repo, prepared.spec.run_id)
-    # Recreate only the key, as a crash after live-unlink would.
+    # Recreate the sidecar and the key, as a crash after live-unlink with the
+    # record still present would.
+    COMPLETION.record_run_root(repo, prepared.spec.run_id)
     leftover = COMPLETION.run_secret(repo, prepared.spec.run_id, create=True)
     REGISTER.retire_run(repo, prepared.spec.run_id)
     replacement = COMPLETION.run_secret(repo, prepared.spec.run_id, create=True)
     assert replacement != leftover
+    assert COMPLETION.read_run_root(prepared.spec.run_id) is None
+
+
+def test_retire_without_a_live_file_does_not_delete_a_new_generations_key(
+    tmp_path: Path,
+) -> None:
+    """A stale 'live file absent' observation must not free a reused identity."""
+    repo = tmp_path / "repo"
+    other = tmp_path / "other"
+    _init_repo(repo)
+    _init_repo(other)
+    prepared = _prepare(repo)
+    REGISTER.retire_run(repo, prepared.spec.run_id)
+    # A later caller reuses the id against a different checkout.
+    COMPLETION.record_run_root(other, prepared.spec.run_id)
+    new_key = COMPLETION.run_secret(other, prepared.spec.run_id, create=True)
+    REGISTER.upsert_row(other, "child-new", {"phase": "planned"}, run_id=prepared.spec.run_id)
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    with pytest.raises(REGISTER.RegisterError, match="bound to"):
+        REGISTER.retire_run(empty, prepared.spec.run_id)
+    assert COMPLETION.run_secret(other, prepared.spec.run_id, create=False) == new_key
+    assert REGISTER.register_path(prepared.spec.run_id).is_file()
+    assert COMPLETION.read_run_root(prepared.spec.run_id) == other.resolve()
+
+
+def test_retire_without_a_recorded_root_leaves_a_leftover_key(tmp_path: Path) -> None:
+    """No sidecar, no delete — the leftover key may be a newly minted generation."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo)
+    REGISTER.retire_run(repo, prepared.spec.run_id)
+    leftover = COMPLETION.run_secret(repo, prepared.spec.run_id, create=True)
+    assert REGISTER.retire_run(repo, prepared.spec.run_id) is not None
+    assert COMPLETION.run_secret(repo, prepared.spec.run_id, create=False) == leftover
+
+
+def test_forget_run_secret_cannot_be_called_with_only_a_run_id() -> None:
+    params = inspect.signature(COMPLETION.forget_run_secret).parameters
+    assert "root" in params
+    assert params["root"].default is inspect.Parameter.empty
+    with pytest.raises(TypeError):
+        COMPLETION.forget_run_secret("run-a")  # type: ignore[misc]
+
+
+def test_forget_run_secret_requires_the_recorded_root(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    other = tmp_path / "other"
+    _init_repo(repo)
+    _init_repo(other)
+    prepared = _prepare(repo)
+    key = COMPLETION.run_secret(repo, prepared.spec.run_id, create=False)
+    with pytest.raises(COMPLETION.RunRootError, match="recorded against"):
+        COMPLETION.forget_run_secret(other, prepared.spec.run_id)
+    assert COMPLETION.run_secret(repo, prepared.spec.run_id, create=False) == key
+    COMPLETION.forget_run_secret(repo, prepared.spec.run_id)
+    with pytest.raises(COMPLETION.RunSecretError):
+        COMPLETION.run_secret(repo, prepared.spec.run_id, create=False)
 
 
 def test_retire_forgets_the_secret_before_removing_the_live_file(
@@ -3385,6 +3452,18 @@ def test_a_recorded_root_compares_by_filesystem_identity(tmp_path: Path) -> None
         COMPLETION.assert_store_is_this_runs_register(other, "run-a")
 
 
+def test_record_run_root_from_a_package_directory_names_the_repository(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    package = repo / "packages" / "tool"
+    package.mkdir(parents=True)
+    recorded = COMPLETION.record_run_root(package, "run-a")
+    assert recorded == repo.resolve()
+    assert COMPLETION.read_run_root("run-a") == repo.resolve()
+
+
 def test_membership_probes_ignore_an_inherited_git_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3407,9 +3486,9 @@ def test_a_receipt_is_refused_when_read_under_a_different_repository(tmp_path: P
     Addressing is by run id, so there is no second live file to copy into. Reading is the
     one place a repository must be supplied, because the receipt is being fetched rather
     than handed over. The per-run secret does not close this on its own: it is named for
-    the run alone, so two checkouts running one run id share it and a receipt sealed under
-    either authenticates under both. The sealed root has to be checked against the
-    location the caller named.
+    the run alone, so it is shared by run id on this host. R12 is one checkout and a
+    second checkout cannot write; the secret is still shared, which is why the sealed
+    root has to be checked against the location the caller named.
     """
     repo = tmp_path / "repo-a"
     _init_repo(repo)

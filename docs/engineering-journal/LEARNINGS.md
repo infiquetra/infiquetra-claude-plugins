@@ -21,6 +21,49 @@
 
 ## 2026-08-13
 
+### A stale observation is not a generation  {#stale-observation-is-not-a-generation}
+
+**Context.** Making retirement's no-live-file branch unconditionally forget the key
+turned a no-op into a destructive act with no binding. The branch ran before the lock
+and before any comparison. A wrong empty directory was accepted. Pausing after the
+"no live file" observation, letting another repository record a root, mint a key and
+write a live row, then releasing retirement deleted the new key.
+**Evidence.** `retire_run` observed `live.exists()` outside `_write_locked` and called
+`forget_run_secret(run_id)` with no repository argument. `SKILL.md` instructed
+`--root "$PWD"` and `subscriber.py` defaulted to `Path.cwd()`; nothing canonicalized
+to the git top level, so a run started from a package subdirectory stamped the package
+and `launch_child` recorded the repository.
+**Mechanism.** "The live file is absent" is a stale observation, not proof the key
+belongs to the retired generation. First-writer agreement is adequate for continuity
+and not for an irreversible act. `$PWD` is a working directory, not a repository.
+Canonicalizing only the subscriber inverts the split: launch still records the package.
+**Fix.** Session-closing paths and key deletion require the coordinator-recorded root
+and share one lock between validation and destruction. No sidecar, no delete. Every
+work-location `root` is canonicalized to the git top level before validate or stamp,
+including the value `record_run_root` writes. A disagreeing stamp is reconciled to
+the recorded path under the register lock.
+**Generalizable rule.** An unlocked observation cannot authorize a later destructive
+act. The fact that names a generation has to still be there at the moment of the
+delete, and the same `$PWD` has to be canonicalized on every side that records it.
+**Refs.** DECISIONS `{#register-addressed-by-run-id}`, LEARNINGS
+`{#inert-repository-argument}`.
+
+### `$PWD` is a working directory, not a repository  {#pwd-is-not-a-repository}
+
+**Context.** The documented subscriber invocation passes `--root "$PWD"`. In a
+monorepo that is often a package subdirectory.
+**Evidence.** `git rev-parse --show-toplevel` is the first canonicalize in this
+module. `launch_child` records its first argument. Those two values disagreed when
+only one side was canonicalized.
+**Mechanism.** A work-location argument that is not reduced to the git top level
+stamps whatever directory the caller happened to stand in.
+**Fix.** `canonical_work_location` runs before the first validation and the first
+stamp, on the CLI and on `record_run_root` / `upsert_rows` / `launch_child`.
+**Generalizable rule.** If the instruction says `$PWD` and the invariant says
+"the repository", canonicalize at the boundary; do not ask the caller to stand in
+the right directory.
+**Refs.** LEARNINGS `{#stale-observation-is-not-a-generation}`.
+
 ### A repository argument that does not bind is an inert parameter  {#inert-repository-argument}
 
 **Context.** After a row could no longer be named without its run, eight functions still
@@ -34,13 +77,19 @@ first-caller-derived: binding against it proves later callers agree with the fir
 writer, not that the first writer named the true repository. The recorded sidecar is
 the half with orchestrator provenance. Not every `root` means work location:
 `run_secret`'s `root` means "keep the key outside this tree".
-**Fix.** `assert_root_belongs_to_run` is the shared check. Destructive paths require a
-binding. Writes compare after the first stamp. The subscriber command line refuses a
-`--root` that disagrees with the run. `run_secret` is not run through this check.
+**Fix.** `assert_root_belongs_to_run` is the shared check. Continuity paths (reads,
+writes, catch-up) bind against the recorded root or the first-writer stamp. Session-closing
+paths and key deletion require the recorded root; a stamp is not enough, and an unlocked
+"live file absent" observation is not a binding. Writes compare after the first stamp.
+The subscriber command line refuses a `--root` that disagrees with the run. `run_secret`
+is not run through this check, because its `root` names the tree the key must stay
+outside of, not the run's work location.
 **Generalizable rule.** An argument that reads as a scope and is not one is the same
 defect as a check that cannot fire. Ask what the parameter *means* before binding
-every parameter of the same name.
-**Refs.** DECISIONS `{#register-addressed-by-run-id}`.
+every parameter of the same name. Then ask whether the provenance that check uses is
+fit for the act it authorizes.
+**Refs.** DECISIONS `{#register-addressed-by-run-id}`, LEARNINGS
+`{#stale-observation-is-not-a-generation}`.
 
 ### A required argument is not a required argument if the type still accepts the old shape  {#required-is-the-type}
 

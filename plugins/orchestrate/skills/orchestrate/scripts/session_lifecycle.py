@@ -791,9 +791,10 @@ def launch_child(
     Identifier fields are written immediately after the launcher returns, while the phase remains
     ``launching``. Dispatch later moves the row to ``launched`` before sending the task.
     """
-    root = root.resolve()
-    # The run's work location is this argument, not a value derived from the
-    # landing. Issuance compares the claimed store against the record this writes.
+    root = register_store.canonical_work_location(root)
+    # The run's work location is the repository that contains this argument, not
+    # a package subdirectory and not a value derived from the landing. Issuance
+    # compares the claimed store against the record this writes.
     # Imported lazily: completion already imports this module.
     import completion as completion_mod
 
@@ -1145,11 +1146,11 @@ def reap_verified(
 ) -> None:
     """Record ``reaped`` before closing a verified child's tab.
 
-    ``root`` must be this run's work location (recorded run root, else the first
-    writer's stamp). A disagreeing or unbound directory is refused and the tab is
+    ``root`` must be the coordinator-recorded work location. A first-writer stamp
+    is not enough. A disagreeing or unrecorded directory is refused and the tab is
     not closed.
     """
-    register_store.assert_root_belongs_to_run(root, run_id)
+    register_store.assert_root_belongs_to_run(root, run_id, require_recorded=True)
     row = register_store.read_rows(root, run_id=run_id).get(row_id)
     if row is None or row.get("phase") not in {"verified", "reaped"}:
         raise SessionLifecycleError(f"child {row_id!r} must be verified before reap")
@@ -1174,10 +1175,11 @@ def assert_child_not_vanished(
 ) -> None:
     """Raise when a registered child disappears without a recorded reap.
 
-    ``root`` must be this run's work location. A disagreeing directory is refused
-    rather than treated as a missing child.
+    ``root`` must be the coordinator-recorded work location. A first-writer stamp
+    is not enough. A disagreeing directory is refused rather than treated as a
+    missing child.
     """
-    register_store.assert_root_belongs_to_run(root, run_id)
+    register_store.assert_root_belongs_to_run(root, run_id, require_recorded=True)
     row = register_store.read_rows(root, run_id=run_id).get(row_id)
     if row is None:
         raise SessionLifecycleError(f"unknown child row {row_id!r}")

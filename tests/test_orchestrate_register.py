@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import sys
 import threading
 from pathlib import Path
@@ -35,6 +36,16 @@ M = _load()
 @pytest.fixture(autouse=True)
 def _register_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(M.REGISTER_DIR_ENV, str(tmp_path / "registers"))
+
+
+def _record(root: Path, run_id: str) -> Path:
+    """Plant the coordinator-recorded work location next to the live register."""
+    directory = Path(str(M.register_dir()))
+    path = directory / f"{run_id}.root"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(str(Path(root).resolve()), encoding="utf-8")
+    path.chmod(0o600)
+    return path
 
 
 def _full_row(row_id: str = "child-1", run_id: str = "run-a") -> dict:
@@ -343,6 +354,8 @@ def test_two_concurrent_writers_do_not_lose_the_first_writers_row(tmp_path: Path
 
 
 def test_retiring_a_run_moves_its_rows_and_leaves_other_runs_intact(tmp_path: Path) -> None:
+    _record(tmp_path, "run-a")
+    _record(tmp_path, "run-b")
     M.upsert_row(tmp_path, "a1", {"run_id": "run-a", "phase": "verified"}, run_id="run-a")
     M.upsert_row(tmp_path, "a2", {"run_id": "run-a", "phase": "verified"}, run_id="run-a")
     M.upsert_row(tmp_path, "b1", {"run_id": "run-b", "phase": "working"}, run_id="run-b")
@@ -387,6 +400,8 @@ def test_retiring_a_run_preserves_a_document_root_key_in_the_live_register(
     # same _read_register_unlocked -> mutate -> _atomic_write_json path. A future edit that
     # reintroduces envelope reconstruction inside retire_run specifically would break the
     # Claude<->Codex handoff on every retirement while leaving every existing test green.
+    _record(tmp_path, "run-a")
+    _record(tmp_path, "run-b")
     M.upsert_row(tmp_path, "a1", {"run_id": "run-a", "phase": "verified"}, run_id="run-a")
     M.upsert_row(tmp_path, "b1", {"run_id": "run-b", "phase": "working"}, run_id="run-b")
 
@@ -463,6 +478,7 @@ def test_a_repo_local_file_is_not_the_live_register(tmp_path: Path) -> None:
 
 def test_retiring_a_run_frees_its_id(tmp_path: Path) -> None:
     """After retirement the live file is gone and the id may be reused."""
+    _record(tmp_path, "run-a")
     M.upsert_row(tmp_path, "child-1", {"run_id": "run-a", "phase": "verified"}, run_id="run-a")
     assert M.retire_run(tmp_path, "run-a") is not None
     assert not M.register_path("run-a").exists()
@@ -502,6 +518,7 @@ def test_retiring_against_the_wrong_work_location_leaves_the_live_file(
     repo_b = tmp_path / "repo-b"
     repo_a.mkdir()
     repo_b.mkdir()
+    _record(repo_a, "run-a")
     M.upsert_row(repo_a, "child-1", {"phase": "verified"}, run_id="run-a")
     before = M.register_path("run-a").read_text()
     with pytest.raises(M.RegisterError, match="bound to"):
@@ -518,3 +535,124 @@ def test_pytest_refuses_the_default_host_register_directory(
     monkeypatch.delenv("ORCHESTRATE_ALLOW_DEFAULT_HOST_DIR", raising=False)
     with pytest.raises(M.RegisterError, match="host default"):
         M.register_dir()
+
+
+def test_retire_without_a_live_file_refuses_a_directory_that_is_not_recorded(
+    tmp_path: Path,
+) -> None:
+    """A missing live file does not authorize forgetting the key."""
+    repo_a = tmp_path / "repo-a"
+    repo_b = tmp_path / "repo-b"
+    repo_a.mkdir()
+    repo_b.mkdir()
+    _record(repo_a, "run-a")
+    key = tmp_path / "registers" / "run-a.key"
+    # The key lives in the secret dir in production; plant a sibling marker the
+    # retire path must not be allowed to treat as "ours" just because live is gone.
+    sidecar = M.register_dir() / "run-a.root"
+    assert sidecar.is_file()
+    with pytest.raises(M.RegisterError, match="bound to"):
+        M.retire_run(repo_b, "run-a")
+    assert sidecar.is_file()
+    assert sidecar.read_text(encoding="utf-8").strip() == str(repo_a.resolve())
+    assert not key.exists()
+
+
+def test_retire_without_a_live_file_does_not_forget_a_key_with_no_recorded_root(
+    tmp_path: Path,
+) -> None:
+    """No sidecar, no delete. A leftover key may belong to a new generation."""
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert M.retire_run(empty, "run-a") is None
+    assert not (M.register_dir() / "run-a.root").exists()
+
+
+def test_retire_without_a_live_file_clears_the_recorded_root(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    sidecar = _record(repo, "run-a")
+    result = M.retire_run(repo, "run-a")
+    assert result is None
+    assert not sidecar.exists()
+
+
+def test_retire_refuses_when_only_a_first_writer_stamp_exists(tmp_path: Path) -> None:
+    """A stamp is continuity. It is not enough to archive or forget the key."""
+    M.upsert_row(tmp_path, "child-1", {"phase": "verified"}, run_id="run-a")
+    live = M.register_path("run-a")
+    before = live.read_text()
+    with pytest.raises(M.RegisterError, match="no recorded work location"):
+        M.retire_run(tmp_path, "run-a")
+    assert live.read_text() == before
+
+
+def test_a_nonempty_unbound_register_is_refused(tmp_path: Path) -> None:
+    """The unbound exception is for a genuinely empty document, not a planted one."""
+    path = M.register_path("run-a")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "run_id": "run-a",
+                "rows": {
+                    "child-a": {
+                        "id": "child-a",
+                        "run_id": "run-a",
+                        "phase": "working",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    with pytest.raises(M.RegisterError, match="no recorded or stamped"):
+        M.read_rows(empty, run_id="run-a")
+    with pytest.raises(M.RegisterError, match="no work location"):
+        M.upsert_row(empty, "child-a", {"phase": "working"}, run_id="run-a")
+    assert json.loads(path.read_text())["rows"]["child-a"]["phase"] == "working"
+
+
+def test_a_package_directory_is_canonicalized_to_the_repository(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    package = repo / "packages" / "tool"
+    package.mkdir(parents=True)
+    _git_init(repo)
+    M.upsert_row(package, "child-1", {"phase": "planned"}, run_id="run-a")
+    doc = json.loads(M.register_path("run-a").read_text())
+    assert Path(doc["repo_root"]).resolve() == repo.resolve()
+    rows = M.read_rows(package, run_id="run-a")
+    assert rows["child-1"]["phase"] == "planned"
+    assert ("run-a", "child-1") in M.rows_stamped_against(package)
+
+
+def test_a_recorded_root_rewrites_a_disagreeing_stamp(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    package = repo / "packages" / "tool"
+    package.mkdir(parents=True)
+    _git_init(repo)
+    # First writer stamps the repository (canonicalize). Plant a stale package stamp.
+    M.upsert_row(repo, "child-1", {"phase": "planned"}, run_id="run-a")
+    path = M.register_path("run-a")
+    doc = json.loads(path.read_text())
+    doc["repo_root"] = str(package.resolve())
+    path.write_text(json.dumps(doc), encoding="utf-8")
+    _record(repo, "run-a")
+    M.reconcile_stamp("run-a", repo)
+    stamped = json.loads(path.read_text())["repo_root"]
+    assert Path(stamped).resolve() == repo.resolve()
+    M.upsert_row(package, "child-1", {"phase": "working"}, run_id="run-a")
+    assert Path(json.loads(path.read_text())["repo_root"]).resolve() == repo.resolve()
+
+
+def _git_init(repo: Path) -> None:
+    repo.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "tests@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Tests"], cwd=repo, check=True)
+    (repo / "README.md").write_text("seed\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "seed"], cwd=repo, check=True)

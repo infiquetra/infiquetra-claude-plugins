@@ -8,9 +8,13 @@
   orchestrator-owned host-local directory (default `~/.orchestrate/registers/<run_id>.json`,
   relocatable by `ORCHESTRATE_REGISTER_DIR`). A child cannot write it by working in its
   landing. A `run_id` is host-global: two callers that name the same id share one live
-  document. Every decision and mutation API requires `run_id`. `retire_run` archives the
-  document into the recorded work location, deletes the live file, and forgets the per-run
-  secret, so a reused id is a new authentication identity. Claude and Muse have no
+  document in one checkout. Two checkouts of one `run_id` are a collision. Every
+  decision and mutation API requires `run_id`. `retire_run` forgets the per-run secret
+  first, then archives the document into the recorded work location, then deletes the
+  live file and the recorded-root sidecar, so a reused id is a new authentication
+  identity. Forgetting the key requires the coordinator-recorded work location, including
+  when the live file is already gone. A user-facing `--root` is canonicalized to the git
+  top level before it is validated or stamped. Claude and Muse have no
   workspace-write flag; mode `0600` does not exclude a child running as this account, so
   the seal does not defend that residual.
 - Completion is the only path to `verified`. A child reaches it when its predicate's dependency
@@ -42,7 +46,9 @@
   second repository could still bind a landing in one tree to a receipt sealed for another;
   that is why issuance derives the work location from the landing and compares it to the
   recorded run root. The per-run secret does not cover this: it is named for the run alone
-  and lives outside every repository, so two checkouts running one run id share it.
+  and lives outside every repository, so it is shared by `run_id` on this host. R12 is
+  one checkout: a second checkout cannot write the register. The secret is still shared,
+  which is why it cannot stand in for a work-location check.
   Comparing a supplied root against the receipt was not enough, because the receipt's copy was made
   from that same supplied value at issue time — that catches a caller who changes it in between and
   cannot catch one that was wrong to begin with. So `issue_receipt` derives it from

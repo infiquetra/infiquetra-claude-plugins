@@ -39,6 +39,15 @@ SUBSCRIBER = _load("subscriber")
 LIFECYCLE = _load("session_lifecycle")
 
 
+def _record(root: Path, run_id: str) -> Path:
+    directory = Path(str(REGISTER.register_dir()))
+    path = directory / f"{run_id}.root"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(str(Path(root).resolve()), encoding="utf-8")
+    path.chmod(0o600)
+    return path
+
+
 def _spec(**overrides: Any) -> Any:
     values = {
         "run_id": "run-a",
@@ -761,6 +770,7 @@ def test_scope_and_cli_boundary_lessons_are_recorded_in_the_journal() -> None:
 
 
 def test_reap_records_transition_before_closing_tab(tmp_path: Path) -> None:
+    _record(tmp_path, "run-a")
     REGISTER.upsert_row(
         tmp_path,
         "child-a",
@@ -777,6 +787,7 @@ def test_reap_records_transition_before_closing_tab(tmp_path: Path) -> None:
 
 
 def test_vanished_child_raises_unless_reap_was_recorded(tmp_path: Path) -> None:
+    _record(tmp_path, "run-a")
     REGISTER.upsert_row(
         tmp_path,
         "child-a",
@@ -802,6 +813,7 @@ def test_reap_refuses_a_directory_that_is_not_the_runs_work_location(
     other = tmp_path / "other"
     repo.mkdir()
     other.mkdir()
+    _record(repo, "run-a")
     REGISTER.upsert_row(
         repo,
         "child-a",
@@ -828,6 +840,7 @@ def test_a_vanish_check_refuses_a_directory_that_is_not_the_runs_work_location(
     other = tmp_path / "other"
     repo.mkdir()
     other.mkdir()
+    _record(repo, "run-a")
     REGISTER.upsert_row(
         repo,
         "child-a",
@@ -862,9 +875,35 @@ def test_reap_refuses_when_the_run_has_no_work_location(tmp_path: Path) -> None:
     empty = tmp_path / "empty"
     empty.mkdir()
     herdr = FakeHerdr()
-    with pytest.raises(REGISTER.RegisterError, match="no recorded or stamped"):
+    with pytest.raises(REGISTER.RegisterError, match="no recorded work location"):
         LIFECYCLE.reap_verified(empty, "child-a", herdr=herdr, run_id="run-a")
     assert herdr.closed == []
+
+
+def test_reap_refuses_when_only_a_first_writer_stamp_exists(tmp_path: Path) -> None:
+    """A stamp is continuity. Closing a tab requires the recorded root."""
+    REGISTER.upsert_row(
+        tmp_path,
+        "child-a",
+        {"run_id": "run-a", "phase": "verified", "tab_id": "tab-a", "cwd": str(tmp_path)},
+        run_id="run-a",
+    )
+    herdr = FakeHerdr()
+    with pytest.raises(REGISTER.RegisterError, match="no recorded work location"):
+        LIFECYCLE.reap_verified(tmp_path, "child-a", herdr=herdr, run_id="run-a")
+    assert herdr.closed == []
+    assert REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]["phase"] == "verified"
+
+
+def test_a_vanish_check_refuses_when_only_a_first_writer_stamp_exists(tmp_path: Path) -> None:
+    REGISTER.upsert_row(
+        tmp_path,
+        "child-a",
+        {"run_id": "run-a", "phase": "launched", "tab_id": "tab-a", "cwd": str(tmp_path)},
+        run_id="run-a",
+    )
+    with pytest.raises(REGISTER.RegisterError, match="no recorded work location"):
+        LIFECYCLE.assert_child_not_vanished(tmp_path, "child-a", herdr=FakeHerdr(), run_id="run-a")
 
 
 # Scenario 9: readiness is an interaction, not agent_status ----------------------------------

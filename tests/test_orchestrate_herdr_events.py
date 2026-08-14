@@ -6,6 +6,7 @@ import importlib.util
 import json
 import re
 import socket
+import subprocess
 import sys
 import threading
 import uuid
@@ -1062,6 +1063,87 @@ def test_the_subscriber_command_refuses_a_disagreeing_root(
     assert rc == 1
     assert ran == []
     assert "bound to" in capsys.readouterr().err
+
+
+def test_the_subscriber_command_accepts_a_package_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The documented `--root "$PWD"` from a package subdirectory names the repository."""
+    repo = tmp_path / "repo"
+    package = repo / "packages" / "tool"
+    package.mkdir(parents=True)
+    _git_init(repo)
+    REGISTER.upsert_row(
+        repo,
+        "child-a",
+        {"run_id": "run-a", "pane_id": "pane-a"},
+        run_id="run-a",
+    )
+    seen: list[Path] = []
+
+    def _run(self: Any) -> None:
+        seen.append(Path(self.root))
+
+    monkeypatch.setattr(SUBSCRIBER.Subscriber, "run", _run)
+    rc = SUBSCRIBER.main(
+        [
+            "--root",
+            str(package),
+            "--run-id",
+            "run-a",
+            "--row-id",
+            "sub-a",
+            "--pane-id",
+            "pane-a",
+            "--orchestrator-pane",
+            "orch",
+            "--subscriptions-json",
+            '[{"type":"pane.exited"}]',
+        ]
+    )
+    assert rc == 0
+    assert seen == [repo.resolve()]
+
+
+def test_catch_up_refuses_a_nonempty_unbound_register(tmp_path: Path) -> None:
+    path = REGISTER.register_path("run-a")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "run_id": "run-a",
+                "rows": {
+                    "child-a": {
+                        "id": "child-a",
+                        "run_id": "run-a",
+                        "pane_id": "pane-a",
+                        "observed_state": "working",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    snapshot = {
+        "panes": [{"pane_id": "pane-a", "agent_status": "exited", "revision": 1}],
+        "agents": [],
+    }
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    with pytest.raises(REGISTER.RegisterError, match="no recorded or stamped"):
+        SUBSCRIBER.catch_up(empty, snapshot, run_id="run-a")
+    assert json.loads(path.read_text())["rows"]["child-a"]["observed_state"] == "working"
+
+
+def _git_init(repo: Path) -> None:
+    repo.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "tests@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Tests"], cwd=repo, check=True)
+    (repo / "README.md").write_text("seed\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "seed"], cwd=repo, check=True)
 
 
 def test_catch_up_for_one_run_does_not_write_another_runs_row(tmp_path: Path) -> None:

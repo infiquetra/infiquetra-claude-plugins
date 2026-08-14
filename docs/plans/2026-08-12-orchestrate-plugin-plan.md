@@ -73,9 +73,10 @@ brainstorm IDs are given in parentheses.
   the same class of location as the run secret). Written atomically. No graph, no leases, no
   fencing. A `run_id` is host-global on this machine. `retire_run` forgets the per-run
   secret first, then archives the document into the repository at
-  `.orchestrate/runs/<run_id>/register-final.json` and deletes the live file. A second
-  retire repairs a crash that left the key behind, so a reused id is a new authentication
-  identity.
+  `.orchestrate/runs/<run_id>/register-final.json` and deletes the live file and the
+  recorded-root sidecar. Forgetting the key requires the coordinator-recorded work
+  location. A second retire repairs a leftover key only when that record is still there
+  to name the generation, so a reused id is a new authentication identity.
   *(Amended 2026-08-14: the live file is no longer repo-local.
   Repo-locality of the live register put orchestrator-private state inside every child's
   landing. Provenance is the retirement archive. Interoperability on one host (R12) is
@@ -197,8 +198,9 @@ The shared foundation (U1) lands first because both runtimes need it.
 **KTD10 — The live register is addressed by `run_id` in an orchestrator-owned host-local
 directory.** Default `~/.orchestrate/registers/<run_id>.json`, relocatable by
 `ORCHESTRATE_REGISTER_DIR`. It must be readable and writable by both runtimes with the same
-meaning **on one host** (R12), which still rules out `.claude/` and `.codex/` — mirroring it
-per runtime forks the exact file the handoff depends on. The original wording placed that
+meaning **on one host and one checkout** (R12), which still rules out `.claude/` and
+`.codex/` — mirroring it per runtime forks the exact file the handoff depends on. Two
+checkouts of one `run_id` are a collision. The original wording placed that
 file at `.orchestrate/register.json` inside the repository for interoperability and
 provenance. Interoperability on one host does not require a repo-local path: two runtimes
 already share `~/.orchestrate/run-secrets`. Provenance is the retirement archive at

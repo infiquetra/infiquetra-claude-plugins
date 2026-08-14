@@ -2,6 +2,90 @@
 
 ## 2026-08-13
 
+### The dispatch receipt binds every input the verdict depends on  {#receipt-binds-deciding-inputs}
+
+Binding run, row and landing stopped one child's evidence verifying another child's row and stopped
+nothing else. Everything else that decides the outcome arrived as a separate, trusted argument: a
+receipt issued for judgment work verified under a mechanical work shape (which skips the depth gate
+entirely), and an out-of-scope write verified under a widened scope or against a baseline taken after
+the write. All three were reproduced.
+
+**Decision.** The receipt seals, and evaluation compares, every input `evaluate_completion` branches
+on — derived by reading the branches rather than by naming a category (LEARNINGS
+`{#name-the-class-mechanically}`): run, row, landing, runtime, work shape, mutability, declared
+scope, integration mode, destination, base commit, ambient root, and the changed-paths baseline. Any
+disagreement is `receipt_mismatch`, before anything else is read. One test per input.
+
+**The baseline is bound by digest, not re-taken.** It is the one deciding input with no label — it
+is repository state at an instant, and the same landing has different, equally valid snapshots
+before and after a write, so landing identity cannot constrain when the snapshot was taken. Taking
+it inside `issue_receipt` would make two producers of one snapshot, which is the exact shape that
+hid a defect in the previous round; the readiness path stays its only producer, the receipt binds it,
+evaluation compares it.
+
+**`write_scope` is sealed but deliberately not compared.** It is a pure function of mutability,
+scope, landing, run and row, every one of which is compared individually, so a comparison against it
+could never be the thing that catches a substitution. A check that can never fire alone reports
+coverage it does not have. The field remains as the sealed record of what issue time permitted.
+
+**Revisit when** `evaluate_completion` grows a branch on anything not in that list — the list is the
+function's read set, so extending the function extends the receipt.
+
+### The predicate runs in its own process group, and the group dies before the evidence is re-read  {#predicate-process-group}
+
+`Popen.wait()` establishes that the predicate's *direct process* finished. A descendant it spawned
+outlives it, is reparented away, and can write the artifact after the after-snapshot has already
+certified it — reproduced as a pass whose durable digest no longer matched the file on disk.
+
+**Decision.** `start_new_session=True` makes the predicate a group leader whose group id is its own
+pid and therefore still addressable after it exits. The group is SIGKILLed and waited out on **every**
+exit path, success included, inside `run_predicate` — so by the time the caller snapshots, a
+descendant's write is either inside the observed interval or impossible. A group that will not drain
+within five seconds is `predicate_descendants`, a refusal, because an observation taken while
+something the predicate started is still running cannot be trusted.
+
+**What remains, enumerated in `predicates.md` rather than implied:** a descendant already inside a
+kernel write when SIGKILL lands; a process that leaves its own group with `setsid`; the child session
+itself if it never actually stopped (U4 owns that); a sibling writing into this child's artifact
+directory (exclusive by assignment, not enforcement); the operator or anything else on the host; and
+a concurrent re-dispatch of the same row.
+
+**Rejected: poll the artifact for a while after the predicate exits.** It converts a boundary into a
+race with a timeout, and any delay chosen is both too long for the common case and too short for the
+adversarial one.
+
+**Revisit when** the plugin runs anywhere without POSIX process groups, where this control does not
+exist and the claim would have to be withdrawn rather than reworded.
+
+### A depth sample's verifier must be a dispatch this orchestrator issued  {#verifier-needs-an-authenticated-dispatch}
+
+The verifier check read register columns — row exists, run matches, phase past `launching`, vendor
+and model match. The register is the store the dispatch receipt is sealed against *because* every
+child can write it, so the check certified precisely what the rest of the unit distrusts. A planted
+row with the right columns reached `verified`, and because the sample is now persisted, the forgery
+left a durable audit trail of a session that never ran.
+
+**Decision.** The load-bearing requirement is an authenticated dispatch receipt for the verifier row,
+under this run's orchestrator secret, which a child cannot produce. The sample's vendor is compared
+against the sealed `runtime` in that receipt rather than against the writable column.
+
+**This places a contract on U8:** a verifier is an ordinary dispatched child and must be issued a
+receipt like any other. A verifier without one cannot be told apart from a planted row.
+
+**What stays unsealed, stated where it is claimed:** the verifier's `model` is still compared against
+a register column, because the model is resolved at launch and the receipt does not carry it. A child
+that can write the register can still misattribute the model of a genuinely dispatched verifier.
+
+**Rejected: name the residual and change no code.** Offered and legitimate, but the receipt primitive
+already existed and reached most of the gap for two comparisons, so documenting a hole that could be
+closed would have been the weaker half of an option pair.
+
+**Rejected: make U8 the sole producer of `DepthSample` and say so.** It relocates the trust rather
+than establishing it, and U8 does not exist yet, so nothing would enforce it.
+
+**Revisit when** the register's own rows are authenticated — the accepted cross-unit residual — at
+which point the phase and model comparisons become as strong as the vendor one.
+
 ### Read-only children are launched write-capable, and the durable receipt is authenticated instead  {#read-only-children-are-write-capable}
 
 Every orchestrate child, read-only or not, is dispatched with one artifact it is required to write.

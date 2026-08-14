@@ -12,9 +12,28 @@
   phase is `verified` if and only if its latest verdict is a pass: a first failure leaves the phase
   alone, and a failing re-evaluation demotes a previously verified row so the reap gate cannot
   consume a contradiction as a pass.
-- The receipt must belong to the child it verifies. The specification, landing, baseline and receipt
-  arrive as independent arguments and every outcome is recorded under the specification's row, so
-  run, row and landing are required to agree with the receipt before anything else is read.
+- The receipt binds **every input the verdict depends on**, not the labels that name the dispatch.
+  The specification, landing, baseline and receipt arrive as independent arguments and every outcome
+  is recorded under the specification's row, so run, row, landing, runtime, work shape, mutability,
+  declared scope, write scope, integration mode, destination, base commit and ambient root must all
+  agree with the receipt before anything else is read. Otherwise a receipt issued for judgment work
+  verified under a mechanical shape, which skips the depth gate entirely, and an out-of-scope write
+  verified under a widened scope.
+- The changed-paths baseline is bound by digest, because it is the one deciding input with no label:
+  a baseline is repository state at an instant, and the same landing has different valid snapshots
+  before and after a write, so binding the landing says nothing about when the snapshot was taken.
+  Without it, an out-of-scope write verified against a baseline taken after the write. The snapshot
+  is still produced once by the readiness path and passed in, rather than re-taken at issue, because
+  two producers of one snapshot is the shape that hid a defect in the previous round.
+- The predicate runs in its own process group, and the group is killed and waited out before the
+  evidence is re-observed — on every exit path, success included. Waiting for the direct process
+  only established that *that* process finished: a descendant outlived it, was reparented away, and
+  rewrote the artifact after the snapshot that certified it, leaving a recorded pass whose durable
+  digest did not match the file. A group that will not drain is `predicate_descendants`, a refusal.
+- A `reaped` row keeps its terminal phase whichever way a later verdict goes. Demotion on a failing
+  re-evaluation already worked; a *passing* re-evaluation wrote `verified` over `reaped`, and needed
+  no forgery to do it — catch-up re-evaluates run-bound artifacts on startup and settlement replays
+  cleanly, so a closed tab returned as a live verified child.
 - The durable records the register holds are authenticated. `.orchestrate/` is Git-ignored and
   therefore invisible to the boundary check, and every child can write files in its landing, so the
   dispatch receipt and settlement record each carry a keyed digest under a per-run orchestrator
@@ -71,8 +90,11 @@
   sample records verifier identity, the digest binding it to this artifact, sampled claims, evidence
   locations, and dispositions from a closed set, and all of it is persisted to the register so a
   child that was genuinely sampled and one whose sample certified nothing are not the same green row.
-  The named verifier must be a real session: a row that exists, belongs to this run, reached a phase
-  past launching, and carries the vendor and model the sample claims for it. A sample from the child
+  The named verifier must be a dispatch this orchestrator issued: an authenticated receipt for the
+  verifier row, whose run matches and whose sealed runtime matches the sample's vendor, plus a phase
+  past launching and a matching recorded model. A register row alone is something a child can write.
+  The verifier's model is still compared against an unsealed column, which is stated where it is
+  claimed. A sample from the child
   itself, one recorded against another artifact, one with no claims, any unsupported claim, and a
   sample with no supported claim at all each block verification. Malformed external depth data is
   recorded as a closed failure rather than raised, because a control that raises instead of recording
@@ -87,8 +109,10 @@
 - Every child is launched with its runtime's ordinary workspace-write posture, mutating or not.
   A read-only flag forbade the artifact every child is required to write, and no supported CLI
   accepts a repository-relative path allowlist, so it never contained a read-only child — it only
-  made its dispatch impossible to satisfy. Containment inside the workspace is the boundary check,
-  whose repository write allowlist for a read-only child is empty.
+  made its dispatch impossible to satisfy. That posture contains writes *outside* the workspace and
+  nothing inside it; the boundary check is post-hoc, partial, repository-visible change detection
+  that fails a child's completion rather than preventing its write, and a read-only child's
+  repository write allowlist is empty.
 - `GitLanding` answers two further boundary questions it already owned: whether a revision exists,
   and whether a path is genuinely invisible to the boundary — ignored *and* untracked. The scope
   helpers it shares with completion are now part of its public surface.

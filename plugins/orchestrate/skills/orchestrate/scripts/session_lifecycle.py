@@ -169,11 +169,15 @@ def permission_argv(runtime: str) -> list[str]:
     rather than a launch that is safe.
 
     What this posture **does** contain: writes outside the workspace the child was launched in.
-    What it does **not** contain: any particular path inside that workspace.  Containment inside
-    the workspace is :func:`check_completion_scope`, whose repository write allowlist for a
-    read-only child is empty, so any repository-visible write fails that child's completion.
-    Git-ignored paths are outside that check -- see ``IGNORED_PATHS_LIMITATION`` -- which is why
-    the durable dispatch receipt is authenticated rather than merely stored (``completion.py``).
+    That is the only *containment* in the word's real sense -- a boundary the runtime refuses to
+    let the child cross.  Inside the workspace nothing is contained.
+    :func:`check_completion_scope` is **post-hoc, partial, repository-visible change detection**:
+    it runs after the child has stopped, it reports rather than prevents, it observes only tracked
+    and non-ignored paths, and in a shared checkout it cannot establish which actor made a change.
+    A read-only child's empty repository write allowlist means any repository-visible write fails
+    that child's completion -- which is a refusal to verify, not a write that did not happen.
+    Git-ignored paths are outside even that -- see ``IGNORED_PATHS_LIMITATION`` -- which is why the
+    durable dispatch receipt is authenticated rather than merely stored (``completion.py``).
 
     Claude and Muse expose no positive flag: Claude has no cwd-write boundary flag at all, and
     Muse's sandbox is already on by default.  Qwen's boolean ``--sandbox`` is its

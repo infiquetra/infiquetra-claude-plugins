@@ -190,9 +190,17 @@ flag for Claude (which has no cwd-write boundary flag) or Muse (whose sandbox is
 Read-only children are **not** launched under a no-write flag, and this is deliberate. Every child
 is dispatched with an artifact it must write, and no supported CLI accepts a repository-relative
 path allowlist — so a read-only flag never contained a read-only child, it only made its dispatch
-impossible to satisfy. What the posture contains is writes *outside* the workspace. What contains a
-child *inside* the workspace is the boundary check, whose repository write allowlist for a read-only
-child is empty.
+impossible to satisfy.
+
+**What the posture contains is writes *outside* the workspace, and that is the only containment
+here.** Inside the workspace nothing is contained. The boundary check is *post-hoc, partial,
+repository-visible change detection*: it runs after the child has stopped, it reports rather than
+prevents, it sees only tracked and non-ignored paths, and in a shared checkout it cannot establish
+which actor made a change. A read-only child's empty repository write allowlist means any
+repository-visible change during its window fails **its completion** — a refusal to verify, not a
+write that did not happen. A child that writes a Git-ignored workspace path outside its own artifact
+directory produces no violation at all, and the register's records are authenticated precisely
+because of that.
 
 ## Run binding: computed before dispatch, never read from beside the artifact
 
@@ -259,6 +267,35 @@ matched the bytes on disk. It now fails `predicate_side_effect`. The whole direc
 one artifact, because a predicate that rewrites the in-flight sibling of the *next* dispatch is the
 same defect wearing a different filename.
 
+### "The predicate has finished" includes everything it started
+
+Two snapshots only bracket the interval between them. Waiting for the predicate's direct process
+establishes that *that* process finished — a descendant it spawned outlives it, is reparented away,
+and can write the artifact after the second snapshot has already certified it. That produced a
+recorded pass whose durable digest did not match the file on disk, with no control observing it.
+
+So the predicate is started as its own process group (`start_new_session=True`, making it a group
+leader whose group id is its own pid) and **the group is SIGKILLed and waited out on every exit
+path, success included, before `run_predicate` returns.** Ordering is the whole point: the kill
+happens before the caller takes the after-snapshot, so anything a descendant wrote is inside the
+observed interval, and after the kill there is nothing left to write. A group that does not drain
+within five seconds is `predicate_descendants` — a refusal, because an observation taken while
+something the predicate started is still running cannot be trusted.
+
+**What can still touch the artifact between the after-snapshot and the durable write** — the
+enumeration, so the claim above is not read as wider than it is:
+
+| Actor | Covered? |
+| --- | --- |
+| the predicate's direct process | yes — waited for |
+| any descendant it started, at any depth | yes — killed with the group before the snapshot |
+| a descendant already inside a kernel write when SIGKILL lands | **no** — the write completes; the window is microseconds and cannot be closed from user space |
+| a process the predicate started that escaped the group (`setsid` of its own) | **no** — nothing in POSIX prevents a process leaving its group |
+| the child session itself, if it never actually stopped | **no** — U5 does not verify that the child exited; readiness and stop are U4's |
+| a sibling child writing into this child's artifact directory | **no** — the exclusive directory is exclusive by assignment, not enforcement |
+| the operator, or anything else on the host | **no** — outside every control here |
+| a concurrent re-dispatch of the same row | **no** — register locking is U2's; the nonce makes the *stale* case fail, not the concurrent one |
+
 Well-behaved Python predicates are additionally kept from writing bytecode into the landing by
 `PYTHONDONTWRITEBYTECODE` and a scratch `PYTHONPYCACHEPREFIX`.
 
@@ -297,13 +334,27 @@ A depth sample records the verifier's identity (row, vendor, model), the digest 
 read, and one or more sampled claims, each with the claim, the evidence location where it was
 checked, and a disposition from the closed set `supported` / `unsupported` / `inconclusive`.
 
-**The verifier must be a session, checked against the register.** A `verifier_row_id` that is merely
-a non-empty string different from the child's is not a session — `"verifier-that-does-not-exist"`
-satisfies that test — and *independent verifier session* is the requirement. So the named row must
-exist in the register, belong to this child's run, have reached a phase past `launching` (a row still
-at `planned` never ran and cannot have read anything), and carry the vendor and model the sample
-claims for it. The last check is what stops a sample crediting its read to a different, more
-credible session than the one that performed it.
+**The verifier must be a dispatch this orchestrator issued.** A `verifier_row_id` that is merely a
+non-empty string different from the child's is not a session — `"verifier-that-does-not-exist"`
+satisfies that test. But neither is a *register row*: the register is the store the dispatch receipt
+is sealed against precisely because every child can write it, so a check that reads only register
+columns certifies exactly what the rest of this document distrusts. A write-capable child can plant
+a row with the right run, the right phase, and any vendor and model it likes — and because the
+sample is now persisted, that forgery leaves a durable audit trail of a session that never ran.
+
+So the load-bearing requirement is an **authenticated dispatch receipt for the verifier row**, under
+this run's orchestrator secret, which a child cannot produce. On top of that: the receipt's run must
+be this child's run; the sample's vendor must match the vendor in that sealed receipt; the row must
+have reached a phase past `launching`; and the sample's model must match the row's recorded model.
+
+**This places a contract on whoever dispatches verifiers (U8): a verifier is an ordinary dispatched
+child and must be issued a receipt like any other.** A verifier without one cannot be told apart
+from a planted row.
+
+**Not established, stated:** the verifier's `model` is compared against a register column that is
+*not* sealed — the model is resolved at launch and the receipt does not carry it — so a child that
+can write the register can still misattribute the model of a genuinely dispatched verifier. The
+vendor and the existence of the dispatch are sealed; the model is not.
 
 **A sample that established nothing does not certify anything.** Any `unsupported` claim blocks
 verification (`depth_sample_unsupported`), and so does a sample with no `supported` claim at all
@@ -352,7 +403,12 @@ is not this unit's call. So:
   pass.** Both halves matter. A first evaluation that fails leaves the phase untouched — typically
   `working`. A **re**-evaluation that fails *demotes* the row from `verified` back to `working`,
   because the reap gate reads the phase: a row left at `verified` with `completion.result=failed`
-  would be consumed downstream as a pass. A `reaped` row is past this question and is left alone.
+  would be consumed downstream as a pass. A `reaped` row is past this question and is left alone
+  **whichever way the verdict goes** — the earlier shape only left it alone on a failure, and a
+  passing re-evaluation wrote `verified` straight over the terminal phase. That needed no forgery:
+  catch-up re-evaluates run-bound artifacts on startup, a reaped child still has a settlement record
+  and a file on disk, and settlement replays cleanly, so a closed tab came back as a live `verified`
+  child and the next vanish check raised on its missing tab.
 - **The verdict lives in the row's own `completion` key**: result, reason from the closed failure
   vocabulary, a human-readable detail, the artifact digest, the settled artifact path, the predicate
   outcome, and — for judgment work — the depth sample.
@@ -370,11 +426,42 @@ distinguishable from "still working" without a new phase.
 
 ## Evaluation order
 
-0. **Identity.** The child specification, the landing, the changed-path baseline and the receipt
-   arrive as four independent arguments, and every outcome is recorded under the *specification's*
-   row. Nothing further down would notice if they described different children, so a correctly bound
-   artifact for one child could verify another child's row. Run, row and landing must agree with the
-   receipt before anything else is read (`receipt_mismatch`).
+0. **Identity — every input the verdict depends on, not just the labels.** The child specification,
+   the landing, the changed-path baseline and the receipt arrive as four independent arguments, and
+   every outcome is recorded under the *specification's* row. Nothing further down would notice if
+   they described different dispatches. The bound set is the mechanical answer to "what does the
+   evaluator read before deciding?", obtained by reading every branch downstream:
+
+   **Deciding inputs** — something downstream branches on them, so substituting one changes the
+   verdict:
+
+   | Input | What it decides | How it is bound |
+   | --- | --- | --- |
+   | `run_id`, `row_id` | which row the verdict lands on; the artifact landing; the token | sealed label |
+   | landing path | where the predicate runs, what the boundary observes | sealed label |
+   | `work_shape` | **whether the depth gate runs at all** | sealed label |
+   | `mutating`, `scope` | what the boundary check permits | sealed labels |
+   | `base_commit` | what committed change is measured against | sealed label |
+   | `ambient_root` | which second tree is observed, and where integration is checked | sealed label |
+   | changed-paths baseline | what "changed since the child started" means | **sealed digest** |
+
+   **Consistency fields** — `runtime`, `integration_mode` and `destination`. Evaluation reads these
+   from the *receipt*, never from the separately supplied arguments, so a mismatch cannot change the
+   verdict. They are compared anyway, because a caller whose landing disagrees with its receipt has
+   muddled two dispatches and failing closed is cheap — but calling them deciding inputs would be
+   the same overclaim this document exists to avoid.
+
+   `write_scope` is sealed and deliberately **not** compared: it is a pure function of `mutating`,
+   `scope`, the landing, the run and the row, all of which are compared individually, so a
+   comparison against it could never be the check that catches a substitution. A check that can
+   never fire alone reports coverage it does not have.
+
+   The baseline is the one input with no label: it is repository state *at an instant*, and the same
+   landing has different, equally valid snapshots before and after a write, so binding the landing
+   says nothing about *when* the snapshot was taken. It is bound by digest rather than re-taken here,
+   because U4's readiness path is its producer and two takers of one snapshot is the same shape as
+   two writers of one register column. One producer, one binder, one comparison. Any disagreement is
+   `receipt_mismatch`, before anything else is read.
 1. **Predicate tamper check** — the closure digest, before anything is executed.
 2. **Settlement** — destination unchanged, in-flight present, rename; or a replay of the recorded
    settlement for this dispatch.

@@ -70,9 +70,14 @@ to the launch working directory.
 Read-only children are deliberately **not** given a no-write flag. Every child, of either kind, is
 dispatched with an artifact it is required to write, and none of these command-line interfaces
 accepts a repository-relative path allowlist — so a read-only posture flag never contained a
-read-only child, it only made its dispatch impossible to satisfy. What these flags contain is writes
-outside the launch workspace. What contains a child *inside* the workspace is the boundary check
-below, whose repository write allowlist for a read-only child is empty.
+read-only child, it only made its dispatch impossible to satisfy.
+
+What these flags contain is writes outside the launch workspace, and that is the only containment in
+this design. Inside the workspace nothing is contained. The boundary check below is post-hoc,
+partial, repository-visible change *detection* — it runs after the child stops, reports rather than
+prevents, covers only tracked and non-ignored paths, and cannot establish authorship in a shared
+checkout. A read-only child's empty repository write allowlist makes any repository-visible change
+fail that child's completion; it does not stop the write.
 
 Enforcement is observational. Every child records the ambient checkout's immutable commit before
 provisioning. U4 therefore requires a landing in a Git repository with at least one commit; a

@@ -132,16 +132,24 @@ def _predicate(*args: str, **overrides: Any) -> Any:
     return COMPLETION.PredicateSpec(argv=argv, **overrides)
 
 
+def _baseline(git: Any, landing: Any) -> Any:
+    return git.changed_paths_baseline(
+        landing.cwd, base_commit=landing.base_commit, ambient_root=landing.ambient_root
+    )
+
+
 class _Prepared:
-    def __init__(self, repo: Path, spec: Any, landing: Any, git: Any, receipt: Any) -> None:
+    def __init__(
+        self, repo: Path, spec: Any, landing: Any, git: Any, receipt: Any, baseline: Any
+    ) -> None:
         self.repo = repo
         self.spec = spec
         self.landing = landing
         self.git = git
         self.receipt = receipt
-        self.baseline = git.changed_paths_baseline(
-            landing.cwd, base_commit=landing.base_commit, ambient_root=landing.ambient_root
-        )
+        # Taken before the receipt is issued and bound into it, exactly as the product does:
+        # readiness produces the snapshot, the receipt binds it, evaluation compares it.
+        self.baseline = baseline
 
     def write_deliverable(
         self, payload: dict[str, Any] | None = None, *, path: Path | None = None
@@ -202,10 +210,17 @@ def _prepare(
         artifacts = COMPLETION.artifact_landing(Path(landing.cwd), spec.run_id, spec.row_id)
         relative = artifacts.relative_to(Path(landing.cwd).resolve()) / artifact_name
         predicate = _predicate(relative.as_posix())
+    baseline = _baseline(git, landing)
     receipt = COMPLETION.issue_receipt(
-        repo, spec, landing, predicate, artifact_name=artifact_name, git=git
+        repo,
+        spec,
+        landing,
+        predicate,
+        artifact_name=artifact_name,
+        git=git,
+        changed_paths_baseline=baseline,
     )
-    return _Prepared(repo, spec, landing, git, receipt)
+    return _Prepared(repo, spec, landing, git, receipt, baseline)
 
 
 class FakeHerdr:
@@ -284,7 +299,13 @@ def test_predicate_entry_point_inside_the_write_scope_is_rejected(tmp_path: Path
 
     with pytest.raises(COMPLETION.PredicateScopeError, match="src/self_check.py"):
         COMPLETION.issue_receipt(
-            repo, spec, landing, predicate, artifact_name="report.json", git=git
+            repo,
+            spec,
+            landing,
+            predicate,
+            artifact_name="report.json",
+            git=git,
+            changed_paths_baseline=_baseline(git, landing),
         )
 
 
@@ -307,7 +328,13 @@ def test_predicate_importing_a_module_inside_the_write_scope_is_rejected(tmp_pat
 
     with pytest.raises(COMPLETION.PredicateScopeError, match="src/oracle.py"):
         COMPLETION.issue_receipt(
-            repo, spec, landing, predicate, artifact_name="report.json", git=git
+            repo,
+            spec,
+            landing,
+            predicate,
+            artifact_name="report.json",
+            git=git,
+            changed_paths_baseline=_baseline(git, landing),
         )
 
 
@@ -705,8 +732,9 @@ def test_reaping_is_refused_while_a_path_destination_is_unchanged(tmp_path: Path
         _predicate(relative.as_posix()),
         artifact_name="report.json",
         git=git,
+        changed_paths_baseline=_baseline(git, landing),
     )
-    prepared = _Prepared(repo, spec, landing, git, receipt)
+    prepared = _Prepared(repo, spec, landing, git, receipt, _baseline(git, landing))
     prepared.write_deliverable()
 
     assert prepared.evaluate().reason == "integration_unverified"
@@ -798,8 +826,16 @@ def _verifier_row(
     vendor: str = "grok",
     model: str = "grok-4.6",
     phase: str = "working",
+    dispatched: bool = True,
 ) -> None:
-    """Register a verifier session, because a depth sample must name one that exists."""
+    """Register a verifier session.
+
+    ``dispatched=True`` issues a real dispatch receipt for the verifier, because that is what the
+    product does and it is the only part of a verifier row a child cannot forge. ``dispatched=False``
+    plants the columns alone -- the shape a write-capable child can produce, which must be refused.
+    """
+    if dispatched:
+        _prepare(repo, row_id=row_id, run_id=run_id, runtime=vendor, artifact_name="verdict.json")
     REGISTER.upsert_row(
         repo, row_id, {"run_id": run_id, "vendor": vendor, "model": model, "phase": phase}
     )
@@ -984,15 +1020,18 @@ def test_a_depth_sample_from_another_run_is_not_this_runs_verifier(tmp_path: Pat
     result = prepared.evaluate(depth_sample=_sample(prepared, register=False))
     assert result.verified is False
     assert result.reason == "depth_sample_invalid"
-    assert "belongs to run" in result.detail
+    assert "was dispatched for run" in result.detail
 
 
 @pytest.mark.parametrize(
-    ("field", "value"),
-    [("verifier_vendor", "codex"), ("verifier_model", "a-more-credible-model")],
+    ("field", "value", "expected"),
+    [
+        ("verifier_vendor", "codex", "its authenticated dispatch names"),
+        ("verifier_model", "a-more-credible-model", "the register records"),
+    ],
 )
 def test_a_depth_sample_misattributing_the_verifier_is_rejected(
-    tmp_path: Path, field: str, value: str
+    tmp_path: Path, field: str, value: str, expected: str
 ) -> None:
     """A sample cannot credit its read to a different session than the one that performed it."""
     repo = tmp_path / "repo"
@@ -1004,7 +1043,9 @@ def test_a_depth_sample_misattributing_the_verifier_is_rejected(
     result = prepared.evaluate(depth_sample=_sample(prepared, **misattributed))
     assert result.verified is False
     assert result.reason == "depth_sample_invalid"
-    assert "the register records" in result.detail
+    # Vendor is checked against the verifier's own authenticated dispatch; model is still checked
+    # against a writable register column, and the two messages say which is which on purpose.
+    assert expected in result.detail
 
 
 def test_an_inconclusive_only_depth_sample_does_not_certify_judgment_work(
@@ -1168,7 +1209,13 @@ def test_a_repository_that_does_not_ignore_the_state_directory_fails_closed(
     landing = git.provision(repo, spec)
     with pytest.raises(COMPLETION.LandingNotExclusiveError, match="not ignored"):
         COMPLETION.issue_receipt(
-            repo, spec, landing, _predicate("x"), artifact_name="report.json", git=git
+            repo,
+            spec,
+            landing,
+            _predicate("x"),
+            artifact_name="report.json",
+            git=git,
+            changed_paths_baseline=_baseline(git, landing),
         )
 
 
@@ -1428,10 +1475,17 @@ def _path_mode_prepared(repo: Path, row_id: str) -> _Prepared:
     REGISTER.upsert_row(repo, row_id, {"run_id": "run-a", "phase": "working"})
     artifacts = COMPLETION.artifact_landing(repo.resolve(), "run-a", row_id)
     relative = artifacts.relative_to(repo.resolve()) / "report.json"
+    baseline = _baseline(git, landing)
     receipt = COMPLETION.issue_receipt(
-        repo, spec, landing, _predicate(relative.as_posix()), artifact_name="report.json", git=git
+        repo,
+        spec,
+        landing,
+        _predicate(relative.as_posix()),
+        artifact_name="report.json",
+        git=git,
+        changed_paths_baseline=baseline,
     )
-    return _Prepared(repo, spec, landing, git, receipt)
+    return _Prepared(repo, spec, landing, git, receipt, baseline)
 
 
 def test_a_changed_path_destination_satisfies_the_integration_gate(tmp_path: Path) -> None:
@@ -1932,7 +1986,13 @@ def test_a_child_that_may_rewrite_a_parent_initializer_cannot_be_certified_by_th
 
     with pytest.raises(COMPLETION.PredicateScopeError, match="pkg/__init__.py"):
         COMPLETION.issue_receipt(
-            repo, spec, landing, predicate, artifact_name="report.json", git=git
+            repo,
+            spec,
+            landing,
+            predicate,
+            artifact_name="report.json",
+            git=git,
+            changed_paths_baseline=_baseline(git, landing),
         )
 
 
@@ -1976,9 +2036,15 @@ def test_a_predicate_that_rewrites_the_settled_artifact_fails_as_a_side_effect(
     relative = (artifacts.relative_to(Path(landing.cwd).resolve()) / "report.json").as_posix()
     predicate = COMPLETION.PredicateSpec(argv=(sys.executable, "checks/rewriter.py", relative))
     receipt = COMPLETION.issue_receipt(
-        repo, spec, landing, predicate, artifact_name="report.json", git=git
+        repo,
+        spec,
+        landing,
+        predicate,
+        artifact_name="report.json",
+        git=git,
+        changed_paths_baseline=_baseline(git, landing),
     )
-    prepared = _Prepared(repo, spec, landing, git, receipt)
+    prepared = _Prepared(repo, spec, landing, git, receipt, _baseline(git, landing))
     prepared.run_child_process()
 
     result = prepared.evaluate()
@@ -2073,3 +2139,446 @@ def test_the_unfiltered_failed_rows_view_spans_every_run(tmp_path: Path) -> None
 
     assert sorted(COMPLETION.failed_rows(repo)) == ["child-a", "child-b"]
     assert sorted(COMPLETION.failed_rows(repo, run_id="run-b")) == ["child-b"]
+
+
+# ============ R16: the receipt binds every input the evaluator branches on ==================
+#
+# The class here is not "the identity labels". It is the mechanical answer to "what does
+# evaluate_completion read before deciding?", obtained by reading every branch downstream of it.
+
+
+def _substitute(prepared: _Prepared, label: str) -> tuple[Any, Any, Any]:
+    """Return (spec, landing, baseline) with exactly one deciding input replaced."""
+    spec, landing, baseline = prepared.spec, prepared.landing, prepared.baseline
+    if label == "runtime":
+        spec = replace(spec, runtime="grok")
+    elif label == "work_shape":
+        # The receipt was issued for judgment work; a mechanical shape skips the depth gate.
+        spec = replace(spec, work_shape="mechanical")
+    elif label == "mutating":
+        spec = replace(spec, mutating=True)
+    elif label == "scope":
+        spec = replace(spec, scope=("src", "reports"))
+    elif label == "integration_mode":
+        landing = replace(landing, integration_mode="path")
+    elif label == "destination":
+        landing = replace(landing, destination="somewhere-else")
+    elif label == "base_commit":
+        landing = replace(landing, base_commit="0" * 40)
+    elif label == "ambient_root":
+        landing = replace(landing, ambient_root=prepared.repo / "elsewhere")
+    else:  # pragma: no cover - a label with no substitution is a test bug
+        raise AssertionError(label)
+    return spec, landing, baseline
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        "runtime",
+        "work_shape",
+        "mutating",
+        "scope",
+        "integration_mode",
+        "destination",
+        "base_commit",
+        "ambient_root",
+    ],
+)
+def test_every_deciding_input_is_bound_to_the_receipt(tmp_path: Path, label: str) -> None:
+    """One case per input the evaluator branches on, each failing if its comparison is removed.
+
+    Binding run, row and landing stops one child's evidence verifying another child's row and
+    stops nothing else. A receipt issued for judgment work verified under a mechanical shape; an
+    out-of-scope write verified under a widened scope. Each of these arrives as a separate
+    argument, so each is sealed and compared.
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo, work_shape="judgment")
+    prepared.run_child_process()
+    spec, landing, baseline = _substitute(prepared, label)
+
+    result = COMPLETION.evaluate_completion(
+        repo, spec, landing, baseline, prepared.receipt, git=prepared.git
+    )
+    assert result.verified is False
+    assert result.reason == "receipt_mismatch"
+    assert label in result.detail
+    assert REGISTER.read_rows(repo)["child-a"]["phase"] == "working"
+
+
+def test_a_widened_scope_cannot_excuse_a_write_the_dispatch_forbade(tmp_path: Path) -> None:
+    """The reproduction, rather than the label: an out-of-scope write under a broadened scope."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo, scope=("reports/a",))
+    prepared.run_child_process()
+    stray = repo / "reports" / "b" / "notes.md"
+    stray.parent.mkdir(parents=True)
+    stray.write_text("outside the declared scope\n", encoding="utf-8")
+
+    widened = replace(prepared.spec, mutating=True, scope=("reports",))
+    result = COMPLETION.evaluate_completion(
+        repo, widened, prepared.landing, prepared.baseline, prepared.receipt, git=prepared.git
+    )
+    assert result.verified is False
+    assert result.reason == "receipt_mismatch"
+
+
+def test_a_baseline_taken_after_the_write_it_would_excuse_is_refused(tmp_path: Path) -> None:
+    """A baseline is repository state at an instant, and the landing does not say which instant.
+
+    The same landing has different, equally valid snapshots before and after a write, so binding
+    the landing says nothing about when the snapshot was taken. Re-taking the baseline after an
+    out-of-scope write makes that write invisible to the boundary check.
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo, scope=("reports/a",))
+    prepared.run_child_process()
+    stray = repo / "reports" / "a" / "notes.md"
+    stray.parent.mkdir(parents=True)
+    stray.write_text("written into the shared checkout\n", encoding="utf-8")
+
+    # With the bound baseline this is a boundary violation, which is the honest verdict.
+    assert prepared.evaluate().reason == "scope_violation"
+
+    # With a baseline taken after the write, the violation disappears -- so the substitution is
+    # refused before the boundary check ever runs.
+    laundered = _baseline(prepared.git, prepared.landing)
+    result = COMPLETION.evaluate_completion(
+        repo, prepared.spec, prepared.landing, laundered, prepared.receipt, git=prepared.git
+    )
+    assert result.verified is False
+    assert result.reason == "receipt_mismatch"
+    assert "changed_paths_baseline" in result.detail
+
+
+def test_the_bound_baseline_digest_distinguishes_two_snapshots_of_one_landing(
+    tmp_path: Path,
+) -> None:
+    """The digest is the binding, so it must move when the snapshot does and not otherwise."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    git = LIFECYCLE.GitLanding()
+    spec = _spec()
+    landing = git.provision(repo, spec)
+    before = _baseline(git, landing)
+    assert COMPLETION.baseline_digest(before) == COMPLETION.baseline_digest(_baseline(git, landing))
+
+    (repo / "reports").mkdir()
+    (repo / "reports" / "note.md").write_text("a change\n", encoding="utf-8")
+    assert COMPLETION.baseline_digest(_baseline(git, landing)) != COMPLETION.baseline_digest(before)
+
+
+def test_the_receipt_round_trip_preserves_every_deciding_input(tmp_path: Path) -> None:
+    """Whatever is sealed must survive the register, or the restart path compares a different set."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo, work_shape="judgment", scope=("reports/a",))
+    reloaded = COMPLETION.read_receipt(repo, "child-a")
+    assert reloaded == prepared.receipt
+    assert reloaded.work_shape == "judgment"
+    assert reloaded.scope == ("reports/a",)
+    assert reloaded.mutating is False
+    assert reloaded.runtime == "codex"
+    assert reloaded.baseline_digest == COMPLETION.baseline_digest(prepared.baseline)
+
+
+# ============ R17: the predicate's descendants ==============================================
+
+_DESCENDANT_PREDICATE = """\
+import subprocess
+import sys
+
+# A predicate that passes immediately and leaves something behind to rewrite the evidence.
+subprocess.Popen(
+    [
+        sys.executable,
+        "-c",
+        "import sys, time; time.sleep(float(sys.argv[1])); "
+        "open(sys.argv[2], 'w').write('FORGED-BY-DESCENDANT')",
+        sys.argv[2],
+        sys.argv[1],
+    ]
+)
+sys.exit(0)
+"""
+
+
+def _descendant_prepared(repo: Path, delay: str) -> _Prepared:
+    (repo / "checks" / "spawner.py").write_text(_DESCENDANT_PREDICATE, encoding="utf-8")
+    _git(repo, "add", "checks/spawner.py")
+    _git(repo, "commit", "-q", "-m", "a predicate that outlives itself")
+    spec = _spec()
+    git = LIFECYCLE.GitLanding()
+    landing = git.provision(repo, spec)
+    REGISTER.upsert_row(repo, "child-a", {"run_id": "run-a", "phase": "working"})
+    artifacts = COMPLETION.artifact_landing(Path(landing.cwd), "run-a", "child-a")
+    relative = (artifacts.relative_to(Path(landing.cwd).resolve()) / "report.json").as_posix()
+    predicate = COMPLETION.PredicateSpec(
+        argv=(sys.executable, "checks/spawner.py", relative, delay)
+    )
+    baseline = _baseline(git, landing)
+    receipt = COMPLETION.issue_receipt(
+        repo,
+        spec,
+        landing,
+        predicate,
+        artifact_name="report.json",
+        git=git,
+        changed_paths_baseline=baseline,
+    )
+    return _Prepared(repo, spec, landing, git, receipt, baseline)
+
+
+def test_a_predicate_descendant_cannot_rewrite_the_evidence_after_the_pass(
+    tmp_path: Path,
+) -> None:
+    """Waiting for the direct process only establishes that *that* process finished.
+
+    A descendant outlives it, is reparented away, and writes after the after-snapshot has already
+    certified the evidence -- so completion recorded a pass whose durable digest no longer matched
+    the file. The predicate now runs in its own process group and the group is killed before this
+    returns, so "the predicate has finished" includes everything it started.
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _descendant_prepared(repo, delay="1.0")
+    prepared.run_child_process()
+
+    result = prepared.evaluate()
+    assert result.verified is True, result.detail
+    recorded = str(result.artifact_digest)
+
+    # Well past the descendant's delay: if anything survived the kill, it has written by now.
+    time.sleep(2.0)
+    on_disk = "sha256:" + hashlib.sha256(prepared.receipt.artifact_path.read_bytes()).hexdigest()
+    assert on_disk == recorded
+    assert b"FORGED-BY-DESCENDANT" not in prepared.receipt.artifact_path.read_bytes()
+
+
+def test_a_descendant_that_writes_before_the_kill_is_still_observed(tmp_path: Path) -> None:
+    """The kill closes the window; it does not replace the observation that covers it."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _descendant_prepared(repo, delay="0")
+    prepared.run_child_process()
+
+    result = prepared.evaluate()
+    if result.verified:
+        # The descendant lost the race and was killed before writing: the evidence is intact,
+        # which is the other honest outcome of the same control.
+        assert b"FORGED-BY-DESCENDANT" not in prepared.receipt.artifact_path.read_bytes()
+    else:
+        assert result.reason == "predicate_side_effect"
+
+
+def test_a_descendant_outlives_its_parent_and_the_group_kill_is_what_ends_it(
+    tmp_path: Path,
+) -> None:
+    """The production shape, with no predicate involved: leader exits, descendant does not.
+
+    This is the mechanism the artifact test depends on. A group leader that spawns a child and
+    exits leaves that child running and reparented, so the group is *not* empty once the leader
+    has been waited for -- which is exactly the window in which the old code took its
+    after-snapshot and called the evidence certified.
+    """
+    leader = subprocess.Popen(  # noqa: S603
+        [
+            sys.executable,
+            "-c",
+            "import subprocess, sys; "
+            "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); "
+            "sys.exit(0)",
+        ],
+        start_new_session=True,
+    )
+    leader.wait()
+    try:
+        assert COMPLETION._process_group_is_empty(leader.pid) is False
+        assert COMPLETION._drain_process_group(leader.pid, timeout=5.0) is True
+        assert COMPLETION._process_group_is_empty(leader.pid) is True
+    finally:
+        COMPLETION._kill_process_group(leader.pid)
+
+
+def test_a_predicate_whose_group_will_not_die_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A defensive branch that a real process cannot reach, pinned by forcing the condition.
+
+    Nothing on this host survives SIGKILL long enough to exercise this for real, so the drain
+    result is forced. What is being pinned is the decision -- an undrained group is a refusal,
+    not a pass -- not the drain mechanism, which the helper test covers.
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo)
+    prepared.run_child_process()
+    monkeypatch.setattr(COMPLETION, "_drain_process_group", lambda *a, **k: False)
+
+    result = prepared.evaluate()
+    assert result.verified is False
+    assert result.reason == "predicate_descendants"
+    # The explanation lives on the predicate outcome, which is what the register persists.
+    assert result.predicate is not None
+    assert "did not stop" in result.predicate.output
+
+
+# ============ R18: `reaped` is terminal in both directions ==================================
+
+
+def test_a_passing_re_evaluation_does_not_resurrect_a_reaped_row(tmp_path: Path) -> None:
+    """The demotion half of the phase invariant was tested; the promotion half was not.
+
+    Catch-up re-evaluates run-bound artifacts on startup, a reaped child still has a settlement
+    record and a file on disk, and settlement replays cleanly -- so a closed tab came back as a
+    live `verified` child and the next vanish check raised on its missing tab.
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo)
+    prepared.run_child_process()
+    REGISTER.upsert_row(repo, "child-a", {"tab_id": "tab-a"})
+    assert prepared.evaluate().verified is True
+    LIFECYCLE.reap_verified(repo, "child-a", herdr=FakeHerdr())
+    assert REGISTER.read_rows(repo)["child-a"]["phase"] == "reaped"
+
+    second = prepared.evaluate()
+    assert second.verified is True, second.detail
+    row = REGISTER.read_rows(repo)["child-a"]
+    assert row["phase"] == "reaped"
+    assert row["completion"]["result"] == "verified"
+    # The vanish check must not see a live verified child whose tab is closed.
+    LIFECYCLE.assert_child_not_vanished(repo, "child-a", herdr=FakeHerdr())
+
+
+@pytest.mark.parametrize("passing", [True, False])
+def test_a_reaped_row_keeps_its_phase_whichever_way_the_verdict_goes(
+    tmp_path: Path, passing: bool
+) -> None:
+    """Both members of the branch `_record` takes on a terminal phase."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo)
+    prepared.run_child_process()
+    REGISTER.upsert_row(repo, "child-a", {"tab_id": "tab-a"})
+    assert prepared.evaluate().verified is True
+    LIFECYCLE.reap_verified(repo, "child-a", herdr=FakeHerdr())
+    if not passing:
+        prepared.receipt.artifact_path.write_text("tampered after the reap\n", encoding="utf-8")
+
+    result = prepared.evaluate()
+    assert result.verified is passing
+    assert REGISTER.read_rows(repo)["child-a"]["phase"] == "reaped"
+
+
+# ============ R19: the verifier must be a dispatch this orchestrator issued =================
+
+
+def test_a_planted_verifier_row_does_not_satisfy_the_verifier_check(tmp_path: Path) -> None:
+    """R6 read register columns, and the register is the store R3 exists because we distrust.
+
+    A write-capable child can plant a row with the right run, phase, vendor and model. Requiring
+    an authenticated dispatch receipt is the part it cannot forge -- and without this the forgery
+    was *more* convincing after the repair, because the planted identity was persisted into the
+    durable completion record.
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo, work_shape="judgment")
+    prepared.run_child_process()
+    _verifier_row(repo, "planted-verifier", dispatched=False)
+
+    result = prepared.evaluate(
+        depth_sample=_sample(prepared, register=False, verifier_row_id="planted-verifier")
+    )
+    assert result.verified is False
+    assert result.reason == "depth_sample_invalid"
+    assert "carries no dispatch this orchestrator issued" in result.detail
+    assert REGISTER.read_rows(repo)["child-a"].get("phase") == "working"
+
+
+def test_a_verifier_whose_receipt_was_tampered_with_is_not_a_session(tmp_path: Path) -> None:
+    """The verifier's dispatch is authenticated, so editing it is the same refusal as editing any."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo, work_shape="judgment")
+    prepared.run_child_process()
+    sample = _sample(prepared)
+    stored = dict(REGISTER.read_rows(repo)["verifier-1"]["dispatch_receipt"])
+    stored["runtime"] = "an-invented-vendor"
+    REGISTER.upsert_row(repo, "verifier-1", {"dispatch_receipt": stored})
+
+    result = prepared.evaluate(depth_sample=sample)
+    assert result.verified is False
+    assert result.reason == "depth_sample_invalid"
+    assert "carries no dispatch this orchestrator issued" in result.detail
+
+
+def test_a_relaundered_baseline_is_caught_when_only_a_fingerprint_moved(tmp_path: Path) -> None:
+    """The path set alone does not distinguish two snapshots of the same landing.
+
+    A file that was already dirty when the child started is in both baselines, so re-taking the
+    snapshot after the child modifies it changes no path — only that path's content fingerprint.
+    A digest over names would call the two snapshots identical and let the modification through.
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    already_dirty = repo / "reports" / "a" / "notes.md"
+    already_dirty.parent.mkdir(parents=True)
+    already_dirty.write_text("present before the child started\n", encoding="utf-8")
+
+    prepared = _prepare(repo, scope=("reports/a",))
+    prepared.run_child_process()
+    already_dirty.write_text("modified during the child's window\n", encoding="utf-8")
+
+    laundered = _baseline(prepared.git, prepared.landing)
+    assert set(laundered.paths) == set(prepared.baseline.paths)
+    assert COMPLETION.baseline_digest(laundered) != COMPLETION.baseline_digest(prepared.baseline)
+
+    result = COMPLETION.evaluate_completion(
+        repo, prepared.spec, prepared.landing, laundered, prepared.receipt, git=prepared.git
+    )
+    assert result.verified is False
+    assert result.reason == "receipt_mismatch"
+    assert "changed_paths_baseline" in result.detail
+
+
+# ============ R20: the operator-facing surfaces do not call detection "containment" ==========
+
+_SURFACES = (
+    "plugins/orchestrate/README.md",
+    "plugins/orchestrate/references/predicates.md",
+    "plugins/orchestrate/references/substrate-contract.md",
+    "plugins/orchestrate/skills/orchestrate/SKILL.md",
+)
+
+
+def test_no_surface_calls_the_boundary_check_containment() -> None:
+    """The boundary check observes after the fact; it does not prevent a write.
+
+    Telling an operator that it "contains" a child inside the workspace describes a control that
+    does not exist: it runs after the child has stopped, reports rather than blocks, sees only
+    tracked and non-ignored paths, and cannot establish authorship in a shared checkout. A child
+    that writes a Git-ignored workspace path outside its artifact directory produces no violation
+    at all. "Containment" belongs to the runtime posture, which really does prevent writes outside
+    the workspace.
+    """
+
+    def flowed(relative: str) -> str:
+        """Markdown and docstrings wrap, so compare on whitespace-collapsed prose."""
+        return " ".join((ROOT / relative).read_text(encoding="utf-8").split()).lower()
+
+    for relative in _SURFACES:
+        text = flowed(relative)
+        assert "containment inside the workspace is the boundary check" not in text, relative
+        assert "what contains a child *inside* the workspace is the boundary check" not in text
+    detection = flowed("plugins/orchestrate/references/predicates.md")
+    assert "post-hoc, partial, repository-visible change detection" in detection
+    assert "reports rather than prevents" in detection
+    posture = flowed("plugins/orchestrate/skills/orchestrate/scripts/session_lifecycle.py")
+    assert "post-hoc, partial, repository-visible change detection" in posture
+    assert "the only *containment* in the word's real sense" in posture

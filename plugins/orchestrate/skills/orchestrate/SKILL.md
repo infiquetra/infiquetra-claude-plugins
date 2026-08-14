@@ -187,7 +187,10 @@ actually exists in the register with the vendor and model it claims, and support
 sampled claim — all of it persisted, so a sampled child and an unsampled one are not the same green
 row. A row's phase is `verified` if and only if its latest verdict is a pass: a failing
 re-evaluation demotes a previously verified row rather than leaving a contradiction the reap gate
-would read as a pass.
+would read as a pass, and a `reaped` row keeps its terminal phase whichever way the verdict goes.
+The receipt binds every input the verdict depends on — work shape, scope, mutability, integration
+target and the changed-paths baseline, not only the identity labels — and the predicate runs in its
+own process group that is killed before the evidence is re-observed.
 
 See `references/predicates.md` for the full contract, including what each control does **not**
 establish.

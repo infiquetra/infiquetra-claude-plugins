@@ -49,8 +49,12 @@ compared with the declared scope even when the work predicate passes, and any at
 checkout change violates a mutating child's isolated landing boundary. Git-ignored paths are an
 explicit limitation, not silently described as covered. Every child is launched with its runtime's
 ordinary workspace-write posture — a read-only flag would have forbidden the artifact every child is
-required to write, and no supported CLI accepts a path allowlist — so containment inside the
-workspace is the boundary check, whose repository write allowlist for a read-only child is empty.
+required to write, and no supported CLI accepts a path allowlist. That posture is the only real
+containment: it prevents writes *outside* the workspace. Inside the workspace nothing is prevented.
+The boundary check is post-hoc, partial detection — it runs after the child stops, reports rather
+than blocks, sees only tracked and non-ignored paths, and cannot establish authorship in a shared
+checkout — and a read-only child's empty repository write allowlist means any repository-visible
+write fails its completion.
 Launch and observation are fixed to Herdr's default session. See
 `references/substrate-contract.md` for the adapter and failure contract.
 

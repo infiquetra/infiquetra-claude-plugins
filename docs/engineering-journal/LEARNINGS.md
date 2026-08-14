@@ -21,6 +21,98 @@
 
 ## 2026-08-13
 
+### Name a class by reading the branches, not by describing the defect  {#name-the-class-mechanically}
+
+**Context.** A review round asked for a "class enumeration" for each control: having fixed one
+instance, enumerate every member of its class. I did that three rounds running and each round the
+next review found members I had missed — always described by the reviewers with the same phrase,
+"adjacent to, not a repetition of".
+
+**Evidence.** The receipt-identity control is the clearest case. I fixed "a receipt for child B
+verifies child A" by binding run, row and landing, and named the class **"the identity labels"** —
+a reasonable, categorical description. The actual class was *every independent input the evaluator
+branches on*, which also contains `work_shape` (it decides whether the depth gate runs at all),
+`mutating` and `scope` (they decide what the boundary check permits), and the changed-paths baseline
+(it decides what "changed" means). All three were reproduced as passes against `95c3cd1e`.
+
+**Mechanism.** Naming a class categorically is an act of judgment, and judgment is exactly what is
+compromised right after fixing a bug: the instance you just fixed dominates the description. "The
+identity labels" is a *description of the fix*, not of the function. The mechanical form has no such
+failure mode — **read the function and list every input it branches on** — because it does not ask
+what kind of defect this is, only what the code reads before deciding. The answer is finite,
+checkable by another reader, and does not depend on how the first instance happened to look.
+
+**Fix.** Applied per control this round and reported as an input list rather than a category. It
+immediately produced four bindings I would not have named categorically (`runtime`,
+`integration_mode`, `base_commit`, `ambient_root`), and it is what turned "one test per control"
+into "one test per input".
+
+**Generalizable rule.** When a fix needs a completeness argument, derive the class from the code's
+structure, not from the defect's description. "What does this function read before it decides?" and
+"what can touch this file between these two instants?" are mechanical questions with enumerable
+answers. "What kind of bug was that?" is not.
+
+**Refs.** [[two-detectors-hide-each-other]], DECISIONS `{#receipt-binds-deciding-inputs}`.
+
+### Two detectors of one condition hide each other, exactly like two writers  {#two-detectors-hide-each-other}
+
+**Context.** The previous round's surviving mutation was two *writers* of one register column, where
+deleting one left the other to hide behind. This round produced the same shape one layer over: two
+*detectors* of one substitution.
+
+**Evidence.** The receipt now compares thirteen inputs. Deleting the `write_scope` comparison killed
+no test. `write_scope` is a pure function of `mutating`, `scope`, the landing, the run and the row —
+all of which are compared individually — so no substitution exists that only it can catch, and its
+comparison can never be the thing that fires. Removed; the field stays on the receipt as the sealed
+record of what issue time permitted.
+
+The same run found the inverse: the baseline digest covers both the path set and per-path content
+fingerprints, and deleting the fingerprint half killed nothing, because every test's laundered
+baseline also *added a path*. That one was a genuine coverage gap, not redundancy — a file already
+dirty at dispatch and modified afterwards changes no path, only its fingerprint — and it got a test.
+
+**Mechanism.** A deletion proof measures one causal path from code to observable outcome. Redundant
+detectors mean two paths to the same outcome, so removing either changes nothing and the proof
+reports coverage that is not there. The diagnosis is the same as the two-writer case, and so is the
+question to ask when a mutation survives: *is something else producing this outcome?* The two
+answers differ — redundancy means delete the check, a gap means add the test — and only reading the
+survivor tells you which.
+
+**Generalizable rule.** A surviving mutation has exactly two honest resolutions: the behaviour is
+genuinely redundant and should go, or the behaviour is load-bearing for a case no test constructs.
+Strengthening the test without deciding which one you are looking at produces a test that passes for
+the wrong reason.
+
+**Refs.** [[deletion-proof-needs-one-writer]], [[one-owner-per-column]].
+
+### Waiting for a process is not a barrier; the process group is  {#a-wait-is-not-a-barrier}
+
+**Context.** Completion runs a bounded predicate, then snapshots the evidence to prove the predicate
+did not disturb it. The snapshot was taken immediately after `Popen.wait()` returned.
+
+**Evidence.** A predicate that spawns a descendant and exits 0 returns control while the descendant
+is still running. It is reparented away, outlives the snapshot, and rewrote the settled artifact
+afterwards — reproduced as `verified=True` followed by a durable digest that no longer matched the
+file on disk. Fixed by `start_new_session=True` plus a group SIGKILL and drain on every exit path,
+success included, *before* the caller re-observes;
+`test_a_predicate_descendant_cannot_rewrite_the_evidence_after_the_pass` pins it.
+
+**Mechanism.** `wait()` answers "has this process finished?" and nothing else. Treating it as "has
+the work finished?" is a scope error hidden by the fact that it is true for almost every process you
+ever write. Two snapshots bracket an interval; anything that can still act after the second one is
+outside the observation regardless of how carefully the two snapshots are compared.
+
+**What surprised.** Ordering did all the work. The kill did not need to be clever — it needed to
+happen before the after-snapshot rather than after it, so a descendant's write is either inside the
+observed interval or impossible.
+
+**Generalizable rule.** When code observes an interval to certify something, enumerate what can act
+after the interval closes, not just what acted inside it. For subprocesses the answer is the process
+group, and a group leader (`start_new_session=True`) is what makes it addressable after the leader
+itself is gone.
+
+**Refs.** DECISIONS `{#predicate-process-group}`.
+
 ### A test must run where the thing it certifies runs  {#test-the-real-execution-context}
 
 **Context.** The orchestrate completion unit carried a requirement from the previous unit: two

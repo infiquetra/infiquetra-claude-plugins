@@ -66,12 +66,14 @@ Evaluation is re-runnable for one dispatch, and the phase follows the verdict: a
 from __future__ import annotations
 
 import ast
+import contextlib
 import hashlib
 import hmac
 import json
 import os
 import re
 import secrets
+import signal
 import stat as stat_module
 import subprocess  # nosec B404 -- fixed argv, no shell
 import tempfile
@@ -167,6 +169,7 @@ FAILURE_REASONS = (
     "predicate_timeout",
     "predicate_output_limit",
     "predicate_error",
+    "predicate_descendants",
     "predicate_side_effect",
     "scope_violation",
     "integration_unverified",
@@ -661,9 +664,40 @@ def _path_state(path: Path) -> dict[str, Any]:
     }
 
 
+def baseline_digest(baseline: session_lifecycle.ChangedPathsBaseline) -> str:
+    """Digest a changed-paths baseline so a receipt can bind the snapshot it was issued against.
+
+    A baseline is the one deciding input that cannot be sealed as a label, because it is
+    repository state *at an instant* rather than a name: the same landing has different, equally
+    valid snapshots before and after a write.  Binding the landing therefore says nothing about
+    *when* the snapshot was taken, and an out-of-scope write verifies cleanly against a baseline
+    taken after it.  A digest is the smallest thing that makes substitution detectable.
+    """
+    digest = hashlib.sha256()
+    for label, paths, fingerprints in (
+        ("landing", baseline.paths, baseline.fingerprints),
+        ("ambient", baseline.ambient_paths, baseline.ambient_fingerprints),
+    ):
+        digest.update(b"\0" + label.encode("utf-8"))
+        for path in sorted(paths):
+            digest.update(b"\0p" + path.encode("utf-8"))
+        for path, fingerprint in sorted(fingerprints):
+            digest.update(b"\0f" + path.encode("utf-8") + b"\0" + fingerprint.encode("utf-8"))
+    digest.update(b"\0base\0" + (baseline.ambient_base_commit or "").encode("utf-8"))
+    return "sha256:" + digest.hexdigest()
+
+
 @dataclass(frozen=True)
 class DispatchReceipt:
-    """The expected identity of one dispatch's evidence, established before the child runs."""
+    """The expected identity of one dispatch's evidence, established before the child runs.
+
+    "Identity" here means **every input the evaluator branches on**, not the labels that name the
+    dispatch.  Binding run, row and landing stops one child's evidence verifying another child's
+    row, and stops nothing else: the work shape decides whether the depth gate runs at all, the
+    declared scope and mutability decide what the boundary check permits, and the baseline decides
+    what "changed" means.  Each of those arrives as a separate argument, so each is sealed here and
+    compared before evaluation.
+    """
 
     run_id: str
     row_id: str
@@ -681,6 +715,12 @@ class DispatchReceipt:
     destination_pre_state: dict[str, Any]
     base_commit: str | None
     issued_at: float
+    runtime: str
+    work_shape: str
+    mutating: bool
+    scope: tuple[str, ...]
+    ambient_root: str | None
+    baseline_digest: str
 
     @property
     def artifact_path(self) -> Path:
@@ -708,6 +748,12 @@ class DispatchReceipt:
             "destination_pre_state": self.destination_pre_state,
             "base_commit": self.base_commit,
             "issued_at": self.issued_at,
+            "runtime": self.runtime,
+            "work_shape": self.work_shape,
+            "mutating": self.mutating,
+            "scope": list(self.scope),
+            "ambient_root": self.ambient_root,
+            "baseline_digest": self.baseline_digest,
         }
 
     @classmethod
@@ -731,6 +777,14 @@ class DispatchReceipt:
                 str(value["base_commit"]) if value.get("base_commit") is not None else None
             ),
             issued_at=float(value["issued_at"]),
+            runtime=str(value["runtime"]),
+            work_shape=str(value["work_shape"]),
+            mutating=bool(value["mutating"]),
+            scope=tuple(str(item) for item in value["scope"]),
+            ambient_root=(
+                str(value["ambient_root"]) if value.get("ambient_root") is not None else None
+            ),
+            baseline_digest=str(value["baseline_digest"]),
         )
 
 
@@ -803,6 +857,7 @@ def issue_receipt(
     *,
     artifact_name: str,
     git: session_lifecycle.GitLanding,
+    changed_paths_baseline: session_lifecycle.ChangedPathsBaseline,
     nonce: str | None = None,
 ) -> DispatchReceipt:
     """Establish this dispatch's expected evidence identity **before** the child is dispatched.
@@ -821,6 +876,11 @@ def issue_receipt(
     recorded once settlement has actually happened, as an absolute path, because that consumer
     resolves a relative path against the ambient checkout while a mutating child's artifact lives
     in its worktree.
+
+    ``changed_paths_baseline`` is taken by U4's readiness path and passed in rather than taken
+    here, deliberately: two takers of one snapshot is the same shape as two writers of one register
+    column, and that shape is what let a mutation survive undetected in the previous round.  One
+    producer (readiness), one binder (this function), one comparison (evaluation).
     """
     landing_cwd = Path(landing.cwd).resolve()
     artifacts = artifact_landing(landing_cwd, spec.run_id, spec.row_id)
@@ -854,6 +914,12 @@ def issue_receipt(
         destination_pre_state=_integration_pre_state(landing, git=git),
         base_commit=landing.base_commit,
         issued_at=time.time(),
+        runtime=spec.runtime,
+        work_shape=spec.work_shape,
+        mutating=spec.mutating,
+        scope=session_lifecycle.normalize_scope(spec.scope),
+        ambient_root=_resolved_or_none(landing.ambient_root),
+        baseline_digest=baseline_digest(changed_paths_baseline),
     )
     register_store.upsert_row(
         root,
@@ -867,6 +933,10 @@ def issue_receipt(
         },
     )
     return receipt
+
+
+def _resolved_or_none(path: Path | None) -> str | None:
+    return str(path.resolve()) if path is not None else None
 
 
 def _integration_pre_state(
@@ -1072,6 +1142,39 @@ class PredicateOutcome:
         }
 
 
+#: How long to wait for a killed predicate's process group to actually disappear.
+PREDICATE_GROUP_DRAIN_SECONDS = 5.0
+
+
+def _kill_process_group(pgid: int) -> None:
+    """SIGKILL the predicate's whole process group, tolerating a group that is already gone."""
+    with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+        os.killpg(pgid, signal.SIGKILL)
+
+
+def _process_group_is_empty(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return True
+    except (PermissionError, OSError):
+        return False
+    return False
+
+
+def _drain_process_group(
+    pgid: int, *, timeout: float = PREDICATE_GROUP_DRAIN_SECONDS, poll: float = 0.01
+) -> bool:
+    """Kill the group and wait for it to be gone; ``False`` means something outlived the kill."""
+    _kill_process_group(pgid)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if _process_group_is_empty(pgid):
+            return True
+        time.sleep(poll)
+    return _process_group_is_empty(pgid)
+
+
 def _predicate_env(pycache_dir: Path) -> dict[str, str]:
     """Keep a well-behaved Python predicate from writing bytecode into the child's landing."""
     env = dict(os.environ)
@@ -1091,6 +1194,21 @@ def run_predicate(
     Output is streamed to a temporary file rather than a pipe so the byte cap can be enforced
     while the process is still running: a predicate that produces unbounded output is killed at
     the cap rather than buffered until it exhausts memory.
+
+    **The predicate is its own process group, and the group is killed before this returns.**
+    Waiting for the direct process only establishes that *that* process finished.  A descendant it
+    started outlives it, is reparented away, and keeps running while the caller takes the
+    after-snapshot that certifies "the predicate did not disturb the evidence" -- so a predicate
+    could pass, the snapshot could be clean, and the artifact could change immediately afterwards
+    with the recorded digest no longer matching the file.  ``start_new_session=True`` makes the
+    predicate a group leader whose identifier is its own pid, and the group is SIGKILLed and
+    waited out on **every** exit path, success included.  Ordering is the point: the kill happens
+    inside this function, so by the time the caller snapshots, nothing the predicate started is
+    still able to write.
+
+    A group that does not drain within :data:`PREDICATE_GROUP_DRAIN_SECONDS` is
+    ``predicate_descendants`` -- a refusal, because the observation that follows cannot be trusted
+    when something the predicate started is still running.
     """
     with tempfile.TemporaryDirectory(prefix="orchestrate-predicate-") as scratch:
         scratch_dir = Path(scratch)
@@ -1104,9 +1222,12 @@ def run_predicate(
                     stdout=sink,
                     stderr=subprocess.STDOUT,
                     env=_predicate_env(scratch_dir / "pycache"),
+                    # Group leader, so its group id is its pid and stays usable after it exits.
+                    start_new_session=True,
                 )
             except (OSError, subprocess.SubprocessError) as exc:
                 return PredicateOutcome(False, "predicate_error", None, f"{exc}")
+            pgid = process.pid
             reason = ""
             while True:
                 returncode = process.poll()
@@ -1117,13 +1238,24 @@ def run_predicate(
                 elif time.monotonic() >= deadline:
                     reason = "predicate_timeout"
                 if reason:
-                    process.kill()
+                    _kill_process_group(pgid)
                     process.wait()
                     break
                 time.sleep(poll_seconds)
+        # Every exit path, success included: nothing the predicate started may outlive it.
+        contained = _drain_process_group(pgid)
         output = _read_tail(sink_path, predicate.max_output_bytes)
         if reason:
             return PredicateOutcome(False, reason, None, output)
+        if not contained:
+            return PredicateOutcome(
+                False,
+                "predicate_descendants",
+                process.returncode,
+                "the predicate left processes running after it exited and they did not stop "
+                f"within {PREDICATE_GROUP_DRAIN_SECONDS:g}s; what they may have written to the "
+                "evidence cannot be established\n" + output,
+            )
         if sink_path.stat().st_size > predicate.max_output_bytes:
             # A process that exits between two polls can still have breached the cap.
             return PredicateOutcome(False, "predicate_output_limit", process.returncode, output)
@@ -1330,6 +1462,23 @@ class DepthSample:
         self._assert_verifier_session(root, run_id=run_id)
 
     def _assert_verifier_session(self, root: Path, *, run_id: str) -> None:
+        """Require the named verifier to be a dispatch this orchestrator authenticated.
+
+        The register is not a trusted store -- that is the premise the dispatch receipt is sealed
+        under -- so a check that reads only register *columns* certifies exactly what it distrusts.
+        A write-capable child can plant a row with ``phase="working"`` and any vendor and model it
+        likes, and a purely column-based check calls it a dispatched session.
+
+        So the load-bearing requirement is an **authenticated dispatch receipt** for the verifier
+        row, under this run's orchestrator secret, which a child cannot produce.  The vendor is
+        then compared against that sealed receipt rather than against the writable column.
+
+        What this does **not** establish, stated rather than implied: the verifier's ``model`` is
+        compared against a register column that is not sealed, because the model is resolved at
+        launch and the receipt does not carry it -- a child that can write the register can still
+        misattribute the model of a genuinely dispatched verifier.  Nor does any of this establish
+        blindness, or that the verifier's vendor differs from the child's.
+        """
         row = register_store.read_rows(root).get(self.verifier_row_id)
         if row is None:
             raise DepthSampleError(
@@ -1337,10 +1486,24 @@ class DepthSample:
                 "the register; an independent verifier session is a session that was dispatched, "
                 "not a string in a mapping"
             )
-        if row.get("run_id") != run_id:
+        try:
+            verifier_receipt = read_receipt(root, self.verifier_row_id)
+        except CompletionError as exc:
             raise DepthSampleError(
-                f"verifier {self.verifier_row_id!r} belongs to run {row.get('run_id')!r}, not to "
-                f"this child's run {run_id!r}"
+                f"verifier {self.verifier_row_id!r} carries no dispatch this orchestrator issued "
+                f"({exc}); a register row alone is something the child can write, so it does not "
+                "establish that a verifier session ever ran"
+            ) from exc
+        if verifier_receipt.run_id != run_id:
+            raise DepthSampleError(
+                f"verifier {self.verifier_row_id!r} was dispatched for run "
+                f"{verifier_receipt.run_id!r}, not for this child's run {run_id!r}"
+            )
+        if verifier_receipt.runtime != self.verifier_vendor:
+            raise DepthSampleError(
+                f"the depth sample says verifier {self.verifier_row_id!r} is vendor "
+                f"{self.verifier_vendor!r}, but its authenticated dispatch names "
+                f"{verifier_receipt.runtime!r}"
             )
         phase = row.get("phase")
         if phase in (None, "planned", "launching"):
@@ -1348,21 +1511,17 @@ class DepthSample:
                 f"verifier {self.verifier_row_id!r} never reached a running session "
                 f"(phase {phase!r}); it cannot have read anything"
             )
-        for column, declared in (
-            ("vendor", self.verifier_vendor),
-            ("model", self.verifier_model),
-        ):
-            recorded = row.get(column)
-            if not isinstance(recorded, str) or not recorded:
-                raise DepthSampleError(
-                    f"verifier {self.verifier_row_id!r} has no recorded {column}; the sample's "
-                    "claim about who read the artifact cannot be checked"
-                )
-            if recorded != declared:
-                raise DepthSampleError(
-                    f"the depth sample says verifier {self.verifier_row_id!r} is {column} "
-                    f"{declared!r}, but the register records {recorded!r}"
-                )
+        recorded_model = row.get("model")
+        if not isinstance(recorded_model, str) or not recorded_model:
+            raise DepthSampleError(
+                f"verifier {self.verifier_row_id!r} has no recorded model; the sample's claim "
+                "about who read the artifact cannot be checked"
+            )
+        if recorded_model != self.verifier_model:
+            raise DepthSampleError(
+                f"the depth sample says verifier {self.verifier_row_id!r} is model "
+                f"{self.verifier_model!r}, but the register records {recorded_model!r}"
+            )
 
 
 # --------------------------------------------------------------------------- evaluation
@@ -1420,8 +1579,16 @@ def _record(root: Path, row_id: str, result: CompletionResult) -> CompletionResu
     same rule, and neither invents a phase: ``PHASES`` is a closed, operator-approved vocabulary
     with no member meaning "evaluated and failed", and "evaluated and failed" is already
     representable as ``phase="working"`` plus a recorded failure, which is what
-    :func:`is_working_not_failed` and :func:`failed_rows` read.  A ``reaped`` row is past this
-    question and is left alone.
+    :func:`is_working_not_failed` and :func:`failed_rows` read.
+
+    A ``reaped`` row is past this question and is left alone **on both halves**.  The previous
+    shape only left it alone when the re-evaluation failed: a *passing* re-evaluation wrote
+    ``phase="verified"`` unconditionally, over the terminal phase.  That is reachable without any
+    forgery -- the catch-up contract re-evaluates run-bound artifacts on startup, a reaped child
+    still has a settlement record and a file on disk, and settlement replays cleanly -- so a closed
+    tab came back as a live ``verified`` child and the next vanish check raised on the missing tab.
+    This is the orchestrator's own writer promoting a terminal phase, which is a different thing
+    from a child writing the column itself.
 
     The ``artifact_path`` *column* is deliberately not written here.  It has exactly one owner --
     :func:`settle_artifact`, the moment the fact becomes true -- because two writers of one column
@@ -1429,10 +1596,14 @@ def _record(root: Path, row_id: str, result: CompletionResult) -> CompletionResu
     part of this verdict's own record, inside the ``completion`` mapping.
     """
     fields: dict[str, Any] = {"completion": result.to_mapping()}
-    if result.verified:
+    current_phase = register_store.read_rows(root).get(row_id, {}).get("phase")
+    if current_phase == "reaped":
+        # Terminal. The verdict is still recorded; the phase is not moved in either direction.
+        pass
+    elif result.verified:
         fields["phase"] = "verified"
         fields["expected_state"] = "verified"
-    elif register_store.read_rows(root).get(row_id, {}).get("phase") == "verified":
+    elif current_phase == "verified":
         fields["phase"] = "working"
         fields["expected_state"] = "working"
     register_store.upsert_row(root, row_id, fields)
@@ -1470,15 +1641,54 @@ def evaluate_completion(
         )
 
     # The receipt, the specification, the landing and the baseline arrive as four independent
-    # arguments and every outcome is recorded under the specification's row. Nothing else in this
-    # function would notice if they described different children, so a correctly bound artifact
-    # for one child could verify another child's row.
+    # arguments and every outcome is recorded under the specification's row. Nothing further down
+    # would notice if they described different dispatches.
+    #
+    # The list below is not a category ("the identity labels") -- it is the mechanical answer to
+    # "what does this function read before deciding?", taken by reading every branch downstream.
+    # It has two halves and they are not the same claim:
+    #
+    # Deciding inputs -- something downstream branches on them, so substituting one changes the
+    # verdict:
+    #   run_id/row_id      -> which row the verdict lands on; the artifact landing; the token
+    #   landing.cwd        -> where the predicate runs and what the boundary observes
+    #   work_shape         -> whether the depth gate runs at all (_depth_verdict's first branch)
+    #   mutating + scope   -> what the boundary check permits (repository_scope_for)
+    #   base_commit        -> what committed change is measured against
+    #   ambient_root       -> which second tree is observed, and where integration is checked
+    #   baseline           -> what "changed since the child started" means; bound by digest,
+    #                         because a snapshot has no label and the same landing has different
+    #                         valid snapshots before and after a write
+    #
+    # Consistency fields -- evaluation reads them from the *receipt*, never from these arguments,
+    # so a mismatch cannot change the verdict. They are compared because a caller whose landing
+    # disagrees with the receipt has muddled two dispatches, and failing closed on that is cheap.
+    # Calling them deciding inputs would be the same overclaim this round is about:
+    #   runtime, integration_mode, destination
+    # ``receipt.write_scope`` is deliberately *not* in the list below. It is a pure function of
+    # mutating, scope, landing, run and row -- every one of which is compared individually -- so a
+    # comparison against it could never be the thing that catches a substitution. A check that can
+    # never fire alone reports coverage it does not have, which is the defect this round is about.
+    # The field stays on the receipt as the sealed record of what issue time permitted.
     mismatches = [
         f"{label}: spec {mine!r} != receipt {theirs!r}"
         for label, mine, theirs in (
             ("run_id", spec.run_id, receipt.run_id),
             ("row_id", spec.row_id, receipt.row_id),
             ("landing", str(landing_cwd.resolve()), str(Path(receipt.landing_cwd).resolve())),
+            ("runtime", spec.runtime, receipt.runtime),
+            ("work_shape", spec.work_shape, receipt.work_shape),
+            ("mutating", spec.mutating, receipt.mutating),
+            ("scope", session_lifecycle.normalize_scope(spec.scope), receipt.scope),
+            ("integration_mode", landing.integration_mode, receipt.integration_mode),
+            ("destination", landing.destination, receipt.destination),
+            ("base_commit", landing.base_commit, receipt.base_commit),
+            ("ambient_root", _resolved_or_none(landing.ambient_root), receipt.ambient_root),
+            (
+                "changed_paths_baseline",
+                baseline_digest(changed_paths_baseline),
+                receipt.baseline_digest,
+            ),
         )
         if mine != theirs
     ]

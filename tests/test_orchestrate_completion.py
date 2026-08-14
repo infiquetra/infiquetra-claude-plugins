@@ -3137,7 +3137,7 @@ def test_a_store_that_is_not_the_run_register_is_refused_at_issue(
         store = repo / "src"
     poisoned = replace(honest, ambient_root=store.resolve())
     REGISTER.upsert_row(
-        store,
+        repo,
         spec.row_id,
         {"run_id": spec.run_id, "phase": "working", "expected_state": "working"},
         run_id="run-a",
@@ -3154,7 +3154,7 @@ def test_a_store_that_is_not_the_run_register_is_refused_at_issue(
             git=git,
             changed_paths_baseline=_baseline(git, poisoned),
         )
-    row = REGISTER.read_rows(store, run_id="run-a").get(spec.row_id, {})
+    row = REGISTER.read_rows(repo, run_id="run-a").get(spec.row_id, {})
     assert "dispatch_receipt" not in row
     assert "completion" not in row
 
@@ -3185,8 +3185,8 @@ def test_a_store_that_is_not_the_run_register_is_refused_at_evaluation(
     with pytest.raises(COMPLETION.ReceiptRootError):
         COMPLETION.evaluate_completion(spec, landing_work, baseline_work, receipt, git=git)
     assert "completion" not in REGISTER.read_rows(store, run_id="run-a").get(spec.row_id, {})
-    work_row = REGISTER.read_rows(repo, run_id="run-a").get(spec.row_id, {})
-    assert "completion" not in work_row
+    with pytest.raises(REGISTER.RegisterError, match="bound to"):
+        REGISTER.read_rows(repo, run_id="run-a")
 
 
 def test_a_recorded_run_root_that_disagrees_with_the_claimed_store_is_refused(
@@ -3202,7 +3202,7 @@ def test_a_recorded_run_root_that_disagrees_with_the_claimed_store_is_refused(
     COMPLETION.record_run_root(repo, spec.run_id)
     landing = git.provision(other, spec)
     REGISTER.upsert_row(
-        other,
+        repo,
         spec.row_id,
         {"run_id": spec.run_id, "phase": "working", "expected_state": "working"},
         run_id="run-a",
@@ -3218,7 +3218,7 @@ def test_a_recorded_run_root_that_disagrees_with_the_claimed_store_is_refused(
             git=git,
             changed_paths_baseline=_baseline(git, landing),
         )
-    assert "dispatch_receipt" not in REGISTER.read_rows(other, run_id="run-a")[spec.row_id]
+    assert "dispatch_receipt" not in REGISTER.read_rows(repo, run_id="run-a")[spec.row_id]
 
 
 def test_a_run_with_no_recorded_root_does_not_mint_one_from_the_landing(tmp_path: Path) -> None:
@@ -3264,6 +3264,47 @@ def test_a_read_only_child_still_verifies_against_the_recorded_root(tmp_path: Pa
     prepared.run_child_process()
     result = prepared.evaluate()
     assert result.verified is True, result.detail
+
+
+def test_a_second_retire_forgets_a_key_the_first_call_left_behind(tmp_path: Path) -> None:
+    """The no-live-file branch must still free the identity."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo)
+    REGISTER.retire_run(repo, prepared.spec.run_id)
+    # Recreate only the key, as a crash after live-unlink would.
+    leftover = COMPLETION.run_secret(repo, prepared.spec.run_id, create=True)
+    REGISTER.retire_run(repo, prepared.spec.run_id)
+    replacement = COMPLETION.run_secret(repo, prepared.spec.run_id, create=True)
+    assert replacement != leftover
+
+
+def test_retire_forgets_the_secret_before_removing_the_live_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A crash at live-unlink must not leave a key that a reuse can inherit."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo)
+    live = REGISTER.register_path(prepared.spec.run_id).resolve()
+    key = COMPLETION.run_secret_dir() / f"{prepared.spec.run_id}.key"
+    assert key.is_file()
+    real_unlink = Path.unlink
+
+    def guarded(self: Path, missing_ok: bool = False) -> None:
+        if self.resolve() == live:
+            assert not key.exists()
+            raise OSError("crash after the secret was forgotten")
+        return real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", guarded)
+    with pytest.raises(OSError, match="crash after the secret"):
+        REGISTER.retire_run(repo, prepared.spec.run_id)
+    monkeypatch.setattr(Path, "unlink", real_unlink)
+    assert live.is_file()
+    assert not key.exists()
+    assert REGISTER.retire_run(repo, prepared.spec.run_id) is not None
+    assert not live.exists()
 
 
 def test_retiring_a_run_forgets_its_secret_so_a_reuse_is_a_new_identity(
@@ -3376,9 +3417,8 @@ def test_a_receipt_is_refused_when_read_under_a_different_repository(tmp_path: P
     _init_repo(other)
     prepared = _prepare(repo)
 
-    with pytest.raises(COMPLETION.ReceiptRootError) as raised:
+    with pytest.raises(REGISTER.RegisterError, match="bound to"):
         COMPLETION.read_receipt(other, prepared.spec.row_id, run_id=prepared.spec.run_id)
-    assert "issued under" in str(raised.value)
 
     # The same bytes read under the repository that issued them are accepted, so the
     # refusal is about which repository asked and not about the record being damaged.

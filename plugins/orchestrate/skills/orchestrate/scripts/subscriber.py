@@ -157,7 +157,11 @@ def catch_up(
 
     A missing pane is recorded as ``exited``. A status mismatch remains a mismatch: catch-up does
     not promote lifecycle phases or trust detector status as a completion verdict.
+
+    ``root`` must be this run's work location. It is also the base for a relative
+    ``artifact_path``. A disagreeing directory is refused before any row is written.
     """
+    register_store.assert_root_belongs_to_run(root, run_id, require_binding=False)
     panes_value = snapshot.get("panes")
     agents_value = snapshot.get("agents")
     if not isinstance(panes_value, list) or not isinstance(agents_value, list):
@@ -521,6 +525,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--socket", type=Path, default=herdr_events.DEFAULT_SOCKET_PATH)
     parser.add_argument("--subscriptions-json", required=True, type=_parse_subscriptions)
     args = parser.parse_args(argv)
+    try:
+        register_store.assert_root_belongs_to_run(args.root, args.run_id, require_binding=False)
+    except register_store.RegisterError as exc:
+        print(f"error: {exc}", file=sys.stderr, flush=True)
+        return 1
 
     subscriber = Subscriber(
         root=args.root,

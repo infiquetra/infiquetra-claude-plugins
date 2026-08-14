@@ -150,8 +150,9 @@ The *live* register sits outside every landing, addressed by `run_id`. A sandbox
 cannot write it by working in its landing. Claude and Muse expose no workspace-write flag,
 and mode `0600` on the run key excludes other operating-system accounts, not a child
 running as this account. For those runtimes this module does not defend against a child
-that reads the key and seals payloads that verify. A record the orchestrator did not write
-still authenticates against nothing. A child that can reach the host path can still
+that reads the key and seals payloads that verify. A digest that does not match this run's
+key authenticates against nothing. The seal does not establish authorship against that
+residual. A child that can reach the host path can still
 destroy those records, after which nothing verifies, which is the correct failure rather
 than a false pass.
 

@@ -413,17 +413,21 @@ def test_a_run_id_is_one_live_register_on_this_host(tmp_path: Path) -> None:
     """Two checkouts that name the same run share one live document.
 
     That is the host-global decision: same-host handoff needs it, and two unrelated
-    projects that pick the same label collide on it.
+    projects that pick the same label collide on it. A later write must name the
+    work location the first writer stamped; a second checkout is refused, not
+    silently merged.
     """
     repo_a = tmp_path / "repo-a"
     repo_b = tmp_path / "repo-b"
     repo_a.mkdir()
     repo_b.mkdir()
     M.upsert_row(repo_a, "child-1", {"run_id": "run-a", "phase": "planned"}, run_id="run-a")
-    M.upsert_row(repo_b, "child-1", {"run_id": "run-a", "phase": "working"}, run_id="run-a")
+    with pytest.raises(M.RegisterError, match="bound to"):
+        M.upsert_row(repo_b, "child-1", {"run_id": "run-a", "phase": "working"}, run_id="run-a")
     assert M.register_path("run-a").parent == tmp_path / "registers"
-    assert M.read_rows(repo_a, run_id="run-a")["child-1"]["phase"] == "working"
-    assert M.read_rows(repo_b, run_id="run-a")["child-1"]["phase"] == "working"
+    assert M.read_rows(repo_a, run_id="run-a")["child-1"]["phase"] == "planned"
+    with pytest.raises(M.RegisterError, match="bound to"):
+        M.read_rows(repo_b, run_id="run-a")
 
 
 def test_the_live_register_is_not_inside_the_repository(tmp_path: Path) -> None:
@@ -500,7 +504,7 @@ def test_retiring_against_the_wrong_work_location_leaves_the_live_file(
     repo_b.mkdir()
     M.upsert_row(repo_a, "child-1", {"phase": "verified"}, run_id="run-a")
     before = M.register_path("run-a").read_text()
-    with pytest.raises(M.RegisterError, match="recorded against"):
+    with pytest.raises(M.RegisterError, match="bound to"):
         M.retire_run(repo_b, "run-a")
     assert M.register_path("run-a").read_text() == before
     assert not M.final_register_path(repo_b, "run-a").exists()

@@ -65,13 +65,12 @@ the assembled marker stays out of echoed dispatch input.
   receipt beside the live file (`<run_id>.halt-receipt.json`) and raises, without ever touching
   the live register itself.
 - **Retiring a run archives that run's document and frees the identity.** `retire_run`
-  writes `.orchestrate/runs/<run-id>/register-final.json` in the recorded work location
-  (verified against the caller-supplied root by filesystem identity), then deletes the live
-  host-local file, the recorded-root sidecar, and the per-run secret. A reused id therefore
-  mints a new key; archived material from the old run does not verify. Retiring the same
-  run again after it already succeeded returns the existing archive path unchanged;
-  retiring a run with nothing live and no prior archive writes nothing and returns `None`.
-  A root that does not match the recorded work location raises and leaves both files.
+  forgets the per-run secret first, then writes `.orchestrate/runs/<run-id>/register-final.json`
+  in the recorded work location (verified against the caller-supplied root by filesystem
+  identity), then deletes the live host-local file and the recorded-root sidecar. A crash
+  after the secret is gone leaves receipts that no longer unseal; a second `retire_run`
+  repairs that state by forgetting any leftover key. A reused id therefore mints a new
+  key. A root that does not match the recorded work location raises and leaves both files.
 - **Both hang-detection time columns always exist on a row.** `deadline` and `max_quiet_seconds`
   are alternative strategies — a caller sets whichever fits a given dispatch — and `upsert_row`
   seeds whichever one a caller didn't set to `None` at row creation, so this pair specifically
@@ -201,9 +200,9 @@ write it by working in its landing. Claude and Muse expose no workspace-write fl
 runtimes can still reach the host-local directory if they know the path. Mode `0600` on the
 run key excludes other operating-system accounts, not a child running as this account. For
 runtimes whose sandbox does not deny `~/.orchestrate`, this module does not defend against a
-child that reads the run key and seals payloads that verify. A record the orchestrator did
-not write still authenticates against nothing — that is the residual the seal actually
-covers.
+child that reads the run key and seals payloads that verify. A digest that does not match
+this run's key authenticates against nothing. The seal does not establish that the
+orchestrator was the writer when the child can read the key.
 
 Integration to the recorded destination is verified before `verified` is written, so a child whose
 change never landed cannot be reaped. Judgment-shaped work additionally requires a claimed independent

@@ -1010,6 +1010,60 @@ def test_catch_up_batches_all_row_updates_into_one_register_write(
     assert rows["child-b"]["observed_state"] == "blocked"
 
 
+def test_catch_up_refuses_a_directory_that_is_not_the_runs_work_location(
+    tmp_path: Path,
+) -> None:
+    REGISTER.upsert_row(
+        tmp_path,
+        "child-a",
+        {"run_id": "run-a", "pane_id": "pane-a", "observed_state": "working"},
+        run_id="run-a",
+    )
+    other = tmp_path / "other"
+    other.mkdir()
+    snapshot = {
+        "panes": [{"pane_id": "pane-a", "agent_status": "exited", "revision": 1}],
+        "agents": [],
+    }
+    with pytest.raises(REGISTER.RegisterError, match="bound to"):
+        SUBSCRIBER.catch_up(other, snapshot, run_id="run-a")
+    assert REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]["observed_state"] == "working"
+
+
+def test_the_subscriber_command_refuses_a_disagreeing_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    REGISTER.upsert_row(
+        tmp_path,
+        "child-a",
+        {"run_id": "run-a", "pane_id": "pane-a"},
+        run_id="run-a",
+    )
+    other = tmp_path / "other"
+    other.mkdir()
+    ran: list[str] = []
+    monkeypatch.setattr(SUBSCRIBER.Subscriber, "run", lambda self: ran.append("ran"))
+    rc = SUBSCRIBER.main(
+        [
+            "--root",
+            str(other),
+            "--run-id",
+            "run-a",
+            "--row-id",
+            "sub-a",
+            "--pane-id",
+            "pane-a",
+            "--orchestrator-pane",
+            "orch",
+            "--subscriptions-json",
+            '[{"type":"pane.exited"}]',
+        ]
+    )
+    assert rc == 1
+    assert ran == []
+    assert "bound to" in capsys.readouterr().err
+
+
 def test_catch_up_for_one_run_does_not_write_another_runs_row(tmp_path: Path) -> None:
     """A catch-up that names run B must not mutate run A, even when they share a row id."""
     REGISTER.upsert_row(

@@ -81,10 +81,11 @@
 - The durable records the register holds are authenticated. The live file sits outside every
   landing, so a sandboxed child cannot rewrite it by address. Claude and Muse have no
   workspace-write flag, so the dispatch receipt and settlement record each carry a keyed
-  digest under a per-run orchestrator secret held outside every landing. A record the
-  orchestrator did not write authenticates against nothing and is refused, an added field
-  is a mismatch rather than an ignored key, and a secret directory inside the repository is
-  refused outright.
+  digest under a per-run orchestrator secret held outside every landing. A digest that
+  does not match this run's key authenticates against nothing and is refused. A
+  same-account child that can read the key can produce a matching digest; the seal does
+  not establish authorship against that residual. An added field is a mismatch rather
+  than an ignored key, and a secret directory inside the repository is refused outright.
 - Evaluation is safe to re-run for one dispatch. Settlement is recorded and replayed rather than
   re-attempted, which is what makes the restart path and judgment work reachable at all: the rename
   is one-shot, so without a record a second evaluation of a correct child fails as though it had

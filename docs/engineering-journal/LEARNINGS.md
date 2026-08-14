@@ -21,6 +21,27 @@
 
 ## 2026-08-13
 
+### A repository argument that does not bind is an inert parameter  {#inert-repository-argument}
+
+**Context.** After a row could no longer be named without its run, eight functions still
+took a repository. On the destructive pair it constrained nothing: `reap_verified`
+pointed at an empty non-repository directory closed the tab.
+**Evidence.** `read_rows` executed `del root`. `upsert_rows` stamped `repo_root` on the
+first write and never compared it again. `_expected_archive_root` already preferred the
+recorded run root and fell back to that stamp — but only `retire_run` called it.
+**Mechanism.** The module carried the binding fact and did not use it. The stamp is
+first-caller-derived: binding against it proves later callers agree with the first
+writer, not that the first writer named the true repository. The recorded sidecar is
+the half with orchestrator provenance. Not every `root` means work location:
+`run_secret`'s `root` means "keep the key outside this tree".
+**Fix.** `assert_root_belongs_to_run` is the shared check. Destructive paths require a
+binding. Writes compare after the first stamp. The subscriber command line refuses a
+`--root` that disagrees with the run. `run_secret` is not run through this check.
+**Generalizable rule.** An argument that reads as a scope and is not one is the same
+defect as a check that cannot fire. Ask what the parameter *means* before binding
+every parameter of the same name.
+**Refs.** DECISIONS `{#register-addressed-by-run-id}`.
+
 ### A required argument is not a required argument if the type still accepts the old shape  {#required-is-the-type}
 
 **Context.** Moving the live register to a run-keyed host-local file left `upsert_row` and

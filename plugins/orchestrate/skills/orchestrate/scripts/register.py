@@ -9,10 +9,11 @@ one for the mirror and one for the subscriber (there is nothing structurally dif
 those two; they are ordinary rows with ``agent="mirror"`` / ``agent="subscriber"``). A
 ``run_id`` is host-global: two callers that name the same id share one live document, which
 is what same-host Claude↔Codex handoff needs, and what two unrelated projects that pick the
-same label collide on. :func:`retire_run` archives the document into the repository, deletes
-the live file, and forgets the per-run secret, so a reused id is a new authentication
-identity. Every decision and mutation API takes ``run_id`` as a required argument; a row
-cannot be named without naming its run.
+same label collide on. :func:`retire_run` forgets the per-run secret first, then archives
+the document and deletes the live file. A second retire repairs a crash that left the key
+behind, so a reused id is a new authentication identity. Every decision and mutation API
+takes ``run_id`` as a required argument; a row cannot be named without naming its run. A
+repository argument names this run's work location or it is refused.
 
 This module implements exactly two responsibilities: atomic durability (a reader never sees a
 torn file, a lost update, or output from a corrupt state) and the row schema (the columns below).
@@ -426,14 +427,58 @@ def read_register(run_id: str) -> dict[str, Any]:
         return _read_register_unlocked(run_id)
 
 
+def run_work_location(run_id: str) -> Path | None:
+    """This run's work location, or ``None`` if nothing has recorded one yet.
+
+    Prefers the recorded run root written by :func:`completion.record_run_root` — that
+    value has orchestrator-side provenance. Falls back to the document's stamped
+    ``repo_root``, which is whatever directory the *first* writer passed. Binding
+    against the stamp proves later callers agree with the first writer, not that the
+    first writer named the true repository.
+    """
+    run_id = _safe_run_id(run_id)
+    doc: Mapping[str, Any] = {}
+    if register_path(run_id).exists():
+        doc = read_register(run_id)
+    return _expected_archive_root(run_id, doc)
+
+
+def assert_root_belongs_to_run(
+    root: Path, run_id: str, *, require_binding: bool = True
+) -> Path | None:
+    """Refuse a claimed work location that disagrees with this run.
+
+    ``require_binding=True`` (destructive paths) raises when neither a recorded root
+    nor a stamp exists — there is nothing to bind against, so the operation must not
+    guess. ``require_binding=False`` (reads of a run that has never been written)
+    returns ``None`` in that state; ``root`` then does not constrain the call.
+    """
+    expected = run_work_location(run_id)
+    claimed = Path(root).resolve()
+    if expected is None:
+        if require_binding:
+            raise RegisterError(
+                f"run {run_id!r} has no recorded or stamped work location; refusing to "
+                "bind a caller-supplied directory"
+            )
+        return None
+    if not _same_dir(claimed, expected):
+        raise RegisterError(
+            f"run {run_id!r} is bound to {expected} and the caller named {claimed}; "
+            "a repository argument must name this run's work location"
+        )
+    return expected
+
+
 def read_rows(root: Path, *, run_id: str) -> dict[str, dict[str, Any]]:
     """Rows for one run.
 
-    The live file is addressed by ``run_id``. ``root`` is the claimed work location and does
-    not select the file. There is no optional form: a caller that does not have a run id
-    wants :func:`rows_stamped_against`, which cannot be indexed by row id alone.
+    The live file is addressed by ``run_id``. ``root`` is the claimed work location.
+    When the run already has a recorded root or a stamp, a disagreeing ``root`` is
+    refused. A run that has never been written has nothing to bind against; that
+    read is empty and ``root`` does not constrain it.
     """
-    del root
+    assert_root_belongs_to_run(root, run_id, require_binding=False)
     doc = read_register(_safe_run_id(run_id))
     return {rid: dict(row) for rid, row in doc["rows"].items()}
 
@@ -483,9 +528,10 @@ def upsert_rows(
 ) -> dict[str, dict[str, Any]]:
     """Create or merge-update several rows in one locked, atomic register rewrite.
 
-    ``run_id`` is required. There is no scan of other live documents and no guess from
-    ``fields``. All updates are validated before the register is mutated, then land in
-    one durable replacement.
+    ``run_id`` is required. ``root`` must name this run's work location once one exists
+    (recorded run root, else the first writer's stamp). The first write of an unrecorded
+    run stamps ``root``; later writes must agree with that stamp. There is no scan of
+    other live documents and no guess from ``fields``.
     """
     run_id = _safe_run_id(run_id)
     normalized = {row_id: dict(fields) for row_id, fields in updates.items()}
@@ -501,10 +547,19 @@ def upsert_rows(
                 f"fields name run_id {named!r} but this write is addressed at {run_id!r}"
             )
 
+    claimed = Path(root).resolve()
     with _write_locked(run_id):
         doc = _read_register_unlocked(run_id)
-        if "repo_root" not in doc:
-            doc["repo_root"] = str(Path(root).resolve())
+        expected = _expected_archive_root(run_id, doc)
+        if expected is not None:
+            if not _same_dir(claimed, expected):
+                raise RegisterError(
+                    f"run {run_id!r} is bound to {expected} and the caller named {claimed}; "
+                    "a repository argument must name this run's work location"
+                )
+            doc.setdefault("repo_root", str(expected))
+        else:
+            doc["repo_root"] = str(claimed)
         doc["run_id"] = run_id
         rows = doc["rows"]
         merged_rows: dict[str, dict[str, Any]] = {}
@@ -546,28 +601,34 @@ def retire_run(root: Path, run_id: str) -> Path | None:
     name that same directory by filesystem identity. A mismatch raises and leaves the
     live file and sidecar untouched.
 
-    The durable copy is written before the live file is removed: a crash between the two
-    steps leaves the rows present in both places. After a successful archive the live
-    file, the sidecar, and the per-run secret are deleted so a reused id is a new
-    authentication identity. The lock file is left in place: unlinking it while held, or
-    after release, is an inode race.
+    The per-run secret is forgotten **before** the live file is removed. A crash after
+    that point leaves a live register whose receipts no longer unseal — this module
+    already calls that the correct failure — and a re-run completes because the live
+    file is still there. The idempotent branch (no live file) always forgets the secret,
+    so a crash after the live unlink is repaired by the second call.
+
+    The durable copy is written after the secret is gone and before the live file is
+    removed. The lock file is left in place: unlinking it while held, or after release,
+    is an inode race.
 
     Genuinely idempotent when nothing is live:
 
     - No live file and an archive already exists at the caller-named path -> that archive
-      is left untouched and its path is returned. The caller root is used only to find
-      it, never to delete anything.
-    - No live file and no archive -> ``None``, nothing is written.
+      is left untouched, the secret is forgotten if it was retained, and the archive path
+      is returned.
+    - No live file and no archive -> the secret is still forgotten, then ``None``.
     """
     run_id = _safe_run_id(run_id)
     live = register_path(run_id)
     claimed = Path(root).resolve()
     if not live.exists():
+        _forget_run_secret(run_id)
         existing = final_register_path(claimed, run_id)
         return existing if existing.exists() else None
 
     with _write_locked(run_id):
         if not live.exists():
+            _forget_run_secret(run_id)
             existing = final_register_path(claimed, run_id)
             return existing if existing.exists() else None
 
@@ -580,11 +641,12 @@ def retire_run(root: Path, run_id: str) -> Path | None:
             )
         if not _same_dir(claimed, expected):
             raise RegisterError(
-                f"run {run_id!r} is recorded against {expected} and retire_run was "
-                f"called with {claimed}; the archive destination is the recorded work "
-                "location, so a mismatch leaves the live register untouched"
+                f"run {run_id!r} is bound to {expected} and retire_run was called with "
+                f"{claimed}; the archive destination is the recorded work location, so a "
+                "mismatch leaves the live register untouched"
             )
 
+        _forget_run_secret(run_id)
         rows: dict[str, dict[str, Any]] = doc["rows"]
         final_path = final_register_path(expected, run_id)
         if not rows and final_path.exists():
@@ -592,7 +654,6 @@ def retire_run(root: Path, run_id: str) -> Path | None:
             sidecar = register_dir() / f"{run_id}.root"
             with contextlib.suppress(FileNotFoundError):
                 sidecar.unlink()
-            _forget_run_secret(run_id)
             return final_path
 
         final_doc = {
@@ -609,7 +670,6 @@ def retire_run(root: Path, run_id: str) -> Path | None:
         sidecar = register_dir() / f"{run_id}.root"
         with contextlib.suppress(FileNotFoundError):
             sidecar.unlink()
-        _forget_run_secret(run_id)
         return final_path
 
 

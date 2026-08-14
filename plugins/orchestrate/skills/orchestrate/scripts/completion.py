@@ -34,9 +34,11 @@ landing.  Claude and Muse expose no workspace-write flag, so those runtimes can 
 ``~/.orchestrate`` if they know the path.  Mode ``0600`` excludes other operating-system
 accounts, not a child running as this account; the seal does not defend that residual.  The
 dispatch receipt and the settlement record therefore each carry a keyed digest under a per-run
-secret held outside every landing (:func:`run_secret`).  A record the orchestrator did not write
-does not authenticate, and nothing it claims is believed.  A child can still *delete* those
-records if it can reach the host path, and then nothing verifies -- which is the correct failure.
+secret held outside every landing (:func:`run_secret`).  A digest that does not match this
+run's key does not authenticate, and nothing it claims is believed.  A same-account child
+that can read the key can produce a matching digest; the seal does not establish authorship
+against that residual.  A child can still *delete* those records if it can reach the host
+path, and then nothing verifies -- which is the correct failure.
 
 **Predicate integrity is static and dynamic.**  Statically, the predicate's entry points *and its
 resolvable import closure* -- including the parent package initializers Python executes on the way

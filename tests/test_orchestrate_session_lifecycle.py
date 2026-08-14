@@ -794,6 +794,79 @@ def test_vanished_child_raises_unless_reap_was_recorded(tmp_path: Path) -> None:
     assert herdr.presence_checks == checks_before
 
 
+def test_reap_refuses_a_directory_that_is_not_the_runs_work_location(
+    tmp_path: Path,
+) -> None:
+    """A repository argument that does not bind the run must not close the tab."""
+    repo = tmp_path / "repo"
+    other = tmp_path / "other"
+    repo.mkdir()
+    other.mkdir()
+    REGISTER.upsert_row(
+        repo,
+        "child-a",
+        {"run_id": "run-a", "phase": "verified", "tab_id": "tab-a", "cwd": str(repo)},
+        run_id="run-a",
+    )
+    herdr = FakeHerdr()
+    with pytest.raises(REGISTER.RegisterError, match="bound to"):
+        LIFECYCLE.reap_verified(other, "child-a", herdr=herdr, run_id="run-a")
+    assert herdr.closed == []
+    assert REGISTER.read_rows(repo, run_id="run-a")["child-a"]["phase"] == "verified"
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    with pytest.raises(REGISTER.RegisterError, match="bound to"):
+        LIFECYCLE.reap_verified(empty, "child-a", herdr=herdr, run_id="run-a")
+    assert herdr.closed == []
+
+
+def test_a_vanish_check_refuses_a_directory_that_is_not_the_runs_work_location(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    other = tmp_path / "other"
+    repo.mkdir()
+    other.mkdir()
+    REGISTER.upsert_row(
+        repo,
+        "child-a",
+        {"run_id": "run-a", "phase": "launched", "tab_id": "tab-a", "cwd": str(repo)},
+        run_id="run-a",
+    )
+    with pytest.raises(REGISTER.RegisterError, match="bound to"):
+        LIFECYCLE.assert_child_not_vanished(other, "child-a", herdr=FakeHerdr(), run_id="run-a")
+
+
+def test_reap_refuses_when_the_run_has_no_work_location(tmp_path: Path) -> None:
+    """A destructive path must not guess a repository the run never bound."""
+    path = REGISTER.register_path("run-a")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "run_id": "run-a",
+                "rows": {
+                    "child-a": {
+                        "id": "child-a",
+                        "run_id": "run-a",
+                        "phase": "verified",
+                        "tab_id": "tab-a",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    herdr = FakeHerdr()
+    with pytest.raises(REGISTER.RegisterError, match="no recorded or stamped"):
+        LIFECYCLE.reap_verified(empty, "child-a", herdr=herdr, run_id="run-a")
+    assert herdr.closed == []
+
+
 # Scenario 9: readiness is an interaction, not agent_status ----------------------------------
 
 

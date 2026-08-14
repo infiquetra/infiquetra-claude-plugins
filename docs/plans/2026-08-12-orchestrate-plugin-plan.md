@@ -71,9 +71,11 @@ brainstorm IDs are given in parentheses.
   subscriber — persisted as one plain JSON file **per run**, addressed by `run_id` in an
   orchestrator-owned host-local directory (default `~/.orchestrate/registers/<run_id>.json`,
   the same class of location as the run secret). Written atomically. No graph, no leases, no
-  fencing. A `run_id` is host-global on this machine. `retire_run` archives the document into
-  the repository at `.orchestrate/runs/<run_id>/register-final.json`, deletes the live
-  file, and forgets the per-run secret, so a reused id is a new authentication identity.
+  fencing. A `run_id` is host-global on this machine. `retire_run` forgets the per-run
+  secret first, then archives the document into the repository at
+  `.orchestrate/runs/<run_id>/register-final.json` and deletes the live file. A second
+  retire repairs a crash that left the key behind, so a reused id is a new authentication
+  identity.
   *(Amended 2026-08-14: the live file is no longer repo-local.
   Repo-locality of the live register put orchestrator-private state inside every child's
   landing. Provenance is the retirement archive. Interoperability on one host (R12) is

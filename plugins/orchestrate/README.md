@@ -72,8 +72,9 @@ The live register sits outside every landing, addressed by `run_id`. A sandboxed
 write it by working in its landing. Claude and Muse expose no workspace-write flag. Mode
 `0600` on the run key excludes other operating-system accounts, not a child running as this
 account, so for those runtimes this module does not defend against a child that reads the
-key. The durable records still carry a keyed digest so a record the orchestrator did not
-write authenticates against nothing. Evaluation is safe to re-run for one dispatch, and a
+key. The durable records still carry a keyed digest so a digest that does not match this
+run's key authenticates against nothing. The seal does not establish authorship against a
+child that can read the key. Evaluation is safe to re-run for one dispatch, and a
 row's phase is `verified` if and only if its latest verdict is a pass.
 
 `references/predicates.md` states what each control establishes and — control by control, with the

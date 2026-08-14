@@ -1143,7 +1143,13 @@ def reap_verified(
     run_id: str,
     herdr: HerdrControl,
 ) -> None:
-    """Record ``reaped`` before closing a verified child's tab."""
+    """Record ``reaped`` before closing a verified child's tab.
+
+    ``root`` must be this run's work location (recorded run root, else the first
+    writer's stamp). A disagreeing or unbound directory is refused and the tab is
+    not closed.
+    """
+    register_store.assert_root_belongs_to_run(root, run_id)
     row = register_store.read_rows(root, run_id=run_id).get(row_id)
     if row is None or row.get("phase") not in {"verified", "reaped"}:
         raise SessionLifecycleError(f"child {row_id!r} must be verified before reap")
@@ -1166,7 +1172,12 @@ def assert_child_not_vanished(
     run_id: str,
     herdr: HerdrControl,
 ) -> None:
-    """Raise when a registered child disappears without a recorded reap."""
+    """Raise when a registered child disappears without a recorded reap.
+
+    ``root`` must be this run's work location. A disagreeing directory is refused
+    rather than treated as a missing child.
+    """
+    register_store.assert_root_belongs_to_run(root, run_id)
     row = register_store.read_rows(root, run_id=run_id).get(row_id)
     if row is None:
         raise SessionLifecycleError(f"unknown child row {row_id!r}")

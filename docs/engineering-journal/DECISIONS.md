@@ -10,41 +10,49 @@ ones: a foreign receipt's *refusal* wrote into the foreign register, and a landi
 verified in the claimed one while the work happened in the other.
 
 **Decision.** Two checks, at the two producers, neither of which compares a value to a copy of
-itself.
+itself. Membership is the git common directory at each path
+(`git rev-parse --path-format=absolute --git-common-dir`), not whether one path is a descendant
+of the other. A repository nested inside another repository is a descendant path and a different
+repository. The relative form of that query is `.git` for every repository; without
+`--path-format=absolute` two different repositories compare equal.
 
-*At issue.* `landing_root` refuses a landing whose working directory does not sit inside the
-repository it names. The two legitimate shapes `GitLanding.provision` produces — `cwd ==
-ambient_root`, and `cwd == ambient_root/.orchestrate/worktrees/<run>/<row>` — both satisfy
-containment. Containment, not the exact worktree path, because a future landing shape that is
-still inside the repository should issue, and the property that closes the reproduction is
-"these two fields do not describe different repositories", not "this landing was produced by
-`provision`".
+*At issue.* `landing_root` refuses a landing whose working directory is not the same git
+repository as the store it names. This function's caller then writes that store — it seals the
+receipt into the row and clears any earlier settlement — so an evaluate-time-only check is
+already too late. Linked worktrees share the main checkout's common directory, so a mutating
+child is accepted without the check knowing `provision`'s layout. A working directory that is
+an ordinary subdirectory of the *same* repository is still accepted.
 
 *At evaluation.* `assert_landing_in_receipt_repository` runs before any register is selected.
-A landing whose working directory is not inside `receipt.root` raises. Every other refusal in
+A landing that is not the same git repository as `receipt.root` raises. Every other refusal in
 the evaluator is recorded, because a recorded refusal is durable evidence; this one has no
-register it may write. Same-repository mismatches, including an `ambient_root` substituted to
-a subdirectory of the same checkout, still record as `receipt_mismatch` — that case has a
-store this evaluation may write.
+register it may write. Same-repository mismatches still record as `receipt_mismatch`.
 
 `settlement_record` and `settle_artifact` receive a receipt and no second opinion about the
-repository. They keep reading the sealed root. After the issue-time containment check they
-cannot be handed a production receipt whose `landing_cwd` and `root` disagree.
+repository. They keep reading the sealed root. The reason they need no membership check is
+not that issuance is the only producer: a `DispatchReceipt` is only unsealed from an
+authenticated, root-checked record, whereas a `Landing` is reconstructed in production from
+child-writable register data.
 
+**Rejected: path ancestry as membership.** True for sibling checkouts and false for a
+repository nested inside another repository, which is a descendant and a different store.
 **Rejected: treating both findings as one ordering defect.** The foreign-refusal path is
 "the store was chosen from the receipt before asking whether the landing belongs there."
-The ambient-root path is not: the receipt is internally consistent, evaluation has nothing
-to reconcile, and the producer that was wrong is issuance. An ordering fix at evaluation
-leaves that path open. **Rejected: recording the refusal in the landing's claimed
+The ambient-root path is not: the receipt is internally consistent, and the producer that
+was wrong is issuance. **Rejected: recording the refusal in the landing's claimed
 repository.** That would close the honest-landing case and write a verdict into a store the
 landing merely *claimed* when the landing is the one that lies. **Rejected: requiring the
-exact worktree layout at issue.** Stronger than the property, and it would refuse a landing
-shape this unit does not yet have.
+exact worktree layout at issue.** Stronger than the property; it freezes `provision`'s
+current paths into this module and would refuse a subdirectory of the same repository.
+**Rejected: comparing `--show-toplevel`.** A linked worktree's toplevel is the worktree
+path, so the mutating-child landing would be refused.
 
 **Revisit when** a later unit persists `cwd` and reconstructs `Landing`. `ambient_root` is
 not a register column; that reconstructor must take it from the orchestrator's own resolved
-root, the same value `provision` sets, and the issue-time containment check is what fails
-closed if they do not.
+root, the same value `provision` sets. A planted `cwd` in a different repository is now
+refused; a planted `cwd` in another worktree of the *same* repository is still accepted
+and belongs to that later unit. The two pairs this entry first named are reduced, not
+closed: path ancestry was not membership.
 
 ### The repository is derived from the landing and the receipt, never supplied  {#repository-is-derived}
 
@@ -85,7 +93,8 @@ parameter on the evaluator.
 `Landing.ambient_root` remain independently settable, evaluation still receives a landing and
 a receipt that can name different repositories, and binding every refusal to `receipt.root`
 before asking whether the landing belongs there demoted an unrelated `verified` row. The
-parameter stays deleted. The two remaining pairs are closed by `{#landing-sits-in-its-repository}`.
+parameter stays deleted. The two remaining pairs are reduced by `{#landing-sits-in-its-repository}`;
+path ancestry was not repository membership, and a nested independent repository still passed.
 
 ### The repository root is a deciding input, and it refuses by raising  {#root-is-a-deciding-input}
 

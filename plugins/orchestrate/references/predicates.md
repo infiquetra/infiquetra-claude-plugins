@@ -468,7 +468,7 @@ distinguishable from "still working" without a new phase.
 
 0. **Identity — every input the verdict depends on, not just the labels.** The child specification,
    the landing, the changed-path baseline and the receipt arrive as four independent arguments, and
-   a landing that sits inside the receipt's repository has its outcome recorded under the
+   a landing that belongs to the receipt's git repository has its outcome recorded under the
    *specification's* row in that register. A landing that does not raises rather than records.
    Nothing further down would notice if they described different dispatches. The bound set is the
    mechanical answer to "what does the evaluator read before deciding?", and taking that answer
@@ -525,19 +525,23 @@ distinguishable from "still working" without a new phase.
    `settlement_record`. Issuing derives the repository from `landing.ambient_root`, which
    `GitLanding.provision` sets to the repository for both landing kinds — the ambient checkout for
    a read-only child, and the checkout a mutating child's worktree was cut from — and refuses a
-   landing that does not sit inside that repository. `cwd` and `ambient_root` are independently
-   settable; a receipt sealed from a working directory in one repository and a claimed root in
-   another is internally consistent and would pass every later comparison. Containment against the
-   filesystem is a fact with a provenance independent of either field.
+   landing that is not the same git repository as that store. `cwd` and `ambient_root` are
+   independently settable; membership is the git common directory at each path, not whether one
+   path is a descendant of the other. A repository nested inside another repository is a
+   descendant path and a different repository. A working directory that is an ordinary
+   subdirectory of the *same* repository is still accepted.
 
    Evaluation still has two objects that name a repository. It takes the store from `receipt.root`
-   only after the landing is shown to sit inside that repository, and raises rather than records
-   when it does not: there is then no register this evaluation may write. `settlement_record` and
-   `settle_artifact` receive a receipt and no second opinion, so they read the sealed root as the
-   authority on where that receipt's own settlement belongs. A landing that does not name its
-   repository is refused rather than defaulted to its working directory, because that default
-   would seal a mutating child's worktree as its repository and file the verdict where nothing
-   else about the run is recorded.
+   only after that membership is shown, and raises rather than records when it does not: there is
+   then no register this evaluation may write. The evaluate-time check does not replace the one
+   at issue: `issue_receipt` writes the derived repository's register (sealed receipt, settlement
+   cleared) before any evaluation exists. `settlement_record` and `settle_artifact` receive a
+   receipt and no second opinion. They do not need one: a `DispatchReceipt` is only unsealed from
+   an authenticated, root-checked record, which is a different thing from a `Landing`
+   reconstructed from child-writable register data. A landing that does not name its repository
+   is refused rather than defaulted to its working directory, because that default would seal a
+   mutating child's worktree as its repository and file the verdict where nothing else about the
+   run is recorded.
 
    `read_receipt` is the exception and it keeps the check. It is handed a repository and a row id
    and has no receipt yet, so the repository genuinely has to be supplied; there the two values

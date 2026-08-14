@@ -167,10 +167,12 @@ before evaluation, and a closure that changes between dispatch and evaluation fa
 The receipt must belong to the child being evaluated: the specification, landing, baseline and
 receipt arrive as four independent arguments, so run, row and landing are checked against it first.
 The repository is deliberately not a fifth. Issuing derives it from the landing and refuses a
-landing whose working directory does not sit inside the repository it names. Evaluation takes the
-store from the sealed receipt only after the landing is shown to sit inside that repository, and
-raises rather than records when it does not — do not add a root parameter back when you wire this
-up. A landing can still name any repository; it cannot do so and remain internally consistent.
+landing whose working directory is not the same git repository as the store it names. Evaluation
+takes the store from the sealed receipt only after that same membership is shown, and raises
+rather than records when it does not — do not add a root parameter back when you wire this up.
+Membership is the git common directory at each path, not whether one path is a descendant of the
+other: a repository nested inside another repository is a descendant and a different store. A
+working directory that is an ordinary subdirectory of the *same* repository is still accepted.
 `ambient_root` is not a register column. Reconstruct it from the orchestrator's own resolved
 root — the same value `GitLanding.provision` sets — never from a child's working directory.
 

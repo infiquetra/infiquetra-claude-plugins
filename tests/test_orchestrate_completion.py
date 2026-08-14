@@ -2683,9 +2683,10 @@ def test_the_repository_is_not_an_argument_a_caller_can_supply(tmp_path: Path) -
     compare against at all.
 
     So the parameter is gone rather than checked: issuance derives the repository from the
-    landing and refuses a landing that does not sit inside it, and every later control takes the
-    sealed value off the receipt. Evaluation still has two objects that name a repository; it
-    raises rather than records when the landing does not sit inside the receipt's.
+    landing and refuses a landing that is not the same git repository as that store, and every
+    later control takes the sealed value off the receipt. Evaluation still has two objects that
+    name a repository; it raises rather than records when the landing does not belong to the
+    receipt's.
     """
     for name in ("issue_receipt", "evaluate_completion", "settle_artifact", "settlement_record"):
         parameters = inspect.signature(getattr(COMPLETION, name)).parameters
@@ -2745,7 +2746,7 @@ def test_a_mutating_childs_receipt_records_the_repository_and_not_its_worktree(
 
     assert Path(prepared.landing.cwd) != repo.resolve()
     assert prepared.receipt.root == str(repo.resolve())
-    assert COMPLETION.landing_root(prepared.landing) == repo.resolve()
+    assert COMPLETION.landing_root(prepared.landing, git=prepared.git) == repo.resolve()
 
 
 def test_a_landing_that_does_not_name_its_repository_cannot_be_issued_a_receipt(
@@ -2780,16 +2781,16 @@ def test_a_landing_that_does_not_name_its_repository_cannot_be_issued_a_receipt(
     assert "does not name the repository" in str(raised.value)
 
 
-def test_a_landing_cannot_name_a_repository_it_does_not_sit_in(tmp_path: Path) -> None:
+def test_a_landing_cannot_name_a_repository_it_does_not_belong_to(tmp_path: Path) -> None:
     """cwd and ambient_root are independently settable; issuance refuses when they disagree.
 
     Deriving the repository from ambient_root removed the parameter and left the pair on the
     type. A receipt sealed from those two fields is internally consistent, so every later
-    comparison agrees -- a check of a value against a copy of that value. Containment against
-    the filesystem is a fact with a provenance independent of either field.
+    comparison agrees -- a check of a value against a copy of that value. Membership is the
+    git common directory at each path, not whether one path is a descendant of the other.
 
-    The after-state of the ambient-root reproduction: issuance raises, neither register gains a
-    receipt or a completion, and the artifact is not settled.
+    Sibling checkouts: issuance raises, neither register gains a receipt or a completion, and
+    the artifact is not settled.
     """
     repo_a = tmp_path / "repo-a"
     repo_b = tmp_path / "repo-b"
@@ -2807,7 +2808,9 @@ def test_a_landing_cannot_name_a_repository_it_does_not_sit_in(tmp_path: Path) -
     artifacts = COMPLETION.artifact_landing(Path(poisoned.cwd), spec.run_id, spec.row_id)
     relative = artifacts.relative_to(Path(poisoned.cwd).resolve()) / "report.json"
 
-    with pytest.raises(COMPLETION.ReceiptRootError, match="does not sit inside") as raised:
+    with pytest.raises(
+        COMPLETION.ReceiptRootError, match="does not belong to the repository"
+    ) as raised:
         COMPLETION.issue_receipt(
             spec,
             poisoned,
@@ -2818,8 +2821,8 @@ def test_a_landing_cannot_name_a_repository_it_does_not_sit_in(tmp_path: Path) -
         )
     assert str(repo_b.resolve()) in str(raised.value)
 
-    with pytest.raises(COMPLETION.ReceiptRootError, match="does not sit inside"):
-        COMPLETION.landing_root(poisoned)
+    with pytest.raises(COMPLETION.ReceiptRootError, match="does not belong to the repository"):
+        COMPLETION.landing_root(poisoned, git=git)
 
     assert spec.row_id not in REGISTER.read_rows(repo_a)
     row_b = REGISTER.read_rows(repo_b)[spec.row_id]
@@ -2881,7 +2884,9 @@ def test_evaluating_with_another_repositorys_receipt_raises_and_writes_neither_r
     prepared_b = _Prepared(repo_b, spec, landing_b, git, receipt_a, baseline_b)
     prepared_b.run_child_process()
 
-    with pytest.raises(COMPLETION.ReceiptRootError, match="not inside the repository") as raised:
+    with pytest.raises(
+        COMPLETION.ReceiptRootError, match="does not belong to the repository"
+    ) as raised:
         COMPLETION.evaluate_completion(spec, landing_b, baseline_b, receipt_a, git=git)
     assert str(Path(receipt_a.root).resolve()) in str(raised.value)
 
@@ -2891,6 +2896,159 @@ def test_evaluating_with_another_repositorys_receipt_raises_and_writes_neither_r
     assert (row_a.get("completion") or {}).get("result") == "verified"
     assert row_b["phase"] == "working"
     assert "completion" not in row_b
+
+
+def _nested_repositories(tmp_path: Path) -> tuple[Path, Path]:
+    """An independent git repository living inside another independent git repository."""
+    outer = tmp_path / "outer"
+    nested = outer / "nested"
+    _init_repo(outer)
+    _init_repo(nested)
+    return outer, nested
+
+
+def test_a_nested_repository_is_not_the_checkout_that_contains_it(tmp_path: Path) -> None:
+    """Path ancestry is not membership: a nested checkout is a descendant and a different store.
+
+    Issuance of a landing that works in the nested repository and names the outer one as its
+    store must refuse before it writes the outer register. The nested path sits inside the
+    outer path, so a descendant check accepts this pairing and files a durable pass in the
+    wrong repository.
+    """
+    outer, nested = _nested_repositories(tmp_path)
+    spec = _spec()
+    git = LIFECYCLE.GitLanding()
+    honest = git.provision(nested, spec)
+    poisoned = replace(honest, ambient_root=outer.resolve())
+    REGISTER.upsert_row(
+        outer, spec.row_id, {"run_id": spec.run_id, "phase": "working", "expected_state": "working"}
+    )
+    artifacts = COMPLETION.artifact_landing(Path(poisoned.cwd), spec.run_id, spec.row_id)
+    relative = artifacts.relative_to(Path(poisoned.cwd).resolve()) / "report.json"
+
+    with pytest.raises(COMPLETION.ReceiptRootError, match="does not belong to the repository"):
+        COMPLETION.issue_receipt(
+            spec,
+            poisoned,
+            _predicate(relative.as_posix()),
+            artifact_name="report.json",
+            git=git,
+            changed_paths_baseline=_baseline(git, poisoned),
+        )
+    with pytest.raises(COMPLETION.ReceiptRootError, match="does not belong to the repository"):
+        COMPLETION.landing_root(poisoned, git=git)
+
+    row_outer = REGISTER.read_rows(outer)[spec.row_id]
+    assert row_outer["phase"] == "working"
+    assert "dispatch_receipt" not in row_outer
+    assert "completion" not in row_outer
+    assert spec.row_id not in REGISTER.read_rows(nested)
+    assert not (artifacts / "report.json").exists()
+
+
+def test_evaluating_a_nested_repository_with_the_containing_checkouts_receipt_writes_neither(
+    tmp_path: Path,
+) -> None:
+    """A nested checkout's landing must not select the containing checkout's register.
+
+    The outer repository holds an honest verified child. The nested repository holds a child
+    with the same row id, evaluated with the outer receipt. Path ancestry lets that pairing
+    through and the mismatch refusal demotes the outer row. Membership refuses; the outer
+    verified row stays verified; the nested row gains no completion.
+    """
+    outer, nested = _nested_repositories(tmp_path)
+    spec = _spec()
+    git = LIFECYCLE.GitLanding()
+
+    landing_outer = git.provision(outer, spec)
+    REGISTER.upsert_row(
+        outer, spec.row_id, {"run_id": spec.run_id, "phase": "working", "expected_state": "working"}
+    )
+    artifacts_outer = COMPLETION.artifact_landing(Path(landing_outer.cwd), spec.run_id, spec.row_id)
+    rel_outer = artifacts_outer.relative_to(Path(landing_outer.cwd).resolve()) / "report.json"
+    baseline_outer = _baseline(git, landing_outer)
+    receipt_outer = COMPLETION.issue_receipt(
+        spec,
+        landing_outer,
+        _predicate(rel_outer.as_posix()),
+        artifact_name="report.json",
+        git=git,
+        changed_paths_baseline=baseline_outer,
+    )
+    _Prepared(outer, spec, landing_outer, git, receipt_outer, baseline_outer).run_child_process()
+    first = COMPLETION.evaluate_completion(
+        spec, landing_outer, baseline_outer, receipt_outer, git=git
+    )
+    assert first.verified is True, first.detail
+    assert REGISTER.read_rows(outer)[spec.row_id]["phase"] == "verified"
+
+    landing_nested = git.provision(nested, spec)
+    REGISTER.upsert_row(
+        nested,
+        spec.row_id,
+        {"run_id": spec.run_id, "phase": "working", "expected_state": "working"},
+    )
+    artifacts_nested = COMPLETION.artifact_landing(
+        Path(landing_nested.cwd), spec.run_id, spec.row_id
+    )
+    rel_nested = artifacts_nested.relative_to(Path(landing_nested.cwd).resolve()) / "report.json"
+    baseline_nested = _baseline(git, landing_nested)
+    COMPLETION.issue_receipt(
+        spec,
+        landing_nested,
+        _predicate(rel_nested.as_posix()),
+        artifact_name="report.json",
+        git=git,
+        changed_paths_baseline=baseline_nested,
+    )
+
+    with pytest.raises(COMPLETION.ReceiptRootError, match="does not belong to the repository"):
+        COMPLETION.evaluate_completion(
+            spec, landing_nested, baseline_nested, receipt_outer, git=git
+        )
+
+    row_outer = REGISTER.read_rows(outer)[spec.row_id]
+    row_nested = REGISTER.read_rows(nested)[spec.row_id]
+    assert row_outer["phase"] == "verified"
+    assert (row_outer.get("completion") or {}).get("result") == "verified"
+    assert row_nested["phase"] == "working"
+    assert "completion" not in row_nested
+
+
+def test_a_linked_worktree_belongs_to_the_repository_it_was_cut_from(tmp_path: Path) -> None:
+    """A mutating child's worktree shares the main checkout's object store.
+
+    A stricter check that required the working directory to be the repository root, or to match
+    provision's path layout by string, would refuse this landing. Membership must accept it.
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo, mutating=True, environment_command=())
+    assert Path(prepared.landing.cwd) != repo.resolve()
+    assert Path(prepared.landing.cwd).is_relative_to(repo.resolve())
+    assert COMPLETION.landing_root(prepared.landing, git=prepared.git) == repo.resolve()
+    # Issuance already wrote the receipt under the main checkout. The evaluate-time
+    # check must accept the same pairing; a root-only or exact-layout predicate
+    # refuses it before any verdict is recorded.
+    COMPLETION.assert_landing_in_receipt_repository(
+        prepared.landing, prepared.receipt, git=prepared.git
+    )
+    assert prepared.receipt.root == str(repo.resolve())
+
+
+def test_a_subdirectory_of_the_same_repository_still_belongs(tmp_path: Path) -> None:
+    """An ordinary subdirectory of the same checkout is still that checkout.
+
+    Stated residual, not a hole this unit is closing. The check is repository identity, not
+    provision's two path shapes.
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "src").mkdir()
+    git = LIFECYCLE.GitLanding()
+    landing = git.provision(repo, _spec())
+    inside = replace(landing, cwd=repo / "src")
+    assert COMPLETION.landing_root(inside, git=git) == repo.resolve()
 
 
 def test_a_receipt_copied_into_another_repositorys_register_is_refused_when_it_is_read(
@@ -3025,6 +3183,14 @@ _VERIFIER_OVERCLAIMS = (
     "an independent verifier's depth sample",
 )
 
+#: Phrasings that claim path ancestry, or a previous check, closed repository membership.
+#: A presence assertion that the honest sentence is somewhere in the file cannot detect these.
+_MEMBERSHIP_OVERCLAIMS = (
+    "cannot do so and remain internally consistent",
+    "the two remaining pairs are closed",
+    "two remaining pairs are closed",
+)
+
 
 def test_no_surface_claims_the_verifier_check_proves_the_verifier_ran() -> None:
     """The columns the check reads are named as columns, wherever the check is described.
@@ -3060,6 +3226,27 @@ def test_no_surface_claims_the_verifier_check_proves_the_verifier_ran() -> None:
         assert established in text, relative
     contract = _flowed("plugins/orchestrate/references/predicates.md")
     assert "the same defect against two different columns of the same untrusted store" in contract
+
+
+def test_no_surface_claims_path_ancestry_closed_repository_membership() -> None:
+    """A descendant path can be a different git repository.
+
+    The honest sentence (membership is the common directory) can sit next to a sentence that
+    still says the pair is closed or that a landing cannot name another repository and remain
+    consistent. Presence of the honest sentence cannot detect that.
+    """
+    surfaces = (
+        *_SURFACES,
+        "plugins/orchestrate/CHANGELOG.md",
+        "plugins/orchestrate/skills/orchestrate/scripts/completion.py",
+        "docs/engineering-journal/DECISIONS.md",
+        "docs/engineering-journal/LEARNINGS.md",
+    )
+    for relative in surfaces:
+        text = _flowed(relative)
+        for phrase in _MEMBERSHIP_OVERCLAIMS:
+            assert phrase not in text, f"{relative} claims {phrase!r}"
+        assert "cannot do so and remain internally consistent" not in text, relative
 
 
 def test_every_identity_paragraph_describes_the_argument_list_the_evaluator_takes() -> None:

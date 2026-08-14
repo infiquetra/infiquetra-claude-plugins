@@ -21,6 +21,29 @@
 
 ## 2026-08-13
 
+### Path ancestry is not repository membership  {#path-ancestry-is-not-membership}
+
+**Context.** The previous repair refused a landing whose working directory was not a descendant
+of the store it named, on the theory that containment against the filesystem is membership.
+**Evidence.** An independent git repository created as a subdirectory of another checkout is a
+descendant path and a different repository. Issuance accepted a landing whose `cwd` was the
+nested checkout and whose `ambient_root` was the outer one, sealed `receipt.root` as the outer
+path, and recorded `verified` in the outer register. Evaluation of an honest nested landing
+with an authentic outer receipt recorded `receipt_mismatch` in the outer register and demoted
+an unrelated `verified` row. Both members are pinned by tests that construct a repository
+inside a repository.
+**Mechanism.** `Path.is_relative_to` answers a filesystem question. The store decision needs
+a git question: do these two paths share an object store? A linked worktree is not the
+repository root and *is* the same repository. A nested `git init` is under the root and *is
+not*. The predicate that is true of both cannot be the property.
+**Fix.** Membership is `git rev-parse --path-format=absolute --git-common-dir` at each path,
+compared as resolved paths. The relative form is `.git` for every repository and would make
+two repositories compare equal. Linked worktrees share the main checkout's common directory,
+so mutating children keep working without the check knowing the worktree layout.
+**Generalizable rule.** When the property is "same repository", ask Git. A path-geometry
+check is a different question that happens to agree on the fixtures you already have.
+**Refs.** DECISIONS `{#landing-sits-in-its-repository}`, `{#check-against-a-copy}`.
+
 ### Two independently settable fields on one object are still a pair  {#pair-on-the-type}
 
 **Context.** The previous round deleted the repository parameter from issuance, settlement and
@@ -38,9 +61,9 @@ is internally consistent, so every later comparison of landing against receipt i
 value against a copy of that value — the same vacuous check `{#check-against-a-copy}` already
 named, one field over. The three production producers keep the fields tied; the public
 constructor does not.
-**Fix.** `landing_root` refuses a landing whose working directory does not sit inside the
-repository it names. The check is containment against the filesystem, not a comparison of one
-field to a copy of the other.
+**Fix.** `landing_root` refuses a landing whose working directory is not the same git
+repository as the store it names. The first form of that check was path ancestry, which is
+not membership; see `{#path-ancestry-is-not-membership}`.
 **Generalizable rule.** A value that cannot be supplied as a parameter can still be supplied as
 a field. After deleting a pair from a signature, ask which remaining public type carries both
 sides, and test those two fields against something neither of them produced.

@@ -546,6 +546,20 @@ class GitLanding:
         )
         return result.stdout.strip() or None
 
+    def common_dir(self, root: Path) -> Path:
+        """The shared object store of the git repository that contains ``root``.
+
+        Linked worktrees share the main checkout's common directory. An independent repository
+        nested inside another checkout has its own. The path is absolute: the relative form is
+        ``.git`` for every repository, which would make two different repositories compare equal.
+        """
+        value = self._git(
+            root, ["rev-parse", "--path-format=absolute", "--git-common-dir"]
+        ).stdout.strip()
+        if not value:
+            raise LandingError(f"git rev-parse --git-common-dir returned no path at {root}")
+        return Path(value).resolve()
+
     def is_invisible_to_boundary(self, root: Path, relative: str) -> bool:
         """Whether ``relative`` is genuinely outside what this boundary observes.
 

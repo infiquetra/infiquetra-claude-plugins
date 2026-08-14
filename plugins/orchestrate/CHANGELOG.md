@@ -9,14 +9,14 @@
   carries this dispatch's pre-established run binding, the predicate passes, the repository
   boundary is clean, the recorded destination has actually changed, and — for judgment-shaped work
   — a claimed independent verifier's depth sample is on record. A failure records a verdict when
-  the landing sits inside the receipt's repository; a landing in a different repository raises
+  the landing belongs to the receipt's git repository; a landing in a different repository raises
   rather than records, because neither register is then a store this evaluation may write. A
   row's phase is `verified` if and only if its latest verdict is a pass: a first failure leaves
   the phase alone, and a failing re-evaluation demotes a previously verified row so the reap
   gate cannot consume a contradiction as a pass.
 - The receipt binds **every input the verdict depends on**, not the labels that name the dispatch.
   The specification, landing, baseline and receipt arrive as four independent arguments. A landing
-  that sits inside the receipt's repository has its outcome recorded under the specification's
+  that belongs to the receipt's git repository has its outcome recorded under the specification's
   row in that register; a landing that does not raises rather than records. So the run, row,
   landing, work shape, mutability, declared scope, base commit, ambient root and changed-paths
   baseline must all agree with the receipt before anything else is read. Otherwise a
@@ -35,10 +35,12 @@
   Comparing a supplied root against the receipt was not enough, because the receipt's copy was made
   from that same supplied value at issue time — that catches a caller who changes it in between and
   cannot catch one that was wrong to begin with. So `issue_receipt` derives it from
-  `landing.ambient_root` and refuses a landing that does not sit inside that repository, and
-  `evaluate_completion`, `settle_artifact` and `settlement_record` take it from the sealed receipt;
-  none of the four accepts it as an argument. Evaluation still has two objects that name a
-  repository: it raises rather than records when the landing does not sit inside the receipt's.
+  `landing.ambient_root` and refuses a landing that is not the same git repository as that store,
+  and `evaluate_completion`, `settle_artifact` and `settlement_record` take it from the sealed
+  receipt; none of the four accepts it as an argument. Membership is the git common directory at
+  each path, not path ancestry: a repository nested inside another repository is a descendant and
+  a different store. Evaluation still has two objects that name a repository: it raises rather
+  than records when the landing does not belong to the receipt's.
   A landing that does not name its repository is refused rather than defaulted to its working
   directory. `read_receipt` is
   the one function that still takes a repository, because it is handed one with a row id and has no

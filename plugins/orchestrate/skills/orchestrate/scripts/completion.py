@@ -221,6 +221,10 @@ class ReceiptAuthenticationError(CompletionError):
     """A durable record in the register was not written by the orchestrator that issued it."""
 
 
+class ReceiptRootError(CompletionError):
+    """A receipt is being used against a repository other than the one it was issued under."""
+
+
 # --------------------------------------------------------------------------- predicate schema
 
 
@@ -697,8 +701,17 @@ class DispatchReceipt:
     declared scope and mutability decide what the boundary check permits, and the baseline decides
     what "changed" means.  Each of those arrives as a separate argument, so each is sealed here and
     compared before evaluation.
+
+    ``root`` is on that list for a reason worth stating, because it was the last member to be
+    found.  Enumerating what a function reads by collecting its attribute reads -- ``spec.``
+    something, ``landing.`` something -- cannot see a plain parameter, and ``root`` is a plain
+    parameter.  It is also the input that decides *which register receives the answer*, so evidence
+    issued against one repository could record a pass in a second one while the artifact settled in
+    the first.  The per-run secret does not cover this incidentally: it is named for the run alone
+    and lives outside every repository, so it authenticates the same receipt under either root.
     """
 
+    root: str
     run_id: str
     row_id: str
     landing_cwd: str
@@ -732,6 +745,7 @@ class DispatchReceipt:
 
     def to_mapping(self) -> dict[str, Any]:
         return {
+            "root": self.root,
             "run_id": self.run_id,
             "row_id": self.row_id,
             "landing_cwd": self.landing_cwd,
@@ -759,6 +773,7 @@ class DispatchReceipt:
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> DispatchReceipt:
         return cls(
+            root=str(value["root"]),
             run_id=str(value["run_id"]),
             row_id=str(value["row_id"]),
             landing_cwd=str(value["landing_cwd"]),
@@ -898,6 +913,7 @@ def issue_receipt(
     token = artifact_binding_token(spec.run_id, spec.row_id, resolved_nonce)
 
     receipt = DispatchReceipt(
+        root=str(Path(root).resolve()),
         run_id=spec.run_id,
         row_id=spec.row_id,
         landing_cwd=str(landing_cwd),
@@ -1004,13 +1020,39 @@ class Settlement:
         )
 
 
+def assert_receipt_root(root: Path, receipt: DispatchReceipt) -> None:
+    """Refuse a receipt that was issued against a different repository than the one being written.
+
+    ``root`` selects the register, and the register is where the verdict, the settlement record and
+    the phase all land.  A caller holding a complete, authentic receipt for repository A can pass
+    repository B here, and every other comparison still agrees, because none of them mention a
+    repository: the specification names a run and a row, the landing names a checkout, and the
+    per-run secret is named for the run and stored outside every repository.  The observed result
+    was an artifact settled in A and a pass recorded in B, against a row whose own work never ran.
+    """
+    resolved = str(Path(root).resolve())
+    if resolved != receipt.root:
+        raise ReceiptRootError(
+            f"the dispatch receipt for {receipt.row_id!r} was issued under {receipt.root!r} and is "
+            f"being used under {resolved!r}; the root selects the register that receives the "
+            "verdict, so evidence from one repository cannot record a result in another"
+        )
+
+
 def settlement_record(root: Path, receipt: DispatchReceipt) -> Settlement | None:
     """The authenticated settlement recorded for this dispatch, or ``None`` if there is none.
 
     Sealed with the same run secret as the receipt and for the same reason: a child that could
     plant an unauthenticated settlement record could make this module replay a settlement that
     never happened, and so accept a file the child wrote straight to the destination.
+
+    This is also where the receipt's own repository is checked, and it is checked here rather than
+    only in :func:`evaluate_completion` because this function and :func:`settle_artifact` take
+    ``root`` and the receipt as two independent arguments and are reachable without going through
+    evaluation at all.  :func:`_record` cannot make the same check -- it is handed a row id, not a
+    receipt, so it has nothing to compare -- which is why the check has to exist upstream of it too.
     """
+    assert_receipt_root(root, receipt)
     row = register_store.read_rows(root).get(receipt.row_id)
     stored = row.get(SETTLEMENT_KEY) if row is not None else None
     if not isinstance(stored, Mapping):
@@ -1202,9 +1244,15 @@ def run_predicate(
     could pass, the snapshot could be clean, and the artifact could change immediately afterwards
     with the recorded digest no longer matching the file.  ``start_new_session=True`` makes the
     predicate a group leader whose identifier is its own pid, and the group is SIGKILLed and
-    waited out on **every** exit path, success included.  Ordering is the point: the kill happens
-    inside this function, so by the time the caller snapshots, nothing the predicate started is
-    still able to write.
+    waited out on every exit path, success included.  Ordering is the point: the kill happens
+    inside this function, so by the time the caller snapshots, **everything the predicate started
+    that is still in the group** has been ended and reaped.
+
+    That is the whole of the claim, and it is smaller than "nothing can still write".  A descendant
+    that leaves the group -- its own ``setsid``, or anything built on it -- is not killed here and
+    can rewrite the artifact after the caller's snapshot has certified it; nothing in POSIX
+    prevents a process leaving its group.  ``references/predicates.md`` carries the full list of
+    actors this does and does not cover.
 
     A group that does not drain within :data:`PREDICATE_GROUP_DRAIN_SECONDS` is
     ``predicate_descendants`` -- a refusal, because the observation that follows cannot be trusted
@@ -1433,10 +1481,11 @@ class DepthSample:
         Independence is enforced against the register, not against the sample.  A
         ``verifier_row_id`` that is merely a non-empty string different from the child's is not a
         session -- ``"verifier-that-does-not-exist"`` satisfies that test -- and "an independent
-        verifier session" is the requirement.  So the named row must exist, must belong to this
-        run, must have got far enough to actually run, and must be the vendor and model the sample
-        claims it was.  The last check is what stops a sample from attributing a read to a
-        different, more credible session than the one that performed it.
+        verifier session" is the requirement.  So the named row must exist, must carry an
+        authenticated dispatch for this run, must not be recorded as still waiting to start, and
+        must be the vendor and model the sample claims it was.  What that reaches, and where it
+        stops short of proving the verifier ran, is set out on
+        :meth:`_assert_verifier_session`.
 
         Binding to this artifact is enforced by digest, so a sample recorded against some other
         document cannot be presented as a read of this one.
@@ -1473,11 +1522,33 @@ class DepthSample:
         row, under this run's orchestrator secret, which a child cannot produce.  The vendor is
         then compared against that sealed receipt rather than against the writable column.
 
-        What this does **not** establish, stated rather than implied: the verifier's ``model`` is
-        compared against a register column that is not sealed, because the model is resolved at
-        launch and the receipt does not carry it -- a child that can write the register can still
-        misattribute the model of a genuinely dispatched verifier.  Nor does any of this establish
-        blindness, or that the verifier's vendor differs from the child's.
+        **What this establishes, exactly: a verifier was dispatched for this run, with this
+        vendor.**  It does not establish that the verifier ran, and the wording here is
+        deliberate because the code cannot support the larger claim.  Two of the four things
+        checked come from the sealed receipt (run, vendor); the other two are register columns that
+        any write-capable actor can set:
+
+        * ``phase`` -- read below to refuse a verifier that never got started.  It refuses the
+          *honest* never-ran state, which is a real and useful thing: a dispatch that failed to
+          launch leaves ``planned`` and is caught.  It does not survive an adversary, because
+          moving one column from ``planned`` to ``working`` is enough to present a verifier that
+          was issued a genuine receipt and never read anything.
+        * ``model`` -- resolved at launch, not carried on the receipt, so the model of a genuinely
+          dispatched verifier can be misattributed.
+
+        Sealing ``phase`` is not possible from inside this module.  The only evidence that separates
+        "dispatched" from "ran" is observed *after* launch, and both observers live elsewhere: the
+        launch transition is U4's and the liveness stream is U3's subscriber.  A real fix is an
+        attestation written by one of those under the run secret, which is a change to those units,
+        not to this one.
+
+        This residual and the accepted one on the *child* row -- a child writing ``phase=verified``
+        into its own row and being reaped with no completion record -- are the same defect against
+        two different columns of the same untrusted store, and one authenticated-register change
+        would close both.
+
+        Nor does any of this establish blindness, or that the verifier's vendor differs from the
+        child's.
         """
         row = register_store.read_rows(root).get(self.verifier_row_id)
         if row is None:
@@ -1508,8 +1579,10 @@ class DepthSample:
         phase = row.get("phase")
         if phase in (None, "planned", "launching"):
             raise DepthSampleError(
-                f"verifier {self.verifier_row_id!r} never reached a running session "
-                f"(phase {phase!r}); it cannot have read anything"
+                f"the register records verifier {self.verifier_row_id!r} at phase {phase!r}, which "
+                "is not past launch; a dispatch that never started cannot have read anything. "
+                "This column is not sealed, so it refuses the honest never-started case and not a "
+                "planted one"
             )
         recorded_model = row.get("model")
         if not isinstance(recorded_model, str) or not recorded_model:
@@ -1630,6 +1703,15 @@ def evaluate_completion(
     again with its sample.  The second call re-runs the mechanical controls rather than trusting
     the first call's verdict, so the answer is a fresh one, not a cached one.
     """
+    # Before anything is read or written, including a recorded refusal. Every other refusal in this
+    # function is recorded rather than raised, because a control that raises leaves the register
+    # showing a working child with no verdict. That argument assumes there *is* a right register to
+    # record into, and a receipt from another repository is exactly the case where there is not:
+    # writing the verdict here would put one repository's answer in another's store, and would
+    # demote an unrelated row that happens to share the row id. So this one raises, and it is the
+    # only comparison in the deciding-input class that does.
+    assert_receipt_root(root, receipt)
+
     landing_cwd = Path(landing.cwd)
     state: dict[str, Any] = {}
 
@@ -1640,16 +1722,24 @@ def evaluate_completion(
             CompletionResult(spec.row_id, False, reason, detail, **{**state, **fields}),
         )
 
-    # The receipt, the specification, the landing and the baseline arrive as four independent
-    # arguments and every outcome is recorded under the specification's row. Nothing further down
-    # would notice if they described different dispatches.
+    # The root, the receipt, the specification, the landing and the baseline arrive as five
+    # independent arguments and every outcome is recorded under the specification's row in the
+    # root's register. Nothing further down would notice if they described different dispatches.
     #
     # The list below is not a category ("the identity labels") -- it is the mechanical answer to
-    # "what does this function read before deciding?", taken by reading every branch downstream.
+    # "what does this function read before deciding?". Taking that answer needs two passes and the
+    # first one is easy to skip: **enumerate the signature, then the attribute reads.** Collecting
+    # ``spec.``/``landing.`` reads finds everything that hangs off an object and is structurally
+    # blind to a plain parameter, which is how ``root`` -- the first argument, and the one that
+    # decides which register receives the verdict -- stayed off the list through two rounds of
+    # this exact exercise.
+    #
     # It has two halves and they are not the same claim:
     #
     # Deciding inputs -- something downstream branches on them, so substituting one changes the
     # verdict:
+    #   root               -> which register the settlement, the verdict and the phase land in;
+    #                         checked above rather than here, for the reason given there
     #   run_id/row_id      -> which row the verdict lands on; the artifact landing; the token
     #   landing.cwd        -> where the predicate runs and what the boundary observes
     #   work_shape         -> whether the depth gate runs at all (_depth_verdict's first branch)

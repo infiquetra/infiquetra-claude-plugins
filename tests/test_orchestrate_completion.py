@@ -49,7 +49,7 @@ LIFECYCLE = _load("session_lifecycle")
 COMPLETION = _load("completion")
 
 
-# --------------------------------------------------------------------------- fixtures
+# -------------------------------------------------------------------------------- fixtures
 
 
 @pytest.fixture(autouse=True)
@@ -238,7 +238,7 @@ class FakeHerdr:
         self.present = False
 
 
-# --------------------------------------------------------------------------- scenario 2: schema
+# ---------------------------------------------------------------------- scenario 2: schema
 
 
 @pytest.mark.parametrize(
@@ -282,7 +282,7 @@ def test_a_valid_declaration_round_trips_through_the_schema() -> None:
     assert COMPLETION.PredicateSpec.from_mapping(spec.to_mapping()) == spec
 
 
-# --------------------------------------------------------------------------- scenario 3: closure
+# --------------------------------------------------------------------- scenario 3: closure
 
 
 def test_predicate_entry_point_inside_the_write_scope_is_rejected(tmp_path: Path) -> None:
@@ -397,7 +397,7 @@ def test_a_closure_change_after_dispatch_fails_before_the_predicate_runs(tmp_pat
     assert result.predicate is None
 
 
-# --------------------------------------------------------------------------- scenario 4: settle
+# ---------------------------------------------------------------------- scenario 4: settle
 
 
 def test_an_artifact_written_directly_to_the_destination_is_not_settled(tmp_path: Path) -> None:
@@ -476,7 +476,7 @@ def test_settlement_does_not_claim_to_detect_delete_then_recreate(tmp_path: Path
     assert result.verified is True
 
 
-# --------------------------------------------------------------------------- scenario 1: binding
+# --------------------------------------------------------------------- scenario 1: binding
 
 
 def test_an_artifact_from_a_previous_run_does_not_satisfy_the_predicate(tmp_path: Path) -> None:
@@ -538,7 +538,7 @@ def test_a_re_dispatch_of_the_same_row_rejects_the_previous_attempts_artifact(
     assert result.reason == "artifact_binding"
 
 
-# --------------------------------------------------------------------------- scenario 5: content
+# --------------------------------------------------------------------- scenario 5: content
 
 
 def test_a_truncated_but_syntactically_valid_artifact_fails_rather_than_passing(
@@ -555,7 +555,7 @@ def test_a_truncated_but_syntactically_valid_artifact_fails_rather_than_passing(
     assert result.predicate is not None and result.predicate.returncode == 1
 
 
-# --------------------------------------------------------------------------- scenario 8: bounds
+# ---------------------------------------------------------------------- scenario 8: bounds
 
 
 def test_a_predicate_that_hangs_is_a_failure(tmp_path: Path) -> None:
@@ -672,7 +672,7 @@ def test_a_predicate_that_writes_into_the_landing_fails_the_predicate_not_the_ch
     assert "predicate-residue.txt" in result.detail
 
 
-# --------------------------------------------------------------------- scenario 6: integration
+# ----------------------------------------------------------------- scenario 6: integration
 
 
 def _mutating_prepared(repo: Path, row_id: str = "child-m") -> _Prepared:
@@ -757,7 +757,7 @@ def test_read_only_work_integrates_nowhere_and_is_permitted_under_mode_none(
     assert herdr.closed == ["tab-a"]
 
 
-# --------------------------------------------------------------------------- scenario 9: pass
+# ------------------------------------------------------------------------ scenario 9: pass
 
 
 def test_a_passing_predicate_on_a_settled_bound_artifact_reaps_cleanly(tmp_path: Path) -> None:
@@ -779,7 +779,7 @@ def test_a_passing_predicate_on_a_settled_bound_artifact_reaps_cleanly(tmp_path:
     LIFECYCLE.reap_verified(repo, "child-a", herdr=FakeHerdr())
 
 
-# --------------------------------------------------------------------- scenario 7: depth sample
+# ---------------------------------------------------------------- scenario 7: depth sample
 
 
 @pytest.mark.parametrize(
@@ -997,7 +997,8 @@ def test_a_depth_sample_naming_a_verifier_that_never_existed_is_rejected(
     assert "no row in the register" in result.detail
 
 
-def test_a_depth_sample_naming_a_verifier_that_never_ran_is_rejected(tmp_path: Path) -> None:
+def test_a_depth_sample_naming_a_verifier_that_never_started_is_rejected(tmp_path: Path) -> None:
+    """The honest never-started state: a dispatch was issued and the session never came up."""
     repo = tmp_path / "repo"
     _init_repo(repo)
     prepared = _prepare(repo, work_shape="judgment")
@@ -1007,7 +1008,7 @@ def test_a_depth_sample_naming_a_verifier_that_never_ran_is_rejected(tmp_path: P
     result = prepared.evaluate(depth_sample=_sample(prepared, register=False))
     assert result.verified is False
     assert result.reason == "depth_sample_invalid"
-    assert "never reached a running session" in result.detail
+    assert "is not past launch" in result.detail
 
 
 def test_a_depth_sample_from_another_run_is_not_this_runs_verifier(tmp_path: Path) -> None:
@@ -1138,7 +1139,7 @@ def test_a_verifier_reads_the_settled_artifact_and_the_second_evaluation_verifie
     assert REGISTER.read_rows(repo)["child-a"]["phase"] == "verified"
 
 
-# ----------------------------------------------------- carried requirement: read-only landings
+# ------------------------------------------------- carried requirement: read-only landings
 
 
 def test_two_read_only_children_with_disjoint_scopes_both_complete_cleanly(
@@ -1239,7 +1240,7 @@ def test_every_child_may_write_only_its_own_artifact_directory(tmp_path: Path) -
     assert COMPLETION.repository_scope_for(mutating).scope == ("src",)
 
 
-# --------------------------------------------------- failed predicate is not a new phase (3.1)
+# ----------------------------------------------- failed predicate is not a new phase (3.1)
 
 
 def test_a_failed_predicate_leaves_the_phase_alone_and_records_a_durable_verdict(
@@ -1307,7 +1308,7 @@ def test_a_snapshot_catch_up_pass_does_not_erase_a_recorded_completion_failure(
     assert row["completion"]["reason"] == "predicate_failed"
 
 
-# --------------------------------------------------------------------------- adapters
+# -------------------------------------------------------------------------------- adapters
 
 
 def test_the_git_adapter_reports_a_missing_revision_rather_than_raising(tmp_path: Path) -> None:
@@ -1407,7 +1408,7 @@ def test_replacing_the_spec_scope_does_not_mutate_the_original(tmp_path: Path) -
     assert replace(spec, scope=()) == narrowed
 
 
-# ----------------------------------------------- remaining members of each control's input class
+# ----------------------------------------- remaining members of each control's input class
 
 
 def test_an_artifact_bound_to_a_different_child_in_the_same_run_is_rejected(
@@ -1536,7 +1537,7 @@ def test_every_recorded_failure_reason_is_in_the_closed_vocabulary(tmp_path: Pat
     assert len(set(COMPLETION.FAILURE_REASONS)) == len(COMPLETION.FAILURE_REASONS)
 
 
-# ------------------------------------------------- R1: the child process boundary and its posture
+# ---------------------------------------------- the child process boundary and its posture
 
 
 def test_no_runtimes_launch_posture_forbids_the_write_its_dispatch_requires(
@@ -1635,7 +1636,7 @@ def test_two_read_only_children_both_produce_their_deliverables_from_their_own_p
     assert second_result.scope is not None and second_result.scope.outside_scope == frozenset()
 
 
-# ----------------------------------------------------------------- R2: the receipt's own identity
+# -------------------------------------------------------------- the receipt's own identity
 
 
 def test_a_receipt_issued_for_another_child_cannot_verify_this_one(tmp_path: Path) -> None:
@@ -1670,7 +1671,7 @@ def test_a_receipt_from_another_run_cannot_verify_this_child(tmp_path: Path) -> 
     assert "run_id" in result.detail
 
 
-# ------------------------------------------------------- R3: the durable receipt is authenticated
+# ---------------------------------------------------- the durable receipt is authenticated
 
 
 def _stored_receipt(repo: Path, row_id: str = "child-a") -> dict[str, Any]:
@@ -1838,7 +1839,7 @@ def test_the_run_secret_is_stable_for_a_run_and_distinct_between_runs(tmp_path: 
     assert len(first) == COMPLETION.RUN_SECRET_BYTES
 
 
-# ------------------------------------------- R4: the artifact path the catch-up consumer reads
+# ------------------------------------------- the artifact path the catch-up consumer reads
 
 
 def test_catch_up_does_not_ask_for_attention_before_the_child_has_settled(
@@ -1893,7 +1894,7 @@ def test_catch_up_finds_a_mutating_childs_artifact_in_its_worktree(tmp_path: Pat
     assert [record.artifact_exists for record in records] == [True]
 
 
-# ------------------------------------------------------- R9: re-evaluation and the phase invariant
+# --------------------------------------------------- re-evaluation and the phase invariant
 
 
 def test_re_evaluating_an_unchanged_verified_child_reaches_the_same_verdict(
@@ -1946,7 +1947,7 @@ def test_a_reaped_row_is_not_demoted_by_a_later_evaluation(tmp_path: Path) -> No
     assert REGISTER.read_rows(repo)["child-a"]["phase"] == "reaped"
 
 
-# --------------------------------------------------------- R11: what Python executes on an import
+# ------------------------------------------------------- what Python executes on an import
 
 
 def _package_repo(repo: Path) -> None:
@@ -2009,7 +2010,7 @@ def test_a_namespace_package_without_an_initializer_still_resolves(tmp_path: Pat
     assert "ns/leaf.py" in closure
 
 
-# --------------------------------------------- R12: the observer can see the evidence it protects
+# ------------------------------------------- the observer can see the evidence it protects
 
 
 def test_a_predicate_that_rewrites_the_settled_artifact_fails_as_a_side_effect(
@@ -2054,7 +2055,7 @@ def test_a_predicate_that_rewrites_the_settled_artifact_fails_as_a_side_effect(
     assert prepared.receipt.artifact_path.read_text(encoding="utf-8") == "FORGED-AFTER-BIND"
 
 
-# ------------------------------------------------- R13: tracked artifacts are refused at dispatch
+# ----------------------------------------------- tracked artifacts are refused at dispatch
 
 
 def test_a_force_added_artifact_tree_is_refused_at_issue_not_blamed_on_the_child(
@@ -2077,7 +2078,7 @@ def test_a_force_added_artifact_tree_is_refused_at_issue_not_blamed_on_the_child
         _prepare(repo, row_id="child-a")
 
 
-# --------------------------------------------------- R15: the default nobody was exercising
+# ------------------------------------------------------- the default nobody was exercising
 
 
 def test_the_default_environment_command_installs_what_a_predicate_needs(tmp_path: Path) -> None:
@@ -2144,7 +2145,12 @@ def test_the_unfiltered_failed_rows_view_spans_every_run(tmp_path: Path) -> None
 # ---- the receipt binds every input the evaluator branches on ------------------------------
 #
 # The class here is not "the identity labels". It is the mechanical answer to "what does
-# evaluate_completion read before deciding?", obtained by reading every branch downstream of it.
+# evaluate_completion read before deciding?", and taking that answer needs two passes in this
+# order: enumerate the signature, then the attribute reads. Collecting `spec.`/`landing.` reads
+# finds everything hanging off an object and cannot see a plain parameter -- which is how the
+# repository root, the first argument, stayed off a list that was being called complete. The
+# parameterised cases below substitute an attribute; the root has its own cases further down,
+# because it is refused by raising rather than by a recorded verdict.
 
 
 def _substitute(prepared: _Prepared, label: str) -> tuple[Any, Any, Any]:
@@ -2279,6 +2285,7 @@ def test_the_receipt_round_trip_preserves_every_deciding_input(tmp_path: Path) -
     prepared = _prepare(repo, work_shape="judgment", scope=("reports/a",))
     reloaded = COMPLETION.read_receipt(repo, "child-a")
     assert reloaded == prepared.receipt
+    assert reloaded.root == str(repo.resolve())
     assert reloaded.work_shape == "judgment"
     assert reloaded.scope == ("reports/a",)
     assert reloaded.mutating is False
@@ -2479,12 +2486,12 @@ def test_a_reaped_row_keeps_its_phase_whichever_way_the_verdict_goes(
 
 
 def test_a_planted_verifier_row_does_not_satisfy_the_verifier_check(tmp_path: Path) -> None:
-    """R6 read register columns, and the register is the store R3 exists because we distrust.
+    """A column-only check certifies exactly the store the sealed records exist because we distrust.
 
     A write-capable child can plant a row with the right run, phase, vendor and model. Requiring
     an authenticated dispatch receipt is the part it cannot forge -- and without this the forgery
-    was *more* convincing after the repair, because the planted identity was persisted into the
-    durable completion record.
+    was *more* convincing once the sample was persisted, because the planted identity went into
+    the durable completion record.
     """
     repo = tmp_path / "repo"
     _init_repo(repo)
@@ -2549,6 +2556,12 @@ def test_a_relaundered_baseline_is_caught_when_only_a_fingerprint_moved(tmp_path
 
 # ---- the operator-facing surfaces do not call detection "containment" ---------------------
 
+
+def _flowed(relative: str) -> str:
+    """Markdown and docstrings wrap, so compare on whitespace-collapsed prose."""
+    return " ".join((ROOT / relative).read_text(encoding="utf-8").split()).lower()
+
+
 _SURFACES = (
     "plugins/orchestrate/README.md",
     "plugins/orchestrate/references/predicates.md",
@@ -2568,17 +2581,203 @@ def test_no_surface_calls_the_boundary_check_containment() -> None:
     the workspace.
     """
 
-    def flowed(relative: str) -> str:
-        """Markdown and docstrings wrap, so compare on whitespace-collapsed prose."""
-        return " ".join((ROOT / relative).read_text(encoding="utf-8").split()).lower()
-
     for relative in _SURFACES:
-        text = flowed(relative)
+        text = _flowed(relative)
         assert "containment inside the workspace is the boundary check" not in text, relative
         assert "what contains a child *inside* the workspace is the boundary check" not in text
-    detection = flowed("plugins/orchestrate/references/predicates.md")
+    detection = _flowed("plugins/orchestrate/references/predicates.md")
     assert "post-hoc, partial, repository-visible change detection" in detection
     assert "reports rather than prevents" in detection
-    posture = flowed("plugins/orchestrate/skills/orchestrate/scripts/session_lifecycle.py")
+    posture = _flowed("plugins/orchestrate/skills/orchestrate/scripts/session_lifecycle.py")
     assert "post-hoc, partial, repository-visible change detection" in posture
     assert "the only *containment* in the word's real sense" in posture
+
+
+# ---- the root is what selects the register that receives the answer ------------------------
+
+
+def _second_repository(tmp_path: Path, prepared: _Prepared, **columns: Any) -> Path:
+    """A second repository whose own bookkeeping happens to use the same row id."""
+    other = tmp_path / "repo-b"
+    _init_repo(other)
+    REGISTER.upsert_row(other, prepared.spec.row_id, {"run_id": "run-b", **columns})
+    return other
+
+
+def test_evidence_from_one_repository_cannot_record_a_verdict_in_another(tmp_path: Path) -> None:
+    """Everything identical except the root: the specification, landing, baseline and receipt.
+
+    The root is the input that selects the register, so it decides where the settlement record,
+    the verdict and the phase land. It arrives as a plain argument that no other comparison
+    mentions, and the per-run secret does not cover it either -- the secret is named for the run
+    alone and lives outside every repository, so it authenticates the same receipt under any root.
+    """
+    repo = tmp_path / "repo-a"
+    _init_repo(repo)
+    prepared = _prepare(repo)
+    prepared.run_child_process()
+    other = _second_repository(tmp_path, prepared, phase="working", expected_state="working")
+
+    with pytest.raises(COMPLETION.ReceiptRootError) as raised:
+        COMPLETION.evaluate_completion(
+            other,
+            prepared.spec,
+            prepared.landing,
+            prepared.baseline,
+            prepared.receipt,
+            git=prepared.git,
+        )
+    assert "receives the verdict" in str(raised.value)
+
+    foreign = REGISTER.read_rows(other)[prepared.spec.row_id]
+    assert "completion" not in foreign
+    assert foreign["phase"] == "working"
+    assert REGISTER.read_rows(repo)[prepared.spec.row_id]["phase"] == "working"
+    assert not prepared.receipt.artifact_path.exists()
+
+
+def test_a_foreign_root_is_refused_before_any_verdict_is_recorded(tmp_path: Path) -> None:
+    """The check is above the recording, not beside it.
+
+    Every other refusal is recorded rather than raised, and recording under a foreign root is
+    itself the harm: the verdict lands in a store it does not belong to, and demotes whatever
+    unrelated row happened to share the row id. This case reaches a refusal that is recorded
+    *before* settlement, so only a check above the recorder can keep it out of the wrong register.
+    """
+    repo = tmp_path / "repo-a"
+    _init_repo(repo)
+    prepared = _prepare(repo)
+    prepared.run_child_process()
+    other = _second_repository(tmp_path, prepared, phase="verified", expected_state="verified")
+    (repo / "checks" / "helpers.py").write_text("REQUIRED_KEYS = ('binding',)\n", encoding="utf-8")
+
+    with pytest.raises(COMPLETION.ReceiptRootError):
+        COMPLETION.evaluate_completion(
+            other,
+            prepared.spec,
+            prepared.landing,
+            prepared.baseline,
+            prepared.receipt,
+            git=prepared.git,
+        )
+
+    foreign = REGISTER.read_rows(other)[prepared.spec.row_id]
+    assert foreign["phase"] == "verified"
+    assert "completion" not in foreign
+
+
+def test_settling_an_artifact_under_a_foreign_repository_is_refused(tmp_path: Path) -> None:
+    """Settlement takes the root and the receipt as two independent arguments.
+
+    It is a public entry point, so evaluation is not the only way to reach it, and it both reads
+    and writes the register. A check that lives only in the evaluator would leave this path open
+    to a later unit that calls it directly.
+    """
+    repo = tmp_path / "repo-a"
+    _init_repo(repo)
+    prepared = _prepare(repo)
+    prepared.run_child_process()
+    other = _second_repository(tmp_path, prepared, phase="working")
+
+    with pytest.raises(COMPLETION.ReceiptRootError):
+        COMPLETION.settle_artifact(other, prepared.receipt)
+
+    assert prepared.receipt.inflight_path.exists()
+    assert not prepared.receipt.artifact_path.exists()
+    assert "settlement" not in REGISTER.read_rows(other)[prepared.spec.row_id]
+
+
+# ---- what the verifier check establishes, and where it stops -------------------------------
+
+
+def test_moving_the_unsealed_verifier_phase_presents_a_verifier_that_never_ran(
+    tmp_path: Path,
+) -> None:
+    """Documented behaviour rather than a refusal, because the code cannot refuse it.
+
+    The verifier's dispatch is sealed and its vendor comes from that seal, so a planted row is
+    caught. Whether the verifier *ran* is answered from ``phase``, which is an ordinary register
+    column that any write-capable actor can set -- the same untrusted store the dispatch receipt
+    is sealed against. So a verifier with a genuine receipt that never started is refused while
+    the column reads ``planned``, and accepted the moment the column reads ``working``.
+
+    Closing this needs evidence observed after launch, and both observers are other units: the
+    launch transition and the liveness stream. This test exists so the claim in the surfaces and
+    the behaviour of the code say the same thing.
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo, work_shape="judgment")
+    prepared.run_child_process()
+    _verifier_row(repo, "verifier-1", dispatched=True, phase="planned")
+
+    refused = prepared.evaluate(
+        depth_sample=_sample(prepared, register=False, verifier_row_id="verifier-1")
+    )
+    assert refused.verified is False
+    assert refused.reason == "depth_sample_invalid"
+    assert "is not past launch" in refused.detail
+
+    REGISTER.upsert_row(repo, "verifier-1", {"phase": "working"})
+    accepted = prepared.evaluate(
+        depth_sample=_sample(prepared, register=False, verifier_row_id="verifier-1")
+    )
+    assert accepted.verified is True, accepted.detail
+    assert REGISTER.read_rows(repo)["child-a"]["completion"]["depth_sample"] is not None
+
+
+def test_no_surface_claims_the_verifier_check_proves_the_verifier_ran() -> None:
+    """The columns the check reads are named as columns, wherever the check is described."""
+    for relative in (
+        "plugins/orchestrate/references/predicates.md",
+        "plugins/orchestrate/CHANGELOG.md",
+        "plugins/orchestrate/skills/orchestrate/SKILL.md",
+        "plugins/orchestrate/skills/orchestrate/scripts/completion.py",
+    ):
+        text = _flowed(relative)
+        assert "not that it ran" in text or "does not establish that the verifier ran" in text, (
+            relative
+        )
+    contract = _flowed("plugins/orchestrate/references/predicates.md")
+    assert "a verifier was dispatched for this run, with this vendor" in contract
+    assert "the same defect against two different columns of the same untrusted store" in contract
+
+
+# ---- the group kill covers the group, and the prose says so --------------------------------
+
+
+def test_no_surface_claims_the_group_kill_ends_everything_the_predicate_started() -> None:
+    """A descendant that calls ``setsid`` leaves the group and outlives the kill.
+
+    The residual table already says so. The sentences introducing it claimed a totality the table
+    denies, which is the more dangerous half: a reader who stops at the claim never reaches the
+    table.
+    """
+    for relative in (
+        "plugins/orchestrate/references/predicates.md",
+        "plugins/orchestrate/skills/orchestrate/scripts/completion.py",
+    ):
+        text = _flowed(relative)
+        assert "after the kill there is nothing left to write" not in text, relative
+        assert "nothing the predicate started is still able to write" not in text, relative
+    contract = _flowed("plugins/orchestrate/references/predicates.md")
+    assert "group membership is the whole of the claim" in contract
+    assert 'narrower than "nothing can still write"' in contract
+
+
+def test_the_release_notes_do_not_promote_a_sealed_field_into_a_compared_one() -> None:
+    """The changelog listed a field that is sealed and deliberately never compared.
+
+    An operator reading it would believe `write_scope` is a check that can fire, and three
+    consistency fields are deciding inputs. Both are the same overclaim as the prose defects above,
+    one surface further out: the detailed reference had it right and the release notes did not
+    catch up.
+    """
+    notes = _flowed("plugins/orchestrate/CHANGELOG.md")
+    assert "`write_scope` is sealed and deliberately **not** compared" in notes
+    assert "as consistency fields rather than deciding inputs" in notes
+    # The same two statements in the document the release notes summarise, so the pair cannot
+    # drift apart again without one of these failing.
+    contract = _flowed("plugins/orchestrate/references/predicates.md")
+    assert "`write_scope` is sealed and deliberately **not** compared" in contract
+    assert "calling them deciding inputs would be" in contract

@@ -275,15 +275,17 @@ and can write the artifact after the second snapshot has already certified it. T
 recorded pass whose durable digest did not match the file on disk, with no control observing it.
 
 So the predicate is started as its own process group (`start_new_session=True`, making it a group
-leader whose group id is its own pid) and **the group is SIGKILLed and waited out on every exit
-path, success included, before `run_predicate` returns.** Ordering is the whole point: the kill
-happens before the caller takes the after-snapshot, so anything a descendant wrote is inside the
-observed interval, and after the kill there is nothing left to write. A group that does not drain
-within five seconds is `predicate_descendants` — a refusal, because an observation taken while
-something the predicate started is still running cannot be trusted.
+leader whose group id is its own pid) and **everything still in that group is SIGKILLed and waited
+out on every exit path, success included, before `run_predicate` returns.** Ordering is the whole
+point: the kill happens before the caller takes the after-snapshot, so anything a group member
+wrote is inside the observed interval. A group that does not drain within five seconds is
+`predicate_descendants` — a refusal, because an observation taken while something the predicate
+started is still running cannot be trusted.
 
-**What can still touch the artifact between the after-snapshot and the durable write** — the
-enumeration, so the claim above is not read as wider than it is:
+**Group membership is the whole of the claim, and it is narrower than "nothing can still write".**
+A descendant that leaves the group — its own `setsid`, or anything built on it — is not reached by
+the kill, and can rewrite the settled artifact after evaluation has recorded a pass and a digest.
+That is a real, constructed case, not a theoretical one. The table below is the enumeration:
 
 | Actor | Covered? |
 | --- | --- |
@@ -345,16 +347,36 @@ sample is now persisted, that forgery leaves a durable audit trail of a session 
 So the load-bearing requirement is an **authenticated dispatch receipt for the verifier row**, under
 this run's orchestrator secret, which a child cannot produce. On top of that: the receipt's run must
 be this child's run; the sample's vendor must match the vendor in that sealed receipt; the row must
-have reached a phase past `launching`; and the sample's model must match the row's recorded model.
+not be recorded as still waiting to start; and the sample's model must match the row's recorded
+model.
 
 **This places a contract on whoever dispatches verifiers (U8): a verifier is an ordinary dispatched
 child and must be issued a receipt like any other.** A verifier without one cannot be told apart
 from a planted row.
 
-**Not established, stated:** the verifier's `model` is compared against a register column that is
-*not* sealed — the model is resolved at launch and the receipt does not carry it — so a child that
-can write the register can still misattribute the model of a genuinely dispatched verifier. The
-vendor and the existence of the dispatch are sealed; the model is not.
+**What this check establishes, exactly: a verifier was dispatched for this run, with this vendor.**
+It does not establish that the verifier ran. Two of the four things checked come from the sealed
+receipt; the other two are register columns that any write-capable actor can set:
+
+| Checked | Source | Survives an adversary? |
+| --- | --- | --- |
+| the dispatch exists, and its run | sealed receipt | yes |
+| the verifier's vendor | sealed receipt | yes |
+| `phase` is past launch | register column | **no** — moving it from `planned` to `working` presents a receipt-bearing verifier that never read anything |
+| `model` matches the sample | register column | **no** — the model is resolved at launch and is not on the receipt |
+
+The `phase` check is still worth having: it refuses the *honest* never-started case, which is what a
+verifier dispatch that failed to launch actually looks like. It is not a proof of execution, and
+nothing here should be read as one.
+
+Sealing `phase` is out of this unit's reach. The only evidence that separates "dispatched" from
+"ran" is observed *after* launch, and both observers live elsewhere — the launch transition is U4's
+and the liveness stream is U3's subscriber. Closing it means one of those units writing an
+attestation under the run secret, not a change here.
+
+**This residual and the accepted one on the child's own row — a child writing `phase=verified` into
+its own row and being reaped with no completion record — are the same defect against two different
+columns of the same untrusted store**, and a single authenticated-register change would close both.
 
 **A sample that established nothing does not certify anything.** Any `unsupported` claim blocks
 verification (`depth_sample_unsupported`), and so does a sample with no `supported` claim at all
@@ -426,17 +448,22 @@ distinguishable from "still working" without a new phase.
 
 ## Evaluation order
 
-0. **Identity — every input the verdict depends on, not just the labels.** The child specification,
-   the landing, the changed-path baseline and the receipt arrive as four independent arguments, and
-   every outcome is recorded under the *specification's* row. Nothing further down would notice if
-   they described different dispatches. The bound set is the mechanical answer to "what does the
-   evaluator read before deciding?", obtained by reading every branch downstream:
+0. **Identity — every input the verdict depends on, not just the labels.** The repository root, the
+   child specification, the landing, the changed-path baseline and the receipt arrive as five
+   independent arguments, and every outcome is recorded under the *specification's* row in the
+   *root's* register. Nothing further down would notice if they described different dispatches. The
+   bound set is the mechanical answer to "what does the evaluator read before deciding?", and taking
+   that answer needs two passes in this order: **enumerate the signature, then the attribute reads.**
+   Collecting `spec.`/`landing.` reads finds everything hanging off an object and is structurally
+   blind to a plain parameter — which is how `root`, the first argument, stayed off this list while
+   the list was being called complete.
 
    **Deciding inputs** — something downstream branches on them, so substituting one changes the
    verdict:
 
    | Input | What it decides | How it is bound |
    | --- | --- | --- |
+   | repository root | which register receives the settlement record, the verdict and the phase | sealed label, checked first |
    | `run_id`, `row_id` | which row the verdict lands on; the artifact landing; the token | sealed label |
    | landing path | where the predicate runs, what the boundary observes | sealed label |
    | `work_shape` | **whether the depth gate runs at all** | sealed label |
@@ -462,6 +489,16 @@ distinguishable from "still working" without a new phase.
    because U4's readiness path is its producer and two takers of one snapshot is the same shape as
    two writers of one register column. One producer, one binder, one comparison. Any disagreement is
    `receipt_mismatch`, before anything else is read.
+
+   The root is the one member of the class that **raises** instead of recording a `receipt_mismatch`
+   verdict. Every other refusal is recorded rather than raised, because raising leaves the register
+   showing a working child with no verdict — but that argument assumes there is a right register to
+   record into, and a receipt from another repository is precisely the case where there is not.
+   Recording the verdict would file one repository's answer in another's store and demote whatever
+   unrelated row happened to share the row id. The same comparison is made a second time, lower
+   down, at the settlement record: that function and `settle_artifact` take the root and the receipt
+   as two independent arguments and are reachable without going through evaluation at all. `_record`
+   cannot make the check — it is handed a row id, not a receipt — so it is protected by its caller.
 1. **Predicate tamper check** — the closure digest, before anything is executed.
 2. **Settlement** — destination unchanged, in-flight present, rename; or a replay of the recorded
    settlement for this dispatch.

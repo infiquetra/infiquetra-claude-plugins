@@ -182,15 +182,23 @@ authenticates against nothing.
 
 Integration to the recorded destination is verified before `verified` is written, so a child whose
 change never landed cannot be reaped. Judgment-shaped work additionally requires an independent
-verifier's depth sample, bound by digest to the settled artifact, naming a verifier session that
-actually exists in the register with the vendor and model it claims, and supporting at least one
-sampled claim — all of it persisted, so a sampled child and an unsampled one are not the same green
-row. A row's phase is `verified` if and only if its latest verdict is a pass: a failing
-re-evaluation demotes a previously verified row rather than leaving a contradiction the reap gate
-would read as a pass, and a `reaped` row keeps its terminal phase whichever way the verdict goes.
-The receipt binds every input the verdict depends on — work shape, scope, mutability, integration
+verifier's depth sample, bound by digest to the settled artifact and supporting at least one sampled
+claim — all of it persisted, so a sampled child and an unsampled one are not the same green row.
+
+**Dispatch a verifier the way you dispatch any other child: issue it a receipt.** The named verifier
+must carry an authenticated dispatch receipt for this run, and its vendor is compared against that
+sealed receipt rather than against a register column — so a verifier that is only *registered*, with
+no receipt issued, is refused and every judgment child that names it stays unverified. What this
+establishes is that a verifier was dispatched for this run with this vendor; it does not establish
+that the verifier ran, because the phase and model it is checked against are register columns any
+write-capable actor can set. `references/predicates.md` sets out where that stops.
+
+A row's phase is `verified` if and only if its latest verdict is a pass: a failing re-evaluation
+demotes a previously verified row rather than leaving a contradiction the reap gate would read as a
+pass, and a `reaped` row keeps its terminal phase whichever way the verdict goes. The receipt binds
+every input the verdict depends on — the repository root, work shape, scope, mutability, integration
 target and the changed-paths baseline, not only the identity labels — and the predicate runs in its
-own process group that is killed before the evidence is re-observed.
+own process group, whose surviving members are killed before the evidence is re-observed.
 
 See `references/predicates.md` for the full contract, including what each control does **not**
 establish.

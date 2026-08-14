@@ -2,6 +2,68 @@
 
 ## 2026-08-13
 
+### The repository root is a deciding input, and it refuses by raising  {#root-is-a-deciding-input}
+
+`evaluate_completion` takes the repository root as its first argument, and the root selects the
+register that receives the settlement record, the verdict and the phase. It was absent from the
+"every deciding input" list because that list was derived by extracting attribute reads from the
+source, and a bare parameter is not an attribute of anything (LEARNINGS
+`{#signature-before-attributes}`). A complete, authentic receipt for one repository recorded a pass
+in a second one while the artifact settled in the first.
+
+**Decision.** The root is sealed into the dispatch receipt at issue time and compared in two places.
+
+*In `evaluate_completion`, first, and it raises rather than recording.* Every other refusal in that
+function is recorded, on the principle that a control which raises leaves the register showing a
+working child with no verdict — a fail-open one level up. That argument assumes there is a right
+register to record into, and a receipt from another repository is exactly the case where there is
+not: recording the verdict would file one repository's answer in another's store and demote whatever
+unrelated row happened to share the row id. So this one comparison raises, and the code says why.
+
+*At the settlement record, again.* `settlement_record` and `settle_artifact` take the root and the
+receipt as two independent arguments, are public, and both read and write the register, so a later
+unit can reach them without going through evaluation. `_record` is handed a row id rather than a
+receipt and has nothing to compare, so it is protected by its caller instead.
+
+**Rejected: a single check at the top only.** The brief allowed it on condition that nothing reaches
+the writers by another path. Settlement is a public entry point and a documented step of the
+sequence, so that condition does not hold. **Rejected: putting the root in the `receipt_mismatch`
+comparison list.** It would be a check that can never fire alone once the raise is in place, which
+is the same defect as the `write_scope` comparison removed in the previous round.
+
+**Revisit when** any function in this module gains a second store-selecting argument, or when the
+per-run secret becomes repository-scoped — today it is named for the run alone and lives outside
+every repository, so it authenticates the same receipt under any root.
+
+### Whether the verifier ran is a named residual, not a claim  {#verifier-execution-is-a-named-residual}
+
+The depth gate requires an independent verifier to have read the settled artifact. Requiring an
+authenticated dispatch receipt for the verifier row closed the planted-row forgery. It did not
+answer the separate question — did that verifier ever run — which is still read from `phase`, an
+ordinary register column any write-capable actor can set. Moving that one column from `planned` to
+`working` on a genuinely dispatched, never-started verifier reaches `verified`.
+
+**Decision.** Name the residual rather than half-close it. `phase` joins `model` in the unsealed
+list on the function, in `references/predicates.md`, in `SKILL.md` and in the changelog, and the
+control is described as establishing *a verifier was dispatched for this run with this vendor*. The
+reproduction is pinned as a test of **documented behaviour**, so the code and the prose cannot drift
+apart silently again. The `phase` check stays, because it refuses the honest never-started case that
+a failed launch actually produces.
+
+**Rejected: sealing it here.** The only evidence separating "dispatched" from "ran" is observed
+after launch, and both observers are other units — the launch transition and the liveness event
+stream. Reaching into either to close this was explicitly out of scope, and building a weaker local
+proxy (for example treating a settled verifier artifact as proof of execution) would rest on a
+child-writable trigger and reproduce the same overclaim one layer down.
+
+**This residual and the accepted one on a child's own `phase` column are the same defect against two
+different columns of the same untrusted store.** One authenticated-register change closes both, and
+that change spans the register and the reap gate rather than this unit.
+
+**Revisit when** the register's own writes are authenticated, or when either observing unit gains an
+attestation written under the run secret — at that point the evidence exists and the claim can grow
+to match it.
+
 ### The dispatch receipt binds every input the verdict depends on  {#receipt-binds-deciding-inputs}
 
 Binding run, row and landing stopped one child's evidence verifying another child's row and stopped

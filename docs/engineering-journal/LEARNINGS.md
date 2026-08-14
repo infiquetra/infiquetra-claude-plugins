@@ -21,6 +21,77 @@
 
 ## 2026-08-13
 
+### Enumerate the signature before the attribute reads  {#signature-before-attributes}
+
+**Context.** The previous entry replaced a categorical class enumeration ("the identity labels")
+with a mechanical one: read the function, list every input it branches on. The mechanical rule was
+right and it still missed an input — the *first argument* of the function it was applied to.
+
+**Evidence.** `evaluate_completion(root, spec, landing, changed_paths_baseline, receipt, ...)` in
+`plugins/orchestrate/skills/orchestrate/scripts/completion.py`. The enumeration was produced by
+extracting every `spec.` and `landing.` attribute read from the source — better than working from
+memory, and structurally blind to a bare parameter, because `root` is not an attribute of anything.
+`root` selects the register that receives the settlement record, the verdict and the phase, so a
+complete and authentic receipt for repository A, evaluated with repository B as `root`, settled the
+artifact in A and recorded `phase=verified` plus the durable completion record in B, leaving A's row
+— the one whose work actually ran — at `working`. Reproduced with everything else held identical.
+
+**Mechanism.** A tool that reads `x.y` finds every input that hangs off an object and none that
+arrives on its own. Deciding inputs do not have to be attributes: `root` is the plainest kind of
+argument there is, and it happened to be the one that decides *where the answer is written* rather
+than *what the answer is* — a category the enumeration was not looking for at all. The per-run
+secret did not incidentally cover it either: the secret file is named for the run and lives outside
+every repository by design, so the same receipt authenticates under either root.
+
+**Fix.** `root` is sealed into the dispatch receipt and compared before anything is read or written,
+and again at the settlement record, which is a public entry point reachable without going through
+evaluation. Pinned by three tests: the reproduction, a case where the refusal would otherwise be
+*recorded* in the foreign register, and a direct call to `settle_artifact` with a foreign root.
+
+**Generalizable rule.** The mechanical class check needs two passes and the order matters:
+**enumerate the signature first, then the attribute reads.** The signature is the outer class and
+the attribute reads are the inner one. A tool that only sees attribute reads will report a complete
+answer to a different question.
+
+**Refs.** [[name-the-class-mechanically]], DECISIONS `{#root-is-a-deciding-input}`.
+
+### An unsealed column cannot answer a question about execution  {#unsealed-column-cannot-prove-execution}
+
+**Context.** A judgment-shaped child may only reach `verified` if an independent verifier read its
+artifact. The check for "was there really a verifier" was hardened to require an authenticated
+dispatch receipt — which a child cannot forge — and the surfaces then described the whole check as
+establishing that a verifier session ran.
+
+**Evidence.** `DepthSample._assert_verifier_session` authenticates the receipt and takes the run and
+vendor from the sealed payload, then answers "did it actually run?" from `row["phase"]`, an ordinary
+register column. A verifier with a genuine receipt that never started sits at `planned` and is
+correctly refused; moving that one column to `working` produced `verified=True` with the depth
+sample persisted into the durable record. Reproduced independently by two reviewers and by the
+orchestrator.
+
+**Mechanism.** The receipt is issued *before* dispatch, so it can only ever attest to dispatch.
+Everything that distinguishes "was dispatched" from "ran" is observed *after* launch, and in this
+system both observers live in other units — the launch transition and the liveness event stream.
+No amount of sealing inside the evaluating module reaches evidence the module never sees.
+
+**Fix (partial, deliberate).** The residual is named rather than closed: `phase` joins `model` in
+the unsealed list on the function, in the operator reference, in the skill and in the changelog, and
+the check is described as establishing *a verifier was dispatched for this run with this vendor* —
+smaller, and true. The reproduction is pinned as **documented behaviour**, not as a refusal, so the
+code and the prose cannot drift apart again silently. The honest never-started case is still
+refused, because that is a real failure mode a launch that dies actually produces.
+
+**What surprised.** The hardening made the forgery *more* convincing, not less: before the sample
+was persisted, a planted verifier left no trace; after, it left a durable audit record of a session
+that never ran.
+
+**Generalizable rule.** Before claiming a control establishes X, ask which of its inputs are
+attestable and when each was written. A record written before an event cannot testify that the
+event happened. If the attesting observer is in another component, the honest move is to name the
+residual and say what closing it would take — not to let the prose cover the gap.
+
+**Refs.** [[gitignored-is-untrusted]], DECISIONS `{#verifier-execution-is-a-named-residual}`.
+
 ### Name a class by reading the branches, not by describing the defect  {#name-the-class-mechanically}
 
 **Context.** A review round asked for a "class enumeration" for each control: having fixed one

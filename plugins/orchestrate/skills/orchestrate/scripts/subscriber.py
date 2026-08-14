@@ -151,7 +151,7 @@ def catch_up(
     root: Path,
     snapshot: Mapping[str, Any],
     *,
-    run_id: str | None = None,
+    run_id: str,
 ) -> list[CatchUpRecord]:
     """Re-read every registered pane from one live snapshot and record observed state.
 
@@ -227,7 +227,8 @@ def catch_up(
                 artifact_exists=artifact_exists,
             )
         )
-    register_store.upsert_rows(root, updates)
+    if updates:
+        register_store.upsert_rows(root, updates, run_id=run_id)
     return records
 
 
@@ -322,6 +323,7 @@ class Subscriber:
                 "observed_state": "working",
                 "observed_state_source": "observed:subscriber_start",
             },
+            run_id=self.run_id,
         )
 
     def run_catch_up(self) -> None:
@@ -420,7 +422,10 @@ class Subscriber:
             # counters. Freshness comes from the complete run/child/purpose/nonce identity above;
             # producers enforce echo ordering through sentinel_assembly_instructions().
             register_store.upsert_row(
-                self.root, row_id, {"last_event_at": herdr_events.unix_time()}
+                self.root,
+                row_id,
+                {"last_event_at": herdr_events.unix_time()},
+                run_id=self.run_id,
             )
             return True
         elif event.name in {"pane_exited", "pane_closed", "tab_closed"}:
@@ -432,6 +437,7 @@ class Subscriber:
                     "observed_state": "exited",
                     "observed_state_source": f"{source_prefix}:{event.name}",
                 },
+                run_id=self.run_id,
             )
             return True
         elif event.name == "pane_agent_status_changed":
@@ -444,6 +450,7 @@ class Subscriber:
                         "observed_state": observed,
                         "observed_state_source": "observed:pane_agent_status_changed",
                     },
+                    run_id=self.run_id,
                 )
                 return True
         return False
@@ -483,6 +490,7 @@ class Subscriber:
                     "observed_state": "exited",
                     "observed_state_source": "observed:subscriber_stop",
                 },
+                run_id=self.run_id,
             )
 
 

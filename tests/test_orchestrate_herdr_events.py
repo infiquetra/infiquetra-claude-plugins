@@ -355,6 +355,7 @@ def test_live_zero_revision_output_match_is_honoured_by_identity(tmp_path: Path)
             "pane_id": "pane-a",
             "phase": "working",
         },
+        run_id="run-a",
     )
     diagnostics: list[dict[str, Any]] = []
     wakes: list[str] = []
@@ -374,7 +375,7 @@ def test_live_zero_revision_output_match_is_honoured_by_identity(tmp_path: Path)
             subscriber.handle_event,
         )
 
-    row = REGISTER.read_rows(tmp_path)["child-a"]
+    row = REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]
     assert isinstance(row["last_event_at"], float)
     assert len(wakes) == 1
     assert diagnostics == []
@@ -391,6 +392,7 @@ def test_pre_dispatch_prompt_echo_cannot_satisfy_sentinel_match(tmp_path: Path) 
         tmp_path,
         "child-a",
         {"run_id": "run-a", "pane_id": "pane-a", "phase": "working"},
+        run_id="run-a",
     )
     diagnostics: list[dict[str, Any]] = []
     wakes: list[str] = []
@@ -408,7 +410,7 @@ def test_pre_dispatch_prompt_echo_cannot_satisfy_sentinel_match(tmp_path: Path) 
 
     assert wakes == []
     assert [item["code"] for item in diagnostics] == ["sentinel_mismatch"]
-    assert "last_event_at" not in REGISTER.read_rows(tmp_path)["child-a"]
+    assert "last_event_at" not in REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]
 
 
 def test_live_output_match_capture_validates_and_decodes_zero_revision() -> None:
@@ -501,6 +503,7 @@ def test_child_exit_during_disconnect_is_detected_by_reconnect_catch_up(
             "expected_state": "working",
             "observed_state": "working",
         },
+        run_id="run-a",
     )
     snapshots: list[dict[str, Any]] = [
         {
@@ -532,7 +535,7 @@ def test_child_exit_during_disconnect_is_detected_by_reconnect_catch_up(
         )
 
     assert snapshot_calls == [0, 1]
-    row = REGISTER.read_rows(tmp_path)["child-a"]
+    row = REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]
     assert row["observed_state"] == "exited"
     assert row["observed_state_source"] == "inferred:snapshot_absence"
     assert len(wakes) == 1
@@ -548,6 +551,7 @@ def test_unregistered_pane_event_mutates_no_row_and_reports_once(tmp_path: Path)
         tmp_path,
         "child-a",
         {"run_id": "run-a", "pane_id": "pane-a", "observed_state": "working"},
+        run_id="run-a",
     )
     before = REGISTER.register_path("run-a").read_bytes()
     diagnostics: list[dict[str, Any]] = []
@@ -610,6 +614,7 @@ def test_session_snapshot_response_validates_against_fixture_and_is_unwrapped(
         tmp_path,
         "child-a",
         {"run_id": "run-a", "pane_id": "pane-a", "expected_state": "done"},
+        run_id="run-a",
     )
 
     with _RequestServer(socket_path, response) as server:
@@ -685,7 +690,7 @@ def test_main_returns_nonzero_and_registers_exit_when_socket_start_fails(
 
     assert result == 1
     assert "error: cannot open repair-test socket" in capsys.readouterr().err
-    row = REGISTER.read_rows(tmp_path)["subscriber-a"]
+    row = REGISTER.read_rows(tmp_path, run_id="run-a")["subscriber-a"]
     assert row["expected_state"] == "working"
     assert row["observed_state"] == "exited"
 
@@ -696,9 +701,7 @@ def test_main_returns_nonzero_and_registers_exit_when_socket_start_fails(
 def test_identity_matched_sentinel_updates_liveness_and_wakes(tmp_path: Path) -> None:
     sentinel = SUBSCRIBER.make_sentinel("run-a", "child-a", "ready", nonce="new")
     REGISTER.upsert_row(
-        tmp_path,
-        "child-a",
-        {"run_id": "run-a", "pane_id": "pane-a"},
+        tmp_path, "child-a", {"run_id": "run-a", "pane_id": "pane-a"}, run_id="run-a"
     )
     wakes: list[str] = []
     subscriber = _subscriber(
@@ -709,7 +712,9 @@ def test_identity_matched_sentinel_updates_liveness_and_wakes(tmp_path: Path) ->
 
     subscriber.handle_event(EVENTS.decode_event(_output_event("pane-a", sentinel, revision=42)))
 
-    assert isinstance(REGISTER.read_rows(tmp_path)["child-a"]["last_event_at"], float)
+    assert isinstance(
+        REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]["last_event_at"], float
+    )
     assert len(wakes) == 1
     assert "child-a" in wakes[0]
 
@@ -718,9 +723,7 @@ def test_multiple_sentinel_interactions_for_one_pane_are_each_honoured(tmp_path:
     ready = SUBSCRIBER.make_sentinel("run-a", "child-a", "ready", nonce="ready")
     complete = SUBSCRIBER.make_sentinel("run-a", "child-a", "complete", nonce="complete")
     REGISTER.upsert_row(
-        tmp_path,
-        "child-a",
-        {"run_id": "run-a", "pane_id": "pane-a"},
+        tmp_path, "child-a", {"run_id": "run-a", "pane_id": "pane-a"}, run_id="run-a"
     )
     wakes: list[str] = []
     subscriber = _subscriber(
@@ -743,6 +746,7 @@ def test_registered_pane_exited_event_records_exit_before_wake(tmp_path: Path) -
         tmp_path,
         "child-a",
         {"run_id": "run-a", "pane_id": "pane-a", "observed_state": "working"},
+        run_id="run-a",
     )
     states_at_wake: list[str] = []
     subscriber = _subscriber(
@@ -750,7 +754,7 @@ def test_registered_pane_exited_event_records_exit_before_wake(tmp_path: Path) -
         wakes=None,
     )
     subscriber.wake_sender = lambda text: states_at_wake.append(
-        REGISTER.read_rows(tmp_path)["child-a"]["observed_state"]
+        REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]["observed_state"]
     )
     event = EVENTS.decode_event(
         {
@@ -762,7 +766,7 @@ def test_registered_pane_exited_event_records_exit_before_wake(tmp_path: Path) -
     subscriber.handle_event(event)
 
     assert states_at_wake == ["exited"]
-    row = REGISTER.read_rows(tmp_path)["child-a"]
+    row = REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]
     assert row["observed_state"] == "exited"
     assert row["observed_state_source"] == "observed:pane_exited"
 
@@ -772,11 +776,12 @@ def test_registered_pane_closed_event_records_exit_before_wake(tmp_path: Path) -
         tmp_path,
         "child-a",
         {"run_id": "run-a", "pane_id": "pane-a", "observed_state": "working"},
+        run_id="run-a",
     )
     states_at_wake: list[str] = []
     subscriber = _subscriber(tmp_path)
     subscriber.wake_sender = lambda text: states_at_wake.append(
-        REGISTER.read_rows(tmp_path)["child-a"]["observed_state"]
+        REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]["observed_state"]
     )
     event = EVENTS.decode_event(
         {
@@ -789,7 +794,8 @@ def test_registered_pane_closed_event_records_exit_before_wake(tmp_path: Path) -
 
     assert states_at_wake == ["exited"]
     assert (
-        REGISTER.read_rows(tmp_path)["child-a"]["observed_state_source"] == "observed:pane_closed"
+        REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]["observed_state_source"]
+        == "observed:pane_closed"
     )
 
 
@@ -805,12 +811,13 @@ def test_registered_tab_closed_events_resolve_rows_and_each_wake_with_exit(
             "pane_id": "pane-a",
             "observed_state": "working",
         },
+        run_id="run-a",
     )
     states_at_wake: list[str] = []
     diagnostics: list[dict[str, Any]] = []
     subscriber = _subscriber(tmp_path, diagnostics=diagnostics)
     subscriber.wake_sender = lambda text: states_at_wake.append(
-        REGISTER.read_rows(tmp_path)["child-a"]["observed_state"]
+        REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]["observed_state"]
     )
     event = EVENTS.decode_event(
         {
@@ -824,7 +831,10 @@ def test_registered_tab_closed_events_resolve_rows_and_each_wake_with_exit(
 
     assert states_at_wake == ["exited", "exited"]
     assert diagnostics == []
-    assert REGISTER.read_rows(tmp_path)["child-a"]["observed_state_source"] == "inferred:tab_closed"
+    assert (
+        REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]["observed_state_source"]
+        == "inferred:tab_closed"
+    )
 
 
 def test_registered_non_state_event_does_not_send_an_empty_wake(tmp_path: Path) -> None:
@@ -832,8 +842,9 @@ def test_registered_non_state_event_does_not_send_an_empty_wake(tmp_path: Path) 
         tmp_path,
         "child-a",
         {"run_id": "run-a", "pane_id": "pane-a", "observed_state": "working"},
+        run_id="run-a",
     )
-    before = REGISTER.read_rows(tmp_path)["child-a"]
+    before = REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]
     wakes: list[str] = []
     subscriber = _subscriber(tmp_path, wakes=wakes)
     event = EVENTS.decode_event(
@@ -845,7 +856,7 @@ def test_registered_non_state_event_does_not_send_an_empty_wake(tmp_path: Path) 
 
     subscriber.handle_event(event)
 
-    assert REGISTER.read_rows(tmp_path)["child-a"] == before
+    assert REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"] == before
     assert wakes == []
 
 
@@ -853,9 +864,7 @@ def test_sentinel_identity_mismatch_rejects_event_before_liveness_update(tmp_pat
     expected = SUBSCRIBER.make_sentinel("run-a", "child-a", "complete", nonce="expected")
     wrong_run = SUBSCRIBER.make_sentinel("run-b", "child-a", "complete", nonce="expected")
     REGISTER.upsert_row(
-        tmp_path,
-        "child-a",
-        {"run_id": "run-a", "pane_id": "pane-a"},
+        tmp_path, "child-a", {"run_id": "run-a", "pane_id": "pane-a"}, run_id="run-a"
     )
     diagnostics: list[dict[str, Any]] = []
     wakes: list[str] = []
@@ -869,13 +878,15 @@ def test_sentinel_identity_mismatch_rejects_event_before_liveness_update(tmp_pat
     subscriber.handle_event(EVENTS.decode_event(_output_event("pane-a", wrong_run, revision=5)))
 
     assert [item["code"] for item in diagnostics] == ["sentinel_mismatch"]
-    assert "last_event_at" not in REGISTER.read_rows(tmp_path)["child-a"]
+    assert "last_event_at" not in REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]
     assert wakes == []
 
 
 def test_output_match_needs_no_cross_counter_revision_baseline(tmp_path: Path) -> None:
     sentinel = SUBSCRIBER.make_sentinel("run-a", "child-a", "complete", nonce="expected")
-    REGISTER.upsert_row(tmp_path, "child-a", {"run_id": "run-a", "pane_id": "pane-a"})
+    REGISTER.upsert_row(
+        tmp_path, "child-a", {"run_id": "run-a", "pane_id": "pane-a"}, run_id="run-a"
+    )
     diagnostics: list[dict[str, Any]] = []
     wakes: list[str] = []
     subscriber = _subscriber(
@@ -888,7 +899,9 @@ def test_output_match_needs_no_cross_counter_revision_baseline(tmp_path: Path) -
     subscriber.handle_event(EVENTS.decode_event(_output_event("pane-a", sentinel, revision=5)))
 
     assert diagnostics == []
-    assert isinstance(REGISTER.read_rows(tmp_path)["child-a"]["last_event_at"], float)
+    assert isinstance(
+        REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]["last_event_at"], float
+    )
     assert len(wakes) == 1
 
 
@@ -902,9 +915,7 @@ def test_output_match_requires_active_purpose_and_nonce(
     expected = SUBSCRIBER.make_sentinel("run-a", "child-a", "complete", nonce="expected")
     wrong = SUBSCRIBER.make_sentinel("run-a", "child-a", purpose, nonce=nonce)
     REGISTER.upsert_row(
-        tmp_path,
-        "child-a",
-        {"run_id": "run-a", "pane_id": "pane-a"},
+        tmp_path, "child-a", {"run_id": "run-a", "pane_id": "pane-a"}, run_id="run-a"
     )
     diagnostics: list[dict[str, Any]] = []
     wakes: list[str] = []
@@ -918,7 +929,7 @@ def test_output_match_requires_active_purpose_and_nonce(
     subscriber.handle_event(EVENTS.decode_event(_output_event("pane-a", wrong, revision=5)))
 
     assert [item["code"] for item in diagnostics] == ["sentinel_mismatch"]
-    assert "last_event_at" not in REGISTER.read_rows(tmp_path)["child-a"]
+    assert "last_event_at" not in REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]
     assert wakes == []
 
 
@@ -930,11 +941,13 @@ def test_catch_up_reports_run_bound_artifact_presence(tmp_path: Path) -> None:
         tmp_path,
         "present",
         {"run_id": "run-a", "pane_id": "p1", "artifact_path": "artifacts/present.md"},
+        run_id="run-a",
     )
     REGISTER.upsert_row(
         tmp_path,
         "missing",
         {"run_id": "run-a", "pane_id": "p2", "artifact_path": "artifacts/missing.md"},
+        run_id="run-a",
     )
     snapshot = {
         "panes": [
@@ -944,7 +957,9 @@ def test_catch_up_reports_run_bound_artifact_presence(tmp_path: Path) -> None:
         "agents": [],
     }
 
-    records = {record.row_id: record for record in SUBSCRIBER.catch_up(tmp_path, snapshot)}
+    records = {
+        record.row_id: record for record in SUBSCRIBER.catch_up(tmp_path, snapshot, run_id="run-a")
+    }
 
     assert records["present"].artifact_exists is True
     assert records["missing"].artifact_exists is False
@@ -958,6 +973,7 @@ def test_catch_up_batches_all_row_updates_into_one_register_write(
             tmp_path,
             row_id,
             {"run_id": "run-a", "pane_id": pane_id, "observed_state": "planned"},
+            run_id="run-a",
         )
     snapshot = {
         "panes": [
@@ -969,9 +985,9 @@ def test_catch_up_batches_all_row_updates_into_one_register_write(
     real_upsert_rows = REGISTER.upsert_rows
     batches: list[dict[str, dict[str, Any]]] = []
 
-    def _record_batch(root: Path, updates: Mapping[str, Mapping[str, Any]]):
+    def _record_batch(root: Path, updates: Mapping[str, Mapping[str, Any]], *, run_id: str):
         batches.append({row_id: dict(fields) for row_id, fields in updates.items()})
-        return real_upsert_rows(root, updates)
+        return real_upsert_rows(root, updates, run_id=run_id)
 
     monkeypatch.setattr(SUBSCRIBER.register_store, "upsert_rows", _record_batch)
 
@@ -989,9 +1005,32 @@ def test_catch_up_batches_all_row_updates_into_one_register_write(
             },
         }
     ]
-    rows = REGISTER.read_rows(tmp_path)
+    rows = REGISTER.read_rows(tmp_path, run_id="run-a")
     assert rows["child-a"]["observed_state"] == "working"
     assert rows["child-b"]["observed_state"] == "blocked"
+
+
+def test_catch_up_for_one_run_does_not_write_another_runs_row(tmp_path: Path) -> None:
+    """A catch-up that names run B must not mutate run A, even when they share a row id."""
+    REGISTER.upsert_row(
+        tmp_path,
+        "child-a",
+        {"run_id": "run-a", "pane_id": "pane-a", "observed_state": "working"},
+        run_id="run-a",
+    )
+    REGISTER.upsert_row(
+        tmp_path,
+        "child-a",
+        {"run_id": "run-b", "pane_id": "pane-b", "observed_state": "working"},
+        run_id="run-b",
+    )
+    snapshot = {
+        "panes": [{"pane_id": "pane-b", "agent_status": "exited", "revision": 1}],
+        "agents": [],
+    }
+    SUBSCRIBER.catch_up(tmp_path, snapshot, run_id="run-b")
+    assert REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]["observed_state"] == "working"
+    assert REGISTER.read_rows(tmp_path, run_id="run-b")["child-a"]["observed_state"] == "exited"
 
 
 def test_once_diagnostic_resets_after_reconnect_catch_up(tmp_path: Path) -> None:
@@ -999,6 +1038,7 @@ def test_once_diagnostic_resets_after_reconnect_catch_up(tmp_path: Path) -> None
         tmp_path,
         "child-a",
         {"run_id": "run-a", "pane_id": "pane-a", "observed_state": "working"},
+        run_id="run-a",
     )
     diagnostics: list[dict[str, Any]] = []
     subscriber = _subscriber(
@@ -1031,7 +1071,7 @@ def test_subscriber_carries_an_ordinary_register_row(tmp_path: Path) -> None:
     subscriber = _subscriber(tmp_path)
     subscriber.register_self()
 
-    row = REGISTER.read_rows(tmp_path)["subscriber-a"]
+    row = REGISTER.read_rows(tmp_path, run_id="run-a")["subscriber-a"]
     assert row["run_id"] == "run-a"
     assert row["agent"] == "subscriber"
     assert row["pane_id"] == "subscriber-pane"
@@ -1067,7 +1107,7 @@ def test_subscriber_row_uses_pane_presence_and_records_process_exit(tmp_path: Pa
     assert records[0].diverged is False
 
     subscriber.run()
-    row = REGISTER.read_rows(tmp_path)["subscriber-a"]
+    row = REGISTER.read_rows(tmp_path, run_id="run-a")["subscriber-a"]
     assert row["expected_state"] == "working"
     assert row["observed_state"] == "exited"
     assert row["observed_state_source"] == "observed:subscriber_stop"

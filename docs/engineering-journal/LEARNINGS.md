@@ -21,6 +21,25 @@
 
 ## 2026-08-13
 
+### A required argument is not a required argument if the type still accepts the old shape  {#required-is-the-type}
+
+**Context.** Moving the live register to a run-keyed host-local file left `upsert_row` and
+`read_rows` able to name a row without naming its run. Seventeen of twenty-one writes
+resolved the file by scanning every live document. Subscriber catch-up read run B and
+wrote run A.
+**Evidence.** Row ids in this build are unit ids. Two runs over one plan reuse them.
+`task_label` already prefixes the run id because the row id is not globally unique.
+A `phase=reaped` write addressed at repository B landed in a different run.
+**Mechanism.** `dict[row_id, row]` cannot hold two runs that share a row id. An optional
+`run_id` plus a host-global scan is a guess. The guess does not consult the repository
+the caller named.
+**Fix.** `run_id` is a required keyword on every decision and mutation API.
+`_run_id_for_updates` is gone. The operator merge is `rows_stamped_against`, keyed by
+`(run_id, row_id)`.
+**Generalizable rule.** If the return type cannot represent the collision, callers will
+not see the collision. Change the type, not the docstring.
+**Refs.** DECISIONS `{#register-addressed-by-run-id}`.
+
 ### A file's address is a capability  {#file-address-is-a-capability}
 
 **Context.** Eight repairs each defended one field of a sealed receipt against a landing

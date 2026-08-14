@@ -31,7 +31,8 @@ stale receipt from a previous run would then satisfy a comparison against itself
 **The durable records are authenticated.**  The live register is addressed by ``run_id`` in an
 orchestrator-owned host-local directory, so a child cannot write it merely by working in its
 landing.  Claude and Muse expose no workspace-write flag, so those runtimes can still reach
-``~/.orchestrate`` if they know the path; the seal is what remains against that residual.  The
+``~/.orchestrate`` if they know the path.  Mode ``0600`` excludes other operating-system
+accounts, not a child running as this account; the seal does not defend that residual.  The
 dispatch receipt and the settlement record therefore each carry a keyed digest under a per-run
 secret held outside every landing (:func:`run_secret`).  A record the orchestrator did not write
 does not authenticate, and nothing it claims is believed.  A child can still *delete* those
@@ -536,7 +537,20 @@ def _safe_component(value: str, *, label: str) -> str:
 def run_secret_dir() -> Path:
     """Where this host keeps per-run orchestrator secrets."""
     override = os.environ.get(RUN_SECRET_DIR_ENV)
-    return Path(override).expanduser() if override else DEFAULT_RUN_SECRET_DIR.expanduser()
+    directory = (
+        Path(override).expanduser().resolve()
+        if override
+        else DEFAULT_RUN_SECRET_DIR.expanduser().resolve()
+    )
+    register_store._refuse_default_host_dir_under_pytest(directory, label="run-secret")
+    return directory
+
+
+def forget_run_secret(run_id: str) -> None:
+    """Delete this run's host-local secret so a later reuse does not inherit identity."""
+    path = run_secret_dir() / f"{_safe_component(run_id, label='run_id')}.key"
+    with contextlib.suppress(FileNotFoundError):
+        path.unlink()
 
 
 def run_secret(root: Path, run_id: str, *, create: bool = True) -> bytes:
@@ -552,16 +566,17 @@ def run_secret(root: Path, run_id: str, *, create: bool = True) -> bytes:
     inside the landing.
 
     Inspection cannot close that, because a forged record and a genuine one are the same bytes in
-    the same place.  Authentication can: the record carries a keyed digest over its own fields,
-    and the key never enters any child's landing.  A child that can reach the host path can still
+    the same place.  Authentication can, **against a party that cannot read the key.**  The key
+    never enters any child's landing.  Mode ``0600`` excludes other operating-system accounts.
+    It does not exclude a child running as this account.  For runtimes whose sandbox does not
+    deny ``~/.orchestrate``, this module does not defend against a child that reads the run
+    key and seals payloads that verify.  A child that can reach the host path can also
     *destroy* the receipt -- and then nothing verifies, which is the correct failure.
 
     **What the key rests on.**  The secret lives outside the repository, and that location is
     checked rather than assumed.  A workspace-write posture is the one containment the supported
-    CLIs genuinely express, so "outside the workspace" is the one boundary a child's own launch
-    flags enforce.  For Claude and Muse the separation rests on the child never being pointed at
-    the directory rather than on a sandbox refusing it; that is weaker and is stated rather than
-    papered over.
+    CLIs genuinely express.  Claude and Muse expose no such flag; the seal is not a defence
+    against those runtimes reading the key.
     """
     directory = run_secret_dir().resolve()
     root_resolved = root.resolve()
@@ -1203,6 +1218,7 @@ def issue_receipt(
             # A new dispatch supersedes any earlier attempt's settlement for this row.
             SETTLEMENT_KEY: None,
         },
+        run_id=spec.run_id,
     )
     return receipt
 
@@ -1430,6 +1446,7 @@ def settle_artifact(receipt: DispatchReceipt) -> Settlement:
             # a mutating child's artifact lives in its worktree, not under the ambient root.
             "artifact_path": settlement.artifact_path,
         },
+        run_id=receipt.run_id,
     )
     return settlement
 
@@ -1837,7 +1854,9 @@ class DepthSample:
         likes, and a purely column-based check calls it a dispatched session.
 
         So the load-bearing requirement is an **authenticated dispatch receipt** for the verifier
-        row, under this run's orchestrator secret, which a child cannot produce.  The vendor is
+        row, under this run's orchestrator secret.  A sandboxed child cannot produce that
+        digest.  A same-account child whose sandbox does not deny the host-local directory
+        can read the key and can.  The vendor is
         then compared against that sealed receipt rather than against the writable column.
 
         The receipt is loaded through :func:`read_receipt`, which enforces the repository the
@@ -2008,7 +2027,7 @@ def _record(root: Path, row_id: str, result: CompletionResult, *, run_id: str) -
     elif current_phase == "verified":
         fields["phase"] = "working"
         fields["expected_state"] = "working"
-    register_store.upsert_row(root, row_id, fields)
+    register_store.upsert_row(root, row_id, fields, run_id=run_id)
     return result
 
 
@@ -2340,7 +2359,7 @@ def _depth_verdict(
     return sample, None
 
 
-def read_receipt(root: Path, row_id: str, *, run_id: str | None = None) -> DispatchReceipt:
+def read_receipt(root: Path, row_id: str, *, run_id: str) -> DispatchReceipt:
     """Load and authenticate the receipt this dispatch established.
 
     The live register is addressed by ``run_id``, not by ``root``.  Pass ``run_id`` when you
@@ -2375,27 +2394,27 @@ def read_receipt(root: Path, row_id: str, *, run_id: str | None = None) -> Dispa
     return receipt
 
 
-def completion_record(root: Path, row_id: str) -> dict[str, Any] | None:
+def completion_record(root: Path, row_id: str, *, run_id: str) -> dict[str, Any] | None:
     """The operator-facing verdict for one row, or ``None`` when it has not been evaluated."""
-    row = register_store.read_rows(root).get(row_id)
+    row = register_store.read_rows(root, run_id=run_id).get(row_id)
     if row is None:
         return None
     record = row.get("completion")
     return dict(record) if isinstance(record, Mapping) else None
 
 
-def is_working_not_failed(root: Path, row_id: str) -> bool:
+def is_working_not_failed(root: Path, row_id: str, *, run_id: str) -> bool:
     """True when a row is still working rather than carrying a recorded failure.
 
     ``PHASES`` has no member for "evaluated and failed", so this is how the operator's view keeps
     the two apart without inventing one.
     """
-    record = completion_record(root, row_id)
+    record = completion_record(root, row_id, run_id=run_id)
     return record is None or record.get("result") != "failed"
 
 
-def failed_rows(root: Path, *, run_id: str | None = None) -> dict[str, dict[str, Any]]:
-    """Every row whose recorded verdict is a failure -- the operator's "what stalled" view."""
+def failed_rows(root: Path, *, run_id: str) -> dict[str, dict[str, Any]]:
+    """Every row of this run whose recorded verdict is a failure."""
     rows = register_store.read_rows(root, run_id=run_id)
     failed: dict[str, dict[str, Any]] = {}
     for row_id, row in rows.items():

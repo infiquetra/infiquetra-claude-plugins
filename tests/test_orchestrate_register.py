@@ -83,7 +83,7 @@ def test_fresh_register_initialises_with_a_schema_version(tmp_path: Path) -> Non
     assert doc["rows"] == {}
 
     # The first real write persists that same schema_version to disk.
-    M.upsert_row(tmp_path, "child-1", {"run_id": "run-a"})
+    M.upsert_row(tmp_path, "child-1", {"run_id": "run-a"}, run_id="run-a")
     on_disk = json.loads(M.register_path("run-a").read_text())
     assert on_disk["schema_version"] == M.SCHEMA_VERSION
 
@@ -93,10 +93,10 @@ def test_fresh_register_initialises_with_a_schema_version(tmp_path: Path) -> Non
 
 def test_row_round_trips_every_column(tmp_path: Path) -> None:
     row = _full_row()
-    stored = M.upsert_row(tmp_path, "child-1", row)
+    stored = M.upsert_row(tmp_path, "child-1", row, run_id="run-a")
     assert stored == row
 
-    reread = M.read_rows(tmp_path)["child-1"]
+    reread = M.read_rows(tmp_path, run_id="run-a")["child-1"]
     assert reread == row
     # Every documented column is actually present, not merely a subset that happens to match.
     for column in M.ROW_COLUMNS:
@@ -107,18 +107,22 @@ def test_new_row_always_has_both_hang_detection_time_columns(tmp_path: Path) -> 
     # Repair round 1 (R7): the module docstring claims deadline/max_quiet_seconds "always exist"
     # on a row regardless of which hang-detection strategy it uses. That was previously false —
     # upsert_row only wrote what a caller passed. Fixed by seeding both to None at row creation.
-    M.upsert_row(tmp_path, "only-deadline", {"run_id": "run-a", "deadline": 12345.0})
-    only_deadline = M.read_rows(tmp_path)["only-deadline"]
+    M.upsert_row(
+        tmp_path, "only-deadline", {"run_id": "run-a", "deadline": 12345.0}, run_id="run-a"
+    )
+    only_deadline = M.read_rows(tmp_path, run_id="run-a")["only-deadline"]
     assert only_deadline["deadline"] == 12345.0
     assert only_deadline["max_quiet_seconds"] is None
 
-    M.upsert_row(tmp_path, "only-quiet", {"run_id": "run-a", "max_quiet_seconds": 600})
-    only_quiet = M.read_rows(tmp_path)["only-quiet"]
+    M.upsert_row(
+        tmp_path, "only-quiet", {"run_id": "run-a", "max_quiet_seconds": 600}, run_id="run-a"
+    )
+    only_quiet = M.read_rows(tmp_path, run_id="run-a")["only-quiet"]
     assert only_quiet["max_quiet_seconds"] == 600
     assert only_quiet["deadline"] is None
 
-    M.upsert_row(tmp_path, "neither", {"run_id": "run-a"})
-    neither = M.read_rows(tmp_path)["neither"]
+    M.upsert_row(tmp_path, "neither", {"run_id": "run-a"}, run_id="run-a")
+    neither = M.read_rows(tmp_path, run_id="run-a")["neither"]
     assert neither["deadline"] is None
     assert neither["max_quiet_seconds"] is None
 
@@ -136,7 +140,7 @@ def test_empty_batch_returns_without_taking_the_write_lock(
 
     monkeypatch.setattr(M, "_write_locked", _unexpected_lock)
 
-    assert M.upsert_rows(tmp_path, {}) == {}
+    assert M.upsert_rows(tmp_path, {}, run_id="run-a") == {}
     assert not M.register_path("run-a").exists()
 
 
@@ -157,7 +161,7 @@ def test_failed_replace_leaves_live_register_untouched(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Establish a known-good register first.
-    M.upsert_row(tmp_path, "child-1", {"run_id": "run-a", "phase": "planned"})
+    M.upsert_row(tmp_path, "child-1", {"run_id": "run-a", "phase": "planned"}, run_id="run-a")
     before = M.register_path("run-a").read_text()
 
     real_replace = __import__("os").replace
@@ -170,7 +174,7 @@ def test_failed_replace_leaves_live_register_untouched(
     monkeypatch.setattr(M.os, "replace", _boom)
 
     with pytest.raises(OSError, match="simulated crash"):
-        M.upsert_row(tmp_path, "child-2", {"run_id": "run-a", "phase": "planned"})
+        M.upsert_row(tmp_path, "child-2", {"run_id": "run-a", "phase": "planned"}, run_id="run-a")
 
     # The live register file is untouched — still exactly the pre-failure content, never a
     # half-written mixture of old and new. A failed replace never reaches the real path at all.
@@ -195,7 +199,7 @@ def test_a_genuinely_interrupted_write_never_reaches_the_live_register_path(
     # raises mid-write, the way a real crash could land between two calls. If register.py's write
     # loop were ever replaced with something that doesn't call ``os.write`` at all, this stub
     # would simply never fire and the test would fail to observe the interruption it expects.
-    M.upsert_row(tmp_path, "child-1", {"run_id": "run-a", "phase": "planned"})
+    M.upsert_row(tmp_path, "child-1", {"run_id": "run-a", "phase": "planned"}, run_id="run-a")
     before = M.register_path("run-a").read_text()
 
     real_write = __import__("os").write
@@ -212,18 +216,18 @@ def test_a_genuinely_interrupted_write_never_reaches_the_live_register_path(
     monkeypatch.setattr(M.os, "write", _torn_write)
 
     with pytest.raises(OSError, match="simulated crash mid-write"):
-        M.upsert_row(tmp_path, "child-2", {"run_id": "run-a", "phase": "planned"})
+        M.upsert_row(tmp_path, "child-2", {"run_id": "run-a", "phase": "planned"}, run_id="run-a")
 
     # The live register path was never replaced into — it is byte-identical to its
     # pre-interruption content, and the row from before the interrupted write is still readable.
     assert M.register_path("run-a").read_text() == before
     assert M.read_register("run-a")["rows"]["child-1"]["phase"] == "planned"
-    assert "child-2" not in M.read_rows(tmp_path)
+    assert "child-2" not in M.read_rows(tmp_path, run_id="run-a")
 
     # And an ordinary subsequent write (write restored to the real implementation) proceeds
     # normally, unaffected by the interrupted attempt that preceded it.
     monkeypatch.setattr(M.os, "write", real_write)
-    M.upsert_row(tmp_path, "child-1", {"phase": "working"})
+    M.upsert_row(tmp_path, "child-1", {"phase": "working"}, run_id="run-a")
     assert M.read_register("run-a")["rows"]["child-1"]["phase"] == "working"
 
 
@@ -237,12 +241,12 @@ def test_unknown_key_nested_in_child_row_is_preserved_on_write(tmp_path: Path) -
         "phase": "working",
         "codex_execution_class": "review-max",  # unknown to this module
     }
-    M.upsert_row(tmp_path, "child-1", codex_row)
+    M.upsert_row(tmp_path, "child-1", codex_row, run_id="run-a")
 
     # Claude's side now performs an ordinary update touching only a column IT knows about.
-    M.upsert_row(tmp_path, "child-1", {"phase": "verified"})
+    M.upsert_row(tmp_path, "child-1", {"phase": "verified"}, run_id="run-a")
 
-    reread = M.read_rows(tmp_path)["child-1"]
+    reread = M.read_rows(tmp_path, run_id="run-a")["child-1"]
     assert reread["phase"] == "verified"
     # The nested key neither runtime's write explicitly re-sent survives — this is the C4
     # requirement, and it is specifically about a key *inside* a row, not a top-level key.
@@ -254,13 +258,13 @@ def test_unknown_key_at_document_root_is_preserved_on_write(tmp_path: Path) -> N
     # meaning both the nested case above AND this one must survive. A document-root key, e.g. a
     # handoff cursor one runtime writes that the other's register.py has never heard of, must
     # equally survive an ordinary write by the other runtime.
-    M.upsert_row(tmp_path, "child-1", {"run_id": "run-a", "phase": "planned"})
+    M.upsert_row(tmp_path, "child-1", {"run_id": "run-a", "phase": "planned"}, run_id="run-a")
     path = M.register_path("run-a")
     doc = json.loads(path.read_text())
     doc["handoff_token"] = "abc123"  # unknown to this module, added directly on disk
     path.write_text(json.dumps(doc))
 
-    M.upsert_row(tmp_path, "child-1", {"phase": "working"})
+    M.upsert_row(tmp_path, "child-1", {"phase": "working"}, run_id="run-a")
 
     on_disk = json.loads(path.read_text())
     assert on_disk["handoff_token"] == "abc123"
@@ -295,7 +299,7 @@ def test_unsupported_schema_version_halts_with_a_receipt_and_mutates_nothing(
     # A subsequent write attempt against the same unsupported file also refuses, still without
     # mutating register.json.
     with pytest.raises(M.UnsupportedSchemaVersionError):
-        M.upsert_row(tmp_path, "y", {"run_id": "run-a"})
+        M.upsert_row(tmp_path, "y", {"run_id": "run-a"}, run_id="run-a")
     assert path.read_text() == before
 
 
@@ -303,10 +307,10 @@ def test_unsupported_schema_version_halts_with_a_receipt_and_mutates_nothing(
 
 
 def test_two_sequential_writers_do_not_lose_the_first_writers_row(tmp_path: Path) -> None:
-    M.upsert_row(tmp_path, "child-1", {"run_id": "run-a", "phase": "planned"})
-    M.upsert_row(tmp_path, "child-2", {"run_id": "run-a", "phase": "planned"})
+    M.upsert_row(tmp_path, "child-1", {"run_id": "run-a", "phase": "planned"}, run_id="run-a")
+    M.upsert_row(tmp_path, "child-2", {"run_id": "run-a", "phase": "planned"}, run_id="run-a")
 
-    rows = M.read_rows(tmp_path)
+    rows = M.read_rows(tmp_path, run_id="run-a")
     assert set(rows) == {"child-1", "child-2"}
 
 
@@ -318,7 +322,9 @@ def test_two_concurrent_writers_do_not_lose_the_first_writers_row(tmp_path: Path
     def _write(row_id: str) -> None:
         try:
             for _ in range(25):
-                M.upsert_row(tmp_path, row_id, {"run_id": "run-a", "phase": "working"})
+                M.upsert_row(
+                    tmp_path, row_id, {"run_id": "run-a", "phase": "working"}, run_id="run-a"
+                )
         except BaseException as exc:  # noqa: BLE001
             errors.append(exc)
 
@@ -329,7 +335,7 @@ def test_two_concurrent_writers_do_not_lose_the_first_writers_row(tmp_path: Path
         t.join()
 
     assert not errors
-    rows = M.read_rows(tmp_path)
+    rows = M.read_rows(tmp_path, run_id="run-a")
     assert set(rows) == {"child-1", "child-2"}
 
 
@@ -337,9 +343,9 @@ def test_two_concurrent_writers_do_not_lose_the_first_writers_row(tmp_path: Path
 
 
 def test_retiring_a_run_moves_its_rows_and_leaves_other_runs_intact(tmp_path: Path) -> None:
-    M.upsert_row(tmp_path, "a1", {"run_id": "run-a", "phase": "verified"})
-    M.upsert_row(tmp_path, "a2", {"run_id": "run-a", "phase": "verified"})
-    M.upsert_row(tmp_path, "b1", {"run_id": "run-b", "phase": "working"})
+    M.upsert_row(tmp_path, "a1", {"run_id": "run-a", "phase": "verified"}, run_id="run-a")
+    M.upsert_row(tmp_path, "a2", {"run_id": "run-a", "phase": "verified"}, run_id="run-a")
+    M.upsert_row(tmp_path, "b1", {"run_id": "run-b", "phase": "working"}, run_id="run-b")
 
     final_path = M.retire_run(tmp_path, "run-a")
 
@@ -347,7 +353,7 @@ def test_retiring_a_run_moves_its_rows_and_leaves_other_runs_intact(tmp_path: Pa
     final_doc = json.loads(final_path.read_text())
     assert set(final_doc["rows"]) == {"a1", "a2"}
 
-    live = M.read_rows(tmp_path)
+    live = M.read_rows(tmp_path, run_id="run-b")
     assert set(live) == {"b1"}
     assert live["b1"]["phase"] == "working"
 
@@ -359,7 +365,7 @@ def test_retiring_a_run_moves_its_rows_and_leaves_other_runs_intact(tmp_path: Pa
     archive_after_second_retire = json.loads(final_path.read_text())
     assert set(archive_after_second_retire["rows"]) == {"a1", "a2"}  # NOT emptied
     # Other runs are still untouched.
-    assert set(M.read_rows(tmp_path)) == {"b1"}
+    assert set(M.read_rows(tmp_path, run_id="run-b")) == {"b1"}
 
 
 def test_retiring_a_run_with_nothing_live_and_no_prior_archive_writes_nothing(
@@ -381,8 +387,8 @@ def test_retiring_a_run_preserves_a_document_root_key_in_the_live_register(
     # same _read_register_unlocked -> mutate -> _atomic_write_json path. A future edit that
     # reintroduces envelope reconstruction inside retire_run specifically would break the
     # Claude<->Codex handoff on every retirement while leaving every existing test green.
-    M.upsert_row(tmp_path, "a1", {"run_id": "run-a", "phase": "verified"})
-    M.upsert_row(tmp_path, "b1", {"run_id": "run-b", "phase": "working"})
+    M.upsert_row(tmp_path, "a1", {"run_id": "run-a", "phase": "verified"}, run_id="run-a")
+    M.upsert_row(tmp_path, "b1", {"run_id": "run-b", "phase": "working"}, run_id="run-b")
 
     path_a = M.register_path("run-a")
     doc_a = json.loads(path_a.read_text())
@@ -413,8 +419,8 @@ def test_a_run_id_is_one_live_register_on_this_host(tmp_path: Path) -> None:
     repo_b = tmp_path / "repo-b"
     repo_a.mkdir()
     repo_b.mkdir()
-    M.upsert_row(repo_a, "child-1", {"run_id": "run-a", "phase": "planned"})
-    M.upsert_row(repo_b, "child-1", {"run_id": "run-a", "phase": "working"})
+    M.upsert_row(repo_a, "child-1", {"run_id": "run-a", "phase": "planned"}, run_id="run-a")
+    M.upsert_row(repo_b, "child-1", {"run_id": "run-a", "phase": "working"}, run_id="run-a")
     assert M.register_path("run-a").parent == tmp_path / "registers"
     assert M.read_rows(repo_a, run_id="run-a")["child-1"]["phase"] == "working"
     assert M.read_rows(repo_b, run_id="run-a")["child-1"]["phase"] == "working"
@@ -424,7 +430,7 @@ def test_the_live_register_is_not_inside_the_repository(tmp_path: Path) -> None:
     """A child working in the repository cannot write the live register by address."""
     repo = tmp_path / "repo"
     repo.mkdir()
-    M.upsert_row(repo, "child-1", {"run_id": "run-a", "phase": "planned"})
+    M.upsert_row(repo, "child-1", {"run_id": "run-a", "phase": "planned"}, run_id="run-a")
     live = M.register_path("run-a").resolve()
     assert not live.is_relative_to(repo.resolve())
 
@@ -445,7 +451,7 @@ def test_a_repo_local_file_is_not_the_live_register(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert "planted" not in M.read_rows(repo, run_id="run-a")
-    M.upsert_row(repo, "child-1", {"run_id": "run-a", "phase": "planned"})
+    M.upsert_row(repo, "child-1", {"run_id": "run-a", "phase": "planned"}, run_id="run-a")
     assert M.read_rows(repo, run_id="run-a")["child-1"]["phase"] == "planned"
     assert "planted" not in M.read_rows(repo, run_id="run-a")
     assert not M.register_path("run-a").is_relative_to(repo.resolve())
@@ -453,9 +459,58 @@ def test_a_repo_local_file_is_not_the_live_register(tmp_path: Path) -> None:
 
 def test_retiring_a_run_frees_its_id(tmp_path: Path) -> None:
     """After retirement the live file is gone and the id may be reused."""
-    M.upsert_row(tmp_path, "child-1", {"run_id": "run-a", "phase": "verified"})
+    M.upsert_row(tmp_path, "child-1", {"run_id": "run-a", "phase": "verified"}, run_id="run-a")
     assert M.retire_run(tmp_path, "run-a") is not None
     assert not M.register_path("run-a").exists()
-    M.upsert_row(tmp_path, "child-2", {"run_id": "run-a", "phase": "planned"})
+    M.upsert_row(tmp_path, "child-2", {"run_id": "run-a", "phase": "planned"}, run_id="run-a")
     assert M.read_rows(tmp_path, run_id="run-a")["child-2"]["phase"] == "planned"
     assert "child-1" not in M.read_rows(tmp_path, run_id="run-a")
+
+
+def test_a_write_cannot_name_a_row_without_naming_its_run(tmp_path: Path) -> None:
+    """The mutation API has no form that guesses the run from the row id."""
+    import inspect
+
+    assert "run_id" in inspect.signature(M.upsert_row).parameters
+    assert inspect.signature(M.upsert_row).parameters["run_id"].default is inspect.Parameter.empty
+    assert inspect.signature(M.upsert_rows).parameters["run_id"].default is inspect.Parameter.empty
+    assert inspect.signature(M.read_rows).parameters["run_id"].default is inspect.Parameter.empty
+    with pytest.raises(TypeError):
+        M.upsert_row(tmp_path, "child-a", {"phase": "working"})
+    with pytest.raises(TypeError):
+        M.read_rows(tmp_path)
+
+
+def test_the_stamped_view_keeps_two_runs_that_share_a_row_id(tmp_path: Path) -> None:
+    """The operator view is keyed by (run, row), so one row id cannot hide another."""
+    M.upsert_row(tmp_path, "child-a", {"phase": "verified"}, run_id="run-a")
+    M.upsert_row(tmp_path, "child-a", {"phase": "working"}, run_id="run-b")
+    merged = M.rows_stamped_against(tmp_path)
+    assert merged[("run-a", "child-a")]["phase"] == "verified"
+    assert merged[("run-b", "child-a")]["phase"] == "working"
+    assert "child-a" not in merged
+
+
+def test_retiring_against_the_wrong_work_location_leaves_the_live_file(
+    tmp_path: Path,
+) -> None:
+    repo_a = tmp_path / "repo-a"
+    repo_b = tmp_path / "repo-b"
+    repo_a.mkdir()
+    repo_b.mkdir()
+    M.upsert_row(repo_a, "child-1", {"phase": "verified"}, run_id="run-a")
+    before = M.register_path("run-a").read_text()
+    with pytest.raises(M.RegisterError, match="recorded against"):
+        M.retire_run(repo_b, "run-a")
+    assert M.register_path("run-a").read_text() == before
+    assert not M.final_register_path(repo_b, "run-a").exists()
+    assert not M.final_register_path(repo_a, "run-a").exists()
+
+
+def test_pytest_refuses_the_default_host_register_directory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(M.REGISTER_DIR_ENV, raising=False)
+    monkeypatch.delenv("ORCHESTRATE_ALLOW_DEFAULT_HOST_DIR", raising=False)
+    with pytest.raises(M.RegisterError, match="host default"):
+        M.register_dir()

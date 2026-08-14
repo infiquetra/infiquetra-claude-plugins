@@ -176,8 +176,10 @@ repository is refused outright, because every child's landing is inside the repo
 
 **Stated rather than assumed:** for Claude and Muse the CLI exposes no write-posture flag at
 all, so those runtimes can still reach the host-local register and secret directories if they
-know the path. The seal is what remains against that residual. A child that can reach the
-host path can still *destroy* a record rather than forge one — after which nothing verifies,
+know the path. Mode `0600` excludes other operating-system accounts, not a child running as
+this account. For runtimes whose sandbox does not deny `~/.orchestrate`, this module does
+not defend against a child that reads the run key and seals payloads that verify. A child
+that can reach the host path can still *destroy* a record — after which nothing verifies,
 which is the correct failure, not a false pass. A JSON document planted at the historical
 repo-local path is not the live register.
 
@@ -339,17 +341,18 @@ checked, and a disposition from the closed set `supported` / `unsupported` / `in
 
 **The verifier must be a dispatch this orchestrator issued.** A `verifier_row_id` that is merely a
 non-empty string different from the child's is not a session — `"verifier-that-does-not-exist"`
-satisfies that test. But neither is a *register row*: the register is the store the dispatch receipt
-is sealed against precisely because every child can write it, so a check that reads only register
-columns certifies exactly what the rest of this document distrusts. A write-capable child can plant
-a row with the right run, the right phase, and any vendor and model it likes — and because the
-sample is now persisted, that forgery leaves a durable audit trail of a session that never ran.
+satisfies that test. A register row alone is not a session either: a check that reads only
+register columns certifies a row any writer of the live file can plant. A write-capable actor
+that can reach the host-local register can plant a row with the right run, the right phase, and
+any vendor and model it likes — and because the sample is now persisted, that forgery leaves a
+durable audit trail of a session that never ran.
 
-So the load-bearing requirement is an **authenticated dispatch receipt for the verifier row**, under
-this run's orchestrator secret, which a child cannot produce. On top of that: the receipt's run must
-be this child's run; the sample's vendor must match the vendor in that sealed receipt; the row must
-not be recorded as still waiting to start; and the sample's model must match the row's recorded
-model.
+So the load-bearing requirement is an **authenticated dispatch receipt for the verifier row**,
+under this run's orchestrator secret. A sandboxed child cannot produce that digest. A
+same-account child whose sandbox does not deny `~/.orchestrate` can read the key and can. On
+top of that: the receipt's run must be this child's run; the sample's vendor must match the
+vendor in that sealed receipt; the row must not be recorded as still waiting to start; and
+the sample's model must match the row's recorded model.
 
 **This places a contract on whoever dispatches verifiers (U8): a verifier is an ordinary dispatched
 child and must be issued a receipt like any other.** A verifier without one cannot be told apart
@@ -389,9 +392,10 @@ Sealing `phase` is out of this unit's reach. The only evidence that separates "d
 and the liveness stream is U3's subscriber. Closing it means one of those units writing an
 attestation under the run secret, not a change here.
 
-**This residual and the accepted one on the child's own row — a child writing `phase=verified` into
-its own row and being reaped with no completion record — are the same defect against two different
-columns of the same untrusted store**, and a single authenticated-register change would close both.
+**This residual and the accepted one on the child's own row — a writer that can reach the live
+register setting `phase=verified` and being reaped with no completion record — are the same
+defect against two different columns.** A sandboxed child cannot write the live file by
+address. Claude and Muse still can, if they know the host path.
 
 **A sample that established nothing does not certify anything.** Any `unsupported` claim blocks
 verification (`depth_sample_unsupported`), and so does a sample with no `supported` claim at all
@@ -488,7 +492,7 @@ distinguishable from "still working" without a new phase.
 
    | Input | What it decides | How it is bound |
    | --- | --- | --- |
-   | repository root | which register receives the settlement record, the verdict and the phase | **derived, not supplied** — see below |
+   | repository root | the work location the receipt binds (git, artifacts, retirement archive) | **derived, not supplied** — the live register is addressed by `run_id` |
    | `run_id`, `row_id` | which row the verdict lands on; the artifact landing; the token | sealed label |
    | landing path | where the predicate runs, what the boundary observes | sealed label |
    | `work_shape` | **whether the depth gate runs at all** | sealed label |

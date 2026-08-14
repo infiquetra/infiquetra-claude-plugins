@@ -804,7 +804,9 @@ def launch_child(
         recovery_cwd = Path(str(existing.get("cwd", root)))
         recovered = herdr.discover_by_label(label, cwd=recovery_cwd)
         if recovered is not None:
-            register_store.upsert_row(root, spec.row_id, _row_identity(recovered))
+            register_store.upsert_row(
+                root, spec.row_id, _row_identity(recovered), run_id=spec.run_id
+            )
             landing = Landing(
                 recovery_cwd,
                 str(existing.get("integration_mode", "none")),
@@ -836,6 +838,7 @@ def launch_child(
             "phase": "planned",
             "expected_state": "ready",
         },
+        run_id=spec.run_id,
     )
     landing = git.provision(root, spec, base_commit=base_commit)
     resolution, runtime_argv = _runtime_resolution(spec, landing)
@@ -849,11 +852,12 @@ def launch_child(
             "integration_mode": landing.integration_mode,
             "destination": landing.destination,
         },
+        run_id=spec.run_id,
     )
     wrapper.preview(spec, landing, label, runtime_argv)
-    register_store.upsert_row(root, spec.row_id, {"phase": "launching"})
+    register_store.upsert_row(root, spec.row_id, {"phase": "launching"}, run_id=spec.run_id)
     identity = wrapper.launch(spec, landing, label, runtime_argv)
-    register_store.upsert_row(root, spec.row_id, _row_identity(identity))
+    register_store.upsert_row(root, spec.row_id, _row_identity(identity), run_id=spec.run_id)
     return identity, landing, resolution
 
 
@@ -883,6 +887,7 @@ def confirm_ready(
                 "observed_state": "trust_prompt",
                 "observed_state_source": "observed:pane_content",
             },
+            run_id=spec.run_id,
         )
         raise TrustPromptError(f"child {spec.row_id} is blocked on a workspace trust prompt")
 
@@ -927,6 +932,7 @@ def confirm_ready(
                     "observed_state": "not_ready",
                     "observed_state_source": "inferred:effort_not_applied",
                 },
+                run_id=spec.run_id,
             )
             raise
         except NotReadyError:
@@ -937,6 +943,7 @@ def confirm_ready(
                     "observed_state": "not_ready",
                     "observed_state_source": "inferred:effort_timeout",
                 },
+                run_id=spec.run_id,
             )
             raise
     elif effort_application.get("mode") != "argv":
@@ -960,6 +967,7 @@ def confirm_ready(
                 "dispatched_at": time.time(),
                 "expected_state": "working",
             },
+            run_id=spec.run_id,
         )
         prompt = (
             subscriber.sentinel_assembly_instructions(sentinel, when="you are ready to begin")
@@ -984,6 +992,7 @@ def confirm_ready(
                 "observed_state": "not_ready",
                 "observed_state_source": "inferred:readiness_timeout",
             },
+            run_id=spec.run_id,
         )
         raise
     register_store.upsert_row(
@@ -994,6 +1003,7 @@ def confirm_ready(
             "observed_state": "ready",
             "observed_state_source": "observed:pane.output_matched",
         },
+        run_id=spec.run_id,
     )
     return ReadyChild(identity, baseline_paths, sentinel)
 
@@ -1130,10 +1140,11 @@ def reap_verified(
     root: Path,
     row_id: str,
     *,
+    run_id: str,
     herdr: HerdrControl,
 ) -> None:
     """Record ``reaped`` before closing a verified child's tab."""
-    row = register_store.read_rows(root).get(row_id)
+    row = register_store.read_rows(root, run_id=run_id).get(row_id)
     if row is None or row.get("phase") not in {"verified", "reaped"}:
         raise SessionLifecycleError(f"child {row_id!r} must be verified before reap")
     tab_id = row.get("tab_id")
@@ -1141,7 +1152,9 @@ def reap_verified(
         raise LaunchProtocolError(f"child {row_id!r} has no tab_id")
     cwd = Path(str(row.get("cwd", root)))
     if row.get("phase") != "reaped":
-        register_store.upsert_row(root, row_id, {"phase": "reaped", "expected_state": "exited"})
+        register_store.upsert_row(
+            root, row_id, {"phase": "reaped", "expected_state": "exited"}, run_id=run_id
+        )
     if herdr.tab_present(tab_id, cwd=cwd):
         herdr.close_tab(tab_id, cwd=cwd)
 
@@ -1150,10 +1163,11 @@ def assert_child_not_vanished(
     root: Path,
     row_id: str,
     *,
+    run_id: str,
     herdr: HerdrControl,
 ) -> None:
     """Raise when a registered child disappears without a recorded reap."""
-    row = register_store.read_rows(root).get(row_id)
+    row = register_store.read_rows(root, run_id=run_id).get(row_id)
     if row is None:
         raise SessionLifecycleError(f"unknown child row {row_id!r}")
     if row.get("phase") == "reaped":

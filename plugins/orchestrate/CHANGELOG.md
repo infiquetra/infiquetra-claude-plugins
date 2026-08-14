@@ -8,10 +8,11 @@
   orchestrator-owned host-local directory (default `~/.orchestrate/registers/<run_id>.json`,
   relocatable by `ORCHESTRATE_REGISTER_DIR`). A child cannot write it by working in its
   landing. A `run_id` is host-global: two callers that name the same id share one live
-  document. `retire_run` archives the document into the repository at
-  `.orchestrate/runs/<run_id>/register-final.json` and deletes the live file, which frees
-  the id. Claude and Muse have no workspace-write flag, so the dispatch receipt and
-  settlement record stay authenticated against that residual.
+  document. Every decision and mutation API requires `run_id`. `retire_run` archives the
+  document into the recorded work location, deletes the live file, and forgets the per-run
+  secret, so a reused id is a new authentication identity. Claude and Muse have no
+  workspace-write flag; mode `0600` does not exclude a child running as this account, so
+  the seal does not defend that residual.
 - Completion is the only path to `verified`. A child reaches it when its predicate's dependency
   closure is unchanged, its artifact was settled by the orchestrator's own rename, that artifact
   carries this dispatch's pre-established run binding, the predicate passes, the repository
@@ -35,11 +36,13 @@
   muddled caller rather than a substitution. `write_scope` is sealed and deliberately **not**
   compared — it is a pure function of inputs that are each compared individually, so a comparison
   against it could never be the check that catches anything.
-- **The repository is derived, not supplied.** It selects the register that receives the settlement
-  record, the verdict and the phase, so a caller who could name it separately could file one
-  repository's answer in another's store while the artifact settled in the first, leaving the row
-  whose work actually ran at `working`. The per-run secret does not cover this: it is named for the
-  run alone and lives outside every repository, so two checkouts running one run id share it.
+- **The repository is derived, not supplied.** It is the work location the receipt binds —
+  where git runs, where artifacts settle, where retirement archives — not the address of the
+  live register. The live register is addressed by `run_id`. A caller who could name a
+  second repository could still bind a landing in one tree to a receipt sealed for another;
+  that is why issuance derives the work location from the landing and compares it to the
+  recorded run root. The per-run secret does not cover this: it is named for the run alone
+  and lives outside every repository, so two checkouts running one run id share it.
   Comparing a supplied root against the receipt was not enough, because the receipt's copy was made
   from that same supplied value at issue time — that catches a caller who changes it in between and
   cannot catch one that was wrong to begin with. So `issue_receipt` derives it from

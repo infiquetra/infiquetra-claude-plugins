@@ -9,8 +9,10 @@ one for the mirror and one for the subscriber (there is nothing structurally dif
 those two; they are ordinary rows with ``agent="mirror"`` / ``agent="subscriber"``). A
 ``run_id`` is host-global: two callers that name the same id share one live document, which
 is what same-host Claude↔Codex handoff needs, and what two unrelated projects that pick the
-same label collide on. :func:`retire_run` archives the document into the repository and
-deletes the live file, which frees the id.
+same label collide on. :func:`retire_run` archives the document into the repository, deletes
+the live file, and forgets the per-run secret, so a reused id is a new authentication
+identity. Every decision and mutation API takes ``run_id`` as a required argument; a row
+cannot be named without naming its run.
 
 This module implements exactly two responsibilities: atomic durability (a reader never sees a
 torn file, a lost update, or output from a corrupt state) and the row schema (the columns below).
@@ -175,11 +177,37 @@ def orchestrate_dir(root: Path) -> Path:
 def register_dir() -> Path:
     """Where this host keeps live per-run registers, outside every working tree."""
     override = os.environ.get(REGISTER_DIR_ENV)
-    return (
+    directory = (
         Path(override).expanduser().resolve()
         if override
         else DEFAULT_REGISTER_DIR.expanduser().resolve()
     )
+    _refuse_default_host_dir_under_pytest(directory, label="register")
+    return directory
+
+
+def _refuse_default_host_dir_under_pytest(directory: Path, *, label: str) -> None:
+    """Refuse the product default during pytest so a missing fixture cannot write there.
+
+    The forbidden location is ``~/.orchestrate``, not "anywhere under ``$HOME``". A pytest
+    tmp that happens to live under the operator's home is legitimate. Opt out with
+    ``ORCHESTRATE_ALLOW_DEFAULT_HOST_DIR``.
+    """
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        return
+    if os.environ.get("ORCHESTRATE_ALLOW_DEFAULT_HOST_DIR"):
+        return
+    forbidden = (Path.home() / ".orchestrate").expanduser().resolve()
+    try:
+        if directory == forbidden or directory.is_relative_to(forbidden):
+            raise RegisterError(
+                f"the {label} directory {directory} is the host default under {forbidden} "
+                "while pytest is running; set ORCHESTRATE_REGISTER_DIR and "
+                "ORCHESTRATE_RUN_SECRET_DIR to an isolated directory (the suite fixture "
+                "does this) or set ORCHESTRATE_ALLOW_DEFAULT_HOST_DIR to opt out"
+            )
+    except OSError:
+        return
 
 
 def _safe_run_id(run_id: str) -> str:
@@ -398,55 +426,68 @@ def read_register(run_id: str) -> dict[str, Any]:
         return _read_register_unlocked(run_id)
 
 
-def read_rows(root: Path, *, run_id: str | None = None) -> dict[str, dict[str, Any]]:
-    """Rows for one run, or every run stamped against ``root``.
+def read_rows(root: Path, *, run_id: str) -> dict[str, dict[str, Any]]:
+    """Rows for one run.
 
-    The live file is addressed by ``run_id``, not by ``root``. Pass ``run_id`` when you know
-    it. ``root`` without ``run_id`` returns rows whose document was stamped against that
-    directory — the compatibility view for callers that have a checkout and not a run id.
-    Each row is returned as stored, including any keys this module does not know about (C4).
+    The live file is addressed by ``run_id``. ``root`` is the claimed work location and does
+    not select the file. There is no optional form: a caller that does not have a run id
+    wants :func:`rows_stamped_against`, which cannot be indexed by row id alone.
     """
-    if run_id is not None:
-        doc = read_register(run_id)
-        return {rid: dict(row) for rid, row in doc["rows"].items()}
+    del root
+    doc = read_register(_safe_run_id(run_id))
+    return {rid: dict(row) for rid, row in doc["rows"].items()}
+
+
+def rows_stamped_against(root: Path) -> dict[tuple[str, str], dict[str, Any]]:
+    """Operator view: every live row whose document was stamped against ``root``.
+
+    Keyed by ``(run_id, row_id)``. Two runs that share a row id both appear. This is not a
+    decision or mutation path — it cannot be indexed by row id alone.
+    """
     target = Path(root).resolve()
-    merged: dict[str, dict[str, Any]] = {}
+    merged: dict[tuple[str, str], dict[str, Any]] = {}
     for live_id in iter_live_run_ids():
         doc = read_register(live_id)
         stamped = doc.get("repo_root")
         if not isinstance(stamped, str):
             continue
         if _same_dir(Path(stamped), target):
-            merged.update({rid: dict(row) for rid, row in doc["rows"].items()})
+            for rid, row in doc["rows"].items():
+                merged[(live_id, rid)] = dict(row)
     return merged
 
 
 # --------------------------------------------------------------------------- public write API
 
 
-def upsert_row(root: Path, row_id: str, fields: Mapping[str, Any]) -> dict[str, Any]:
+def upsert_row(
+    root: Path, row_id: str, fields: Mapping[str, Any], *, run_id: str
+) -> dict[str, Any]:
     """Create or merge-update one row.
 
-    ``fields`` is merged into whatever already exists at ``row_id`` — it does not replace the row
-    wholesale — so a caller that only knows a subset of columns (its own runtime's, say) can never
-    erase columns it has never heard of (C4). A brand-new row requires ``run_id`` in ``fields`` (or
-    already present in an existing row of the same id); every other column is optional and simply
-    absent until some later phase transition sets it, **except** ``deadline`` /
-    ``max_quiet_seconds``, which are seeded to ``None`` on row creation (not merely left absent) so
-    that pair specifically always round-trips (see the Time group docstring above).
+    ``run_id`` is required and addresses the live file. A ``run_id`` also present in
+    ``fields`` must agree; it is not a substitute for the argument. ``fields`` is merged
+    into whatever already exists at ``row_id`` — it does not replace the row wholesale —
+    so a caller that only knows a subset of columns can never erase columns it has never
+    heard of (C4). Every other column is optional and simply absent until some later
+    phase transition sets it, **except** ``deadline`` / ``max_quiet_seconds``, which are
+    seeded to ``None`` on row creation so that pair specifically always round-trips.
 
     Returns the row exactly as stored, id included.
     """
-    return upsert_rows(root, {row_id: fields})[row_id]
+    return upsert_rows(root, {row_id: fields}, run_id=run_id)[row_id]
 
 
-def upsert_rows(root: Path, updates: Mapping[str, Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+def upsert_rows(
+    root: Path, updates: Mapping[str, Mapping[str, Any]], *, run_id: str
+) -> dict[str, dict[str, Any]]:
     """Create or merge-update several rows in one locked, atomic register rewrite.
 
-    Each entry has the same semantics as :func:`upsert_row`, including new-row ``run_id``
-    validation, optional-column preservation, and the deadline/quiet-time seeding pair. All
-    updates are validated before the register is mutated, then land in one durable replacement.
+    ``run_id`` is required. There is no scan of other live documents and no guess from
+    ``fields``. All updates are validated before the register is mutated, then land in
+    one durable replacement.
     """
+    run_id = _safe_run_id(run_id)
     normalized = {row_id: dict(fields) for row_id, fields in updates.items()}
     if not normalized:
         return {}
@@ -454,8 +495,12 @@ def upsert_rows(root: Path, updates: Mapping[str, Mapping[str, Any]]) -> dict[st
         if not row_id:
             raise RegisterError("row_id must be non-empty")
         _validate_phase(fields)
+        named = fields.get("run_id")
+        if named is not None and str(named) != run_id:
+            raise RegisterError(
+                f"fields name run_id {named!r} but this write is addressed at {run_id!r}"
+            )
 
-    run_id = _run_id_for_updates(normalized)
     with _write_locked(run_id):
         doc = _read_register_unlocked(run_id)
         if "repo_root" not in doc:
@@ -466,9 +511,7 @@ def upsert_rows(root: Path, updates: Mapping[str, Mapping[str, Any]]) -> dict[st
         for row_id, fields in normalized.items():
             existing = rows.get(row_id, {})
             is_new_row = not existing
-            if is_new_row and "run_id" not in fields:
-                raise RegisterError(f"new row {row_id!r} requires 'run_id' in fields")
-            merged = {**existing, **fields, "id": row_id}
+            merged = {**existing, **fields, "id": row_id, "run_id": run_id}
             if is_new_row:
                 for column in _TIME_STRATEGY_COLUMNS:
                     merged.setdefault(column, None)
@@ -479,46 +522,77 @@ def upsert_rows(root: Path, updates: Mapping[str, Mapping[str, Any]]) -> dict[st
         return merged_rows
 
 
-def _run_id_for_updates(updates: Mapping[str, Mapping[str, Any]]) -> str:
-    named = {str(fields["run_id"]) for fields in updates.values() if "run_id" in fields}
-    if len(named) > 1:
-        raise RegisterError(f"one write cannot address more than one run: {sorted(named)}")
-    if named:
-        return _safe_run_id(named.pop())
-    for row_id in updates:
-        for live_id in iter_live_run_ids():
-            if row_id in _read_register_unlocked(live_id)["rows"]:
-                return live_id
-    raise RegisterError("new rows require 'run_id' in fields")
+def _expected_archive_root(run_id: str, doc: Mapping[str, Any]) -> Path | None:
+    """Work location from orchestrator-private state: sidecar first, then stamped root."""
+    try:
+        import completion as completion_mod
+
+        recorded = completion_mod.read_run_root(run_id)
+    except ImportError:
+        recorded = None
+    if recorded is not None:
+        return Path(recorded).resolve()
+    stamped = doc.get("repo_root")
+    if isinstance(stamped, str) and stamped:
+        return Path(stamped).resolve()
+    return None
 
 
 def retire_run(root: Path, run_id: str) -> Path | None:
-    """Archive this run's live register into the repository and delete the live file.
+    """Archive this run's live register into the recorded work location and delete the live file.
 
-    The live document is ``register_path(run_id)``. The durable copy is written to
-    ``.orchestrate/runs/<run_id>/register-final.json`` **in the repository** before the live
-    file is removed: a crash between the two steps leaves the rows present in both places
-    (recoverable by re-running: the live file is still there), never in neither.
+    The archive destination is derived from orchestrator-private state (the recorded run
+    root, else the document's stamped ``repo_root``). The caller-supplied ``root`` must
+    name that same directory by filesystem identity. A mismatch raises and leaves the
+    live file and sidecar untouched.
 
-    Deleting the live file is what frees the host-global ``run_id``. Genuinely idempotent:
+    The durable copy is written before the live file is removed: a crash between the two
+    steps leaves the rows present in both places. After a successful archive the live
+    file, the sidecar, and the per-run secret are deleted so a reused id is a new
+    authentication identity. The lock file is left in place: unlinking it while held, or
+    after release, is an inode race.
 
-    - No live file and an archive already exists -> that archive is left untouched and its
-      path is returned.
+    Genuinely idempotent when nothing is live:
+
+    - No live file and an archive already exists at the caller-named path -> that archive
+      is left untouched and its path is returned. The caller root is used only to find
+      it, never to delete anything.
     - No live file and no archive -> ``None``, nothing is written.
     """
     run_id = _safe_run_id(run_id)
     live = register_path(run_id)
-    final_path = final_register_path(root, run_id)
+    claimed = Path(root).resolve()
+    if not live.exists():
+        existing = final_register_path(claimed, run_id)
+        return existing if existing.exists() else None
+
     with _write_locked(run_id):
         if not live.exists():
-            return final_path if final_path.exists() else None
+            existing = final_register_path(claimed, run_id)
+            return existing if existing.exists() else None
 
         doc = _read_register_unlocked(run_id)
+        expected = _expected_archive_root(run_id, doc)
+        if expected is None:
+            raise RegisterError(
+                f"run {run_id!r} has no recorded or stamped work location; refusing to "
+                "archive it under a caller-supplied directory"
+            )
+        if not _same_dir(claimed, expected):
+            raise RegisterError(
+                f"run {run_id!r} is recorded against {expected} and retire_run was "
+                f"called with {claimed}; the archive destination is the recorded work "
+                "location, so a mismatch leaves the live register untouched"
+            )
+
         rows: dict[str, dict[str, Any]] = doc["rows"]
+        final_path = final_register_path(expected, run_id)
         if not rows and final_path.exists():
             live.unlink(missing_ok=True)
+            sidecar = register_dir() / f"{run_id}.root"
             with contextlib.suppress(FileNotFoundError):
-                _lock_path(run_id).unlink()
+                sidecar.unlink()
+            _forget_run_secret(run_id)
             return final_path
 
         final_doc = {
@@ -532,20 +606,31 @@ def retire_run(root: Path, run_id: str) -> Path | None:
                 final_doc[key] = value
         _atomic_write_json(final_path, final_doc)
         live.unlink(missing_ok=True)
-        with contextlib.suppress(FileNotFoundError):
-            _lock_path(run_id).unlink()
         sidecar = register_dir() / f"{run_id}.root"
         with contextlib.suppress(FileNotFoundError):
             sidecar.unlink()
+        _forget_run_secret(run_id)
         return final_path
+
+
+def _forget_run_secret(run_id: str) -> None:
+    try:
+        import completion as completion_mod
+    except ImportError:
+        return
+    completion_mod.forget_run_secret(run_id)
 
 
 # --------------------------------------------------------------------------- thin CLI
 
 
 def _cli_show(root: Path, run_id: str | None) -> int:
-    rows = read_rows(root, run_id=run_id)
-    print(json.dumps(rows, indent=2, sort_keys=True))
+    if run_id is None:
+        merged = rows_stamped_against(root)
+        printable = {f"{run}/{row}": value for (run, row), value in merged.items()}
+        print(json.dumps(printable, indent=2, sort_keys=True))
+        return 0
+    print(json.dumps(read_rows(root, run_id=run_id), indent=2, sort_keys=True))
     return 0
 
 

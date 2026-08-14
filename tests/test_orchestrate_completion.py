@@ -208,7 +208,10 @@ def _prepare(
         COMPLETION.record_run_root(repo, spec.run_id)
     landing = git.provision(repo, spec)
     REGISTER.upsert_row(
-        repo, spec.row_id, {"run_id": spec.run_id, "phase": "working", "expected_state": "working"}
+        repo,
+        spec.row_id,
+        {"run_id": spec.run_id, "phase": "working", "expected_state": "working"},
+        run_id=spec.run_id,
     )
     if predicate is None:
         artifacts = COMPLETION.artifact_landing(Path(landing.cwd), spec.run_id, spec.row_id)
@@ -443,7 +446,10 @@ def test_a_child_that_produced_nothing_fails_with_a_recorded_verdict(tmp_path: P
     assert result.verified is False
     assert result.reason == "artifact_unsettled"
     assert "did not produce a settleable deliverable" in result.detail
-    assert REGISTER.read_rows(repo)["child-a"]["completion"]["reason"] == "artifact_unsettled"
+    assert (
+        REGISTER.read_rows(repo, run_id="run-a")["child-a"]["completion"]["reason"]
+        == "artifact_unsettled"
+    )
 
 
 def test_an_inflight_symlink_is_refused_rather_than_renamed_into_place(tmp_path: Path) -> None:
@@ -513,11 +519,14 @@ def test_the_expected_binding_is_established_before_the_child_can_write_anything
     _init_repo(repo)
     prepared = _prepare(repo)
 
-    stored = REGISTER.read_rows(repo)["child-a"]["dispatch_receipt"]
+    stored = REGISTER.read_rows(repo, run_id="run-a")["child-a"]["dispatch_receipt"]
     assert stored["binding_token"] == prepared.receipt.binding_token
     assert not prepared.receipt.artifact_path.exists()
     assert not prepared.receipt.inflight_path.exists()
-    assert COMPLETION.read_receipt(repo, "child-a").binding_token == prepared.receipt.binding_token
+    assert (
+        COMPLETION.read_receipt(repo, "child-a", run_id="run-a").binding_token
+        == prepared.receipt.binding_token
+    )
 
 
 def test_a_re_dispatch_of_the_same_row_rejects_the_previous_attempts_artifact(
@@ -689,9 +698,9 @@ def test_reaping_is_refused_while_the_destination_branch_is_unchanged(tmp_path: 
     result = prepared.evaluate()
     assert result.verified is False
     assert result.reason == "integration_unverified"
-    assert REGISTER.read_rows(repo)["child-m"]["phase"] != "verified"
+    assert REGISTER.read_rows(repo, run_id="run-a")["child-m"]["phase"] != "verified"
     with pytest.raises(LIFECYCLE.SessionLifecycleError, match="must be verified before reap"):
-        LIFECYCLE.reap_verified(repo, "child-m", herdr=FakeHerdr())
+        LIFECYCLE.reap_verified(repo, "child-m", herdr=FakeHerdr(), run_id="run-a")
 
 
 def test_reaping_is_permitted_once_the_destination_branch_advances(tmp_path: Path) -> None:
@@ -704,14 +713,14 @@ def test_reaping_is_permitted_once_the_destination_branch_advances(tmp_path: Pat
     _git(worktree, "add", "src/landed.py")
     _git(worktree, "commit", "-q", "-m", "child work")
     prepared.write_deliverable()
-    REGISTER.upsert_row(repo, "child-m", {"tab_id": "tab-m", "cwd": str(worktree)})
+    REGISTER.upsert_row(repo, "child-m", {"tab_id": "tab-m", "cwd": str(worktree)}, run_id="run-a")
 
     result = prepared.evaluate()
     assert result.verified is True, result.detail
     herdr = FakeHerdr()
-    LIFECYCLE.reap_verified(repo, "child-m", herdr=herdr)
+    LIFECYCLE.reap_verified(repo, "child-m", herdr=herdr, run_id="run-a")
     assert herdr.closed == ["tab-m"]
-    assert REGISTER.read_rows(repo)["child-m"]["phase"] == "reaped"
+    assert REGISTER.read_rows(repo, run_id="run-a")["child-m"]["phase"] == "reaped"
 
 
 def test_reaping_is_refused_while_a_path_destination_is_unchanged(tmp_path: Path) -> None:
@@ -723,7 +732,7 @@ def test_reaping_is_refused_while_a_path_destination_is_unchanged(tmp_path: Path
     landing = LIFECYCLE.Landing(
         repo.resolve(), "path", "delivered.txt", git.base_commit(repo), repo.resolve()
     )
-    REGISTER.upsert_row(repo, "child-p", {"run_id": "run-a", "phase": "working"})
+    REGISTER.upsert_row(repo, "child-p", {"run_id": "run-a", "phase": "working"}, run_id="run-a")
     artifacts = COMPLETION.artifact_landing(repo.resolve(), "run-a", "child-p")
     relative = artifacts.relative_to(repo.resolve()) / "report.json"
     receipt = COMPLETION.issue_receipt(
@@ -747,13 +756,13 @@ def test_read_only_work_integrates_nowhere_and_is_permitted_under_mode_none(
     _init_repo(repo)
     prepared = _prepare(repo)
     prepared.write_deliverable()
-    REGISTER.upsert_row(repo, "child-a", {"tab_id": "tab-a"})
+    REGISTER.upsert_row(repo, "child-a", {"tab_id": "tab-a"}, run_id="run-a")
 
     result = prepared.evaluate()
     assert result.verified is True, result.detail
     assert result.integration is not None and "none" in result.integration
     herdr = FakeHerdr()
-    LIFECYCLE.reap_verified(repo, "child-a", herdr=herdr)
+    LIFECYCLE.reap_verified(repo, "child-a", herdr=herdr, run_id="run-a")
     assert herdr.closed == ["tab-a"]
 
 
@@ -765,7 +774,7 @@ def test_a_passing_predicate_on_a_settled_bound_artifact_reaps_cleanly(tmp_path:
     _init_repo(repo)
     prepared = _prepare(repo)
     inflight = prepared.write_deliverable()
-    REGISTER.upsert_row(repo, "child-a", {"tab_id": "tab-a"})
+    REGISTER.upsert_row(repo, "child-a", {"tab_id": "tab-a"}, run_id="run-a")
 
     result = prepared.evaluate()
     assert result.verified is True, result.detail
@@ -773,10 +782,10 @@ def test_a_passing_predicate_on_a_settled_bound_artifact_reaps_cleanly(tmp_path:
     assert prepared.receipt.artifact_path.is_file()
     expected = hashlib.sha256(prepared.receipt.artifact_path.read_bytes()).hexdigest()
     assert result.artifact_digest == "sha256:" + expected
-    row = REGISTER.read_rows(repo)["child-a"]
+    row = REGISTER.read_rows(repo, run_id="run-a")["child-a"]
     assert row["phase"] == "verified"
     assert row["completion"]["result"] == "verified"
-    LIFECYCLE.reap_verified(repo, "child-a", herdr=FakeHerdr())
+    LIFECYCLE.reap_verified(repo, "child-a", herdr=FakeHerdr(), run_id="run-a")
 
 
 # ---------------------------------------------------------------- scenario 7: depth sample
@@ -845,7 +854,10 @@ def _verifier_row(
             record_root=record_root,
         )
     REGISTER.upsert_row(
-        repo, row_id, {"run_id": run_id, "vendor": vendor, "model": model, "phase": phase}
+        repo,
+        row_id,
+        {"run_id": run_id, "vendor": vendor, "model": model, "phase": phase},
+        run_id=run_id,
     )
 
 
@@ -956,7 +968,7 @@ def test_a_depth_sample_round_trips_through_the_register_it_is_recorded_in(
     sample = _sample(prepared)
 
     assert prepared.evaluate(depth_sample=sample).verified is True
-    stored = REGISTER.read_rows(repo)["child-a"]["completion"]["depth_sample"]
+    stored = REGISTER.read_rows(repo, run_id="run-a")["child-a"]["completion"]["depth_sample"]
     assert COMPLETION.DepthSample.from_mapping(stored) == sample
 
 
@@ -975,7 +987,7 @@ def test_a_verified_judgment_child_has_its_verifier_and_claims_on_record(
     prepared.run_child_process()
 
     assert prepared.evaluate(depth_sample=_sample(prepared)).verified is True
-    recorded = REGISTER.read_rows(repo)["child-a"]["completion"]["depth_sample"]
+    recorded = REGISTER.read_rows(repo, run_id="run-a")["child-a"]["completion"]["depth_sample"]
     assert recorded["verifier_row_id"] == "verifier-1"
     assert recorded["verifier_vendor"] == "grok"
     assert recorded["verifier_model"] == "grok-4.6"
@@ -1052,7 +1064,7 @@ def test_a_verifier_phase_outside_the_register_vocabulary_is_not_a_started_dispa
     _verifier_row(repo, phase="working")
     for phase in ("", "garbage", "launchd"):
         plant_phase(phase)
-        assert REGISTER.read_rows(repo)["verifier-1"]["phase"] == phase
+        assert REGISTER.read_rows(repo, run_id="run-a")["verifier-1"]["phase"] == phase
         result = prepared.evaluate(depth_sample=_sample(prepared, register=False))
         assert result.verified is False, phase
         assert result.reason == "depth_sample_invalid", phase
@@ -1087,6 +1099,7 @@ def test_a_depth_sample_from_another_run_is_not_this_runs_verifier(tmp_path: Pat
             "phase": "working",
             "dispatch_receipt": foreign["dispatch_receipt"],
         },
+        run_id="run-a",
     )
 
     result = prepared.evaluate(depth_sample=_sample(prepared, register=False))
@@ -1133,7 +1146,7 @@ def test_an_inconclusive_only_depth_sample_does_not_certify_judgment_work(
     result = prepared.evaluate(depth_sample=_sample(prepared, claims=(inconclusive,)))
     assert result.verified is False
     assert result.reason == "depth_sample_inconclusive"
-    assert REGISTER.read_rows(repo)["child-a"]["phase"] == "working"
+    assert REGISTER.read_rows(repo, run_id="run-a")["child-a"]["phase"] == "working"
 
 
 @pytest.mark.parametrize(
@@ -1176,8 +1189,8 @@ def test_a_malformed_depth_mapping_records_a_closed_failure_instead_of_raising(
     result = prepared.evaluate(depth_sample=mapping)
     assert result.verified is False
     assert result.reason == "depth_sample_invalid"
-    assert REGISTER.read_rows(repo)["child-a"]["completion"]["result"] == "failed"
-    assert COMPLETION.is_working_not_failed(repo, "child-a") is False
+    assert REGISTER.read_rows(repo, run_id="run-a")["child-a"]["completion"]["result"] == "failed"
+    assert COMPLETION.is_working_not_failed(repo, "child-a", run_id="run-a") is False
 
 
 def test_a_verifier_reads_the_settled_artifact_and_the_second_evaluation_verifies(
@@ -1207,7 +1220,7 @@ def test_a_verifier_reads_the_settled_artifact_and_the_second_evaluation_verifie
     digest = "sha256:" + hashlib.sha256(settled.read_bytes()).hexdigest()
     second = prepared.evaluate(depth_sample=_sample(prepared, artifact_digest=digest))
     assert second.verified is True, second.detail
-    assert REGISTER.read_rows(repo)["child-a"]["phase"] == "verified"
+    assert REGISTER.read_rows(repo, run_id="run-a")["child-a"]["phase"] == "verified"
 
 
 # ------------------------------------------------- carried requirement: read-only landings
@@ -1323,12 +1336,12 @@ def test_a_failed_predicate_leaves_the_phase_alone_and_records_a_durable_verdict
 
     result = prepared.evaluate()
     assert result.verified is False
-    row = REGISTER.read_rows(repo)["child-a"]
+    row = REGISTER.read_rows(repo, run_id="run-a")["child-a"]
     assert row["phase"] == "working"
     assert row["completion"]["result"] == "failed"
     assert row["completion"]["reason"] == "predicate_failed"
     assert COMPLETION.failed_rows(repo, run_id="run-a") == {"child-a": row["completion"]}
-    assert COMPLETION.is_working_not_failed(repo, "child-a") is False
+    assert COMPLETION.is_working_not_failed(repo, "child-a", run_id="run-a") is False
 
 
 def test_no_completion_outcome_writes_a_phase_outside_the_closed_vocabulary(
@@ -1348,7 +1361,9 @@ def test_no_completion_outcome_writes_a_phase_outside_the_closed_vocabulary(
             document["binding"] = prepared.receipt.binding_token
         prepared.write_deliverable(document)
         prepared.evaluate()
-        assert REGISTER.read_rows(repo)[f"child-{index}"]["phase"] in REGISTER.PHASES
+        assert (
+            REGISTER.read_rows(repo, run_id="run-a")[f"child-{index}"]["phase"] in REGISTER.PHASES
+        )
 
 
 def test_a_snapshot_catch_up_pass_does_not_erase_a_recorded_completion_failure(
@@ -1365,7 +1380,7 @@ def test_a_snapshot_catch_up_pass_does_not_erase_a_recorded_completion_failure(
     prepared.write_deliverable({"binding": prepared.receipt.binding_token})
     prepared.evaluate()
     REGISTER.upsert_row(
-        repo, "child-a", {"pane_id": "pane-a", "observed_state": "predicate_failed"}
+        repo, "child-a", {"pane_id": "pane-a", "observed_state": "predicate_failed"}, run_id="run-a"
     )
 
     SUBSCRIBER.catch_up(
@@ -1373,7 +1388,7 @@ def test_a_snapshot_catch_up_pass_does_not_erase_a_recorded_completion_failure(
         {"panes": [{"pane_id": "pane-a", "agent_status": "working"}], "agents": []},
         run_id="run-a",
     )
-    row = REGISTER.read_rows(repo)["child-a"]
+    row = REGISTER.read_rows(repo, run_id="run-a")["child-a"]
     assert row["observed_state"] == "working"
     assert row["completion"]["reason"] == "predicate_failed"
 
@@ -1433,9 +1448,9 @@ def test_dispatch_instructions_name_the_inflight_path_and_the_binding(tmp_path: 
 def test_completing_a_row_that_was_never_bound_to_a_dispatch_is_refused(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)
-    REGISTER.upsert_row(repo, "child-z", {"run_id": "run-a", "phase": "working"})
+    REGISTER.upsert_row(repo, "child-z", {"run_id": "run-a", "phase": "working"}, run_id="run-a")
     with pytest.raises(COMPLETION.CompletionError, match="no dispatch receipt"):
-        COMPLETION.read_receipt(repo, "child-z")
+        COMPLETION.read_receipt(repo, "child-z", run_id="run-a")
 
 
 def test_an_artifact_above_the_binding_read_bound_is_refused(tmp_path: Path) -> None:
@@ -1464,10 +1479,10 @@ def test_the_completion_result_is_recorded_for_a_row_that_was_never_evaluated(
 ) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)
-    REGISTER.upsert_row(repo, "child-z", {"run_id": "run-a", "phase": "working"})
-    assert COMPLETION.completion_record(repo, "child-z") is None
-    assert COMPLETION.completion_record(repo, "absent") is None
-    assert COMPLETION.is_working_not_failed(repo, "child-z") is True
+    REGISTER.upsert_row(repo, "child-z", {"run_id": "run-a", "phase": "working"}, run_id="run-a")
+    assert COMPLETION.completion_record(repo, "child-z", run_id="run-a") is None
+    assert COMPLETION.completion_record(repo, "absent", run_id="run-a") is None
+    assert COMPLETION.is_working_not_failed(repo, "child-z", run_id="run-a") is True
 
 
 def test_replacing_the_spec_scope_does_not_mutate_the_original(tmp_path: Path) -> None:
@@ -1543,7 +1558,7 @@ def _path_mode_prepared(repo: Path, row_id: str) -> _Prepared:
     landing = LIFECYCLE.Landing(
         repo.resolve(), "path", "delivered.txt", git.base_commit(repo), repo.resolve()
     )
-    REGISTER.upsert_row(repo, row_id, {"run_id": "run-a", "phase": "working"})
+    REGISTER.upsert_row(repo, row_id, {"run_id": "run-a", "phase": "working"}, run_id="run-a")
     artifacts = COMPLETION.artifact_landing(repo.resolve(), "run-a", row_id)
     relative = artifacts.relative_to(repo.resolve()) / "report.json"
     baseline = _baseline(git, landing)
@@ -1722,7 +1737,7 @@ def test_a_receipt_issued_for_another_child_cannot_verify_this_one(tmp_path: Pat
     assert result.verified is False
     assert result.reason == "receipt_mismatch"
     assert "row_id" in result.detail
-    assert REGISTER.read_rows(repo)["child-a"].get("phase") == "working"
+    assert REGISTER.read_rows(repo, run_id="run-a")["child-a"].get("phase") == "working"
 
 
 def test_a_receipt_from_another_run_cannot_verify_this_child(tmp_path: Path) -> None:
@@ -1744,7 +1759,7 @@ def test_a_receipt_from_another_run_cannot_verify_this_child(tmp_path: Path) -> 
 
 
 def _stored_receipt(repo: Path, row_id: str = "child-a") -> dict[str, Any]:
-    return dict(REGISTER.read_rows(repo)[row_id]["dispatch_receipt"])
+    return dict(REGISTER.read_rows(repo, run_id="run-a")[row_id]["dispatch_receipt"])
 
 
 def test_a_restarted_orchestrator_evaluates_through_the_durable_receipt(
@@ -1760,7 +1775,7 @@ def test_a_restarted_orchestrator_evaluates_through_the_durable_receipt(
     prepared = _prepare(repo)
     prepared.run_child_process()
 
-    reloaded = COMPLETION.read_receipt(repo, "child-a")
+    reloaded = COMPLETION.read_receipt(repo, "child-a", run_id="run-a")
     assert reloaded == prepared.receipt
     result = COMPLETION.evaluate_completion(
         prepared.spec, prepared.landing, prepared.baseline, reloaded, git=prepared.git
@@ -1775,13 +1790,13 @@ def test_a_planted_binding_token_in_the_register_does_not_authenticate(tmp_path:
     prepared = _prepare(repo)
     stored = _stored_receipt(repo)
     stored["binding_token"] = "ORCHESTRATE-ARTIFACT-BINDING:run-previous:child-a:old"
-    REGISTER.upsert_row(repo, "child-a", {"dispatch_receipt": stored})
+    REGISTER.upsert_row(repo, "child-a", {"dispatch_receipt": stored}, run_id="run-a")
     prepared.receipt.inflight_path.write_text(
         json.dumps({"binding": stored["binding_token"], "conclusion": "done"}), encoding="utf-8"
     )
 
     with pytest.raises(COMPLETION.ReceiptAuthenticationError, match="did not authenticate"):
-        COMPLETION.read_receipt(repo, "child-a")
+        COMPLETION.read_receipt(repo, "child-a", run_id="run-a")
 
 
 def test_a_replaced_predicate_in_the_register_does_not_authenticate(tmp_path: Path) -> None:
@@ -1798,11 +1813,11 @@ def test_a_replaced_predicate_in_the_register_does_not_authenticate(tmp_path: Pa
     stored["predicate_digest"] = COMPLETION.closure_digest(
         Path(prepared.landing.cwd), spec, closure
     )
-    REGISTER.upsert_row(repo, "child-a", {"dispatch_receipt": stored})
+    REGISTER.upsert_row(repo, "child-a", {"dispatch_receipt": stored}, run_id="run-a")
     prepared.run_child_process()
 
     with pytest.raises(COMPLETION.ReceiptAuthenticationError, match="did not authenticate"):
-        COMPLETION.read_receipt(repo, "child-a")
+        COMPLETION.read_receipt(repo, "child-a", run_id="run-a")
 
 
 def test_a_receipt_with_an_added_field_does_not_authenticate(tmp_path: Path) -> None:
@@ -1812,10 +1827,10 @@ def test_a_receipt_with_an_added_field_does_not_authenticate(tmp_path: Path) -> 
     _prepare(repo)
     stored = _stored_receipt(repo)
     stored["smuggled"] = "ignored on the way back into the dataclass"
-    REGISTER.upsert_row(repo, "child-a", {"dispatch_receipt": stored})
+    REGISTER.upsert_row(repo, "child-a", {"dispatch_receipt": stored}, run_id="run-a")
 
     with pytest.raises(COMPLETION.ReceiptAuthenticationError):
-        COMPLETION.read_receipt(repo, "child-a")
+        COMPLETION.read_receipt(repo, "child-a", run_id="run-a")
 
 
 def test_a_receipt_stripped_of_its_authentication_is_refused(tmp_path: Path) -> None:
@@ -1824,10 +1839,10 @@ def test_a_receipt_stripped_of_its_authentication_is_refused(tmp_path: Path) -> 
     _prepare(repo)
     stored = _stored_receipt(repo)
     stored.pop(COMPLETION.AUTHENTICATION_KEY)
-    REGISTER.upsert_row(repo, "child-a", {"dispatch_receipt": stored})
+    REGISTER.upsert_row(repo, "child-a", {"dispatch_receipt": stored}, run_id="run-a")
 
     with pytest.raises(COMPLETION.ReceiptAuthenticationError, match="no authentication"):
-        COMPLETION.read_receipt(repo, "child-a")
+        COMPLETION.read_receipt(repo, "child-a", run_id="run-a")
 
 
 def test_a_receipt_naming_a_run_this_host_never_issued_is_refused(tmp_path: Path) -> None:
@@ -1837,10 +1852,10 @@ def test_a_receipt_naming_a_run_this_host_never_issued_is_refused(tmp_path: Path
     _prepare(repo)
     stored = _stored_receipt(repo)
     stored["run_id"] = "run-invented"
-    REGISTER.upsert_row(repo, "child-a", {"dispatch_receipt": stored})
+    REGISTER.upsert_row(repo, "child-a", {"dispatch_receipt": stored}, run_id="run-a")
 
     with pytest.raises(COMPLETION.RunSecretError, match="no orchestrator secret"):
-        COMPLETION.read_receipt(repo, "child-a")
+        COMPLETION.read_receipt(repo, "child-a", run_id="run-a")
 
 
 def test_a_forged_settlement_record_cannot_replay_a_direct_write(tmp_path: Path) -> None:
@@ -1870,6 +1885,7 @@ def test_a_forged_settlement_record_cannot_replay_a_direct_write(tmp_path: Path)
                 COMPLETION.AUTHENTICATION_KEY: "hmac-sha256:" + "0" * 64,
             }
         },
+        run_id="run-a",
     )
 
     result = prepared.evaluate()
@@ -1922,7 +1938,7 @@ def test_catch_up_does_not_ask_for_attention_before_the_child_has_settled(
     repo = tmp_path / "repo"
     _init_repo(repo)
     prepared = _prepare(repo)
-    REGISTER.upsert_row(repo, "child-a", {"pane_id": "pane-a"})
+    REGISTER.upsert_row(repo, "child-a", {"pane_id": "pane-a"}, run_id="run-a")
 
     records = SUBSCRIBER.catch_up(
         repo,
@@ -1953,7 +1969,7 @@ def test_catch_up_finds_a_mutating_childs_artifact_in_its_worktree(tmp_path: Pat
     _git(worktree, "commit", "-q", "-m", "child work")
     prepared.run_child_process()
     assert prepared.evaluate().verified is True
-    REGISTER.upsert_row(repo, "child-m", {"pane_id": "pane-m"})
+    REGISTER.upsert_row(repo, "child-m", {"pane_id": "pane-m"}, run_id="run-a")
 
     records = SUBSCRIBER.catch_up(
         repo,
@@ -1978,7 +1994,7 @@ def test_re_evaluating_an_unchanged_verified_child_reaches_the_same_verdict(
     assert prepared.evaluate().verified is True
     second = prepared.evaluate()
     assert second.verified is True, second.detail
-    assert REGISTER.read_rows(repo)["child-a"]["phase"] == "verified"
+    assert REGISTER.read_rows(repo, run_id="run-a")["child-a"]["phase"] == "verified"
 
 
 def test_re_evaluating_a_mutating_child_replays_the_settlement_from_its_repository(
@@ -2007,11 +2023,11 @@ def test_re_evaluating_a_mutating_child_replays_the_settlement_from_its_reposito
     prepared.run_child_process()
 
     assert prepared.evaluate().verified is True
-    assert "settlement" in REGISTER.read_rows(repo)["child-m"]
+    assert "settlement" in REGISTER.read_rows(repo, run_id="run-a")["child-m"]
 
     second = prepared.evaluate()
     assert second.verified is True, second.detail
-    assert REGISTER.read_rows(repo)["child-m"]["phase"] == "verified"
+    assert REGISTER.read_rows(repo, run_id="run-a")["child-m"]["phase"] == "verified"
 
 
 def test_a_failing_re_evaluation_removes_the_verified_phase(tmp_path: Path) -> None:
@@ -2020,18 +2036,18 @@ def test_a_failing_re_evaluation_removes_the_verified_phase(tmp_path: Path) -> N
     _init_repo(repo)
     prepared = _prepare(repo)
     prepared.run_child_process()
-    REGISTER.upsert_row(repo, "child-a", {"tab_id": "tab-a"})
+    REGISTER.upsert_row(repo, "child-a", {"tab_id": "tab-a"}, run_id="run-a")
     assert prepared.evaluate().verified is True
-    assert REGISTER.read_rows(repo)["child-a"]["phase"] == "verified"
+    assert REGISTER.read_rows(repo, run_id="run-a")["child-a"]["phase"] == "verified"
 
     prepared.receipt.artifact_path.write_text("tampered after the pass\n", encoding="utf-8")
     second = prepared.evaluate()
     assert second.verified is False
-    row = REGISTER.read_rows(repo)["child-a"]
+    row = REGISTER.read_rows(repo, run_id="run-a")["child-a"]
     assert row["completion"]["result"] == "failed"
     assert row["phase"] == "working"
     with pytest.raises(LIFECYCLE.SessionLifecycleError, match="must be verified before reap"):
-        LIFECYCLE.reap_verified(repo, "child-a", herdr=FakeHerdr())
+        LIFECYCLE.reap_verified(repo, "child-a", herdr=FakeHerdr(), run_id="run-a")
 
 
 def test_a_reaped_row_is_not_demoted_by_a_later_evaluation(tmp_path: Path) -> None:
@@ -2040,13 +2056,13 @@ def test_a_reaped_row_is_not_demoted_by_a_later_evaluation(tmp_path: Path) -> No
     _init_repo(repo)
     prepared = _prepare(repo)
     prepared.run_child_process()
-    REGISTER.upsert_row(repo, "child-a", {"tab_id": "tab-a"})
+    REGISTER.upsert_row(repo, "child-a", {"tab_id": "tab-a"}, run_id="run-a")
     assert prepared.evaluate().verified is True
-    LIFECYCLE.reap_verified(repo, "child-a", herdr=FakeHerdr())
+    LIFECYCLE.reap_verified(repo, "child-a", herdr=FakeHerdr(), run_id="run-a")
 
     prepared.receipt.artifact_path.write_text("tampered after the reap\n", encoding="utf-8")
     assert prepared.evaluate().verified is False
-    assert REGISTER.read_rows(repo)["child-a"]["phase"] == "reaped"
+    assert REGISTER.read_rows(repo, run_id="run-a")["child-a"]["phase"] == "reaped"
 
 
 # ------------------------------------------------------- what Python executes on an import
@@ -2133,7 +2149,7 @@ def test_a_predicate_that_rewrites_the_settled_artifact_fails_as_a_side_effect(
     spec = _spec()
     git = LIFECYCLE.GitLanding()
     landing = git.provision(repo, spec)
-    REGISTER.upsert_row(repo, "child-a", {"run_id": "run-a", "phase": "working"})
+    REGISTER.upsert_row(repo, "child-a", {"run_id": "run-a", "phase": "working"}, run_id="run-a")
     artifacts = COMPLETION.artifact_landing(Path(landing.cwd), "run-a", "child-a")
     relative = (artifacts.relative_to(Path(landing.cwd).resolve()) / "report.json").as_posix()
     predicate = COMPLETION.PredicateSpec(argv=(sys.executable, "checks/rewriter.py", relative))
@@ -2223,12 +2239,8 @@ def test_the_default_environment_command_installs_what_a_predicate_needs(tmp_pat
     assert ["uv", "sync", "--locked", "--extra", "dev"] in invoked
 
 
-def test_the_unfiltered_failed_rows_view_spans_every_run(tmp_path: Path) -> None:
-    """``run_id=None`` is the default, and it was the one shape no test constructed.
-
-    The operator's "what stalled" view is most useful unfiltered -- several runs can hold live
-    rows in one register at once -- so the default is the call most real callers make.
-    """
+def test_failed_rows_is_per_run_and_the_stamped_view_keeps_both(tmp_path: Path) -> None:
+    """A decision view is per run. The operator merge is keyed by (run, row)."""
     repo = tmp_path / "repo"
     _init_repo(repo)
     first = _prepare(repo, row_id="child-a")
@@ -2238,8 +2250,11 @@ def test_the_unfiltered_failed_rows_view_spans_every_run(tmp_path: Path) -> None
     second.write_deliverable({"binding": second.receipt.binding_token})
     second.evaluate()
 
-    assert sorted(COMPLETION.failed_rows(repo)) == ["child-a", "child-b"]
+    assert sorted(COMPLETION.failed_rows(repo, run_id="run-a")) == ["child-a"]
     assert sorted(COMPLETION.failed_rows(repo, run_id="run-b")) == ["child-b"]
+    stamped = REGISTER.rows_stamped_against(repo)
+    assert ("run-a", "child-a") in stamped
+    assert ("run-b", "child-b") in stamped
 
 
 # ---- the receipt binds every input the evaluator branches on ------------------------------
@@ -2311,7 +2326,7 @@ def test_every_deciding_input_is_bound_to_the_receipt(tmp_path: Path, label: str
     assert result.verified is False
     assert result.reason == "receipt_mismatch"
     assert label in result.detail
-    assert REGISTER.read_rows(repo)["child-a"]["phase"] == "working"
+    assert REGISTER.read_rows(repo, run_id="run-a")["child-a"]["phase"] == "working"
 
 
 def test_a_widened_scope_cannot_excuse_a_write_the_dispatch_forbade(tmp_path: Path) -> None:
@@ -2383,7 +2398,7 @@ def test_the_receipt_round_trip_preserves_every_deciding_input(tmp_path: Path) -
     repo = tmp_path / "repo"
     _init_repo(repo)
     prepared = _prepare(repo, work_shape="judgment", scope=("reports/a",))
-    reloaded = COMPLETION.read_receipt(repo, "child-a")
+    reloaded = COMPLETION.read_receipt(repo, "child-a", run_id="run-a")
     assert reloaded == prepared.receipt
     assert reloaded.root == str(repo.resolve())
     assert reloaded.work_shape == "judgment"
@@ -2421,7 +2436,7 @@ def _descendant_prepared(repo: Path, delay: str) -> _Prepared:
     spec = _spec()
     git = LIFECYCLE.GitLanding()
     landing = git.provision(repo, spec)
-    REGISTER.upsert_row(repo, "child-a", {"run_id": "run-a", "phase": "working"})
+    REGISTER.upsert_row(repo, "child-a", {"run_id": "run-a", "phase": "working"}, run_id="run-a")
     artifacts = COMPLETION.artifact_landing(Path(landing.cwd), "run-a", "child-a")
     relative = (artifacts.relative_to(Path(landing.cwd).resolve()) / "report.json").as_posix()
     predicate = COMPLETION.PredicateSpec(
@@ -2547,18 +2562,18 @@ def test_a_passing_re_evaluation_does_not_resurrect_a_reaped_row(tmp_path: Path)
     _init_repo(repo)
     prepared = _prepare(repo)
     prepared.run_child_process()
-    REGISTER.upsert_row(repo, "child-a", {"tab_id": "tab-a"})
+    REGISTER.upsert_row(repo, "child-a", {"tab_id": "tab-a"}, run_id="run-a")
     assert prepared.evaluate().verified is True
-    LIFECYCLE.reap_verified(repo, "child-a", herdr=FakeHerdr())
-    assert REGISTER.read_rows(repo)["child-a"]["phase"] == "reaped"
+    LIFECYCLE.reap_verified(repo, "child-a", herdr=FakeHerdr(), run_id="run-a")
+    assert REGISTER.read_rows(repo, run_id="run-a")["child-a"]["phase"] == "reaped"
 
     second = prepared.evaluate()
     assert second.verified is True, second.detail
-    row = REGISTER.read_rows(repo)["child-a"]
+    row = REGISTER.read_rows(repo, run_id="run-a")["child-a"]
     assert row["phase"] == "reaped"
     assert row["completion"]["result"] == "verified"
     # The vanish check must not see a live verified child whose tab is closed.
-    LIFECYCLE.assert_child_not_vanished(repo, "child-a", herdr=FakeHerdr())
+    LIFECYCLE.assert_child_not_vanished(repo, "child-a", herdr=FakeHerdr(), run_id="run-a")
 
 
 @pytest.mark.parametrize("passing", [True, False])
@@ -2570,15 +2585,15 @@ def test_a_reaped_row_keeps_its_phase_whichever_way_the_verdict_goes(
     _init_repo(repo)
     prepared = _prepare(repo)
     prepared.run_child_process()
-    REGISTER.upsert_row(repo, "child-a", {"tab_id": "tab-a"})
+    REGISTER.upsert_row(repo, "child-a", {"tab_id": "tab-a"}, run_id="run-a")
     assert prepared.evaluate().verified is True
-    LIFECYCLE.reap_verified(repo, "child-a", herdr=FakeHerdr())
+    LIFECYCLE.reap_verified(repo, "child-a", herdr=FakeHerdr(), run_id="run-a")
     if not passing:
         prepared.receipt.artifact_path.write_text("tampered after the reap\n", encoding="utf-8")
 
     result = prepared.evaluate()
     assert result.verified is passing
-    assert REGISTER.read_rows(repo)["child-a"]["phase"] == "reaped"
+    assert REGISTER.read_rows(repo, run_id="run-a")["child-a"]["phase"] == "reaped"
 
 
 # ---- the verifier must be a dispatch this orchestrator issued -----------------------------
@@ -2604,7 +2619,7 @@ def test_a_planted_verifier_row_does_not_satisfy_the_verifier_check(tmp_path: Pa
     assert result.verified is False
     assert result.reason == "depth_sample_invalid"
     assert "carries no dispatch this orchestrator issued" in result.detail
-    assert REGISTER.read_rows(repo)["child-a"].get("phase") == "working"
+    assert REGISTER.read_rows(repo, run_id="run-a")["child-a"].get("phase") == "working"
 
 
 def test_a_verifier_whose_receipt_was_tampered_with_is_not_a_session(tmp_path: Path) -> None:
@@ -2614,9 +2629,9 @@ def test_a_verifier_whose_receipt_was_tampered_with_is_not_a_session(tmp_path: P
     prepared = _prepare(repo, work_shape="judgment")
     prepared.run_child_process()
     sample = _sample(prepared)
-    stored = dict(REGISTER.read_rows(repo)["verifier-1"]["dispatch_receipt"])
+    stored = dict(REGISTER.read_rows(repo, run_id="run-a")["verifier-1"]["dispatch_receipt"])
     stored["runtime"] = "an-invented-vendor"
-    REGISTER.upsert_row(repo, "verifier-1", {"dispatch_receipt": stored})
+    REGISTER.upsert_row(repo, "verifier-1", {"dispatch_receipt": stored}, run_id="run-a")
 
     result = prepared.evaluate(depth_sample=sample)
     assert result.verified is False
@@ -2699,7 +2714,7 @@ def _second_repository(tmp_path: Path, prepared: _Prepared, **columns: Any) -> P
     """A second repository whose own bookkeeping happens to use the same row id."""
     other = tmp_path / "repo-b"
     _init_repo(other)
-    REGISTER.upsert_row(other, prepared.spec.row_id, {"run_id": "run-b", **columns})
+    REGISTER.upsert_row(other, prepared.spec.row_id, {"run_id": "run-b", **columns}, run_id="run-b")
     return other
 
 
@@ -2747,15 +2762,18 @@ def test_a_receipt_records_the_repository_of_the_landing_it_was_issued_against(
     assert prepared.receipt.root == str(Path(prepared.landing.ambient_root).resolve())
 
     # The sealed receipt went into its own repository's register; the other one has no dispatch.
-    assert COMPLETION.read_receipt(repo, prepared.spec.row_id).nonce == prepared.receipt.nonce
-    assert "dispatch_receipt" not in REGISTER.read_rows(other)[prepared.spec.row_id]
+    assert (
+        COMPLETION.read_receipt(repo, prepared.spec.row_id, run_id="run-a").nonce
+        == prepared.receipt.nonce
+    )
+    assert "dispatch_receipt" not in REGISTER.read_rows(other, run_id="run-b")[prepared.spec.row_id]
 
     prepared.run_child_process()
     result = prepared.evaluate()
     assert result.verified is True, result.detail
-    assert REGISTER.read_rows(repo)[prepared.spec.row_id]["phase"] == "verified"
+    assert REGISTER.read_rows(repo, run_id="run-a")[prepared.spec.row_id]["phase"] == "verified"
 
-    foreign = REGISTER.read_rows(other)[prepared.spec.row_id]
+    foreign = REGISTER.read_rows(other, run_id="run-b")[prepared.spec.row_id]
     assert foreign["phase"] == "working"
     assert "completion" not in foreign
     assert "settlement" not in foreign
@@ -2835,6 +2853,7 @@ def test_a_landing_cannot_name_a_repository_it_does_not_belong_to(tmp_path: Path
         repo_b,
         spec.row_id,
         {"run_id": spec.run_id, "phase": "working", "expected_state": "working"},
+        run_id="run-a",
     )
     artifacts = COMPLETION.artifact_landing(Path(poisoned.cwd), spec.run_id, spec.row_id)
     relative = artifacts.relative_to(Path(poisoned.cwd).resolve()) / "report.json"
@@ -2855,8 +2874,7 @@ def test_a_landing_cannot_name_a_repository_it_does_not_belong_to(tmp_path: Path
     with pytest.raises(COMPLETION.ReceiptRootError, match="does not belong to the repository"):
         COMPLETION.landing_root(poisoned, git=git)
 
-    assert spec.row_id not in REGISTER.read_rows(repo_a)
-    row_b = REGISTER.read_rows(repo_b)[spec.row_id]
+    row_b = REGISTER.read_rows(repo_b, run_id=spec.run_id)[spec.row_id]
     assert row_b["phase"] == "working"
     assert "dispatch_receipt" not in row_b
     assert "completion" not in row_b
@@ -2886,6 +2904,7 @@ def test_evaluating_with_another_repositorys_receipt_raises_and_writes_neither_r
         repo_a,
         spec.row_id,
         {"run_id": spec.run_id, "phase": "working", "expected_state": "working"},
+        run_id="run-a",
     )
     artifacts_a = COMPLETION.artifact_landing(Path(landing_a.cwd), spec.run_id, spec.row_id)
     rel_a = artifacts_a.relative_to(Path(landing_a.cwd).resolve()) / "report.json"
@@ -2945,7 +2964,10 @@ def test_a_nested_repository_is_not_the_checkout_that_contains_it(tmp_path: Path
     honest = git.provision(nested, spec)
     poisoned = replace(honest, ambient_root=outer.resolve())
     REGISTER.upsert_row(
-        outer, spec.row_id, {"run_id": spec.run_id, "phase": "working", "expected_state": "working"}
+        outer,
+        spec.row_id,
+        {"run_id": spec.run_id, "phase": "working", "expected_state": "working"},
+        run_id="run-a",
     )
     artifacts = COMPLETION.artifact_landing(Path(poisoned.cwd), spec.run_id, spec.row_id)
     relative = artifacts.relative_to(Path(poisoned.cwd).resolve()) / "report.json"
@@ -2962,11 +2984,10 @@ def test_a_nested_repository_is_not_the_checkout_that_contains_it(tmp_path: Path
     with pytest.raises(COMPLETION.ReceiptRootError, match="does not belong to the repository"):
         COMPLETION.landing_root(poisoned, git=git)
 
-    row_outer = REGISTER.read_rows(outer)[spec.row_id]
+    row_outer = REGISTER.read_rows(outer, run_id="run-a")[spec.row_id]
     assert row_outer["phase"] == "working"
     assert "dispatch_receipt" not in row_outer
     assert "completion" not in row_outer
-    assert spec.row_id not in REGISTER.read_rows(nested)
     assert not (artifacts / "report.json").exists()
 
 
@@ -2986,7 +3007,10 @@ def test_evaluating_a_nested_repository_with_the_containing_checkouts_receipt_wr
 
     landing_outer = git.provision(outer, spec)
     REGISTER.upsert_row(
-        outer, spec.row_id, {"run_id": spec.run_id, "phase": "working", "expected_state": "working"}
+        outer,
+        spec.row_id,
+        {"run_id": spec.run_id, "phase": "working", "expected_state": "working"},
+        run_id="run-a",
     )
     artifacts_outer = COMPLETION.artifact_landing(Path(landing_outer.cwd), spec.run_id, spec.row_id)
     rel_outer = artifacts_outer.relative_to(Path(landing_outer.cwd).resolve()) / "report.json"
@@ -3064,7 +3088,10 @@ def _linked_worktree(repo: Path, name: str) -> Path:
 def _issue_honest(repo: Path, spec: Any, git: Any) -> tuple[Any, Any, Any]:
     landing = git.provision(repo, spec)
     REGISTER.upsert_row(
-        repo, spec.row_id, {"run_id": spec.run_id, "phase": "working", "expected_state": "working"}
+        repo,
+        spec.row_id,
+        {"run_id": spec.run_id, "phase": "working", "expected_state": "working"},
+        run_id=spec.run_id,
     )
     artifacts = COMPLETION.artifact_landing(Path(landing.cwd), spec.run_id, spec.row_id)
     relative = artifacts.relative_to(Path(landing.cwd).resolve()) / "report.json"
@@ -3110,7 +3137,10 @@ def test_a_store_that_is_not_the_run_register_is_refused_at_issue(
         store = repo / "src"
     poisoned = replace(honest, ambient_root=store.resolve())
     REGISTER.upsert_row(
-        store, spec.row_id, {"run_id": spec.run_id, "phase": "working", "expected_state": "working"}
+        store,
+        spec.row_id,
+        {"run_id": spec.run_id, "phase": "working", "expected_state": "working"},
+        run_id="run-a",
     )
     artifacts = COMPLETION.artifact_landing(Path(poisoned.cwd), spec.run_id, spec.row_id)
     relative = artifacts.relative_to(Path(poisoned.cwd).resolve()) / "report.json"
@@ -3124,10 +3154,9 @@ def test_a_store_that_is_not_the_run_register_is_refused_at_issue(
             git=git,
             changed_paths_baseline=_baseline(git, poisoned),
         )
-    row = REGISTER.read_rows(store).get(spec.row_id, {})
+    row = REGISTER.read_rows(store, run_id="run-a").get(spec.row_id, {})
     assert "dispatch_receipt" not in row
     assert "completion" not in row
-    assert spec.row_id not in REGISTER.read_rows(repo)
 
 
 @pytest.mark.parametrize(
@@ -3155,8 +3184,8 @@ def test_a_store_that_is_not_the_run_register_is_refused_at_evaluation(
 
     with pytest.raises(COMPLETION.ReceiptRootError):
         COMPLETION.evaluate_completion(spec, landing_work, baseline_work, receipt, git=git)
-    assert "completion" not in REGISTER.read_rows(store).get(spec.row_id, {})
-    work_row = REGISTER.read_rows(repo).get(spec.row_id, {})
+    assert "completion" not in REGISTER.read_rows(store, run_id="run-a").get(spec.row_id, {})
+    work_row = REGISTER.read_rows(repo, run_id="run-a").get(spec.row_id, {})
     assert "completion" not in work_row
 
 
@@ -3173,7 +3202,10 @@ def test_a_recorded_run_root_that_disagrees_with_the_claimed_store_is_refused(
     COMPLETION.record_run_root(repo, spec.run_id)
     landing = git.provision(other, spec)
     REGISTER.upsert_row(
-        other, spec.row_id, {"run_id": spec.run_id, "phase": "working", "expected_state": "working"}
+        other,
+        spec.row_id,
+        {"run_id": spec.run_id, "phase": "working", "expected_state": "working"},
+        run_id="run-a",
     )
     artifacts = COMPLETION.artifact_landing(Path(landing.cwd), spec.run_id, spec.row_id)
     relative = artifacts.relative_to(Path(landing.cwd).resolve()) / "report.json"
@@ -3186,7 +3218,7 @@ def test_a_recorded_run_root_that_disagrees_with_the_claimed_store_is_refused(
             git=git,
             changed_paths_baseline=_baseline(git, landing),
         )
-    assert "dispatch_receipt" not in REGISTER.read_rows(other)[spec.row_id]
+    assert "dispatch_receipt" not in REGISTER.read_rows(other, run_id="run-a")[spec.row_id]
 
 
 def test_a_run_with_no_recorded_root_does_not_mint_one_from_the_landing(tmp_path: Path) -> None:
@@ -3203,7 +3235,10 @@ def test_a_run_with_no_recorded_root_does_not_mint_one_from_the_landing(tmp_path
     landing = git.provision(repo, spec)
     assert COMPLETION.read_run_root(spec.run_id) is None
     REGISTER.upsert_row(
-        repo, spec.row_id, {"run_id": spec.run_id, "phase": "working", "expected_state": "working"}
+        repo,
+        spec.row_id,
+        {"run_id": spec.run_id, "phase": "working", "expected_state": "working"},
+        run_id=spec.run_id,
     )
     artifacts = COMPLETION.artifact_landing(Path(landing.cwd), spec.run_id, spec.row_id)
     relative = artifacts.relative_to(Path(landing.cwd).resolve()) / "report.json"
@@ -3229,6 +3264,24 @@ def test_a_read_only_child_still_verifies_against_the_recorded_root(tmp_path: Pa
     prepared.run_child_process()
     result = prepared.evaluate()
     assert result.verified is True, result.detail
+
+
+def test_retiring_a_run_forgets_its_secret_so_a_reuse_is_a_new_identity(
+    tmp_path: Path,
+) -> None:
+    """Archived material from a retired run must not verify under a reused id."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo)
+    sealed = REGISTER.read_rows(repo, run_id=prepared.spec.run_id)[prepared.spec.row_id][
+        "dispatch_receipt"
+    ]
+    old_key = COMPLETION.run_secret(repo, prepared.spec.run_id, create=False)
+    REGISTER.retire_run(repo, prepared.spec.run_id)
+    new_key = COMPLETION.run_secret(repo, prepared.spec.run_id, create=True)
+    assert new_key != old_key
+    with pytest.raises(COMPLETION.ReceiptAuthenticationError):
+        COMPLETION._unseal(sealed, new_key, label="dispatch receipt")
 
 
 def test_a_child_cannot_address_the_live_register_from_its_landing(tmp_path: Path) -> None:
@@ -3352,7 +3405,7 @@ def test_a_verifier_dispatched_in_another_repository_does_not_satisfy_the_depth_
 
     # Repository A dispatches a real verifier and holds an authentic sealed receipt for it.
     _verifier_row(repo, "verifier-1", dispatched=True, phase="working", record_root=False)
-    foreign = REGISTER.read_rows(repo)["verifier-1"]["dispatch_receipt"]
+    foreign = REGISTER.read_rows(repo, run_id="run-a")["verifier-1"]["dispatch_receipt"]
 
     # Repository B runs the same run and has no verifier of its own, so it borrows A's.
     prepared = _prepare(other, work_shape="judgment")
@@ -3367,6 +3420,7 @@ def test_a_verifier_dispatched_in_another_repository_does_not_satisfy_the_depth_
             "phase": "working",
             "dispatch_receipt": foreign,
         },
+        run_id="run-a",
     )
 
     result = prepared.evaluate(
@@ -3412,12 +3466,15 @@ def test_moving_the_unsealed_verifier_phase_presents_a_verifier_that_never_ran(
     assert refused.reason == "depth_sample_invalid"
     assert "is not one of the phases past launch" in refused.detail
 
-    REGISTER.upsert_row(repo, "verifier-1", {"phase": "working"})
+    REGISTER.upsert_row(repo, "verifier-1", {"phase": "working"}, run_id="run-a")
     accepted = prepared.evaluate(
         depth_sample=_sample(prepared, register=False, verifier_row_id="verifier-1")
     )
     assert accepted.verified is True, accepted.detail
-    assert REGISTER.read_rows(repo)["child-a"]["completion"]["depth_sample"] is not None
+    assert (
+        REGISTER.read_rows(repo, run_id="run-a")["child-a"]["completion"]["depth_sample"]
+        is not None
+    )
 
 
 #: Sentences that would be false about the verifier check, in any file that mentions it.
@@ -3479,7 +3536,7 @@ def test_no_surface_claims_the_verifier_check_proves_the_verifier_ran() -> None:
         )
         assert established in text, relative
     contract = _flowed("plugins/orchestrate/references/predicates.md")
-    assert "the same defect against two different columns of the same untrusted store" in contract
+    assert "the same defect against two different columns" in contract
 
 
 def test_no_surface_claims_path_ancestry_closed_repository_membership() -> None:

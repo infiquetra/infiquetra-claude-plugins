@@ -145,13 +145,15 @@ cannot reliably attribute ignored control-plane writes to one child. Protecting 
 as runtime state requires a separate filesystem boundary. This exclusion is explicit rather than a
 claim that Git observes every filesystem write.
 
-That exclusion is why the register is **not treated as a trusted store**. `.orchestrate/` is
-Git-ignored, the register lives inside every child's landing, and every child can write files there,
-so a child that rewrites its own dispatch receipt is observed by nothing. The durable dispatch
-receipt and settlement record therefore each carry a keyed digest under a per-run orchestrator secret
-held outside the repository; a record that does not authenticate establishes nothing. This does not
-replace the missing filesystem boundary — a child can still destroy those records, after which
-nothing verifies, which is the correct failure rather than a false pass.
+That exclusion is why a planted repo-local register file is invisible to the boundary check.
+The *live* register sits outside every landing, addressed by `run_id`. A sandboxed child
+cannot write it by working in its landing. Claude and Muse expose no workspace-write flag,
+and mode `0600` on the run key excludes other operating-system accounts, not a child
+running as this account. For those runtimes this module does not defend against a child
+that reads the key and seals payloads that verify. A record the orchestrator did not write
+still authenticates against nothing. A child that can reach the host path can still
+destroy those records, after which nothing verifies, which is the correct failure rather
+than a false pass.
 
 ## Reaping and disappearance
 

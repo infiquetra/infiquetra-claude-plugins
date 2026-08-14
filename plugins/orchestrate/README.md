@@ -18,8 +18,9 @@ The live register is the whole state model for a run: one row per dispatched chi
 mirror, one for the subscriber. It is one JSON document per `run_id`, held outside every
 working tree (default `~/.orchestrate/registers/<run_id>.json`). A `run_id` is host-global, so
 two runtimes on one host that name the same id share one live document. `retire_run` archives
-into the repository and deletes the live file, which frees the id. See
-`scripts/register.py`'s module docstring for the full column reference.
+into the repository, deletes the live file, and forgets the per-run secret, so a reused id
+is a new authentication identity. See `scripts/register.py`'s module docstring for the full
+column reference.
 
 ## Event subscriber
 
@@ -67,9 +68,12 @@ predicate dependency closure and content digest — then settles the artifact by
 in-flight file itself, runs the bounded predicate, checks the boundary, verifies the destination
 changed, and for judgment work requires a claimed independent verifier's depth sample.
 
-Because the register is Git-ignored and therefore writable by any child without the boundary check
-seeing it, the durable dispatch receipt and settlement record each carry a keyed digest under a
-per-run secret held outside the repository. Evaluation is safe to re-run for one dispatch, and a
+The live register sits outside every landing, addressed by `run_id`. A sandboxed child cannot
+write it by working in its landing. Claude and Muse expose no workspace-write flag. Mode
+`0600` on the run key excludes other operating-system accounts, not a child running as this
+account, so for those runtimes this module does not defend against a child that reads the
+key. The durable records still carry a keyed digest so a record the orchestrator did not
+write authenticates against nothing. Evaluation is safe to re-run for one dispatch, and a
 row's phase is `verified` if and only if its latest verdict is a pass.
 
 `references/predicates.md` states what each control establishes and — control by control, with the

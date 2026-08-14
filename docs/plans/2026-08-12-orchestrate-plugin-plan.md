@@ -72,8 +72,9 @@ brainstorm IDs are given in parentheses.
   orchestrator-owned host-local directory (default `~/.orchestrate/registers/<run_id>.json`,
   the same class of location as the run secret). Written atomically. No graph, no leases, no
   fencing. A `run_id` is host-global on this machine. `retire_run` archives the document into
-  the repository at `.orchestrate/runs/<run_id>/register-final.json` and deletes the live
-  file, which frees the id. *(Amended 2026-08-14: the live file is no longer repo-local.
+  the repository at `.orchestrate/runs/<run_id>/register-final.json`, deletes the live
+  file, and forgets the per-run secret, so a reused id is a new authentication identity.
+  *(Amended 2026-08-14: the live file is no longer repo-local.
   Repo-locality of the live register put orchestrator-private state inside every child's
   landing. Provenance is the retirement archive. Interoperability on one host (R12) is
   unchanged.)* (§5, C1, C5)
@@ -296,10 +297,12 @@ defaulting; an unknown runtime raises; `fallbacks` are returned in declared orde
 ### U2. Plugin scaffold and the register
 
 **What.** Create `plugins/orchestrate/` by copying the shape of a current skills plugin
-(`house-style` or `saga`). Define the register: a flat JSON document, one row per child plus one for
-the mirror and one for the subscriber. Implement atomic read/write (temp file plus rename) at
-**`.orchestrate/register.json`**, with per-run material under `.orchestrate/runs/<run-id>/`. Add
-`.orchestrate/` to this repository's `.gitignore`.
+(`house-style` or `saga`). Define the register: a flat JSON document **per run**, one row per
+child plus one for the mirror and one for the subscriber. Implement atomic read/write (temp
+file plus rename) at **`~/.orchestrate/registers/<run_id>.json`** (relocatable by
+`ORCHESTRATE_REGISTER_DIR`). The retirement archive is
+`.orchestrate/runs/<run-id>/register-final.json` **in the repository**. Add `.orchestrate/` to
+this repository's `.gitignore`. Every decision and mutation API requires `run_id`.
 
 **Register columns.** Identity: `id`, `run_id`, `agent`, `vendor`, `model`, `effort`.
 Substrate: `herdr_session`, `workspace_id`, `tab_id`, `pane_id`, `cwd`. Work: `task`,
@@ -319,9 +322,11 @@ reaping, U7's hang detection, U6's spend gate, and U10's handoff all unimplement
 
 **Watch for.** Do **not** use `tools/create-plugin.sh`: it emits `src/main.py`, `tests/test_main.py`,
 `docs/`, and a manifest keyed `"id"` with `"main": "src/main.py"` — the CLI-plugin layout — while
-`scripts/sync_marketplace.py:51` indexes `plugin_json["name"]` and would raise. Whether the register
-is per-run or global: it is **global**, keyed by `run_id`, and rows are retired to
-`.orchestrate/runs/<run-id>/register-final.json` when a run completes.
+`scripts/sync_marketplace.py:51` indexes `plugin_json["name"]` and would raise. The live register
+is **one document per run**, addressed by `run_id` in an orchestrator-owned host-local
+directory. Rows are retired to `.orchestrate/runs/<run-id>/register-final.json` in the
+repository when a run completes, and the per-run secret is deleted so the id does not inherit
+the retired run's authentication identity.
 
 **Test scenarios** — `tests/test_orchestrate_register.py`:
 a fresh register initialises with a schema version; a row round-trips every column above; an atomic

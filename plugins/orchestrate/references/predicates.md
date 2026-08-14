@@ -525,15 +525,17 @@ distinguishable from "still working" without a new phase.
    `settlement_record`. Issuing derives the repository from `landing.ambient_root`, which
    `GitLanding.provision` sets to the repository for both landing kinds — the ambient checkout for
    a read-only child, and the checkout a mutating child's worktree was cut from — and refuses a
-   landing that is not the same git repository as that store. `cwd` and `ambient_root` are
-   independently settable; membership is the git common directory at each path, not whether one
-   path is a descendant of the other. A repository nested inside another repository is a
-   descendant path and a different repository. A working directory that is an ordinary
-   subdirectory of the *same* repository is still accepted.
+   landing that fails git identity or containment, then compares the derived store to the run
+   root recorded at launch — a value whose provenance is not the landing. Issuance never writes
+   that record. `cwd` and `ambient_root` are independently settable. Git identity and containment
+   are two properties: a nested repository shares ancestry and not identity; a sibling worktree
+   shares identity and not ancestry. A working directory that is an ordinary subdirectory of the
+   *same* store is still accepted. A store that is merely an ancestor of a mutating child's
+   worktree is still accepted when no run root has been recorded.
 
-   Evaluation still has two objects that name a repository. It takes the store from `receipt.root`
-   only after that membership is shown, and raises rather than records when it does not: there is
-   then no register this evaluation may write. The evaluate-time check does not replace the one
+   Evaluation still has two objects that name a store. It takes the store from `receipt.root`
+   only after those checks, and raises rather than records when they fail: there is then no
+   register this evaluation may write. The evaluate-time check does not replace the one
    at issue: `issue_receipt` writes the derived repository's register (sealed receipt, settlement
    cleared) before any evaluation exists. `settlement_record` and `settle_artifact` receive a
    receipt and no second opinion. They do not need one: a `DispatchReceipt` is only unsealed from

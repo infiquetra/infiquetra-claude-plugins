@@ -54,11 +54,11 @@ Ordering
 --------
 Identity first: the specification, landing, baseline and receipt arrive as four independent
 arguments, and a receipt that belongs to a different child is refused before anything else is
-read.  The repository is deliberately not a fifth: issuing derives it from the landing and
-refuses a landing whose working directory is not the same git repository as the store it
-names; evaluation takes the store from the sealed receipt only after that same membership is
-shown, and raises rather than records when it does not -- there is then no register this
-evaluation may write.
+read.  The repository is deliberately not a fifth: issuing derives the store from the landing,
+refuses a landing that fails git identity or containment, and then compares that store to the
+run root recorded at launch -- a value whose provenance is not the landing.  Evaluation takes
+the store from the sealed receipt only after those same checks, and raises rather than records
+when they fail -- there is then no register this evaluation may write.
 
 Then evidence integrity, short-circuiting (tamper, settlement, binding), because an unsettled or
 unbound artifact is not evidence and there is nothing to evaluate.  Then the predicate outcome and
@@ -230,6 +230,10 @@ class DepthSampleError(CompletionError):
 
 class RunSecretError(CompletionError):
     """The per-run orchestrator secret is missing, unreadable, or reachable by a child."""
+
+
+class RunRootError(CompletionError):
+    """The run's recorded register directory is missing, unreadable, or disputed."""
 
 
 class ReceiptAuthenticationError(CompletionError):
@@ -601,6 +605,106 @@ def run_secret(root: Path, run_id: str, *, create: bool = True) -> bytes:
     return material
 
 
+def _run_root_path(run_id: str) -> Path:
+    return run_secret_dir().resolve() / f"{_safe_component(run_id, label='run_id')}.root"
+
+
+def record_run_root(root: Path, run_id: str) -> Path:
+    """Record the register directory this run was launched against.
+
+    Provenance is the orchestrator's own root -- the first argument of
+    :func:`session_lifecycle.launch_child` -- not a value derived from a landing.
+    :func:`issue_receipt` never writes this file.  A later unit that issues before
+    launching must call this first, with the same root it will pass to ``launch_child``.
+
+    The file lives next to the run secret, outside every repository, with the same
+    permission and exclusivity rules.  A second writer of the same path is a retry.
+    A second writer of a different path is a conflict, not a race.
+    """
+    directory = run_secret_dir().resolve()
+    root_resolved = Path(root).resolve()
+    if directory == root_resolved or root_resolved in directory.parents:
+        raise RunSecretError(
+            f"the run-secret directory {directory} is inside the repository at {root_resolved}; "
+            "every child's landing is inside that repository, so a record stored there is "
+            "writable by the very children it authenticates"
+        )
+    path = _run_root_path(run_id)
+    payload = str(root_resolved).encode("utf-8")
+    if path.exists():
+        existing = _read_run_root_file(path)
+        if existing != root_resolved:
+            raise RunRootError(
+                f"run {run_id!r} is already recorded against {existing} and a second "
+                f"orchestrator claimed {root_resolved}; one run id has one register"
+            )
+        return existing
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        existing = read_run_root(run_id)
+        if existing is None:
+            raise RunRootError(f"run root {path} disappeared while being recorded") from None
+        if existing != root_resolved:
+            raise RunRootError(
+                f"run {run_id!r} is already recorded against {existing} and a second "
+                f"orchestrator claimed {root_resolved}; one run id has one register"
+            ) from None
+        return existing
+    try:
+        os.write(handle, payload)
+        os.fsync(handle)
+    finally:
+        os.close(handle)
+    return root_resolved
+
+
+def _read_run_root_file(path: Path) -> Path:
+    info = path.lstat()
+    if stat_module.S_ISLNK(info.st_mode):
+        raise RunRootError(f"run root {path} is a symlink; it must be a regular file")
+    if info.st_mode & 0o077:
+        raise RunRootError(
+            f"run root {path} is accessible beyond its owner (mode "
+            f"{stat_module.S_IMODE(info.st_mode):04o}); refusing to trust a record another "
+            "account can read or replace"
+        )
+    material = path.read_bytes().decode("utf-8").strip()
+    if not material:
+        raise RunRootError(f"run root {path} is empty")
+    return Path(material).resolve()
+
+
+def read_run_root(run_id: str) -> Path | None:
+    """The recorded register directory for this run, or ``None`` if none was recorded.
+
+    Absence is not an error.  Issuance and evaluation then fall back to containment plus
+    git identity, and they do not write this file -- writing it from a landing would
+    canonise whatever store the first landing happened to name.
+    """
+    path = _run_root_path(run_id)
+    if not path.exists():
+        return None
+    return _read_run_root_file(path)
+
+
+def assert_store_is_this_runs_register(store: Path, run_id: str) -> None:
+    """Refuse a store that is not the register directory recorded for this run.
+
+    When no root was recorded, this is a no-op: containment and git identity still run,
+    and this function does not mint a record from ``store``.  That residual is named on
+    :func:`landing_root`.
+    """
+    recorded = read_run_root(run_id)
+    resolved = Path(store).resolve()
+    if recorded is not None and recorded != resolved:
+        raise ReceiptRootError(
+            f"the claimed store {resolved} is not the register directory recorded for "
+            f"run {run_id!r} ({recorded})"
+        )
+
+
 def _signature(payload: Mapping[str, Any], secret: bytes) -> str:
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     return "hmac-sha256:" + hmac.new(secret, canonical.encode("utf-8"), hashlib.sha256).hexdigest()
@@ -749,6 +853,7 @@ class DispatchReceipt:
     scope: tuple[str, ...]
     ambient_root: str | None
     baseline_digest: str
+    run_root: str | None = None
 
     @property
     def artifact_path(self) -> Path:
@@ -783,6 +888,7 @@ class DispatchReceipt:
             "scope": list(self.scope),
             "ambient_root": self.ambient_root,
             "baseline_digest": self.baseline_digest,
+            "run_root": self.run_root,
         }
 
     @classmethod
@@ -815,6 +921,7 @@ class DispatchReceipt:
                 str(value["ambient_root"]) if value.get("ambient_root") is not None else None
             ),
             baseline_digest=str(value["baseline_digest"]),
+            run_root=(str(value["run_root"]) if value.get("run_root") is not None else None),
         )
 
 
@@ -880,10 +987,16 @@ def assert_landing_is_invisible_to_git(
 
 
 def _repository_common_dir(git: session_lifecycle.GitLanding, path: Path) -> Path:
-    """The git object store that contains ``path``, or raise if Git cannot name one."""
+    """The git object store that contains ``path``, or raise if Git cannot name one.
+
+    Catches :class:`session_lifecycle.SessionLifecycleError`, not only ``LandingError``.
+    Git returning non-zero is a ``LandingError``. Git not running at all -- missing
+    binary, missing path, timeout -- is the parent class, and is not a
+    :class:`CompletionError` unless converted here.
+    """
     try:
         return git.common_dir(path)
-    except session_lifecycle.LandingError as exc:
+    except session_lifecycle.SessionLifecycleError as exc:
         raise ReceiptRootError(
             f"cannot establish which repository {path} belongs to: {exc}"
         ) from exc
@@ -892,31 +1005,73 @@ def _repository_common_dir(git: session_lifecycle.GitLanding, path: Path) -> Pat
 def _same_repository(git: session_lifecycle.GitLanding, cwd: Path, store: Path) -> bool:
     """True when ``cwd`` and ``store`` share a git object store.
 
-    Each side is asked independently. Asking both from the same directory, or comparing the
-    relative string ``.git`` that every repository reports, would make two repositories compare
-    equal.
+    This is repository membership. It is not "the store contains the work". Each side
+    is asked independently. Asking both from the same directory, or comparing the
+    relative string ``.git`` that every repository reports, would make two repositories
+    compare equal.
     """
     return _repository_common_dir(git, cwd) == _repository_common_dir(git, store)
 
 
+def _store_contains_work(cwd: Path, store: Path) -> bool:
+    """True when ``cwd`` is ``store`` or a descendant, after resolving both.
+
+    This is "the store contains the work". It is not repository membership. A nested
+    independent repository is a descendant and a different repository; a sibling
+    linked worktree shares the object store and does not contain the main checkout.
+    """
+    return cwd.resolve().is_relative_to(store.resolve())
+
+
+def assert_landing_belongs_to_store(
+    landing: session_lifecycle.Landing,
+    store: Path,
+    *,
+    git: session_lifecycle.GitLanding,
+) -> None:
+    """Refuse a landing that does not belong in ``store`` as a register.
+
+    Two properties, not one check with two clauses. Git identity asks whether the
+    working directory and the store are the same repository. Containment asks whether
+    the store contains the work. Either one alone accepts pairings the other refuses.
+    """
+    cwd = Path(landing.cwd).resolve()
+    resolved = Path(store).resolve()
+    if not _same_repository(git, cwd, resolved):
+        raise ReceiptRootError(
+            f"the landing at {cwd} does not belong to the repository at {resolved}; a "
+            "receipt sealed from those two fields would agree with itself and record the "
+            "verdict where the work did not happen"
+        )
+    if not _store_contains_work(cwd, resolved):
+        raise ReceiptRootError(
+            f"the landing at {cwd} is not inside the store at {resolved}; a worktree has "
+            "its own register, so a store that does not contain the work files a verdict "
+            "where nothing else about the run is recorded"
+        )
+
+
 def landing_root(landing: session_lifecycle.Landing, *, git: session_lifecycle.GitLanding) -> Path:
-    """The repository a landing belongs to, which is the only place its verdict may be recorded.
+    """The store a landing names, after it is shown to belong there.
 
     ``GitLanding.provision`` sets ``ambient_root`` to the repository root for both landing kinds --
     a read-only child lands in the ambient checkout and a mutating child lands in a worktree of it
-    -- so the landing already knows its repository and a caller never has to say it a second time.
+    -- so the landing already knows its store and a caller never has to say it a second time.
 
     A landing built by hand with no ``ambient_root`` is refused rather than defaulted to ``cwd``.
-    Defaulting would silently seal a mutating child's *worktree* as its repository, and a worktree
+    Defaulting would silently seal a mutating child's *worktree* as its store, and a worktree
     has its own register: the verdict would be recorded where nothing else about the run is.
 
-    A landing whose working directory is not the same git repository as the store it names is
-    also refused. ``cwd`` and ``ambient_root`` are independently settable; membership is the git
-    common directory at each path, not whether one path is a descendant of the other. A
-    repository nested inside another repository is a descendant path and a different repository.
+    Two properties are checked, and they are not the same question. Git identity refuses a
+    nested independent repository, which is a descendant path and a different store.
+    Containment refuses a store that does not contain the work -- a sibling worktree, another
+    worktree of the same repository, a subdirectory named as the store.
 
-    A working directory that is an ordinary subdirectory of the *same* repository is still
-    accepted. This check does not require the exact worktree layout ``provision`` produces.
+    A working directory that is an ordinary subdirectory of the *same* store is still
+    accepted. A store that is an ancestor of a mutating child's worktree and shares its
+    object store is still accepted **when no run root has been recorded**; five such
+    ancestors exist and only one is the run's register. The recorded run root is what
+    picks that one. This function does not record it.
     """
     if landing.ambient_root is None:
         raise ReceiptRootError(
@@ -925,13 +1080,7 @@ def landing_root(landing: session_lifecycle.Landing, *, git: session_lifecycle.G
             "repository is unknown"
         )
     root = Path(landing.ambient_root).resolve()
-    cwd = Path(landing.cwd).resolve()
-    if not _same_repository(git, cwd, root):
-        raise ReceiptRootError(
-            f"the landing at {cwd} does not belong to the repository it names ({root}); a "
-            "receipt sealed from those two fields would agree with itself and record the verdict "
-            "where the work did not happen"
-        )
+    assert_landing_belongs_to_store(landing, root, git=git)
     return root
 
 
@@ -975,11 +1124,15 @@ def issue_receipt(
     carrying a landing in repository A passed every comparison and recorded the pass in B while the
     work happened in A.  Deriving it removes that parameter.  It does not remove the pair on the
     landing itself -- ``cwd`` and ``ambient_root`` remain independently settable -- so
-    :func:`landing_root` also refuses a landing that is not the same git repository as the store
-    it names.  This function writes that store (the sealed receipt, and it clears any earlier
-    settlement) before any evaluation exists, so an evaluate-time-only check is already too late.
+    :func:`landing_root` also refuses a landing that fails git identity or containment.  This
+    function then compares the derived store to the run root recorded at launch -- a value
+    whose provenance is not the landing -- and writes the store (the sealed receipt, and it
+    clears any earlier settlement) before any evaluation exists, so an evaluate-time-only
+    check is already too late.  This function never records the run root.
     """
     root = landing_root(landing, git=git)
+    assert_store_is_this_runs_register(root, spec.run_id)
+    recorded = read_run_root(spec.run_id)
     landing_cwd = Path(landing.cwd).resolve()
     artifacts = artifact_landing(landing_cwd, spec.run_id, spec.row_id)
     assert_landing_is_invisible_to_git(landing_cwd, artifacts, git=git)
@@ -1019,6 +1172,7 @@ def issue_receipt(
         scope=session_lifecycle.normalize_scope(spec.scope),
         ambient_root=_resolved_or_none(landing.ambient_root),
         baseline_digest=baseline_digest(changed_paths_baseline),
+        run_root=str(recorded) if recorded is not None else None,
     )
     register_store.upsert_row(
         root,
@@ -1114,11 +1268,11 @@ def assert_receipt_root(root: Path, receipt: DispatchReceipt) -> None:
     Everywhere else the pair was deleted instead of compared.  A comparison between a supplied root
     and the copy made from that same supplied root at issue time can only catch a caller who
     changed it in between; it cannot, even in principle, catch one that was wrong when it was
-    copied.  So :func:`issue_receipt` derives the repository from the landing -- and refuses a
-    landing that is not the same git repository as that store -- and :func:`settle_artifact`,
-    :func:`settlement_record` and :func:`evaluate_completion` take it from the sealed receipt.
-    Evaluation still has two objects that name a repository; it raises rather than records when
-    the landing is not the same git repository as the receipt's store.
+    copied.  So :func:`issue_receipt` derives the store from the landing, checks git identity
+    and containment, and compares it to the run root recorded at launch.  :func:`settle_artifact`,
+    :func:`settlement_record` and :func:`evaluate_completion` take the store from the sealed
+    receipt.  Evaluation still has two objects that name a store; it raises rather than records
+    when the landing does not belong there.
 
     The per-run secret cannot stand in for this check: it is named for the run alone and lives
     outside every repository, so two checkouts running one run id share it and a receipt authentic
@@ -1139,32 +1293,34 @@ def assert_landing_in_receipt_repository(
     *,
     git: session_lifecycle.GitLanding,
 ) -> None:
-    """Refuse a landing that is not the same git repository the receipt was issued under.
+    """Refuse a landing that does not belong in the receipt's store.
 
-    Evaluation receives the landing and the receipt as independent arguments.  The receipt names
-    a store; the landing names a place of work.  The store is chosen only after they are shown
-    to be the same git repository.  Choosing first is how a foreign receipt's mismatch refusal
-    demoted an unrelated ``verified`` row that shared the row id.
+    Evaluation receives the landing and the receipt as independent arguments.  The store is
+    chosen only after the landing is shown to belong there.  Choosing first is how a foreign
+    receipt's mismatch refusal demoted an unrelated ``verified`` row that shared the row id.
 
-    Membership is the git common directory at each path.  Path ancestry is not membership: a
-    repository nested inside another repository is a descendant path and a different repository.
+    Git identity and containment are two properties.  A nested independent repository shares
+    ancestry and not identity.  A sibling worktree shares identity and not ancestry.
 
-    When they disagree there is no register this evaluation may write: the receipt's store is
-    another child's, and the landing's claimed repository is not known to be where the work
-    actually sits.  Every other refusal in this module is recorded, because a recorded refusal is
-    durable evidence.  This one cannot be.
+    When a run root has been recorded, the receipt's store must equal it.  When the receipt
+    sealed a run root, that copy must equal the store too -- it was copied from the record
+    at issue, not from the landing.  When no root was recorded, those comparisons are
+    skipped and the two filesystem properties still run.
 
-    This check does not replace the one at issue time.  :func:`issue_receipt` has already written
-    the derived repository's register -- it seals the receipt into the row and clears any earlier
+    When they disagree there is no register this evaluation may write.  Every other refusal
+    in this module is recorded; this one cannot be.
+
+    This check does not replace the one at issue time.  :func:`issue_receipt` has already
+    written the derived store -- it seals the receipt into the row and clears any earlier
     settlement -- so an evaluate-time-only refusal leaves a foreign receipt already filed.
     """
     root = Path(receipt.root).resolve()
-    cwd = Path(landing.cwd).resolve()
-    if not _same_repository(git, cwd, root):
+    assert_landing_belongs_to_store(landing, root, git=git)
+    assert_store_is_this_runs_register(root, receipt.run_id)
+    if receipt.run_root is not None and Path(receipt.run_root).resolve() != root:
         raise ReceiptRootError(
-            f"the landing at {cwd} does not belong to the repository the receipt was issued "
-            f"under ({root}); a refusal cannot be recorded in either register without writing a "
-            "verdict about one child into another's store"
+            f"the receipt for {receipt.row_id!r} was sealed against run root "
+            f"{receipt.run_root!r} and names store {root}; those are not the same register"
         )
 
 
@@ -1861,16 +2017,14 @@ def evaluate_completion(
     again with its sample.  The second call re-runs the mechanical controls rather than trusting
     the first call's verdict, so the answer is a fresh one, not a cached one.
 
-    A landing that is not the same git repository as the receipt raises rather than recording a
+    A landing that does not belong in the receipt's store raises rather than recording a
     ``receipt_mismatch``.  Every other refusal in this function is recorded, because a recorded
     refusal is durable evidence; this one has no register it may write.
     """
     # The receipt names a store and the landing names a place of work. Those are independent
-    # arguments. The store is chosen only after they are shown to be the same git repository:
-    # a landing that does not belong to the receipt's repository raises, and nothing is written.
-    # Path ancestry is not that question -- a nested independent repository is a descendant and
-    # a different store. Choosing first is how a foreign receipt's mismatch refusal demoted an
-    # unrelated verified row that shared the row id.
+    # arguments. The store is chosen only after the landing is shown to belong there -- git
+    # identity, containment, and equality with the recorded run root when one exists. Choosing
+    # first is how a foreign receipt's mismatch refusal demoted an unrelated verified row.
     landing_cwd = Path(landing.cwd)
     assert_landing_in_receipt_repository(landing, receipt, git=git)
     root = Path(receipt.root).resolve()

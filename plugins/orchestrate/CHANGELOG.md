@@ -35,12 +35,14 @@
   Comparing a supplied root against the receipt was not enough, because the receipt's copy was made
   from that same supplied value at issue time — that catches a caller who changes it in between and
   cannot catch one that was wrong to begin with. So `issue_receipt` derives it from
-  `landing.ambient_root` and refuses a landing that is not the same git repository as that store,
-  and `evaluate_completion`, `settle_artifact` and `settlement_record` take it from the sealed
-  receipt; none of the four accepts it as an argument. Membership is the git common directory at
-  each path, not path ancestry: a repository nested inside another repository is a descendant and
-  a different store. Evaluation still has two objects that name a repository: it raises rather
-  than records when the landing does not belong to the receipt's.
+  `landing.ambient_root`, refuses a landing that fails git identity or containment, and compares
+  the derived store to the run root recorded at launch — a value whose provenance is not the
+  landing. `evaluate_completion`, `settle_artifact` and `settlement_record` take it from the
+  sealed receipt; none of the four accepts it as an argument. Git identity and containment are
+  two properties: a nested repository shares ancestry and not identity; a sibling worktree
+  shares identity and not ancestry. A git repository has as many registers as it has working
+  trees. Evaluation raises rather than records when the landing does not belong in the receipt's
+  store.
   A landing that does not name its repository is refused rather than defaulted to its working
   directory. `read_receipt` is
   the one function that still takes a repository, because it is handed one with a row id and has no

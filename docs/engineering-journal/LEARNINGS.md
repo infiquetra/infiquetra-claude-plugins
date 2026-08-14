@@ -21,6 +21,48 @@
 
 ## 2026-08-13
 
+### A git failure that never ran is not a LandingError  {#git-failure-is-not-landing-error}
+
+**Context.** The membership probe converted `LandingError` into `ReceiptRootError` so a path
+that is not a working tree would raise rather than record. The conversion was written as if
+every git failure were a `LandingError`.
+**Evidence.** `_git` raises `LandingError` only when git ran and returned non-zero.
+`_run_command` raises the parent `SessionLifecycleError` when git cannot run — missing
+binary, missing path, timeout. A nonexistent store path escaped as
+`SessionLifecycleError`, and `isinstance(exc, CompletionError)` was false.
+**Mechanism.** Catching a subclass does not catch the parent. The claim "a git failure
+raises rather than records" was true of one failure class and false of the one that
+does not produce a working-tree answer at all.
+**Fix.** Catch `SessionLifecycleError`. The journal holds the correction; the commit
+message that stated the opposite cannot be amended.
+**Generalizable rule.** When you convert an adapter error into a domain error, catch the
+adapter's base class, not the subclass that one call path happens to raise.
+**Refs.** `{#path-ancestry-is-not-membership}`.
+
+### The store is a register directory, not a repository  {#store-is-a-register}
+
+**Context.** Replacing path ancestry with git identity closed nested repositories and
+accepted a sibling linked worktree as the store. The work happened in one working tree;
+a durable `verified` landed in another run's register.
+**Evidence.** A linked worktree outside the checkout shares the object store and has its
+own `.orchestrate/register.json`. Issuance accepted `ambient_root` pointing at that
+worktree, evaluation returned `verified=True`, and another run's honest row in that
+tree was overwritten.
+**Mechanism.** Ancestry and identity are two properties. Identity asks "same repository".
+Ancestry asks "does the store contain the work". A legitimate mutating child works in
+one tree and stores in another, so no predicate over `(cwd, store)` separates the
+honest split from the poisoned one. What distinguishes them is a fact about the run:
+which register directory it was launched against.
+**Fix.** `record_run_root` writes that directory next to the run secret, from the
+orchestrator's own root, never from a landing. Issuance and evaluation compare the
+claimed store to it by exact equality. Containment and identity stay as named layers
+for when the record is absent. They do not close the class: a mutating worktree has
+five ancestor stores that pass both.
+**Generalizable rule.** When two honest paths differ on a filesystem relation, the
+relation is not the property. Find the fact that is about the run, and give it
+provenance that is not derived from the object being checked.
+**Refs.** DECISIONS `{#landing-sits-in-its-repository}`, `{#check-against-a-copy}`.
+
 ### Path ancestry is not repository membership  {#path-ancestry-is-not-membership}
 
 **Context.** The previous repair refused a landing whose working directory was not a descendant

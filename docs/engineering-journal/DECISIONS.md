@@ -47,12 +47,17 @@ current paths into this module and would refuse a subdirectory of the same repos
 **Rejected: comparing `--show-toplevel`.** A linked worktree's toplevel is the worktree
 path, so the mutating-child landing would be refused.
 
+**Later.** Git identity is necessary and not sufficient. The store is a register directory,
+not a repository. `record_run_root` records the launch root next to the run secret;
+issuance never writes that file. Containment is reinstated as a second named property.
+When no root has been recorded, containment plus identity still accept five ancestor
+stores of a mutating child's worktree. The recorded root is what picks the one register.
+
 **Revisit when** a later unit persists `cwd` and reconstructs `Landing`. `ambient_root` is
 not a register column; that reconstructor must take it from the orchestrator's own resolved
 root, the same value `provision` sets. A planted `cwd` in a different repository is now
-refused; a planted `cwd` in another worktree of the *same* repository is still accepted
-and belongs to that later unit. The two pairs this entry first named are reduced, not
-closed: path ancestry was not membership.
+refused; a planted `cwd` in another worktree of the *same* repository whose store equals
+the recorded root is still accepted and belongs to that later unit.
 
 ### The repository is derived from the landing and the receipt, never supplied  {#repository-is-derived}
 

@@ -65,6 +65,19 @@ def _identity() -> None:
     IDENTITY = LIFECYCLE.LaunchIdentity("actual-child", "workspace-a", "tab-a", "pane-a", True)
 
 
+@pytest.fixture(autouse=True)
+def _orchestrator_secret_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep per-run records out of the operator's home, and outside the test root.
+
+    ``launch_child`` records the run root next to the run secret. The secret directory
+    is refused if it sits inside the repository, and these tests use ``tmp_path`` as
+    that repository, so the directory must be a sibling, not a child.
+    """
+    monkeypatch.setenv(
+        "ORCHESTRATE_RUN_SECRET_DIR", str(tmp_path.parent / f"{tmp_path.name}-run-secrets")
+    )
+
+
 class FakeGit:
     def __init__(self, root: Path, paths: list[frozenset[str]] | None = None) -> None:
         self.root = root
@@ -215,6 +228,14 @@ def test_register_row_and_run_label_exist_before_a_failing_launch(tmp_path: Path
 
     assert wrapper.launches == 1
     assert REGISTER.read_rows(tmp_path)["child-a"]["phase"] == "launching"
+
+
+def test_launch_records_the_run_register_directory(tmp_path: Path) -> None:
+    """The run's store is this argument, recorded before any landing exists."""
+    _launch(tmp_path)
+    import completion as completion_mod
+
+    assert completion_mod.read_run_root("run-a") == tmp_path.resolve()
 
 
 def test_planned_row_exists_before_mutating_worktree_provision(tmp_path: Path) -> None:

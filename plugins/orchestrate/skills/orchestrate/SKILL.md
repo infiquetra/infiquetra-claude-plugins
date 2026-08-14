@@ -166,15 +166,19 @@ before evaluation, and a closure that changes between dispatch and evaluation fa
 
 The receipt must belong to the child being evaluated: the specification, landing, baseline and
 receipt arrive as four independent arguments, so run, row and landing are checked against it first.
-The repository is deliberately not a fifth. Issuing derives it from the landing and refuses a
-landing whose working directory is not the same git repository as the store it names. Evaluation
-takes the store from the sealed receipt only after that same membership is shown, and raises
-rather than records when it does not — do not add a root parameter back when you wire this up.
-Membership is the git common directory at each path, not whether one path is a descendant of the
-other: a repository nested inside another repository is a descendant and a different store. A
-working directory that is an ordinary subdirectory of the *same* repository is still accepted.
-`ambient_root` is not a register column. Reconstruct it from the orchestrator's own resolved
-root — the same value `GitLanding.provision` sets — never from a child's working directory.
+The repository is deliberately not a fifth. Issuing derives the store from the landing, refuses
+a landing that fails git identity or containment, and compares that store to the run root
+recorded at launch — a value whose provenance is not the landing. Evaluation takes the store
+from the sealed receipt only after those same checks, and raises rather than records when they
+fail — do not add a root parameter back when you wire this up. Record the run root with
+`record_run_root` before the first issue, using the same path you will pass to `launch_child`.
+Issuance never writes that record. Git identity and containment are two properties: a nested
+repository shares ancestry and not identity; a sibling worktree shares identity and not
+ancestry. A working directory that is an ordinary subdirectory of the *same* store is still
+accepted. A store that is merely an ancestor of a mutating child's worktree is still accepted
+when no run root has been recorded. `ambient_root` is not a register column. Reconstruct it
+from the orchestrator's own resolved root — the same value `GitLanding.provision` sets — never
+from a child's working directory.
 
 Settlement is performed, not inferred. The child writes only an in-flight sibling of its
 destination; the orchestrator requires the destination to be untouched and then renames the

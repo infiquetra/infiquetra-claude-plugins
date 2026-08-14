@@ -198,10 +198,13 @@ def _prepare(
     *,
     predicate: Any | None = None,
     artifact_name: str = "report.json",
+    record_root: bool = True,
     **spec_overrides: Any,
 ) -> _Prepared:
     spec = _spec(**spec_overrides)
     git = LIFECYCLE.GitLanding()
+    if record_root:
+        COMPLETION.record_run_root(repo, spec.run_id)
     landing = git.provision(repo, spec)
     REGISTER.upsert_row(
         repo, spec.row_id, {"run_id": spec.run_id, "phase": "working", "expected_state": "working"}
@@ -823,6 +826,7 @@ def _verifier_row(
     model: str = "grok-4.6",
     phase: str = "working",
     dispatched: bool = True,
+    record_root: bool = True,
 ) -> None:
     """Register a verifier session.
 
@@ -831,7 +835,14 @@ def _verifier_row(
     plants the columns alone -- the shape a write-capable child can produce, which must be refused.
     """
     if dispatched:
-        _prepare(repo, row_id=row_id, run_id=run_id, runtime=vendor, artifact_name="verdict.json")
+        _prepare(
+            repo,
+            row_id=row_id,
+            run_id=run_id,
+            runtime=vendor,
+            artifact_name="verdict.json",
+            record_root=record_root,
+        )
     REGISTER.upsert_row(
         repo, row_id, {"run_id": run_id, "vendor": vendor, "model": model, "phase": phase}
     )
@@ -3039,8 +3050,8 @@ def test_a_linked_worktree_belongs_to_the_repository_it_was_cut_from(tmp_path: P
 def test_a_subdirectory_of_the_same_repository_still_belongs(tmp_path: Path) -> None:
     """An ordinary subdirectory of the same checkout is still that checkout.
 
-    Stated residual, not a hole this unit is closing. The check is repository identity, not
-    provision's two path shapes.
+    Stated residual on the working-directory side. The store-side residual is the opposite
+    shape -- a subdirectory named as the store -- and is refused below.
     """
     repo = tmp_path / "repo"
     _init_repo(repo)
@@ -3049,6 +3060,198 @@ def test_a_subdirectory_of_the_same_repository_still_belongs(tmp_path: Path) -> 
     landing = git.provision(repo, _spec())
     inside = replace(landing, cwd=repo / "src")
     assert COMPLETION.landing_root(inside, git=git) == repo.resolve()
+
+
+def _linked_worktree(repo: Path, name: str) -> Path:
+    path = repo.parent / name
+    _git(repo, "worktree", "add", "-q", "-b", f"branch-{name}", str(path))
+    return path
+
+
+def _issue_honest(repo: Path, spec: Any, git: Any) -> tuple[Any, Any, Any]:
+    landing = git.provision(repo, spec)
+    REGISTER.upsert_row(
+        repo, spec.row_id, {"run_id": spec.run_id, "phase": "working", "expected_state": "working"}
+    )
+    artifacts = COMPLETION.artifact_landing(Path(landing.cwd), spec.run_id, spec.row_id)
+    relative = artifacts.relative_to(Path(landing.cwd).resolve()) / "report.json"
+    baseline = _baseline(git, landing)
+    receipt = COMPLETION.issue_receipt(
+        spec,
+        landing,
+        _predicate(relative.as_posix()),
+        artifact_name="report.json",
+        git=git,
+        changed_paths_baseline=baseline,
+    )
+    return landing, baseline, receipt
+
+
+@pytest.mark.parametrize(
+    "store_kind",
+    ["sibling-worktree", "other-worktree", "subdirectory"],
+)
+def test_a_store_that_is_not_the_run_register_is_refused_at_issue(
+    tmp_path: Path, store_kind: str
+) -> None:
+    """The store is a register directory, not a repository.
+
+    Three shapes that share the object store with the work and are not the run's
+    register: a sibling linked worktree, another worktree of the same repository,
+    and a subdirectory of the checkout. Each is refused before the register is written.
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "src").mkdir()
+    spec = _spec()
+    git = LIFECYCLE.GitLanding()
+    COMPLETION.record_run_root(repo, spec.run_id)
+    honest = git.provision(repo, spec)
+    if store_kind == "sibling-worktree":
+        store = _linked_worktree(repo, "side-tree")
+    elif store_kind == "other-worktree":
+        first = _linked_worktree(repo, "side-tree")
+        store = _linked_worktree(repo, "side-tree-2")
+        honest = replace(honest, cwd=first)
+    else:
+        store = repo / "src"
+    poisoned = replace(honest, ambient_root=store.resolve())
+    REGISTER.upsert_row(
+        store, spec.row_id, {"run_id": spec.run_id, "phase": "working", "expected_state": "working"}
+    )
+    artifacts = COMPLETION.artifact_landing(Path(poisoned.cwd), spec.run_id, spec.row_id)
+    relative = artifacts.relative_to(Path(poisoned.cwd).resolve()) / "report.json"
+
+    with pytest.raises(COMPLETION.ReceiptRootError):
+        COMPLETION.issue_receipt(
+            spec,
+            poisoned,
+            _predicate(relative.as_posix()),
+            artifact_name="report.json",
+            git=git,
+            changed_paths_baseline=_baseline(git, poisoned),
+        )
+    row = REGISTER.read_rows(store).get(spec.row_id, {})
+    assert "dispatch_receipt" not in row
+    assert "completion" not in row
+    assert spec.row_id not in REGISTER.read_rows(repo)
+
+
+@pytest.mark.parametrize(
+    "store_kind",
+    ["sibling-worktree", "other-worktree", "subdirectory"],
+)
+def test_a_store_that_is_not_the_run_register_is_refused_at_evaluation(
+    tmp_path: Path, store_kind: str
+) -> None:
+    """Evaluating against a receipt whose store is the wrong working tree writes neither register."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "src").mkdir()
+    spec = _spec()
+    git = LIFECYCLE.GitLanding()
+    if store_kind == "sibling-worktree":
+        store = _linked_worktree(repo, "side-tree")
+    elif store_kind == "other-worktree":
+        store = _linked_worktree(repo, "side-tree-2")
+    else:
+        store = repo / "src"
+    _, _, receipt = _issue_honest(store, spec, git)
+    landing_work = git.provision(repo, spec)
+    baseline_work = _baseline(git, landing_work)
+
+    with pytest.raises(COMPLETION.ReceiptRootError):
+        COMPLETION.evaluate_completion(spec, landing_work, baseline_work, receipt, git=git)
+    assert "completion" not in REGISTER.read_rows(store).get(spec.row_id, {})
+    work_row = REGISTER.read_rows(repo).get(spec.row_id, {})
+    assert "completion" not in work_row
+
+
+def test_a_recorded_run_root_that_disagrees_with_the_claimed_store_is_refused(
+    tmp_path: Path,
+) -> None:
+    """The new property, independent of any path relationship between cwd and store."""
+    repo = tmp_path / "repo"
+    other = tmp_path / "other"
+    _init_repo(repo)
+    _init_repo(other)
+    spec = _spec()
+    git = LIFECYCLE.GitLanding()
+    COMPLETION.record_run_root(repo, spec.run_id)
+    landing = git.provision(other, spec)
+    REGISTER.upsert_row(
+        other, spec.row_id, {"run_id": spec.run_id, "phase": "working", "expected_state": "working"}
+    )
+    artifacts = COMPLETION.artifact_landing(Path(landing.cwd), spec.run_id, spec.row_id)
+    relative = artifacts.relative_to(Path(landing.cwd).resolve()) / "report.json"
+    with pytest.raises(COMPLETION.ReceiptRootError, match="not the register directory recorded"):
+        COMPLETION.issue_receipt(
+            spec,
+            landing,
+            _predicate(relative.as_posix()),
+            artifact_name="report.json",
+            git=git,
+            changed_paths_baseline=_baseline(git, landing),
+        )
+    assert "dispatch_receipt" not in REGISTER.read_rows(other)[spec.row_id]
+
+
+def test_a_run_with_no_recorded_root_does_not_mint_one_from_the_landing(tmp_path: Path) -> None:
+    """In-flight runs keep working; the landing is not promoted to the run root.
+
+    Containment and git identity still run. The class those two close is smaller than
+    the property: a mutating child's worktree has five ancestor stores that pass both.
+    This test pins the decision -- accept, and do not write the record.
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    spec = _spec()
+    git = LIFECYCLE.GitLanding()
+    landing = git.provision(repo, spec)
+    assert COMPLETION.read_run_root(spec.run_id) is None
+    REGISTER.upsert_row(
+        repo, spec.row_id, {"run_id": spec.run_id, "phase": "working", "expected_state": "working"}
+    )
+    artifacts = COMPLETION.artifact_landing(Path(landing.cwd), spec.run_id, spec.row_id)
+    relative = artifacts.relative_to(Path(landing.cwd).resolve()) / "report.json"
+    receipt = COMPLETION.issue_receipt(
+        spec,
+        landing,
+        _predicate(relative.as_posix()),
+        artifact_name="report.json",
+        git=git,
+        changed_paths_baseline=_baseline(git, landing),
+    )
+    assert receipt.root == str(repo.resolve())
+    assert receipt.run_root is None
+    assert COMPLETION.read_run_root(spec.run_id) is None
+
+
+def test_a_read_only_child_still_verifies_against_the_recorded_root(tmp_path: Path) -> None:
+    """The legitimate read-only shape, both directions: issue and evaluate."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo)
+    assert prepared.receipt.run_root == str(repo.resolve())
+    prepared.run_child_process()
+    result = prepared.evaluate()
+    assert result.verified is True, result.detail
+
+
+def test_membership_probes_ignore_an_inherited_git_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GIT_DIR makes every checkout report the same object store. The probe must not inherit it."""
+    outer, nested = _nested_repositories(tmp_path)
+    monkeypatch.setenv("GIT_DIR", str((outer / ".git").resolve()))
+    monkeypatch.setenv("GIT_COMMON_DIR", str((outer / ".git").resolve()))
+    git = LIFECYCLE.GitLanding()
+    spec = _spec()
+    honest = git.provision(nested, spec)
+    poisoned = replace(honest, ambient_root=outer.resolve())
+    with pytest.raises(COMPLETION.ReceiptRootError):
+        COMPLETION.landing_root(poisoned, git=git)
+    assert COMPLETION._same_repository(git, nested, outer) is False
 
 
 def test_a_receipt_copied_into_another_repositorys_register_is_refused_when_it_is_read(
@@ -3100,7 +3303,7 @@ def test_a_verifier_dispatched_in_another_repository_does_not_satisfy_the_depth_
     _init_repo(other)
 
     # Repository A dispatches a real verifier and holds an authentic sealed receipt for it.
-    _verifier_row(repo, "verifier-1", dispatched=True, phase="working")
+    _verifier_row(repo, "verifier-1", dispatched=True, phase="working", record_root=False)
     foreign = REGISTER.read_rows(repo)["verifier-1"]["dispatch_receipt"]
 
     # Repository B runs the same run and has no verifier of its own, so it borrows A's.

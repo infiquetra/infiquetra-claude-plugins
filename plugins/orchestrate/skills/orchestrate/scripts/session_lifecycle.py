@@ -199,8 +199,12 @@ def _run_command(
     cwd: Path,
     runner: Runner | None = None,
     timeout: float = 60.0,
+    env: Mapping[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     run = runner or subprocess.run
+    extra: dict[str, Any] = {}
+    if env is not None:
+        extra["env"] = dict(env)
     try:
         result = run(  # nosec B603 -- argv is a sequence and shell is never enabled
             list(argv),
@@ -209,6 +213,7 @@ def _run_command(
             text=True,
             timeout=timeout,
             check=False,
+            **extra,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise SessionLifecycleError(f"command failed to run: {argv[0]}: {exc}") from exc
@@ -520,8 +525,14 @@ class GitLanding:
     def __init__(self, *, runner: Runner | None = None) -> None:
         self.runner = runner
 
-    def _git(self, root: Path, args: Sequence[str]) -> subprocess.CompletedProcess[str]:
-        result = _run_command(["git", *args], cwd=root, runner=self.runner)
+    def _git(
+        self,
+        root: Path,
+        args: Sequence[str],
+        *,
+        env: Mapping[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        result = _run_command(["git", *args], cwd=root, runner=self.runner, env=env)
         if result.returncode != 0:
             raise LandingError(result.stderr.strip() or f"git {' '.join(args)} failed")
         return result
@@ -553,8 +564,27 @@ class GitLanding:
         nested inside another checkout has its own. The path is absolute: the relative form is
         ``.git`` for every repository, which would make two different repositories compare equal.
         """
+        # Membership probes fail permissively under GIT_DIR / GIT_COMMON_DIR: every
+        # repository reports the inherited store, so two different checkouts compare
+        # equal. Other git calls in this adapter fail loudly on a bad environment;
+        # only this one would accept. Strip the inherited git identity, not the rest
+        # of the process environment.
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if key
+            not in {
+                "GIT_DIR",
+                "GIT_COMMON_DIR",
+                "GIT_WORK_TREE",
+                "GIT_OBJECT_DIRECTORY",
+                "GIT_CEILING_DIRECTORIES",
+            }
+        }
         value = self._git(
-            root, ["rev-parse", "--path-format=absolute", "--git-common-dir"]
+            root,
+            ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            env=env,
         ).stdout.strip()
         if not value:
             raise LandingError(f"git rev-parse --git-common-dir returned no path at {root}")
@@ -762,6 +792,12 @@ def launch_child(
     ``launching``. Dispatch later moves the row to ``launched`` before sending the task.
     """
     root = root.resolve()
+    # The run's register directory is this argument, not a value derived from the
+    # landing. Issuance compares the claimed store against the record this writes.
+    # Imported lazily: completion already imports this module.
+    import completion as completion_mod
+
+    completion_mod.record_run_root(root, spec.run_id)
     label = task_label(spec.run_id, spec.row_id)
     existing = register_store.read_rows(root).get(spec.row_id)
     if existing and existing.get("phase") == "launching" and not existing.get("pane_id"):

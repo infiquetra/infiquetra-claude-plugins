@@ -2141,7 +2141,7 @@ def test_the_unfiltered_failed_rows_view_spans_every_run(tmp_path: Path) -> None
     assert sorted(COMPLETION.failed_rows(repo, run_id="run-b")) == ["child-b"]
 
 
-# ============ R16: the receipt binds every input the evaluator branches on ==================
+# ---- the receipt binds every input the evaluator branches on ------------------------------
 #
 # The class here is not "the identity labels". It is the mechanical answer to "what does
 # evaluate_completion read before deciding?", obtained by reading every branch downstream of it.
@@ -2286,7 +2286,7 @@ def test_the_receipt_round_trip_preserves_every_deciding_input(tmp_path: Path) -
     assert reloaded.baseline_digest == COMPLETION.baseline_digest(prepared.baseline)
 
 
-# ============ R17: the predicate's descendants ==============================================
+# ---- the predicate's descendants ----------------------------------------------------------
 
 _DESCENDANT_PREDICATE = """\
 import subprocess
@@ -2427,7 +2427,7 @@ def test_a_predicate_whose_group_will_not_die_is_refused(
     assert "did not stop" in result.predicate.output
 
 
-# ============ R18: `reaped` is terminal in both directions ==================================
+# ---- `reaped` is terminal in both directions ----------------------------------------------
 
 
 def test_a_passing_re_evaluation_does_not_resurrect_a_reaped_row(tmp_path: Path) -> None:
@@ -2475,7 +2475,7 @@ def test_a_reaped_row_keeps_its_phase_whichever_way_the_verdict_goes(
     assert REGISTER.read_rows(repo)["child-a"]["phase"] == "reaped"
 
 
-# ============ R19: the verifier must be a dispatch this orchestrator issued =================
+# ---- the verifier must be a dispatch this orchestrator issued -----------------------------
 
 
 def test_a_planted_verifier_row_does_not_satisfy_the_verifier_check(tmp_path: Path) -> None:
@@ -2547,7 +2547,7 @@ def test_a_relaundered_baseline_is_caught_when_only_a_fingerprint_moved(tmp_path
     assert "changed_paths_baseline" in result.detail
 
 
-# ============ R20: the operator-facing surfaces do not call detection "containment" ==========
+# ---- the operator-facing surfaces do not call detection "containment" ---------------------
 
 _SURFACES = (
     "plugins/orchestrate/README.md",

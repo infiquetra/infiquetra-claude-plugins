@@ -480,9 +480,7 @@ def test_a_mirror_role_lands_in_the_identity_write_and_a_writerless_upsert_is_re
     payloads: list[Mapping[str, Any]] = []
     real_upsert = MIRROR.register_store.upsert_row
 
-    def tracking_upsert(
-        root: Path, row_id: str, fields: Mapping[str, Any], **kwargs: Any
-    ) -> Any:
+    def tracking_upsert(root: Path, row_id: str, fields: Mapping[str, Any], **kwargs: Any) -> Any:
         payloads.append(dict(fields))
         return real_upsert(root, row_id, fields, **kwargs)
 

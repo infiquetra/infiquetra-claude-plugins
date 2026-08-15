@@ -268,8 +268,6 @@ journal you already have is part of that substrate.
 [`#pane-revision-is-the-liveness-signal`](#pane-revision-is-the-liveness-signal),
 [`#agent-lifecycle-detectors-lie`](#agent-lifecycle-detectors-lie).
 
-## 2026-08-14
-
 ### Membership in a launched-phase set is not "has launched" when the column can be absent  {#absent-phase-is-unknown}
 
 **Context.** The spend gate charged zero for any row whose `phase` was not

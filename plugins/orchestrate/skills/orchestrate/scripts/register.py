@@ -250,6 +250,7 @@ def is_supervisory_row(row: Mapping[str, Any]) -> bool:
     """True when a row supervises the run rather than performing the outcome's work."""
     return row.get("role") in SUPERVISORY_ROLES
 
+
 IDENTITY_COLUMNS = ("id", "run_id", "agent", "vendor", "model", "effort")
 SUBSTRATE_COLUMNS = ("herdr_session", "workspace_id", "tab_id", "pane_id", "cwd")
 WORK_COLUMNS = (

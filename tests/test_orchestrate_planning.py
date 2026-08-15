@@ -513,9 +513,7 @@ def test_a_supervisory_row_is_not_charged_against_the_run(tmp_path: Path) -> Non
     )
     REGISTER.write_phase(tmp_path, "subscriber-a", "working", run_id="run-a")
     assert ACCOUNTING.run_actual_tokens(tmp_path, run_id="run-a") == 8000.0
-    assert REGISTER.is_supervisory_row(
-        REGISTER.read_rows(tmp_path, run_id="run-a")["subscriber-a"]
-    )
+    assert REGISTER.is_supervisory_row(REGISTER.read_rows(tmp_path, run_id="run-a")["subscriber-a"])
     assert not REGISTER.is_supervisory_row(REGISTER.read_rows(tmp_path, run_id="run-a")["c1"])
 
 

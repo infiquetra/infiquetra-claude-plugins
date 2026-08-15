@@ -139,8 +139,6 @@ it as owned by the mirror module; the writes above are already consistent with s
 **Refs.** LEARNINGS [`{#hung-mirror-needs-a-clock}`](LEARNINGS.md#hung-mirror-needs-a-clock);
 `plugins/orchestrate/references/operator-channel.md`.
 
-## 2026-08-14
-
 ### Shared register columns have one writer function  {#register-column-ownership}
 
 **Decision.** `register.py` is the schema owner. It publishes

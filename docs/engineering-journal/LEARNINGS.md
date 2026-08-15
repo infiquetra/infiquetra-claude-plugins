@@ -19,6 +19,46 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-08-14
+
+### A per-run lock cannot serialize a host-wide bound  {#generation-lock-is-not-a-host-lock}
+
+**Context.** Admission has to enforce per-vendor and aggregate work-in-progress
+bounds. The register's generation lock covers one `run_id`. Two runs on the
+same host can both take the last Claude slot if that is the only lock.
+**Evidence.** `generation_locked` in `plugins/orchestrate/skills/orchestrate/scripts/register.py`
+is keyed by run. `admission.reserve_slot` counts occupancy across
+`iter_live_run_ids()`.
+**Mechanism.** `fcntl.flock` is not reentrant, so a reservation that holds the
+generation lock cannot call `upsert_rows`. The lock it *can* hold still only
+serializes one run. Cross-run occupancy needs a second lock, taken first.
+**Fix.** Host-wide `admission.lock` in the register directory, then the run's
+generation lock, then an unlocked document write. Canonicalize the work
+location before either lock so git does not run while they are held.
+**Generalizable rule.** A lock whose key is narrower than the invariant it is
+asked to protect is a control that cannot fire on the case that justified it.
+**Refs.** DECISIONS `{#host-wide-admission-lock}`.
+
+### The nearest existing ancestor is a place to ask from, not an answer  {#ancestor-is-not-the-location}
+
+**Context.** `canonical_work_location` walked up to an existing directory so
+`git -C` had somewhere to stand. When git named no repository, the function
+returned that ancestor. `parent/future-a` and `parent/future-b` compared
+equal, and once `future-a` existed it locked itself out.
+**Evidence.** `canonical_work_location` in
+`plugins/orchestrate/skills/orchestrate/scripts/register.py`. A one-second hung
+git held the generation lock for the whole write.
+**Mechanism.** "Ask git from here" and "this is the work location" were the
+same path. A timeout had no value, so a hung git wedged every writer on that
+run.
+**Fix.** Five-second `timeout=` on the git subprocess. Timeout, `OSError`, and
+a non-zero git return `intended.resolve()`. The ancestor is only the `-C`
+directory.
+**Generalizable rule.** A fallback used to *pose* a question must not become
+the answer when the question is declined. Bound every subprocess that runs
+inside a lock.
+**Refs.** DECISIONS `{#host-wide-admission-lock}`.
+
 ## 2026-08-13
 
 ### A generation is more than the live register  {#generation-is-more-than-the-live-file}

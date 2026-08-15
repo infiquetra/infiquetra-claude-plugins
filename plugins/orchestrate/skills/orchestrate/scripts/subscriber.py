@@ -18,6 +18,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+import accounting
 import herdr_events
 import register as register_store
 
@@ -97,6 +98,22 @@ def output_match_subscription(
     return subscription
 
 
+def usage_match_subscription(pane_id: str) -> dict[str, Any]:
+    """Subscribe to a vendor usage line on one pane.
+
+    The match is the closed accounting needle, not a free-text pattern and not
+    a regex. Identity-bound sentinels stay on :func:`output_match_subscription`.
+    """
+    subscription = {
+        "type": "pane.output_matched",
+        "pane_id": pane_id,
+        "source": "recent_unwrapped",
+        "match": {"type": "substring", "value": accounting.USAGE_SUBSTRING},
+    }
+    herdr_events.validate_subscription(subscription)
+    return subscription
+
+
 def _sentinel_payload(line: str) -> dict[str, Any] | None:
     marker_at = line.find(SENTINEL_MARKER)
     if marker_at < 0:
@@ -127,15 +144,19 @@ def _sentinel_expectations(
                 "the orchestrate subscriber requires pane.output_matched to use a substring "
                 "sentinel match"
             )
-        payload = _sentinel_payload(str(match["value"]))
-        if payload is None or any(
+        value = str(match["value"])
+        payload = _sentinel_payload(value)
+        if payload is not None and not any(
             not isinstance(payload.get(field), str) or not payload[field]
             for field in identity_fields
         ):
-            raise herdr_events.SubscriptionError(
-                "pane.output_matched substring must contain a complete orchestrate sentinel"
-            )
-        expectations.setdefault(pane_id, []).append(payload)
+            expectations.setdefault(pane_id, []).append(payload)
+            continue
+        if accounting.is_usage_match_value(value):
+            continue
+        raise herdr_events.SubscriptionError(
+            "pane.output_matched substring must contain a complete orchestrate sentinel"
+        )
     return expectations
 
 
@@ -412,7 +433,20 @@ class Subscriber:
         if event.name == "pane.output_matched":
             if pane_id is None:
                 return False
-            payload = _sentinel_payload(event.matched_line or "")
+            line = event.matched_line or ""
+            recorded = accounting.apply_output_match(self.root, row_id, line, run_id=self.run_id)
+            payload = _sentinel_payload(line)
+            if payload is None:
+                if recorded is not None:
+                    return True
+                if pane_id in self._sentinel_expectations:
+                    self._diagnostic(
+                        "sentinel_mismatch",
+                        "ignored output match whose sentinel is not the active run-child interaction",
+                        pane_id=pane_id,
+                        row_id=row_id,
+                    )
+                return False
             if not self._sentinel_matches_active_subscription(pane_id, payload):
                 self._diagnostic(
                     "sentinel_mismatch",
@@ -420,7 +454,7 @@ class Subscriber:
                     pane_id=pane_id,
                     row_id=row_id,
                 )
-                return False
+                return recorded is not None
             # Protocol 19's live pane.output_matched envelope reports read.revision=0 even when
             # pane.get reports a positive, advancing pane revision. They are not comparable
             # counters. Freshness comes from the complete run/child/purpose/nonce identity above;

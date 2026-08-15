@@ -1,5 +1,41 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-08-14
+
+### Admission takes a host lock first, then the generation lock  {#host-wide-admission-lock}
+
+**Decision.** Per-vendor and aggregate work-in-progress bounds are enforced by
+`admission.py` under a host-wide `admission.lock` in the register directory.
+The lock is taken before the per-run generation lock and never after.
+Reservations and the FIFO queue live at the document root (`admission.queue`,
+`admission.reservations`) so they survive restart. Occupancy is reservations
+plus active phases, counted only for runs whose stored work location matches
+the claimed one. Stored location is sidecar-then-stamp, resolved, no git.
+A reservation whose row is `reaped`, or has no `pane_id` past `lease_seconds`,
+is reclaimed and the queue advances.
+
+`tokens_reserved` is produced by `reserve_slot` and consumed by
+`check_spend` when the vendor exposes no usage line. `tokens_observed` is
+produced by `record_observed_tokens` (the subscriber calls it on a usage
+`pane.output_matched`) and consumed by `check_spend` when the vendor reports
+usage. `authorize_spend` is never passed `None` to mean "this vendor is
+silent." Planning does not import `launch_child`. `launch_child` does not
+yet call `reserve_slot`.
+
+**Rejected: reserve with only the generation lock.** Two runs admit the last
+slot. The control cannot fire on the case it exists for.
+**Rejected: call `upsert_rows` while holding the generation lock.**
+`fcntl.flock` is not reentrant. The in-tree pattern is already unlocked
+helpers.
+**Rejected: reject when a per-vendor bound is full.** The load-bearing word
+is "queues." A rejected child and a queued child are different outcomes.
+**Rejected: return the nearest existing ancestor when git is silent.** That
+is the executed collapse of two missing siblings.
+
+**Revisit when** launch is wired to admission (the named gap: a launching
+row without a reservation is counted as occupancy but was never reserved),
+or when a second host must share a live run.
+
 ## 2026-08-13
 
 ### The live register is addressed by run identity, not by repository root  {#register-addressed-by-run-id}

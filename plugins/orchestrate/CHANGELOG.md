@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.5.0] - 2026-08-14
+
+### Added
+
+- Planning decides the split and the route and then stops. `planning.py` never
+  imports or calls `launch_child`. The operator is shown the plan before
+  `commit_plan` writes a reservation. A plan that has not been presented is
+  refused.
+- Routing maps a work shape through `tier_policy.json` and the shared tier
+  resolver's `resolve_for_runtime`. An unavailable preferred vendor walks
+  `claude`, `codex`, `grok`, `qwen`, `muse`, `agy` and records the
+  substitution. An explicit operator vendor, model, or effort is recorded as
+  an override. See `references/routing.md`.
+- Register-owned admission: per-vendor and aggregate work-in-progress bounds,
+  a durable FIFO queue at the document root, an atomic reservation under a
+  host-wide admission lock taken before the per-run generation lock, a
+  release that advances the queue, and reclaim of a dead holder's slot.
+  Exceeding a per-vendor bound queues even when aggregate room remains.
+- Spend accounting. `tokens_reserved` is produced by `reserve_slot` and
+  consumed by `check_spend` when the vendor has no usage line. `tokens_observed`
+  is produced from a `pane.output_matched` usage line (the subscriber is the
+  writer) and consumed by `check_spend` when the vendor reports usage. Missing
+  telemetry fails closed. `authorize_spend` is never passed `None` to mean a
+  silent vendor.
+- `canonical_work_location` bounds the git subprocess at five seconds. A
+  timeout, a missing git, or a non-repository is `intended.resolve()`, not the
+  nearest existing ancestor. Two missing siblings of one parent no longer
+  compare equal.
+
 ## [0.4.0] - 2026-08-13
 
 ### Added

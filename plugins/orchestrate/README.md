@@ -4,13 +4,23 @@ Cross-vendor multi-session orchestration over [herdr](https://github.com/infique
 work to Claude, Codex, Grok, Muse, Qwen, and agy children as tracked herdr sessions, aggregate
 their results, and hold the operator's conversation steady while they run.
 
-**This release ships the register, tracked herdr event subscriber, child session lifecycle, and
-completion** — write-ahead launch, interaction readiness, scoped worktrees, recorded reaping, and
-the only path a child reaches `verified`: a bounded predicate run on a settled, run-bound artifact,
-inside its boundary, with its destination actually changed and, for judgment work, a claimed
-independent verifier's depth sample on record. See `skills/orchestrate/SKILL.md` for the full contract and
-`CHANGELOG.md` for what is and is not implemented yet. The full design lives in
+**This release ships the register, tracked herdr event subscriber, child session lifecycle,
+completion, planning, routing, admission, and spend accounting** — write-ahead launch,
+interaction readiness, scoped worktrees, recorded reaping, the only path a child reaches
+`verified`, work-shape routing with recorded substitutions, register-owned per-vendor
+and aggregate bounds that queue rather than reject, and a spend ceiling from observed
+actuals. Planning never launches. See `skills/orchestrate/SKILL.md` for the full contract
+and `CHANGELOG.md` for what is and is not implemented yet. The full design lives in
 `docs/plans/2026-08-12-orchestrate-plugin-plan.md`.
+
+## Planning, routing, admission, and spend
+
+`scripts/planning.py` decides the split and the route and then stops. The operator
+sees the plan before `commit_plan` writes a reservation. `scripts/admission.py`
+enforces per-vendor and aggregate bounds from durable register state; a full vendor
+queues. `scripts/accounting.py` engages the spend ceiling from observed actuals and
+fails closed when a vendor that should report usage has not. Routing is documented
+in `references/routing.md`.
 
 ## Register
 

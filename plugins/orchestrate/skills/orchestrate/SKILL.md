@@ -1,23 +1,24 @@
 ---
 name: orchestrate
-description: The orchestrate register, tracked herdr subscriber, write-ahead child session lifecycle, and completion gate for multi-vendor runs, with interaction readiness, scoped worktrees, nonce-bound sentinels, reconnect catch-up, bounded predicates on settled run-bound artifacts, verified integration, and recorded reaping. No routing, spend gate, or mirror behavior yet. Triggers on "orchestrate register", "orchestrate subscriber", "orchestrate session lifecycle", "orchestrate completion", "orchestrate predicate", "herdr event catch-up", "the run register".
+description: The orchestrate register, tracked herdr subscriber, write-ahead child session lifecycle, completion gate, work-shape routing, register-owned admission, and spend accounting for multi-vendor runs, with interaction readiness, scoped worktrees, nonce-bound sentinels, reconnect catch-up, bounded predicates on settled run-bound artifacts, verified integration, and recorded reaping. Planning never launches. No mirror behavior or slash command yet. Triggers on "orchestrate register", "orchestrate subscriber", "orchestrate session lifecycle", "orchestrate completion", "orchestrate planning", "orchestrate admission", "orchestrate routing", "orchestrate spend", "orchestrate predicate", "herdr event catch-up", "the run register".
 ---
 
-# orchestrate — register, event subscriber, session lifecycle, and completion
+# orchestrate — register, subscriber, lifecycle, completion, planning, admission
 
 `orchestrate` coordinates multi-vendor herdr sessions: Claude, Codex, Grok, Muse, Qwen, and agy
 children dispatched under one operator-driven run, aggregated back through a mirror and woken by a
-subscriber holding herdr's event socket across turns. This skill currently ships **four pieces of
-that system: the register, subscriber, child session lifecycle, and completion gate**. The register is the whole state model (KTD5) and the
+subscriber holding herdr's event socket across turns. This skill currently ships the register,
+subscriber, child session lifecycle, completion gate, planning, routing, admission, and spend
+accounting. The register is the whole state model (KTD5) and the
 Claude↔Codex handoff seam (R12). The subscriber holds protocol 19 event streams, wakes the
 orchestrator, and performs reconnect catch-up (KTD3/KTD12). The session lifecycle owns write-ahead
 launch, recovery, interaction readiness, landing isolation, scope checks, and recorded reaping.
 Completion is the only path to `verified` (R5): a bounded, typed predicate run inline by the
 orchestrator on a settled, run-bound artifact, inside a clean boundary, with integration to the
 recorded destination verified before a child can be reaped.
-Routing, spend gating, hang detection, mirror behavior, and the `/orchestrate`
-command itself land in later units of
-`docs/plans/2026-08-12-orchestrate-plugin-plan.md` and is deliberately absent here.
+Planning decides the split and the route and then stops. Hang detection, mirror
+behavior, and the `/orchestrate` command itself land in later units of
+`docs/plans/2026-08-12-orchestrate-plugin-plan.md` and are deliberately absent here.
 
 ## What the register is
 
@@ -124,10 +125,11 @@ and checks declared `artifact_path` presence. Its `observed_state_source` record
 was directly observed or inferred from pane/tab presence. A catch-up failure is reported but does
 not close the accepted event stream. It does not evaluate predicates.
 
-The subscriber only accepts `pane.output_matched` entries built from a complete substring sentinel;
-a regex or ordinary-text output match is valid for Herdr generally but is a startup error here
-because it cannot satisfy the subscriber's identity guard. More than one sentinel subscription may
-target the same pane, so readiness and completion interactions can both remain active.
+The subscriber accepts two closed `pane.output_matched` substring classes: a complete sentinel,
+and the accounting usage needle (`token`). A regex or any other ordinary-text match is valid for
+Herdr generally but is a startup error here. More than one sentinel subscription may target the
+same pane, so readiness and completion interactions can both remain active. A usage match writes
+`tokens_observed` on the matching row.
 
 The spawning unit supplies the subscriber pane, orchestrator pane, run identity, and complete JSON
 subscription list:
@@ -244,8 +246,37 @@ own process group, whose surviving members are killed before the evidence is re-
 See `references/predicates.md` for the full contract, including what each control does **not**
 establish.
 
+## Planning, routing, admission, and spend
+
+`scripts/planning.py` is the judgment step. It maps each child's work shape through
+`tier_policy.json` and `resolve_for_runtime`, walks the declared vendor order when the
+preferred vendor is unavailable, and records every substitution and every explicit
+operator override. See `references/routing.md`.
+
+`scripts/admission.py` owns the work-in-progress bounds. Per-vendor and aggregate
+occupancy are counted from durable reservations plus active phases, across every live
+run whose stored work location matches this one. Exceeding a per-vendor bound
+**queues**. The queue is a real FIFO at the document root and `advance_queue` is the
+only thing that turns a queued child into a reservation. A dead holder's slot (reaped,
+or no `pane_id` past `lease_seconds`) is reclaimed and the queue advances.
+
+The generation lock is per run and is not reentrant. Bounds span runs, so admission
+takes a host-wide `admission.lock` first, then the run's generation lock, and never
+the reverse. Work location is canonicalized before either lock. Git is not invoked
+while they are held.
+
+`scripts/accounting.py` is the spend gate. `tokens_reserved` is produced by
+`reserve_slot` and consumed when the vendor has no usage line. `tokens_observed` is
+produced from a usage `pane.output_matched` line and consumed when the vendor reports
+usage. Missing telemetry fails closed. `authorize_spend` is never passed `None` to
+mean a silent vendor.
+
+`plan` and `present_plan` write nothing. `commit_plan` refuses unless the operator
+has been shown the plan. None of them launch a child.
+
 ## What is deliberately not here
 
 No `commands/` entry (`/orchestrate` lands with the units that need an invocable surface — KTD2),
-no planning or vendor routing, no admission control, no mirror behaviour beyond the register row it
-will eventually hold, no spend gate, and no hang detector.
+no mirror behaviour beyond the register row it will eventually hold, and no hang detector.
+`launch_child` still does not call admission; wiring launch to a reserved slot is a later
+unit.

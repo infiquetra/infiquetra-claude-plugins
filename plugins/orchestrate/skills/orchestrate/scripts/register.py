@@ -284,21 +284,27 @@ def _nearest_existing(path: Path) -> Path:
     return current.resolve()
 
 
+GIT_LOCATION_TIMEOUT_SECONDS = 5.0
+
+
 def canonical_work_location(root: Path) -> Path:
     """The git top level that contains ``root``.
 
     A user-facing directory is often a package subdirectory. The run's work location is
     the repository, not the package.
 
-    ``root`` need not exist. Git is asked from the nearest existing ancestor, so
-    ``repo/packages/future-tool`` and ``repo/packages/tool`` name the same repository.
-    If git cannot answer (bare repo, not a repo, git missing), the nearest existing
-    ancestor is used. That is deliberate, not a silent degrade: a temporary directory
-    used as a test root is not a repository, and a nonexistent descendant of one must
-    not stamp a path that later canonicalizes to something else.
+    Git is asked from the nearest existing ancestor, so a path that does not exist
+    yet can still resolve to a repository. If git cannot answer (bare repo, not a
+    repo, git missing, timeout), the result is ``intended.resolve()`` — not the
+    ancestor. Using the ancestor as the location made two missing siblings of one
+    parent compare equal, and locked a path out of itself once it was created.
+
+    A hung git is bounded by :data:`GIT_LOCATION_TIMEOUT_SECONDS`. Timeout is
+    "git cannot answer", not a hang of the generation lock.
     """
     intended = Path(root)
     existing = _nearest_existing(intended)
+    fallback = intended.resolve()
     env = {key: value for key, value in os.environ.items() if key not in _GIT_IDENTITY_ENV}
     try:
         result = subprocess.run(  # nosec B603 -- fixed argv, no shell
@@ -307,12 +313,13 @@ def canonical_work_location(root: Path) -> Path:
             capture_output=True,
             text=True,
             env=env,
+            timeout=GIT_LOCATION_TIMEOUT_SECONDS,
         )
-    except OSError:
-        return existing
+    except (OSError, subprocess.TimeoutExpired):
+        return fallback
     toplevel = result.stdout.strip()
     if result.returncode != 0 or not toplevel:
-        return existing
+        return fallback
     resolved = Path(toplevel).resolve()
     try:
         intended.resolve().relative_to(resolved)
@@ -320,7 +327,7 @@ def canonical_work_location(root: Path) -> Path:
         # git walked up to a repository that does not contain this directory
         # (a pytest tmp next to an unrelated checkout). That is not a work
         # location for this caller.
-        return existing
+        return fallback
     return resolved
 
 
@@ -701,37 +708,69 @@ def upsert_rows(
 
     claimed = canonical_work_location(root)
     with _write_locked(run_id):
+        return _upsert_rows_unlocked(claimed, normalized, run_id=run_id)
+
+
+def _upsert_rows_unlocked(
+    claimed: Path,
+    normalized: Mapping[str, Mapping[str, Any]],
+    *,
+    run_id: str,
+) -> dict[str, dict[str, Any]]:
+    """Merge-update rows. Caller already holds the generation lock and a canonical ``claimed``."""
+    doc = _read_register_unlocked(run_id)
+    expected = _expected_archive_root(run_id, doc)
+    if expected is not None:
+        if not _same_dir(claimed, expected):
+            raise RegisterError(
+                f"run {run_id!r} is bound to {expected} and the caller named {claimed}; "
+                "a repository argument must name this run's work location"
+            )
+        doc["repo_root"] = str(expected)
+    else:
+        if doc.get("rows"):
+            raise RegisterError(
+                f"run {run_id!r} has a nonempty live register with no work location; "
+                "refusing to stamp a caller-supplied directory"
+            )
+        doc["repo_root"] = str(claimed)
+    doc["run_id"] = run_id
+    rows = doc["rows"]
+    merged_rows: dict[str, dict[str, Any]] = {}
+    for row_id, fields in normalized.items():
+        existing = rows.get(row_id, {})
+        is_new_row = not existing
+        merged = {**existing, **fields, "id": row_id, "run_id": run_id}
+        if is_new_row:
+            for column in _TIME_STRATEGY_COLUMNS:
+                merged.setdefault(column, None)
+        rows[row_id] = merged
+        merged_rows[row_id] = dict(merged)
+    doc["rows"] = rows
+    _atomic_write_json(register_path(run_id), doc)
+    return merged_rows
+
+
+def stored_work_location(run_id: str, doc: Mapping[str, Any] | None = None) -> Path | None:
+    """Sidecar then stamp, resolved only. Does not invoke git.
+
+    Admission counts under the generation lock and must not run
+    :func:`canonical_work_location` while holding it.
+    """
+    run_id = _safe_run_id(run_id)
+    path = register_dir() / f"{run_id}.root"
+    if path.exists():
+        material = path.read_bytes().decode("utf-8").strip()
+        if material:
+            return Path(material).resolve()
+    if doc is None:
+        if not register_path(run_id).exists():
+            return None
         doc = _read_register_unlocked(run_id)
-        expected = _expected_archive_root(run_id, doc)
-        if expected is not None:
-            if not _same_dir(claimed, expected):
-                raise RegisterError(
-                    f"run {run_id!r} is bound to {expected} and the caller named {claimed}; "
-                    "a repository argument must name this run's work location"
-                )
-            doc["repo_root"] = str(expected)
-        else:
-            if doc.get("rows"):
-                raise RegisterError(
-                    f"run {run_id!r} has a nonempty live register with no work location; "
-                    "refusing to stamp a caller-supplied directory"
-                )
-            doc["repo_root"] = str(claimed)
-        doc["run_id"] = run_id
-        rows = doc["rows"]
-        merged_rows: dict[str, dict[str, Any]] = {}
-        for row_id, fields in normalized.items():
-            existing = rows.get(row_id, {})
-            is_new_row = not existing
-            merged = {**existing, **fields, "id": row_id, "run_id": run_id}
-            if is_new_row:
-                for column in _TIME_STRATEGY_COLUMNS:
-                    merged.setdefault(column, None)
-            rows[row_id] = merged
-            merged_rows[row_id] = dict(merged)
-        doc["rows"] = rows
-        _atomic_write_json(register_path(run_id), doc)
-        return merged_rows
+    stamped = doc.get("repo_root")
+    if isinstance(stamped, str) and stamped:
+        return Path(stamped).resolve()
+    return None
 
 
 def _expected_archive_root(run_id: str, doc: Mapping[str, Any]) -> Path | None:

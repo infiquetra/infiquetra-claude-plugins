@@ -2,6 +2,93 @@
 
 ## 2026-08-15
 
+### Review loops terminate by construction; escalation is bounded at one  {#review-loops-bounded-by-construction}
+
+**Decision.** Every review layer runs under a loop bound: **three iterations
+per unit**, re-review scoped to the delta, findings deduplicated **by class
+rather than by location**, three verdicts instead of two (`pass`,
+`halt-and-repair`, `halt-and-escalate`), and **one escalation per unit**.
+
+`halt-and-escalate` fires mechanically — the same defect class recurring in a
+third round, regardless of the rank it was given — and hands the finding to
+the layer above rather than requesting another repair.
+
+The consensus panel (multiple reviewers, per-lens scoring, quorum,
+vendor-exclusion roster) is a **separate** mechanism from the loop bound. It
+applies to code review and qa, is optional for doc review, and does not apply
+to the orchestration-plan review, which has a single voter: the operator.
+
+Gate or score is chosen **per dimension**. Threshold questions take a gate;
+continuum questions take a score. Where both exist the rank binds the
+decision and the score measures convergence.
+
+Two campaigns motivated this and failed in opposite directions. A
+requirements review was unbounded in **breadth** — 162 whole-document
+re-reads against 10 delta-scoped ones, and three incompatible round counters
+running at once. A code review was unbounded in **depth** — rounds counted
+correctly, budget extended twice, seven merge-blocking defects at the end,
+because each repair created the next round's review surface. The clearest
+demonstration: the eighth instance of a recurring class was inside the fix
+for the seventh.
+
+Three reviewers from three vendors then filed the correct structural
+diagnosis at the **lowest** rank, because a merge-gate rubric has no rank for
+"the design is wrong." The loop had one available action for a finding that
+needed a different one.
+
+**Rejected: review until the panel returns nothing blocking.** This is not a
+stopping rule. It terminates only when reviewers run out of findings, and
+they never do, because the artifact changes under them every round.
+**Rejected: a uniform numeric threshold across all dimensions.** It is
+nudgeable in both directions — a reviewer who wants to halt scores just under
+the line, and a panel under time pressure inflates to end the loop.
+**Rejected: leave escalation unbounded.** Bounding only the inner loop moves
+the problem outward, where each turn is more expensive because it discards a
+plan and its work.
+**Rejected: make the escalation budget configurable.** A bound does not erode
+by being deleted, it erodes by being raised. Raising it requires saying so in
+the prompt or the plan.
+
+**Revisit when** a unit legitimately needs a second escalation often enough
+that the friction is the bottleneck rather than the signal.
+
+**Refs.** [`docs/plans/2026-08-15-orchestrate-architecture-correction.md`](../plans/2026-08-15-orchestrate-architecture-correction.md),
+Part II; LEARNINGS
+[`{#two-inferences-meet-at-every-gate}`](LEARNINGS.md#two-inferences-meet-at-every-gate).
+
+### External reviewers are engaged as managed sessions, and may be the whole panel  {#external-reviewers-are-managed-sessions}
+
+**Decision.** `/code-review` and `/doc-review` engage an external reviewer
+through a managed agent session rather than a subagent. The operator-facing
+offer is unchanged — the same durable gate-record contract, prompt-and-remember
+path, provider selection, egress policy, tier selection, and atomic
+persistence of request state. Only the transport changes.
+
+A new offer mode, **external only**, excludes the home vendor's panel
+entirely rather than adding an advisory seat beside it. When a review runs
+inside a session over code that session's vendor wrote, external-only is the
+correctness option, not a cost option: it is "never review your own vendor"
+applied at the skill level, so the rule is implemented once rather than twice.
+
+**Losing quorum under external-only halts and tells the operator.** During
+the campaign that motivated this, an external reviewer was terminated by its
+provider's content filter three separate times.
+
+**Rejected: keep the subagent transport.** A subagent dies with its caller and
+reports only what it chose to summarise. A managed session is visible — its
+pane can be watched, read and interrupted — and it outlives the caller. The
+campaign's central failure was a summary that dropped the fact which refuted
+it.
+**Rejected: fall back to the home panel when external-only loses quorum.**
+That silently converts a correctness choice into a cost choice, and the
+operator never learns it happened.
+
+**Revisit when** a vendor's session transport becomes less reliable than a
+subagent for a review-shaped task.
+
+**Refs.** [`{#review-loops-bounded-by-construction}`](#review-loops-bounded-by-construction);
+[`{#subscriber-is-a-managed-pane}`](#subscriber-is-a-managed-pane).
+
 ### The durable run table keeps intent and outcome; it stops storing substrate  {#register-keeps-intent-not-substrate}
 
 **Decision.** The orchestration run table persists only facts nothing else

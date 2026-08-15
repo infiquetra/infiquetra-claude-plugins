@@ -253,30 +253,41 @@ establish.
 preferred vendor is unavailable, and records every substitution and every explicit
 operator override. See `references/routing.md`.
 
-`scripts/admission.py` owns the work-in-progress bounds. Per-vendor and aggregate
-occupancy are counted from durable reservations plus active phases, across every live
-run whose stored work location matches this one. Exceeding a per-vendor bound
-**queues**. The queue is a real FIFO at the document root and `advance_queue` is the
-only thing that turns a queued child into a reservation. A dead holder's slot (reaped,
-or no `pane_id` past `lease_seconds`) is reclaimed and the queue advances.
+`scripts/admission.py` owns the work-in-progress bounds. Occupancy for the bound is
+the reservation set on every live run on this host. Active phases without a
+reservation are reconciliation evidence (`unreserved_active`); they are not the
+atomic enforcement. Exceeding a per-vendor bound **queues**. The queue is a real
+FIFO at the document root and `advance_queue` is the only thing that turns a queued
+child into a reservation. Admission never writes `phase`. A planned reservation
+expires only by abandonment or a declared lease; an observed `exited` row is
+reclaimable even if its pane id remains.
 
-The generation lock is per run and is not reentrant. Bounds span runs, so admission
-takes a host-wide `admission.lock` first, then the run's generation lock, and never
-the reverse. Work location is canonicalized before either lock. Git is not invoked
-while they are held.
+The generation lock is per run and is not reentrant. Bounds are host-wide, so
+admission takes `admission.lock` first, then the run's generation lock, and never
+the reverse. An optional `admission.policy` file beside that lock is the durable
+operator-set rule. Reserve never writes it. If the file is absent the module
+defaults apply. `write_host_policy` is the only writer. Work-location binding
+on a write is unchanged: a run still belongs to one directory. When promoting
+a queued child of another run, the write uses *that* run's stored location.
 
-`scripts/accounting.py` is the spend gate. `tokens_reserved` is produced by
-`reserve_slot` and consumed when the vendor has no usage line. `tokens_observed` is
-produced from a usage `pane.output_matched` line and consumed when the vendor reports
-usage. Missing telemetry fails closed. `authorize_spend` is never passed `None` to
-mean a silent vendor.
+`scripts/accounting.py` is the spend gate. Every planned child declares a positive
+`tokens_max`. That number is `tokens_reserved`. For a vendor with no usage line it
+is charged as a declared maximum, not labelled observed actual. `tokens_observed`
+is produced from a usage `pane.output_matched` line. Missing telemetry fails
+closed. `authorize_spend` is never passed `None` to mean a silent vendor.
 
-`plan` and `present_plan` write nothing. `commit_plan` refuses unless the operator
-has been shown the plan. None of them launch a child.
+`plan` and `present_plan` write nothing. `present_plan` only renders. `commit_plan`
+requires a presentation receipt whose digest matches this plan. This unit can write
+that receipt; the composition unit is the producer that should write it after the
+operator channel delivers the text. None of them launch a child.
+
+`activate_slot` marks a matching reservation `held`. It does not launch and does
+not write `phase`.
 
 ## What is deliberately not here
 
 No `commands/` entry (`/orchestrate` lands with the units that need an invocable surface — KTD2),
 no mirror behaviour beyond the register row it will eventually hold, and no hang detector.
-`launch_child` still does not call admission; wiring launch to a reserved slot is a later
-unit.
+`launch_child` still does not call `reserve_slot` or `activate_slot`. Reaping still
+does not call `release_slot`. Wiring launch→reserve and reap→release is a later
+unit; without the second, the bound is a one-way ratchet until reclaim runs.

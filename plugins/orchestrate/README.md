@@ -15,12 +15,16 @@ and `CHANGELOG.md` for what is and is not implemented yet. The full design lives
 
 ## Planning, routing, admission, and spend
 
-`scripts/planning.py` decides the split and the route and then stops. The operator
-sees the plan before `commit_plan` writes a reservation. `scripts/admission.py`
-enforces per-vendor and aggregate bounds from durable register state; a full vendor
-queues. `scripts/accounting.py` engages the spend ceiling from observed actuals and
-fails closed when a vendor that should report usage has not. Routing is documented
-in `references/routing.md`.
+`scripts/planning.py` decides the split and the route and then stops. `commit_plan`
+requires a presentation receipt whose digest matches the rendered plan; this unit
+does not deliver that text to the operator. `scripts/admission.py` enforces
+host-wide per-vendor and aggregate bounds from durable reservations and
+documented defaults (or an operator-written `admission.policy` file); a full
+vendor queues. Admission does not write `phase`.
+`scripts/accounting.py` engages the spend ceiling from observed actuals, or from a
+declared per-child maximum for a vendor with no usage line, and fails closed when
+a vendor that should report usage has not. Routing is documented in
+`references/routing.md`.
 
 ## Register
 

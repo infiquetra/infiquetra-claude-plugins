@@ -2,6 +2,35 @@
 
 ## 2026-08-14
 
+### Admission owns reservations, not phases  {#admission-owns-reservations}
+
+**Decision.** The bound is the reservation set on every live run on the
+host. An optional `admission.policy` file beside the host lock is the
+durable operator-set rule. Reserve, release, and reclaim never write it.
+Absence means the module defaults (`DEFAULT_PER_VENDOR`,
+`DEFAULT_AGGREGATE`). `write_host_policy` is the only writer. Per-call
+limit arguments override for that call only, for tests.
+Admission never writes `phase`. `activate_slot` sets reservation state to
+`held`. Reclaim reads reservation state, a declared lease, and terminal
+evidence (`observed_state="exited"`, `phase` in `{verified, reaped}`). A
+planned reservation with no pane is not dead. `_write_admission` still
+binds a run to its stored work location; a promotion of another run uses
+that run's stored path.
+
+**Rejected: first writer of the policy file wins.** A test or a stray
+`reserve_slot(..., per_vendor_limit=999)` would leave the host permanently
+unbounded, and the operator's only remedy is a file they have no reason to
+know exists.
+**Rejected: write `phase=launching` inside the admission lock.** That
+recreates launch in this unit and puts admission back on a column it does
+not own.
+**Rejected: keep the active-phase union as enforcement.** The writers do
+not take this lock.
+**Rejected: infer death from no pane id.** That is the normal pre-launch
+state, and after exit the pane id remains.
+
+**Revisit when** launch calls `activate_slot` and reap calls `release_slot`.
+
 ### Admission takes a host lock first, then the generation lock  {#host-wide-admission-lock}
 
 **Decision.** Per-vendor and aggregate work-in-progress bounds are enforced by

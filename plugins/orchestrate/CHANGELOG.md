@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.5.1] - 2026-08-14
+
+### Fixed
+
+- Admission owns reservations, the queue, and the host policy. It no longer
+  writes `phase`. Occupancy for the bound is the reservation set on every live
+  run. Active phases without a reservation are evidence, not enforcement.
+- A queued child that has already finished is dropped from the queue rather
+  than promoted back to `planned`.
+- Host bounds count every live run. An optional `admission.policy` file is
+  the durable operator-set rule; reserve never writes it. Absent file means
+  the documented defaults. A write still binds a run to its own stored work
+  location.
+- Reusing a row id for a different vendor or shape is a refusal.
+- A planned reservation is not reclaimed because it has no pane yet. An
+  observed `exited` holder is reclaimable even if the pane id remains.
+- Every planned child declares a positive `tokens_max`. A silent vendor is
+  charged that declaration, not an unlabeled estimate. The run-level spend
+  gate no longer skips an unaccounted child.
+- `commit_plan` requires a presentation receipt whose digest matches the
+  rendered plan, which now includes scope, artifact, predicate, and
+  integration mode.
+- Observed-token writes hold the generation lock across read and write. A
+  redelivered usage line is not counted twice. `context left` and token rates
+  are not spend.
+
 ## [0.5.0] - 2026-08-14
 
 ### Added

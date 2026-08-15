@@ -21,6 +21,25 @@
 
 ## 2026-08-14
 
+### Guarding one input of a two-input comparison relocates the inequality  {#one-sided-lock-relocates-the-inequality}
+
+**Context.** Admission widened to a host lock because the generation lock is
+per run. Occupancy still added rows whose `phase` was written under the
+generation lock alone. A process holding the admission lock for five seconds
+did not delay `upsert_row(phase='launching')`.
+**Evidence.** `admission._occupancy` counted `ACTIVE_PHASES`.
+`register.upsert_row` takes only `generation_locked`.
+**Mechanism.** The bound is reservations (admission-owned) plus phases
+(lifecycle-owned). The lock covered the half admission writes. The union
+caught an unreserved launch only after the fact, and never atomically.
+**Fix.** Count reservations only. Keep the phase walk as
+`unreserved_active` evidence. `activate_slot` holds a reservation; it does
+not write `phase`.
+**Generalizable rule.** If a decision reads two writers, one lock on one
+writer does not make the decision atomic. Stop mixing the columns, or put
+both writes in one critical section owned by one module.
+**Refs.** DECISIONS `{#admission-owns-reservations}`.
+
 ### A per-run lock cannot serialize a host-wide bound  {#generation-lock-is-not-a-host-lock}
 
 **Context.** Admission has to enforce per-vendor and aggregate work-in-progress

@@ -8,18 +8,23 @@ Dispatch is a later unit.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 import admission
+import completion
 import fleet_commons_shim
 import register as register_store
 
 tier_resolver = fleet_commons_shim.load("tier_resolver")
 
 DEFAULT_VENDOR_ORDER = ("claude", "codex", "grok", "qwen", "muse", "agy")
+INTEGRATION_MODES = frozenset({"none", "branch", "path"})
+SILENT_VENDORS = frozenset({"muse", "agy"})
 
 # Portable work-shape names (tier_policy.json / role-tier aliases) onto the
 # execution-class vocabulary that resolve_for_runtime understands. Execution
@@ -78,6 +83,7 @@ class PlannedChild:
     predicate: Mapping[str, Any]
     integration_mode: str
     tokens_reserved: int
+    tokens_max: int
     substitutions: tuple[dict[str, str], ...]
     override: dict[str, str] | None
     policy_model: str
@@ -90,13 +96,23 @@ class PlannedChild:
 
 @dataclass(frozen=True)
 class Plan:
-    """A run plan. ``presented`` is the operator-seen flag :func:`commit_plan` requires."""
+    """A run plan. Commit requires a presentation receipt, not a boolean."""
 
     run_id: str
     outcome: str
     children: tuple[PlannedChild, ...]
-    presented: bool = False
     ceiling: float | None = None
+    per_vendor_limit: int = admission.DEFAULT_PER_VENDOR
+    aggregate_limit: int = admission.DEFAULT_AGGREGATE
+
+
+@dataclass(frozen=True)
+class PresentationReceipt:
+    """Digest of the rendered plan. The composition unit is the real producer."""
+
+    run_id: str
+    digest: str
+    text: str
 
 
 def execution_class_for(work_shape: str) -> str:
@@ -215,6 +231,34 @@ def route(
     )
 
 
+def _require_child_contract(row_id: str, spec: Mapping[str, Any]) -> dict[str, Any]:
+    scope = spec.get("scope")
+    if not isinstance(scope, str) or not scope.strip():
+        raise PlanningError(f"child {row_id!r} needs a non-empty scope")
+    artifact = spec.get("artifact_path")
+    if not isinstance(artifact, str) or not artifact.strip():
+        raise PlanningError(f"child {row_id!r} needs a non-empty artifact_path")
+    mode = spec.get("integration_mode")
+    if not isinstance(mode, str) or mode not in INTEGRATION_MODES:
+        raise PlanningError(
+            f"child {row_id!r} needs an explicit integration_mode in {sorted(INTEGRATION_MODES)}"
+        )
+    try:
+        predicate = completion.PredicateSpec.from_mapping(spec.get("predicate"))
+    except completion.PredicateSchemaError as exc:
+        raise PlanningError(f"child {row_id!r} predicate is not the closed schema: {exc}") from exc
+    raw_max = spec.get("tokens_max")
+    if isinstance(raw_max, bool) or not isinstance(raw_max, (int, float)) or int(raw_max) <= 0:
+        raise PlanningError(f"child {row_id!r} needs a positive tokens_max")
+    return {
+        "scope": scope.strip(),
+        "artifact_path": artifact.strip(),
+        "integration_mode": mode,
+        "predicate": predicate.to_mapping(),
+        "tokens_max": int(raw_max),
+    }
+
+
 def plan(
     outcome: str,
     children: Sequence[Mapping[str, Any]],
@@ -238,6 +282,7 @@ def plan(
         work_shape = str(spec.get("work_shape") or "")
         if not work_shape:
             raise PlanningError(f"child {row_id!r} is missing work_shape")
+        contract = _require_child_contract(row_id, spec)
         routed = route(
             work_shape,
             vendor=spec.get("vendor"),
@@ -245,13 +290,10 @@ def plan(
             effort=spec.get("effort"),
             is_vendor_available=is_vendor_available,
         )
-        predicate = spec.get("predicate")
-        if not isinstance(predicate, Mapping):
-            predicate = {
-                "argv": ["true"],
-                "timeout_seconds": 30.0,
-                "max_output_bytes": 4096,
-            }
+        if routed.vendor in SILENT_VENDORS and ceiling is not None:
+            # A silent vendor cannot prove actuals. The declared maximum is the
+            # charge; it is not observed usage.
+            pass
         planned.append(
             PlannedChild(
                 row_id=row_id,
@@ -261,11 +303,12 @@ def plan(
                 vendor=routed.vendor,
                 model=routed.model,
                 effort=routed.effort,
-                scope=str(spec.get("scope") or ""),
-                artifact_path=str(spec.get("artifact_path") or ""),
-                predicate=dict(predicate),
-                integration_mode=str(spec.get("integration_mode") or "none"),
-                tokens_reserved=routed.tokens_reserved,
+                scope=contract["scope"],
+                artifact_path=contract["artifact_path"],
+                predicate=dict(contract["predicate"]),
+                integration_mode=contract["integration_mode"],
+                tokens_reserved=contract["tokens_max"],
+                tokens_max=contract["tokens_max"],
                 substitutions=routed.substitutions,
                 override=routed.override,
                 policy_model=routed.policy_model,
@@ -274,12 +317,14 @@ def plan(
                 workspace_boundary=routed.workspace_boundary,
             )
         )
+    resolved = admission.host_policy()
     return Plan(
         run_id=register_store._safe_run_id(run_id),
         outcome=outcome,
         children=tuple(planned),
-        presented=False,
         ceiling=ceiling,
+        per_vendor_limit=resolved.per_vendor,
+        aggregate_limit=resolved.aggregate,
     )
 
 
@@ -292,12 +337,19 @@ def render_plan(built: Plan) -> str:
     ]
     if built.ceiling is not None:
         lines.append(f"Spend ceiling: {built.ceiling:g} tokens")
+    lines.append(
+        f"Host bounds: per-vendor {built.per_vendor_limit}, aggregate {built.aggregate_limit}"
+    )
     for child in built.children:
         lines.append(
             f"- {child.row_id}: {child.vendor} {child.model}/{child.effort} "
             f"shape={child.work_shape} class={child.execution_class} "
-            f"reserved={child.tokens_reserved}"
+            f"tokens_max={child.tokens_max} reserved={child.tokens_reserved}"
         )
+        lines.append(f"    scope: {child.scope}")
+        lines.append(f"    artifact_path: {child.artifact_path}")
+        lines.append(f"    integration_mode: {child.integration_mode}")
+        lines.append(f"    predicate: {json.dumps(dict(child.predicate), sort_keys=True)}")
         if child.override is not None:
             lines.append(f"    override: {child.override}")
         for item in child.substitutions:
@@ -310,26 +362,63 @@ def render_plan(built: Plan) -> str:
     return "\n".join(lines) + "\n"
 
 
+def plan_digest(built: Plan) -> str:
+    return hashlib.sha256(render_plan(built).encode("utf-8")).hexdigest()
+
+
+def presentation_receipt_path(run_id: str) -> Path:
+    return register_store.register_dir() / f"{register_store._safe_run_id(run_id)}.presented"
+
+
 def present_plan(built: Plan) -> tuple[Plan, str]:
-    """Mark the plan as shown. Writes nothing. Launches nothing."""
+    """Render the full child contract. Does not write a receipt. Launches nothing."""
+    return built, render_plan(built)
+
+
+def issue_presentation_receipt(built: Plan) -> PresentationReceipt:
+    """Write the digest this commit will require.
+
+    This unit is not the operator channel. The composition unit is the producer
+    that should call this after the operator has actually been shown the text.
+    """
     text = render_plan(built)
-    return replace(built, presented=True), text
+    receipt = PresentationReceipt(run_id=built.run_id, digest=plan_digest(built), text=text)
+    path = presentation_receipt_path(built.run_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    register_store._atomic_write_json(
+        path, {"run_id": receipt.run_id, "digest": receipt.digest, "text": receipt.text}
+    )
+    return receipt
+
+
+def load_presentation_receipt(run_id: str) -> PresentationReceipt:
+    path = presentation_receipt_path(run_id)
+    if not path.exists():
+        raise PlanningError(
+            "no presentation receipt for this plan; the composition unit writes one "
+            "after the operator channel delivers the rendered text"
+        )
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    return PresentationReceipt(str(raw["run_id"]), str(raw["digest"]), str(raw.get("text") or ""))
 
 
 def commit_plan(
     built: Plan,
     root: Path,
     *,
-    per_vendor_limit: int = admission.DEFAULT_PER_VENDOR,
-    aggregate_limit: int = admission.DEFAULT_AGGREGATE,
+    receipt: PresentationReceipt | None = None,
+    per_vendor_limit: int | None = None,
+    aggregate_limit: int | None = None,
     now: float | None = None,
 ) -> Plan:
-    """Reserve slots and write planned rows. Refuses unless the plan was presented.
+    """Reserve slots and write planned rows. Requires a matching presentation receipt.
 
     Does not launch. A queued child is written as queued, not as an error.
     """
-    if not built.presented:
-        raise PlanningError("the operator has not been shown this plan")
+    shown = receipt if receipt is not None else load_presentation_receipt(built.run_id)
+    expected = plan_digest(built)
+    if shown.run_id != built.run_id or shown.digest != expected:
+        raise PlanningError("presentation receipt does not match this plan")
     committed: list[PlannedChild] = []
     for child in built.children:
         decision = admission.reserve_slot(
@@ -338,6 +427,7 @@ def commit_plan(
             run_id=built.run_id,
             vendor=child.vendor,
             work_shape=child.execution_class,
+            tokens_max=child.tokens_max,
             per_vendor_limit=per_vendor_limit,
             aggregate_limit=aggregate_limit,
             now=now,
@@ -346,6 +436,7 @@ def commit_plan(
             root,
             child.row_id,
             {
+                "phase": "planned",
                 "task": child.task,
                 "work_shape": child.work_shape,
                 "execution_class": child.execution_class,
@@ -357,7 +448,8 @@ def commit_plan(
                 "artifact_path": child.artifact_path,
                 "predicate": dict(child.predicate),
                 "integration_mode": child.integration_mode,
-                "tokens_reserved": child.tokens_reserved,
+                "tokens_reserved": child.tokens_max,
+                "tokens_max": child.tokens_max,
                 "substitutions": [dict(item) for item in child.substitutions],
                 "override": dict(child.override) if child.override else None,
                 "workspace_boundary": child.workspace_boundary,

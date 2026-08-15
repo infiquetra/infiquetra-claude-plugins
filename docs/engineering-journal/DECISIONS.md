@@ -2,6 +2,77 @@
 
 ## 2026-08-15
 
+### The durable run table keeps intent and outcome; it stops storing substrate  {#register-keeps-intent-not-substrate}
+
+**Decision.** The orchestration run table persists only facts nothing else
+owns — role, task, scope, reserved and maximum tokens, disposition, base
+commit, destination, verdict, settlement. It stops persisting the columns
+the terminal multiplexer already owns and can be asked for: pane id, tab id,
+working directory, process id, observed session state, vendor. Those are
+queried at read time from the component that owns them.
+
+The general rule: **do not keep a durable record of a fact whose owner is
+already durable and queryable.** A second record of someone else's fact is a
+second register, and two registers can disagree.
+
+The composition unit's five repair rounds produced seven merge-blocking
+defects. Every one is an instance of that disagreement — a failed process
+query read as a negative result, a reused process id read as an identity, a
+snapshot gap read as a closed session, a session label that is not injective
+over the two identifiers it concatenates. None is a logic error. The full
+analysis is in
+[`docs/plans/2026-08-15-orchestrate-architecture-correction.md`](../plans/2026-08-15-orchestrate-architecture-correction.md).
+
+**Rejected: keep the substrate columns and reconcile them harder.** Three
+rounds already did this. Each closed the named entrances and the next review
+found new ones, because a property with more entrances than anyone has
+enumerated cannot be secured by enumerating entrances.
+**Rejected: drop the durable table entirely and hand off in prose.** Prose
+carries intent — this campaign was run from markdown briefs — but it cannot
+*refuse*. A resumed session must be told it is already at its concurrency
+bound and how much ceiling remains, and only machinery enforces that.
+**Rejected: treat this as a defect backlog rather than a boundary change.**
+Six of the seven defects are in the category the plan's own `cost x silence`
+ranking placed lowest, precisely because the operator objects out loud every
+time. Repairing them individually spends the budget in the deprioritised
+quadrant.
+
+**Revisit when** the multiplexer stops being queryable for session facts, or
+when a fact currently classed as substrate turns out to have no owner.
+
+**Refs.** LEARNINGS
+[`{#two-inferences-meet-at-every-gate}`](LEARNINGS.md#two-inferences-meet-at-every-gate).
+
+### The subscriber runs in a managed pane, not as a bare subprocess  {#subscriber-is-a-managed-pane}
+
+**Decision.** The event subscriber is started as the same script with the
+same arguments inside a multiplexer-managed pane, instead of as a tracked
+subprocess identified by process id. It remains a plain process — not an
+agent session — so it costs no tokens and needs no model. "Is this run's
+subscriber alive?" becomes a pane lookup against the component that owns the
+answer, rather than a substring search of the process table.
+
+There is no bootstrap cycle. The subscriber is never subscribed to: on each
+handled event it pushes, issuing a prompt request targeting the
+orchestrator's pane. The startup sequence differs by one line; the wake path,
+the socket, and the script are unchanged.
+
+A deadman is required in both designs, because a waker cannot report its own
+death. The agreed form is the cheap one: whenever the orchestrator wakes for
+any reason, it checks the subscriber's pane before trusting silence.
+
+**Rejected: run the subscriber as a full agent session.** It holds a socket
+and forwards. It makes no decisions and keeps no state anyone else needs, so
+paying vendor tokens for it buys nothing.
+**Rejected: keep the subprocess and strengthen process identity.** A round
+was already spent building a command-line identity check for exactly this,
+and the underlying problem — that we are asking the operating system a
+question the multiplexer could answer — remained.
+
+**Revisit when** the subscriber needs to outlive the multiplexer itself.
+
+**Refs.** [`{#register-keeps-intent-not-substrate}`](#register-keeps-intent-not-substrate).
+
 ### `usage_unparseable` is sticky and owned; a later sample is not a recovery  {#usage-unparseable-is-sticky-and-owned}
 
 **Decision.** Once a row's usage telemetry is marked unparseable, the mark

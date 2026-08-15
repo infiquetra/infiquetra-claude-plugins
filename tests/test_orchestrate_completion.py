@@ -51,9 +51,6 @@ LIFECYCLE = _load("session_lifecycle")
 COMPLETION = _load("completion")
 
 
-# -------------------------------------------------------------------------------- fixtures
-
-
 @pytest.fixture(autouse=True)
 def _orchestrator_secret_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep every test's per-run orchestrator secret out of the operator's home directory.
@@ -66,20 +63,7 @@ def _orchestrator_secret_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setenv(REGISTER.REGISTER_DIR_ENV, str(tmp_path / "orchestrator-registers"))
 
 
-#: A stand-in child. It receives the same dispatch text a real child receives and does exactly
-#: what that text asks: it writes the in-flight sibling, and nothing else.
-_CHILD_SOURCE = """\
-import json
-import pathlib
-import sys
-
-indented = [line.strip() for line in sys.argv[1].splitlines() if line.startswith("  ")]
-inflight, destination, token = indented
-assert not pathlib.Path(destination).exists(), "the child must never see its destination"
-pathlib.Path(inflight).write_text(
-    json.dumps({"binding": token, "conclusion": "done"}), encoding="utf-8"
-)
-"""
+_CHILD_SOURCE = 'import json\nimport pathlib\nimport sys\n\nindented = [line.strip() for line in sys.argv[1].splitlines() if line.startswith("  ")]\ninflight, destination, token = indented\nassert not pathlib.Path(destination).exists(), "the child must never see its destination"\npathlib.Path(inflight).write_text(\n    json.dumps({"binding": token, "conclusion": "done"}), encoding="utf-8"\n)\n'
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -102,11 +86,7 @@ def _init_repo(repo: Path, *, ignore_orchestrate: bool = True) -> None:
         "REQUIRED_KEYS = ('binding', 'conclusion')\n", encoding="utf-8"
     )
     (repo / "checks" / "check.py").write_text(
-        "import json, sys\n"
-        "from helpers import REQUIRED_KEYS\n"
-        "payload = json.loads(open(sys.argv[1], encoding='utf-8').read())\n"
-        "missing = [key for key in REQUIRED_KEYS if key not in payload]\n"
-        "sys.exit(1 if missing else 0)\n",
+        "import json, sys\nfrom helpers import REQUIRED_KEYS\npayload = json.loads(open(sys.argv[1], encoding='utf-8').read())\nmissing = [key for key in REQUIRED_KEYS if key not in payload]\nsys.exit(1 if missing else 0)\n",
         encoding="utf-8",
     )
     _git(repo, "add", "README.md", ".gitignore", "checks")
@@ -150,8 +130,6 @@ class _Prepared:
         self.landing = landing
         self.git = git
         self.receipt = receipt
-        # Taken before the receipt is issued and bound into it, exactly as the product does:
-        # readiness produces the snapshot, the receipt binds it, evaluation compares it.
         self.baseline = baseline
 
     def write_deliverable(
@@ -186,12 +164,7 @@ class _Prepared:
 
     def evaluate(self, **kwargs: Any) -> Any:
         return COMPLETION.evaluate_completion(
-            self.spec,
-            self.landing,
-            self.baseline,
-            self.receipt,
-            git=self.git,
-            **kwargs,
+            self.spec, self.landing, self.baseline, self.receipt, git=self.git, **kwargs
         )
 
 
@@ -213,6 +186,7 @@ def _prepare(
         spec.row_id,
         {"run_id": spec.run_id, "phase": "working", "expected_state": "working"},
         run_id=spec.run_id,
+        writer="write_phase",
     )
     if predicate is None:
         artifacts = COMPLETION.artifact_landing(Path(landing.cwd), spec.run_id, spec.row_id)
@@ -243,9 +217,6 @@ class FakeHerdr:
     def close_tab(self, tab_id: str, *, cwd: Path) -> None:
         self.closed.append(tab_id)
         self.present = False
-
-
-# ---------------------------------------------------------------------- scenario 2: schema
 
 
 @pytest.mark.parametrize(
@@ -289,9 +260,6 @@ def test_a_valid_declaration_round_trips_through_the_schema() -> None:
     assert COMPLETION.PredicateSpec.from_mapping(spec.to_mapping()) == spec
 
 
-# --------------------------------------------------------------------- scenario 3: closure
-
-
 def test_predicate_entry_point_inside_the_write_scope_is_rejected(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)
@@ -303,7 +271,6 @@ def test_predicate_entry_point_inside_the_write_scope_is_rejected(tmp_path: Path
     spec = _spec(mutating=True, environment_command=())
     landing = git.provision(repo, spec)
     predicate = COMPLETION.PredicateSpec(argv=(sys.executable, "src/self_check.py"))
-
     with pytest.raises(COMPLETION.PredicateScopeError, match="src/self_check.py"):
         COMPLETION.issue_receipt(
             spec,
@@ -331,7 +298,6 @@ def test_predicate_importing_a_module_inside_the_write_scope_is_rejected(tmp_pat
     spec = _spec(mutating=True, environment_command=())
     landing = git.provision(repo, spec)
     predicate = COMPLETION.PredicateSpec(argv=(sys.executable, "checks/importing_check.py"))
-
     with pytest.raises(COMPLETION.PredicateScopeError, match="src/oracle.py"):
         COMPLETION.issue_receipt(
             spec,
@@ -395,14 +361,10 @@ def test_a_closure_change_after_dispatch_fails_before_the_predicate_runs(tmp_pat
     prepared = _prepare(repo)
     prepared.write_deliverable()
     (repo / "checks" / "helpers.py").write_text("REQUIRED_KEYS = ()\n", encoding="utf-8")
-
     result = prepared.evaluate()
     assert result.verified is False
     assert result.reason == "predicate_tampered"
     assert result.predicate is None
-
-
-# ---------------------------------------------------------------------- scenario 4: settle
 
 
 def test_an_artifact_written_directly_to_the_destination_is_not_settled(tmp_path: Path) -> None:
@@ -410,7 +372,6 @@ def test_an_artifact_written_directly_to_the_destination_is_not_settled(tmp_path
     _init_repo(repo)
     prepared = _prepare(repo)
     prepared.write_deliverable(path=prepared.receipt.artifact_path)
-
     result = prepared.evaluate()
     assert result.verified is False
     assert result.reason == "artifact_unsettled"
@@ -426,7 +387,6 @@ def test_a_destination_touched_alongside_a_valid_inflight_file_is_not_settled(
     prepared = _prepare(repo)
     prepared.write_deliverable()
     prepared.receipt.artifact_path.write_text("{}", encoding="utf-8")
-
     result = prepared.evaluate()
     assert result.verified is False
     assert result.reason == "artifact_unsettled"
@@ -442,7 +402,6 @@ def test_a_child_that_produced_nothing_fails_with_a_recorded_verdict(tmp_path: P
     repo = tmp_path / "repo"
     _init_repo(repo)
     prepared = _prepare(repo)
-
     result = prepared.evaluate()
     assert result.verified is False
     assert result.reason == "artifact_unsettled"
@@ -461,7 +420,6 @@ def test_an_inflight_symlink_is_refused_rather_than_renamed_into_place(tmp_path:
     prepared = _prepare(repo)
     prepared.receipt.inflight_path.parent.mkdir(parents=True, exist_ok=True)
     prepared.receipt.inflight_path.symlink_to(elsewhere)
-
     result = prepared.evaluate()
     assert result.verified is False
     assert result.reason == "artifact_unsettled"
@@ -479,12 +437,8 @@ def test_settlement_does_not_claim_to_detect_delete_then_recreate(tmp_path: Path
     prepared.receipt.inflight_path.parent.mkdir(parents=True, exist_ok=True)
     with prepared.receipt.inflight_path.open("w", encoding="utf-8") as handle:
         handle.write(json.dumps({"binding": prepared.receipt.binding_token, "conclusion": "ok"}))
-
     result = prepared.evaluate()
     assert result.verified is True
-
-
-# --------------------------------------------------------------------- scenario 1: binding
 
 
 def test_an_artifact_from_a_previous_run_does_not_satisfy_the_predicate(tmp_path: Path) -> None:
@@ -493,7 +447,6 @@ def test_an_artifact_from_a_previous_run_does_not_satisfy_the_predicate(tmp_path
     prepared = _prepare(repo)
     stale_token = COMPLETION.artifact_binding_token("run-previous", "child-a", "old")
     prepared.write_deliverable({"binding": stale_token, "conclusion": "stale but complete"})
-
     result = prepared.evaluate()
     assert result.verified is False
     assert result.reason == "artifact_binding"
@@ -505,7 +458,6 @@ def test_an_artifact_with_no_binding_at_all_is_rejected(tmp_path: Path) -> None:
     _init_repo(repo)
     prepared = _prepare(repo)
     prepared.write_deliverable({"binding": "none", "conclusion": "complete"})
-
     result = prepared.evaluate()
     assert result.verified is False
     assert result.reason == "artifact_binding"
@@ -519,7 +471,6 @@ def test_the_expected_binding_is_established_before_the_child_can_write_anything
     repo = tmp_path / "repo"
     _init_repo(repo)
     prepared = _prepare(repo)
-
     stored = REGISTER.read_rows(repo, run_id="run-a")["child-a"]["dispatch_receipt"]
     assert stored["binding_token"] == prepared.receipt.binding_token
     assert not prepared.receipt.artifact_path.exists()
@@ -539,7 +490,6 @@ def test_a_re_dispatch_of_the_same_row_rejects_the_previous_attempts_artifact(
     first = _prepare(repo)
     first.write_deliverable()
     assert first.evaluate().verified is True
-
     second = _prepare(repo)
     second.receipt.inflight_path.write_text(
         first.receipt.artifact_path.read_text(encoding="utf-8"), encoding="utf-8"
@@ -549,9 +499,6 @@ def test_a_re_dispatch_of_the_same_row_rejects_the_previous_attempts_artifact(
     assert result.reason == "artifact_binding"
 
 
-# --------------------------------------------------------------------- scenario 5: content
-
-
 def test_a_truncated_but_syntactically_valid_artifact_fails_rather_than_passing(
     tmp_path: Path,
 ) -> None:
@@ -559,14 +506,10 @@ def test_a_truncated_but_syntactically_valid_artifact_fails_rather_than_passing(
     _init_repo(repo)
     prepared = _prepare(repo)
     prepared.write_deliverable({"binding": prepared.receipt.binding_token})
-
     result = prepared.evaluate()
     assert result.verified is False
     assert result.reason == "predicate_failed"
     assert result.predicate is not None and result.predicate.returncode == 1
-
-
-# ---------------------------------------------------------------------- scenario 8: bounds
 
 
 def test_a_predicate_that_hangs_is_a_failure(tmp_path: Path) -> None:
@@ -580,7 +523,6 @@ def test_a_predicate_that_hangs_is_a_failure(tmp_path: Path) -> None:
         ),
     )
     prepared.write_deliverable()
-
     result = prepared.evaluate()
     assert result.verified is False
     assert result.reason == "predicate_timeout"
@@ -600,7 +542,6 @@ def test_a_predicate_that_exceeds_its_output_limit_is_a_failure(tmp_path: Path) 
         ),
     )
     prepared.write_deliverable()
-
     result = prepared.evaluate()
     assert result.verified is False
     assert result.reason == "predicate_output_limit"
@@ -623,13 +564,10 @@ def test_a_predicate_that_never_stops_spewing_is_killed_at_the_cap_not_at_the_de
     prepared = _prepare(
         repo,
         predicate=COMPLETION.PredicateSpec(
-            argv=(sys.executable, "checks/forever.py"),
-            timeout_seconds=30.0,
-            max_output_bytes=4096,
+            argv=(sys.executable, "checks/forever.py"), timeout_seconds=30.0, max_output_bytes=4096
         ),
     )
     prepared.write_deliverable()
-
     started = time.monotonic()
     result = prepared.evaluate()
     assert result.verified is False
@@ -644,7 +582,6 @@ def test_a_predicate_that_errors_is_a_failure_never_a_pass(tmp_path: Path) -> No
         repo, predicate=COMPLETION.PredicateSpec(argv=("orchestrate-no-such-program",))
     )
     prepared.write_deliverable()
-
     result = prepared.evaluate()
     assert result.verified is False
     assert result.reason == "predicate_error"
@@ -658,7 +595,6 @@ def test_a_predicate_that_raises_is_a_failure(tmp_path: Path) -> None:
         repo, predicate=COMPLETION.PredicateSpec(argv=(sys.executable, "checks/boom.py"))
     )
     prepared.write_deliverable()
-
     result = prepared.evaluate()
     assert result.verified is False
     assert result.reason == "predicate_failed"
@@ -676,14 +612,10 @@ def test_a_predicate_that_writes_into_the_landing_fails_the_predicate_not_the_ch
         repo, predicate=COMPLETION.PredicateSpec(argv=(sys.executable, "checks/dirty.py"))
     )
     prepared.write_deliverable()
-
     result = prepared.evaluate()
     assert result.verified is False
     assert result.reason == "predicate_side_effect"
     assert "predicate-residue.txt" in result.detail
-
-
-# ----------------------------------------------------------------- scenario 6: integration
 
 
 def _mutating_prepared(repo: Path, row_id: str = "child-m") -> _Prepared:
@@ -695,7 +627,6 @@ def test_reaping_is_refused_while_the_destination_branch_is_unchanged(tmp_path: 
     _init_repo(repo)
     prepared = _mutating_prepared(repo)
     prepared.write_deliverable()
-
     result = prepared.evaluate()
     assert result.verified is False
     assert result.reason == "integration_unverified"
@@ -715,7 +646,6 @@ def test_reaping_is_permitted_once_the_destination_branch_advances(tmp_path: Pat
     _git(worktree, "commit", "-q", "-m", "child work")
     prepared.write_deliverable()
     REGISTER.upsert_row(repo, "child-m", {"tab_id": "tab-m", "cwd": str(worktree)}, run_id="run-a")
-
     result = prepared.evaluate()
     assert result.verified is True, result.detail
     herdr = FakeHerdr()
@@ -733,7 +663,13 @@ def test_reaping_is_refused_while_a_path_destination_is_unchanged(tmp_path: Path
     landing = LIFECYCLE.Landing(
         repo.resolve(), "path", "delivered.txt", git.base_commit(repo), repo.resolve()
     )
-    REGISTER.upsert_row(repo, "child-p", {"run_id": "run-a", "phase": "working"}, run_id="run-a")
+    REGISTER.upsert_row(
+        repo,
+        "child-p",
+        {"run_id": "run-a", "phase": "working"},
+        run_id="run-a",
+        writer="write_phase",
+    )
     artifacts = COMPLETION.artifact_landing(repo.resolve(), "run-a", "child-p")
     relative = artifacts.relative_to(repo.resolve()) / "report.json"
     receipt = COMPLETION.issue_receipt(
@@ -746,19 +682,15 @@ def test_reaping_is_refused_while_a_path_destination_is_unchanged(tmp_path: Path
     )
     prepared = _Prepared(repo, spec, landing, git, receipt, _baseline(git, landing))
     prepared.write_deliverable()
-
     assert prepared.evaluate().reason == "integration_unverified"
 
 
-def test_read_only_work_integrates_nowhere_and_is_permitted_under_mode_none(
-    tmp_path: Path,
-) -> None:
+def test_read_only_work_integrates_nowhere_and_is_permitted_under_mode_none(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)
     prepared = _prepare(repo)
     prepared.write_deliverable()
     REGISTER.upsert_row(repo, "child-a", {"tab_id": "tab-a"}, run_id="run-a")
-
     result = prepared.evaluate()
     assert result.verified is True, result.detail
     assert result.integration is not None and "none" in result.integration
@@ -767,16 +699,12 @@ def test_read_only_work_integrates_nowhere_and_is_permitted_under_mode_none(
     assert herdr.closed == ["tab-a"]
 
 
-# ------------------------------------------------------------------------ scenario 9: pass
-
-
 def test_a_passing_predicate_on_a_settled_bound_artifact_reaps_cleanly(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)
     prepared = _prepare(repo)
     inflight = prepared.write_deliverable()
     REGISTER.upsert_row(repo, "child-a", {"tab_id": "tab-a"}, run_id="run-a")
-
     result = prepared.evaluate()
     assert result.verified is True, result.detail
     assert not inflight.exists()
@@ -787,9 +715,6 @@ def test_a_passing_predicate_on_a_settled_bound_artifact_reaps_cleanly(tmp_path:
     assert row["phase"] == "verified"
     assert row["completion"]["result"] == "verified"
     LIFECYCLE.reap_verified(repo, "child-a", herdr=FakeHerdr(), run_id="run-a")
-
-
-# ---------------------------------------------------------------- scenario 7: depth sample
 
 
 @pytest.mark.parametrize(
@@ -821,7 +746,6 @@ def test_a_judgment_shaped_child_cannot_reach_verified_on_mechanical_coverage_al
     _init_repo(repo)
     prepared = _prepare(repo, work_shape="judgment")
     prepared.write_deliverable()
-
     result = prepared.evaluate()
     assert result.verified is False
     assert result.reason == "depth_sample_missing"
@@ -859,6 +783,7 @@ def _verifier_row(
         row_id,
         {"run_id": run_id, "vendor": vendor, "model": model, "phase": phase},
         run_id=run_id,
+        writer="write_phase",
     )
 
 
@@ -893,19 +818,15 @@ def test_a_judgment_shaped_child_reaches_verified_with_an_independent_depth_samp
     _init_repo(repo)
     prepared = _prepare(repo, work_shape="judgment")
     prepared.write_deliverable()
-
     result = prepared.evaluate(depth_sample=_sample(prepared))
     assert result.verified is True, result.detail
 
 
-def test_a_depth_sample_from_the_child_itself_is_not_an_independent_reader(
-    tmp_path: Path,
-) -> None:
+def test_a_depth_sample_from_the_child_itself_is_not_an_independent_reader(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)
     prepared = _prepare(repo, work_shape="judgment")
     prepared.write_deliverable()
-
     result = prepared.evaluate(depth_sample=_sample(prepared, verifier_row_id="child-a"))
     assert result.verified is False
     assert result.reason == "depth_sample_invalid"
@@ -916,7 +837,6 @@ def test_a_depth_sample_recorded_against_another_artifact_is_rejected(tmp_path: 
     _init_repo(repo)
     prepared = _prepare(repo, work_shape="judgment")
     prepared.write_deliverable()
-
     result = prepared.evaluate(depth_sample=_sample(prepared, artifact_digest="sha256:" + "0" * 64))
     assert result.verified is False
     assert result.reason == "depth_sample_invalid"
@@ -927,7 +847,6 @@ def test_an_unsupported_sampled_claim_blocks_verification(tmp_path: Path) -> Non
     _init_repo(repo)
     prepared = _prepare(repo, work_shape="judgment")
     prepared.write_deliverable()
-
     unsupported = COMPLETION.SampledClaim("no data is lost", "report.json:40", "unsupported")
     result = prepared.evaluate(depth_sample=_sample(prepared, claims=(unsupported,)))
     assert result.verified is False
@@ -952,30 +871,24 @@ def test_a_depth_sample_with_no_claims_is_rejected(tmp_path: Path) -> None:
     _init_repo(repo)
     prepared = _prepare(repo, work_shape="judgment")
     prepared.write_deliverable()
-
     result = prepared.evaluate(depth_sample=_sample(prepared, claims=()))
     assert result.verified is False
     assert result.reason == "depth_sample_invalid"
 
 
-def test_a_depth_sample_round_trips_through_the_register_it_is_recorded_in(
-    tmp_path: Path,
-) -> None:
+def test_a_depth_sample_round_trips_through_the_register_it_is_recorded_in(tmp_path: Path) -> None:
     """The record the operator can actually see, not a mapping that never left memory."""
     repo = tmp_path / "repo"
     _init_repo(repo)
     prepared = _prepare(repo, work_shape="judgment")
     prepared.run_child_process()
     sample = _sample(prepared)
-
     assert prepared.evaluate(depth_sample=sample).verified is True
     stored = REGISTER.read_rows(repo, run_id="run-a")["child-a"]["completion"]["depth_sample"]
     assert COMPLETION.DepthSample.from_mapping(stored) == sample
 
 
-def test_a_verified_judgment_child_has_its_verifier_and_claims_on_record(
-    tmp_path: Path,
-) -> None:
+def test_a_verified_judgment_child_has_its_verifier_and_claims_on_record(tmp_path: Path) -> None:
     """A sampled child and a child whose sample certified nothing must not be the same green row.
 
     Everything the plan requires durably -- verifier identity, the claims, where each was checked,
@@ -986,7 +899,6 @@ def test_a_verified_judgment_child_has_its_verifier_and_claims_on_record(
     _init_repo(repo)
     prepared = _prepare(repo, work_shape="judgment")
     prepared.run_child_process()
-
     assert prepared.evaluate(depth_sample=_sample(prepared)).verified is True
     recorded = REGISTER.read_rows(repo, run_id="run-a")["child-a"]["completion"]["depth_sample"]
     assert recorded["verifier_row_id"] == "verifier-1"
@@ -1001,15 +913,12 @@ def test_a_verified_judgment_child_has_its_verifier_and_claims_on_record(
     ]
 
 
-def test_a_depth_sample_naming_a_verifier_that_never_existed_is_rejected(
-    tmp_path: Path,
-) -> None:
+def test_a_depth_sample_naming_a_verifier_that_never_existed_is_rejected(tmp_path: Path) -> None:
     """An unchecked string is not an independent verifier session."""
     repo = tmp_path / "repo"
     _init_repo(repo)
     prepared = _prepare(repo, work_shape="judgment")
     prepared.run_child_process()
-
     result = prepared.evaluate(
         depth_sample=_sample(prepared, register=False, verifier_row_id="verifier-that-never-was")
     )
@@ -1025,7 +934,6 @@ def test_a_depth_sample_naming_a_verifier_that_never_started_is_rejected(tmp_pat
     prepared = _prepare(repo, work_shape="judgment")
     prepared.run_child_process()
     _verifier_row(repo, phase="planned")
-
     result = prepared.evaluate(depth_sample=_sample(prepared, register=False))
     assert result.verified is False
     assert result.reason == "depth_sample_invalid"
@@ -1070,7 +978,6 @@ def test_a_verifier_phase_outside_the_register_vocabulary_is_not_a_started_dispa
         assert result.verified is False, phase
         assert result.reason == "depth_sample_invalid", phase
         assert "is not one of the phases past launch" in result.detail, phase
-
     assert COMPLETION.PHASES_PAST_LAUNCH == ("launched", "ready", "working", "verified", "reaped")
     assert "planned" not in COMPLETION.PHASES_PAST_LAUNCH
     assert "launching" not in COMPLETION.PHASES_PAST_LAUNCH
@@ -1101,8 +1008,8 @@ def test_a_depth_sample_from_another_run_is_not_this_runs_verifier(tmp_path: Pat
             "dispatch_receipt": foreign["dispatch_receipt"],
         },
         run_id="run-a",
+        writer="write_phase",
     )
-
     result = prepared.evaluate(depth_sample=_sample(prepared, register=False))
     assert result.verified is False
     assert result.reason == "depth_sample_invalid"
@@ -1124,25 +1031,19 @@ def test_a_depth_sample_misattributing_the_verifier_is_rejected(
     _init_repo(repo)
     prepared = _prepare(repo, work_shape="judgment")
     prepared.run_child_process()
-
     misattributed: dict[str, Any] = {field: value}
     result = prepared.evaluate(depth_sample=_sample(prepared, **misattributed))
     assert result.verified is False
     assert result.reason == "depth_sample_invalid"
-    # Vendor is checked against the verifier's own authenticated dispatch; model is still checked
-    # against a writable register column, and the two messages say which is which on purpose.
     assert expected in result.detail
 
 
-def test_an_inconclusive_only_depth_sample_does_not_certify_judgment_work(
-    tmp_path: Path,
-) -> None:
+def test_an_inconclusive_only_depth_sample_does_not_certify_judgment_work(tmp_path: Path) -> None:
     """Absence of a refutation is not a confirmation."""
     repo = tmp_path / "repo"
     _init_repo(repo)
     prepared = _prepare(repo, work_shape="judgment")
     prepared.run_child_process()
-
     inconclusive = COMPLETION.SampledClaim("no data is lost", "report.json:40", "inconclusive")
     result = prepared.evaluate(depth_sample=_sample(prepared, claims=(inconclusive,)))
     assert result.verified is False
@@ -1186,7 +1087,6 @@ def test_a_malformed_depth_mapping_records_a_closed_failure_instead_of_raising(
     _init_repo(repo)
     prepared = _prepare(repo, work_shape="judgment")
     prepared.run_child_process()
-
     result = prepared.evaluate(depth_sample=mapping)
     assert result.verified is False
     assert result.reason == "depth_sample_invalid"
@@ -1209,27 +1109,19 @@ def test_a_verifier_reads_the_settled_artifact_and_the_second_evaluation_verifie
     _init_repo(repo)
     prepared = _prepare(repo, work_shape="judgment")
     prepared.run_child_process()
-
     first = prepared.evaluate()
     assert first.verified is False
     assert first.reason == "depth_sample_missing"
     settled = prepared.receipt.artifact_path
     assert settled.is_file()
     assert not prepared.receipt.inflight_path.exists()
-
-    # The verifier now reads the settled path -- the only artifact that exists at this point.
     digest = "sha256:" + hashlib.sha256(settled.read_bytes()).hexdigest()
     second = prepared.evaluate(depth_sample=_sample(prepared, artifact_digest=digest))
     assert second.verified is True, second.detail
     assert REGISTER.read_rows(repo, run_id="run-a")["child-a"]["phase"] == "verified"
 
 
-# ------------------------------------------------- carried requirement: read-only landings
-
-
-def test_two_read_only_children_with_disjoint_scopes_both_complete_cleanly(
-    tmp_path: Path,
-) -> None:
+def test_two_read_only_children_with_disjoint_scopes_both_complete_cleanly(tmp_path: Path) -> None:
     """The requirement carried from U4: the ordinary multi-child configuration must pass.
 
     Each child's deliverable lands in a directory that is exclusively its own and invisible to
@@ -1241,7 +1133,6 @@ def test_two_read_only_children_with_disjoint_scopes_both_complete_cleanly(
     second = _prepare(repo, row_id="child-b", scope=("reports/b",))
     first.write_deliverable()
     second.write_deliverable()
-
     first_result = first.evaluate()
     second_result = second.evaluate()
     assert first_result.verified is True, first_result.detail
@@ -1261,7 +1152,6 @@ def test_a_read_only_child_writing_into_the_repository_still_fails_the_boundary(
     stray = repo / "reports" / "a" / "notes.md"
     stray.parent.mkdir(parents=True)
     stray.write_text("written into the shared checkout\n", encoding="utf-8")
-
     result = prepared.evaluate()
     assert result.verified is False
     assert result.reason == "scope_violation"
@@ -1277,16 +1167,13 @@ def test_a_boundary_violation_fails_completion_even_when_the_predicate_passes(
     worktree = Path(prepared.landing.cwd)
     (worktree / "outside.txt").write_text("escaped\n", encoding="utf-8")
     prepared.write_deliverable()
-
     result = prepared.evaluate()
     assert result.verified is False
     assert result.reason == "scope_violation"
     assert result.predicate is not None and result.predicate.passed is True
 
 
-def test_a_repository_that_does_not_ignore_the_state_directory_fails_closed(
-    tmp_path: Path,
-) -> None:
+def test_a_repository_that_does_not_ignore_the_state_directory_fails_closed(tmp_path: Path) -> None:
     """The read-only repair depends on the artifact landing being outside Git's view."""
     repo = tmp_path / "repo"
     _init_repo(repo, ignore_orchestrate=False)
@@ -1312,7 +1199,6 @@ def test_every_child_may_write_only_its_own_artifact_directory(tmp_path: Path) -
     mutating = _spec(row_id="child-m", mutating=True, environment_command=(), scope=("src",))
     read_only_landing = git.provision(repo, read_only)
     mutating_landing = git.provision(repo, mutating)
-
     assert COMPLETION.write_scope_for(read_only, read_only_landing) == (
         ".orchestrate/artifacts/run-a/child-a",
     )
@@ -1324,9 +1210,6 @@ def test_every_child_may_write_only_its_own_artifact_directory(tmp_path: Path) -
     assert COMPLETION.repository_scope_for(mutating).scope == ("src",)
 
 
-# ----------------------------------------------- failed predicate is not a new phase (3.1)
-
-
 def test_a_failed_predicate_leaves_the_phase_alone_and_records_a_durable_verdict(
     tmp_path: Path,
 ) -> None:
@@ -1334,7 +1217,6 @@ def test_a_failed_predicate_leaves_the_phase_alone_and_records_a_durable_verdict
     _init_repo(repo)
     prepared = _prepare(repo)
     prepared.write_deliverable({"binding": prepared.receipt.binding_token})
-
     result = prepared.evaluate()
     assert result.verified is False
     row = REGISTER.read_rows(repo, run_id="run-a")["child-a"]
@@ -1345,9 +1227,7 @@ def test_a_failed_predicate_leaves_the_phase_alone_and_records_a_durable_verdict
     assert COMPLETION.is_working_not_failed(repo, "child-a", run_id="run-a") is False
 
 
-def test_no_completion_outcome_writes_a_phase_outside_the_closed_vocabulary(
-    tmp_path: Path,
-) -> None:
+def test_no_completion_outcome_writes_a_phase_outside_the_closed_vocabulary(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)
     payloads: list[dict[str, Any]] = [
@@ -1381,9 +1261,12 @@ def test_a_snapshot_catch_up_pass_does_not_erase_a_recorded_completion_failure(
     prepared.write_deliverable({"binding": prepared.receipt.binding_token})
     prepared.evaluate()
     REGISTER.upsert_row(
-        repo, "child-a", {"pane_id": "pane-a", "observed_state": "predicate_failed"}, run_id="run-a"
+        repo,
+        "child-a",
+        {"pane_id": "pane-a", "observed_state": "predicate_failed"},
+        run_id="run-a",
+        writer="record_observed_state",
     )
-
     SUBSCRIBER.catch_up(
         repo,
         {"panes": [{"pane_id": "pane-a", "agent_status": "working"}], "agents": []},
@@ -1392,9 +1275,6 @@ def test_a_snapshot_catch_up_pass_does_not_erase_a_recorded_completion_failure(
     row = REGISTER.read_rows(repo, run_id="run-a")["child-a"]
     assert row["observed_state"] == "working"
     assert row["completion"]["reason"] == "predicate_failed"
-
-
-# -------------------------------------------------------------------------------- adapters
 
 
 def test_the_git_adapter_reports_a_missing_revision_rather_than_raising(tmp_path: Path) -> None:
@@ -1419,7 +1299,6 @@ def test_the_git_adapter_answers_the_invisibility_question_not_the_ignore_rule_q
     git = LIFECYCLE.GitLanding()
     assert git.is_invisible_to_boundary(repo, ".orchestrate/artifacts") is True
     assert git.is_invisible_to_boundary(repo, "src/thing.py") is False
-
     forced = repo / ".orchestrate" / "artifacts" / "run-a" / "child-a" / "report.json"
     forced.parent.mkdir(parents=True)
     forced.write_text("{}\n", encoding="utf-8")
@@ -1432,8 +1311,8 @@ def test_a_receipt_round_trips_through_its_register_mapping(tmp_path: Path) -> N
     repo = tmp_path / "repo"
     _init_repo(repo)
     prepared = _prepare(repo)
-    assert COMPLETION.DispatchReceipt.from_mapping(prepared.receipt.to_mapping()) == (
-        prepared.receipt
+    assert (
+        COMPLETION.DispatchReceipt.from_mapping(prepared.receipt.to_mapping()) == prepared.receipt
     )
 
 
@@ -1449,7 +1328,13 @@ def test_dispatch_instructions_name_the_inflight_path_and_the_binding(tmp_path: 
 def test_completing_a_row_that_was_never_bound_to_a_dispatch_is_refused(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)
-    REGISTER.upsert_row(repo, "child-z", {"run_id": "run-a", "phase": "working"}, run_id="run-a")
+    REGISTER.upsert_row(
+        repo,
+        "child-z",
+        {"run_id": "run-a", "phase": "working"},
+        run_id="run-a",
+        writer="write_phase",
+    )
     with pytest.raises(COMPLETION.CompletionError, match="no dispatch receipt"):
         COMPLETION.read_receipt(repo, "child-z", run_id="run-a")
 
@@ -1480,7 +1365,13 @@ def test_the_completion_result_is_recorded_for_a_row_that_was_never_evaluated(
 ) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)
-    REGISTER.upsert_row(repo, "child-z", {"run_id": "run-a", "phase": "working"}, run_id="run-a")
+    REGISTER.upsert_row(
+        repo,
+        "child-z",
+        {"run_id": "run-a", "phase": "working"},
+        run_id="run-a",
+        writer="write_phase",
+    )
     assert COMPLETION.completion_record(repo, "child-z", run_id="run-a") is None
     assert COMPLETION.completion_record(repo, "absent", run_id="run-a") is None
     assert COMPLETION.is_working_not_failed(repo, "child-z", run_id="run-a") is True
@@ -1494,19 +1385,13 @@ def test_replacing_the_spec_scope_does_not_mutate_the_original(tmp_path: Path) -
     assert replace(spec, scope=()) == narrowed
 
 
-# ----------------------------------------- remaining members of each control's input class
-
-
-def test_an_artifact_bound_to_a_different_child_in_the_same_run_is_rejected(
-    tmp_path: Path,
-) -> None:
+def test_an_artifact_bound_to_a_different_child_in_the_same_run_is_rejected(tmp_path: Path) -> None:
     """Same run and same nonce shape, wrong child -- the binding is per dispatch, not per run."""
     repo = tmp_path / "repo"
     _init_repo(repo)
     prepared = _prepare(repo)
     sibling_token = COMPLETION.artifact_binding_token("run-a", "child-b", prepared.receipt.nonce)
     prepared.write_deliverable({"binding": sibling_token, "conclusion": "complete"})
-
     result = prepared.evaluate()
     assert result.verified is False
     assert result.reason == "artifact_binding"
@@ -1559,7 +1444,9 @@ def _path_mode_prepared(repo: Path, row_id: str) -> _Prepared:
     landing = LIFECYCLE.Landing(
         repo.resolve(), "path", "delivered.txt", git.base_commit(repo), repo.resolve()
     )
-    REGISTER.upsert_row(repo, row_id, {"run_id": "run-a", "phase": "working"}, run_id="run-a")
+    REGISTER.upsert_row(
+        repo, row_id, {"run_id": "run-a", "phase": "working"}, run_id="run-a", writer="write_phase"
+    )
     artifacts = COMPLETION.artifact_landing(repo.resolve(), "run-a", row_id)
     relative = artifacts.relative_to(repo.resolve()) / "report.json"
     baseline = _baseline(git, landing)
@@ -1583,7 +1470,6 @@ def test_a_changed_path_destination_satisfies_the_integration_gate(tmp_path: Pat
     prepared = _path_mode_prepared(repo, "child-p")
     prepared.write_deliverable()
     (repo / "delivered.txt").write_text("after\n", encoding="utf-8")
-
     result = prepared.evaluate()
     assert result.verified is False
     assert result.reason == "scope_violation"
@@ -1622,12 +1508,7 @@ def test_every_recorded_failure_reason_is_in_the_closed_vocabulary(tmp_path: Pat
     assert len(set(COMPLETION.FAILURE_REASONS)) == len(COMPLETION.FAILURE_REASONS)
 
 
-# ---------------------------------------------- the child process boundary and its posture
-
-
-def test_no_runtimes_launch_posture_forbids_the_write_its_dispatch_requires(
-    tmp_path: Path,
-) -> None:
+def test_no_runtimes_launch_posture_forbids_the_write_its_dispatch_requires(tmp_path: Path) -> None:
     """Every child is told to write an artifact, so no child may be launched unable to write.
 
     The launch posture is composed here the way the product composes it, from the specification
@@ -1646,16 +1527,12 @@ def test_no_runtimes_launch_posture_forbids_the_write_its_dispatch_requires(
     assert LIFECYCLE.permission_argv("grok") == ["--sandbox", "workspace"]
     assert LIFECYCLE.permission_argv("qwen") == ["--sandbox"]
     assert LIFECYCLE.permission_argv("agy") == ["--sandbox"]
-    # Claude and Muse expose no positive flag at all; the empty list is the honest answer, not a
-    # missing case, and the boundary check is what contains them.
     assert LIFECYCLE.permission_argv("claude") == []
     assert LIFECYCLE.permission_argv("muse") == []
     assert LIFECYCLE.permission_argv("unknown-runtime") == []
 
 
-def test_a_deliverable_written_by_a_real_child_process_settles_and_verifies(
-    tmp_path: Path,
-) -> None:
+def test_a_deliverable_written_by_a_real_child_process_settles_and_verifies(tmp_path: Path) -> None:
     """The settlement protocol, executed by a process that is not the one asserting about it.
 
     What this does not establish: that a particular vendor's sandbox permits the write. No
@@ -1666,11 +1543,9 @@ def test_a_deliverable_written_by_a_real_child_process_settles_and_verifies(
     repo = tmp_path / "repo"
     _init_repo(repo)
     prepared = _prepare(repo)
-
     completed = prepared.run_child_process()
     assert completed.returncode == 0, completed.stderr
     assert prepared.receipt.inflight_path.is_file()
-
     result = prepared.evaluate()
     assert result.verified is True, result.detail
     assert prepared.receipt.artifact_path.is_file()
@@ -1690,14 +1565,14 @@ def test_a_child_process_that_cannot_write_its_artifact_directory_fails_completi
     _init_repo(repo)
     prepared = _prepare(repo)
     artifacts = prepared.receipt.artifact_path.parent
-    artifacts.chmod(0o500)
+    artifacts.chmod(320)
     try:
         completed = prepared.run_child_process()
         assert completed.returncode != 0
         assert not prepared.receipt.inflight_path.exists()
         result = prepared.evaluate()
     finally:
-        artifacts.chmod(0o700)
+        artifacts.chmod(448)
     assert result.verified is False
     assert result.reason == "artifact_unsettled"
 
@@ -1712,16 +1587,12 @@ def test_two_read_only_children_both_produce_their_deliverables_from_their_own_p
     second = _prepare(repo, row_id="child-b", scope=("reports/b",))
     assert first.run_child_process().returncode == 0
     assert second.run_child_process().returncode == 0
-
     first_result = first.evaluate()
     second_result = second.evaluate()
     assert first_result.verified is True, first_result.detail
     assert second_result.verified is True, second_result.detail
     assert first_result.scope is not None and first_result.scope.outside_scope == frozenset()
     assert second_result.scope is not None and second_result.scope.outside_scope == frozenset()
-
-
-# -------------------------------------------------------------- the receipt's own identity
 
 
 def test_a_receipt_issued_for_another_child_cannot_verify_this_one(tmp_path: Path) -> None:
@@ -1731,7 +1602,6 @@ def test_a_receipt_issued_for_another_child_cannot_verify_this_one(tmp_path: Pat
     first = _prepare(repo, row_id="child-a")
     second = _prepare(repo, row_id="child-b")
     second.run_child_process()
-
     result = COMPLETION.evaluate_completion(
         first.spec, second.landing, second.baseline, second.receipt, git=second.git
     )
@@ -1747,7 +1617,6 @@ def test_a_receipt_from_another_run_cannot_verify_this_child(tmp_path: Path) -> 
     prepared = _prepare(repo)
     prepared.run_child_process()
     other_run = replace(prepared.spec, run_id="run-b")
-
     result = COMPLETION.evaluate_completion(
         other_run, prepared.landing, prepared.baseline, prepared.receipt, git=prepared.git
     )
@@ -1756,16 +1625,11 @@ def test_a_receipt_from_another_run_cannot_verify_this_child(tmp_path: Path) -> 
     assert "run_id" in result.detail
 
 
-# ---------------------------------------------------- the durable receipt is authenticated
-
-
 def _stored_receipt(repo: Path, row_id: str = "child-a") -> dict[str, Any]:
     return dict(REGISTER.read_rows(repo, run_id="run-a")[row_id]["dispatch_receipt"])
 
 
-def test_a_restarted_orchestrator_evaluates_through_the_durable_receipt(
-    tmp_path: Path,
-) -> None:
+def test_a_restarted_orchestrator_evaluates_through_the_durable_receipt(tmp_path: Path) -> None:
     """The path the receipt is persisted for, exercised rather than assumed.
 
     Every other evaluation in this suite passes the in-memory receipt object, which is the one
@@ -1775,7 +1639,6 @@ def test_a_restarted_orchestrator_evaluates_through_the_durable_receipt(
     _init_repo(repo)
     prepared = _prepare(repo)
     prepared.run_child_process()
-
     reloaded = COMPLETION.read_receipt(repo, "child-a", run_id="run-a")
     assert reloaded == prepared.receipt
     result = COMPLETION.evaluate_completion(
@@ -1795,7 +1658,6 @@ def test_a_planted_binding_token_in_the_register_does_not_authenticate(tmp_path:
     prepared.receipt.inflight_path.write_text(
         json.dumps({"binding": stored["binding_token"], "conclusion": "done"}), encoding="utf-8"
     )
-
     with pytest.raises(COMPLETION.ReceiptAuthenticationError, match="did not authenticate"):
         COMPLETION.read_receipt(repo, "child-a", run_id="run-a")
 
@@ -1816,7 +1678,6 @@ def test_a_replaced_predicate_in_the_register_does_not_authenticate(tmp_path: Pa
     )
     REGISTER.upsert_row(repo, "child-a", {"dispatch_receipt": stored}, run_id="run-a")
     prepared.run_child_process()
-
     with pytest.raises(COMPLETION.ReceiptAuthenticationError, match="did not authenticate"):
         COMPLETION.read_receipt(repo, "child-a", run_id="run-a")
 
@@ -1829,7 +1690,6 @@ def test_a_receipt_with_an_added_field_does_not_authenticate(tmp_path: Path) -> 
     stored = _stored_receipt(repo)
     stored["smuggled"] = "ignored on the way back into the dataclass"
     REGISTER.upsert_row(repo, "child-a", {"dispatch_receipt": stored}, run_id="run-a")
-
     with pytest.raises(COMPLETION.ReceiptAuthenticationError):
         COMPLETION.read_receipt(repo, "child-a", run_id="run-a")
 
@@ -1841,7 +1701,6 @@ def test_a_receipt_stripped_of_its_authentication_is_refused(tmp_path: Path) -> 
     stored = _stored_receipt(repo)
     stored.pop(COMPLETION.AUTHENTICATION_KEY)
     REGISTER.upsert_row(repo, "child-a", {"dispatch_receipt": stored}, run_id="run-a")
-
     with pytest.raises(COMPLETION.ReceiptAuthenticationError, match="no authentication"):
         COMPLETION.read_receipt(repo, "child-a", run_id="run-a")
 
@@ -1854,7 +1713,6 @@ def test_a_receipt_naming_a_run_this_host_never_issued_is_refused(tmp_path: Path
     stored = _stored_receipt(repo)
     stored["run_id"] = "run-invented"
     REGISTER.upsert_row(repo, "child-a", {"dispatch_receipt": stored}, run_id="run-a")
-
     with pytest.raises(COMPLETION.RunSecretError, match="no orchestrator secret"):
         COMPLETION.read_receipt(repo, "child-a", run_id="run-a")
 
@@ -1887,8 +1745,8 @@ def test_a_forged_settlement_record_cannot_replay_a_direct_write(tmp_path: Path)
             }
         },
         run_id="run-a",
+        writer="settle_artifact",
     )
-
     result = prepared.evaluate()
     assert result.verified is False
     assert result.reason == "artifact_unsettled"
@@ -1911,7 +1769,7 @@ def test_a_run_secret_readable_beyond_its_owner_is_refused(tmp_path: Path) -> No
     _init_repo(repo)
     COMPLETION.run_secret(repo, "run-a")
     key = COMPLETION.run_secret_dir() / "run-a.key"
-    key.chmod(0o644)
+    key.chmod(420)
     with pytest.raises(COMPLETION.RunSecretError, match="accessible beyond its owner"):
         COMPLETION.run_secret(repo, "run-a")
 
@@ -1925,12 +1783,7 @@ def test_the_run_secret_is_stable_for_a_run_and_distinct_between_runs(tmp_path: 
     assert len(first) == COMPLETION.RUN_SECRET_BYTES
 
 
-# ------------------------------------------- the artifact path the catch-up consumer reads
-
-
-def test_catch_up_does_not_ask_for_attention_before_the_child_has_settled(
-    tmp_path: Path,
-) -> None:
+def test_catch_up_does_not_ask_for_attention_before_the_child_has_settled(tmp_path: Path) -> None:
     """At issue time the artifact is required to be absent, so declaring it then is a false alarm.
 
     The shipped subscriber treats a declared artifact path that does not exist as an
@@ -1940,14 +1793,12 @@ def test_catch_up_does_not_ask_for_attention_before_the_child_has_settled(
     _init_repo(repo)
     prepared = _prepare(repo)
     REGISTER.upsert_row(repo, "child-a", {"pane_id": "pane-a"}, run_id="run-a")
-
     records = SUBSCRIBER.catch_up(
         repo,
         {"panes": [{"pane_id": "pane-a", "agent_status": "working"}], "agents": []},
         run_id="run-a",
     )
     assert [record.artifact_exists for record in records] == [None]
-
     prepared.run_child_process()
     assert prepared.evaluate().verified is True
     records = SUBSCRIBER.catch_up(
@@ -1971,7 +1822,6 @@ def test_catch_up_finds_a_mutating_childs_artifact_in_its_worktree(tmp_path: Pat
     prepared.run_child_process()
     assert prepared.evaluate().verified is True
     REGISTER.upsert_row(repo, "child-m", {"pane_id": "pane-m"}, run_id="run-a")
-
     records = SUBSCRIBER.catch_up(
         repo,
         {"panes": [{"pane_id": "pane-m", "agent_status": "working"}], "agents": []},
@@ -1980,18 +1830,12 @@ def test_catch_up_finds_a_mutating_childs_artifact_in_its_worktree(tmp_path: Pat
     assert [record.artifact_exists for record in records] == [True]
 
 
-# --------------------------------------------------- re-evaluation and the phase invariant
-
-
-def test_re_evaluating_an_unchanged_verified_child_reaches_the_same_verdict(
-    tmp_path: Path,
-) -> None:
+def test_re_evaluating_an_unchanged_verified_child_reaches_the_same_verdict(tmp_path: Path) -> None:
     """Restart catch-up re-evaluates. Settlement is one-shot, so it must replay, not re-consume."""
     repo = tmp_path / "repo"
     _init_repo(repo)
     prepared = _prepare(repo)
     prepared.run_child_process()
-
     assert prepared.evaluate().verified is True
     second = prepared.evaluate()
     assert second.verified is True, second.detail
@@ -2022,10 +1866,8 @@ def test_re_evaluating_a_mutating_child_replays_the_settlement_from_its_reposito
     _git(worktree, "add", "src/landed.py")
     _git(worktree, "commit", "-q", "-m", "child work")
     prepared.run_child_process()
-
     assert prepared.evaluate().verified is True
     assert "settlement" in REGISTER.read_rows(repo, run_id="run-a")["child-m"]
-
     second = prepared.evaluate()
     assert second.verified is True, second.detail
     assert REGISTER.read_rows(repo, run_id="run-a")["child-m"]["phase"] == "verified"
@@ -2040,7 +1882,6 @@ def test_a_failing_re_evaluation_removes_the_verified_phase(tmp_path: Path) -> N
     REGISTER.upsert_row(repo, "child-a", {"tab_id": "tab-a"}, run_id="run-a")
     assert prepared.evaluate().verified is True
     assert REGISTER.read_rows(repo, run_id="run-a")["child-a"]["phase"] == "verified"
-
     prepared.receipt.artifact_path.write_text("tampered after the pass\n", encoding="utf-8")
     second = prepared.evaluate()
     assert second.verified is False
@@ -2049,6 +1890,53 @@ def test_a_failing_re_evaluation_removes_the_verified_phase(tmp_path: Path) -> N
     assert row["phase"] == "working"
     with pytest.raises(LIFECYCLE.SessionLifecycleError, match="must be verified before reap"):
         LIFECYCLE.reap_verified(repo, "child-a", herdr=FakeHerdr(), run_id="run-a")
+
+
+def test_a_verdict_and_its_phase_survive_an_interrupt_together(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo)
+    prepared.run_child_process()
+    REGISTER.upsert_row(repo, "child-a", {"tab_id": "tab-a"}, run_id="run-a")
+    assert prepared.evaluate().verified is True
+    prepared.receipt.artifact_path.write_text("tampered after the pass\n", encoding="utf-8")
+    completed: list[str] = []
+    real_upsert = COMPLETION.register_store.upsert_row
+    real_write_phase = COMPLETION.register_store.write_phase
+
+    def upsert(*args: Any, **kwargs: Any) -> Any:
+        if completed:
+            raise KeyboardInterrupt("interrupted between the two register writes")
+        result = real_upsert(*args, **kwargs)
+        completed.append("upsert")
+        return result
+
+    def write_phase(*args: Any, **kwargs: Any) -> Any:
+        if completed:
+            raise KeyboardInterrupt("interrupted between the two register writes")
+        result = real_write_phase(*args, **kwargs)
+        completed.append("write_phase")
+        return result
+
+    monkeypatch.setattr(COMPLETION.register_store, "upsert_row", upsert)
+    monkeypatch.setattr(COMPLETION.register_store, "write_phase", write_phase)
+    interrupted = False
+    try:
+        second = prepared.evaluate()
+    except KeyboardInterrupt:
+        interrupted = True
+        second = None
+    row = REGISTER.read_rows(repo, run_id="run-a")["child-a"]
+    verdict = row.get("completion", {}).get("result")
+    phase = row.get("phase")
+    both = phase == "working" and verdict == "failed"
+    neither = phase == "verified" and verdict == "verified"
+    assert both or neither, (phase, verdict, interrupted)
+    if not interrupted:
+        assert second is not None and second.verified is False
+        assert both
 
 
 def test_a_reaped_row_is_not_demoted_by_a_later_evaluation(tmp_path: Path) -> None:
@@ -2060,13 +1948,9 @@ def test_a_reaped_row_is_not_demoted_by_a_later_evaluation(tmp_path: Path) -> No
     REGISTER.upsert_row(repo, "child-a", {"tab_id": "tab-a"}, run_id="run-a")
     assert prepared.evaluate().verified is True
     LIFECYCLE.reap_verified(repo, "child-a", herdr=FakeHerdr(), run_id="run-a")
-
     prepared.receipt.artifact_path.write_text("tampered after the reap\n", encoding="utf-8")
     assert prepared.evaluate().verified is False
     assert REGISTER.read_rows(repo, run_id="run-a")["child-a"]["phase"] == "reaped"
-
-
-# ------------------------------------------------------- what Python executes on an import
 
 
 def _package_repo(repo: Path) -> None:
@@ -2087,7 +1971,6 @@ def test_a_parent_package_initializer_is_in_the_closure(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _package_repo(repo)
     predicate = COMPLETION.PredicateSpec(argv=(sys.executable, "checks/package_check.py"))
-
     closure = COMPLETION.predicate_closure(repo, predicate)
     assert "pkg/__init__.py" in closure
     assert "pkg/oracle.py" in closure
@@ -2103,7 +1986,6 @@ def test_a_child_that_may_rewrite_a_parent_initializer_cannot_be_certified_by_th
     git = LIFECYCLE.GitLanding()
     landing = git.provision(repo, spec)
     predicate = COMPLETION.PredicateSpec(argv=(sys.executable, "checks/package_check.py"))
-
     with pytest.raises(COMPLETION.PredicateScopeError, match="pkg/__init__.py"):
         COMPLETION.issue_receipt(
             spec,
@@ -2123,12 +2005,8 @@ def test_a_namespace_package_without_an_initializer_still_resolves(tmp_path: Pat
     (repo / "ns" / "leaf.py").write_text("VALUE = 1\n", encoding="utf-8")
     (repo / "checks" / "ns_check.py").write_text("import ns.leaf\n", encoding="utf-8")
     predicate = COMPLETION.PredicateSpec(argv=(sys.executable, "checks/ns_check.py"))
-
     closure = COMPLETION.predicate_closure(repo, predicate)
     assert "ns/leaf.py" in closure
-
-
-# ------------------------------------------- the observer can see the evidence it protects
 
 
 def test_a_predicate_that_rewrites_the_settled_artifact_fails_as_a_side_effect(
@@ -2150,7 +2028,13 @@ def test_a_predicate_that_rewrites_the_settled_artifact_fails_as_a_side_effect(
     spec = _spec()
     git = LIFECYCLE.GitLanding()
     landing = git.provision(repo, spec)
-    REGISTER.upsert_row(repo, "child-a", {"run_id": "run-a", "phase": "working"}, run_id="run-a")
+    REGISTER.upsert_row(
+        repo,
+        "child-a",
+        {"run_id": "run-a", "phase": "working"},
+        run_id="run-a",
+        writer="write_phase",
+    )
     artifacts = COMPLETION.artifact_landing(Path(landing.cwd), "run-a", "child-a")
     relative = (artifacts.relative_to(Path(landing.cwd).resolve()) / "report.json").as_posix()
     predicate = COMPLETION.PredicateSpec(argv=(sys.executable, "checks/rewriter.py", relative))
@@ -2164,15 +2048,11 @@ def test_a_predicate_that_rewrites_the_settled_artifact_fails_as_a_side_effect(
     )
     prepared = _Prepared(repo, spec, landing, git, receipt, _baseline(git, landing))
     prepared.run_child_process()
-
     result = prepared.evaluate()
     assert result.verified is False
     assert result.reason == "predicate_side_effect"
     assert "report.json" in result.detail
     assert prepared.receipt.artifact_path.read_text(encoding="utf-8") == "FORGED-AFTER-BIND"
-
-
-# ----------------------------------------------- tracked artifacts are refused at dispatch
 
 
 def test_a_force_added_artifact_tree_is_refused_at_issue_not_blamed_on_the_child(
@@ -2190,12 +2070,8 @@ def test_a_force_added_artifact_tree_is_refused_at_issue_not_blamed_on_the_child
     assert prepared.evaluate().verified is True
     _git(repo, "add", "-f", ".orchestrate/artifacts")
     _git(repo, "commit", "-q", "-m", "an operator archives the artifact")
-
     with pytest.raises(COMPLETION.LandingNotExclusiveError, match="git rm -r --cached"):
         _prepare(repo, row_id="child-a")
-
-
-# ------------------------------------------------------- the default nobody was exercising
 
 
 def test_the_default_environment_command_installs_what_a_predicate_needs(tmp_path: Path) -> None:
@@ -2216,10 +2092,7 @@ def test_the_default_environment_command_installs_what_a_predicate_needs(tmp_pat
         workspace="workspace-a",
     )
     assert spec.environment_command == ("uv", "sync", "--locked", "--extra", "dev")
-    # The same helper that masked the environment default masks this one: every lifecycle test
-    # overrides it. Pinning the value is the minimum a default in a public signature deserves.
     assert spec.readiness_timeout == 30.0
-
     invoked: list[list[str]] = []
 
     def runner(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
@@ -2250,7 +2123,6 @@ def test_failed_rows_is_per_run_and_the_stamped_view_keeps_both(tmp_path: Path) 
     second = _prepare(repo, row_id="child-b", run_id="run-b")
     second.write_deliverable({"binding": second.receipt.binding_token})
     second.evaluate()
-
     assert sorted(COMPLETION.failed_rows(repo, run_id="run-a")) == ["child-a"]
     assert sorted(COMPLETION.failed_rows(repo, run_id="run-b")) == ["child-b"]
     stamped = REGISTER.rows_stamped_against(repo)
@@ -2258,24 +2130,12 @@ def test_failed_rows_is_per_run_and_the_stamped_view_keeps_both(tmp_path: Path) 
     assert ("run-b", "child-b") in stamped
 
 
-# ---- the receipt binds every input the evaluator branches on ------------------------------
-#
-# The class here is not "the identity labels". It is the mechanical answer to "what does
-# evaluate_completion read before deciding?", and taking that answer needs two passes in this
-# order: enumerate the signature, then the attribute reads. Collecting `spec.`/`landing.` reads
-# finds everything hanging off an object and cannot see a plain parameter -- which is how the
-# repository root, the first argument, stayed off a list that was being called complete. The
-# parameterised cases below substitute an attribute; the root has its own cases further down,
-# because it is refused by raising rather than by a recorded verdict.
-
-
 def _substitute(prepared: _Prepared, label: str) -> tuple[Any, Any, Any]:
     """Return (spec, landing, baseline) with exactly one deciding input replaced."""
-    spec, landing, baseline = prepared.spec, prepared.landing, prepared.baseline
+    spec, landing, baseline = (prepared.spec, prepared.landing, prepared.baseline)
     if label == "runtime":
         spec = replace(spec, runtime="grok")
     elif label == "work_shape":
-        # The receipt was issued for judgment work; a mechanical shape skips the depth gate.
         spec = replace(spec, work_shape="mechanical")
     elif label == "mutating":
         spec = replace(spec, mutating=True)
@@ -2289,9 +2149,9 @@ def _substitute(prepared: _Prepared, label: str) -> tuple[Any, Any, Any]:
         landing = replace(landing, base_commit="0" * 40)
     elif label == "ambient_root":
         landing = replace(landing, ambient_root=prepared.repo / "elsewhere")
-    else:  # pragma: no cover - a label with no substitution is a test bug
+    else:
         raise AssertionError(label)
-    return spec, landing, baseline
+    return (spec, landing, baseline)
 
 
 @pytest.mark.parametrize(
@@ -2320,7 +2180,6 @@ def test_every_deciding_input_is_bound_to_the_receipt(tmp_path: Path, label: str
     prepared = _prepare(repo, work_shape="judgment")
     prepared.run_child_process()
     spec, landing, baseline = _substitute(prepared, label)
-
     result = COMPLETION.evaluate_completion(
         spec, landing, baseline, prepared.receipt, git=prepared.git
     )
@@ -2339,7 +2198,6 @@ def test_a_widened_scope_cannot_excuse_a_write_the_dispatch_forbade(tmp_path: Pa
     stray = repo / "reports" / "b" / "notes.md"
     stray.parent.mkdir(parents=True)
     stray.write_text("outside the declared scope\n", encoding="utf-8")
-
     widened = replace(prepared.spec, mutating=True, scope=("reports",))
     result = COMPLETION.evaluate_completion(
         widened, prepared.landing, prepared.baseline, prepared.receipt, git=prepared.git
@@ -2362,12 +2220,7 @@ def test_a_baseline_taken_after_the_write_it_would_excuse_is_refused(tmp_path: P
     stray = repo / "reports" / "a" / "notes.md"
     stray.parent.mkdir(parents=True)
     stray.write_text("written into the shared checkout\n", encoding="utf-8")
-
-    # With the bound baseline this is a boundary violation, which is the honest verdict.
     assert prepared.evaluate().reason == "scope_violation"
-
-    # With a baseline taken after the write, the violation disappears -- so the substitution is
-    # refused before the boundary check ever runs.
     laundered = _baseline(prepared.git, prepared.landing)
     result = COMPLETION.evaluate_completion(
         prepared.spec, prepared.landing, laundered, prepared.receipt, git=prepared.git
@@ -2388,7 +2241,6 @@ def test_the_bound_baseline_digest_distinguishes_two_snapshots_of_one_landing(
     landing = git.provision(repo, spec)
     before = _baseline(git, landing)
     assert COMPLETION.baseline_digest(before) == COMPLETION.baseline_digest(_baseline(git, landing))
-
     (repo / "reports").mkdir()
     (repo / "reports" / "note.md").write_text("a change\n", encoding="utf-8")
     assert COMPLETION.baseline_digest(_baseline(git, landing)) != COMPLETION.baseline_digest(before)
@@ -2409,25 +2261,7 @@ def test_the_receipt_round_trip_preserves_every_deciding_input(tmp_path: Path) -
     assert reloaded.baseline_digest == COMPLETION.baseline_digest(prepared.baseline)
 
 
-# ---- the predicate's descendants ----------------------------------------------------------
-
-_DESCENDANT_PREDICATE = """\
-import subprocess
-import sys
-
-# A predicate that passes immediately and leaves something behind to rewrite the evidence.
-subprocess.Popen(
-    [
-        sys.executable,
-        "-c",
-        "import sys, time; time.sleep(float(sys.argv[1])); "
-        "open(sys.argv[2], 'w').write('FORGED-BY-DESCENDANT')",
-        sys.argv[2],
-        sys.argv[1],
-    ]
-)
-sys.exit(0)
-"""
+_DESCENDANT_PREDICATE = 'import subprocess\nimport sys\n\n# A predicate that passes immediately and leaves something behind to rewrite the evidence.\nsubprocess.Popen(\n    [\n        sys.executable,\n        "-c",\n        "import sys, time; time.sleep(float(sys.argv[1])); "\n        "open(sys.argv[2], \'w\').write(\'FORGED-BY-DESCENDANT\')",\n        sys.argv[2],\n        sys.argv[1],\n    ]\n)\nsys.exit(0)\n'
 
 
 def _descendant_prepared(repo: Path, delay: str) -> _Prepared:
@@ -2437,7 +2271,13 @@ def _descendant_prepared(repo: Path, delay: str) -> _Prepared:
     spec = _spec()
     git = LIFECYCLE.GitLanding()
     landing = git.provision(repo, spec)
-    REGISTER.upsert_row(repo, "child-a", {"run_id": "run-a", "phase": "working"}, run_id="run-a")
+    REGISTER.upsert_row(
+        repo,
+        "child-a",
+        {"run_id": "run-a", "phase": "working"},
+        run_id="run-a",
+        writer="write_phase",
+    )
     artifacts = COMPLETION.artifact_landing(Path(landing.cwd), "run-a", "child-a")
     relative = (artifacts.relative_to(Path(landing.cwd).resolve()) / "report.json").as_posix()
     predicate = COMPLETION.PredicateSpec(
@@ -2455,9 +2295,7 @@ def _descendant_prepared(repo: Path, delay: str) -> _Prepared:
     return _Prepared(repo, spec, landing, git, receipt, baseline)
 
 
-def test_a_predicate_descendant_cannot_rewrite_the_evidence_after_the_pass(
-    tmp_path: Path,
-) -> None:
+def test_a_predicate_descendant_cannot_rewrite_the_evidence_after_the_pass(tmp_path: Path) -> None:
     """Waiting for the direct process only establishes that *that* process finished.
 
     A descendant outlives it, is reparented away, and writes after the after-snapshot has already
@@ -2469,12 +2307,9 @@ def test_a_predicate_descendant_cannot_rewrite_the_evidence_after_the_pass(
     _init_repo(repo)
     prepared = _descendant_prepared(repo, delay="1.0")
     prepared.run_child_process()
-
     result = prepared.evaluate()
     assert result.verified is True, result.detail
     recorded = str(result.artifact_digest)
-
-    # Well past the descendant's delay: if anything survived the kill, it has written by now.
     time.sleep(2.0)
     on_disk = "sha256:" + hashlib.sha256(prepared.receipt.artifact_path.read_bytes()).hexdigest()
     assert on_disk == recorded
@@ -2487,11 +2322,8 @@ def test_a_descendant_that_writes_before_the_kill_is_still_observed(tmp_path: Pa
     _init_repo(repo)
     prepared = _descendant_prepared(repo, delay="0")
     prepared.run_child_process()
-
     result = prepared.evaluate()
     if result.verified:
-        # The descendant lost the race and was killed before writing: the evidence is intact,
-        # which is the other honest outcome of the same control.
         assert b"FORGED-BY-DESCENDANT" not in prepared.receipt.artifact_path.read_bytes()
     else:
         assert result.reason == "predicate_side_effect"
@@ -2507,13 +2339,11 @@ def test_a_descendant_outlives_its_parent_and_the_group_kill_is_what_ends_it(
     has been waited for -- which is exactly the window in which the old code took its
     after-snapshot and called the evidence certified.
     """
-    leader = subprocess.Popen(  # noqa: S603
+    leader = subprocess.Popen(
         [
             sys.executable,
             "-c",
-            "import subprocess, sys; "
-            "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); "
-            "sys.exit(0)",
+            "import subprocess, sys; subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); sys.exit(0)",
         ],
         start_new_session=True,
     )
@@ -2540,16 +2370,11 @@ def test_a_predicate_whose_group_will_not_die_is_refused(
     prepared = _prepare(repo)
     prepared.run_child_process()
     monkeypatch.setattr(COMPLETION, "_drain_process_group", lambda *a, **k: False)
-
     result = prepared.evaluate()
     assert result.verified is False
     assert result.reason == "predicate_descendants"
-    # The explanation lives on the predicate outcome, which is what the register persists.
     assert result.predicate is not None
     assert "did not stop" in result.predicate.output
-
-
-# ---- `reaped` is terminal in both directions ----------------------------------------------
 
 
 def test_a_passing_re_evaluation_does_not_resurrect_a_reaped_row(tmp_path: Path) -> None:
@@ -2567,13 +2392,11 @@ def test_a_passing_re_evaluation_does_not_resurrect_a_reaped_row(tmp_path: Path)
     assert prepared.evaluate().verified is True
     LIFECYCLE.reap_verified(repo, "child-a", herdr=FakeHerdr(), run_id="run-a")
     assert REGISTER.read_rows(repo, run_id="run-a")["child-a"]["phase"] == "reaped"
-
     second = prepared.evaluate()
     assert second.verified is True, second.detail
     row = REGISTER.read_rows(repo, run_id="run-a")["child-a"]
     assert row["phase"] == "reaped"
     assert row["completion"]["result"] == "verified"
-    # The vanish check must not see a live verified child whose tab is closed.
     LIFECYCLE.assert_child_not_vanished(repo, "child-a", herdr=FakeHerdr(), run_id="run-a")
 
 
@@ -2591,13 +2414,9 @@ def test_a_reaped_row_keeps_its_phase_whichever_way_the_verdict_goes(
     LIFECYCLE.reap_verified(repo, "child-a", herdr=FakeHerdr(), run_id="run-a")
     if not passing:
         prepared.receipt.artifact_path.write_text("tampered after the reap\n", encoding="utf-8")
-
     result = prepared.evaluate()
     assert result.verified is passing
     assert REGISTER.read_rows(repo, run_id="run-a")["child-a"]["phase"] == "reaped"
-
-
-# ---- the verifier must be a dispatch this orchestrator issued -----------------------------
 
 
 def test_a_planted_verifier_row_does_not_satisfy_the_verifier_check(tmp_path: Path) -> None:
@@ -2613,7 +2432,6 @@ def test_a_planted_verifier_row_does_not_satisfy_the_verifier_check(tmp_path: Pa
     prepared = _prepare(repo, work_shape="judgment")
     prepared.run_child_process()
     _verifier_row(repo, "planted-verifier", dispatched=False)
-
     result = prepared.evaluate(
         depth_sample=_sample(prepared, register=False, verifier_row_id="planted-verifier")
     )
@@ -2633,7 +2451,6 @@ def test_a_verifier_whose_receipt_was_tampered_with_is_not_a_session(tmp_path: P
     stored = dict(REGISTER.read_rows(repo, run_id="run-a")["verifier-1"]["dispatch_receipt"])
     stored["runtime"] = "an-invented-vendor"
     REGISTER.upsert_row(repo, "verifier-1", {"dispatch_receipt": stored}, run_id="run-a")
-
     result = prepared.evaluate(depth_sample=sample)
     assert result.verified is False
     assert result.reason == "depth_sample_invalid"
@@ -2652,24 +2469,18 @@ def test_a_relaundered_baseline_is_caught_when_only_a_fingerprint_moved(tmp_path
     already_dirty = repo / "reports" / "a" / "notes.md"
     already_dirty.parent.mkdir(parents=True)
     already_dirty.write_text("present before the child started\n", encoding="utf-8")
-
     prepared = _prepare(repo, scope=("reports/a",))
     prepared.run_child_process()
     already_dirty.write_text("modified during the child's window\n", encoding="utf-8")
-
     laundered = _baseline(prepared.git, prepared.landing)
     assert set(laundered.paths) == set(prepared.baseline.paths)
     assert COMPLETION.baseline_digest(laundered) != COMPLETION.baseline_digest(prepared.baseline)
-
     result = COMPLETION.evaluate_completion(
         prepared.spec, prepared.landing, laundered, prepared.receipt, git=prepared.git
     )
     assert result.verified is False
     assert result.reason == "receipt_mismatch"
     assert "changed_paths_baseline" in result.detail
-
-
-# ---- the operator-facing surfaces do not call detection "containment" ---------------------
 
 
 def _flowed(relative: str) -> str:
@@ -2695,7 +2506,6 @@ def test_no_surface_calls_the_boundary_check_containment() -> None:
     at all. "Containment" belongs to the runtime posture, which really does prevent writes outside
     the workspace.
     """
-
     for relative in _SURFACES:
         text = _flowed(relative)
         assert "containment inside the workspace is the boundary check" not in text, relative
@@ -2708,14 +2518,24 @@ def test_no_surface_calls_the_boundary_check_containment() -> None:
     assert "the only *containment* in the word's real sense" in posture
 
 
-# ---- the repository is derived, never supplied beside the receipt --------------------------
-
-
 def _second_repository(tmp_path: Path, prepared: _Prepared, **columns: Any) -> Path:
     """A second repository whose own bookkeeping happens to use the same row id."""
     other = tmp_path / "repo-b"
     _init_repo(other)
+    phase = columns.pop("phase", None)
+    observed = columns.pop("observed_state", None)
+    source = columns.pop("observed_state_source", None)
     REGISTER.upsert_row(other, prepared.spec.row_id, {"run_id": "run-b", **columns}, run_id="run-b")
+    if phase is not None:
+        REGISTER.write_phase(other, prepared.spec.row_id, phase, run_id="run-b")
+    if observed is not None:
+        REGISTER.record_observed_state(
+            other,
+            prepared.spec.row_id,
+            observed,
+            source=source or "observed:test",
+            run_id="run-b",
+        )
     return other
 
 
@@ -2738,10 +2558,6 @@ def test_the_repository_is_not_an_argument_a_caller_can_supply(tmp_path: Path) -
     for name in ("issue_receipt", "evaluate_completion", "settle_artifact", "settlement_record"):
         parameters = inspect.signature(getattr(COMPLETION, name)).parameters
         assert "root" not in parameters, f"{name} takes a repository a caller could disagree with"
-
-    # One exception, and it is why ``assert_receipt_root`` still exists: this function is handed a
-    # repository and a row id and has no receipt yet, so the repository has to be supplied. There
-    # the two values have independent origins, which is what makes comparing them a real check.
     assert "root" in inspect.signature(COMPLETION.read_receipt).parameters
 
 
@@ -2758,22 +2574,17 @@ def test_a_receipt_records_the_repository_of_the_landing_it_was_issued_against(
     _init_repo(repo)
     prepared = _prepare(repo)
     other = _second_repository(tmp_path, prepared, phase="working", expected_state="working")
-
     assert prepared.receipt.root == str(repo.resolve())
     assert prepared.receipt.root == str(Path(prepared.landing.ambient_root).resolve())
-
-    # The sealed receipt went into its own repository's register; the other one has no dispatch.
     assert (
         COMPLETION.read_receipt(repo, prepared.spec.row_id, run_id="run-a").nonce
         == prepared.receipt.nonce
     )
     assert "dispatch_receipt" not in REGISTER.read_rows(other, run_id="run-b")[prepared.spec.row_id]
-
     prepared.run_child_process()
     result = prepared.evaluate()
     assert result.verified is True, result.detail
     assert REGISTER.read_rows(repo, run_id="run-a")[prepared.spec.row_id]["phase"] == "verified"
-
     foreign = REGISTER.read_rows(other, run_id="run-b")[prepared.spec.row_id]
     assert foreign["phase"] == "working"
     assert "completion" not in foreign
@@ -2793,7 +2604,6 @@ def test_a_mutating_childs_receipt_records_the_repository_and_not_its_worktree(
     repo = tmp_path / "repo"
     _init_repo(repo)
     prepared = _prepare(repo, mutating=True, environment_command=())
-
     assert Path(prepared.landing.cwd) != repo.resolve()
     assert prepared.receipt.root == str(repo.resolve())
     assert COMPLETION.landing_root(prepared.landing, git=prepared.git) == repo.resolve()
@@ -2818,7 +2628,6 @@ def test_a_landing_that_does_not_name_its_repository_cannot_be_issued_a_receipt(
         landing.cwd, landing.integration_mode, landing.destination, landing.base_commit
     )
     assert anonymous.ambient_root is None
-
     with pytest.raises(COMPLETION.ReceiptRootError) as raised:
         COMPLETION.issue_receipt(
             spec,
@@ -2855,10 +2664,10 @@ def test_a_landing_cannot_name_a_repository_it_does_not_belong_to(tmp_path: Path
         spec.row_id,
         {"run_id": spec.run_id, "phase": "working", "expected_state": "working"},
         run_id="run-a",
+        writer="write_phase",
     )
     artifacts = COMPLETION.artifact_landing(Path(poisoned.cwd), spec.run_id, spec.row_id)
     relative = artifacts.relative_to(Path(poisoned.cwd).resolve()) / "report.json"
-
     with pytest.raises(
         COMPLETION.ReceiptRootError, match="does not belong to the repository"
     ) as raised:
@@ -2871,10 +2680,8 @@ def test_a_landing_cannot_name_a_repository_it_does_not_belong_to(tmp_path: Path
             changed_paths_baseline=_baseline(git, poisoned),
         )
     assert str(repo_b.resolve()) in str(raised.value)
-
     with pytest.raises(COMPLETION.ReceiptRootError, match="does not belong to the repository"):
         COMPLETION.landing_root(poisoned, git=git)
-
     row_b = REGISTER.read_rows(repo_b, run_id=spec.run_id)[spec.row_id]
     assert row_b["phase"] == "working"
     assert "dispatch_receipt" not in row_b
@@ -2899,13 +2706,13 @@ def test_evaluating_with_another_repositorys_receipt_raises_and_writes_neither_r
     _init_repo(repo_b)
     spec = _spec()
     git = LIFECYCLE.GitLanding()
-
     landing_a = git.provision(repo_a, spec)
     REGISTER.upsert_row(
         repo_a,
         spec.row_id,
         {"run_id": spec.run_id, "phase": "working", "expected_state": "working"},
         run_id="run-a",
+        writer="write_phase",
     )
     artifacts_a = COMPLETION.artifact_landing(Path(landing_a.cwd), spec.run_id, spec.row_id)
     rel_a = artifacts_a.relative_to(Path(landing_a.cwd).resolve()) / "report.json"
@@ -2923,20 +2730,15 @@ def test_evaluating_with_another_repositorys_receipt_raises_and_writes_neither_r
     first = COMPLETION.evaluate_completion(spec, landing_a, baseline_a, receipt_a, git=git)
     assert first.verified is True, first.detail
     assert REGISTER.read_rows(repo_a, run_id=spec.run_id)[spec.row_id]["phase"] == "verified"
-
     landing_b = git.provision(repo_b, spec)
     baseline_b = _baseline(git, landing_b)
     prepared_b = _Prepared(repo_b, spec, landing_b, git, receipt_a, baseline_b)
     prepared_b.run_child_process()
-
     with pytest.raises(
         COMPLETION.ReceiptRootError, match="does not belong to the repository"
     ) as raised:
         COMPLETION.evaluate_completion(spec, landing_b, baseline_b, receipt_a, git=git)
     assert str(Path(receipt_a.root).resolve()) in str(raised.value)
-
-    # One run id is one live document. The pairing is refused and that document is not
-    # written with a failure or a demotion.
     row = REGISTER.read_rows(repo_a, run_id=spec.run_id)[spec.row_id]
     assert row["phase"] == "verified"
     assert (row.get("completion") or {}).get("result") == "verified"
@@ -2948,7 +2750,7 @@ def _nested_repositories(tmp_path: Path) -> tuple[Path, Path]:
     nested = outer / "nested"
     _init_repo(outer)
     _init_repo(nested)
-    return outer, nested
+    return (outer, nested)
 
 
 def test_a_nested_repository_is_not_the_checkout_that_contains_it(tmp_path: Path) -> None:
@@ -2969,10 +2771,10 @@ def test_a_nested_repository_is_not_the_checkout_that_contains_it(tmp_path: Path
         spec.row_id,
         {"run_id": spec.run_id, "phase": "working", "expected_state": "working"},
         run_id="run-a",
+        writer="write_phase",
     )
     artifacts = COMPLETION.artifact_landing(Path(poisoned.cwd), spec.run_id, spec.row_id)
     relative = artifacts.relative_to(Path(poisoned.cwd).resolve()) / "report.json"
-
     with pytest.raises(COMPLETION.ReceiptRootError, match="does not belong to the repository"):
         COMPLETION.issue_receipt(
             spec,
@@ -2984,7 +2786,6 @@ def test_a_nested_repository_is_not_the_checkout_that_contains_it(tmp_path: Path
         )
     with pytest.raises(COMPLETION.ReceiptRootError, match="does not belong to the repository"):
         COMPLETION.landing_root(poisoned, git=git)
-
     row_outer = REGISTER.read_rows(outer, run_id="run-a")[spec.row_id]
     assert row_outer["phase"] == "working"
     assert "dispatch_receipt" not in row_outer
@@ -3005,13 +2806,13 @@ def test_evaluating_a_nested_repository_with_the_containing_checkouts_receipt_wr
     outer, nested = _nested_repositories(tmp_path)
     spec = _spec()
     git = LIFECYCLE.GitLanding()
-
     landing_outer = git.provision(outer, spec)
     REGISTER.upsert_row(
         outer,
         spec.row_id,
         {"run_id": spec.run_id, "phase": "working", "expected_state": "working"},
         run_id="run-a",
+        writer="write_phase",
     )
     artifacts_outer = COMPLETION.artifact_landing(Path(landing_outer.cwd), spec.run_id, spec.row_id)
     rel_outer = artifacts_outer.relative_to(Path(landing_outer.cwd).resolve()) / "report.json"
@@ -3030,15 +2831,12 @@ def test_evaluating_a_nested_repository_with_the_containing_checkouts_receipt_wr
     )
     assert first.verified is True, first.detail
     assert REGISTER.read_rows(outer, run_id=spec.run_id)[spec.row_id]["phase"] == "verified"
-
     landing_nested = git.provision(nested, spec)
     baseline_nested = _baseline(git, landing_nested)
-
     with pytest.raises(COMPLETION.ReceiptRootError, match="does not belong to the repository"):
         COMPLETION.evaluate_completion(
             spec, landing_nested, baseline_nested, receipt_outer, git=git
         )
-
     row = REGISTER.read_rows(outer, run_id=spec.run_id)[spec.row_id]
     assert row["phase"] == "verified"
     assert (row.get("completion") or {}).get("result") == "verified"
@@ -3056,9 +2854,6 @@ def test_a_linked_worktree_belongs_to_the_repository_it_was_cut_from(tmp_path: P
     assert Path(prepared.landing.cwd) != repo.resolve()
     assert Path(prepared.landing.cwd).is_relative_to(repo.resolve())
     assert COMPLETION.landing_root(prepared.landing, git=prepared.git) == repo.resolve()
-    # Issuance already wrote the receipt under the main checkout. The evaluate-time
-    # check must accept the same pairing; a root-only or exact-layout predicate
-    # refuses it before any verdict is recorded.
     COMPLETION.assert_landing_in_receipt_repository(
         prepared.landing, prepared.receipt, git=prepared.git
     )
@@ -3093,6 +2888,7 @@ def _issue_honest(repo: Path, spec: Any, git: Any) -> tuple[Any, Any, Any]:
         spec.row_id,
         {"run_id": spec.run_id, "phase": "working", "expected_state": "working"},
         run_id=spec.run_id,
+        writer="write_phase",
     )
     artifacts = COMPLETION.artifact_landing(Path(landing.cwd), spec.run_id, spec.row_id)
     relative = artifacts.relative_to(Path(landing.cwd).resolve()) / "report.json"
@@ -3105,13 +2901,10 @@ def _issue_honest(repo: Path, spec: Any, git: Any) -> tuple[Any, Any, Any]:
         git=git,
         changed_paths_baseline=baseline,
     )
-    return landing, baseline, receipt
+    return (landing, baseline, receipt)
 
 
-@pytest.mark.parametrize(
-    "store_kind",
-    ["sibling-worktree", "other-worktree", "subdirectory"],
-)
+@pytest.mark.parametrize("store_kind", ["sibling-worktree", "other-worktree", "subdirectory"])
 def test_a_store_that_is_not_the_run_register_is_refused_at_issue(
     tmp_path: Path, store_kind: str
 ) -> None:
@@ -3142,10 +2935,10 @@ def test_a_store_that_is_not_the_run_register_is_refused_at_issue(
         spec.row_id,
         {"run_id": spec.run_id, "phase": "working", "expected_state": "working"},
         run_id="run-a",
+        writer="write_phase",
     )
     artifacts = COMPLETION.artifact_landing(Path(poisoned.cwd), spec.run_id, spec.row_id)
     relative = artifacts.relative_to(Path(poisoned.cwd).resolve()) / "report.json"
-
     with pytest.raises(COMPLETION.ReceiptRootError):
         COMPLETION.issue_receipt(
             spec,
@@ -3160,10 +2953,7 @@ def test_a_store_that_is_not_the_run_register_is_refused_at_issue(
     assert "completion" not in row
 
 
-@pytest.mark.parametrize(
-    "store_kind",
-    ["sibling-worktree", "other-worktree", "subdirectory"],
-)
+@pytest.mark.parametrize("store_kind", ["sibling-worktree", "other-worktree", "subdirectory"])
 def test_a_store_that_is_not_the_run_register_is_refused_at_evaluation(
     tmp_path: Path, store_kind: str
 ) -> None:
@@ -3182,13 +2972,10 @@ def test_a_store_that_is_not_the_run_register_is_refused_at_evaluation(
     _, _, receipt = _issue_honest(store, spec, git)
     landing_work = git.provision(repo, spec)
     baseline_work = _baseline(git, landing_work)
-
     with pytest.raises(COMPLETION.ReceiptRootError):
         COMPLETION.evaluate_completion(spec, landing_work, baseline_work, receipt, git=git)
     assert "completion" not in REGISTER.read_rows(store, run_id="run-a").get(spec.row_id, {})
     if store_kind == "subdirectory":
-        # A subdirectory of the checkout is the same work location after
-        # canonicalize. The live document is stamped against the repository.
         assert spec.row_id in REGISTER.read_rows(repo, run_id="run-a")
     else:
         with pytest.raises(REGISTER.RegisterError, match="bound to"):
@@ -3212,6 +2999,7 @@ def test_a_recorded_run_root_that_disagrees_with_the_claimed_store_is_refused(
         spec.row_id,
         {"run_id": spec.run_id, "phase": "working", "expected_state": "working"},
         run_id="run-a",
+        writer="write_phase",
     )
     artifacts = COMPLETION.artifact_landing(Path(landing.cwd), spec.run_id, spec.row_id)
     relative = artifacts.relative_to(Path(landing.cwd).resolve()) / "report.json"
@@ -3245,6 +3033,7 @@ def test_a_run_with_no_recorded_root_does_not_mint_one_from_the_landing(tmp_path
         spec.row_id,
         {"run_id": spec.run_id, "phase": "working", "expected_state": "working"},
         run_id=spec.run_id,
+        writer="write_phase",
     )
     artifacts = COMPLETION.artifact_landing(Path(landing.cwd), spec.run_id, spec.row_id)
     relative = artifacts.relative_to(Path(landing.cwd).resolve()) / "report.json"
@@ -3272,16 +3061,12 @@ def test_a_read_only_child_still_verifies_against_the_recorded_root(tmp_path: Pa
     assert result.verified is True, result.detail
 
 
-def test_a_second_retire_forgets_a_key_only_when_the_root_is_still_recorded(
-    tmp_path: Path,
-) -> None:
+def test_a_second_retire_forgets_a_key_only_when_the_root_is_still_recorded(tmp_path: Path) -> None:
     """A leftover key is forgotten only when the sidecar still names this generation."""
     repo = tmp_path / "repo"
     _init_repo(repo)
     prepared = _prepare(repo)
     REGISTER.retire_run(repo, prepared.spec.run_id)
-    # Recreate the sidecar and the key, as a crash after live-unlink with the
-    # record still present would.
     COMPLETION.record_run_root(repo, prepared.spec.run_id)
     leftover = COMPLETION.run_secret(repo, prepared.spec.run_id, create=True)
     REGISTER.retire_run(repo, prepared.spec.run_id)
@@ -3290,9 +3075,7 @@ def test_a_second_retire_forgets_a_key_only_when_the_root_is_still_recorded(
     assert COMPLETION.read_run_root(prepared.spec.run_id) is None
 
 
-def test_retire_without_a_live_file_does_not_delete_a_new_generations_key(
-    tmp_path: Path,
-) -> None:
+def test_retire_without_a_live_file_does_not_delete_a_new_generations_key(tmp_path: Path) -> None:
     """A stale 'live file absent' observation must not free a reused identity."""
     repo = tmp_path / "repo"
     other = tmp_path / "other"
@@ -3300,10 +3083,11 @@ def test_retire_without_a_live_file_does_not_delete_a_new_generations_key(
     _init_repo(other)
     prepared = _prepare(repo)
     REGISTER.retire_run(repo, prepared.spec.run_id)
-    # A later caller reuses the id against a different checkout.
     COMPLETION.record_run_root(other, prepared.spec.run_id)
     new_key = COMPLETION.run_secret(other, prepared.spec.run_id, create=True)
-    REGISTER.upsert_row(other, "child-new", {"phase": "planned"}, run_id=prepared.spec.run_id)
+    REGISTER.upsert_row(
+        other, "child-new", {"phase": "planned"}, run_id=prepared.spec.run_id, writer="write_phase"
+    )
     empty = tmp_path / "empty"
     empty.mkdir()
     with pytest.raises(REGISTER.RegisterError, match="bound to"):
@@ -3329,7 +3113,7 @@ def test_forget_run_secret_cannot_be_called_with_only_a_run_id() -> None:
     assert "root" in params
     assert params["root"].default is inspect.Parameter.empty
     with pytest.raises(TypeError):
-        COMPLETION.forget_run_secret("run-a")  # type: ignore[misc]
+        COMPLETION.forget_run_secret("run-a")
 
 
 def test_forget_run_secret_requires_the_recorded_root(tmp_path: Path) -> None:
@@ -3375,9 +3159,7 @@ def test_retire_forgets_the_secret_before_removing_the_live_file(
     assert not live.exists()
 
 
-def test_retiring_a_run_forgets_its_secret_so_a_reuse_is_a_new_identity(
-    tmp_path: Path,
-) -> None:
+def test_retiring_a_run_forgets_its_secret_so_a_reuse_is_a_new_identity(tmp_path: Path) -> None:
     """Archived material from a retired run must not verify under a reused id."""
     repo = tmp_path / "repo"
     _init_repo(repo)
@@ -3453,9 +3235,7 @@ def test_a_recorded_root_compares_by_filesystem_identity(tmp_path: Path) -> None
         COMPLETION.assert_store_is_this_runs_register(other, "run-a")
 
 
-def test_record_run_root_from_a_package_directory_names_the_repository(
-    tmp_path: Path,
-) -> None:
+def test_record_run_root_from_a_package_directory_names_the_repository(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)
     package = repo / "packages" / "tool"
@@ -3472,7 +3252,6 @@ def test_a_concurrent_mint_does_not_complete_before_retirement_returns(
     repo = tmp_path / "repo"
     _init_repo(repo)
     prepared = _prepare(repo)
-    key_path = COMPLETION.run_secret_dir() / f"{prepared.spec.run_id}.key"
     minted_during: list[bytes] = []
     mint_thread: list[threading.Thread] = []
     real_unlink = COMPLETION.unlink_run_secret
@@ -3491,7 +3270,6 @@ def test_a_concurrent_mint_does_not_complete_before_retirement_returns(
     monkeypatch.setattr(COMPLETION, "unlink_run_secret", hooked)
     REGISTER.retire_run(repo, prepared.spec.run_id)
     assert minted_during == []
-    assert not key_path.exists()
     assert mint_thread
     mint_thread[0].join(2)
     assert mint_thread[0].is_alive() is False
@@ -3584,12 +3362,8 @@ def test_a_receipt_is_refused_when_read_under_a_different_repository(tmp_path: P
     other = tmp_path / "repo-b"
     _init_repo(other)
     prepared = _prepare(repo)
-
     with pytest.raises(REGISTER.RegisterError, match="bound to"):
         COMPLETION.read_receipt(other, prepared.spec.row_id, run_id=prepared.spec.run_id)
-
-    # The same bytes read under the repository that issued them are accepted, so the
-    # refusal is about which repository asked and not about the record being damaged.
     assert (
         COMPLETION.read_receipt(repo, prepared.spec.row_id, run_id=prepared.spec.run_id).nonce
         == prepared.receipt.nonce
@@ -3610,12 +3384,8 @@ def test_a_verifier_dispatched_in_another_repository_does_not_satisfy_the_depth_
     _init_repo(repo)
     other = tmp_path / "repo-b"
     _init_repo(other)
-
-    # Repository A dispatches a real verifier and holds an authentic sealed receipt for it.
     _verifier_row(repo, "verifier-1", dispatched=True, phase="working", record_root=False)
     foreign = REGISTER.read_rows(repo, run_id="run-a")["verifier-1"]["dispatch_receipt"]
-
-    # Repository B runs the same run and has no verifier of its own, so it borrows A's.
     prepared = _prepare(other, work_shape="judgment")
     prepared.run_child_process()
     REGISTER.upsert_row(
@@ -3629,8 +3399,8 @@ def test_a_verifier_dispatched_in_another_repository_does_not_satisfy_the_depth_
             "dispatch_receipt": foreign,
         },
         run_id="run-a",
+        writer="write_phase",
     )
-
     result = prepared.evaluate(
         depth_sample=_sample(prepared, register=False, verifier_row_id="verifier-1")
     )
@@ -3641,9 +3411,6 @@ def test_a_verifier_dispatched_in_another_repository_does_not_satisfy_the_depth_
         REGISTER.read_rows(other, run_id=prepared.spec.run_id)[prepared.spec.row_id]["phase"]
         != "verified"
     )
-
-
-# ---- what the verifier check establishes, and where it stops -------------------------------
 
 
 def test_moving_the_unsealed_verifier_phase_presents_a_verifier_that_never_ran(
@@ -3666,15 +3433,15 @@ def test_moving_the_unsealed_verifier_phase_presents_a_verifier_that_never_ran(
     prepared = _prepare(repo, work_shape="judgment")
     prepared.run_child_process()
     _verifier_row(repo, "verifier-1", dispatched=True, phase="planned")
-
     refused = prepared.evaluate(
         depth_sample=_sample(prepared, register=False, verifier_row_id="verifier-1")
     )
     assert refused.verified is False
     assert refused.reason == "depth_sample_invalid"
     assert "is not one of the phases past launch" in refused.detail
-
-    REGISTER.upsert_row(repo, "verifier-1", {"phase": "working"}, run_id="run-a")
+    REGISTER.upsert_row(
+        repo, "verifier-1", {"phase": "working"}, run_id="run-a", writer="write_phase"
+    )
     accepted = prepared.evaluate(
         depth_sample=_sample(prepared, register=False, verifier_row_id="verifier-1")
     )
@@ -3685,13 +3452,6 @@ def test_moving_the_unsealed_verifier_phase_presents_a_verifier_that_never_ran(
     )
 
 
-#: Sentences that would be false about the verifier check, in any file that mentions it.
-#:
-#: These are bans rather than requirements because a *presence* assertion cannot detect a
-#: contradiction. Requiring a disclaimer somewhere in a file is satisfied by one honest paragraph,
-#: and leaves every overclaiming sentence elsewhere in that same file green -- which is exactly
-#: how a class docstring four hundred lines from the disclaimer went on calling the persisted
-#: sample a proven blind read while the test that exists to catch that passed.
 _VERIFIER_OVERCLAIMS = (
     "verifier's blind read",
     "a blind read of",
@@ -3701,9 +3461,6 @@ _VERIFIER_OVERCLAIMS = (
     "confirms that the verifier ran",
     "an independent verifier's depth sample",
 )
-
-#: Phrasings that claim path ancestry, or a previous check, closed repository membership.
-#: A presence assertion that the honest sentence is somewhere in the file cannot detect these.
 _MEMBERSHIP_OVERCLAIMS = (
     "cannot do so and remain internally consistent",
     "the two remaining pairs are closed",
@@ -3732,10 +3489,6 @@ def test_no_surface_claims_the_verifier_check_proves_the_verifier_ran() -> None:
         text = _flowed(relative)
         for phrase in _VERIFIER_OVERCLAIMS:
             assert phrase not in text, f"{relative} claims {phrase!r}"
-
-    # One sentence, worded identically everywhere, so the four surfaces cannot drift into four
-    # different sizes of the same claim. Three of them said something slightly smaller or larger
-    # than the others at some point in this build, and each difference had to be found by reading.
     established = "a verifier was dispatched in this repository, for this run, with this vendor"
     for relative in described_in:
         text = _flowed(relative)
@@ -3783,7 +3536,6 @@ def test_every_identity_paragraph_describes_the_argument_list_the_evaluator_take
     module_doc = " ".join((COMPLETION.__doc__ or "").split())
     skill = _flowed("plugins/orchestrate/skills/orchestrate/SKILL.md")
     contract = _flowed("plugins/orchestrate/references/predicates.md")
-
     for text, label in (
         (module_doc, "completion.py module docstring"),
         (skill, "SKILL.md"),
@@ -3811,9 +3563,6 @@ def test_the_persisted_depth_sample_type_describes_a_claim_and_not_a_proven_read
     assert "does not establish that the verifier ran" in doc
     for phrase in _VERIFIER_OVERCLAIMS:
         assert phrase not in doc, phrase
-
-
-# ---- the group kill covers the group, and the prose says so --------------------------------
 
 
 def test_no_surface_claims_the_group_kill_ends_everything_the_predicate_started() -> None:
@@ -3852,8 +3601,6 @@ def test_the_release_notes_do_not_promote_a_sealed_field_into_a_compared_one() -
     notes = _flowed("plugins/orchestrate/CHANGELOG.md")
     assert "`write_scope` is sealed and deliberately **not** compared" in notes
     assert "as consistency fields rather than deciding inputs" in notes
-    # The same two statements in the document the release notes summarise, so the pair cannot
-    # drift apart again without one of these failing.
     contract = _flowed("plugins/orchestrate/references/predicates.md")
     assert "`write_scope` is sealed and deliberately **not** compared" in contract
     assert "calling them deciding inputs would be" in contract

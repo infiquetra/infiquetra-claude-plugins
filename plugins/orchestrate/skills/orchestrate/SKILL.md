@@ -1,22 +1,24 @@
 ---
 name: orchestrate
-description: The orchestrate register, tracked herdr subscriber, write-ahead child session lifecycle, completion gate, and paired mirror session for multi-vendor runs, with interaction readiness, scoped worktrees, nonce-bound sentinels, reconnect catch-up, bounded predicates on settled run-bound artifacts, verified integration, recorded reaping, distilled mirror returns under an enforced byte bound, and clock-based mirror hang detection. No routing or spend gate yet. Triggers on "orchestrate register", "orchestrate subscriber", "orchestrate session lifecycle", "orchestrate completion", "orchestrate predicate", "orchestrate mirror", "the operator channel", "mirror hang detection", "herdr event catch-up", "the run register".
+description: The orchestrate register, tracked herdr subscriber, write-ahead child session lifecycle, completion gate, work-shape routing, register-owned admission, spend accounting, and paired mirror session for multi-vendor runs, with interaction readiness, scoped worktrees, nonce-bound sentinels, reconnect catch-up, bounded predicates on settled run-bound artifacts, verified integration, recorded reaping, distilled mirror returns under an enforced byte bound, and clock-based mirror hang detection. Planning never launches. No composed runner or slash command yet. Triggers on "orchestrate register", "orchestrate subscriber", "orchestrate session lifecycle", "orchestrate completion", "orchestrate planning", "orchestrate admission", "orchestrate routing", "orchestrate spend", "orchestrate predicate", "orchestrate mirror", "the operator channel", "mirror hang detection", "herdr event catch-up", "the run register".
 ---
 
-# orchestrate — register, event subscriber, session lifecycle, completion, and the mirror
+# orchestrate — register, subscriber, lifecycle, completion, planning, admission, and the mirror
 
 `orchestrate` coordinates multi-vendor herdr sessions: Claude, Codex, Grok, Muse, Qwen, and agy
 children dispatched under one operator-driven run, aggregated back through a mirror and woken by a
-subscriber holding herdr's event socket across turns. This skill currently ships **five pieces of
-that system: the register, subscriber, child session lifecycle, completion gate, and mirror**. The register is the whole state model (KTD5) and the
+subscriber holding herdr's event socket across turns. This skill currently ships the register,
+subscriber, child session lifecycle, completion gate, planning, routing, admission, spend
+accounting, and the mirror. The register is the whole state model (KTD5) and the
 Claude↔Codex handoff seam (R12). The subscriber holds protocol 19 event streams, wakes the
 orchestrator, and performs reconnect catch-up (KTD3/KTD12). The session lifecycle owns write-ahead
 launch, recovery, interaction readiness, landing isolation, scope checks, and recorded reaping.
 Completion is the only path to `verified` (R5): a bounded, typed predicate run inline by the
 orchestrator on a settled, run-bound artifact, inside a clean boundary, with integration to the
-recorded destination verified before a child can be reaped. The mirror is the home for the
+recorded destination verified before a child can be reaped.
+Planning decides the split and the route and then stops. The mirror is the home for the
 orchestrator's own unbounded work, so the operator's channel stays answerable.
-Routing, spend gating, and the `/orchestrate` command itself land in later units of
+The composed runner and the `/orchestrate` command itself land in later units of
 `docs/plans/2026-08-12-orchestrate-plugin-plan.md` and are deliberately absent here.
 
 ## What the register is
@@ -95,9 +97,8 @@ from pathlib import Path
 import register  # scripts/register.py, on sys.path for the invoking skill/command
 
 root = register.canonical_work_location(Path.cwd())
-register.upsert_row(
-    root, "child-1", {"phase": "planned", "agent": "claude"}, run_id="run-abc"
-)
+register.upsert_row(root, "child-1", {"agent": "claude"}, run_id="run-abc")
+register.write_phase(root, "child-1", "planned", run_id="run-abc")
 rows = register.read_rows(root, run_id="run-abc")
 register.retire_run(root, "run-abc")
 ```
@@ -120,14 +121,17 @@ or underscored subscription is an error, never an ignored entry.
 creates an ordinary register row with `agent="subscriber"`, wakes the orchestrator through
 `agent.prompt`, and runs one `session.snapshot` catch-up after every accepted subscription,
 including startup. Catch-up updates `observed_state`, reports disagreement with `expected_state`,
-and checks declared `artifact_path` presence. Its `observed_state_source` records whether the value
+and checks the settled `artifact_path` column. A plan declaration is not that
+column; catch-up reports presence as unknown until settlement writes it. Its
+`observed_state_source` records whether the value
 was directly observed or inferred from pane/tab presence. A catch-up failure is reported but does
 not close the accepted event stream. It does not evaluate predicates.
 
-The subscriber only accepts `pane.output_matched` entries built from a complete substring sentinel;
-a regex or ordinary-text output match is valid for Herdr generally but is a startup error here
-because it cannot satisfy the subscriber's identity guard. More than one sentinel subscription may
-target the same pane, so readiness and completion interactions can both remain active.
+The subscriber accepts two closed `pane.output_matched` substring classes: a complete sentinel,
+and the accounting usage needle (`token`). A regex or any other ordinary-text match is valid for
+Herdr generally but is a startup error here. More than one sentinel subscription may target the
+same pane, so readiness and completion interactions can both remain active. A usage match writes
+`tokens_observed` on the matching row.
 
 The spawning unit supplies the subscriber pane, orchestrator pane, run identity, and complete JSON
 subscription list:
@@ -244,6 +248,60 @@ own process group, whose surviving members are killed before the evidence is re-
 See `references/predicates.md` for the full contract, including what each control does **not**
 establish.
 
+## Planning, routing, admission, and spend
+
+`scripts/planning.py` is the judgment step. It maps each child's work shape through
+`tier_policy.json` and `resolve_for_runtime`, walks the declared vendor order when the
+preferred vendor is unavailable, and records every substitution and every explicit
+operator override. See `references/routing.md`.
+
+`scripts/admission.py` owns the work-in-progress bounds. Occupancy for the bound is
+the reservation set on every live run on this host. Active phases without a
+reservation are reconciliation evidence (`unreserved_active`); they are not the
+atomic enforcement. Exceeding a per-vendor bound **queues**. The queue is a real
+FIFO at the document root and `advance_queue` is the only thing that turns a queued
+child into a reservation. Admission never writes `phase`. A planned reservation
+expires only by abandonment or a declared lease; an observed `exited` row is
+reclaimable even if its pane id remains.
+
+The generation lock is per run and is not reentrant. Bounds are host-wide, so
+admission takes `admission.lock` first, then the run's generation lock, and never
+the reverse. An optional `admission.policy` file beside that lock is the durable
+operator-set rule. Reserve never writes it. If the file is absent the module
+defaults apply. Any other unreadable or malformed file is an admission error that
+names the path; only exact positive integers are accepted. `write_host_policy` is
+the only writer. Work-location binding on a write is unchanged: a run still
+belongs to one directory. When promoting a queued child of another run, the write
+uses *that* run's stored location. Promotion takes the globally oldest eligible
+entry by enqueue time.
+
+`scripts/accounting.py` is the spend gate. Every planned child declares a positive
+integer `tokens_max`. That number is `tokens_reserved`. A child whose phase is
+explicitly `planned` has spent zero. Queued is an admission status, not a phase.
+A missing or unknown phase fails closed. Once launched, a vendor with no usage
+line is charged that declared maximum; an observed value cannot lower it. `tokens_observed` is produced
+from a usage `pane.output_matched` line. Cumulative totals keep a monotonic
+maximum; equal delta samples add. A content hash is not a delivery identity.
+A line matching both grammars is refused. Unparseable telemetry after a prior
+sample fails closed; a later parseable sample does not reopen the gate. A
+launched metered child with no telemetry fails closed.
+`authorize_spend` is never passed `None` to mean a silent vendor.
+
+`plan` and `present_plan` write nothing. `present_plan` only renders. `commit_plan`
+requires a presentation receipt whose digest and generation match this plan, and
+whose rendered host bounds still equal the durable policy. This unit can write
+that receipt; the composition unit is the producer that should write it after the
+operator channel delivers the text. The generation sidecar is written atomically
+under the generation lock. An empty or unreadable sidecar is absent; a generation
+already stamped on the register is restored rather than minting a second one.
+`retire_run` forgets the receipt with the generation and takes the admission lock
+first, so it cannot split a reserved verdict from its reservation. None of them launch a child. `commit_plan` does
+not write the settled `artifact_path` column. The reservation, generation,
+phase, and plan row are one critical section.
+
+`activate_slot` marks a matching reservation `held`. It does not launch and does
+not write `phase`.
+
 ## The mirror — the operator's channel, and the clock that watches it
 
 `scripts/mirror.py` is the home for the orchestrator's own work: synthesis, comparison, bulk
@@ -348,6 +406,9 @@ subscription is still not how it may be attached.
 ## What is deliberately not here
 
 No `commands/` entry (`/orchestrate` lands with the units that need an invocable surface — KTD2),
-no planning or vendor routing, no admission control, and no spend gate. The mirror's mechanisms are
-here; the supervision loop that calls the clock on a schedule, and the control flow that proves the
-operator is answered while a mirror request is outstanding, belong to the composition unit.
+and no composition loop. `launch_child` still does not call `reserve_slot` or `activate_slot`.
+Reaping still does not call `release_slot`. Wiring launch→reserve and reap→release is a later
+unit; without the second, the bound is a one-way ratchet until reclaim runs. The mirror's
+mechanisms are here; the supervision loop that calls the clock on a schedule, and the control
+flow that proves the operator is answered while a mirror request is outstanding, belong to the
+composition unit.

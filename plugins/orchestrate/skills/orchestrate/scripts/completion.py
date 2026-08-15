@@ -1476,6 +1476,7 @@ def settle_artifact(receipt: DispatchReceipt) -> Settlement:
             "artifact_path": settlement.artifact_path,
         },
         run_id=receipt.run_id,
+        writer=register_store.ARTIFACT_PATH_WRITER,
     )
     return settlement
 
@@ -2056,7 +2057,8 @@ def _record(root: Path, row_id: str, result: CompletionResult, *, run_id: str) -
     elif current_phase == "verified":
         fields["phase"] = "working"
         fields["expected_state"] = "working"
-    register_store.upsert_row(root, row_id, fields, run_id=run_id)
+    writer = register_store.PHASE_WRITER if "phase" in fields else ""
+    register_store.upsert_row(root, row_id, fields, run_id=run_id, writer=writer)
     return result
 
 

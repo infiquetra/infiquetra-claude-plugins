@@ -19,7 +19,7 @@ import subprocess  # nosec B404 -- fixed argv, no shell
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
 import fleet_commons_shim
@@ -836,11 +836,11 @@ def launch_child(
             "work_shape": spec.work_shape,
             "scope": list(spec.scope),
             **({"base_commit": base_commit} if base_commit is not None else {}),
-            "phase": "planned",
             "expected_state": "ready",
         },
         run_id=spec.run_id,
     )
+    register_store.write_phase(root, spec.row_id, "planned", run_id=spec.run_id)
     landing = git.provision(root, spec, base_commit=base_commit)
     resolution, runtime_argv = _runtime_resolution(spec, landing)
     register_store.upsert_row(
@@ -856,7 +856,7 @@ def launch_child(
         run_id=spec.run_id,
     )
     wrapper.preview(spec, landing, label, runtime_argv)
-    register_store.upsert_row(root, spec.row_id, {"phase": "launching"}, run_id=spec.run_id)
+    register_store.write_phase(root, spec.row_id, "launching", run_id=spec.run_id)
     identity = wrapper.launch(spec, landing, label, runtime_argv)
     register_store.upsert_row(root, spec.row_id, _row_identity(identity), run_id=spec.run_id)
     return identity, landing, resolution
@@ -881,13 +881,11 @@ def confirm_ready(
     """Establish effort when required, then dispatch and observe a readiness sentinel."""
     pane_text = herdr.pane_text(identity.pane_id, cwd=landing.cwd)
     if _is_trust_prompt(pane_text):
-        register_store.upsert_row(
+        register_store.record_observed_state(
             root,
             spec.row_id,
-            {
-                "observed_state": "trust_prompt",
-                "observed_state_source": "observed:pane_content",
-            },
+            "trust_prompt",
+            source="observed:pane_content",
             run_id=spec.run_id,
         )
         raise TrustPromptError(f"child {spec.row_id} is blocked on a workspace trust prompt")
@@ -926,24 +924,20 @@ def confirm_ready(
                 ),
             )
         except EffortNotAppliedError:
-            register_store.upsert_row(
+            register_store.record_observed_state(
                 root,
                 spec.row_id,
-                {
-                    "observed_state": "not_ready",
-                    "observed_state_source": "inferred:effort_not_applied",
-                },
+                "not_ready",
+                source="inferred:effort_not_applied",
                 run_id=spec.run_id,
             )
             raise
         except NotReadyError:
-            register_store.upsert_row(
+            register_store.record_observed_state(
                 root,
                 spec.row_id,
-                {
-                    "observed_state": "not_ready",
-                    "observed_state_source": "inferred:effort_timeout",
-                },
+                "not_ready",
+                source="inferred:effort_timeout",
                 run_id=spec.run_id,
             )
             raise
@@ -969,6 +963,7 @@ def confirm_ready(
                 "expected_state": "working",
             },
             run_id=spec.run_id,
+            writer=register_store.PHASE_WRITER,
         )
         prompt = (
             subscriber.sentinel_assembly_instructions(sentinel, when="you are ready to begin")
@@ -986,24 +981,20 @@ def confirm_ready(
             dispatch=_dispatch,
         )
     except NotReadyError:
-        register_store.upsert_row(
+        register_store.record_observed_state(
             root,
             spec.row_id,
-            {
-                "observed_state": "not_ready",
-                "observed_state_source": "inferred:readiness_timeout",
-            },
+            "not_ready",
+            source="inferred:readiness_timeout",
             run_id=spec.run_id,
         )
         raise
-    register_store.upsert_row(
+    register_store.write_phase(root, spec.row_id, "ready", run_id=spec.run_id)
+    register_store.record_observed_state(
         root,
         spec.row_id,
-        {
-            "phase": "ready",
-            "observed_state": "ready",
-            "observed_state_source": "observed:pane.output_matched",
-        },
+        "ready",
+        source="observed:pane.output_matched",
         run_id=spec.run_id,
     )
     return ReadyChild(identity, baseline_paths, sentinel)
@@ -1043,13 +1034,12 @@ def _accept_effort_acknowledgement(
 
 
 def normalize_scope(scope: Sequence[str]) -> tuple[str, ...]:
-    normalized: list[str] = []
-    for item in scope:
-        path = PurePosixPath(item)
-        if path.is_absolute() or ".." in path.parts or str(path) in {"", "."}:
-            raise ValueError(f"scope entry {item!r} must be a bounded repository-relative path")
-        normalized.append(path.as_posix().rstrip("/"))
-    return tuple(normalized)
+    if not scope:
+        return ()
+    try:
+        return register_store.normalize_repo_relative_paths(scope, what="scope entry")
+    except register_store.RegisterError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 def path_in_scope(path: str, scope: Sequence[str]) -> bool:
@@ -1160,7 +1150,11 @@ def reap_verified(
     cwd = Path(str(row.get("cwd", root)))
     if row.get("phase") != "reaped":
         register_store.upsert_row(
-            root, row_id, {"phase": "reaped", "expected_state": "exited"}, run_id=run_id
+            root,
+            row_id,
+            {"phase": "reaped", "expected_state": "exited"},
+            run_id=run_id,
+            writer=register_store.PHASE_WRITER,
         )
     if herdr.tab_present(tab_id, cwd=cwd):
         herdr.close_tab(tab_id, cwd=cwd)

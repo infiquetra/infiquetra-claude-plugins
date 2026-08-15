@@ -37,10 +37,11 @@ The client writes one newline-delimited JSON request and keeps the connection op
 API source is `recent_unwrapped` with an underscore. The `herdr pane read` command spells the same
 source `recent-unwrapped` with a hyphen, which is not valid in the socket request.
 
-That is the general Herdr protocol. The orchestrate subscriber deliberately accepts only substring
-output matches containing a complete sentinel. Regex and ordinary-text matches must use the lower
-level event client; passing either to the sentinel-bound subscriber is a startup error, never a
-silently inactive subscription. Multiple complete sentinel subscriptions may target one pane.
+That is the general Herdr protocol. The orchestrate subscriber accepts two closed substring
+classes: a complete sentinel, and the accounting usage needle (`token`). Regex and any other
+ordinary-text match must use the lower level event client; passing either to this subscriber is
+a startup error, never a silently inactive subscription. Multiple complete sentinel
+subscriptions may target one pane. A usage subscription is how `tokens_observed` is produced.
 
 A successful subscription acknowledgement is:
 

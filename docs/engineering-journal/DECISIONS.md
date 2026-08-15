@@ -2,6 +2,95 @@
 
 ## 2026-08-15
 
+### `usage_unparseable` is sticky and owned; a later sample is not a recovery  {#usage-unparseable-is-sticky-and-owned}
+
+**Decision.** Once a row's usage telemetry is marked unparseable, the mark
+stays. `_mark_usage_unparseable` is the sole writer and only sets the mark
+true. `record_observed_tokens` still updates `tokens_observed` so an
+operator can see later samples; it does not write the mark. There is no
+clear function. The operator's escape is to retire the run. A future
+explicit recovery is a separately reviewed action, not a side effect of the
+next sensor reading.
+
+The column is in the ownership table. Stickiness that a writer-less upsert
+can undo is not stickiness.
+
+**Rejected: clear the mark when a later line parses.** A later line is a
+different sample. The ambiguous line that set the mark represented 600 or
+900; treating the next 100 as a recovery authorised spend the gate had
+just refused.
+**Rejected: leave the column unowned because only accounting writes it.**
+The mark is the load-bearing input to a spend refusal. A writer-less
+`usage_unparseable=False` reopens the gate the same way a writer-less
+`agent=subscriber` did.
+**Rejected: add a public clear alongside the mark.** Recovery is a
+decision. Shipping a clearer in the same change would make the next sample
+one function call away from becoming a recovery again.
+
+**Revisit when** an operator needs to resume a live run after a false mark
+(a spinner after a real sample) without retiring the generation. That
+clearer must be a named action, not a sensor side effect.
+
+**Refs.** LEARNINGS [`{#refusal-must-outlive-the-sensor}`](LEARNINGS.md#refusal-must-outlive-the-sensor);
+[`{#supervisory-role-not-agent}`](#supervisory-role-not-agent).
+
+### The `role` writer is declared at the producing seam, on the same write as the identity  {#role-writer-is-declared-at-the-producing-seam}
+
+**Decision.** `role` stays in the register's ownership table under
+`write_role`. The subscriber and the mirror both write it, and each does so
+by passing `writer=ROLE_WRITER` on the `upsert_row` that also records the
+rest of that row's identity. The mirror's declaration lives in `_write_owned`,
+which is already the module's only register-write seam. Callers do not call
+`write_role` as a second public write.
+
+`upsert_row` still takes one writer string. That is enough today: of the
+columns the mirror seam may write, only `role` is in the enforced table. A
+payload that needed two differently-owned columns in one write would be a
+change to the merger, not a reason to split the write.
+
+**Rejected: call `write_role` and then write the rest of the identity.** A
+crash between those writes leaves a mirror row with no `role`. Spend then
+charges a supervisor as a child — the defect the column exists to prevent.
+**Rejected: drop `role` from the ownership table so the mirror's plain field
+write works again.** That reopens the writer-less spend bypass the column
+was added to close.
+**Rejected: rename the owner to `_write_owned`.** The subscriber writes the
+same column and is not that function. The owner is the fact, named by the
+gateway, not the first module that needed the column.
+
+**Revisit when** a single logical write must carry two columns with different
+owners. That is a gap in the merger, not a licence to split the write.
+
+**Refs.** LEARNINGS [`{#owned-column-needs-a-writer-at-every-seam}`](LEARNINGS.md#owned-column-needs-a-writer-at-every-seam);
+[`{#supervisory-role-not-agent}`](#supervisory-role-not-agent);
+[`{#mirror-row-identified-by-role}`](#mirror-row-identified-by-role).
+
+### `agent` stays multi-writer; spend reads the owned `role` column  {#supervisory-role-not-agent}
+
+**Decision.** `agent` is legitimately multi-writer: planning writes the
+planned vendor, launch overwrites it with the launcher's uniquified name, and
+the subscriber writes `subscriber`. It is not a spend input. Supervising
+rows are identified by `register.is_supervisory_row`, which tests the owned
+`role` column only. `tokens_reserved` is owned by admission's write gateway;
+`commit_plan` does not write it a second time.
+
+A writer-less upsert of `agent` may still land and must not change what the
+run is charged. A writer-less upsert of `role` or `tokens_reserved` is
+refused.
+
+**Rejected: treat `agent in {subscriber, mirror}` as sufficient.** Launch
+writes a uniquified name on every launched row, including the mirror, so an
+agent-only test misses the mirror. The same test also fails open: a
+writer-less `agent=subscriber` on a real child drops it from the run total.
+**Rejected: own `agent` under one writer function.** There is no single
+writer. Inventing one would force honest call sites to lie about the owner.
+
+**Revisit when** a third supervising row appears. It writes `role` through
+the same gateway token, on the same write as its identity.
+
+**Refs.** LEARNINGS [`{#refuse-at-the-gate-not-the-sensor}`](LEARNINGS.md#refuse-at-the-gate-not-the-sensor);
+[`{#owned-column-needs-a-writer-at-every-seam}`](LEARNINGS.md#owned-column-needs-a-writer-at-every-seam).
+
 ### The mirror's liveness feed gets its own column rather than a second writer of `last_event_at`  {#mirror-liveness-own-column}
 
 The register documents `last_event_at` as the hang-detection input that must be fed by herdr's
@@ -81,6 +170,95 @@ it as owned by the mirror module; the writes above are already consistent with s
 
 **Refs.** LEARNINGS [`{#hung-mirror-needs-a-clock}`](LEARNINGS.md#hung-mirror-needs-a-clock);
 `plugins/orchestrate/references/operator-channel.md`.
+
+### Shared register columns have one writer function  {#register-column-ownership}
+
+**Decision.** `register.py` is the schema owner. It publishes
+`COLUMN_OWNERSHIP`: for every column more than one module can reach, one
+function may write it and that write asserts one fact. `write_phase` owns
+`phase`. `settle_artifact` owns `artifact_path`. `record_observed_state`
+owns `observed_state` and its source. `commit_plan` owns `tokens_max`.
+`record_observed_tokens` owns `tokens_observed`. `reserve_slot` owns the
+reservation record. The merger refuses a foreign `artifact_path` and refuses
+`planned` over a terminal phase. Admission's private write path is an
+allowlist.
+
+A planned reservation has no wall-clock expiry. An operator who approves a
+plan and walks away must not lose it to a clock. The reservation record
+carries run, row, vendor, and work location so a later reconciler can name
+the occupant. Owner recovery belongs to the composition unit.
+
+The merger now requires the writer identity for every owned column. Tests
+that plant `phase` or `observed_state` name the setter they are standing in
+for. A mixed payload from two owners is two writes.
+**Rejected: a wall-clock lease on every planned reservation.** That
+recreates eager reclaim the moment an operator pauses.
+
+**Revisit when** composition wires launch to `activate_slot` and adds
+deliberate abandon-or-resume.
+
+### Admission owns reservations, not phases  {#admission-owns-reservations}
+
+**Decision.** The bound is the reservation set on every live run on the
+host. An optional `admission.policy` file beside the host lock is the
+durable operator-set rule. Reserve, release, and reclaim never write it.
+Absence means the module defaults (`DEFAULT_PER_VENDOR`,
+`DEFAULT_AGGREGATE`). `write_host_policy` is the only writer. Per-call
+limit arguments override for that call only, for tests.
+Admission never writes `phase`. `activate_slot` sets reservation state to
+`held`. Reclaim reads reservation state, a declared lease, and terminal
+evidence (`observed_state="exited"`, `phase` in `{verified, reaped}`). A
+planned reservation with no pane is not dead. `_write_admission` still
+binds a run to its stored work location; a promotion of another run uses
+that run's stored path.
+
+**Rejected: first writer of the policy file wins.** A test or a stray
+`reserve_slot(..., per_vendor_limit=999)` would leave the host permanently
+unbounded, and the operator's only remedy is a file they have no reason to
+know exists.
+**Rejected: write `phase=launching` inside the admission lock.** That
+recreates launch in this unit and puts admission back on a column it does
+not own.
+**Rejected: keep the active-phase union as enforcement.** The writers do
+not take this lock.
+**Rejected: infer death from no pane id.** That is the normal pre-launch
+state, and after exit the pane id remains.
+
+**Revisit when** launch calls `activate_slot` and reap calls `release_slot`.
+
+### Admission takes a host lock first, then the generation lock  {#host-wide-admission-lock}
+
+**Decision.** Per-vendor and aggregate work-in-progress bounds are enforced by
+`admission.py` under a host-wide `admission.lock` in the register directory.
+The lock is taken before the per-run generation lock and never after.
+Reservations and the FIFO queue live at the document root (`admission.queue`,
+`admission.reservations`) so they survive restart. Occupancy is reservations
+plus active phases, counted only for runs whose stored work location matches
+the claimed one. Stored location is sidecar-then-stamp, resolved, no git.
+A reservation whose row is `reaped`, or has no `pane_id` past `lease_seconds`,
+is reclaimed and the queue advances.
+
+`tokens_reserved` is produced by `reserve_slot` and consumed by
+`check_spend` when the vendor exposes no usage line. `tokens_observed` is
+produced by `record_observed_tokens` (the subscriber calls it on a usage
+`pane.output_matched`) and consumed by `check_spend` when the vendor reports
+usage. `authorize_spend` is never passed `None` to mean "this vendor is
+silent." Planning does not import `launch_child`. `launch_child` does not
+yet call `reserve_slot`.
+
+**Rejected: reserve with only the generation lock.** Two runs admit the last
+slot. The control cannot fire on the case it exists for.
+**Rejected: call `upsert_rows` while holding the generation lock.**
+`fcntl.flock` is not reentrant. The in-tree pattern is already unlocked
+helpers.
+**Rejected: reject when a per-vendor bound is full.** The load-bearing word
+is "queues." A rejected child and a queued child are different outcomes.
+**Rejected: return the nearest existing ancestor when git is silent.** That
+is the executed collapse of two missing siblings.
+
+**Revisit when** launch is wired to admission (the named gap: a launching
+row without a reservation is counted as occupancy but was never reserved),
+or when a second host must share a live run.
 
 ## 2026-08-13
 

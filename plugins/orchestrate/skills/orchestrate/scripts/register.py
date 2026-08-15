@@ -5,8 +5,10 @@ handoff seam (R12).
 One flat JSON document **per run**, addressed by ``run_id`` alone, held outside every working
 tree (default ``~/.orchestrate/registers/<run_id>.json``, relocatable by
 ``ORCHESTRATE_REGISTER_DIR``). One row per tracked entity — one per dispatched child, plus
-one for the mirror and one for the subscriber (there is nothing structurally different about
-those two; they are ordinary rows with ``agent="mirror"`` / ``agent="subscriber"``). A
+one for the mirror and one for the subscriber. Those two are ordinary rows. They are
+identified by ``role``, not by ``agent``: launch overwrites ``agent`` with the
+launcher's uniquified name. :func:`is_supervisory_row` answers whether a row
+supervises the run rather than doing the outcome's work. A
 ``run_id`` is host-global: two callers that name the same id share one live document, which
 is what same-host Claude↔Codex handoff needs in **one checkout**, and what two unrelated
 projects that pick the same label collide on. Two checkouts of one ``run_id`` are a
@@ -32,7 +34,9 @@ Row columns, by group
 Identity   -- id, run_id, agent, vendor, model, effort
     ``id`` is this row's own key (also the dict key under ``rows``); ``run_id`` groups rows into
     one run for filtering and retirement; ``agent``/``vendor``/``model``/``effort`` name what was
-    dispatched (``agent`` is a role such as "mirror"/"subscriber" for the two non-child rows).
+    dispatched. ``agent`` is the launcher's uniquified name for a launched row, not a
+    role. Supervising rows carry ``role``. :func:`is_supervisory_row` is the
+    predicate that tells them apart from the outcome's children.
 
 Substrate  -- herdr_session, workspace_id, tab_id, pane_id, cwd
     Where the row's process actually lives in herdr. ``pane_id`` is the durable handle U3's
@@ -89,9 +93,62 @@ Completion -- dispatch_receipt, completion
     "evaluated and failed", so a failed completion leaves ``phase`` untouched and this key is what
     keeps a failed child distinguishable from a working one.
 
-Accounting -- tokens_observed, tokens_reserved
-    ``tokens_reserved`` is what U6's spend gate committed before dispatch; ``tokens_observed`` is
-    the running actual, updated as events arrive. The gap between them is what the gate checks.
+Accounting -- tokens_observed, tokens_reserved, tokens_max
+    ``tokens_reserved`` is what admission committed before dispatch; ``tokens_observed`` is
+    the running actual, updated as events arrive. ``tokens_max`` is the operator-approved
+    ceiling for the child. The gap between reserved and observed is what the gate checks.
+
+Column ownership (shared columns)
+---------------------------------
+A column more than one module can *reach* still has one writer. Reaching is not
+owning. The writer is a function, not a module. :func:`upsert_row` is a merger:
+an owned column arriving without that function's writer identity is refused.
+
+    column                 writer                            asserts
+    ------                 ------                            -------
+    phase                  write_phase                       this row is in this
+                                                             lifecycle step.
+                                                             ``planned`` cannot
+                                                             replace a terminal
+                                                             step.
+    artifact_path          completion.settle_artifact        this path exists and
+                                                             is the settled
+                                                             deliverable.
+    observed_state         record_observed_state             a named detector
+                                                             reported this state.
+    observed_state_source  record_observed_state             how that state was
+                                                             learned
+                                                             (``observed:`` vs
+                                                             ``inferred:``).
+    tokens_observed        accounting.record_observed_tokens usage this row has
+                                                             produced under its
+                                                             vendor contract.
+    tokens_max             planning.commit_plan              the operator-approved
+                                                             ceiling for this
+                                                             child.
+    tokens_reserved        admission._write_admission        what admission committed
+                                                             before dispatch.
+    role                   write_role                        this row supervises
+                                                             the run.
+    usage_unparseable      _mark_usage_unparseable           this row's usage
+                                                             telemetry is
+                                                             unreliable; the
+                                                             spend gate refuses.
+    admission.reservations admission._write_admission        this row occupies or
+                                                             waits for a host
+                                                             slot. Every admission
+                                                             mutation (reserve,
+                                                             activate, release,
+                                                             promote, reclaim)
+                                                             goes through this
+                                                             gateway.
+
+Identity (``agent``, ``vendor``, ``model``, ``effort``), ``work_shape``, and
+``expected_state`` are filled across phases by planning, admission, and
+launch. They are accumulated facts, not one-shot facts, and they are not in
+the enforced table. ``tokens_reserved`` is produced by admission's write
+gateway. ``agent`` stays multi-writer, so spend must not treat it as a
+classifier: :func:`is_supervisory_row` reads the owned ``role`` column.
 
 Forward compatibility (C4)
 ---------------------------
@@ -115,9 +172,9 @@ import stat as stat_module
 import subprocess  # nosec B404 -- fixed argv, no shell
 import threading
 import time
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 SCHEMA_VERSION = 1
@@ -126,6 +183,84 @@ SUPPORTED_SCHEMA_VERSIONS = frozenset({1})
 # Closed, ordered lifecycle vocabulary (U2 brief). U3/U4/U7 move a row through these in order;
 # this module does not enforce the order, only that a written value is a member of the set.
 PHASES = ("planned", "launching", "launched", "ready", "working", "verified", "reaped")
+TERMINAL_PHASES = frozenset({"verified", "reaped"})
+# The only caller permitted to write the settled artifact column.
+ARTIFACT_PATH_WRITER = "settle_artifact"
+# Presentation sidecars live beside the live register and die with the generation.
+PRESENTATION_SIDECARS = (".presented", ".generation")
+
+# Shared-column ownership. Writer is a function. The fact is what that write asserts.
+# The merger refuses these columns unless ``writer`` equals the named owner.
+PHASE_WRITER = "write_phase"
+OBSERVED_STATE_WRITER = "record_observed_state"
+TOKENS_OBSERVED_WRITER = "record_observed_tokens"
+TOKENS_MAX_WRITER = "commit_plan"
+TOKENS_RESERVED_WRITER = "admission._write_admission"
+ROLE_WRITER = "write_role"
+USAGE_UNPARSEABLE_WRITER = "_mark_usage_unparseable"
+COLUMN_WRITERS: dict[str, str] = {
+    "phase": PHASE_WRITER,
+    "artifact_path": ARTIFACT_PATH_WRITER,
+    "observed_state": OBSERVED_STATE_WRITER,
+    "observed_state_source": OBSERVED_STATE_WRITER,
+    "tokens_observed": TOKENS_OBSERVED_WRITER,
+    "tokens_max": TOKENS_MAX_WRITER,
+    "tokens_reserved": TOKENS_RESERVED_WRITER,
+    "role": ROLE_WRITER,
+    "usage_unparseable": USAGE_UNPARSEABLE_WRITER,
+}
+COLUMN_OWNERSHIP: tuple[tuple[str, str, str], ...] = (
+    (
+        "phase",
+        PHASE_WRITER,
+        "the row is in this lifecycle step; planned cannot replace a terminal step",
+    ),
+    (
+        "artifact_path",
+        "completion.settle_artifact",
+        "this path exists and is the settled deliverable",
+    ),
+    ("observed_state", OBSERVED_STATE_WRITER, "a named detector reported this state"),
+    (
+        "observed_state_source",
+        OBSERVED_STATE_WRITER,
+        "how that state was learned (observed: vs inferred:)",
+    ),
+    (
+        "tokens_observed",
+        TOKENS_OBSERVED_WRITER,
+        "usage this row has produced under its vendor contract",
+    ),
+    ("tokens_max", TOKENS_MAX_WRITER, "the operator-approved ceiling for this child"),
+    (
+        "tokens_reserved",
+        TOKENS_RESERVED_WRITER,
+        "what admission committed before dispatch",
+    ),
+    ("role", ROLE_WRITER, "this row supervises the run rather than doing its work"),
+    (
+        "usage_unparseable",
+        USAGE_UNPARSEABLE_WRITER,
+        "this row's usage telemetry is unreliable; the spend gate refuses",
+    ),
+    (
+        "admission.reservations",
+        "admission._write_admission",
+        "this row occupies or waits for a host slot",
+    ),
+)
+
+# Rows that supervise the run rather than doing its work. Spend excludes these.
+# ``agent`` is the launcher's uniquified name for every launched row, so it cannot
+# be the classifier: a writer-less upsert of ``agent="subscriber"`` would hide a
+# real child from the run total. ``role`` is owned and written by the row's creator.
+SUPERVISORY_ROLES = frozenset({"subscriber", "mirror"})
+
+
+def is_supervisory_row(row: Mapping[str, Any]) -> bool:
+    """True when a row supervises the run rather than performing the outcome's work."""
+    return row.get("role") in SUPERVISORY_ROLES
+
 
 IDENTITY_COLUMNS = ("id", "run_id", "agent", "vendor", "model", "effort")
 SUBSTRATE_COLUMNS = ("herdr_session", "workspace_id", "tab_id", "pane_id", "cwd")
@@ -146,7 +281,7 @@ TIME_COLUMNS = (
     "max_quiet_seconds",
     "last_event_at",
 )
-ACCOUNTING_COLUMNS = ("tokens_observed", "tokens_reserved")
+ACCOUNTING_COLUMNS = ("tokens_observed", "tokens_reserved", "tokens_max")
 
 ROW_COLUMNS = (
     IDENTITY_COLUMNS
@@ -284,21 +419,27 @@ def _nearest_existing(path: Path) -> Path:
     return current.resolve()
 
 
+GIT_LOCATION_TIMEOUT_SECONDS = 5.0
+
+
 def canonical_work_location(root: Path) -> Path:
     """The git top level that contains ``root``.
 
     A user-facing directory is often a package subdirectory. The run's work location is
     the repository, not the package.
 
-    ``root`` need not exist. Git is asked from the nearest existing ancestor, so
-    ``repo/packages/future-tool`` and ``repo/packages/tool`` name the same repository.
-    If git cannot answer (bare repo, not a repo, git missing), the nearest existing
-    ancestor is used. That is deliberate, not a silent degrade: a temporary directory
-    used as a test root is not a repository, and a nonexistent descendant of one must
-    not stamp a path that later canonicalizes to something else.
+    Git is asked from the nearest existing ancestor, so a path that does not exist
+    yet can still resolve to a repository. If git cannot answer (bare repo, not a
+    repo, git missing, timeout), the result is ``intended.resolve()`` — not the
+    ancestor. Using the ancestor as the location made two missing siblings of one
+    parent compare equal, and locked a path out of itself once it was created.
+
+    A hung git is bounded by :data:`GIT_LOCATION_TIMEOUT_SECONDS`. Timeout is
+    "git cannot answer", not a hang of the generation lock.
     """
     intended = Path(root)
     existing = _nearest_existing(intended)
+    fallback = intended.resolve()
     env = {key: value for key, value in os.environ.items() if key not in _GIT_IDENTITY_ENV}
     try:
         result = subprocess.run(  # nosec B603 -- fixed argv, no shell
@@ -307,12 +448,13 @@ def canonical_work_location(root: Path) -> Path:
             capture_output=True,
             text=True,
             env=env,
+            timeout=GIT_LOCATION_TIMEOUT_SECONDS,
         )
-    except OSError:
-        return existing
+    except (OSError, subprocess.TimeoutExpired):
+        return fallback
     toplevel = result.stdout.strip()
     if result.returncode != 0 or not toplevel:
-        return existing
+        return fallback
     resolved = Path(toplevel).resolve()
     try:
         intended.resolve().relative_to(resolved)
@@ -320,7 +462,7 @@ def canonical_work_location(root: Path) -> Path:
         # git walked up to a repository that does not contain this directory
         # (a pytest tmp next to an unrelated checkout). That is not a work
         # location for this caller.
-        return existing
+        return fallback
     return resolved
 
 
@@ -347,8 +489,8 @@ def _unique_tmp(path: Path) -> Path:
     )
 
 
-def _atomic_write_json(path: Path, doc: Mapping[str, Any]) -> None:
-    """Write ``doc`` to ``path`` atomically: temp file + ``fsync`` + ``os.replace``.
+def _atomic_write(path: Path, payload: bytes) -> None:
+    """Write ``payload`` to ``path`` atomically: temp file + ``fsync`` + ``os.replace``.
 
     A reader never observes a partially written file — ``os.replace`` is atomic within a POSIX
     filesystem, so the file at ``path`` is either the previous complete content or the new
@@ -365,7 +507,6 @@ def _atomic_write_json(path: Path, doc: Mapping[str, Any]) -> None:
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = _unique_tmp(path)
-    payload = json.dumps(doc, indent=2, sort_keys=True).encode("utf-8") + b"\n"
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         view = memoryview(payload)
@@ -381,6 +522,17 @@ def _atomic_write_json(path: Path, doc: Mapping[str, Any]) -> None:
             os.close(fd)
         with contextlib.suppress(FileNotFoundError):
             tmp.unlink()
+
+
+def _atomic_write_json(path: Path, doc: Mapping[str, Any]) -> None:
+    """Write ``doc`` as JSON using the atomic primitive."""
+    payload = json.dumps(doc, indent=2, sort_keys=True).encode("utf-8") + b"\n"
+    _atomic_write(path, payload)
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write ``text`` using the atomic primitive."""
+    _atomic_write(path, text.encode("utf-8"))
 
 
 @contextmanager
@@ -483,6 +635,171 @@ def _validate_phase(fields: Mapping[str, Any]) -> None:
     phase = fields.get("phase")
     if phase is not None and phase not in PHASES:
         raise RegisterError(f"phase {phase!r} is not one of {PHASES}")
+
+
+def normalize_repo_relative_paths(paths: Sequence[str], *, what: str = "path") -> tuple[str, ...]:
+    """A non-empty closed sequence of bounded repository-relative paths."""
+    if not paths:
+        raise RegisterError(f"{what} must be a non-empty sequence of repository-relative paths")
+    normalized: list[str] = []
+    for item in paths:
+        if not isinstance(item, str) or not item.strip():
+            raise RegisterError(f"{what} entries must be non-empty strings")
+        path = PurePosixPath(item)
+        if path.is_absolute() or ".." in path.parts or str(path) in {"", "."}:
+            raise RegisterError(f"{what} {item!r} must be a bounded repository-relative path")
+        normalized.append(path.as_posix().rstrip("/"))
+    return tuple(normalized)
+
+
+def write_phase(
+    root: Path,
+    row_id: str,
+    phase: str,
+    *,
+    run_id: str,
+    claimed: Path | None = None,
+) -> dict[str, Any]:
+    """Sole writer of ``phase``. Asserts the row is in this lifecycle step."""
+    if phase not in PHASES:
+        raise RegisterError(f"phase {phase!r} is not one of {PHASES}")
+    fields = {"phase": phase}
+    if claimed is not None:
+        return _upsert_rows_unlocked(claimed, {row_id: fields}, run_id=run_id, writer=PHASE_WRITER)[
+            row_id
+        ]
+    return upsert_row(root, row_id, fields, run_id=run_id, writer=PHASE_WRITER)
+
+
+def write_role(
+    root: Path,
+    row_id: str,
+    role: str,
+    *,
+    run_id: str,
+    claimed: Path | None = None,
+) -> dict[str, Any]:
+    """Sole writer of ``role``. Supervisory rows are identified by this column."""
+    if role not in SUPERVISORY_ROLES:
+        raise RegisterError(f"role {role!r} is not one of {sorted(SUPERVISORY_ROLES)}")
+    fields = {"role": role}
+    if claimed is not None:
+        return _upsert_rows_unlocked(claimed, {row_id: fields}, run_id=run_id, writer=ROLE_WRITER)[
+            row_id
+        ]
+    return upsert_row(root, row_id, fields, run_id=run_id, writer=ROLE_WRITER)
+
+
+def record_observed_state(
+    root: Path,
+    row_id: str,
+    state: str,
+    *,
+    source: str,
+    run_id: str,
+) -> dict[str, Any]:
+    """Sole writer of ``observed_state`` and ``observed_state_source``."""
+    return record_observed_states(root, {row_id: (state, source)}, run_id=run_id)[row_id]
+
+
+def record_observed_states(
+    root: Path,
+    updates: Mapping[str, tuple[str, str]],
+    *,
+    run_id: str,
+) -> dict[str, dict[str, Any]]:
+    """Batch writer of ``observed_state`` and ``observed_state_source``."""
+    fields: dict[str, dict[str, Any]] = {}
+    for row_id, (state, source) in updates.items():
+        if not source:
+            raise RegisterError("observed_state_source is required")
+        fields[row_id] = {"observed_state": state, "observed_state_source": source}
+    return upsert_rows(root, fields, run_id=run_id, writer=OBSERVED_STATE_WRITER)
+
+
+def stamp_generation(run_id: str, generation: str, *, already_locked: bool = False) -> str:
+    """Bind this live register to a presentation generation.
+
+    First writer stamps. A later stamp must name the same generation.
+    """
+    run_id = _safe_run_id(run_id)
+    if not generation:
+        raise RegisterError("generation must be non-empty")
+    if already_locked:
+        return _stamp_generation_unlocked(run_id, generation)
+    with _write_locked(run_id):
+        return _stamp_generation_unlocked(run_id, generation)
+
+
+def _stamp_generation_unlocked(run_id: str, generation: str) -> str:
+    doc = _read_register_unlocked(run_id)
+    existing = doc.get("generation")
+    if existing is None:
+        doc["generation"] = generation
+        _atomic_write_json(register_path(run_id), doc)
+        return generation
+    if existing != generation:
+        raise RegisterError(
+            f"run {run_id!r} generation {existing!r} does not match receipt {generation!r}"
+        )
+    return str(existing)
+
+
+def generation_sidecar_path(run_id: str) -> Path:
+    return register_dir() / f"{_safe_run_id(run_id)}.generation"
+
+
+def read_generation_sidecar(run_id: str) -> str | None:
+    """The live generation, or ``None`` if the sidecar is absent or unreadable.
+
+    An empty or undecodable file is absent. It is not a reason to mint a
+    second generation.
+    """
+    path = generation_sidecar_path(run_id)
+    try:
+        if not path.is_file():
+            return None
+        text = path.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+    return text or None
+
+
+def write_generation_sidecar(run_id: str, generation: str) -> None:
+    """Replace the generation sidecar atomically. Caller holds the generation lock."""
+    if not generation or not str(generation).strip():
+        raise RegisterError("generation must be non-empty")
+    _atomic_write_text(generation_sidecar_path(run_id), str(generation).strip() + "\n")
+
+
+def stamped_generation(run_id: str) -> str | None:
+    """The generation already stamped on the live register, if any.
+
+    Caller holds the generation lock. An unreadable document is treated as
+    having no stamp, not as a reason to mint.
+    """
+    path = register_path(run_id)
+    if not path.exists():
+        return None
+    try:
+        doc = _read_register_unlocked(run_id)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, RegisterError):
+        return None
+    value = doc.get("generation")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def presentation_sidecar_path(run_id: str) -> Path:
+    return register_dir() / f"{_safe_run_id(run_id)}.presented"
+
+
+def _forget_presentation(run_id: str) -> None:
+    """Drop the presentation receipt and generation sidecar with this generation."""
+    for suffix in PRESENTATION_SIDECARS:
+        with contextlib.suppress(FileNotFoundError):
+            (register_dir() / f"{_safe_run_id(run_id)}{suffix}").unlink()
 
 
 # The two alternative hang-detection strategies (see the Time group docstring above). Both are
@@ -656,7 +973,14 @@ def rows_stamped_against(root: Path) -> dict[tuple[str, str], dict[str, Any]]:
 
 
 def upsert_row(
-    root: Path, row_id: str, fields: Mapping[str, Any], *, run_id: str
+    root: Path,
+    row_id: str,
+    fields: Mapping[str, Any],
+    *,
+    run_id: str,
+    writer: str = "",
+    already_locked: bool = False,
+    claimed: Path | None = None,
 ) -> dict[str, Any]:
     """Create or merge-update one row.
 
@@ -670,11 +994,24 @@ def upsert_row(
 
     Returns the row exactly as stored, id included.
     """
-    return upsert_rows(root, {row_id: fields}, run_id=run_id)[row_id]
+    return upsert_rows(
+        root,
+        {row_id: fields},
+        run_id=run_id,
+        writer=writer,
+        already_locked=already_locked,
+        claimed=claimed,
+    )[row_id]
 
 
 def upsert_rows(
-    root: Path, updates: Mapping[str, Mapping[str, Any]], *, run_id: str
+    root: Path,
+    updates: Mapping[str, Mapping[str, Any]],
+    *,
+    run_id: str,
+    writer: str = "",
+    already_locked: bool = False,
+    claimed: Path | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Create or merge-update several rows in one locked, atomic register rewrite.
 
@@ -699,39 +1036,85 @@ def upsert_rows(
                 f"fields name run_id {named!r} but this write is addressed at {run_id!r}"
             )
 
-    claimed = canonical_work_location(root)
+    if already_locked:
+        if claimed is None:
+            raise RegisterError("claimed work location is required when already locked")
+        return _upsert_rows_unlocked(claimed, normalized, run_id=run_id, writer=writer)
+    located = canonical_work_location(root)
     with _write_locked(run_id):
+        return _upsert_rows_unlocked(located, normalized, run_id=run_id, writer=writer)
+
+
+def _upsert_rows_unlocked(
+    claimed: Path,
+    normalized: Mapping[str, Mapping[str, Any]],
+    *,
+    run_id: str,
+    writer: str = "",
+) -> dict[str, dict[str, Any]]:
+    """Merge-update rows. Caller already holds the generation lock and a canonical ``claimed``."""
+    doc = _read_register_unlocked(run_id)
+    expected = _expected_archive_root(run_id, doc)
+    if expected is not None:
+        if not _same_dir(claimed, expected):
+            raise RegisterError(
+                f"run {run_id!r} is bound to {expected} and the caller named {claimed}; "
+                "a repository argument must name this run's work location"
+            )
+        doc["repo_root"] = str(expected)
+    else:
+        if doc.get("rows"):
+            raise RegisterError(
+                f"run {run_id!r} has a nonempty live register with no work location; "
+                "refusing to stamp a caller-supplied directory"
+            )
+        doc["repo_root"] = str(claimed)
+    doc["run_id"] = run_id
+    rows = doc["rows"]
+    merged_rows: dict[str, dict[str, Any]] = {}
+    for row_id, fields in normalized.items():
+        existing = rows.get(row_id, {})
+        is_new_row = not existing
+        for column, owner in COLUMN_WRITERS.items():
+            if column in fields and writer != owner:
+                raise RegisterError(f"{column} is written only by {owner}")
+        incoming_phase = fields.get("phase")
+        if incoming_phase == "planned" and existing.get("phase") in TERMINAL_PHASES:
+            raise RegisterError(
+                f"row {row_id!r} is {existing.get('phase')}; refusing to write "
+                "planned over a terminal phase"
+            )
+        merged = {**existing, **fields, "id": row_id, "run_id": run_id}
+        if is_new_row:
+            for column in _TIME_STRATEGY_COLUMNS:
+                merged.setdefault(column, None)
+        rows[row_id] = merged
+        merged_rows[row_id] = dict(merged)
+    doc["rows"] = rows
+    _atomic_write_json(register_path(run_id), doc)
+    return merged_rows
+
+
+def stored_work_location(run_id: str, doc: Mapping[str, Any] | None = None) -> Path | None:
+    """Sidecar then stamp, resolved only. Does not invoke git.
+
+    Admission counts under the generation lock and must not run
+    :func:`canonical_work_location` while holding it.
+    """
+    run_id = _safe_run_id(run_id)
+    path = register_dir() / f"{run_id}.root"
+    if path.exists():
+        material = path.read_bytes().decode("utf-8").strip()
+        if material:
+            return Path(material).resolve()
+    if doc is None:
+        if not register_path(run_id).exists():
+            return None
         doc = _read_register_unlocked(run_id)
-        expected = _expected_archive_root(run_id, doc)
-        if expected is not None:
-            if not _same_dir(claimed, expected):
-                raise RegisterError(
-                    f"run {run_id!r} is bound to {expected} and the caller named {claimed}; "
-                    "a repository argument must name this run's work location"
-                )
-            doc["repo_root"] = str(expected)
-        else:
-            if doc.get("rows"):
-                raise RegisterError(
-                    f"run {run_id!r} has a nonempty live register with no work location; "
-                    "refusing to stamp a caller-supplied directory"
-                )
-            doc["repo_root"] = str(claimed)
-        doc["run_id"] = run_id
-        rows = doc["rows"]
-        merged_rows: dict[str, dict[str, Any]] = {}
-        for row_id, fields in normalized.items():
-            existing = rows.get(row_id, {})
-            is_new_row = not existing
-            merged = {**existing, **fields, "id": row_id, "run_id": run_id}
-            if is_new_row:
-                for column in _TIME_STRATEGY_COLUMNS:
-                    merged.setdefault(column, None)
-            rows[row_id] = merged
-            merged_rows[row_id] = dict(merged)
-        doc["rows"] = rows
-        _atomic_write_json(register_path(run_id), doc)
-        return merged_rows
+    stamped = doc.get("repo_root")
+    if isinstance(stamped, str) and stamped:
+        return Path(stamped).resolve()
+    return None
 
 
 def _expected_archive_root(run_id: str, doc: Mapping[str, Any]) -> Path | None:
@@ -785,7 +1168,9 @@ def retire_run(root: Path, run_id: str) -> Path | None:
     claimed = canonical_work_location(root)
     sidecar = register_dir() / f"{run_id}.root"
 
-    with _write_locked(run_id):
+    import admission as admission_mod
+
+    with admission_mod.admission_locked(), _write_locked(run_id):
         recorded = _recorded_root(run_id)
         if not live.exists():
             if recorded is None:
@@ -798,6 +1183,7 @@ def retire_run(root: Path, run_id: str) -> Path | None:
                     "location, so a mismatch leaves the key and sidecar untouched"
                 )
             _unlink_run_secret(run_id)
+            _forget_presentation(run_id)
             with contextlib.suppress(FileNotFoundError):
                 sidecar.unlink()
             existing = final_register_path(recorded, run_id)
@@ -822,6 +1208,7 @@ def retire_run(root: Path, run_id: str) -> Path | None:
         final_path = final_register_path(recorded, run_id)
         if not rows and final_path.exists():
             live.unlink(missing_ok=True)
+            _forget_presentation(run_id)
             with contextlib.suppress(FileNotFoundError):
                 sidecar.unlink()
             return final_path
@@ -837,6 +1224,7 @@ def retire_run(root: Path, run_id: str) -> Path | None:
                 final_doc[key] = value
         _atomic_write_json(final_path, final_doc)
         live.unlink(missing_ok=True)
+        _forget_presentation(run_id)
         with contextlib.suppress(FileNotFoundError):
             sidecar.unlink()
         return final_path

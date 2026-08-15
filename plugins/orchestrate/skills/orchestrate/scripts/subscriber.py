@@ -18,6 +18,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+import accounting
 import herdr_events
 import register as register_store
 
@@ -97,6 +98,22 @@ def output_match_subscription(
     return subscription
 
 
+def usage_match_subscription(pane_id: str) -> dict[str, Any]:
+    """Subscribe to a vendor usage line on one pane.
+
+    The match is the closed accounting needle, not a free-text pattern and not
+    a regex. Identity-bound sentinels stay on :func:`output_match_subscription`.
+    """
+    subscription = {
+        "type": "pane.output_matched",
+        "pane_id": pane_id,
+        "source": "recent_unwrapped",
+        "match": {"type": "substring", "value": accounting.USAGE_SUBSTRING},
+    }
+    herdr_events.validate_subscription(subscription)
+    return subscription
+
+
 def _sentinel_payload(line: str) -> dict[str, Any] | None:
     marker_at = line.find(SENTINEL_MARKER)
     if marker_at < 0:
@@ -127,15 +144,19 @@ def _sentinel_expectations(
                 "the orchestrate subscriber requires pane.output_matched to use a substring "
                 "sentinel match"
             )
-        payload = _sentinel_payload(str(match["value"]))
-        if payload is None or any(
+        value = str(match["value"])
+        payload = _sentinel_payload(value)
+        if payload is not None and not any(
             not isinstance(payload.get(field), str) or not payload[field]
             for field in identity_fields
         ):
-            raise herdr_events.SubscriptionError(
-                "pane.output_matched substring must contain a complete orchestrate sentinel"
-            )
-        expectations.setdefault(pane_id, []).append(payload)
+            expectations.setdefault(pane_id, []).append(payload)
+            continue
+        if accounting.is_usage_match_value(value):
+            continue
+        raise herdr_events.SubscriptionError(
+            "pane.output_matched substring must contain a complete orchestrate sentinel"
+        )
     return expectations
 
 
@@ -178,7 +199,7 @@ def catch_up(
             live.setdefault(live_pane_id, {}).update(item)
 
     records: list[CatchUpRecord] = []
-    updates: dict[str, dict[str, str]] = {}
+    updates: dict[str, tuple[str, str]] = {}
     for row_id, row in register_store.read_rows(root, run_id=run_id).items():
         pane_id = row.get("pane_id")
         if not isinstance(pane_id, str) or not pane_id:
@@ -213,10 +234,7 @@ def catch_up(
 
         expected = row.get("expected_state")
         expected_state = expected if isinstance(expected, str) else None
-        updates[row_id] = {
-            "observed_state": observed_state,
-            "observed_state_source": observed_state_source,
-        }
+        updates[row_id] = (observed_state, observed_state_source)
         artifact_path, artifact_exists = _artifact_presence(root, row.get("artifact_path"))
         records.append(
             CatchUpRecord(
@@ -232,7 +250,7 @@ def catch_up(
             )
         )
     if updates:
-        register_store.upsert_rows(root, updates, run_id=run_id)
+        register_store.record_observed_states(root, updates, run_id=run_id)
     return records
 
 
@@ -320,13 +338,20 @@ class Subscriber:
             {
                 "run_id": self.run_id,
                 "agent": "subscriber",
+                "role": "subscriber",
                 "pane_id": self.pane_id,
                 "cwd": str(self.root),
-                "phase": "working",
                 "expected_state": "working",
-                "observed_state": "working",
-                "observed_state_source": "observed:subscriber_start",
             },
+            run_id=self.run_id,
+            writer=register_store.ROLE_WRITER,
+        )
+        register_store.write_phase(self.root, self.row_id, "working", run_id=self.run_id)
+        register_store.record_observed_state(
+            self.root,
+            self.row_id,
+            "working",
+            source="observed:subscriber_start",
             run_id=self.run_id,
         )
 
@@ -412,7 +437,26 @@ class Subscriber:
         if event.name == "pane.output_matched":
             if pane_id is None:
                 return False
-            payload = _sentinel_payload(event.matched_line or "")
+            line = event.matched_line or ""
+            recorded = accounting.apply_output_match(
+                self.root,
+                row_id,
+                line,
+                run_id=self.run_id,
+                vendor=str(row.get("vendor") or row.get("agent") or "") or None,
+            )
+            payload = _sentinel_payload(line)
+            if payload is None:
+                if recorded is not None:
+                    return True
+                if pane_id in self._sentinel_expectations:
+                    self._diagnostic(
+                        "sentinel_mismatch",
+                        "ignored output match whose sentinel is not the active run-child interaction",
+                        pane_id=pane_id,
+                        row_id=row_id,
+                    )
+                return False
             if not self._sentinel_matches_active_subscription(pane_id, payload):
                 self._diagnostic(
                     "sentinel_mismatch",
@@ -420,7 +464,7 @@ class Subscriber:
                     pane_id=pane_id,
                     row_id=row_id,
                 )
-                return False
+                return recorded is not None
             # Protocol 19's live pane.output_matched envelope reports read.revision=0 even when
             # pane.get reports a positive, advancing pane revision. They are not comparable
             # counters. Freshness comes from the complete run/child/purpose/nonce identity above;
@@ -434,26 +478,22 @@ class Subscriber:
             return True
         elif event.name in {"pane_exited", "pane_closed", "tab_closed"}:
             source_prefix = "inferred" if event.name == "tab_closed" else "observed"
-            register_store.upsert_row(
+            register_store.record_observed_state(
                 self.root,
                 row_id,
-                {
-                    "observed_state": "exited",
-                    "observed_state_source": f"{source_prefix}:{event.name}",
-                },
+                "exited",
+                source=f"{source_prefix}:{event.name}",
                 run_id=self.run_id,
             )
             return True
         elif event.name == "pane_agent_status_changed":
             observed = event.data.get("agent_status")
             if isinstance(observed, str):
-                register_store.upsert_row(
+                register_store.record_observed_state(
                     self.root,
                     row_id,
-                    {
-                        "observed_state": observed,
-                        "observed_state_source": "observed:pane_agent_status_changed",
-                    },
+                    observed,
+                    source="observed:pane_agent_status_changed",
                     run_id=self.run_id,
                 )
                 return True
@@ -487,13 +527,11 @@ class Subscriber:
                 diagnostic=lambda message: self._diagnostic("socket", message),
             )
         finally:
-            register_store.upsert_row(
+            register_store.record_observed_state(
                 self.root,
                 self.row_id,
-                {
-                    "observed_state": "exited",
-                    "observed_state_source": "observed:subscriber_stop",
-                },
+                "exited",
+                source="observed:subscriber_stop",
                 run_id=self.run_id,
             )
 

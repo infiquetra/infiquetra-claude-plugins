@@ -925,6 +925,10 @@ def _write_owned(
     Every write this module performs goes through here. A shared column written by more than
     one module, with the ownership recorded nowhere checkable, is the defect this guards
     against, so the ownership is asserted at runtime rather than described in a comment.
+
+    When the payload includes ``role``, the register writer is named on this same call.
+    A second public write of ``role`` after the rest of the identity would leave a crash
+    window where the row exists without a role, and spend would treat a supervisor as a child.
     """
     foreign = sorted(set(fields) - set(OWNED_COLUMNS))
     if foreign:
@@ -932,7 +936,8 @@ def _write_owned(
             f"the mirror module does not own {foreign}; it writes only {list(OWNED_COLUMNS)} "
             "and only on the mirror's own row"
         )
-    return register_store.upsert_row(root, row_id, dict(fields), run_id=run_id)
+    writer = register_store.ROLE_WRITER if "role" in fields else ""
+    return register_store.upsert_row(root, row_id, dict(fields), run_id=run_id, writer=writer)
 
 
 def _mirror_row(root: Path, *, run_id: str, row_id: str) -> dict[str, Any]:

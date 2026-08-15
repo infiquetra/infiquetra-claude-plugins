@@ -1,5 +1,129 @@
 # Changelog
 
+## [0.10.0] - 2026-08-15
+
+### Fixed
+
+- An unparseable usage line marks the row and returns. The spend gate refuses,
+  and a later parseable sample does not clear the mark. An ordinary output
+  line containing the word token no longer kills the subscriber that holds
+  the run's event stream.
+- A completion verdict and the phase it justifies are one register write. A
+  reap records `reaped` and `expected_state=exited` as one write.
+- A writer-less upsert of `agent` cannot change what the run is charged.
+  Spend excludes supervising rows by the owned `role` column, not by
+  matching an `agent` name. `tokens_reserved` is owned by admission's write
+  gateway, so a writer-less upsert cannot lower the charge.
+- The mirror's owned-column seam names the `role` writer on the same write
+  that records the rest of the mirror identity. The column stays owned; the
+  identity stays one write.
+
+## [0.9.3] - 2026-08-15
+
+### Fixed
+
+- An owned register column arriving at the generic merger without that
+  column's writer is refused. Production writers of `phase` and
+  `observed_state` go through the named setters. The reservation record is
+  owned by the admission write gateway, not by reserve alone.
+- Equal delta usage lines add. A content hash is not a delivery identity.
+  A line matching both usage grammars is refused. Unparseable telemetry
+  after a prior sample fails the spend gate closed.
+- `commit_plan` writes the reservation, generation, phase, and plan row
+  under one admission-then-generation critical section. Retirement takes
+  the admission lock first, so it cannot split a reserved verdict from its
+  reservation.
+- A child is charged zero only when its phase is `planned`. A missing
+  phase is unknown and fails closed.
+- The generation sidecar is written atomically under the generation lock.
+  An empty or unreadable sidecar is absent; a generation already stamped
+  on the register is restored rather than minting a second one.
+
+## [0.9.2] - 2026-08-15
+
+### Fixed
+
+- Shared register columns name one writer. `phase="planned"` cannot replace a
+  terminal phase. `artifact_path` is written only when the artifact is settled.
+  Admission writes only the row fields it owns.
+- Re-planning a finished child is refused, including when its reservation is
+  still held. `activate_slot` refuses a terminal row.
+- An inferred snapshot absence is not immediate death. Reclaim of a held slot
+  still requires a directly observed exit, an expired holder lease, or a
+  terminal phase.
+- A silent vendor is charged its declared `tokens_max` once launched. An
+  observed value cannot lower that ceiling.
+- `commit_plan` no longer accepts per-call limits the rendered plan does not
+  own. The durable host policy must still equal the bounds the operator was
+  shown. The presentation receipt is bound to a generation and is forgotten
+  with the register.
+- Queue promotion takes the globally oldest eligible entry by enqueue time.
+
+### Changed
+
+- A planned or queued child has spent zero. A launched metered child with no
+  telemetry still fails closed.
+- Usage replay is deduplicated by event identity. Cumulative totals keep a
+  monotonic maximum; input/output samples add.
+- Child `scope` is a sequence of bounded repository-relative paths.
+  `tokens_max` is an exact positive integer.
+- An absent host policy file still defaults. Every other unreadable or
+  malformed file is an admission error that names the path.
+
+## [0.9.1] - 2026-08-14
+
+### Fixed
+
+- Admission owns reservations, the queue, and the host policy. It no longer
+  writes `phase`. Occupancy for the bound is the reservation set on every live
+  run. Active phases without a reservation are evidence, not enforcement.
+- A queued child that has already finished is dropped from the queue rather
+  than promoted back to `planned`.
+- Host bounds count every live run. An optional `admission.policy` file is
+  the durable operator-set rule; reserve never writes it. Absent file means
+  the documented defaults. A write still binds a run to its own stored work
+  location.
+- Reusing a row id for a different vendor or shape is a refusal.
+- A planned reservation is not reclaimed because it has no pane yet. An
+  observed `exited` holder is reclaimable even if the pane id remains.
+- Every planned child declares a positive `tokens_max`. A silent vendor is
+  charged that declaration, not an unlabeled estimate. The run-level spend
+  gate no longer skips an unaccounted child.
+- `commit_plan` requires a presentation receipt whose digest matches the
+  rendered plan, which now includes scope, artifact, predicate, and
+  integration mode.
+- Observed-token writes hold the generation lock across read and write. A
+  redelivered usage line is not counted twice. `context left` and token rates
+  are not spend.
+
+## [0.9.0] - 2026-08-14
+
+### Added
+
+- Planning decides the split and the route and then stops. `planning.py` never
+  imports or calls `launch_child`. The operator is shown the plan before
+  `commit_plan` writes a reservation. A plan that has not been presented is
+  refused.
+- Routing maps a work shape through `tier_policy.json` and the shared tier
+  resolver's `resolve_for_runtime`. An unavailable preferred vendor walks
+  `claude`, `codex`, `grok`, `qwen`, `muse`, `agy` and records the
+  substitution. An explicit operator vendor, model, or effort is recorded as
+  an override. See `references/routing.md`.
+- Register-owned admission: per-vendor and aggregate work-in-progress bounds,
+  a durable FIFO queue at the document root, an atomic reservation under a
+  host-wide admission lock taken before the per-run generation lock, a
+  release that advances the queue, and reclaim of a dead holder's slot.
+  Exceeding a per-vendor bound queues even when aggregate room remains.
+- Spend accounting. `tokens_reserved` is produced by `reserve_slot` and
+  consumed by `check_spend` when the vendor has no usage line. `tokens_observed`
+  is produced from a `pane.output_matched` usage line (the subscriber is the
+  writer) and consumed by `check_spend` when the vendor reports usage. Missing
+  telemetry fails closed. `authorize_spend` is never passed `None` to mean a
+  silent vendor.
+- `canonical_work_location` bounds the git subprocess at five seconds. A
+  timeout, a missing git, or a non-repository is `intended.resolve()`, not the
+  nearest existing ancestor. Two missing siblings of one parent no longer
+  compare equal.
 ## [0.8.0] - 2026-08-15
 
 ### Fixed

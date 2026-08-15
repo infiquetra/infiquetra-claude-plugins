@@ -1148,6 +1148,44 @@ def test_identical_delta_usage_lines_are_added(tmp_path: Path) -> None:
     assert row["tokens_observed"] == 300
 
 
+def test_an_unparseable_mark_survives_a_later_parseable_sample(tmp_path: Path) -> None:
+    """A later valid delta is a different sample, not a recovery of the earlier line."""
+    REGISTER.upsert_row(
+        tmp_path,
+        "metered",
+        {"vendor": "claude", "phase": "working"},
+        run_id="run-a",
+        writer="write_phase",
+    )
+    ACCOUNTING.apply_output_match(tmp_path, "metered", "input 100 output 0 tokens", run_id="run-a")
+    ACCOUNTING.check_spend(tmp_path, run_id="run-a", ceiling=500, row_id="metered")
+    ACCOUNTING.check_spend(tmp_path, run_id="run-a", ceiling=500)
+    ACCOUNTING.apply_output_match(
+        tmp_path, "metered", "input 400 output 0 tokens; total: 900", run_id="run-a"
+    )
+    row = REGISTER.read_rows(tmp_path, run_id="run-a")["metered"]
+    assert row["tokens_observed"] == 100
+    assert row[ACCOUNTING.USAGE_UNPARSEABLE_KEY] is True
+    with pytest.raises(ACCOUNTING.AccountingError, match="unparseable"):
+        ACCOUNTING.check_spend(tmp_path, run_id="run-a", ceiling=500, row_id="metered")
+    with pytest.raises(ACCOUNTING.AccountingError, match="unparseable"):
+        ACCOUNTING.check_spend(tmp_path, run_id="run-a", ceiling=500)
+    ACCOUNTING.apply_output_match(tmp_path, "metered", "input 100 output 0 tokens", run_id="run-a")
+    row = REGISTER.read_rows(tmp_path, run_id="run-a")["metered"]
+    assert row["tokens_observed"] == 200
+    assert row[ACCOUNTING.USAGE_UNPARSEABLE_KEY] is True
+    with pytest.raises(ACCOUNTING.AccountingError, match="unparseable"):
+        ACCOUNTING.check_spend(tmp_path, run_id="run-a", ceiling=500, row_id="metered")
+    with pytest.raises(ACCOUNTING.AccountingError, match="unparseable"):
+        ACCOUNTING.check_spend(tmp_path, run_id="run-a", ceiling=500)
+    with pytest.raises(REGISTER.RegisterError, match="usage_unparseable"):
+        REGISTER.upsert_row(
+            tmp_path, "metered", {ACCOUNTING.USAGE_UNPARSEABLE_KEY: False}, run_id="run-a"
+        )
+    with pytest.raises(ACCOUNTING.AccountingError, match="unparseable"):
+        ACCOUNTING.check_spend(tmp_path, run_id="run-a", ceiling=500)
+
+
 def test_an_ambiguous_usage_line_is_refused(tmp_path: Path) -> None:
     REGISTER.upsert_row(tmp_path, "metered", {"vendor": "claude"}, run_id="run-a")
     ACCOUNTING.apply_output_match(tmp_path, "metered", "tokens used: 100", run_id="run-a")

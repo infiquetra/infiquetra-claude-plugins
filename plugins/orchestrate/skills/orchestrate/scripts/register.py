@@ -130,6 +130,10 @@ an owned column arriving without that function's writer identity is refused.
                                                              before dispatch.
     role                   write_role                        this row supervises
                                                              the run.
+    usage_unparseable      _mark_usage_unparseable           this row's usage
+                                                             telemetry is
+                                                             unreliable; the
+                                                             spend gate refuses.
     admission.reservations admission._write_admission        this row occupies or
                                                              waits for a host
                                                              slot. Every admission
@@ -193,6 +197,7 @@ TOKENS_OBSERVED_WRITER = "record_observed_tokens"
 TOKENS_MAX_WRITER = "commit_plan"
 TOKENS_RESERVED_WRITER = "admission._write_admission"
 ROLE_WRITER = "write_role"
+USAGE_UNPARSEABLE_WRITER = "_mark_usage_unparseable"
 COLUMN_WRITERS: dict[str, str] = {
     "phase": PHASE_WRITER,
     "artifact_path": ARTIFACT_PATH_WRITER,
@@ -202,6 +207,7 @@ COLUMN_WRITERS: dict[str, str] = {
     "tokens_max": TOKENS_MAX_WRITER,
     "tokens_reserved": TOKENS_RESERVED_WRITER,
     "role": ROLE_WRITER,
+    "usage_unparseable": USAGE_UNPARSEABLE_WRITER,
 }
 COLUMN_OWNERSHIP: tuple[tuple[str, str, str], ...] = (
     (
@@ -232,6 +238,11 @@ COLUMN_OWNERSHIP: tuple[tuple[str, str, str], ...] = (
         "what admission committed before dispatch",
     ),
     ("role", ROLE_WRITER, "this row supervises the run rather than doing its work"),
+    (
+        "usage_unparseable",
+        USAGE_UNPARSEABLE_WRITER,
+        "this row's usage telemetry is unreliable; the spend gate refuses",
+    ),
     (
         "admission.reservations",
         "admission._write_admission",

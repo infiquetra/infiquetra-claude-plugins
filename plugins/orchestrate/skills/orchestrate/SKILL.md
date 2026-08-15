@@ -283,7 +283,8 @@ line is charged that declared maximum; an observed value cannot lower it. `token
 from a usage `pane.output_matched` line. Cumulative totals keep a monotonic
 maximum; equal delta samples add. A content hash is not a delivery identity.
 A line matching both grammars is refused. Unparseable telemetry after a prior
-sample fails closed. A launched metered child with no telemetry fails closed.
+sample fails closed; a later parseable sample does not reopen the gate. A
+launched metered child with no telemetry fails closed.
 `authorize_spend` is never passed `None` to mean a silent vendor.
 
 `plan` and `present_plan` write nothing. `present_plan` only renders. `commit_plan`

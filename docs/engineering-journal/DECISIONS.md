@@ -2,6 +2,38 @@
 
 ## 2026-08-15
 
+### `usage_unparseable` is sticky and owned; a later sample is not a recovery  {#usage-unparseable-is-sticky-and-owned}
+
+**Decision.** Once a row's usage telemetry is marked unparseable, the mark
+stays. `_mark_usage_unparseable` is the sole writer and only sets the mark
+true. `record_observed_tokens` still updates `tokens_observed` so an
+operator can see later samples; it does not write the mark. There is no
+clear function. The operator's escape is to retire the run. A future
+explicit recovery is a separately reviewed action, not a side effect of the
+next sensor reading.
+
+The column is in the ownership table. Stickiness that a writer-less upsert
+can undo is not stickiness.
+
+**Rejected: clear the mark when a later line parses.** A later line is a
+different sample. The ambiguous line that set the mark represented 600 or
+900; treating the next 100 as a recovery authorised spend the gate had
+just refused.
+**Rejected: leave the column unowned because only accounting writes it.**
+The mark is the load-bearing input to a spend refusal. A writer-less
+`usage_unparseable=False` reopens the gate the same way a writer-less
+`agent=subscriber` did.
+**Rejected: add a public clear alongside the mark.** Recovery is a
+decision. Shipping a clearer in the same change would make the next sample
+one function call away from becoming a recovery again.
+
+**Revisit when** an operator needs to resume a live run after a false mark
+(a spinner after a real sample) without retiring the generation. That
+clearer must be a named action, not a sensor side effect.
+
+**Refs.** LEARNINGS [`{#refusal-must-outlive-the-sensor}`](LEARNINGS.md#refusal-must-outlive-the-sensor);
+[`{#supervisory-role-not-agent}`](#supervisory-role-not-agent).
+
 ### The `role` writer is declared at the producing seam, on the same write as the identity  {#role-writer-is-declared-at-the-producing-seam}
 
 **Decision.** `role` stays in the register's ownership table under

@@ -4,9 +4,10 @@
 
 ### Fixed
 
-- An unparseable usage line marks the row and returns. The spend gate refuses.
-  An ordinary output line containing the word token no longer kills the
-  subscriber that holds the run's event stream.
+- An unparseable usage line marks the row and returns. The spend gate refuses,
+  and a later parseable sample does not clear the mark. An ordinary output
+  line containing the word token no longer kills the subscriber that holds
+  the run's event stream.
 - A completion verdict and the phase it justifies are one register write. A
   reap records `reaped` and `expected_state=exited` as one write.
 - A writer-less upsert of `agent` cannot change what the run is charged.

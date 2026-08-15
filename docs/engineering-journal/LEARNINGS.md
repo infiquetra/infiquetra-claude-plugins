@@ -21,6 +21,38 @@
 
 ## 2026-08-15
 
+### A refusal stored in a field the sensor rewrites lasts only until the next sample  {#refusal-must-outlive-the-sensor}
+
+**Context.** Usage accounting moved its refusal from the observer to the
+spend gate: an unparseable line marks the row and returns, and the gate
+reads the mark. The observer still wrote `usage_unparseable=False` on every
+parseable sample.
+**Evidence.** After a clean delta of 100, an ambiguous line matching both
+grammars (400 as a delta or 900 as a cumulative total), and a later valid
+delta of 100, the row held `tokens_observed=200` with the mark cleared, and
+`check_spend(ceiling=500)` authorised. Both readings of the ambiguous line
+exceed 500.
+**Mechanism.** The mark the gate reads was written by the sensor on every
+sample, so the refusal inherited the sensor's lifetime. Fail-closed became
+"fail closed until the next line parses." Removing the observer's raise did
+not create this: the old raise killed the process before the later sample
+could arrive. The clear was always in the code.
+**Fix.** `record_observed_tokens` no longer writes the mark. The sole writer
+is `_mark_usage_unparseable`, which only sets it true, and the column is in
+the ownership table so a writer-less upsert cannot clear it either. Recovery
+is not a side effect of the next reading.
+**Validation.**
+`tests/test_orchestrate_planning.py::test_an_unparseable_mark_survives_a_later_parseable_sample`
+runs the three-step sequence and asserts both the per-row and whole-run
+gates still refuse, and that a writer-less clear is refused.
+**What surprised.** The existing subscriber and ambiguous-line tests both
+passed while this sequence authorised, because neither delivered a later
+parseable sample.
+**Generalizable rule.** A refusal recorded in a field the sensor rewrites is
+only as durable as the next sample. The gate and the mark it reads must have
+the same lifetime, and that lifetime is not the next observation.
+**Refs.** DECISIONS `{#usage-unparseable-is-sticky-and-owned}`.
+
 ### Two units that invent the same column still break if only one of them can name its writer  {#owned-column-needs-a-writer-at-every-seam}
 
 **Context.** Planning made `role` an owned register column so spend could tell a

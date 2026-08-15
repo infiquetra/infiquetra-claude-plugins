@@ -25,7 +25,9 @@ can see. Under-counting authorizes spend past the ceiling, silently.
 
 A line that matches the usage needle but neither closed grammar, after a
 prior sample exists, marks telemetry unparseable. The spend gate then fails
-closed instead of keeping the stale prior.
+closed instead of keeping the stale prior. That mark is not cleared by a
+later parseable sample: a later line is a different sample, not evidence
+that the earlier ambiguity was resolved.
 
 A child whose phase is explicitly planned has spent zero. Queued is an
 admission status, not a phase; a queued child is still planned. A missing
@@ -150,7 +152,8 @@ def record_observed_tokens(
 
     ``event_id`` is a transport delivery identity. Deltas are not suppressed by
     content. A missing transport identity means equal deltas are added: that is
-    fail-closed. Cumulative samples keep a monotonic maximum.
+    fail-closed. Cumulative samples keep a monotonic maximum. This function
+    does not write ``usage_unparseable``: a later sample is not a recovery.
     """
     if tokens < 0:
         raise AccountingError("observed tokens cannot be negative")
@@ -169,10 +172,7 @@ def record_observed_tokens(
             total = tokens if prior_n is None else max(prior_n, tokens)
         else:
             total = tokens if prior_n is None else prior_n + tokens
-        fields: dict[str, Any] = {
-            "tokens_observed": total,
-            USAGE_UNPARSEABLE_KEY: False,
-        }
+        fields: dict[str, Any] = {"tokens_observed": total}
         if event_id:
             fields["usage_events"] = [*seen, event_id]
         merged = register_store._upsert_rows_unlocked(
@@ -185,12 +185,14 @@ def record_observed_tokens(
 
 
 def _mark_usage_unparseable(root: Path, row_id: str, *, run_id: str) -> None:
+    """Sole writer of ``usage_unparseable``. Sets the mark; never clears it."""
     claimed = register_store.canonical_work_location(root)
     with register_store.generation_locked(run_id):
         register_store._upsert_rows_unlocked(
             claimed,
             {row_id: {USAGE_UNPARSEABLE_KEY: True}},
             run_id=run_id,
+            writer=register_store.USAGE_UNPARSEABLE_WRITER,
         )
 
 
@@ -207,7 +209,8 @@ def apply_output_match(
 
     A line matching the usage needle that is not a closed grammar, after a
     prior sample exists, marks telemetry unparseable. The observer records
-    that fact and returns; the spend gate is what refuses.
+    that fact and returns; the spend gate is what refuses. A later parseable
+    sample does not clear the mark.
     """
     try:
         classified = classify_usage_line(line, vendor=vendor)

@@ -1,6 +1,6 @@
 {
   "name": "orchestrate",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "Cross-vendor orchestration over herdr: routing, admission, a spend ceiling, durable state, write-ahead launches, event catch-up, bounded predicates, and a mirror protecting the operator's channel.",
   "author": {
     "name": "Infiquetra",
@@ -13,7 +13,7 @@
     "herdr",
     "multi-vendor",
     "dispatch",
-    "state-model",
+    "composition",
     "events",
     "mirror",
     "predicate",

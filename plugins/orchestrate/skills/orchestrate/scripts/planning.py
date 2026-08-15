@@ -363,7 +363,11 @@ def render_plan(built: Plan) -> str:
         lines.append(f"    integration_mode: {child.integration_mode}")
         lines.append(f"    predicate: {json.dumps(dict(child.predicate), sort_keys=True)}")
         if child.override is not None:
-            lines.append(f"    override: {child.override}")
+            # Serialised, not interpolated. A mapping's ``repr`` is insertion-ordered, so the
+            # operator-visible text -- and therefore the digest the approval is bound to --
+            # depended on the order this dict happened to be built in. Two producers building the
+            # same override in a different order computed different digests for the same plan.
+            lines.append(f"    override: {json.dumps(dict(child.override), sort_keys=True)}")
         for item in child.substitutions:
             lines.append(
                 f"    substitution: {item.get('field')} "

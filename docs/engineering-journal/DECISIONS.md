@@ -2,6 +2,174 @@
 
 ## 2026-08-15
 
+### Dispatch ownership is a durable claim, and it is never taken over by inference  {#dispatch-ownership-is-a-claim}
+
+**Decision.** One row's dispatch is owned by one named coordinator, recorded on the row, taken
+under the run's generation lock in the same transaction as the re-check of whether the row may
+still be launched. A coordinator that does not hold the claim does not reach the launcher. A claim
+is released only by the dispatch finishing, by the holder abandoning the child, or by an explicit
+operator decision to resume it under a new owner.
+
+**Rationale.** Every cheaper guard is a read followed by an act, and two actors can both complete
+the read. Only a write that one of them loses excludes the other. Binding the claim to the register
+generation means a retired-and-reused run identifier does not inherit stale ownership.
+
+**Rejected: take the claim when its holder's process is not running.** This is the one that looks
+most reasonable and is the most dangerous. Process liveness is not ownership: a recycled process
+identifier reads as alive, an unreadable one reads as unknown, and a paused coordinator reads as
+dead in exactly the case where taking its work launches a second copy. It is also a clock wearing a
+different hat, and recovery in this system is by ownership rather than by elapsed time — a
+constraint settled deliberately, against a recommendation, because an operator who approves a plan
+and walks away must not lose it to a timer. Liveness is reported to the operator as *evidence for*
+the decision and never as the decision.
+
+**Rejected: an in-process lock or a lease.** The first does not survive the object; the second is
+a timer.
+
+**Cost accepted.** An interrupted dispatch waits for a decision indefinitely. That is why startup
+reconciliation surfaces this run's own interrupted rows rather than only other runs' reservations —
+the decision has to be *offered*, or "wait for a decision" becomes "wait forever".
+
+**Revisit when.** There is a durable host-local process identity that survives identifier reuse and
+is available to every runtime the plugin supports. Even then it informs the decision rather than
+replacing it.
+
+**Refs.** LEARNINGS `{#a-read-then-act-guard-is-not-a-guard}`, `{#never-gate-on-a-status-you-wrote}`.
+
+### Reaping is a fenced protocol, not a check followed by a close  {#reaping-is-fenced}
+
+**Decision.** Closing a verified child is: authorise from evidence, record a fence, stop the
+producer, re-run the evidence chain behind the fence, record `reaped`, release the slot. The fence
+record is durable before the producer is stopped.
+
+**Rationale.** A comparison cannot establish a property of a system that is still changing. Only a
+child that has already passed is fenced, so the case the verify-before-reap requirement exists for
+— recovering a defective artifact from a live session for the price of one prompt — is untouched.
+
+**Rejected: stop the producer before evaluating.** Simpler, and it forfeits exactly that recovery:
+a failing predicate would then arrive with the session already dead.
+
+**Rejected: treat the window as an accepted residual and say so.** That was the previous position.
+The requirement asks composition to establish that the producer stopped, and a disclosure is not an
+establishment.
+
+**Cost accepted.** A crash between the fence record and the tab close leaves a closed tab beside a
+live row. The fence record is what makes that state readable as deliberate, and the re-observation
+step is resumable from it.
+
+**Correction: the fence record alone is not proof the producer stopped.** A crash can also land
+*before* the tab close — between writing the fence and that close landing — leaving the fence
+durable and the producer still running. A retry that sees the fence and returns, treating its
+existence as proof the close already happened, reaps behind a tab nobody ever actually closed: the
+exact window this protocol exists to remove, reopened by the path meant to make it durable. The
+close is therefore re-attempted on every retry regardless of whether the fence record already
+exists; only the write of the record itself is skipped once made.
+
+**Refs.** LEARNINGS `{#observation-cannot-fence-a-live-producer}`, `{#absence-must-be-proved-not-inferred}`.
+
+
+### A dispatch that reached a live pane is recovered by resending, never by replacing  {#unconfirmed-dispatch-is-resent-not-replaced}
+
+**Decision.** A row whose native launcher already returned an identity, but whose delivery to that
+pane cannot be confirmed, is recovered in one of two ways depending on how far it got. If a dispatch
+receipt was already sealed (readiness confirmed, the child told its task), the recovery resends the
+same nonce-bound artifact instructions to the *existing* pane — never a new native launch, never a
+second receipt. If readiness itself never completed (a trust prompt, a timeout), there is no sealed,
+idempotent identity to resend, and the row is offered but only abandonable, not automatically
+resumable.
+
+**Rationale.** The instructions a sealed dispatch resends are idempotent under their own nonce: a
+pane that already read them once reads the same thing again, harmlessly, whether or not the first
+attempt actually landed. Resuming a session's *readiness* is not idempotent in the same way — its
+prompt is the child's original task, and resending it to a pane that has since moved on and started
+working risks contradicting or derailing real progress the coordinator cannot observe from a durable
+record alone. The asymmetry in what is recoverable follows directly from what is provably safe to
+repeat, not from which shape is more common.
+
+**Rejected: stop the pane and relaunch through the ordinary path.** Converts either shape back into
+the well-tested "no pane" recovery, and was rejected because it requires writing a register phase
+backward (from `ready`, or from `launching` with a pane, to `launching` with none) through a
+function whose entire purpose is refusing exactly that transition. Bypassing the forward-only phase
+guard to reach a *different* recovery path undermines the guard for every future caller, not only
+this one.
+
+**Cost accepted.** A dispatch that stalled before readiness completed has no automatic recovery.
+Abandoning it is the only supported action, and until the operator abandons it, spend across the
+whole run reads as unknown for exactly that row (though no longer for any other row, and no longer
+blocks retirement once abandoned).
+
+**Revisit when.** The readiness sentinel's nonce is itself persisted at the moment it is first used,
+which would make a readiness resend idempotent the same way the artifact protocol's is and close
+this residual the same way.
+
+**Refs.** LEARNINGS `{#absence-must-be-proved-not-inferred}`.
+
+### Composition owns the seams, and owns them by refusing rather than adapting  {#composition-owns-the-seams}
+
+**Decision.** The orchestrate composition unit (`skills/orchestrate/scripts/runner.py`) is
+responsible for every property that lives *between* two modules, and where the modules disagree it
+**refuses and names the disagreement** rather than reconciling it silently.
+
+Three concrete applications:
+
+- `session_lifecycle.launch_child` re-resolves model and effort from the work shape and runtime
+  instead of accepting the route planning chose. When an operator override makes the approved
+  values differ from the policy values, the runner refuses before the launch side effect and
+  refuses again against the register afterwards. It does not pass the approved model through by
+  editing the launcher, and it does not accept the launcher's answer.
+- `GitLanding.provision` produces `integration_mode` `branch` for a mutating child and `none` for a
+  read-only one, regardless of what the plan declared. An approved `path` mode is refused rather
+  than launched as `branch`.
+- The spend gate fails closed for a launched metered child with no telemetry yet. The runner does
+  not seed a zero to make the gate answerable — that would delete the fail-closed property — it
+  reports the halt as *unknowable* rather than as *over budget* and re-checks on the next wake.
+
+**Rationale.** Every silent adaptation at a seam converts a disagreement into false provenance. The
+register would then record a vendor, model, effort or integration target that nothing actually ran
+under, and the record is the thing later decisions and the acceptance receipt are computed from. A
+refusal costs one operator round trip; a silent adaptation costs the credibility of every row.
+
+**Rejected alternative — push the fix down into the module.** Making `launch_child` accept a model
+would be a smaller diff and is wrong: it moves the ambiguity rather than removing it, and this
+build has already paid six times for the shape "relocating a write establishes ownership".
+
+**Rejected alternative — let the runner choose.** A coordinator that picks between the approved
+value and the resolved value is a second router, and the plugin already has one.
+
+**Revisit when.** A vendor genuinely requires a launch-time substitution that cannot be known at
+plan time. At that point the answer is a new plan presentation with the substitution rendered in
+it, not a quieter refusal.
+
+**Refs.** LEARNINGS `{#exclude-by-the-column-that-carries-the-fact}`,
+`{#the-snapshot-a-restart-cannot-retake}`, `{#render-order-is-part-of-the-digest}`.
+
+### Reservation recovery is by ownership, never by elapsed time  {#reservation-recovery-by-ownership}
+
+**Decision.** A planned admission reservation has no wall-clock expiry. A coordinator that starts
+up names every reservation it does not own — run, row, vendor, work shape, tokens, state, work
+location, phase, pane, tab — and takes an explicit abandon-or-resume decision for each one.
+Launching before that reconciliation has run is refused.
+
+**Rationale.** A timer is wrong in both directions. Too short and it steals a slot from a live but
+paused child, letting another child oversubscribe the host. Too long and a dead coordinator's
+reservations saturate the host-wide vendor pool for that long. Neither error is visible to the
+operator, and the failure mode of the first is *worse* than the leak the timer was added to fix. An
+operator who approves a plan and walks away must not lose it to a clock.
+
+**Rejected alternative — an unconditional lease on every reservation.** Recommended during review
+of the admission unit and declined there for the reason above. Declared leases remain available for
+callers that genuinely have a bounded holder.
+
+**Cost accepted.** A dead coordinator's reservations hold slots until something deliberately
+reconciles them, which means the reconciliation step is load-bearing rather than hygienic. That is
+why it is a precondition of launching rather than a startup convenience.
+
+**Revisit when.** There is a durable, host-local liveness fact about a coordinator that is not a
+clock — a pid plus boot identity, say — and it is available to every runtime the plugin supports.
+
+**Refs.** LEARNINGS `{#exclude-by-the-column-that-carries-the-fact}`.
+
+
 ### `usage_unparseable` is sticky and owned; a later sample is not a recovery  {#usage-unparseable-is-sticky-and-owned}
 
 **Decision.** Once a row's usage telemetry is marked unparseable, the mark

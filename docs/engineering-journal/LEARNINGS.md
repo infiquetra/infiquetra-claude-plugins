@@ -21,6 +21,318 @@
 
 ## 2026-08-15
 
+### "No record of X" is not "X does not exist" — it is "not yet known"  {#absence-must-be-proved-not-inferred}
+
+**Context.** The orchestrate composition control flow's spend gate treated a `launching` row with
+no recorded pane as a session that had spent nothing: `phase` is written before the native launcher
+runs, so on its own it cannot distinguish "the launcher was never called" from "the launcher
+returned an identity and this process has not yet written it down." The rule that closed one crash
+window opened another: a genuinely launched, genuinely spending session could sit behind that same
+field and be charged zero indefinitely, while a sibling child launched past the ceiling on the
+strength of an accounting total that was quietly wrong.
+
+**Evidence.** Two children, one host-wide slot each, both metered. The first crashes between the
+native launcher returning an identity and that identity being persisted — a real session now exists,
+discoverable by its deterministic run-bound label, with nothing on the row proving it. Before the
+fix: the spend gate read the row alone, saw `launching` with no pane, and reported the run's spend
+as fully known; a second child then launched normally. After the fix, the same state is read as
+`unknown` until the launcher's own label-discovery mechanism is asked and answers, and the second
+child is withheld with that reason named. Pinned by
+`tests/test_orchestrate_composition.py::test_a_pane_less_launching_row_with_a_discoverable_session_blocks_the_next_child`,
+with a companion removal proof that stubs the discovery call to always answer "no" and shows the
+same stale-zero total return.
+
+**Mechanism.** This is the third time this build produced the same shape from three different
+modules, each defended by a comment that read as reasoning rather than as an assumption: a
+phase-membership test charged an absent phase as zero; a structure walk reported `complete` when it
+had only stopped looking; a missing pane was read as a missing session. In every case the *absence
+of a durable record* was treated as proof of *absence of the fact the record would describe*, when
+the only thing a missing record actually proves is that nothing has written one yet. Those are the
+same event exactly once — right up until a crash, a race, or an external system's own delay lands in
+the gap between "the fact became true" and "this process wrote it down." A regression test built
+from one reviewer's or one incident's exact reproduction sequence cannot catch this: it proves that
+*sequence* is closed, and a fix that narrows the triggering condition instead of widening what
+counts as proof will pass it while leaving the class open. The tell, in review, is a comment that
+asserts a negative ("nothing could have spent anything", "this cannot happen") about a window the
+code itself creates by writing intent before writing the outcome.
+
+**Fix.** Wherever "no durable record of X" was being read as "X is proved absent," either establish
+the fact from an independent, authoritative source before trusting the cheap answer (here: the
+launcher's own label discovery, asked by the one caller positioned to ask it), or represent "intent
+recorded" and "outcome confirmed" as two different durable facts and require the second before
+proceeding as though the outcome had happened (applied to a fence that is written before a producer
+is stopped: a retry that finds the fence must still confirm the stop, not treat the fence's
+existence as proof of it).
+
+**What surprised.** Two of the three prior instances of this class were already fixed, in this same
+unit, by the round that introduced the third. Closing the instance is not the same work as closing
+the class, and a defect this build had already paid to learn once reappeared in a different module
+under a different name.
+
+**Generalizable rule.** Before trusting an absence as a fact, ask what wrote the record that's
+missing, and whether that writer runs *before* or *after* the fact it would record. If before,
+absence proves nothing about the fact — only that the writer hasn't reached that line yet — and the
+code must either ask an independent source or fail closed until one exists. When reviewing a fix for
+a reported failure, the question to ask is never "does this stop the reported sequence" but "what is
+the full set of states this property must hold over, and does the fix's condition match that set or
+only the reported instance of it."
+
+**Refs.** [[#never-gate-on-a-status-you-wrote]], [[#a-read-then-act-guard-is-not-a-guard]],
+[[#observation-cannot-fence-a-live-producer]] — the three prior instances of the same shape in this
+unit, at reservation status, structural completeness, and (after this entry) launch-intent spend
+accounting.
+
+### A precondition you write yourself is a trap you set for yourself  {#never-gate-on-a-status-you-wrote}
+
+**Context.** The orchestrate composition control flow marks an admission slot active immediately
+before handing a child to the launcher, and refused to launch any row whose admission status was
+not `reserved`. Marking a slot active changes that status to `held`.
+
+**Evidence.** Executed against fakes: a wrapper error after activation leaves
+`{'phase': 'launching', 'admission': 'held', 'pane_id': None}` with host occupancy 1. Retrying on
+the same coordinator, and on a restarted one, both refused with
+
+```
+AdmissionOrderError: row 'child-a' has admission status 'held'; only a row holding a matching
+reservation is launched, and a queued row waits for promotion
+```
+
+The row was not queued. `held` *is* a matching reservation — the module that owns reservations
+lists `reserved` and `held` together as its holding states. Pinned by
+`tests/test_orchestrate_composition.py::test_a_launch_interrupted_after_the_slot_is_taken_is_recoverable`,
+parametrised over three crash windows.
+
+**Mechanism.** The precondition was written from the happy path, where the row is always `reserved`
+when the launch begins. The one caller that can make it false is the launch path itself, one line
+earlier. So the failure could only appear after a launch had already started and then not finished
+— exactly the window that is hardest to reach and most important to survive — and it presented as
+a permanently occupied vendor slot rather than as a wrong status check.
+
+Worse, the modules underneath were both correct. The launcher already handles this: a `launching`
+row with no pane is its label-recovery case, and calling it directly does recover. Composition made
+that branch unreachable by demanding a status it had itself just overwritten.
+
+**Fix.** Accept the whole holding set, and let a durable dispatch claim — not the status — be what
+stops a *second* actor launching the row. Surface this run's own interrupted dispatches at startup
+as explicit resume-or-abandon decisions.
+
+**Generalizable rule.** When a step writes state and then a later step gates on that state, ask what
+the gate sees if the sequence stops between them. If the answer is "a value this code wrote", the
+gate is testing its own footprint rather than the caller's intent. Gate on the fact you actually
+need — here, "does a matching reservation exist" — and take the ownership question somewhere that
+can answer it.
+
+**Refs.** [[#a-read-then-act-guard-is-not-a-guard]], DECISIONS `{#dispatch-ownership-is-a-claim}`.
+
+### A guard that reads and then acts is not a guard against a second actor  {#a-read-then-act-guard-is-not-a-guard}
+
+**Context.** Two coordinators over one run, each about to launch the same child.
+
+**Evidence.** Executed with a real barrier: pause the first coordinator inside the call that marks
+the slot active, run the second through the whole launch path, then release the first.
+
+```
+native_launch_calls ['child-a', 'child-a']
+launch_count 2
+errors []
+```
+
+Every guard passed for both: phase, pane, dispatch receipt, reservation identity, spend, route. The
+in-process "already dispatching" set is local to one Python object, and marking an already-active
+slot succeeds by design, so nothing in the sequence was a compare-and-set on *dispatch*. Pinned by
+`::test_two_coordinators_racing_the_same_child_launch_it_once`.
+
+**Mechanism.** Each guard was a read followed by a decision followed by an act. Any number of actors
+can complete the read-and-decide half before the first one acts. A sequential test cannot express
+this: the second actor has to be inside a window the first has opened, which needs a barrier.
+
+**Fix.** One transaction under the run's generation lock that re-reads the row, re-checks what
+decides double dispatch, and writes a named coordinator's claim. Ownership is durable and
+generation-bound; a coordinator that does not hold it never reaches the launcher.
+
+**What surprised.** The existing restart test looked like it covered this and could not: it is
+sequential, and the second coordinator only ever reads state the first has finished writing.
+
+**Generalizable rule.** Counting guards does not establish exclusion. Ask of each one: between the
+read and the act, could another actor complete the same read? If yes, the exclusion has to be a
+single atomic write that the other actor loses, and the test has to be a barrier rather than a
+sequence.
+
+**Refs.** [[#never-gate-on-a-status-you-wrote]], [[#observation-cannot-fence-a-live-producer]].
+
+### Observation cannot fence a producer that is still running  {#observation-cannot-fence-a-live-producer}
+
+**Context.** Before closing a verified child, the composition unit compared a digest of its landing
+against one taken when the verdict was recorded, then closed the child's tab.
+
+**Evidence.** Executed: inject a repository-visible write at the last moment the child is still
+alive — during the tab close itself. Before the repair the row was recorded `reaped` with the write
+present and the acceptance receipt reported no false completion. Pinned by
+`::test_a_child_that_writes_before_it_is_stopped_does_not_reach_a_recorded_reap`.
+
+**Mechanism.** The comparison and the closure were two operations, and between them the producer
+was still running. No amount of care in the comparison closes that window, because the thing being
+compared can still move after it is read. The previous round's report called this "observation, not
+enforcement" and treated the qualifier as a disclosure; it was a gap.
+
+**Fix.** Stop the producer first, behind a durably recorded fence, then re-run the evidence chain
+against something that can no longer change. The fence is written before the tab closes, so a crash
+between them leaves a record saying the closure was deliberate rather than a vanished child. Only a
+child that has already passed is fenced, which preserves the reason verify-before-reap exists: a
+failing verdict still leaves a live session to recover a defective artifact from.
+
+**Generalizable rule.** "Check, then act on a live system" is a time-of-check/time-of-use bug
+whatever the check is. If a property must hold at the moment of the act, make the thing that could
+violate it stop first, and record the stop before you perform it.
+
+**Refs.** [[#a-read-then-act-guard-is-not-a-guard]].
+
+### A gate that outlives its evidence passes  {#a-gate-that-outlives-its-evidence-passes}
+
+**Context.** The Phase 1 acceptance receipt is computed from the live register. The written
+procedure said to stop writers, retire the run, then compute it.
+
+**Evidence.** Executed: a complete child with 1,200 observed tokens and a qualifying operator
+answer. Before retirement the receipt passed with the right spend. After the documented sequence:
+
+```
+after_retire  passed=True  spend=0.0  unaccounted_children=[]
+live_rows_after_retire {}
+```
+
+Retirement archives and deletes the live register and the run key, so every criterion was computed
+over nothing and every one of them was vacuously satisfied. The tests called it before retirement
+and never exercised the documented order.
+
+**Mechanism.** The criteria are all of the form "no row is X". An empty set satisfies all of them.
+Nothing in the receipt distinguished "no child was lost" from "there are no children to ask about".
+
+**Fix.** Seal the receipt while the evidence exists, have retirement seal one if the operator
+skipped that step, and refuse to compute one afterwards instead of answering. Document and test the
+same order.
+
+**Generalizable rule.** For any check phrased as a universal over a collection, ask what it reports
+when the collection is empty — and then ask whether anything in the procedure empties it. A gate
+whose inputs are removed by a step in its own documented sequence will pass at exactly the moment
+it matters least.
+
+**Refs.** [[#observation-cannot-fence-a-live-producer]].
+
+
+### An exclusion that names a role but tests a different column excludes nothing  {#exclude-by-the-column-that-carries-the-fact}
+
+**Context.** The orchestrate plugin keeps one register row per tracked entity, including two that
+supervise a run rather than doing its work: the subscriber and the mirror. The spend total and the
+work-in-progress reconciliation both mean to exclude those two, and both wrote the exclusion as
+`row.get("agent") in {"subscriber", "mirror"}`.
+
+**Evidence.** Reproduced by hand before changing anything, against a mirror row written exactly as
+`mirror.create_mirror` plus `session_lifecycle.launch_child` leave it:
+
+```
+mirror row agent = claude-mirror-1
+REPRO accounting: vendor 'claude' reports usage but row 'mirror' has no tokens_observed; fail closed
+unreserved_active = (('run-x', 'mirror'),)
+```
+
+Pinned by `tests/test_orchestrate_composition.py::test_the_mirror_is_excluded_from_the_spend_total_and_the_bound_by_its_role`.
+
+**Mechanism.** The mirror is deliberately launched through the ordinary session path so it gets the
+same write-ahead label, dry-run preview, trust-prompt check and readiness sentinel every child
+gets. That path ends by writing the launcher's *actual, uniquified* agent name onto the row, so the
+mirror's `agent` is `claude-mirror-1`, never `mirror`. `mirror.py` knows this and identifies its
+row by a separate `role` column — and says so — but the two modules that needed to exclude the row
+were written against `agent`. The subscriber is the one row that is not launched that way, so it
+does keep `agent="subscriber"`, and the half-working exclusion looked correct in every test that
+only involved a subscriber.
+
+The consequence was not a cosmetic miscount. `run_actual_tokens` fails closed on a launched
+metered row with no telemetry, so once a mirror existed the run's spend gate raised on every call
+and no child could ever start; and the mirror sat permanently in `unreserved_active`, which is the
+evidence a startup reconciler reads.
+
+**Fix.** One predicate with one owner: `register.is_supervisory_row`, testing both columns, called
+from `accounting.run_actual_tokens` and `admission.unreserved_active`
+(`plugins/orchestrate/skills/orchestrate/scripts/register.py`, `SUPERVISORY_AGENTS` /
+`SUPERVISORY_ROLES`). The register's module docstring, which had asserted the false version of this
+in prose, was corrected in the same change.
+
+**Validation.** The reproduction above now prints `run_actual_tokens = 0.0` and
+`unreserved_active = ()`; the orchestrate suite went from 477 to 574 passing with the change in.
+
+**What surprised.** The defect was invisible to every module suite because it needs *two* modules
+in one process: the mirror to create the row, and accounting or admission to read it. Neither
+unit's tests could reach it, and both units were correct in isolation.
+
+**Generalizable rule.** When a filter names a role, test the column that actually carries the role.
+If two columns could plausibly carry it, that is a sign the fact has no owner — give it one
+predicate in the module that owns the schema, and make every reader call it. A literal set repeated
+in two modules is two chances to be wrong about the same fact.
+
+**Refs.** [[#the-snapshot-a-restart-cannot-retake]], DECISIONS `{#composition-owns-the-seams}`.
+
+### A snapshot bound by digest is a snapshot a restart cannot re-take  {#the-snapshot-a-restart-cannot-retake}
+
+**Context.** Building the orchestrate composition unit's restart path — a coordinator that died
+mid-run and must finish evaluating children it launched before it died.
+
+**Evidence.** `completion.issue_receipt` seals `baseline_digest(changed_paths_baseline)`, and
+`evaluate_completion` compares the caller's baseline against it and records `receipt_mismatch` when
+they differ (`plugins/orchestrate/skills/orchestrate/scripts/completion.py`, the mismatch list).
+The baseline is produced inside `session_lifecycle.confirm_ready._dispatch`, immediately before the
+task is sent. Pinned both ways by
+`tests/test_orchestrate_composition.py::test_a_restarted_coordinator_evaluates_a_child_it_did_not_launch`
+and `::test_a_restart_that_lost_the_recorded_baseline_refuses_rather_than_guessing`.
+
+**Mechanism.** The baseline is repository state *at an instant*, which is exactly why the receipt
+binds it — an out-of-scope write verifies cleanly against a baseline taken after it. But the same
+property makes it unrecoverable: re-taking the snapshot after the child has written produces a
+different, equally valid snapshot with a different digest. A restarted coordinator that re-derived
+it would fail every child it had launched, and the failure would read as evidence tampering rather
+than as a lost handle.
+
+**Fix.** The composition unit persists the baseline in a register column it owns
+(`changed_paths_baseline`) at dispatch and rebuilds the attempt from it on resume. Reading it back
+is safe precisely because the receipt's sealed digest is the check: a stored baseline that was
+edited fails as `receipt_mismatch`, which is the correct answer.
+
+**What surprised.** Nothing had flagged this anywhere, because it is invisible until someone
+actually writes the restart path — every unit test evaluates in the same process that dispatched.
+
+**Generalizable rule.** When a durable record binds a *snapshot* rather than a *name*, ask who
+holds the snapshot and whether that holder can die. If it can, the snapshot needs a durable copy,
+and the binding digest is what makes the copy trustworthy rather than a second source of truth.
+
+**Refs.** [[#exclude-by-the-column-that-carries-the-fact]].
+
+### An operator-facing render that embeds a dict repr makes its own approval digest order-sensitive  {#render-order-is-part-of-the-digest}
+
+**Context.** The orchestrate approval gate hashes the rendered plan text; the composition unit
+persists the approved plan so a restart can enforce the ceiling the operator saw.
+
+**Evidence.** The first persisted copy failed its own digest check. Diffing the two renders:
+
+```
+-    override: {'kind': 'explicit', 'field': 'vendor', 'value': 'claude'}
++    override: {'field': 'vendor', 'kind': 'explicit', 'value': 'claude'}
+```
+
+**Mechanism.** `planning.render_plan` interpolates the route override with `f"... {child.override}"`
+— a Python dict repr, which is insertion-ordered. `register._atomic_write_json` writes with
+`sort_keys=True`. Round-tripping the plan through the standard atomic writer reordered one dict and
+changed the operator-visible text, and therefore the digest.
+
+**Fix.** The approved-plan sidecar is written with key order preserved, with the reason stated at
+the write.
+
+**Generalizable rule.** If a digest covers rendered text, every non-deterministic element of that
+render is part of the contract. A `repr` of a mapping inside operator-facing output is a latent
+ordering dependency — and a portability hazard, because a second producer that builds the same
+mapping in a different order computes a different digest for the same plan.
+
+**Refs.** DECISIONS `{#composition-owns-the-seams}`.
+
+
 ### A refusal stored in a field the sensor rewrites lasts only until the next sample  {#refusal-must-outlive-the-sensor}
 
 **Context.** Usage accounting moved its refusal from the observer to the

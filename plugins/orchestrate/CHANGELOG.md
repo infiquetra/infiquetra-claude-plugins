@@ -1,5 +1,147 @@
 # Changelog
 
+## [0.11.0] - 2026-08-15
+
+Six defects in how the assembled control flow meets the modules it composes. Every one of them is
+two modules that are individually correct, meeting somewhere no single module's tests can reach.
+
+### Fixed
+
+- **An approved `path` integration ran and was recorded as `branch`.** The landing provisioner
+  decides from `mutating` alone — a branch worktree for a mutating child, the ambient checkout for
+  a read-only one — and never sees the approved mode, while the custody checks compared only the
+  tier fields. Planning's vocabulary is wider than what can be landed, so it is now named
+  explicitly and a mode outside it is refused when the plan is built, before anything durable
+  exists, and again before the launch side effect. The custody comparison covers every field the
+  operator was shown: vendor, model, effort, scope and integration mode. Work isolated *more* than
+  the operator asked for is still a landing they did not approve, recorded as though they had.
+- **A launch interrupted after its slot was taken lost the child and could stall the whole run.**
+  Marking a slot active writes `held`, and the launch path accepted only `reserved` — the status
+  this control flow had itself just written — so one wrapper error or crash left a row holding a
+  vendor slot that could never be launched again. Startup reconciliation looked only at runs it did
+  not own, so the row was never offered to anyone either, and under a metered vendor the resulting
+  `launching`-with-no-usage row fail-closed the spend gate for every other child. A holding
+  reservation is now launchable, this run's own interrupted dispatches are offered as
+  resume-or-abandon decisions, resuming re-enters the launcher's own label recovery rather than
+  opening a second session, and one child's launcher error no longer ends the sweep. Nothing here
+  is time-based: an interrupted dispatch waits for a decision and is never reclaimed by a timer.
+- **A launch intent with no session was charged as an in-flight metered child.** `launching` is
+  written before the launcher runs, so a row that never recorded a pane has nothing that could have
+  spent. Failing closed on its silence stopped every other child in the run, including its own
+  retry.
+- **Two coordinators could launch one child twice.** Every guard read state and then acted on it,
+  and the in-process dispatch set is local to one object while marking an already-active slot
+  succeeds — so both could pass every check before either acted. Dispatch ownership is now a
+  durable claim taken under the run's generation lock in the same transaction as the launchability
+  re-read. A claim is never taken over because its holder looks dead; the claimant's process
+  liveness is evidence for an operator's decision, not the decision.
+- **A restart started a second subscriber and retirement ignored the first.** The subscriber is
+  deliberately the process that outlives its parent, and its identity lived only in the coordinator
+  that started it. A new coordinator now finds the running subscriber and adopts it, replaces it
+  when its subscription set is stale, and retirement asks the durable record whether any subscriber
+  of this run is alive rather than whether one object holds a handle. Two event streams meant two
+  writers of the same row, and retirement could complete while a prior generation was still able to
+  put a live document back beside the archive. Supervision asks the record too: a coordinator that
+  adopted a running subscriber holds no handle for it, and asking the handle reported a death that
+  had not happened — a false `exited` written onto the subscriber's row and a false alarm on every
+  tick after a restart.
+- **A child could write between its final digest and the closing of its tab.** Comparing a digest
+  and then closing the tab as a separate step leaves a window in which the producer is still
+  running, and a write made there was never evaluated while the row was recorded reaped. The
+  producer is now stopped first, behind a durably recorded fence, and the evidence chain is re-run
+  against something that can no longer change; a disagreement refuses the reap and leaves the work
+  on disk. Only a child that has already passed is fenced, so a failing verdict still leaves a live
+  session to recover from. The acceptance receipt detects the same drift independently.
+- **The documented acceptance order produced a passing receipt over an empty register.** Retirement
+  archives and deletes the live register and the run key, and every pass criterion reads them, so
+  a receipt computed afterwards reported no child lost, no false completion and zero spend. The
+  receipt is now sealed while the evidence exists, retirement seals one if the operator skipped the
+  step, and asking afterwards refuses instead of answering. The documented order and the tested
+  order are the same order.
+- **The approval digest depended on how a mapping was built.** The rendered plan interpolated the
+  route override with `repr`, which is insertion-ordered, so two producers of the same plan could
+  compute different digests. It is serialised deterministically.
+
+### Changed
+
+- **Judgment-shaped work is refused when the plan is built.** It requires an independently
+  dispatched verifier, and this control flow does not dispatch one. The completion gate already
+  refuses a verifier that holds no dispatch receipt, so such work failed closed — but only after
+  the child had run and been paid for. Refusing at plan time is the same answer, before it costs
+  anything. This narrows Phase 1 to mechanical work explicitly rather than by omission.
+- The Phase 1 acceptance procedure now names the API that produces its operator-channel criterion,
+  imports what its own snippet uses, says to reconstruct the coordinator with the same run
+  identifier after a restart, and documents two behaviours that look like faults and are not:
+  fan-out serialising behind the first metered child's usage line, and the recovery path for a
+  launch interrupted with its slot already taken.
+
+### Added
+
+- **The control flow that makes the modules a product.** `skills/orchestrate/scripts/runner.py`
+  assembles the register, the subscriber, the session lifecycle, the completion gate, planning,
+  admission, accounting and the mirror into one supervised run. It owns the properties that live
+  between modules rather than inside any of them: the admission slot is activated immediately
+  before the launcher and released only after a recorded reap; the run root is recorded before the
+  first launch and the first receipt; the approved route reaches the launcher unchanged or the
+  launch is refused; startup names every reservation this coordinator does not own and takes an
+  explicit decision about each; and an operator question is answered or explicitly parked with a
+  durable receipt whether or not the mirror is busy.
+- **Reaping is authorised from evidence rather than from `phase`.** A row's phase is a writable
+  column, and a child that produced nothing could set it to `verified` and have its tab closed as a
+  success. Closing a child now requires an authenticated dispatch receipt, a settlement sealed
+  under that receipt's own attempt nonce, a recorded passing verdict, and the artifact still
+  carrying this dispatch's binding token and still digesting to the value the verdict was recorded
+  against. The child's landing is separately re-observed against a snapshot taken at the verdict,
+  because the window between the verdict and the reap was observed by nothing.
+- **The changed-paths baseline is durable.** It is a snapshot taken at readiness that a dispatch
+  receipt seals a digest over, and it cannot be re-taken once the child has written. A restarted
+  coordinator that re-took it would have every child it launched fail as `receipt_mismatch` — work
+  lost to a restart rather than to a fault — so the snapshot is recorded at dispatch and validated
+  by the receipt's digest on the way back.
+- **The approved spend ceiling is durable and bound to the approval.** Committing a plan did not
+  persist the ceiling, and the ceiling is what every later admission decision is measured against.
+  The approved plan is now kept beside the register and is untrusted on the way back in: it is
+  re-rendered and its digest must equal the presentation receipt's, which is itself bound to the
+  live register generation. An edited ceiling renders differently, digests differently, and is
+  refused.
+- **The run record emits on the failing path, not only the successful one.** A step that records
+  nothing when it raises leaves a log reading "activated a slot, then stopped happening", which is
+  indistinguishable from a coordinator that is still working. A launch that fails after its slot is
+  taken, a launch withheld by admission or by the spend gate, an evaluation that raises, a refused
+  reap, and a slot that could not be released after a reap are each recorded with their cause.
+- **`references/phase-1-acceptance.md`**, defining the acceptance gate as one real unrelated task
+  with two children on different vendors, one mutating and one read-only, and one deliberate
+  mid-run restart — with five pass criteria computed from the durable record and evidence at
+  `.orchestrate/runs/<run-id>/`.
+
+### Fixed
+
+- **A mirror whose launch failed would have stopped the subscriber from ever starting.** The
+  mirror's register row is written before its launch side effect, deliberately, so a failed launch
+  leaves a row with no pane. Rebuilding a session from that row raises, so confirming the mirror's
+  subscription — and the supervision tick's liveness read — would have raised with it, taking the
+  whole run down for a component the operator can already see failed. Both paths now report the
+  unlaunched row instead of raising, keyed on the mirror module's own record of whether a return
+  subscription exists at all, so a launched mirror with a missing wire is still refused loudly.
+- **An open mirror no longer lets a run retire underneath it.** The mirror is excluded from the
+  run's spend and from the work-in-progress bound because it is not one of the outcome's children,
+  but it is a live session that writes its own register columns, and a late write after retirement
+  recreates a live document beside the archive.
+- **The mirror was counted as one of the outcome's children by the spend total and by the
+  work-in-progress reconciliation.** Both excluded it by testing `agent`, but the mirror is
+  launched through the ordinary session path, which overwrites `agent` with the launcher's
+  uniquified agent name; only the subscriber keeps a literal one. The run's spend therefore
+  demanded usage telemetry from the mirror forever and failed closed on every check, and the mirror
+  appeared permanently in the unreserved-active evidence. Both now ask
+  `register.is_supervisory_row`, which is the one predicate for the question and reads `role` as
+  well as `agent`.
+
+### Changed
+
+- The register's documentation said the mirror and the subscriber were "ordinary rows with
+  `agent="mirror"` / `agent="subscriber"`". That was true of the subscriber and false of the
+  mirror, and the two modules that believed it were wrong because of it.
+
 ## [0.10.0] - 2026-08-15
 
 ### Fixed

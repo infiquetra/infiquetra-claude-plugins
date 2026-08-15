@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -241,6 +241,14 @@ def _actual_for_row(row: Mapping[str, Any], *, vendor: str) -> float:
     phase = row.get("phase")
     if phase == "planned":
         return 0.0
+    if phase == "launching" and not row.get("pane_id"):
+        # ``launching`` is written *before* the launcher runs -- it is the durable launch intent,
+        # not evidence that a session exists. With no recorded pane there is nothing that could
+        # have spent anything, so charging this row its worst case, or failing closed on its
+        # silence, is not caution: it stops every other child in the run, including the retry of
+        # this one, over a session that was never created. A row that has recorded a pane is in
+        # flight and still fails closed below.
+        return 0.0
     if phase not in LAUNCHED_PHASES:
         raise AccountingError(f"row {row.get('id')!r} has unknown phase {phase!r}; fail closed")
     declared = row.get("tokens_max", row.get("tokens_reserved"))
@@ -260,12 +268,20 @@ def _actual_for_row(row: Mapping[str, Any], *, vendor: str) -> float:
     )
 
 
-def run_actual_tokens(root: Path, *, run_id: str) -> float:
-    """Sum this run's actuals. Missing telemetry fails closed."""
+def run_actual_tokens(root: Path, *, run_id: str, exclude_row_ids: Collection[str] = ()) -> float:
+    """Sum this run's actuals. Missing telemetry fails closed.
+
+    ``exclude_row_ids`` names rows the caller has already decided not to count toward this total
+    -- for instance a row a coordinator has explicitly stopped pursuing
+    (``coordinator_disposition.state == "abandoned"``). Excluding is not charging zero: a row's
+    true spend may be nonzero and genuinely unknown, and it is left out of the sum rather than
+    guessed at. This module does not itself know what "abandoned" means -- that fact belongs to
+    whichever module records it -- it only skips whichever row ids the caller names.
+    """
     rows = register_store.read_rows(root, run_id=run_id)
     total = 0.0
-    for row in rows.values():
-        if register_store.is_supervisory_row(row):
+    for row_id, row in rows.items():
+        if register_store.is_supervisory_row(row) or row_id in exclude_row_ids:
             continue
         vendor = str(row.get("vendor") or row.get("agent") or "")
         total += _actual_for_row(row, vendor=vendor)
@@ -279,6 +295,7 @@ def check_spend(
     ceiling: float,
     vendor: str | None = None,
     row_id: str | None = None,
+    exclude_row_ids: Collection[str] = (),
 ) -> None:
     """Refuse when observed actuals, or a silent vendor's declared maximum, meet the ceiling.
 
@@ -293,7 +310,7 @@ def check_spend(
         chosen = vendor or str(row.get("vendor") or row.get("agent") or "")
         actual = _actual_for_row(row, vendor=chosen)
     else:
-        actual = run_actual_tokens(root, run_id=run_id)
+        actual = run_actual_tokens(root, run_id=run_id, exclude_row_ids=exclude_row_ids)
     spend = intent_envelope.SpendEnvelope(cost_ceiling_tokens=float(ceiling))
     decision = intent_envelope.authorize_spend(spend, actual_tokens=actual)
     if not decision.authorized:

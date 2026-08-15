@@ -206,21 +206,19 @@ def apply_output_match(
     """If ``line`` is a usage line, record it. Otherwise leave the row alone.
 
     A line matching the usage needle that is not a closed grammar, after a
-    prior sample exists, marks telemetry unparseable.
+    prior sample exists, marks telemetry unparseable. The observer records
+    that fact and returns; the spend gate is what refuses.
     """
     try:
         classified = classify_usage_line(line, vendor=vendor)
     except AccountingError:
         _mark_usage_unparseable(root, row_id, run_id=run_id)
-        raise
+        return None
     if classified is None:
         if USAGE_SUBSTRING in line.lower() and not _NOT_SPEND.search(line):
             existing = register_store.read_rows(root, run_id=run_id).get(row_id, {})
             if existing.get("tokens_observed") is not None:
                 _mark_usage_unparseable(root, row_id, run_id=run_id)
-                raise AccountingError(
-                    f"usage line is not a closed grammar after a prior sample: {line!r}"
-                )
         return None
     kind, tokens = classified
     record_observed_tokens(
@@ -264,7 +262,7 @@ def run_actual_tokens(root: Path, *, run_id: str) -> float:
     rows = register_store.read_rows(root, run_id=run_id)
     total = 0.0
     for row in rows.values():
-        if row.get("agent") in {"subscriber", "mirror"}:
+        if register_store.is_supervisory_row(row):
             continue
         vendor = str(row.get("vendor") or row.get("agent") or "")
         total += _actual_for_row(row, vendor=vendor)

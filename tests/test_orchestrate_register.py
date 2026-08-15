@@ -120,6 +120,13 @@ def test_row_round_trips_every_column(tmp_path: Path) -> None:
         run_id="run-a",
         writer=M.TOKENS_MAX_WRITER,
     )
+    M.upsert_row(
+        tmp_path,
+        "child-1",
+        {"tokens_reserved": row["tokens_reserved"]},
+        run_id="run-a",
+        writer=M.TOKENS_RESERVED_WRITER,
+    )
     stored = M.upsert_row(
         tmp_path,
         "child-1",

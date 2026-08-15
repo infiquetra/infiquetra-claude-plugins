@@ -654,7 +654,59 @@ def test_reap_records_transition_before_closing_tab(tmp_path: Path) -> None:
     herdr = FakeHerdr()
     LIFECYCLE.reap_verified(tmp_path, "child-a", herdr=herdr, run_id="run-a")
     assert herdr.closed == ["tab-a"]
-    assert REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]["phase"] == "reaped"
+    row = REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]
+    assert row["phase"] == "reaped"
+    assert row["expected_state"] == "exited"
+
+
+def test_reap_writes_phase_and_expected_state_together(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _record(tmp_path, "run-a")
+    REGISTER.upsert_row(
+        tmp_path,
+        "child-a",
+        {
+            "run_id": "run-a",
+            "phase": "verified",
+            "expected_state": "working",
+            "tab_id": "tab-a",
+            "cwd": str(tmp_path),
+        },
+        run_id="run-a",
+        writer="write_phase",
+    )
+    completed: list[str] = []
+    real_upsert = LIFECYCLE.register_store.upsert_row
+    real_write_phase = LIFECYCLE.register_store.write_phase
+
+    def upsert(*args: Any, **kwargs: Any) -> Any:
+        if completed:
+            raise KeyboardInterrupt("interrupted between the two register writes")
+        result = real_upsert(*args, **kwargs)
+        completed.append("upsert")
+        return result
+
+    def write_phase(*args: Any, **kwargs: Any) -> Any:
+        if completed:
+            raise KeyboardInterrupt("interrupted between the two register writes")
+        result = real_write_phase(*args, **kwargs)
+        completed.append("write_phase")
+        return result
+
+    monkeypatch.setattr(LIFECYCLE.register_store, "upsert_row", upsert)
+    monkeypatch.setattr(LIFECYCLE.register_store, "write_phase", write_phase)
+    interrupted = False
+    try:
+        LIFECYCLE.reap_verified(tmp_path, "child-a", herdr=FakeHerdr(), run_id="run-a")
+    except KeyboardInterrupt:
+        interrupted = True
+    row = REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]
+    both = row.get("phase") == "reaped" and row.get("expected_state") == "exited"
+    neither = row.get("phase") == "verified" and row.get("expected_state") == "working"
+    assert both or neither, (row.get("phase"), row.get("expected_state"), interrupted)
+    if not interrupted:
+        assert both
 
 
 def test_vanished_child_raises_unless_reap_was_recorded(tmp_path: Path) -> None:

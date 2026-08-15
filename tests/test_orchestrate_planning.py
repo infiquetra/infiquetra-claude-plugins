@@ -402,6 +402,123 @@ def test_usage_line_from_output_match_is_the_observed_column(tmp_path: Path) -> 
     assert row["tokens_observed"] == 321
 
 
+def test_an_ordinary_token_line_leaves_the_subscriber_alive_and_the_spend_gate_refuses(
+    tmp_path: Path,
+) -> None:
+    _commit(tmp_path, [_child("metered", "work-medium", vendor="claude")])
+    REGISTER.upsert_row(
+        tmp_path,
+        "metered",
+        {"pane_id": "pane-a", "phase": "working"},
+        run_id="run-plan",
+        writer="write_phase",
+    )
+    subscriber = SUBSCRIBER.Subscriber(
+        root=tmp_path,
+        run_id="run-plan",
+        row_id="subscriber-a",
+        pane_id="subscriber-pane",
+        orchestrator_pane="orchestrator-pane",
+        subscriptions=[SUBSCRIBER.usage_match_subscription("pane-a")],
+        client=EVENTS.HerdrEventClient(tmp_path / "unused.sock"),
+        snapshot_reader=lambda: {"panes": [], "agents": []},
+        wake_sender=lambda _text: None,
+        diagnostic_sink=lambda _payload: None,
+    )
+    good = {
+        "event": "pane.output_matched",
+        "data": {
+            "pane_id": "pane-a",
+            "matched_line": "tokens used: 321",
+            "read": {"revision": 0, "text": "tokens used: 321\n"},
+        },
+    }
+    noisy = {
+        "event": "pane.output_matched",
+        "data": {
+            "pane_id": "pane-a",
+            "matched_line": "warning: refresh token expired",
+            "read": {"revision": 0, "text": "warning: refresh token expired\n"},
+        },
+    }
+    subscriber.handle_event(EVENTS.decode_event(good))
+    subscriber.handle_event(EVENTS.decode_event(noisy))
+    subscriber.handle_event(EVENTS.decode_event(noisy))
+    row = REGISTER.read_rows(tmp_path, run_id="run-plan")["metered"]
+    assert row["tokens_observed"] == 321
+    assert row[ACCOUNTING.USAGE_UNPARSEABLE_KEY] is True
+    with pytest.raises(ACCOUNTING.AccountingError, match="unparseable"):
+        ACCOUNTING.check_spend(tmp_path, run_id="run-plan", ceiling=1_000_000, row_id="metered")
+    with pytest.raises(ACCOUNTING.AccountingError, match="unparseable"):
+        ACCOUNTING.check_spend(tmp_path, run_id="run-plan", ceiling=1_000_000)
+
+
+def test_a_writerless_agent_upsert_cannot_change_what_the_run_is_charged(
+    tmp_path: Path,
+) -> None:
+    ADMISSION.reserve_slot(
+        tmp_path,
+        "c1",
+        run_id="run-a",
+        vendor="muse",
+        work_shape="work-medium",
+        tokens_max=8000,
+    )
+    REGISTER.write_phase(tmp_path, "c1", "working", run_id="run-a")
+    with pytest.raises(ACCOUNTING.AccountingError, match="8000"):
+        ACCOUNTING.check_spend(tmp_path, run_id="run-a", ceiling=1000)
+    REGISTER.upsert_row(tmp_path, "c1", {"agent": "subscriber"}, run_id="run-a")
+    assert REGISTER.read_rows(tmp_path, run_id="run-a")["c1"]["agent"] == "subscriber"
+    with pytest.raises(ACCOUNTING.AccountingError, match="8000"):
+        ACCOUNTING.check_spend(tmp_path, run_id="run-a", ceiling=1000)
+
+
+def test_a_writerless_tokens_reserved_upsert_cannot_change_what_the_run_is_charged(
+    tmp_path: Path,
+) -> None:
+    ADMISSION.reserve_slot(
+        tmp_path,
+        "c1",
+        run_id="run-a",
+        vendor="muse",
+        work_shape="work-medium",
+        tokens_max=8000,
+    )
+    REGISTER.write_phase(tmp_path, "c1", "working", run_id="run-a")
+    with pytest.raises(ACCOUNTING.AccountingError, match="8000"):
+        ACCOUNTING.check_spend(tmp_path, run_id="run-a", ceiling=1000)
+    with pytest.raises(REGISTER.RegisterError, match="tokens_reserved"):
+        REGISTER.upsert_row(tmp_path, "c1", {"tokens_reserved": 1}, run_id="run-a")
+    assert REGISTER.read_rows(tmp_path, run_id="run-a")["c1"]["tokens_reserved"] == 8000
+    with pytest.raises(ACCOUNTING.AccountingError, match="8000"):
+        ACCOUNTING.check_spend(tmp_path, run_id="run-a", ceiling=1000)
+
+
+def test_a_supervisory_row_is_not_charged_against_the_run(tmp_path: Path) -> None:
+    ADMISSION.reserve_slot(
+        tmp_path,
+        "c1",
+        run_id="run-a",
+        vendor="muse",
+        work_shape="work-medium",
+        tokens_max=8000,
+    )
+    REGISTER.write_phase(tmp_path, "c1", "working", run_id="run-a")
+    REGISTER.upsert_row(
+        tmp_path,
+        "subscriber-a",
+        {"agent": "subscriber", "role": "subscriber"},
+        run_id="run-a",
+        writer=REGISTER.ROLE_WRITER,
+    )
+    REGISTER.write_phase(tmp_path, "subscriber-a", "working", run_id="run-a")
+    assert ACCOUNTING.run_actual_tokens(tmp_path, run_id="run-a") == 8000.0
+    assert REGISTER.is_supervisory_row(
+        REGISTER.read_rows(tmp_path, run_id="run-a")["subscriber-a"]
+    )
+    assert not REGISTER.is_supervisory_row(REGISTER.read_rows(tmp_path, run_id="run-a")["c1"])
+
+
 def test_commit_refuses_until_the_operator_has_been_shown_the_plan(tmp_path: Path) -> None:
     built = PLANNING.plan("deliver the outcome", [_child("c1", "judgment")], run_id="run-plan")
     with pytest.raises(PLANNING.PlanningError, match="presentation receipt"):
@@ -1037,12 +1154,15 @@ def test_an_ambiguous_usage_line_is_refused(tmp_path: Path) -> None:
     REGISTER.upsert_row(tmp_path, "metered", {"vendor": "claude"}, run_id="run-a")
     ACCOUNTING.apply_output_match(tmp_path, "metered", "tokens used: 100", run_id="run-a")
     with pytest.raises(ACCOUNTING.AccountingError, match="both the delta and cumulative"):
-        ACCOUNTING.apply_output_match(
-            tmp_path,
-            "metered",
-            "input 100 output 50 tokens; total tokens: 900",
-            run_id="run-a",
-        )
+        ACCOUNTING.classify_usage_line("input 100 output 50 tokens; total tokens: 900")
+    ACCOUNTING.apply_output_match(
+        tmp_path,
+        "metered",
+        "input 100 output 50 tokens; total tokens: 900",
+        run_id="run-a",
+    )
+    row = REGISTER.read_rows(tmp_path, run_id="run-a")["metered"]
+    assert row[ACCOUNTING.USAGE_UNPARSEABLE_KEY] is True
     with pytest.raises(ACCOUNTING.AccountingError, match="unparseable"):
         ACCOUNTING.check_spend(tmp_path, run_id="run-a", ceiling=1_000_000, row_id="metered")
 

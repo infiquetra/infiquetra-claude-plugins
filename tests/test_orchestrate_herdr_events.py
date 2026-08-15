@@ -1104,6 +1104,7 @@ def test_subscriber_carries_an_ordinary_register_row(tmp_path: Path) -> None:
     row = REGISTER.read_rows(tmp_path, run_id="run-a")["subscriber-a"]
     assert row["run_id"] == "run-a"
     assert row["agent"] == "subscriber"
+    assert row["role"] == "subscriber"
     assert row["pane_id"] == "subscriber-pane"
     assert row["expected_state"] == "working"
     assert row["observed_state"] == "working"

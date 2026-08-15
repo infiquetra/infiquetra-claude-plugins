@@ -1892,6 +1892,53 @@ def test_a_failing_re_evaluation_removes_the_verified_phase(tmp_path: Path) -> N
         LIFECYCLE.reap_verified(repo, "child-a", herdr=FakeHerdr(), run_id="run-a")
 
 
+def test_a_verdict_and_its_phase_survive_an_interrupt_together(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    prepared = _prepare(repo)
+    prepared.run_child_process()
+    REGISTER.upsert_row(repo, "child-a", {"tab_id": "tab-a"}, run_id="run-a")
+    assert prepared.evaluate().verified is True
+    prepared.receipt.artifact_path.write_text("tampered after the pass\n", encoding="utf-8")
+    completed: list[str] = []
+    real_upsert = COMPLETION.register_store.upsert_row
+    real_write_phase = COMPLETION.register_store.write_phase
+
+    def upsert(*args: Any, **kwargs: Any) -> Any:
+        if completed:
+            raise KeyboardInterrupt("interrupted between the two register writes")
+        result = real_upsert(*args, **kwargs)
+        completed.append("upsert")
+        return result
+
+    def write_phase(*args: Any, **kwargs: Any) -> Any:
+        if completed:
+            raise KeyboardInterrupt("interrupted between the two register writes")
+        result = real_write_phase(*args, **kwargs)
+        completed.append("write_phase")
+        return result
+
+    monkeypatch.setattr(COMPLETION.register_store, "upsert_row", upsert)
+    monkeypatch.setattr(COMPLETION.register_store, "write_phase", write_phase)
+    interrupted = False
+    try:
+        second = prepared.evaluate()
+    except KeyboardInterrupt:
+        interrupted = True
+        second = None
+    row = REGISTER.read_rows(repo, run_id="run-a")["child-a"]
+    verdict = row.get("completion", {}).get("result")
+    phase = row.get("phase")
+    both = phase == "working" and verdict == "failed"
+    neither = phase == "verified" and verdict == "verified"
+    assert both or neither, (phase, verdict, interrupted)
+    if not interrupted:
+        assert second is not None and second.verified is False
+        assert both
+
+
 def test_a_reaped_row_is_not_demoted_by_a_later_evaluation(tmp_path: Path) -> None:
     """``reaped`` is past this question; the invariant is about ``verified``, not about history."""
     repo = tmp_path / "repo"

@@ -524,7 +524,6 @@ def commit_plan(
                     "declared_artifact_path": child.artifact_path,
                     "predicate": dict(child.predicate),
                     "integration_mode": child.integration_mode,
-                    "tokens_reserved": child.tokens_max,
                     "tokens_max": child.tokens_max,
                     "substitutions": [dict(item) for item in child.substitutions],
                     "override": dict(child.override) if child.override else None,

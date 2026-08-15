@@ -1149,8 +1149,13 @@ def reap_verified(
         raise LaunchProtocolError(f"child {row_id!r} has no tab_id")
     cwd = Path(str(row.get("cwd", root)))
     if row.get("phase") != "reaped":
-        register_store.write_phase(root, row_id, "reaped", run_id=run_id)
-        register_store.upsert_row(root, row_id, {"expected_state": "exited"}, run_id=run_id)
+        register_store.upsert_row(
+            root,
+            row_id,
+            {"phase": "reaped", "expected_state": "exited"},
+            run_id=run_id,
+            writer=register_store.PHASE_WRITER,
+        )
     if herdr.tab_present(tab_id, cwd=cwd):
         herdr.close_tab(tab_id, cwd=cwd)
 

@@ -5,8 +5,10 @@ handoff seam (R12).
 One flat JSON document **per run**, addressed by ``run_id`` alone, held outside every working
 tree (default ``~/.orchestrate/registers/<run_id>.json``, relocatable by
 ``ORCHESTRATE_REGISTER_DIR``). One row per tracked entity — one per dispatched child, plus
-one for the mirror and one for the subscriber (there is nothing structurally different about
-those two; they are ordinary rows with ``agent="mirror"`` / ``agent="subscriber"``). A
+one for the mirror and one for the subscriber. Those two are ordinary rows. They are
+identified by ``role``, not by ``agent``: launch overwrites ``agent`` with the
+launcher's uniquified name. :func:`is_supervisory_row` answers whether a row
+supervises the run rather than doing the outcome's work. A
 ``run_id`` is host-global: two callers that name the same id share one live document, which
 is what same-host Claude↔Codex handoff needs in **one checkout**, and what two unrelated
 projects that pick the same label collide on. Two checkouts of one ``run_id`` are a
@@ -32,7 +34,9 @@ Row columns, by group
 Identity   -- id, run_id, agent, vendor, model, effort
     ``id`` is this row's own key (also the dict key under ``rows``); ``run_id`` groups rows into
     one run for filtering and retirement; ``agent``/``vendor``/``model``/``effort`` name what was
-    dispatched (``agent`` is a role such as "mirror"/"subscriber" for the two non-child rows).
+    dispatched. ``agent`` is the launcher's uniquified name for a launched row, not a
+    role. Supervising rows carry ``role``. :func:`is_supervisory_row` is the
+    predicate that tells them apart from the outcome's children.
 
 Substrate  -- herdr_session, workspace_id, tab_id, pane_id, cwd
     Where the row's process actually lives in herdr. ``pane_id`` is the durable handle U3's
@@ -122,6 +126,10 @@ an owned column arriving without that function's writer identity is refused.
     tokens_max             planning.commit_plan              the operator-approved
                                                              ceiling for this
                                                              child.
+    tokens_reserved        admission._write_admission        what admission committed
+                                                             before dispatch.
+    role                   write_role                        this row supervises
+                                                             the run.
     admission.reservations admission._write_admission        this row occupies or
                                                              waits for a host
                                                              slot. Every admission
@@ -131,10 +139,12 @@ an owned column arriving without that function's writer identity is refused.
                                                              goes through this
                                                              gateway.
 
-Identity (``agent``, ``vendor``, ``model``, ``effort``), ``work_shape``,
-``expected_state``, and ``tokens_reserved`` are filled across phases by
-planning, admission, and launch. They are accumulated facts, not one-shot
-facts, and they are not in the enforced table.
+Identity (``agent``, ``vendor``, ``model``, ``effort``), ``work_shape``, and
+``expected_state`` are filled across phases by planning, admission, and
+launch. They are accumulated facts, not one-shot facts, and they are not in
+the enforced table. ``tokens_reserved`` is produced by admission's write
+gateway. ``agent`` stays multi-writer, so spend must not treat it as a
+classifier: :func:`is_supervisory_row` reads the owned ``role`` column.
 
 Forward compatibility (C4)
 ---------------------------
@@ -181,6 +191,8 @@ PHASE_WRITER = "write_phase"
 OBSERVED_STATE_WRITER = "record_observed_state"
 TOKENS_OBSERVED_WRITER = "record_observed_tokens"
 TOKENS_MAX_WRITER = "commit_plan"
+TOKENS_RESERVED_WRITER = "admission._write_admission"
+ROLE_WRITER = "write_role"
 COLUMN_WRITERS: dict[str, str] = {
     "phase": PHASE_WRITER,
     "artifact_path": ARTIFACT_PATH_WRITER,
@@ -188,6 +200,8 @@ COLUMN_WRITERS: dict[str, str] = {
     "observed_state_source": OBSERVED_STATE_WRITER,
     "tokens_observed": TOKENS_OBSERVED_WRITER,
     "tokens_max": TOKENS_MAX_WRITER,
+    "tokens_reserved": TOKENS_RESERVED_WRITER,
+    "role": ROLE_WRITER,
 }
 COLUMN_OWNERSHIP: tuple[tuple[str, str, str], ...] = (
     (
@@ -213,11 +227,28 @@ COLUMN_OWNERSHIP: tuple[tuple[str, str, str], ...] = (
     ),
     ("tokens_max", TOKENS_MAX_WRITER, "the operator-approved ceiling for this child"),
     (
+        "tokens_reserved",
+        TOKENS_RESERVED_WRITER,
+        "what admission committed before dispatch",
+    ),
+    ("role", ROLE_WRITER, "this row supervises the run rather than doing its work"),
+    (
         "admission.reservations",
         "admission._write_admission",
         "this row occupies or waits for a host slot",
     ),
 )
+
+# Rows that supervise the run rather than doing its work. Spend excludes these.
+# ``agent`` is the launcher's uniquified name for every launched row, so it cannot
+# be the classifier: a writer-less upsert of ``agent="subscriber"`` would hide a
+# real child from the run total. ``role`` is owned and written by the row's creator.
+SUPERVISORY_ROLES = frozenset({"subscriber", "mirror"})
+
+
+def is_supervisory_row(row: Mapping[str, Any]) -> bool:
+    """True when a row supervises the run rather than performing the outcome's work."""
+    return row.get("role") in SUPERVISORY_ROLES
 
 IDENTITY_COLUMNS = ("id", "run_id", "agent", "vendor", "model", "effort")
 SUBSTRATE_COLUMNS = ("herdr_session", "workspace_id", "tab_id", "pane_id", "cwd")
@@ -626,6 +657,25 @@ def write_phase(
             row_id
         ]
     return upsert_row(root, row_id, fields, run_id=run_id, writer=PHASE_WRITER)
+
+
+def write_role(
+    root: Path,
+    row_id: str,
+    role: str,
+    *,
+    run_id: str,
+    claimed: Path | None = None,
+) -> dict[str, Any]:
+    """Sole writer of ``role``. Supervisory rows are identified by this column."""
+    if role not in SUPERVISORY_ROLES:
+        raise RegisterError(f"role {role!r} is not one of {sorted(SUPERVISORY_ROLES)}")
+    fields = {"role": role}
+    if claimed is not None:
+        return _upsert_rows_unlocked(claimed, {row_id: fields}, run_id=run_id, writer=ROLE_WRITER)[
+            row_id
+        ]
+    return upsert_row(root, row_id, fields, run_id=run_id, writer=ROLE_WRITER)
 
 
 def record_observed_state(

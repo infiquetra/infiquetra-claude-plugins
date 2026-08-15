@@ -338,11 +338,13 @@ class Subscriber:
             {
                 "run_id": self.run_id,
                 "agent": "subscriber",
+                "role": "subscriber",
                 "pane_id": self.pane_id,
                 "cwd": str(self.root),
                 "expected_state": "working",
             },
             run_id=self.run_id,
+            writer=register_store.ROLE_WRITER,
         )
         register_store.write_phase(self.root, self.row_id, "working", run_id=self.run_id)
         register_store.record_observed_state(

@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.131.2] - 2026-08-15
+
+### Changed
+
+- **`/outcome`'s `description:` frontmatter no longer reads like a general orchestration request.**
+  `description` is the field Claude matches a user's intent against when picking a command, so
+  wording it in orchestration-general terms kept pulling in requests meant for the new
+  `/orchestrate` command. The rewrite drops that vocabulary, keeps every verb `/outcome` actually
+  still runs (`start`, `advance`, `attend`, `resume`, `graph`, `export`/`import`), and names
+  `/orchestrate` as where a cross-vendor, no-upfront-decomposition request now belongs. Nothing
+  about `/outcome` itself changed — invoking it explicitly still works exactly as before, and its
+  skill and scripts are untouched.
+
 ## [0.131.1] - 2026-08-08
 
 ### Added - house-style presentation contract, on two agents and the emitter (#704)

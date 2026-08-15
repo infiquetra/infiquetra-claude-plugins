@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.0] - 2026-08-15
+
+### Added
+
+- `plugins/orchestrate/commands/orchestrate.md`: a thin command loader exposing `/orchestrate` to
+  Claude. `orchestrate` is a verb taking the outcome as its argument (an issue number, a parent
+  issue, a requirements doc, or a prose prompt) — no decomposition is required before invocation.
+  The loader carries `name`, `description`, and `argument-hint` frontmatter and defers all behaviour
+  to `skills/orchestrate/SKILL.md`.
+
 ## [0.4.0] - 2026-08-13
 
 ### Added

@@ -1,6 +1,6 @@
 {
   "name": "orchestrate",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Cross-vendor orchestration over herdr with durable state, write-ahead launches, interaction readiness, scoped landings, event catch-up, and bounded predicates on settled artifacts.",
   "author": {
     "name": "Infiquetra",

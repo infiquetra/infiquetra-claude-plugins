@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.10.0] - 2026-08-15
+
+### Fixed
+
+- An unparseable usage line marks the row and returns. The spend gate refuses.
+  An ordinary output line containing the word token no longer kills the
+  subscriber that holds the run's event stream.
+- A completion verdict and the phase it justifies are one register write. A
+  reap records `reaped` and `expected_state=exited` as one write.
+- A writer-less upsert of `agent` cannot change what the run is charged.
+  Spend excludes supervising rows by the owned `role` column, not by
+  matching an `agent` name. `tokens_reserved` is owned by admission's write
+  gateway, so a writer-less upsert cannot lower the charge.
+- The mirror's owned-column seam names the `role` writer on the same write
+  that records the rest of the mirror identity. The column stays owned; the
+  identity stays one write.
+
 ## [0.9.3] - 2026-08-15
 
 ### Fixed

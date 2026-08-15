@@ -21,6 +21,60 @@
 
 ## 2026-08-15
 
+### Two units that invent the same column still break if only one of them can name its writer  {#owned-column-needs-a-writer-at-every-seam}
+
+**Context.** Planning made `role` an owned register column so spend could tell a
+supervisor from a child without trusting the multi-writer `agent` field. The
+mirror, built on a tree that did not yet enforce that ownership, independently
+invented the same column for the same reason and wrote it as a plain field
+through its own owned-column seam.
+**Evidence.** After `origin/main` landed the mirror on this branch, fifty-four
+of one hundred forty mirror tests raised `role is written only by write_role`.
+Neither suite could have caught it: planning has no mirror, and the mirror ran
+against a register that did not own `role`.
+**Mechanism.** Ownership lives in the merger. A producing seam that does not
+declare the writer is a foreign write, even when the module invented the
+column and already refuses every column it does not own. The obvious repair —
+call `write_role` as a second public write — reopens the crash window the
+column exists to close: a row with no `role` is charged as a child.
+**Fix.** The mirror's `_write_owned` names `ROLE_WRITER` on the same `upsert_row`
+that records the rest of the identity. The register already accepted `writer=`.
+The producing seam was the side that had to change.
+**Validation.** `tests/test_orchestrate_mirror.py` asserts the identity write
+carries `role` in one payload and that a writer-less `role` upsert is refused.
+**What surprised.** Convergence on the column was evidence the design was
+right. The break was not a disagreement about meaning. It was a merge of two
+correct-in-isolation enforcements.
+**Generalizable rule.** When two modules converge on one column, the ownership
+table is not done until every producing seam can declare the writer without
+splitting a logical write. A suite that never loads the other module cannot
+see the seam.
+**Refs.** DECISIONS `{#role-writer-is-declared-at-the-producing-seam}`,
+`{#supervisory-role-not-agent}`.
+
+### A refusal belongs at the decision, not at the sensor  {#refuse-at-the-gate-not-the-sensor}
+
+**Context.** Usage accounting needed to fail closed on a line that matched the
+usage needle but neither closed grammar. The observer raised, and nothing
+between that raise and process exit caught it.
+**Evidence.** The subscriber is subscribed on the substring `token`. After one
+good sample, an ordinary status line containing that word raised out of
+`apply_output_match` and killed the process that holds the run's event stream.
+The row was already marked `usage_unparseable`; `_actual_for_row` already
+refused that mark.
+**Mechanism.** Fail-closed was implemented at the observation, not at the
+spend decision. An observer that refuses converts "I could not read one line"
+into "I can no longer see anything."
+**Fix.** Delete the two raises. Keep every `_mark_usage_unparseable` call.
+The spend gate is the refusal.
+**Validation.** A real `Subscriber.handle_event` survives `warning: refresh
+token expired` after a prior sample, and both the per-row and whole-run spend
+gates still refuse the marked row.
+**Generalizable rule.** A sensor records a fact. A gate decides. Putting the
+refusal on the sensor makes every later reader blind, including the ones that
+were never the problem.
+**Refs.** DECISIONS `{#supervisory-role-not-agent}`.
+
 ### A resource bound with two ways to end will pick the dishonest one; give it one  {#one-exhaustion-path}
 
 **Context.** A scanner that refuses machine-readable predicate declarations acquired several

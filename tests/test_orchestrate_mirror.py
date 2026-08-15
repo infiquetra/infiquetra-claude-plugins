@@ -24,7 +24,7 @@ import inspect
 import json
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
@@ -471,6 +471,39 @@ def test_the_mirror_row_is_identified_by_role_not_by_agent(tmp_path: Path) -> No
     assert row["agent"] == IDENTITY.agent_name
     assert row["role"] == MIRROR.MIRROR_ROLE
     assert MIRROR.find_mirror_rows(REGISTER.read_rows(tmp_path, run_id=RUN_ID)) == {ROW_ID: row}
+
+
+def test_a_mirror_role_lands_in_the_identity_write_and_a_writerless_upsert_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The identity must be one write, and the column stays owned."""
+    payloads: list[Mapping[str, Any]] = []
+    real_upsert = MIRROR.register_store.upsert_row
+
+    def tracking_upsert(
+        root: Path, row_id: str, fields: Mapping[str, Any], **kwargs: Any
+    ) -> Any:
+        payloads.append(dict(fields))
+        return real_upsert(root, row_id, fields, **kwargs)
+
+    def split_write_role(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("role must not be a second public write")
+
+    monkeypatch.setattr(MIRROR.register_store, "upsert_row", tracking_upsert)
+    monkeypatch.setattr(MIRROR.register_store, "write_role", split_write_role)
+    wrapper = FakeWrapper(launch_error=RuntimeError("stop after identity"))
+    with pytest.raises(RuntimeError, match="stop after identity"):
+        _create(tmp_path, wrapper=wrapper)
+
+    identity_writes = [payload for payload in payloads if "role" in payload]
+    assert len(identity_writes) == 1
+    assert identity_writes[0]["role"] == MIRROR.MIRROR_ROLE
+    assert "max_quiet_seconds" in identity_writes[0]
+    assert "mirror_identity" in identity_writes[0]
+    assert _row(tmp_path)["role"] == MIRROR.MIRROR_ROLE
+
+    with pytest.raises(REGISTER.RegisterError, match="role is written only by"):
+        REGISTER.upsert_row(tmp_path, "child-a", {"role": "mirror"}, run_id=RUN_ID)
 
 
 def test_a_row_that_is_not_a_mirror_is_refused_by_every_mirror_operation(tmp_path: Path) -> None:

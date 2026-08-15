@@ -2,6 +2,63 @@
 
 ## 2026-08-15
 
+### The `role` writer is declared at the producing seam, on the same write as the identity  {#role-writer-is-declared-at-the-producing-seam}
+
+**Decision.** `role` stays in the register's ownership table under
+`write_role`. The subscriber and the mirror both write it, and each does so
+by passing `writer=ROLE_WRITER` on the `upsert_row` that also records the
+rest of that row's identity. The mirror's declaration lives in `_write_owned`,
+which is already the module's only register-write seam. Callers do not call
+`write_role` as a second public write.
+
+`upsert_row` still takes one writer string. That is enough today: of the
+columns the mirror seam may write, only `role` is in the enforced table. A
+payload that needed two differently-owned columns in one write would be a
+change to the merger, not a reason to split the write.
+
+**Rejected: call `write_role` and then write the rest of the identity.** A
+crash between those writes leaves a mirror row with no `role`. Spend then
+charges a supervisor as a child — the defect the column exists to prevent.
+**Rejected: drop `role` from the ownership table so the mirror's plain field
+write works again.** That reopens the writer-less spend bypass the column
+was added to close.
+**Rejected: rename the owner to `_write_owned`.** The subscriber writes the
+same column and is not that function. The owner is the fact, named by the
+gateway, not the first module that needed the column.
+
+**Revisit when** a single logical write must carry two columns with different
+owners. That is a gap in the merger, not a licence to split the write.
+
+**Refs.** LEARNINGS [`{#owned-column-needs-a-writer-at-every-seam}`](LEARNINGS.md#owned-column-needs-a-writer-at-every-seam);
+[`{#supervisory-role-not-agent}`](#supervisory-role-not-agent);
+[`{#mirror-row-identified-by-role}`](#mirror-row-identified-by-role).
+
+### `agent` stays multi-writer; spend reads the owned `role` column  {#supervisory-role-not-agent}
+
+**Decision.** `agent` is legitimately multi-writer: planning writes the
+planned vendor, launch overwrites it with the launcher's uniquified name, and
+the subscriber writes `subscriber`. It is not a spend input. Supervising
+rows are identified by `register.is_supervisory_row`, which tests the owned
+`role` column only. `tokens_reserved` is owned by admission's write gateway;
+`commit_plan` does not write it a second time.
+
+A writer-less upsert of `agent` may still land and must not change what the
+run is charged. A writer-less upsert of `role` or `tokens_reserved` is
+refused.
+
+**Rejected: treat `agent in {subscriber, mirror}` as sufficient.** Launch
+writes a uniquified name on every launched row, including the mirror, so an
+agent-only test misses the mirror. The same test also fails open: a
+writer-less `agent=subscriber` on a real child drops it from the run total.
+**Rejected: own `agent` under one writer function.** There is no single
+writer. Inventing one would force honest call sites to lie about the owner.
+
+**Revisit when** a third supervising row appears. It writes `role` through
+the same gateway token, on the same write as its identity.
+
+**Refs.** LEARNINGS [`{#refuse-at-the-gate-not-the-sensor}`](LEARNINGS.md#refuse-at-the-gate-not-the-sensor);
+[`{#owned-column-needs-a-writer-at-every-seam}`](LEARNINGS.md#owned-column-needs-a-writer-at-every-seam).
+
 ### The mirror's liveness feed gets its own column rather than a second writer of `last_event_at`  {#mirror-liveness-own-column}
 
 The register documents `last_event_at` as the hang-detection input that must be fed by herdr's

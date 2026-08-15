@@ -5,28 +5,44 @@
 - Its COMMAND `description:` frontmatter (`plugins/saga/commands/outcome.md`) is rewritten so it
   no longer reads like a general orchestration request — this is the field a model matches intent
   against when picking a command; a deprecation notice in the command body changes nothing about
-  that decision. Section 2 covers the fixed-stem check; section 2b covers a second, structural
-  check that catches synonyms the fixed list doesn't know about.
+  that decision. The approved text is pinned verbatim (section 2,
+  `test_outcome_description_is_the_pinned_approved_text`) — that pin is the actual guard against a
+  future rewrite reading as a general orchestration pitch. Sections 2 and 2b also keep a
+  fixed-stem check and a structural pitch-vocabulary check as readable diagnostics for WHY a
+  candidate text was rejected, but neither is exhaustive and neither decides what's accepted —
+  see the design points below.
 - Its SKILL `description:` frontmatter (`plugins/saga/skills/outcome/SKILL.md`) is a second,
   independent selection surface — Claude can invoke a same-named skill on its own initiative from
   a natural-language request, not just via the command. Rewriting that text would replay the same
-  synonym-dodging problem section 2b exists to defeat, so it is left untouched and
+  synonym-dodging problem the paragraph below names, so it is left untouched and
   `disable-model-invocation: true` is added instead, which stops model-initiated selection
   structurally rather than lexically. Section 3 covers this.
 
-Two design points worth stating plainly, since both were the actual failure mode found here before:
+Three design points worth stating plainly, since each was the actual failure mode found here:
 
-- **A vocabulary list is only as good as the text it's checked against.** A list declared but never
-  run against real description text — or run against a fixed stem set that a synonym can dodge —
-  is a test that reports safety that is not there. Sections 2 and 2b each prove their checker is
-  behavioural: section 2 runs it against the captured ORIGINAL pre-rewrite text
-  (`test_vocabulary_checker_flags_the_original_pre_rewrite_description`); section 2b runs it
-  against three concrete adversarial rewrites that dodge the fixed list
-  (`test_pitch_checker_catches_adversarial_rewrites_the_fixed_stem_list_misses`).
+- **A vocabulary list is only as good as the text it's checked against, and it is never
+  exhaustive.** A list declared but never run against real description text is a test that reports
+  safety that is not there — fixed by running the fixed-stem checker against the captured ORIGINAL
+  pre-rewrite text (`test_vocabulary_checker_flags_the_original_pre_rewrite_description`). A fixed
+  word set can also always be dodged by a synonym nobody added yet; the structural pitch-vocabulary
+  check in section 2b closes part of that gap by deriving banned words from `/orchestrate`'s own
+  live description instead of a hardcoded guess-list
+  (`test_pitch_checker_catches_adversarial_rewrites_the_fixed_stem_list_misses`) — but even it only
+  watches words `/orchestrate`'s description currently uses, so a rewrite using neither a banned
+  stem nor one of those current words still slips past both heuristics
+  (`test_pitch_checker_has_a_real_blind_spot_the_pinned_description_closes` names one). Growing the
+  word list further would not fix that; it is the same defeatable shape at a longer length. The
+  fixture-pinned exact-match test is what actually closes it: a candidate either matches the
+  approved text byte-for-byte or it doesn't ship, independent of what any heuristic catches.
 - **A command's own selection field is not the only one that matters.** The first round of this
   work treated `plugins/saga/commands/outcome.md`'s `description:` as the whole deprecation
   surface; the same-named skill's OWN `description:` was a second, live surface carrying the exact
   vocabulary the command fix removed. Section 3 closes it.
+- **A regression fixture that's also caught by an unrelated check doesn't prove the checker it's
+  attached to does anything.** The adversarial rewrites in section 2b originally all led with
+  `start`, so a later, separate `start`-absence check would have caught them independently of
+  pitch-checking. They're written without `start` now, so each one is caught by the mechanism its
+  test actually names.
 """
 
 from __future__ import annotations
@@ -57,6 +73,20 @@ ORIGINAL_OUTCOME_DESCRIPTION = (
     "Coordinate a whole outcome as a durable DAG of leaf sagas — start, advance the ready "
     "frontier, attend a leaf, resume, graph, export/import. The coordinator routes and "
     "dispatches to executors; it never runs leaf work itself, and status is derived on read."
+)
+
+# The APPROVED current `/outcome` description, pinned verbatim. This — not the fixed-stem or
+# pitch-vocabulary checks below — is the actual guard against a future rewrite reading as a
+# general orchestration pitch: a candidate either matches this byte-for-byte or it doesn't ship.
+# A future, legitimate copy change updates THIS constant as a conscious, reviewed act; the
+# heuristic checks below keep running and keep explaining WHY a rejected candidate was rejected,
+# when they're able to, but they are diagnostics now, not the thing that decides acceptance.
+APPROVED_OUTCOME_DESCRIPTION = (
+    "Operate on an outcome already split into a DAG of leaf sagas — advance the ready frontier, "
+    "attend a leaf, resume, graph, discover, handoff, attach. Each leaf's work happens through "
+    "its own native saga command, never inline here, and status is derived on read rather than "
+    "stored. Deprecated in favor of /orchestrate, which takes the outcome as its argument and "
+    "discovers the work's shape during planning instead of requiring the DAG decomposed up front."
 )
 
 # Orchestration-intent vocabulary `/outcome`'s description must no longer contain. Each entry is a
@@ -185,6 +215,15 @@ def test_orchestrate_loader_argument_hint_takes_the_outcome_as_its_argument():
 # ---------------------------------------------------------------------------
 # 2. `/outcome`'s description no longer matches orchestration intent, and names /orchestrate
 # ---------------------------------------------------------------------------
+
+
+def test_outcome_description_is_the_pinned_approved_text():
+    """The primary guard, not a diagnostic: exact identity with the approved text catches ANY
+    future rewrite, whether or not it happens to trip a fixed stem or borrow a word the pitch
+    checker below currently watches for. See the module docstring's first design point."""
+    front = _split_frontmatter(_read(OUTCOME_CMD))
+
+    assert front["description"] == APPROVED_OUTCOME_DESCRIPTION
 
 
 def test_outcome_description_contains_none_of_the_banned_vocabulary():
@@ -397,24 +436,43 @@ def _self_description_pitch_hits(outcome_description: str) -> list[str]:
     return sorted(_content_words(self_description) & _orchestrate_pitch_vocabulary())
 
 
-# Concrete adversarial rewrites — reconstructed from the three the review process actually ran,
-# each of which passed every check above this section. Each keeps the required /orchestrate
-# pointer and the real DAG/leaf-saga/status-derived-on-read properties, so only this section's
-# check can tell them apart from the genuine description.
+# Concrete adversarial rewrites — reconstructed from three the review process actually ran, minus
+# the property that confounded them with a check unrelated to this one: each originally led with
+# `start`, which the separate test_outcome_description_does_not_lead_with_start check now catches
+# on its own, so a rewrite built that way no longer demonstrates that PITCH-checking is what's
+# catching it. These use the real live verbs instead (discover/handoff/attach, no start, no
+# export/import) so each is caught — if it is — only by _self_description_pitch_hits, nothing
+# else. Each keeps the required /orchestrate pointer and the real DAG/leaf-saga/status-derived-on-
+# read/live-verb properties, so only this section's check can tell them apart from the genuine
+# description.
 _ADVERSARIAL_REWRITES = (
     # Leads with the product verb the fixed stem list cannot ban (it's needed for the pointer).
-    "Orchestrate a whole outcome as a durable DAG of leaf sagas — start, advance the ready "
-    "frontier, attend a leaf, resume, graph, export/import. Status is derived on read. "
+    "Orchestrate a whole outcome as a durable DAG of leaf sagas — advance the ready frontier, "
+    "attend a leaf, resume, graph, discover, handoff, attach. Status is derived on read. "
     "Deprecated in favor of /orchestrate.",
     # Borrows /orchestrate's own "multi-vendor children across Claude and Codex" framing —
     # describing a capability /outcome does not actually have.
-    "A durable DAG of leaf sagas for one outcome — start, advance, attend, resume, graph. "
-    "Manages multi-vendor children across Claude and Codex. Status is derived on read. "
-    "Deprecated in favor of /orchestrate.",
+    "A durable DAG of leaf sagas for one outcome — advance, attend, resume, graph, discover, "
+    "handoff, attach. Manages multi-vendor children across Claude and Codex. Status is derived "
+    "on read. Deprecated in favor of /orchestrate.",
     # Unlisted orchestration-flavoured synonyms plus /orchestrate's own "operator turn" phrase.
-    "A durable DAG of leaf sagas for one outcome — start, advance, attend, resume, graph. "
-    "Drive the whole campaign and run the work across agents without an operator turn. "
-    "Status is derived on read. Deprecated in favor of /orchestrate.",
+    "A durable DAG of leaf sagas for one outcome — advance, attend, resume, graph, discover, "
+    "handoff, attach. Drive the whole campaign and run the work across agents without an "
+    "operator turn. Status is derived on read. Deprecated in favor of /orchestrate.",
+)
+
+# A rewrite that beats every check in this file, including the pitch check above: no banned stem,
+# no word from /orchestrate's OWN current pitch vocabulary, still names /orchestrate, still reads
+# DAG/leaf saga/outcome/status-is-derived-on-read, doesn't lead with start. It is a real, current
+# blind spot in every heuristic here — not a hypothetical one, and not closed by adding it as one
+# more banned word (the next unlisted synonym would just open the same gap again). It is what
+# `test_outcome_description_is_the_pinned_approved_text` exists to close: that test does not need
+# to recognize prose, only byte-for-byte identity with the approved text, so this rewrite fails it
+# on sight regardless of what any heuristic below does or doesn't catch.
+_PITCH_CHECKER_BLIND_SPOT_REWRITE = (
+    "Manage an outcome end to end as a durable DAG of leaf sagas — assign jobs among multiple "
+    "agents, supervise parallel progress, recover failures, and finish automatically. Status is "
+    "derived on read. Deprecated in favor of /orchestrate."
 )
 
 
@@ -428,25 +486,66 @@ def test_outcome_self_description_shares_none_of_orchestrates_pitch_vocabulary()
 
 def test_pitch_checker_catches_adversarial_rewrites_the_fixed_stem_list_misses():
     """Each of these passes `test_outcome_description_contains_none_of_the_banned_vocabulary`
-    (zero fixed-stem hits), `test_outcome_description_names_orchestrate_as_the_replacement`, and
-    `test_outcome_description_still_describes_what_outcome_actually_does` — proving the fixed list
-    alone is not sufficient. The pitch-vocabulary check must fail every one of them."""
+    (zero fixed-stem hits), `test_outcome_description_names_orchestrate_as_the_replacement`,
+    `test_outcome_description_still_describes_what_outcome_actually_does`, and
+    `test_outcome_description_does_not_lead_with_start` — proving none of THOSE checks is what
+    catches these. The pitch-vocabulary check must fail every one of them; if it didn't, nothing
+    in this file would."""
     for rewrite in _ADVERSARIAL_REWRITES:
         assert _vocabulary_hits(rewrite) == [], (
             "test fixture assumption broken: rewrite should "
             "dodge the fixed stem list, or it isn't testing what this test claims"
+        )
+        assert "start" not in rewrite.lower(), (
+            "test fixture assumption broken: rewrite should not be catchable by the separate "
+            "start-absence check, or it isn't isolating what this test claims to isolate"
         )
         assert REPLACEMENT_COMMAND in rewrite
         hits = _self_description_pitch_hits(rewrite)
         assert hits, f"pitch checker failed to catch an adversarial rewrite: {rewrite!r}"
 
 
-def test_outcome_argument_hint_and_body_are_unchanged():
-    """This change is a description rewrite, not a behaviour change: `/outcome` must keep working,
-    invoked explicitly, exactly as it did before. Its sub-verbs (argument-hint) and its explanatory
-    body are a second, independent read on "nothing deleted" beyond the skill/script check below."""
+def test_pitch_checker_has_a_real_blind_spot_the_pinned_description_closes():
+    """Not a regression the pitch checker is expected to catch — the opposite: an honesty check
+    that documents a real, current miss, so the module docstring's claim about it is verified
+    rather than asserted. This rewrite passes the fixed-stem check, doesn't lead with `start`, and
+    shares none of /orchestrate's OWN current content words in its self-description half — the
+    pitch checker has nothing to flag. `test_outcome_description_is_the_pinned_approved_text` is
+    what actually rejects it: it isn't this exact-approved text, full stop."""
+    assert _vocabulary_hits(_PITCH_CHECKER_BLIND_SPOT_REWRITE) == [], (
+        "fixture assumption broken: this rewrite should dodge the fixed stem list too"
+    )
+    assert "start" not in _PITCH_CHECKER_BLIND_SPOT_REWRITE.lower()
+    assert REPLACEMENT_COMMAND in _PITCH_CHECKER_BLIND_SPOT_REWRITE
+
+    hits = _self_description_pitch_hits(_PITCH_CHECKER_BLIND_SPOT_REWRITE)
+
+    assert hits == [], (
+        "fixture assumption broken: expected this to be a documented MISS for the pitch checker "
+        "— if it now has hits, the checker changed and this comment/test pair needs revisiting"
+    )
+    assert _PITCH_CHECKER_BLIND_SPOT_REWRITE != APPROVED_OUTCOME_DESCRIPTION
+
+
+def test_outcome_command_body_is_unchanged():
+    """This unit is a description/argument-hint rewrite, not a behaviour change: `/outcome` must
+    keep working, invoked explicitly, exactly as it did before. The load path and the body
+    invariant are a second, independent read on "nothing deleted" beyond the skill/script check
+    below."""
     text = _read(OUTCOME_CMD)
-    front = _split_frontmatter(text)
+
+    assert "Load `saga/skills/outcome/SKILL.md`" in text
+    assert "**The coordinator routes, it never executes**" in text  # body invariant, untouched
+
+
+def test_outcome_argument_hint_names_live_verbs_not_the_retired_export_import_pair():
+    """`argument-hint` is autocomplete for someone who already knows to reach for `/outcome`
+    directly, not the field a model matches intent against — it can and does still list `start`
+    (see `test_outcome_description_does_not_lead_with_start`). It should not be the one place left
+    still advertising `export`/`import` as reachable verbs once the description itself no longer
+    names them — see `test_outcome_description_names_live_verbs_not_the_retired_export_import_pair`."""
+    front = _split_frontmatter(_read(OUTCOME_CMD))
+    hint = front["argument-hint"]
 
     for verb in (
         "start",
@@ -456,12 +555,13 @@ def test_outcome_argument_hint_and_body_are_unchanged():
         "attend",
         "resume",
         "graph",
-        "export",
-        "import",
+        "discover",
+        "handoff",
+        "attach",
     ):
-        assert verb in front["argument-hint"]
-    assert "Load `saga/skills/outcome/SKILL.md`" in text
-    assert "**The coordinator routes, it never executes**" in text  # body invariant, untouched
+        assert verb in hint, f"argument-hint dropped a real verb: {verb!r}"
+    for retired in ("export", "import"):
+        assert retired not in hint, f"argument-hint still advertises the retired verb {retired!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -525,6 +625,25 @@ def test_outcome_skill_disable_model_invocation_mutation_is_detected():
     assert front.get("disable-model-invocation") is True  # sanity: the real file passes
     assert missing.get("disable-model-invocation") is not True
     assert falsy.get("disable-model-invocation") is not True
+
+
+def test_outcome_skill_body_states_the_manual_only_deprecation_boundary():
+    """The frontmatter `description:` is deliberately untouched (the test above confirms it still
+    reads as general orchestration) so a human reading the file's most prominent field never sees
+    a deprecation boundary there — the body is where it has to live instead. This only reaches a
+    reader once the skill is already loaded (explicit `/outcome`, or the command body's file-read),
+    so stating it here doesn't reopen the synonym game `disable-model-invocation` exists to close
+    structurally on the selection surface itself."""
+    # Blockquote-marker-and-whitespace-normalized: this is hard-wrapped Markdown prose, not
+    # structured data — the phrases below are logically contiguous even where an editor line-wraps
+    # them inside a `>` blockquote, and a rewrap of the paragraph (a legitimate future edit) should
+    # not itself break this check.
+    raw = _read(OUTCOME_SKILL)
+    body = " ".join(line.removeprefix(">").strip() for line in raw.splitlines())
+
+    assert "Manual-only, already-decomposed surface" in body
+    assert "does not select it on its own initiative" in body
+    assert REPLACEMENT_COMMAND in body
 
 
 def test_outcome_skill_frontmatter_has_no_other_new_keys():

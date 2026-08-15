@@ -642,7 +642,7 @@ commands:
   outcome:
     command: /outcome
     phase: orchestrate
-    lifecycle_role: outcome coordinator over a DAG of leaf sagas
+    lifecycle_role: already-decomposed outcome DAG operator
     source_refs:
       - plugins/saga/commands/outcome.md
       - plugins/saga/skills/outcome/SKILL.md
@@ -655,7 +655,7 @@ commands:
       - The work is a single linear work-thread (use /work directly).
       - The graph still needs authoring from scratch (use /plan and the decompose flow).
       - The outcome hasn't been decomposed yet and may span more than one vendor (use /orchestrate, which discovers the work's shape during planning instead of requiring the DAG up front).
-    inputs: Outcome id, objective, or a portable outcome bundle.
+    inputs: Outcome id, objective, or a protected handoff reference (attach --handoff-id).
     outputs: Branch-local outcome spec, dispatched leaf sagas, derived-on-read status, Mermaid graph.
     durable_artifacts: [docs/outcomes/]
     saga_state_behavior: Coordinates leaf sagas; live node state is derived on read from spec plus completion events, never a stored status field.

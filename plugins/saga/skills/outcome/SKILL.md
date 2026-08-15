@@ -6,6 +6,13 @@ disable-model-invocation: true
 
 # Outcome
 
+> **Manual-only, already-decomposed surface.** `/outcome` operates on an outcome already split into
+> a DAG of leaf sagas; it does not decompose one from scratch, and Claude does not select it on its
+> own initiative (`disable-model-invocation` in this file's frontmatter) — it loads only once a
+> person types `/outcome` explicitly. For an outcome that hasn't been split yet, or that may span
+> more than one vendor, use `/orchestrate` instead: it discovers the work's shape during planning
+> rather than requiring a DAG decomposed up front.
+
 `/outcome` is the **OutcomeOrchestrator**: the layer above a single work-thread saga that drives a whole
 *outcome* — outcome → subplots (leaf sagas) — as a concurrent, durable DAG across sessions, worktrees,
 and machines. The human is an interrupt-handler on gates and exceptions; the runner advances everything

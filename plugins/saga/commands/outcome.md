@@ -1,7 +1,7 @@
 ---
 name: outcome
 description: Operate on an outcome already split into a DAG of leaf sagas — advance the ready frontier, attend a leaf, resume, graph, discover, handoff, attach. Each leaf's work happens through its own native saga command, never inline here, and status is derived on read rather than stored. Deprecated in favor of /orchestrate, which takes the outcome as its argument and discovers the work's shape during planning instead of requiring the DAG decomposed up front.
-argument-hint: "[start <id> <objective> | advance <id> [--loop] [--persist] | approve <id> | commit <id> [--push] | attend <id> [subplot] | report <id> | project <id> | resume <id> | status <id> | graph <id> | export <id> | import <bundle>]"
+argument-hint: "[start <id> <objective> | advance <id> [--loop] [--persist] | approve <id> | commit <id> [--push] | attend <id> [subplot] | report <id> | project <id> | resume <id> | status <id> | graph <id> | discover <id> | handoff <id> <subplot> | attach <id> [--advance | --attend]]"
 ---
 
 Load `saga/skills/outcome/SKILL.md` and run the requested coordinator verb.

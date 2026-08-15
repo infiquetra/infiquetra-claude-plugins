@@ -398,14 +398,14 @@ Lifecycle router and lightweight resume substrate.
 
 ### /outcome
 
-Outcome coordinator over a DAG of leaf sagas — the layer above a single work-thread.
+Already-decomposed outcome DAG operator — the layer above a single work-thread.
 
 | Field | Value |
 |-------|-------|
 | Purpose | Operate on an outcome already split into a DAG of leaf sagas via a level-triggered reconcile loop that dispatches the ready frontier and pages only on exceptions. |
 | Use when | An outcome is already a DAG that spans multiple concurrent subplots, each running its own saga; the operator wants to advance the frontier, attend a leaf, or resume an outcome. |
 | Do not use when | The work is a single linear work-thread (use `/work`); the graph still needs authoring from scratch (use `/plan` and the decompose flow); or the outcome hasn't been decomposed yet and may span more than one vendor (use `/orchestrate`, which discovers the work's shape during planning instead of requiring the DAG up front). |
-| Inputs | Outcome id, objective, or a portable outcome bundle. |
+| Inputs | Outcome id, objective, or a protected handoff reference (`attach --handoff-id`). |
 | Outputs | Branch-local outcome spec, dispatched leaf sagas, derived-on-read status, Mermaid graph. |
 | Saga state | Coordinates leaf sagas; live node state is derived on read from spec + completion events, never a stored status field. |
 | Routes in | explicit `/outcome` invocation on an already-decomposed DAG, `/plan` decompose. |

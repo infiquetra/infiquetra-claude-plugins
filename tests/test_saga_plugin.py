@@ -46,9 +46,10 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
 
     assert plugin_json["name"] == "saga"
     assert (
-        plugin_json["version"] == "0.131.3"
-    )  # the outcome skill's own selection surface and the plugin's release metadata now
-    # tell the same deprecation story as /outcome's command description
+        plugin_json["version"] == "0.131.4"
+    )  # the outcome skill's own selection surface, the pinned approved description, and the
+    # plugin's release metadata now tell the same deprecation story as /outcome's command
+    # description
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]

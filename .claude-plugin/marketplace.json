@@ -83,7 +83,7 @@
     {
       "name": "saga",
       "source": "./plugins/saga",
-      "version": "0.131.3",
+      "version": "0.131.4",
       "description": "Infiquetra lifecycle plugin: /outcome operates an already-split outcome DAG, cross-runtime discovery/handoff, liveness facts, /pulse telemetry, trust-gated engine onboarding, /fleet-doctor auditing.",
       "author": {
         "name": "Infiquetra",

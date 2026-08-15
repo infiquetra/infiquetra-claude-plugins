@@ -1,5 +1,33 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-08-15
+
+### Close a same-named skill's model selection structurally, not by rewriting its description  {#disable-model-invocation-over-skill-description-rewrite}
+
+A same-named skill can carry its own `description:` frontmatter, independent of a deprecated
+command's, and remain fully available for the model's own initiative to select — see LEARNINGS
+`{#skill-description-is-a-second-selector}`. Closing that required picking between rewriting the
+skill's `description:` to match the command's new, narrower framing, or removing the skill from
+model-initiated selection entirely via a frontmatter flag.
+
+**Decision.** Add `disable-model-invocation: true` to the skill's frontmatter and leave its
+`description:` untouched. The flag removes the skill from the listing Claude selects from on its
+own initiative while leaving explicit `/<name>` invocation — which loads the skill directly, not
+through model selection — unaffected. This closes the surface structurally: it holds for any
+future phrasing of a request, not just the phrasings a wordlist happens to ban.
+
+**Rejected: rewrite the skill's `description:` to match the command's new framing.** This would
+have worked for the phrasings it was written against, but it rebuilds the exact defeatable
+word-list defense on a second surface instead of closing it once — a later synonym the rewrite
+didn't anticipate would still select the skill, the same failure mode that made the command
+description alone insufficient in the first place. A structural flag doesn't have that failure
+mode: there is no vocabulary to dodge.
+
+**Revisit when** a skill needs to remain selectable by the model under a narrower, deliberately
+maintained description rather than being fully closed — at that point the rejected alternative
+becomes the live design, not a fallback, and should carry its own regression discipline (a pinned
+approved-text check, not a wordlist) rather than being reopened by adding words back to a wordlist.
+
 ## 2026-08-13
 
 ### The live register is addressed by run identity, not by repository root  {#register-addressed-by-run-id}

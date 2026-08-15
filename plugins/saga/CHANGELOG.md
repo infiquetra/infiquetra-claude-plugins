@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.131.4] - 2026-08-15
+
+### Changed
+
+- **`/outcome`'s approved description is now pinned verbatim in an exact-match check, which is the
+  actual guard against a future rewrite that reads as general orchestration.** A finite banned-word
+  list — even a structural one that derives its vocabulary from `/orchestrate`'s own live text — can
+  always be dodged by a rewrite that uses neither a listed stem nor a word `/orchestrate` currently
+  uses; growing the list further only repeats the same defeatable shape at a longer length. The
+  fixed-stem and pitch-vocabulary checks stay in place as readable diagnostics for why a rejected
+  candidate was rejected, but the pinned exact-match test is what decides acceptance: any future
+  copy change has to update that pinned text as a conscious, reviewed act.
+- **`argument-hint` on `/outcome` no longer lists the retired `export`/`import` pair and now lists
+  the live `discover`/`handoff`/`attach` verbs**, matching what the description already names and
+  what the skill's own frontmatter already listed.
+- **The outcome skill's body now states its manual-only, already-decomposed boundary for a reader
+  who opens the file directly**, without touching the skill's `description:` frontmatter (which
+  stays untouched by design — see the prior entry below on why that surface is closed structurally,
+  not lexically). The boundary only reaches a reader once the skill is already loaded, so it doesn't
+  reopen the selection surface `disable-model-invocation` closes.
+- **Saga's README, command reference, and docs model finish the "already-decomposed DAG" wording
+  reconciliation.** The remaining "coordinator" framing in the manual heading and README's
+  `/outcome` paragraph, and the stale "portable outcome bundle" input description (the bundle path
+  is retired; a protected handoff reference is what the current path accepts), now match the
+  command description and the rest of the reconciled documentation.
+
 ## [0.131.3] - 2026-08-15
 
 ### Changed

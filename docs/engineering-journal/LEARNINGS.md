@@ -19,6 +19,38 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-08-15
+
+### A same-named skill's own `description:` is a second, independent model-selection surface  {#skill-description-is-a-second-selector}
+
+**Context.** A command was deprecated for general-orchestration intent by rewriting only its
+`description:` frontmatter — the field Claude matches a natural-language request against when
+choosing a command. The rewrite held for the command surface and did nothing for a same-named
+skill sitting alongside it.
+**Evidence.** `plugins/saga/commands/outcome.md`'s `description:` was rewritten so it no longer
+reads as a general orchestration pitch. `plugins/saga/skills/outcome/SKILL.md`'s own
+`description:` still carried the entire original pitch verbatim — "Coordinate a whole outcome…",
+"dispatches the ready frontier to executors", "the coordinator routes" — because editing the
+command file never touches the skill file; they are two separate files with two independent
+frontmatter blocks.
+**Mechanism.** A command and a same-named skill are two distinct model-selection surfaces, each
+carrying its own `description:` that Claude matches intent against independently. They share a
+name and both ultimately load the same operator surface once selected, but nothing about that
+relationship makes editing one also edit the other — a plugin author has to know a same-named pair
+exists and touch both deliberately.
+**Fix (or queued).** `disable-model-invocation: true` added to the skill's frontmatter. This
+removes the skill from the model's own selection listing while leaving explicit `/<name>`
+invocation — which loads the skill file directly, not through model-initiated selection —
+unaffected.
+**What surprised.** That a command-description rewrite, by itself, is not a complete deprecation
+whenever a same-named skill exists — nothing in the frontmatter schema signals that a second
+surface even needs checking, so the gap doesn't show up by inspecting the file you already edited.
+**Generalizable rule.** Before treating a command's `description:` rewrite as a complete
+deprecation of that command's selection behavior, check whether a same-named skill exists and
+carries its own independent `description:` — it is a second live selector, not documentation that
+inherits the command's framing.
+**Refs.** DECISIONS `{#disable-model-invocation-over-skill-description-rewrite}`.
+
 ## 2026-08-13
 
 ### A generation is more than the live register  {#generation-is-more-than-the-live-file}

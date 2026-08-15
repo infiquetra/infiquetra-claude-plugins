@@ -167,8 +167,8 @@
     <tspan x="838" dy="0">/outcome</tspan>
   </text>
   <text x="838" y="679" class="body" fill="#52616f">
-    <tspan x="838" dy="0">outcome coordinator over a</tspan>
-    <tspan x="838" dy="18">DAG of leaf sagas</tspan>
+    <tspan x="838" dy="0">already-decomposed outcome</tspan>
+    <tspan x="838" dy="18">DAG operator</tspan>
   </text>
   <rect x="1015" y="629" width="154" height="34" rx="17" fill="#6b5fb5"/>
   <text x="1029" y="652" class="small" fill="#fbfcfd">

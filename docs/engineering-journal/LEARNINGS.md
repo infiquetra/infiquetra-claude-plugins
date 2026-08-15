@@ -21,6 +21,26 @@
 
 ## 2026-08-14
 
+### A shared column with no named writer will be rewritten by the next neighbour  {#shared-column-needs-one-writer}
+
+**Context.** Planning, admission, and the subscriber could all reach `phase`,
+`artifact_path`, and `observed_state`. Each repair moved a write or a guess
+to a different module and the same defect returned one seam over.
+**Evidence.** `commit_plan` wrote `artifact_path` before any file existed.
+`reserve_slot` returned "already reserved" before it read a terminal phase.
+Catch-up labelled snapshot absence `observed_state="exited"` and reclaim
+treated the value as witnessed death.
+**Mechanism.** Ownership lived in prose. The merger accepted any field. A
+module that does not own a column can still write it, so moving the write
+does not establish an owner.
+**Fix.** `register.py` names one writer function and one asserted fact per
+shared column. The merger refuses `artifact_path` except from settlement,
+refuses `planned` over a terminal phase, and admission writes only the
+fields it owns.
+**Generalizable rule.** If two modules can reach a column, name the single
+function that may write it and refuse the others. A docstring is not a lock.
+**Refs.** DECISIONS `{#register-column-ownership}`.
+
 ### Guarding one input of a two-input comparison relocates the inequality  {#one-sided-lock-relocates-the-inequality}
 
 **Context.** Admission widened to a host lock because the generation lock is

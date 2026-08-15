@@ -81,6 +81,7 @@ def _full_row(row_id: str = "child-1", run_id: str = "run-a") -> dict:
         "last_event_at": 1000.5,
         "tokens_observed": 1234,
         "tokens_reserved": 50000,
+        "tokens_max": 50000,
     }
 
 
@@ -105,7 +106,7 @@ def test_fresh_register_initialises_with_a_schema_version(tmp_path: Path) -> Non
 
 def test_row_round_trips_every_column(tmp_path: Path) -> None:
     row = _full_row()
-    stored = M.upsert_row(tmp_path, "child-1", row, run_id="run-a")
+    stored = M.upsert_row(tmp_path, "child-1", row, run_id="run-a", writer=M.ARTIFACT_PATH_WRITER)
     assert stored == row
 
     reread = M.read_rows(tmp_path, run_id="run-a")["child-1"]
@@ -724,6 +725,46 @@ def test_a_recorded_root_readable_beyond_its_owner_is_refused(tmp_path: Path) ->
         M.recorded_work_location("run-a")
     with pytest.raises(M.RegisterError, match="accessible beyond its owner"):
         M.assert_root_belongs_to_run(repo, "run-a", require_recorded=True)
+
+
+def test_shared_columns_name_one_writer_each() -> None:
+    owned = {column for column, _writer, _fact in M.COLUMN_OWNERSHIP}
+    assert {
+        "phase",
+        "artifact_path",
+        "observed_state",
+        "observed_state_source",
+        "tokens_observed",
+        "tokens_max",
+        "admission.reservations",
+    } <= owned
+    writers = {column: writer for column, writer, _fact in M.COLUMN_OWNERSHIP}
+    assert writers["phase"] == "write_phase"
+    assert writers["artifact_path"] == "completion.settle_artifact"
+
+
+def test_planned_cannot_replace_a_terminal_phase(tmp_path: Path) -> None:
+    M.upsert_row(tmp_path, "child-1", {"phase": "reaped"}, run_id="run-a")
+    with pytest.raises(M.RegisterError, match="refusing to write planned over a terminal phase"):
+        M.write_phase(tmp_path, "child-1", "planned", run_id="run-a")
+
+
+def test_artifact_path_refuses_a_foreign_writer(tmp_path: Path) -> None:
+    with pytest.raises(M.RegisterError, match="written only by settle_artifact"):
+        M.upsert_row(
+            tmp_path,
+            "child-1",
+            {"artifact_path": "artifacts/child.json"},
+            run_id="run-a",
+        )
+    stored = M.upsert_row(
+        tmp_path,
+        "child-1",
+        {"artifact_path": "artifacts/child.json"},
+        run_id="run-a",
+        writer=M.ARTIFACT_PATH_WRITER,
+    )
+    assert stored["artifact_path"] == "artifacts/child.json"
 
 
 def test_a_nonexistent_package_directory_stamps_the_repository(tmp_path: Path) -> None:

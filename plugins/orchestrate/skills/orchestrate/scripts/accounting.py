@@ -6,6 +6,17 @@ consumed by :func:`check_spend`. ``tokens_reserved`` is produced by admission
 and consumed here when a vendor exposes no usage line: the declared worst case
 is the actual, and the ceiling can fire.
 
+Usage-sample contract. Vendors in ``VENDORS_WITHOUT_USAGE`` emit no usage line;
+their declared ``tokens_max`` is the charge once the child has launched, and an
+observed value cannot lower it. For vendors that do emit usage, a line matching
+``tokens used`` / ``total tokens`` is a *cumulative* total (store the monotonic
+maximum). A line matching ``input``/``output`` is a *delta* sample (add each
+unseen event). Deduplication is by event identity: every seen content hash is
+kept, not only the latest.
+
+A planned or queued child has spent zero. A launched, active, or terminal
+metered child with no telemetry fails closed.
+
 ``authorize_spend`` does not engage when actuals are ``None``. This module never
 passes ``None`` to mean "the vendor is silent."
 """
@@ -25,6 +36,9 @@ intent_envelope = fleet_commons_shim.load("intent_envelope")
 
 # Vendors whose CLIs have no documented usage line on this host.
 VENDORS_WITHOUT_USAGE = frozenset({"muse", "agy"})
+USAGE_KIND_CUMULATIVE = "cumulative"
+USAGE_KIND_DELTA = "delta"
+LAUNCHED_PHASES = frozenset({"launching", "launched", "ready", "working", "verified", "reaped"})
 
 # Closed needle the subscriber accepts as a usage ``pane.output_matched``
 # substring. A match that does not contain this token is still a startup
@@ -74,6 +88,13 @@ def usage_fingerprint(line: str) -> str:
     return hashlib.sha256(line.encode("utf-8")).hexdigest()
 
 
+def usage_sample_kind(line: str) -> str:
+    """Whether this line is a cumulative total or a delta sample."""
+    if _USED_TOTAL.search(line):
+        return USAGE_KIND_CUMULATIVE
+    return USAGE_KIND_DELTA
+
+
 def record_observed_tokens(
     root: Path,
     row_id: str,
@@ -81,10 +102,12 @@ def record_observed_tokens(
     *,
     run_id: str,
     fingerprint: str | None = None,
+    kind: str = USAGE_KIND_DELTA,
 ) -> dict[str, Any]:
-    """Producer of ``tokens_observed``. Adds under the generation lock.
+    """Producer of ``tokens_observed``. Updates under the generation lock.
 
-    A repeated ``fingerprint`` is ignored so a redelivered line is not spend.
+    A repeated event identity is ignored so a replayed line is not spend.
+    Cumulative samples keep a monotonic maximum; delta samples add.
     """
     if tokens < 0:
         raise AccountingError("observed tokens cannot be negative")
@@ -92,13 +115,21 @@ def record_observed_tokens(
     with register_store.generation_locked(run_id):
         doc = register_store._read_register_unlocked(run_id)
         existing = doc.get("rows", {}).get(row_id, {})
-        if fingerprint and existing.get("usage_fingerprint") == fingerprint:
+        seen_raw = existing.get("usage_events")
+        seen = [str(item) for item in seen_raw] if isinstance(seen_raw, list) else []
+        if fingerprint and fingerprint in seen:
             return dict(existing)
         prior = existing.get("tokens_observed")
-        total = tokens if not isinstance(prior, (int, float)) else int(prior) + tokens
+        numeric = isinstance(prior, (int, float)) and not isinstance(prior, bool)
+        prior_n = int(prior) if numeric else None
+        if kind == USAGE_KIND_CUMULATIVE:
+            total = tokens if prior_n is None else max(prior_n, tokens)
+        else:
+            total = tokens if prior_n is None else prior_n + tokens
         fields: dict[str, Any] = {"tokens_observed": total}
         if fingerprint:
             fields["usage_fingerprint"] = fingerprint
+            fields["usage_events"] = [*seen, fingerprint]
         merged = register_store._upsert_rows_unlocked(claimed, {row_id: fields}, run_id=run_id)
         return merged[row_id]
 
@@ -108,22 +139,34 @@ def apply_output_match(root: Path, row_id: str, line: str, *, run_id: str) -> in
     tokens = parse_usage_line(line)
     if tokens is None:
         return None
-    record_observed_tokens(root, row_id, tokens, run_id=run_id, fingerprint=usage_fingerprint(line))
+    record_observed_tokens(
+        root,
+        row_id,
+        tokens,
+        run_id=run_id,
+        fingerprint=usage_fingerprint(line),
+        kind=usage_sample_kind(line),
+    )
     return tokens
 
 
 def _actual_for_row(row: Mapping[str, Any], *, vendor: str) -> float:
-    observed = row.get("tokens_observed")
+    launched = row.get("phase") in LAUNCHED_PHASES
     declared = row.get("tokens_max", row.get("tokens_reserved"))
-    if isinstance(observed, (int, float)) and not isinstance(observed, bool):
-        return float(observed)
     if not vendor_reports_usage(vendor):
+        if not launched:
+            return 0.0
         if isinstance(declared, (int, float)) and not isinstance(declared, bool) and declared > 0:
             return float(declared)
         raise AccountingError(
             f"vendor {vendor!r} exposes no usage line and row {row.get('id')!r} "
             "has no declared tokens_max; fail closed"
         )
+    if not launched:
+        return 0.0
+    observed = row.get("tokens_observed")
+    if isinstance(observed, (int, float)) and not isinstance(observed, bool):
+        return float(observed)
     raise AccountingError(
         f"vendor {vendor!r} reports usage but row {row.get('id')!r} has no "
         "tokens_observed; fail closed"

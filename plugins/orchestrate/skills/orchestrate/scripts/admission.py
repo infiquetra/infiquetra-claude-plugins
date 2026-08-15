@@ -26,9 +26,11 @@ from typing import Any
 import register as register_store
 
 ACTIVE_PHASES = frozenset({"launching", "launched", "ready", "working"})
-TERMINAL_PHASES = frozenset({"verified", "reaped"})
+TERMINAL_PHASES = register_store.TERMINAL_PHASES
 TERMINAL_OBSERVED = frozenset({"exited"})
 HOLDING_STATES = frozenset({"reserved", "held"})
+DIRECT_OBSERVED_PREFIX = "observed:"
+ADMISSION_ROW_FIELDS = frozenset({"admission", "vendor", "agent", "work_shape", "tokens_reserved"})
 DEFAULT_LEASE_SECONDS = 3600.0
 DEFAULT_PER_VENDOR = 3
 DEFAULT_AGGREGATE = 7
@@ -110,13 +112,27 @@ def _admission_doc(doc: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _exact_positive_int(value: Any, *, name: str, path: Path) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise AdmissionError(f"host policy {path} field {name!r} must be a positive integer")
+    return value
+
+
 def read_host_policy() -> HostPolicy | None:
     """The file, or ``None``. Absence means the module defaults, not a blank cheque."""
     path = policy_path()
     if not path.exists():
         return None
-    raw = json.loads(path.read_text(encoding="utf-8"))
-    return HostPolicy(int(raw["per_vendor"]), int(raw["aggregate"]))
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise AdmissionError(f"host policy {path} is unreadable: {exc}") from exc
+    if not isinstance(raw, dict) or "per_vendor" not in raw or "aggregate" not in raw:
+        raise AdmissionError(f"host policy {path} is malformed")
+    return HostPolicy(
+        _exact_positive_int(raw["per_vendor"], name="per_vendor", path=path),
+        _exact_positive_int(raw["aggregate"], name="aggregate", path=path),
+    )
 
 
 def resolve_host_policy(
@@ -127,24 +143,32 @@ def resolve_host_policy(
     """File if present, else module defaults. Arguments override for this call only.
 
     Never writes. Reserve, release, and reclaim do not create a policy file.
+    Call-time overrides must be exact positive integers; they are not a second
+    policy file.
     """
     stored = read_host_policy()
     base = stored or HostPolicy(DEFAULT_PER_VENDOR, DEFAULT_AGGREGATE)
-    policy = HostPolicy(
-        base.per_vendor if per_vendor is None else int(per_vendor),
-        base.aggregate if aggregate is None else int(aggregate),
+    path = policy_path()
+    resolved_vendor = (
+        base.per_vendor
+        if per_vendor is None
+        else _exact_positive_int(per_vendor, name="per_vendor", path=path)
     )
-    if policy.per_vendor < 1 or policy.aggregate < 1:
-        raise AdmissionError("host policy limits must be at least 1")
-    return policy
+    resolved_aggregate = (
+        base.aggregate
+        if aggregate is None
+        else _exact_positive_int(aggregate, name="aggregate", path=path)
+    )
+    return HostPolicy(resolved_vendor, resolved_aggregate)
 
 
 def write_host_policy(*, per_vendor: int, aggregate: int) -> HostPolicy:
     """Explicit operator-facing writer. Not called from reserve, release, or reclaim."""
-    policy = HostPolicy(int(per_vendor), int(aggregate))
-    if policy.per_vendor < 1 or policy.aggregate < 1:
-        raise AdmissionError("host policy limits must be at least 1")
     path = policy_path()
+    policy = HostPolicy(
+        _exact_positive_int(per_vendor, name="per_vendor", path=path),
+        _exact_positive_int(aggregate, name="aggregate", path=path),
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     with admission_locked():
         register_store._atomic_write_json(
@@ -183,8 +207,12 @@ def _write_admission(
     if row_updates:
         rows = doc["rows"]
         for row_id, fields in row_updates.items():
-            if "phase" in fields:
-                raise AdmissionError("admission does not write phase")
+            foreign = set(fields) - ADMISSION_ROW_FIELDS
+            if foreign:
+                raise AdmissionError(
+                    f"admission does not write {sorted(foreign)}; it owns only "
+                    f"{sorted(ADMISSION_ROW_FIELDS)}"
+                )
             existing = rows.get(row_id, {})
             merged = {**existing, **fields, "id": row_id, "run_id": run_id}
             if not existing:
@@ -264,6 +292,32 @@ def _identity_matches(
     )
 
 
+def _reservation_record(
+    *,
+    run_id: str,
+    row_id: str,
+    vendor: str,
+    work_shape: str,
+    tokens: int,
+    when: float,
+    work_location: Path,
+    lease_until: float | None,
+    state: str = "reserved",
+) -> dict[str, Any]:
+    """Occupant identity a later reconciler can name. No clock on a planned reservation."""
+    return {
+        "run_id": run_id,
+        "row_id": row_id,
+        "work_location": str(work_location),
+        "vendor": vendor,
+        "work_shape": work_shape,
+        "tokens_reserved": tokens,
+        "reserved_at": when,
+        "state": state,
+        "lease_until": lease_until,
+    }
+
+
 def reserve_slot(
     root: Path,
     row_id: str,
@@ -278,19 +332,53 @@ def reserve_slot(
     lease_until: float | None = None,
 ) -> AdmissionDecision:
     """Reserve a slot or enqueue. Durable. Does not launch. Does not write phase."""
+    claimed = register_store.canonical_work_location(root)
+    with admission_locked():
+        return _reserve_under_admission_lock(
+            claimed,
+            row_id,
+            run_id=run_id,
+            vendor=vendor,
+            work_shape=work_shape,
+            tokens_max=tokens_max,
+            per_vendor_limit=per_vendor_limit,
+            aggregate_limit=aggregate_limit,
+            now=now,
+            lease_until=lease_until,
+        )
+
+
+def _reserve_under_admission_lock(
+    claimed: Path,
+    row_id: str,
+    *,
+    run_id: str,
+    vendor: str,
+    work_shape: str,
+    tokens_max: int | None = None,
+    per_vendor_limit: int | None = None,
+    aggregate_limit: int | None = None,
+    now: float | None = None,
+    lease_until: float | None = None,
+) -> AdmissionDecision:
+    """Caller already holds the host admission lock."""
     if not row_id or not vendor:
         raise AdmissionError("row_id and vendor must be non-empty")
-    claimed = register_store.canonical_work_location(root)
     run_id = register_store._safe_run_id(run_id)
     tokens = reserved_tokens_for(work_shape) if tokens_max is None else int(tokens_max)
-    if tokens <= 0:
+    if isinstance(tokens_max, bool) or tokens <= 0:
         raise AdmissionError("tokens_max must be a positive integer")
     when = time.time() if now is None else now
-    with admission_locked(), register_store.generation_locked(run_id):
+    with register_store.generation_locked(run_id):
         policy = resolve_host_policy(per_vendor=per_vendor_limit, aggregate=aggregate_limit)
         per_vendor, aggregate, _occupying = _occupancy()
         doc = register_store._read_register_unlocked(run_id)
         state = _admission_doc(doc)
+        row = doc.get("rows", {}).get(row_id, {})
+        if row.get("phase") in TERMINAL_PHASES:
+            raise AdmissionError(
+                f"row {row_id!r} is {row.get('phase')}; release and replan rather than reuse it"
+            )
         existing = state["reservations"].get(row_id)
         if isinstance(existing, dict) and _reservation_counts(existing):
             if _identity_matches(existing, vendor=vendor, work_shape=work_shape, tokens=tokens):
@@ -314,12 +402,13 @@ def reserve_slot(
                 f"row {row_id!r} is queued for a different vendor or shape; "
                 "release and replan to change it"
             )
-        row = doc.get("rows", {}).get(row_id, {})
-        if row.get("phase") in TERMINAL_PHASES:
-            raise AdmissionError(
-                f"row {row_id!r} is {row.get('phase')}; release and replan rather than reuse it"
-            )
         vendor_count = per_vendor.get(vendor, 0)
+        row_fields = {
+            "vendor": vendor,
+            "agent": vendor,
+            "work_shape": work_shape,
+            "tokens_reserved": tokens,
+        }
         if vendor_count >= policy.per_vendor or aggregate >= policy.aggregate:
             reason = (
                 f"per-vendor bound {policy.per_vendor} reached for {vendor}"
@@ -329,10 +418,12 @@ def reserve_slot(
             state["queue"].append(
                 {
                     "row_id": row_id,
+                    "run_id": run_id,
                     "vendor": vendor,
                     "work_shape": work_shape,
                     "tokens_reserved": tokens,
                     "enqueued_at": when,
+                    "work_location": str(claimed),
                 }
             )
             _write_admission(
@@ -340,41 +431,25 @@ def reserve_slot(
                 run_id,
                 queue=state["queue"],
                 reservations=state["reservations"],
-                row_updates={
-                    row_id: {
-                        "vendor": vendor,
-                        "agent": vendor,
-                        "work_shape": work_shape,
-                        "tokens_reserved": tokens,
-                        "tokens_max": tokens,
-                        "admission": "queued",
-                    }
-                },
+                row_updates={row_id: {**row_fields, "admission": "queued"}},
             )
             return AdmissionDecision("queued", row_id, vendor, tokens, reason)
-        state["reservations"][row_id] = {
-            "vendor": vendor,
-            "reserved_at": when,
-            "work_shape": work_shape,
-            "tokens_reserved": tokens,
-            "state": "reserved",
-            "lease_until": lease_until,
-        }
+        state["reservations"][row_id] = _reservation_record(
+            run_id=run_id,
+            row_id=row_id,
+            vendor=vendor,
+            work_shape=work_shape,
+            tokens=tokens,
+            when=when,
+            work_location=claimed,
+            lease_until=lease_until,
+        )
         _write_admission(
             claimed,
             run_id,
             queue=state["queue"],
             reservations=state["reservations"],
-            row_updates={
-                row_id: {
-                    "vendor": vendor,
-                    "agent": vendor,
-                    "work_shape": work_shape,
-                    "tokens_reserved": tokens,
-                    "tokens_max": tokens,
-                    "admission": "reserved",
-                }
-            },
+            row_updates={row_id: {**row_fields, "admission": "reserved"}},
         )
         return AdmissionDecision("reserved", row_id, vendor, tokens, "reserved")
 
@@ -390,6 +465,11 @@ def activate_slot(root: Path, row_id: str, *, run_id: str, now: float | None = N
         reservation = state["reservations"].get(row_id)
         if not isinstance(reservation, dict) or reservation.get("state") not in HOLDING_STATES:
             raise AdmissionError(f"row {row_id!r} has no reservation to activate")
+        row = doc.get("rows", {}).get(row_id, {})
+        if row.get("phase") in TERMINAL_PHASES:
+            raise AdmissionError(
+                f"row {row_id!r} is {row.get('phase')}; release and replan rather than reuse it"
+            )
         reservation = dict(reservation)
         reservation["state"] = "held"
         reservation["held_at"] = when
@@ -447,9 +527,11 @@ def _advance_until_full(*, now: float | None) -> AdmissionDecision | None:
 
 
 def _advance_queue_locked(*, now: float | None) -> AdmissionDecision | None:
-    """Caller holds the host admission lock and does not hold a generation lock."""
+    """Promote the globally oldest eligible entry. Caller holds the admission lock only."""
     when = time.time() if now is None else now
     policy = resolve_host_policy()
+    candidates: list[tuple[float, str, str, dict[str, Any], Path]] = []
+    dirty_runs: dict[str, tuple[Path, list[Any]]] = {}
     for run_id in register_store.iter_live_run_ids():
         doc = register_store._read_register_unlocked(run_id)
         stored = register_store.stored_work_location(run_id, doc)
@@ -459,7 +541,6 @@ def _advance_queue_locked(*, now: float | None) -> AdmissionDecision | None:
         if not state["queue"]:
             continue
         remaining: list[Any] = []
-        chosen: dict[str, Any] | None = None
         dirty = False
         for entry in state["queue"]:
             if not isinstance(entry, dict):
@@ -474,51 +555,15 @@ def _advance_queue_locked(*, now: float | None) -> AdmissionDecision | None:
             if (run_id, row_id) in occupying or row.get("phase") in TERMINAL_PHASES:
                 dirty = True
                 continue
-            if chosen is None and (
-                per_vendor.get(vendor, 0) < policy.per_vendor and aggregate < policy.aggregate
-            ):
-                chosen = {
-                    "row_id": row_id,
-                    "vendor": vendor,
-                    "work_shape": work_shape,
-                    "tokens": tokens,
-                }
-                dirty = True
-                continue
+            if per_vendor.get(vendor, 0) < policy.per_vendor and aggregate < policy.aggregate:
+                enqueued_at = entry.get("enqueued_at")
+                stamp = float(enqueued_at) if isinstance(enqueued_at, (int, float)) else 0.0
+                candidates.append((stamp, run_id, row_id, dict(entry), stored))
             remaining.append(entry)
-        if chosen is not None:
-            row_id = str(chosen["row_id"])
-            vendor = str(chosen["vendor"])
-            work_shape = str(chosen["work_shape"])
-            tokens = int(chosen["tokens"])
-            with register_store.generation_locked(run_id):
-                live = _admission_doc(register_store._read_register_unlocked(run_id))
-                live["reservations"][row_id] = {
-                    "vendor": vendor,
-                    "reserved_at": when,
-                    "work_shape": work_shape,
-                    "tokens_reserved": tokens,
-                    "state": "reserved",
-                    "lease_until": None,
-                }
-                _write_admission(
-                    stored,
-                    run_id,
-                    queue=remaining,
-                    reservations=live["reservations"],
-                    row_updates={
-                        row_id: {
-                            "admission": "reserved",
-                            "tokens_reserved": tokens,
-                            "tokens_max": tokens,
-                            "vendor": vendor,
-                            "agent": vendor,
-                            "work_shape": work_shape,
-                        }
-                    },
-                )
-            return AdmissionDecision("reserved", row_id, vendor, tokens, "advanced from queue")
         if dirty:
+            dirty_runs[run_id] = (stored, remaining)
+    if not candidates:
+        for run_id, (stored, remaining) in dirty_runs.items():
             with register_store.generation_locked(run_id):
                 live = _admission_doc(register_store._read_register_unlocked(run_id))
                 _write_admission(
@@ -527,7 +572,46 @@ def _advance_queue_locked(*, now: float | None) -> AdmissionDecision | None:
                     queue=remaining,
                     reservations=live["reservations"],
                 )
-    return None
+        return None
+    _enqueued_at, run_id, row_id, entry, stored = min(
+        candidates, key=lambda item: (item[0], item[1], item[2])
+    )
+    vendor = str(entry.get("vendor") or "")
+    work_shape = str(entry.get("work_shape") or "work-medium")
+    tokens = int(entry.get("tokens_reserved") or reserved_tokens_for(work_shape))
+    with register_store.generation_locked(run_id):
+        live = _admission_doc(register_store._read_register_unlocked(run_id))
+        remaining = [
+            item
+            for item in live["queue"]
+            if not (isinstance(item, dict) and item.get("row_id") == row_id)
+        ]
+        live["reservations"][row_id] = _reservation_record(
+            run_id=run_id,
+            row_id=row_id,
+            vendor=vendor,
+            work_shape=work_shape,
+            tokens=tokens,
+            when=when,
+            work_location=stored,
+            lease_until=None,
+        )
+        _write_admission(
+            stored,
+            run_id,
+            queue=remaining,
+            reservations=live["reservations"],
+            row_updates={
+                row_id: {
+                    "admission": "reserved",
+                    "tokens_reserved": tokens,
+                    "vendor": vendor,
+                    "agent": vendor,
+                    "work_shape": work_shape,
+                }
+            },
+        )
+    return AdmissionDecision("reserved", row_id, vendor, tokens, "advanced from queue")
 
 
 def advance_queue(
@@ -545,10 +629,20 @@ def _is_dead(
     now: float,
     hold_lease: float,
 ) -> bool:
-    """Reclaim from reservation state and terminal evidence, not from 'no pane'."""
-    if row.get("observed_state") in TERMINAL_OBSERVED:
-        return True
+    """Reclaim from reservation state and terminal evidence, not from a guess.
+
+    Immediate reclaim needs a directly observed terminal state, a lifecycle-owned
+    terminal phase, or an expired holder lease. An inferred snapshot absence is
+    not witnessed death.
+    """
     if row.get("phase") in TERMINAL_PHASES:
+        return True
+    observed_terminal = row.get("observed_state") in TERMINAL_OBSERVED
+    source = row.get("observed_state_source")
+    directly_observed = (
+        observed_terminal and isinstance(source, str) and source.startswith(DIRECT_OBSERVED_PREFIX)
+    )
+    if directly_observed:
         return True
     state = str(reservation.get("state") or "reserved")
     if state == "abandoned":
@@ -559,7 +653,10 @@ def _is_dead(
     if state == "held":
         held_at = reservation.get("held_at", reservation.get("reserved_at"))
         started = float(held_at) if isinstance(held_at, (int, float)) else now
-        return not row.get("pane_id") and (now - started) >= hold_lease
+        expired = (now - started) >= hold_lease
+        if observed_terminal and expired:
+            return True
+        return not row.get("pane_id") and expired
     return False
 
 

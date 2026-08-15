@@ -1476,6 +1476,7 @@ def settle_artifact(receipt: DispatchReceipt) -> Settlement:
             "artifact_path": settlement.artifact_path,
         },
         run_id=receipt.run_id,
+        writer=register_store.ARTIFACT_PATH_WRITER,
     )
     return settlement
 

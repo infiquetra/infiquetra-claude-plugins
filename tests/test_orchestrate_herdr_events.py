@@ -943,12 +943,14 @@ def test_catch_up_reports_run_bound_artifact_presence(tmp_path: Path) -> None:
         "present",
         {"run_id": "run-a", "pane_id": "p1", "artifact_path": "artifacts/present.md"},
         run_id="run-a",
+        writer=REGISTER.ARTIFACT_PATH_WRITER,
     )
     REGISTER.upsert_row(
         tmp_path,
         "missing",
         {"run_id": "run-a", "pane_id": "p2", "artifact_path": "artifacts/missing.md"},
         run_id="run-a",
+        writer=REGISTER.ARTIFACT_PATH_WRITER,
     )
     snapshot = {
         "panes": [

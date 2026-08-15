@@ -199,7 +199,7 @@ def catch_up(
             live.setdefault(live_pane_id, {}).update(item)
 
     records: list[CatchUpRecord] = []
-    updates: dict[str, dict[str, str]] = {}
+    updates: dict[str, tuple[str, str]] = {}
     for row_id, row in register_store.read_rows(root, run_id=run_id).items():
         pane_id = row.get("pane_id")
         if not isinstance(pane_id, str) or not pane_id:
@@ -234,10 +234,7 @@ def catch_up(
 
         expected = row.get("expected_state")
         expected_state = expected if isinstance(expected, str) else None
-        updates[row_id] = {
-            "observed_state": observed_state,
-            "observed_state_source": observed_state_source,
-        }
+        updates[row_id] = (observed_state, observed_state_source)
         artifact_path, artifact_exists = _artifact_presence(root, row.get("artifact_path"))
         records.append(
             CatchUpRecord(
@@ -253,7 +250,7 @@ def catch_up(
             )
         )
     if updates:
-        register_store.upsert_rows(root, updates, run_id=run_id)
+        register_store.record_observed_states(root, updates, run_id=run_id)
     return records
 
 
@@ -468,26 +465,22 @@ class Subscriber:
             return True
         elif event.name in {"pane_exited", "pane_closed", "tab_closed"}:
             source_prefix = "inferred" if event.name == "tab_closed" else "observed"
-            register_store.upsert_row(
+            register_store.record_observed_state(
                 self.root,
                 row_id,
-                {
-                    "observed_state": "exited",
-                    "observed_state_source": f"{source_prefix}:{event.name}",
-                },
+                "exited",
+                source=f"{source_prefix}:{event.name}",
                 run_id=self.run_id,
             )
             return True
         elif event.name == "pane_agent_status_changed":
             observed = event.data.get("agent_status")
             if isinstance(observed, str):
-                register_store.upsert_row(
+                register_store.record_observed_state(
                     self.root,
                     row_id,
-                    {
-                        "observed_state": observed,
-                        "observed_state_source": "observed:pane_agent_status_changed",
-                    },
+                    observed,
+                    source="observed:pane_agent_status_changed",
                     run_id=self.run_id,
                 )
                 return True
@@ -521,13 +514,11 @@ class Subscriber:
                 diagnostic=lambda message: self._diagnostic("socket", message),
             )
         finally:
-            register_store.upsert_row(
+            register_store.record_observed_state(
                 self.root,
                 self.row_id,
-                {
-                    "observed_state": "exited",
-                    "observed_state_source": "observed:subscriber_stop",
-                },
+                "exited",
+                source="observed:subscriber_stop",
                 run_id=self.run_id,
             )
 

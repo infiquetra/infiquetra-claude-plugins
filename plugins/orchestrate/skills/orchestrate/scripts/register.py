@@ -89,9 +89,53 @@ Completion -- dispatch_receipt, completion
     "evaluated and failed", so a failed completion leaves ``phase`` untouched and this key is what
     keeps a failed child distinguishable from a working one.
 
-Accounting -- tokens_observed, tokens_reserved
-    ``tokens_reserved`` is what U6's spend gate committed before dispatch; ``tokens_observed`` is
-    the running actual, updated as events arrive. The gap between them is what the gate checks.
+Accounting -- tokens_observed, tokens_reserved, tokens_max
+    ``tokens_reserved`` is what admission committed before dispatch; ``tokens_observed`` is
+    the running actual, updated as events arrive. ``tokens_max`` is the operator-approved
+    ceiling for the child. The gap between reserved and observed is what the gate checks.
+
+Column ownership (shared columns)
+---------------------------------
+A column more than one module can *reach* still has one writer. Reaching is not
+owning. The writer is a function, not a module: moving a write to a neighbour is
+how a column has meant whatever the last writer thought.
+
+The table is the contract. The three columns a non-owner has actually written --
+``phase``, ``artifact_path``, ``observed_state`` -- are refused on a foreign write
+path, in the same style as admission already refusing ``phase``.
+
+    column                 writer                            asserts
+    ------                 ------                            -------
+    phase                  write_phase                       this row is in this
+                                                             lifecycle step.
+                                                             ``planned`` cannot
+                                                             replace a terminal
+                                                             step.
+    artifact_path          completion.settle_artifact        this path exists and
+                                                             is the settled
+                                                             deliverable.
+    observed_state         record_observed_state             a named detector
+                                                             reported this state.
+    observed_state_source  record_observed_state             how that state was
+                                                             learned
+                                                             (``observed:`` vs
+                                                             ``inferred:``).
+    tokens_observed        accounting.record_observed_tokens usage this row has
+                                                             produced under its
+                                                             vendor contract.
+    tokens_max             planning.commit_plan              the operator-approved
+                                                             ceiling for this
+                                                             child.
+    admission.reservations admission.reserve_slot            this row occupies or
+                                                             waits for a host
+                                                             slot, named by
+                                                             occupant identity
+                                                             (run, row, vendor,
+                                                             work location).
+
+``upsert_row`` is a merger, not an owner. It refuses ``artifact_path`` unless the
+caller names :data:`ARTIFACT_PATH_WRITER`, and it refuses ``phase="planned"`` over
+a terminal phase. Admission writes only the admission-owned row fields.
 
 Forward compatibility (C4)
 ---------------------------
@@ -115,9 +159,9 @@ import stat as stat_module
 import subprocess  # nosec B404 -- fixed argv, no shell
 import threading
 import time
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 SCHEMA_VERSION = 1
@@ -126,6 +170,42 @@ SUPPORTED_SCHEMA_VERSIONS = frozenset({1})
 # Closed, ordered lifecycle vocabulary (U2 brief). U3/U4/U7 move a row through these in order;
 # this module does not enforce the order, only that a written value is a member of the set.
 PHASES = ("planned", "launching", "launched", "ready", "working", "verified", "reaped")
+TERMINAL_PHASES = frozenset({"verified", "reaped"})
+# The only caller permitted to write the settled artifact column.
+ARTIFACT_PATH_WRITER = "settle_artifact"
+# Presentation sidecars live beside the live register and die with the generation.
+PRESENTATION_SIDECARS = (".presented", ".generation")
+
+# Shared-column ownership. Writer is a function. The fact is what that write asserts.
+COLUMN_OWNERSHIP: tuple[tuple[str, str, str], ...] = (
+    (
+        "phase",
+        "write_phase",
+        "the row is in this lifecycle step; planned cannot replace a terminal step",
+    ),
+    (
+        "artifact_path",
+        "completion.settle_artifact",
+        "this path exists and is the settled deliverable",
+    ),
+    ("observed_state", "record_observed_state", "a named detector reported this state"),
+    (
+        "observed_state_source",
+        "record_observed_state",
+        "how that state was learned (observed: vs inferred:)",
+    ),
+    (
+        "tokens_observed",
+        "accounting.record_observed_tokens",
+        "usage this row has produced under its vendor contract",
+    ),
+    ("tokens_max", "planning.commit_plan", "the operator-approved ceiling for this child"),
+    (
+        "admission.reservations",
+        "admission.reserve_slot",
+        "this row occupies or waits for a host slot, named by occupant identity",
+    ),
+)
 
 IDENTITY_COLUMNS = ("id", "run_id", "agent", "vendor", "model", "effort")
 SUBSTRATE_COLUMNS = ("herdr_session", "workspace_id", "tab_id", "pane_id", "cwd")
@@ -146,7 +226,7 @@ TIME_COLUMNS = (
     "max_quiet_seconds",
     "last_event_at",
 )
-ACCOUNTING_COLUMNS = ("tokens_observed", "tokens_reserved")
+ACCOUNTING_COLUMNS = ("tokens_observed", "tokens_reserved", "tokens_max")
 
 ROW_COLUMNS = (
     IDENTITY_COLUMNS
@@ -492,6 +572,92 @@ def _validate_phase(fields: Mapping[str, Any]) -> None:
         raise RegisterError(f"phase {phase!r} is not one of {PHASES}")
 
 
+def normalize_repo_relative_paths(paths: Sequence[str], *, what: str = "path") -> tuple[str, ...]:
+    """A non-empty closed sequence of bounded repository-relative paths."""
+    if not paths:
+        raise RegisterError(f"{what} must be a non-empty sequence of repository-relative paths")
+    normalized: list[str] = []
+    for item in paths:
+        if not isinstance(item, str) or not item.strip():
+            raise RegisterError(f"{what} entries must be non-empty strings")
+        path = PurePosixPath(item)
+        if path.is_absolute() or ".." in path.parts or str(path) in {"", "."}:
+            raise RegisterError(f"{what} {item!r} must be a bounded repository-relative path")
+        normalized.append(path.as_posix().rstrip("/"))
+    return tuple(normalized)
+
+
+def write_phase(root: Path, row_id: str, phase: str, *, run_id: str) -> dict[str, Any]:
+    """Sole writer of ``phase``. Asserts the row is in this lifecycle step."""
+    if phase not in PHASES:
+        raise RegisterError(f"phase {phase!r} is not one of {PHASES}")
+    return upsert_row(root, row_id, {"phase": phase}, run_id=run_id)
+
+
+def record_observed_state(
+    root: Path,
+    row_id: str,
+    state: str,
+    *,
+    source: str,
+    run_id: str,
+) -> dict[str, Any]:
+    """Sole writer of ``observed_state`` and ``observed_state_source``."""
+    return record_observed_states(root, {row_id: (state, source)}, run_id=run_id)[row_id]
+
+
+def record_observed_states(
+    root: Path,
+    updates: Mapping[str, tuple[str, str]],
+    *,
+    run_id: str,
+) -> dict[str, dict[str, Any]]:
+    """Batch writer of ``observed_state`` and ``observed_state_source``."""
+    fields: dict[str, dict[str, Any]] = {}
+    for row_id, (state, source) in updates.items():
+        if not source:
+            raise RegisterError("observed_state_source is required")
+        fields[row_id] = {"observed_state": state, "observed_state_source": source}
+    return upsert_rows(root, fields, run_id=run_id)
+
+
+def stamp_generation(run_id: str, generation: str) -> str:
+    """Bind this live register to a presentation generation.
+
+    First writer stamps. A later stamp must name the same generation.
+    """
+    run_id = _safe_run_id(run_id)
+    if not generation:
+        raise RegisterError("generation must be non-empty")
+    with _write_locked(run_id):
+        doc = _read_register_unlocked(run_id)
+        existing = doc.get("generation")
+        if existing is None:
+            doc["generation"] = generation
+            _atomic_write_json(register_path(run_id), doc)
+            return generation
+        if existing != generation:
+            raise RegisterError(
+                f"run {run_id!r} generation {existing!r} does not match receipt {generation!r}"
+            )
+        return str(existing)
+
+
+def generation_sidecar_path(run_id: str) -> Path:
+    return register_dir() / f"{_safe_run_id(run_id)}.generation"
+
+
+def presentation_sidecar_path(run_id: str) -> Path:
+    return register_dir() / f"{_safe_run_id(run_id)}.presented"
+
+
+def _forget_presentation(run_id: str) -> None:
+    """Drop the presentation receipt and generation sidecar with this generation."""
+    for suffix in PRESENTATION_SIDECARS:
+        with contextlib.suppress(FileNotFoundError):
+            (register_dir() / f"{_safe_run_id(run_id)}{suffix}").unlink()
+
+
 # The two alternative hang-detection strategies (see the Time group docstring above). Both are
 # seeded to None at row creation so this pair — and only this pair — always round-trips
 # identically regardless of which strategy a given row uses; every other optional column stays
@@ -663,7 +829,12 @@ def rows_stamped_against(root: Path) -> dict[tuple[str, str], dict[str, Any]]:
 
 
 def upsert_row(
-    root: Path, row_id: str, fields: Mapping[str, Any], *, run_id: str
+    root: Path,
+    row_id: str,
+    fields: Mapping[str, Any],
+    *,
+    run_id: str,
+    writer: str = "",
 ) -> dict[str, Any]:
     """Create or merge-update one row.
 
@@ -677,11 +848,15 @@ def upsert_row(
 
     Returns the row exactly as stored, id included.
     """
-    return upsert_rows(root, {row_id: fields}, run_id=run_id)[row_id]
+    return upsert_rows(root, {row_id: fields}, run_id=run_id, writer=writer)[row_id]
 
 
 def upsert_rows(
-    root: Path, updates: Mapping[str, Mapping[str, Any]], *, run_id: str
+    root: Path,
+    updates: Mapping[str, Mapping[str, Any]],
+    *,
+    run_id: str,
+    writer: str = "",
 ) -> dict[str, dict[str, Any]]:
     """Create or merge-update several rows in one locked, atomic register rewrite.
 
@@ -708,7 +883,7 @@ def upsert_rows(
 
     claimed = canonical_work_location(root)
     with _write_locked(run_id):
-        return _upsert_rows_unlocked(claimed, normalized, run_id=run_id)
+        return _upsert_rows_unlocked(claimed, normalized, run_id=run_id, writer=writer)
 
 
 def _upsert_rows_unlocked(
@@ -716,6 +891,7 @@ def _upsert_rows_unlocked(
     normalized: Mapping[str, Mapping[str, Any]],
     *,
     run_id: str,
+    writer: str = "",
 ) -> dict[str, dict[str, Any]]:
     """Merge-update rows. Caller already holds the generation lock and a canonical ``claimed``."""
     doc = _read_register_unlocked(run_id)
@@ -740,6 +916,17 @@ def _upsert_rows_unlocked(
     for row_id, fields in normalized.items():
         existing = rows.get(row_id, {})
         is_new_row = not existing
+        if "artifact_path" in fields and writer != ARTIFACT_PATH_WRITER:
+            raise RegisterError(
+                "artifact_path is written only by settle_artifact at the moment "
+                "the artifact becomes true"
+            )
+        incoming_phase = fields.get("phase")
+        if incoming_phase == "planned" and existing.get("phase") in TERMINAL_PHASES:
+            raise RegisterError(
+                f"row {row_id!r} is {existing.get('phase')}; refusing to write "
+                "planned over a terminal phase"
+            )
         merged = {**existing, **fields, "id": row_id, "run_id": run_id}
         if is_new_row:
             for column in _TIME_STRATEGY_COLUMNS:
@@ -837,6 +1024,7 @@ def retire_run(root: Path, run_id: str) -> Path | None:
                     "location, so a mismatch leaves the key and sidecar untouched"
                 )
             _unlink_run_secret(run_id)
+            _forget_presentation(run_id)
             with contextlib.suppress(FileNotFoundError):
                 sidecar.unlink()
             existing = final_register_path(recorded, run_id)
@@ -861,6 +1049,7 @@ def retire_run(root: Path, run_id: str) -> Path | None:
         final_path = final_register_path(recorded, run_id)
         if not rows and final_path.exists():
             live.unlink(missing_ok=True)
+            _forget_presentation(run_id)
             with contextlib.suppress(FileNotFoundError):
                 sidecar.unlink()
             return final_path
@@ -876,6 +1065,7 @@ def retire_run(root: Path, run_id: str) -> Path | None:
                 final_doc[key] = value
         _atomic_write_json(final_path, final_doc)
         live.unlink(missing_ok=True)
+        _forget_presentation(run_id)
         with contextlib.suppress(FileNotFoundError):
             sidecar.unlink()
         return final_path

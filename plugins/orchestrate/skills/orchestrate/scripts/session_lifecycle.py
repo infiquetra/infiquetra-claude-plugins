@@ -19,7 +19,7 @@ import subprocess  # nosec B404 -- fixed argv, no shell
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
 import fleet_commons_shim
@@ -1043,13 +1043,12 @@ def _accept_effort_acknowledgement(
 
 
 def normalize_scope(scope: Sequence[str]) -> tuple[str, ...]:
-    normalized: list[str] = []
-    for item in scope:
-        path = PurePosixPath(item)
-        if path.is_absolute() or ".." in path.parts or str(path) in {"", "."}:
-            raise ValueError(f"scope entry {item!r} must be a bounded repository-relative path")
-        normalized.append(path.as_posix().rstrip("/"))
-    return tuple(normalized)
+    if not scope:
+        return ()
+    try:
+        return register_store.normalize_repo_relative_paths(scope, what="scope entry")
+    except register_store.RegisterError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 def path_in_scope(path: str, scope: Sequence[str]) -> bool:

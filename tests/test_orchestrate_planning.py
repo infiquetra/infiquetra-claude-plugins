@@ -72,11 +72,20 @@ def _commit(
     children: list[dict[str, Any]],
     *,
     run_id: str = "run-plan",
-    per_vendor_limit: int = ADMISSION.DEFAULT_PER_VENDOR,
-    aggregate_limit: int = ADMISSION.DEFAULT_AGGREGATE,
+    per_vendor_limit: int | None = None,
+    aggregate_limit: int | None = None,
     is_vendor_available: Any = None,
     now: float | None = None,
 ) -> Any:
+    if per_vendor_limit is not None or aggregate_limit is not None:
+        ADMISSION.write_host_policy(
+            per_vendor=(
+                per_vendor_limit if per_vendor_limit is not None else ADMISSION.DEFAULT_PER_VENDOR
+            ),
+            aggregate=(
+                aggregate_limit if aggregate_limit is not None else ADMISSION.DEFAULT_AGGREGATE
+            ),
+        )
     built = PLANNING.plan(
         "deliver the outcome",
         children,
@@ -84,13 +93,7 @@ def _commit(
         is_vendor_available=is_vendor_available,
     )
     PLANNING.issue_presentation_receipt(built)
-    return PLANNING.commit_plan(
-        built,
-        tmp_path,
-        per_vendor_limit=per_vendor_limit,
-        aggregate_limit=aggregate_limit,
-        now=now,
-    )
+    return PLANNING.commit_plan(built, tmp_path, now=now)
 
 
 # --------------------------------------------------------------------------- routing
@@ -234,7 +237,11 @@ def test_dead_holder_slot_is_reclaimed_and_the_queue_advances(tmp_path: Path) ->
     REGISTER.upsert_row(
         tmp_path,
         "dead",
-        {"observed_state": "exited", "pane_id": "w1:p9"},
+        {
+            "observed_state": "exited",
+            "observed_state_source": "observed:pane_exited",
+            "pane_id": "w1:p9",
+        },
         run_id="run-plan",
     )
     reclaimed = ADMISSION.reclaim_dead_slots(
@@ -369,6 +376,7 @@ def test_vendor_without_usage_consumes_its_declared_reservation(tmp_path: Path) 
     row = REGISTER.read_rows(tmp_path, run_id="run-plan")["silent"]
     assert row["tokens_reserved"] == reserved
     assert row.get("tokens_observed") is None
+    REGISTER.upsert_row(tmp_path, "silent", {"phase": "working"}, run_id="run-plan")
 
     ACCOUNTING.check_spend(tmp_path, run_id="run-plan", ceiling=reserved + 1, row_id="silent")
     with pytest.raises(ACCOUNTING.AccountingError, match="reached the captured cost"):
@@ -377,6 +385,7 @@ def test_vendor_without_usage_consumes_its_declared_reservation(tmp_path: Path) 
 
 def test_reaching_the_spend_ceiling_halts_and_reports(tmp_path: Path) -> None:
     _commit(tmp_path, [_child("metered", "work-medium", vendor="claude")])
+    REGISTER.upsert_row(tmp_path, "metered", {"phase": "working"}, run_id="run-plan")
     ACCOUNTING.record_observed_tokens(tmp_path, "metered", 1000, run_id="run-plan")
     with pytest.raises(ACCOUNTING.AccountingError, match="1000") as halted:
         ACCOUNTING.check_spend(tmp_path, run_id="run-plan", ceiling=1000, row_id="metered")
@@ -386,6 +395,7 @@ def test_reaching_the_spend_ceiling_halts_and_reports(tmp_path: Path) -> None:
 
 def test_missing_telemetry_fails_closed_rather_than_passing(tmp_path: Path) -> None:
     _commit(tmp_path, [_child("quiet", "work-medium", vendor="claude")])
+    REGISTER.upsert_row(tmp_path, "quiet", {"phase": "working"}, run_id="run-plan")
     with pytest.raises(ACCOUNTING.AccountingError, match="no tokens_observed") as closed:
         ACCOUNTING.check_spend(tmp_path, run_id="run-plan", ceiling=1_000_000, row_id="quiet")
     assert "fail closed" in str(closed.value)
@@ -724,7 +734,12 @@ def test_an_observed_exit_is_reclaimed_even_when_the_pane_id_remains(tmp_path: P
     REGISTER.upsert_row(
         tmp_path,
         "gone",
-        {"phase": "working", "pane_id": "w1:p9", "observed_state": "exited"},
+        {
+            "phase": "working",
+            "pane_id": "w1:p9",
+            "observed_state": "exited",
+            "observed_state_source": "observed:pane_exited",
+        },
         run_id="run-a",
     )
     reclaimed = ADMISSION.reclaim_dead_slots(
@@ -833,3 +848,267 @@ def test_concurrent_observed_token_writes_sum_exactly(tmp_path: Path) -> None:
     assert [proc.wait() for proc in procs] == [0] * workers
     row = REGISTER.read_rows(tmp_path, run_id="run-a")["metered"]
     assert row["tokens_observed"] == workers * increment
+
+
+def _record_root(root: Path, run_id: str) -> None:
+    path = REGISTER.register_dir() / f"{run_id}.root"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(str(root.resolve()), encoding="utf-8")
+    path.chmod(0o600)
+
+
+def test_commit_does_not_write_the_settled_artifact_column(tmp_path: Path) -> None:
+    _commit(tmp_path, [_child("child-a", "work-medium")])
+    REGISTER.upsert_row(tmp_path, "child-a", {"pane_id": "pane-a"}, run_id="run-plan")
+    snapshot = {
+        "panes": [{"pane_id": "pane-a", "agent_status": "working", "revision": 1}],
+        "agents": [],
+    }
+    before = {
+        record.row_id: record
+        for record in SUBSCRIBER.catch_up(tmp_path, snapshot, run_id="run-plan")
+    }
+    row = REGISTER.read_rows(tmp_path, run_id="run-plan")["child-a"]
+    assert "artifact_path" not in row
+    assert row["declared_artifact_path"] == "artifacts/child-a.json"
+    assert before["child-a"].artifact_exists is None
+
+    artifact = tmp_path / "artifacts" / "child-a.json"
+    artifact.parent.mkdir()
+    artifact.write_text("{}", encoding="utf-8")
+    REGISTER.upsert_row(
+        tmp_path,
+        "child-a",
+        {"artifact_path": str(artifact)},
+        run_id="run-plan",
+        writer=REGISTER.ARTIFACT_PATH_WRITER,
+    )
+    after = {
+        record.row_id: record
+        for record in SUBSCRIBER.catch_up(tmp_path, snapshot, run_id="run-plan")
+    }
+    assert after["child-a"].artifact_exists is True
+
+
+def test_a_terminal_row_cannot_be_replanned(tmp_path: Path) -> None:
+    _commit(tmp_path, [_child("c1", "work-medium", vendor="claude")])
+    REGISTER.upsert_row(tmp_path, "c1", {"phase": "reaped"}, run_id="run-plan")
+    with pytest.raises(ADMISSION.AdmissionError, match="reaped"):
+        _commit(tmp_path, [_child("c1", "work-medium", vendor="claude")])
+    assert REGISTER.read_rows(tmp_path, run_id="run-plan")["c1"]["phase"] == "reaped"
+
+
+def test_activate_slot_refuses_a_terminal_row(tmp_path: Path) -> None:
+    ADMISSION.reserve_slot(
+        tmp_path,
+        "c1",
+        run_id="run-a",
+        vendor="claude",
+        work_shape="work-medium",
+        tokens_max=20000,
+    )
+    REGISTER.upsert_row(tmp_path, "c1", {"phase": "reaped"}, run_id="run-a")
+    with pytest.raises(ADMISSION.AdmissionError, match="reaped"):
+        ADMISSION.activate_slot(tmp_path, "c1", run_id="run-a")
+
+
+def test_inferred_snapshot_absence_does_not_free_a_live_holder(tmp_path: Path) -> None:
+    ADMISSION.reserve_slot(
+        tmp_path,
+        "live",
+        run_id="run-a",
+        vendor="claude",
+        work_shape="work-medium",
+        tokens_max=20000,
+        now=100.0,
+    )
+    ADMISSION.activate_slot(tmp_path, "live", run_id="run-a", now=100.0)
+    REGISTER.upsert_row(
+        tmp_path,
+        "live",
+        {"phase": "working", "pane_id": "w1:p9"},
+        run_id="run-a",
+    )
+    SUBSCRIBER.catch_up(
+        tmp_path,
+        {"panes": [], "agents": []},
+        run_id="run-a",
+    )
+    row = REGISTER.read_rows(tmp_path, run_id="run-a")["live"]
+    assert row["observed_state"] == "exited"
+    assert row["observed_state_source"] == "inferred:snapshot_absence"
+    reclaimed = ADMISSION.reclaim_dead_slots(
+        tmp_path, run_id="run-a", lease_seconds=3600.0, now=101.0
+    )
+    assert reclaimed == []
+    assert row["pane_id"] == "w1:p9"
+    per_vendor, _aggregate = ADMISSION.occupancy(tmp_path)
+    assert per_vendor["claude"] == 1
+
+
+def test_silent_vendor_observed_value_cannot_lower_the_declared_maximum(
+    tmp_path: Path,
+) -> None:
+    _commit(tmp_path, [_child("silent", "work-medium", vendor="muse", tokens_max=20000)])
+    REGISTER.upsert_row(tmp_path, "silent", {"phase": "working"}, run_id="run-plan")
+    ACCOUNTING.record_observed_tokens(tmp_path, "silent", 1, run_id="run-plan")
+    row = REGISTER.read_rows(tmp_path, run_id="run-plan")["silent"]
+    assert row["tokens_max"] == 20000
+    assert row["tokens_observed"] == 1
+    assert ACCOUNTING.run_actual_tokens(tmp_path, run_id="run-plan") == 20000.0
+
+
+def test_commit_refuses_when_the_host_policy_has_drifted(tmp_path: Path) -> None:
+    built = PLANNING.plan(
+        "deliver the outcome",
+        [_child("c1", "work-medium"), _child("c2", "work-medium")],
+        run_id="run-plan",
+    )
+    PLANNING.issue_presentation_receipt(built)
+    ADMISSION.write_host_policy(per_vendor=4, aggregate=7)
+    with pytest.raises(PLANNING.PlanningError, match="host policy drifted"):
+        PLANNING.commit_plan(built, tmp_path)
+
+
+def test_retire_forgets_the_presentation_receipt(tmp_path: Path) -> None:
+    _commit(tmp_path, [_child("c1", "work-medium")])
+    _record_root(tmp_path, "run-plan")
+    receipt_path = PLANNING.presentation_receipt_path("run-plan")
+    generation_path = REGISTER.generation_sidecar_path("run-plan")
+    assert receipt_path.exists()
+    assert generation_path.exists()
+    REGISTER.retire_run(tmp_path, "run-plan")
+    assert not receipt_path.exists()
+    assert not generation_path.exists()
+    rebuilt = PLANNING.plan(
+        "deliver the outcome",
+        [_child("c1", "work-medium")],
+        run_id="run-plan",
+    )
+    with pytest.raises(PLANNING.PlanningError, match="presentation receipt"):
+        PLANNING.commit_plan(rebuilt, tmp_path)
+
+
+def test_queue_promotes_the_oldest_eligible_entry(tmp_path: Path) -> None:
+    ADMISSION.write_host_policy(per_vendor=1, aggregate=7)
+    _commit(
+        tmp_path,
+        [
+            _child("older-held", "work-medium", vendor="claude"),
+            _child("older-wait", "work-medium", vendor="claude"),
+        ],
+        run_id="run-z",
+        now=10.0,
+    )
+    _commit(
+        tmp_path,
+        [_child("newer-wait", "work-medium", vendor="claude")],
+        run_id="run-a",
+        now=20.0,
+    )
+    promoted = ADMISSION.release_slot(tmp_path, "older-held", run_id="run-z")
+    assert promoted is not None
+    assert promoted.row_id == "older-wait"
+
+
+def test_replayed_usage_events_are_not_counted_twice(tmp_path: Path) -> None:
+    REGISTER.upsert_row(tmp_path, "metered", {"vendor": "claude"}, run_id="run-a")
+    ACCOUNTING.apply_output_match(tmp_path, "metered", "tokens used: 100", run_id="run-a")
+    ACCOUNTING.apply_output_match(tmp_path, "metered", "tokens used: 200", run_id="run-a")
+    ACCOUNTING.apply_output_match(tmp_path, "metered", "tokens used: 100", run_id="run-a")
+    row = REGISTER.read_rows(tmp_path, run_id="run-a")["metered"]
+    assert row["tokens_observed"] == 200
+    ACCOUNTING.apply_output_match(tmp_path, "metered", "input 100 output 0 tokens", run_id="run-a")
+    ACCOUNTING.apply_output_match(tmp_path, "metered", "input 200 output 0 tokens", run_id="run-a")
+    ACCOUNTING.apply_output_match(tmp_path, "metered", "input 100 output 0 tokens", run_id="run-a")
+    row = REGISTER.read_rows(tmp_path, run_id="run-a")["metered"]
+    assert row["tokens_observed"] == 500
+
+
+def test_a_planned_child_has_spent_zero(tmp_path: Path) -> None:
+    _commit(tmp_path, [_child("quiet", "work-medium", vendor="claude")])
+    ACCOUNTING.check_spend(tmp_path, run_id="run-plan", ceiling=1)
+    assert ACCOUNTING.run_actual_tokens(tmp_path, run_id="run-plan") == 0.0
+
+
+def test_child_contract_matches_the_launch_boundary() -> None:
+    with pytest.raises(PLANNING.PlanningError, match="repository-relative"):
+        PLANNING.plan(
+            "outcome",
+            [_child("c1", "work-medium", scope="../outside")],
+            run_id="run-a",
+        )
+    with pytest.raises(PLANNING.PlanningError, match="repository-relative"):
+        PLANNING.plan(
+            "outcome",
+            [_child("c1", "work-medium", artifact_path="../../outside.json")],
+            run_id="run-a",
+        )
+    with pytest.raises(PLANNING.PlanningError, match="positive integer tokens_max"):
+        PLANNING.plan(
+            "outcome",
+            [_child("c1", "work-medium", tokens_max=1.9)],
+            run_id="run-a",
+        )
+    built = PLANNING.plan(
+        "outcome",
+        [_child("c1", "work-medium", scope=("src/", "tests/"))],
+        run_id="run-a",
+    )
+    assert built.children[0].scope == ("src", "tests")
+
+
+def test_host_policy_file_has_a_closed_schema(tmp_path: Path) -> None:
+    path = ADMISSION.policy_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("", encoding="utf-8")
+    with pytest.raises(ADMISSION.AdmissionError, match=str(path)):
+        ADMISSION.read_host_policy()
+    path.write_text('{"per_vendor": true, "aggregate": 3.9}', encoding="utf-8")
+    with pytest.raises(ADMISSION.AdmissionError, match="positive integer"):
+        ADMISSION.read_host_policy()
+    path.unlink()
+    assert ADMISSION.host_policy() == ADMISSION.HostPolicy(
+        ADMISSION.DEFAULT_PER_VENDOR, ADMISSION.DEFAULT_AGGREGATE
+    )
+
+
+def test_admission_refuses_foreign_row_columns(tmp_path: Path) -> None:
+    claimed = REGISTER.canonical_work_location(tmp_path)
+    ADMISSION.reserve_slot(
+        tmp_path,
+        "c1",
+        run_id="run-a",
+        vendor="claude",
+        work_shape="work-medium",
+        tokens_max=20000,
+    )
+    with ADMISSION.admission_locked(), REGISTER.generation_locked("run-a"):
+        doc = REGISTER._read_register_unlocked("run-a")
+        state = ADMISSION._admission_doc(doc)
+        with pytest.raises(ADMISSION.AdmissionError, match="does not write"):
+            ADMISSION._write_admission(
+                claimed,
+                "run-a",
+                queue=state["queue"],
+                reservations=state["reservations"],
+                row_updates={"c1": {"observed_state": "exited", "phase": "planned"}},
+            )
+
+
+def test_a_reservation_names_its_occupant(tmp_path: Path) -> None:
+    ADMISSION.reserve_slot(
+        tmp_path,
+        "c1",
+        run_id="run-a",
+        vendor="claude",
+        work_shape="work-medium",
+        tokens_max=20000,
+    )
+    doc = json.loads(REGISTER.register_path("run-a").read_text(encoding="utf-8"))
+    reservation = doc["admission"]["reservations"]["c1"]
+    assert reservation["run_id"] == "run-a"
+    assert reservation["row_id"] == "c1"
+    assert reservation["vendor"] == "claude"
+    assert reservation["work_location"]
+    assert reservation["lease_until"] is None

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -78,7 +79,7 @@ class PlannedChild:
     vendor: str
     model: str
     effort: str
-    scope: str
+    scope: tuple[str, ...]
     artifact_path: str
     predicate: Mapping[str, Any]
     integration_mode: str
@@ -108,11 +109,12 @@ class Plan:
 
 @dataclass(frozen=True)
 class PresentationReceipt:
-    """Digest of the rendered plan. The composition unit is the real producer."""
+    """Digest of the rendered plan, bound to one register generation."""
 
     run_id: str
     digest: str
     text: str
+    generation: str
 
 
 def execution_class_for(work_shape: str) -> str:
@@ -232,12 +234,26 @@ def route(
 
 
 def _require_child_contract(row_id: str, spec: Mapping[str, Any]) -> dict[str, Any]:
-    scope = spec.get("scope")
-    if not isinstance(scope, str) or not scope.strip():
+    raw_scope = spec.get("scope")
+    if isinstance(raw_scope, str):
+        scope_seq: tuple[str, ...] = (raw_scope,)
+    elif isinstance(raw_scope, Sequence) and not isinstance(raw_scope, (bytes, bytearray)):
+        scope_seq = tuple(str(item) for item in raw_scope)
+    else:
         raise PlanningError(f"child {row_id!r} needs a non-empty scope")
+    try:
+        scope = register_store.normalize_repo_relative_paths(scope_seq, what="scope")
+    except register_store.RegisterError as exc:
+        raise PlanningError(f"child {row_id!r} {exc}") from exc
     artifact = spec.get("artifact_path")
     if not isinstance(artifact, str) or not artifact.strip():
         raise PlanningError(f"child {row_id!r} needs a non-empty artifact_path")
+    try:
+        declared = register_store.normalize_repo_relative_paths(
+            (artifact.strip(),), what="artifact_path"
+        )
+    except register_store.RegisterError as exc:
+        raise PlanningError(f"child {row_id!r} {exc}") from exc
     mode = spec.get("integration_mode")
     if not isinstance(mode, str) or mode not in INTEGRATION_MODES:
         raise PlanningError(
@@ -248,14 +264,14 @@ def _require_child_contract(row_id: str, spec: Mapping[str, Any]) -> dict[str, A
     except completion.PredicateSchemaError as exc:
         raise PlanningError(f"child {row_id!r} predicate is not the closed schema: {exc}") from exc
     raw_max = spec.get("tokens_max")
-    if isinstance(raw_max, bool) or not isinstance(raw_max, (int, float)) or int(raw_max) <= 0:
-        raise PlanningError(f"child {row_id!r} needs a positive tokens_max")
+    if isinstance(raw_max, bool) or not isinstance(raw_max, int) or raw_max <= 0:
+        raise PlanningError(f"child {row_id!r} needs a positive integer tokens_max")
     return {
-        "scope": scope.strip(),
-        "artifact_path": artifact.strip(),
+        "scope": scope,
+        "artifact_path": declared[0],
         "integration_mode": mode,
         "predicate": predicate.to_mapping(),
-        "tokens_max": int(raw_max),
+        "tokens_max": raw_max,
     }
 
 
@@ -290,10 +306,6 @@ def plan(
             effort=spec.get("effort"),
             is_vendor_available=is_vendor_available,
         )
-        if routed.vendor in SILENT_VENDORS and ceiling is not None:
-            # A silent vendor cannot prove actuals. The declared maximum is the
-            # charge; it is not observed usage.
-            pass
         planned.append(
             PlannedChild(
                 row_id=row_id,
@@ -346,7 +358,7 @@ def render_plan(built: Plan) -> str:
             f"shape={child.work_shape} class={child.execution_class} "
             f"tokens_max={child.tokens_max} reserved={child.tokens_reserved}"
         )
-        lines.append(f"    scope: {child.scope}")
+        lines.append(f"    scope: {', '.join(child.scope)}")
         lines.append(f"    artifact_path: {child.artifact_path}")
         lines.append(f"    integration_mode: {child.integration_mode}")
         lines.append(f"    predicate: {json.dumps(dict(child.predicate), sort_keys=True)}")
@@ -367,7 +379,19 @@ def plan_digest(built: Plan) -> str:
 
 
 def presentation_receipt_path(run_id: str) -> Path:
-    return register_store.register_dir() / f"{register_store._safe_run_id(run_id)}.presented"
+    return register_store.presentation_sidecar_path(run_id)
+
+
+def _mint_generation(run_id: str) -> str:
+    path = register_store.generation_sidecar_path(run_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        existing = path.read_text(encoding="utf-8").strip()
+        if existing:
+            return existing
+    generation = uuid.uuid4().hex
+    path.write_text(generation + "\n", encoding="utf-8")
+    return generation
 
 
 def present_plan(built: Plan) -> tuple[Plan, str]:
@@ -380,13 +404,27 @@ def issue_presentation_receipt(built: Plan) -> PresentationReceipt:
 
     This unit is not the operator channel. The composition unit is the producer
     that should call this after the operator has actually been shown the text.
+    The receipt is bound to a generation sidecar that ``retire_run`` forgets
+    with the live register.
     """
     text = render_plan(built)
-    receipt = PresentationReceipt(run_id=built.run_id, digest=plan_digest(built), text=text)
+    generation = _mint_generation(built.run_id)
+    receipt = PresentationReceipt(
+        run_id=built.run_id,
+        digest=plan_digest(built),
+        text=text,
+        generation=generation,
+    )
     path = presentation_receipt_path(built.run_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     register_store._atomic_write_json(
-        path, {"run_id": receipt.run_id, "digest": receipt.digest, "text": receipt.text}
+        path,
+        {
+            "run_id": receipt.run_id,
+            "digest": receipt.digest,
+            "text": receipt.text,
+            "generation": receipt.generation,
+        },
     )
     return receipt
 
@@ -399,7 +437,29 @@ def load_presentation_receipt(run_id: str) -> PresentationReceipt:
             "after the operator channel delivers the rendered text"
         )
     raw = json.loads(path.read_text(encoding="utf-8"))
-    return PresentationReceipt(str(raw["run_id"]), str(raw["digest"]), str(raw.get("text") or ""))
+    generation = str(raw.get("generation") or "")
+    sidecar = register_store.generation_sidecar_path(run_id)
+    if not generation or not sidecar.exists():
+        raise PlanningError("presentation receipt is not bound to a live generation")
+    stored = sidecar.read_text(encoding="utf-8").strip()
+    if stored != generation:
+        raise PlanningError("presentation receipt generation does not match this run")
+    return PresentationReceipt(
+        str(raw["run_id"]),
+        str(raw["digest"]),
+        str(raw.get("text") or ""),
+        generation,
+    )
+
+
+def _require_matching_host_policy(built: Plan) -> None:
+    current = admission.host_policy()
+    if current.per_vendor != built.per_vendor_limit or current.aggregate != built.aggregate_limit:
+        raise PlanningError(
+            "host policy drifted: rendered per-vendor "
+            f"{built.per_vendor_limit}, aggregate {built.aggregate_limit}; "
+            f"current per-vendor {current.per_vendor}, aggregate {current.aggregate}"
+        )
 
 
 def commit_plan(
@@ -407,60 +467,67 @@ def commit_plan(
     root: Path,
     *,
     receipt: PresentationReceipt | None = None,
-    per_vendor_limit: int | None = None,
-    aggregate_limit: int | None = None,
     now: float | None = None,
 ) -> Plan:
     """Reserve slots and write planned rows. Requires a matching presentation receipt.
 
     Does not launch. A queued child is written as queued, not as an error.
+    The durable host policy must still equal the rendered bounds. This function
+    does not accept a per-call limit the rendered plan does not own.
     """
     shown = receipt if receipt is not None else load_presentation_receipt(built.run_id)
     expected = plan_digest(built)
     if shown.run_id != built.run_id or shown.digest != expected:
         raise PlanningError("presentation receipt does not match this plan")
+    if not shown.generation:
+        raise PlanningError("presentation receipt is not bound to a live generation")
+    claimed = register_store.canonical_work_location(root)
     committed: list[PlannedChild] = []
-    for child in built.children:
-        decision = admission.reserve_slot(
-            root,
-            child.row_id,
-            run_id=built.run_id,
-            vendor=child.vendor,
-            work_shape=child.execution_class,
-            tokens_max=child.tokens_max,
-            per_vendor_limit=per_vendor_limit,
-            aggregate_limit=aggregate_limit,
-            now=now,
-        )
-        register_store.upsert_row(
-            root,
-            child.row_id,
-            {
-                "phase": "planned",
-                "task": child.task,
-                "work_shape": child.work_shape,
-                "execution_class": child.execution_class,
-                "vendor": child.vendor,
-                "agent": child.vendor,
-                "model": child.model,
-                "effort": child.effort,
-                "scope": child.scope,
-                "artifact_path": child.artifact_path,
-                "predicate": dict(child.predicate),
-                "integration_mode": child.integration_mode,
-                "tokens_reserved": child.tokens_max,
-                "tokens_max": child.tokens_max,
-                "substitutions": [dict(item) for item in child.substitutions],
-                "override": dict(child.override) if child.override else None,
-                "workspace_boundary": child.workspace_boundary,
-            },
-            run_id=built.run_id,
-        )
-        committed.append(
-            replace(
-                child,
-                admission=decision.status,
-                admission_reason=decision.reason,
+    with admission.admission_locked():
+        _require_matching_host_policy(built)
+        sidecar = register_store.generation_sidecar_path(built.run_id)
+        if not sidecar.exists() or sidecar.read_text(encoding="utf-8").strip() != shown.generation:
+            raise PlanningError("presentation receipt generation does not match this run")
+        for child in built.children:
+            decision = admission._reserve_under_admission_lock(
+                claimed,
+                child.row_id,
+                run_id=built.run_id,
+                vendor=child.vendor,
+                work_shape=child.execution_class,
+                tokens_max=child.tokens_max,
+                now=now,
             )
-        )
+            register_store.stamp_generation(built.run_id, shown.generation)
+            register_store.write_phase(root, child.row_id, "planned", run_id=built.run_id)
+            register_store.upsert_row(
+                root,
+                child.row_id,
+                {
+                    "task": child.task,
+                    "work_shape": child.work_shape,
+                    "execution_class": child.execution_class,
+                    "vendor": child.vendor,
+                    "agent": child.vendor,
+                    "model": child.model,
+                    "effort": child.effort,
+                    "scope": list(child.scope),
+                    "declared_artifact_path": child.artifact_path,
+                    "predicate": dict(child.predicate),
+                    "integration_mode": child.integration_mode,
+                    "tokens_reserved": child.tokens_max,
+                    "tokens_max": child.tokens_max,
+                    "substitutions": [dict(item) for item in child.substitutions],
+                    "override": dict(child.override) if child.override else None,
+                    "workspace_boundary": child.workspace_boundary,
+                },
+                run_id=built.run_id,
+            )
+            committed.append(
+                replace(
+                    child,
+                    admission=decision.status,
+                    admission_reason=decision.reason,
+                )
+            )
     return replace(built, children=tuple(committed))

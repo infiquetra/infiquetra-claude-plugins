@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.5.2] - 2026-08-15
+
+### Fixed
+
+- Shared register columns name one writer. `phase="planned"` cannot replace a
+  terminal phase. `artifact_path` is written only when the artifact is settled.
+  Admission writes only the row fields it owns.
+- Re-planning a finished child is refused, including when its reservation is
+  still held. `activate_slot` refuses a terminal row.
+- An inferred snapshot absence is not immediate death. Reclaim of a held slot
+  still requires a directly observed exit, an expired holder lease, or a
+  terminal phase.
+- A silent vendor is charged its declared `tokens_max` once launched. An
+  observed value cannot lower that ceiling.
+- `commit_plan` no longer accepts per-call limits the rendered plan does not
+  own. The durable host policy must still equal the bounds the operator was
+  shown. The presentation receipt is bound to a generation and is forgotten
+  with the register.
+- Queue promotion takes the globally oldest eligible entry by enqueue time.
+
+### Changed
+
+- A planned or queued child has spent zero. A launched metered child with no
+  telemetry still fails closed.
+- Usage replay is deduplicated by event identity. Cumulative totals keep a
+  monotonic maximum; input/output samples add.
+- Child `scope` is a sequence of bounded repository-relative paths.
+  `tokens_max` is an exact positive integer.
+- An absent host policy file still defaults. Every other unreadable or
+  malformed file is an admission error that names the path.
+
 ## [0.5.1] - 2026-08-14
 
 ### Fixed

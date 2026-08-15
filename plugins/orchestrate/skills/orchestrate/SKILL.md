@@ -121,7 +121,9 @@ or underscored subscription is an error, never an ignored entry.
 creates an ordinary register row with `agent="subscriber"`, wakes the orchestrator through
 `agent.prompt`, and runs one `session.snapshot` catch-up after every accepted subscription,
 including startup. Catch-up updates `observed_state`, reports disagreement with `expected_state`,
-and checks declared `artifact_path` presence. Its `observed_state_source` records whether the value
+and checks the settled `artifact_path` column. A plan declaration is not that
+column; catch-up reports presence as unknown until settlement writes it. Its
+`observed_state_source` records whether the value
 was directly observed or inferred from pane/tab presence. A catch-up failure is reported but does
 not close the accepted event stream. It does not evaluate predicates.
 
@@ -266,20 +268,29 @@ The generation lock is per run and is not reentrant. Bounds are host-wide, so
 admission takes `admission.lock` first, then the run's generation lock, and never
 the reverse. An optional `admission.policy` file beside that lock is the durable
 operator-set rule. Reserve never writes it. If the file is absent the module
-defaults apply. `write_host_policy` is the only writer. Work-location binding
-on a write is unchanged: a run still belongs to one directory. When promoting
-a queued child of another run, the write uses *that* run's stored location.
+defaults apply. Any other unreadable or malformed file is an admission error that
+names the path; only exact positive integers are accepted. `write_host_policy` is
+the only writer. Work-location binding on a write is unchanged: a run still
+belongs to one directory. When promoting a queued child of another run, the write
+uses *that* run's stored location. Promotion takes the globally oldest eligible
+entry by enqueue time.
 
 `scripts/accounting.py` is the spend gate. Every planned child declares a positive
-`tokens_max`. That number is `tokens_reserved`. For a vendor with no usage line it
-is charged as a declared maximum, not labelled observed actual. `tokens_observed`
-is produced from a usage `pane.output_matched` line. Missing telemetry fails
-closed. `authorize_spend` is never passed `None` to mean a silent vendor.
+integer `tokens_max`. That number is `tokens_reserved`. A planned or queued child
+has spent zero. Once launched, a vendor with no usage line is charged that
+declared maximum; an observed value cannot lower it. `tokens_observed` is produced
+from a usage `pane.output_matched` line. Cumulative totals keep a monotonic
+maximum; delta samples add. A replayed event identity is not spend. A launched
+metered child with no telemetry fails closed. `authorize_spend` is never passed
+`None` to mean a silent vendor.
 
 `plan` and `present_plan` write nothing. `present_plan` only renders. `commit_plan`
-requires a presentation receipt whose digest matches this plan. This unit can write
+requires a presentation receipt whose digest and generation match this plan, and
+whose rendered host bounds still equal the durable policy. This unit can write
 that receipt; the composition unit is the producer that should write it after the
-operator channel delivers the text. None of them launch a child.
+operator channel delivers the text. `retire_run` forgets the receipt with the
+generation. None of them launch a child. `commit_plan` does not write the settled
+`artifact_path` column.
 
 `activate_slot` marks a matching reservation `held`. It does not launch and does
 not write `phase`.

@@ -2,6 +2,32 @@
 
 ## 2026-08-14
 
+### Shared register columns have one writer function  {#register-column-ownership}
+
+**Decision.** `register.py` is the schema owner. It publishes
+`COLUMN_OWNERSHIP`: for every column more than one module can reach, one
+function may write it and that write asserts one fact. `write_phase` owns
+`phase`. `settle_artifact` owns `artifact_path`. `record_observed_state`
+owns `observed_state` and its source. `commit_plan` owns `tokens_max`.
+`record_observed_tokens` owns `tokens_observed`. `reserve_slot` owns the
+reservation record. The merger refuses a foreign `artifact_path` and refuses
+`planned` over a terminal phase. Admission's private write path is an
+allowlist.
+
+A planned reservation has no wall-clock expiry. An operator who approves a
+plan and walks away must not lose it to a clock. The reservation record
+carries run, row, vendor, and work location so a later reconciler can name
+the occupant. Owner recovery belongs to the composition unit.
+
+**Rejected: a required writer token on every `upsert_row`.** Tests and later
+lifecycle units plant `phase` through the merger. Forcing a token would
+rewrite surfaces this unit does not own.
+**Rejected: a wall-clock lease on every planned reservation.** That
+recreates eager reclaim the moment an operator pauses.
+
+**Revisit when** composition wires launch to `activate_slot` and adds
+deliberate abandon-or-resume.
+
 ### Admission owns reservations, not phases  {#admission-owns-reservations}
 
 **Decision.** The bound is the reservation set on every live run on the

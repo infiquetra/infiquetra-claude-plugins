@@ -2,6 +2,37 @@
 
 ## 2026-08-15
 
+### The mirror's liveness feed gets its own column rather than a second writer of `last_event_at`  {#mirror-liveness-own-column}
+
+The register documents `last_event_at` as the hang-detection input that must be fed by herdr's
+pane-output `revision` counter, and names the mirror's unit as the reader that must honour that.
+The mirror now *has* a revision reader — a supervision-tick snapshot read that advances the clock
+without touching the subscriber's wake path, which is what lets it tell a thinking mirror from a
+dead one. The obvious place to put the result is `last_event_at` itself.
+
+**Decision.** It writes `mirror_pane_activity`, a column this module owns, and `check_liveness`
+reads both feeds and takes the later instant.
+
+The subscriber already writes `last_event_at`, on matched sentinels. Writing it here too would
+make two modules writers of one column with the ownership recorded nowhere checkable — the
+defect this codebase has paid for most often, and the reason the mirror uses `role`
+rather than `agent` in the first place. Nothing is lost by splitting: both feeds are read, the
+later wins, and `MirrorLiveness.reference_source` reports which one the answer rested on, which
+is information a single column would have destroyed.
+
+**Rejected: write `last_event_at` because the register names this unit as its reader.** Reader
+and writer are different roles, and the sentence names the first. Taking it as licence to write
+would be the two-writer defect wearing a documentation quote.
+**Rejected: move `last_event_at` wholly to the mirror for mirror rows.** That is a change to the
+subscriber's contract for one row type, decided unilaterally by the module that benefits.
+
+**Revisit when** the register's ownership table lands. If it assigns `last_event_at` a single
+owner who is the revision reader, `mirror_pane_activity` should fold into it. Until then this
+module is the sole writer of its own column and reads the other's.
+
+**Refs.** LEARNINGS [`{#hung-mirror-needs-a-clock}`](LEARNINGS.md#hung-mirror-needs-a-clock);
+[`{#mirror-row-identified-by-role}`](#mirror-row-identified-by-role).
+
 ### The mirror's register row is identified by `role`, not by `agent`  {#mirror-row-identified-by-role}
 
 The register's own docstring describes `agent` as "a role such as mirror/subscriber for the two

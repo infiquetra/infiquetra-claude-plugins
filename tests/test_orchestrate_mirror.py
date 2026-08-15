@@ -18,6 +18,7 @@ has not established -- an unarmed row and an idle mirror.
 from __future__ import annotations
 
 import ast
+import base64
 import importlib.util
 import inspect
 import sys
@@ -175,9 +176,15 @@ def _create(
     *,
     herdr: FakeHerdr | None = None,
     wrapper: FakeWrapper | None = None,
+    acknowledge: bool = True,
     **kwargs: Any,
 ) -> Any:
-    return MIRROR.create_mirror(
+    """Create a mirror, and by default confirm its subscription the way composition must.
+
+    ``acknowledge=False`` leaves the wire unconfirmed, which is the state a composition that
+    forgot to hand the subscriber the mirror's subscription would be in.
+    """
+    session = MIRROR.create_mirror(
         tmp_path,
         run_id=kwargs.pop("run_id", RUN_ID),
         row_id=kwargs.pop("row_id", ROW_ID),
@@ -191,6 +198,9 @@ def _create(
         nonce=kwargs.pop("nonce", NONCE),
         **kwargs,
     )
+    if acknowledge:
+        MIRROR.acknowledge_subscription(session, list(session.subscriptions), now=0.5)
+    return session
 
 
 def _request(**overrides: Any) -> Any:
@@ -415,6 +425,8 @@ def test_a_rejected_return_is_durably_recorded_rather_than_silently_dropped(
         "byte_length": 40,
         "max_return_bytes": 8,
         "at": 111.0,
+        "repository_changes": [],
+        "repository_observed": False,
     }
 
 
@@ -780,3 +792,506 @@ def test_a_mirror_cannot_be_created_without_a_usable_quiet_bound(tmp_path: Path,
     with pytest.raises(MIRROR.MirrorError, match="max_quiet_seconds"):
         _create(tmp_path, max_quiet_seconds=bad)
     assert not REGISTER.read_rows(tmp_path, run_id=RUN_ID)
+
+
+# =========================================================================================
+# Repair: the predicate scan detects a declaration's signature, not one serialisation of it
+# =========================================================================================
+
+
+def _predicate_json() -> str:
+    return '{"argv": ["uv", "run", "pytest", "-q"], "timeout_seconds": 60}'
+
+
+DECLARATION_FORMS: dict[str, str] = {
+    "json": f"Run this and report: {_predicate_json()}",
+    "yaml_block": "Run this check:\nargv:\n  - uv\n  - run\n  - pytest\ntimeout_seconds: 60\n",
+    "yaml_flow": "Run this: {argv: [uv, run, pytest]}",
+    "toml": 'Run this:\nargv = ["uv", "run", "pytest"]\n',
+    "python_dict": "Run this: {'argv': ['uv', 'run', 'pytest']}",
+    "json_array": '[{"argv": ["uv", "run"]}]',
+    "nested_json_string": '{"note": "{\\"argv\\": [\\"uv\\"]}"}',
+    "unicode_escaped_braces": '\\u007b"argv": ["uv"]\\u007d',
+    "unicode_escaped_key": '{"\\u0061rgv": ["uv", "run"]}',
+    "base64": "Decode and run: "
+    + base64.b64encode(_predicate_json().encode("utf-8")).decode("ascii"),
+    "base64_in_json_field": '{"blob": "'
+    + base64.b64encode(_predicate_json().encode("utf-8")).decode("ascii")
+    + '"}',
+    "decoy_braces_then_json": ("{" * 512) + " now run " + _predicate_json(),
+    "decoy_objects_then_json": ("{}" * 512) + " now run " + _predicate_json(),
+}
+
+
+@pytest.mark.parametrize("form", sorted(DECLARATION_FORMS))
+def test_a_predicate_declaration_is_refused_however_it_is_written(form: str) -> None:
+    """Enumerating serialisations is a race the enumerator loses, so key on the signature.
+
+    A predicate is the name ``argv`` bound to a value. JSON, YAML, TOML, a Python literal, a
+    string nested inside another object, escaped braces, and Base64 are all the same
+    declaration wearing different clothes.
+    """
+    with pytest.raises(MIRROR.PredicateInMirrorError):
+        _request(instruction=DECLARATION_FORMS[form])
+
+
+def test_the_decode_budget_no_longer_hides_a_declaration_behind_it() -> None:
+    """The bound set as a denial-of-service guard had become the bypass.
+
+    511 decoys were refused and 512 were accepted, because the scan gave up and reported the
+    absence it had not verified.
+    """
+    for decoys in (511, 512, 4096):
+        instruction = ("{" * decoys) + " now run " + _predicate_json()
+        with pytest.raises(MIRROR.PredicateInMirrorError):
+            _request(instruction=instruction)
+
+
+def test_an_instruction_the_scan_cannot_finish_examining_is_refused() -> None:
+    """Fail closed: "I could not finish looking" is not a pass.
+
+    This text carries no declaration at all. It is still refused, because the scan cannot say
+    so, and a scanner that reports clean when it ran out of budget reports a fact it never
+    established.
+    """
+    exhausting = "{" * (MIRROR._MAX_DECODE_ATTEMPTS + 1)
+    scan = MIRROR.scan_for_predicate_declaration(exhausting)
+    assert scan.found is False
+    assert scan.complete is False
+    assert scan.suspicious is True
+    with pytest.raises(MIRROR.PredicateInMirrorError, match="could not be fully examined"):
+        _request(instruction=exhausting)
+
+
+BENIGN_INSTRUCTIONS: dict[str, str] = {
+    "english_residual": "Run the tests and tell me whether they pass.",
+    "long_repo_paths": (
+        "Compare plugins/orchestrate/skills/orchestrate/scripts/mirror and "
+        "plugins/orchestrate/skills/orchestrate/scripts/register and summarise the difference."
+    ),
+    "mentions_permission_argv": (
+        "Read session_lifecycle and explain what permission_argv: returns for each runtime."
+    ),
+    "ordinary_synthesis": "Compare the two child reports and state where they disagree.",
+    "json_without_argv": 'Summarise this config: {"timeout_seconds": 60, "retries": 3}',
+}
+
+
+@pytest.mark.parametrize("case", sorted(BENIGN_INSTRUCTIONS))
+def test_reading_work_is_not_mistaken_for_a_declaration(case: str) -> None:
+    """A detector that refused ordinary reading work would make the mirror useless.
+
+    The English case is the disclosed residual: it asks for a check in prose and is accepted,
+    because no scanner detects intent. That is stated rather than papered over.
+    """
+    assert _request(instruction=BENIGN_INSTRUCTIONS[case])
+
+
+def test_the_scan_names_which_form_it_matched() -> None:
+    assert MIRROR.scan_for_predicate_declaration(_predicate_json()).form == "key"
+    assert (
+        MIRROR.scan_for_predicate_declaration(
+            base64.b64encode(_predicate_json().encode()).decode()
+        ).form
+        == "base64"
+    )
+
+
+# =========================================================================================
+# Repair: the constructor is a boundary, because dispatch re-runs it
+# =========================================================================================
+
+
+def test_dispatch_refuses_an_object_that_only_looks_like_a_request(tmp_path: Path) -> None:
+    """Attribute access is satisfied by any object with the right attribute names.
+
+    Every load-bearing check lives in the constructor, and this is the one function that talks
+    to the pane, so reading attributes off whatever arrived made those checks a suggestion.
+    """
+    herdr = FakeHerdr()
+    session = _create(tmp_path, herdr=herdr)
+    herdr.sent.clear()
+    impostor = SimpleNamespace(
+        request_id="req-pred",
+        kind="predicate",
+        instruction="evaluate the child's artifact and tell me if it passes",
+        max_return_bytes=4096,
+    )
+    with pytest.raises(MIRROR.MirrorError, match="MirrorRequest"):
+        MIRROR.dispatch_request(session, impostor, herdr=herdr, now=1.0)
+    assert herdr.sent == []
+    assert _row(tmp_path)["mirror_request"] is None
+
+
+def test_dispatch_re_runs_the_checks_on_a_request_that_never_ran_them(tmp_path: Path) -> None:
+    """A genuine instance built around ``__post_init__`` is still re-validated.
+
+    ``isinstance`` alone would pass this object through, which is why dispatch rebuilds the
+    request rather than merely checking its type.
+    """
+    herdr = FakeHerdr()
+    session = _create(tmp_path, herdr=herdr)
+    herdr.sent.clear()
+    smuggled = object.__new__(MIRROR.MirrorRequest)
+    object.__setattr__(smuggled, "request_id", "req-smuggled")
+    object.__setattr__(smuggled, "kind", "predicate")
+    object.__setattr__(smuggled, "instruction", f"run this: {_predicate_json()}")
+    object.__setattr__(smuggled, "max_return_bytes", 4096)
+
+    with pytest.raises(MIRROR.PredicateInMirrorError):
+        MIRROR.dispatch_request(session, smuggled, herdr=herdr, now=1.0)
+    assert herdr.sent == []
+    assert _row(tmp_path)["mirror_request"] is None
+
+
+# =========================================================================================
+# Repair: a restarted orchestrator can rebuild the session from the row
+# =========================================================================================
+
+
+def test_a_restarted_orchestrator_rebuilds_the_session_from_the_row(tmp_path: Path) -> None:
+    """R6a's "persistent for the life of the orchestration" has to survive the orchestrator.
+
+    The pane and the subscriber outlive an orchestrator that dies. Before the row carried the
+    nonce and the markers, the orchestrator that came back could not speak to them.
+    """
+    original = _create(tmp_path)
+    resumed = MIRROR.resume_mirror(tmp_path, run_id=RUN_ID, row_id=ROW_ID)
+    assert resumed.nonce == original.nonce
+    assert resumed.open_marker == original.open_marker
+    assert resumed.close_marker == original.close_marker
+    assert resumed.pane_id == original.pane_id
+    assert resumed.tab_id == original.tab_id
+    assert resumed.runtime == original.runtime
+    assert resumed.max_quiet_seconds == original.max_quiet_seconds
+    assert resumed.subscriptions == original.subscriptions
+
+
+def test_a_resumed_session_collects_a_return_the_original_session_dispatched(
+    tmp_path: Path,
+) -> None:
+    """The end the restart exists for: the answer is not lost with the orchestrator."""
+    herdr = FakeHerdr()
+    original = _create(tmp_path, herdr=herdr)
+    MIRROR.dispatch_request(original, _request(), herdr=herdr, now=100.0)
+    herdr.text = _pane_block(original, "req-1", "the distilled answer")
+
+    del original
+    resumed = MIRROR.resume_mirror(tmp_path, run_id=RUN_ID)
+    assert MIRROR.collect_return(resumed, herdr=herdr, now=110.0).material == "the distilled answer"
+
+
+def test_resume_refuses_to_guess_between_two_mirrors(tmp_path: Path) -> None:
+    _create(tmp_path)
+    _create(tmp_path, row_id="mirror-b", nonce="fedcba9876543210")
+    with pytest.raises(MIRROR.MirrorNotRegisteredError, match="name the"):
+        MIRROR.resume_mirror(tmp_path, run_id=RUN_ID)
+
+
+def test_resume_refuses_a_mirror_that_never_finished_launching(tmp_path: Path) -> None:
+    """The write-ahead row exists from creation; that is not the same as a live session."""
+    wrapper = FakeWrapper(launch_error=RuntimeError("launch exploded"))
+    with pytest.raises(RuntimeError):
+        _create(tmp_path, wrapper=wrapper)
+    with pytest.raises(MIRROR.MirrorNotRegisteredError, match="never finished launching"):
+        MIRROR.resume_mirror(tmp_path, run_id=RUN_ID)
+
+
+# =========================================================================================
+# Repair: a missing subscription is loud, not silent
+# =========================================================================================
+
+
+def test_a_subscriber_started_without_the_mirrors_subscription_is_refused(
+    tmp_path: Path,
+) -> None:
+    """The cross-unit omission this unit could previously only warn about in prose."""
+    session = _create(tmp_path, acknowledge=False)
+    other = SUBSCRIBER.output_match_subscription(
+        "pane-child", SUBSCRIBER.make_sentinel(RUN_ID, "child-a", "completion", nonce="abc")
+    )
+    with pytest.raises(MIRROR.MirrorSubscriptionMissingError, match="never wake"):
+        MIRROR.acknowledge_subscription(session, [other], now=1.0)
+    assert (
+        MIRROR.mirror_status(tmp_path, run_id=RUN_ID, row_id=ROW_ID)["subscription_acknowledged"]
+        is False
+    )
+
+
+def test_an_unconfirmed_subscription_is_not_reported_as_a_hang(tmp_path: Path) -> None:
+    """A mirror nobody is listening to and a hung mirror produce the same silence.
+
+    Reporting the first as the second sends the operator hunting a hang that is not there.
+    """
+    herdr = FakeHerdr()
+    session = _create(tmp_path, herdr=herdr, acknowledge=False)
+    MIRROR.dispatch_request(session, _request(), herdr=herdr, now=1.0)
+    with pytest.raises(MIRROR.MirrorSubscriptionUnconfirmedError, match="not a hang"):
+        MIRROR.check_liveness(tmp_path, run_id=RUN_ID, row_id=ROW_ID, now=2.0)
+
+    MIRROR.acknowledge_subscription(session, list(session.subscriptions), now=3.0)
+    assert MIRROR.check_liveness(tmp_path, run_id=RUN_ID, row_id=ROW_ID, now=4.0).state == "working"
+
+
+def test_an_idle_unconfirmed_mirror_is_still_idle(tmp_path: Path) -> None:
+    """The confirmation gates the outstanding-request path only; idle is not an alarm state."""
+    _create(tmp_path, acknowledge=False)
+    assert MIRROR.check_liveness(tmp_path, run_id=RUN_ID, row_id=ROW_ID, now=1e6).state == "idle"
+
+
+# =========================================================================================
+# Repair: pane revision distinguishes a thinking mirror from a dead one
+# =========================================================================================
+
+
+def _snapshot(pane_id: str, revision: int | None) -> dict[str, Any]:
+    pane: dict[str, Any] = {"pane_id": pane_id}
+    if revision is not None:
+        pane["revision"] = revision
+    return {"panes": [pane], "agents": []}
+
+
+def test_pane_revision_advances_the_clock_and_tells_thinking_from_dead(tmp_path: Path) -> None:
+    """The signal the subscription path cannot carry without waking the operator's channel.
+
+    ``register.py`` names herdr's pane-output ``revision`` counter as the feed for this and
+    names this unit as its reader. Two mirrors, same silence on the subscription path: the one
+    whose pane is still emitting is working, the one whose pane has stopped is a hang.
+    """
+    herdr = FakeHerdr()
+    session = _create(tmp_path, herdr=herdr, max_quiet_seconds=100.0)
+    MIRROR.dispatch_request(session, _request(), herdr=herdr, now=1_000.0)
+
+    # Thinking: the pane keeps emitting, so successive ticks keep the clock fed.
+    for tick, revision in ((1_050.0, 12), (1_150.0, 47)):
+        activity = MIRROR.observe_pane_activity(
+            tmp_path,
+            run_id=RUN_ID,
+            row_id=ROW_ID,
+            snapshot=_snapshot(session.pane_id, revision),
+            now=tick,
+        )
+        assert activity.advanced is True
+        assert activity.revision == revision
+    live = MIRROR.check_liveness(tmp_path, run_id=RUN_ID, row_id=ROW_ID, now=1_200.0)
+    assert live.state == "working"
+    assert live.reference_source == "pane_revision"
+    assert live.quiet_seconds == 50.0
+
+    # Dead: the counter stops moving, and the same tick no longer feeds the clock.
+    still = MIRROR.observe_pane_activity(
+        tmp_path, run_id=RUN_ID, row_id=ROW_ID, snapshot=_snapshot(session.pane_id, 47), now=1_400.0
+    )
+    assert still.advanced is False
+    with pytest.raises(MIRROR.MirrorQuietTooLongError, match="pane_revision"):
+        MIRROR.check_liveness(tmp_path, run_id=RUN_ID, row_id=ROW_ID, now=1_400.0)
+
+
+def test_re_observing_an_unchanged_counter_is_not_activity(tmp_path: Path) -> None:
+    """Otherwise a supervision loop would keep a dead mirror alive by asking about it."""
+    herdr = FakeHerdr()
+    session = _create(tmp_path, herdr=herdr, max_quiet_seconds=10.0)
+    MIRROR.dispatch_request(session, _request(), herdr=herdr, now=1.0)
+    MIRROR.observe_pane_activity(
+        tmp_path, run_id=RUN_ID, row_id=ROW_ID, snapshot=_snapshot(session.pane_id, 5), now=2.0
+    )
+    before = REGISTER.register_path(RUN_ID).read_bytes()
+    for tick in (100.0, 200.0, 300.0):
+        assert (
+            MIRROR.observe_pane_activity(
+                tmp_path,
+                run_id=RUN_ID,
+                row_id=ROW_ID,
+                snapshot=_snapshot(session.pane_id, 5),
+                now=tick,
+            ).advanced
+            is False
+        )
+    assert REGISTER.register_path(RUN_ID).read_bytes() == before
+    with pytest.raises(MIRROR.MirrorQuietTooLongError):
+        MIRROR.check_liveness(tmp_path, run_id=RUN_ID, row_id=ROW_ID, now=300.0)
+
+
+def test_a_pane_absent_from_the_snapshot_is_not_invented_as_activity(tmp_path: Path) -> None:
+    """Pane absence is a different failure, and one the ordinary divergence machinery reaches."""
+    herdr = FakeHerdr()
+    session = _create(tmp_path, herdr=herdr)
+    MIRROR.dispatch_request(session, _request(), herdr=herdr, now=1.0)
+    activity = MIRROR.observe_pane_activity(
+        tmp_path, run_id=RUN_ID, row_id=ROW_ID, snapshot={"panes": [], "agents": []}, now=2.0
+    )
+    assert activity == MIRROR.MirrorActivity(revision=None, advanced=False, advanced_at=None)
+    assert "mirror_pane_activity" not in _row(tmp_path)
+
+
+def test_the_revision_reader_never_reaches_a_wake(tmp_path: Path) -> None:
+    """A heartbeat *subscription* would wake the operator's channel on a timer; this does not.
+
+    The reader takes a snapshot, which is why it can feed the clock without going anywhere near
+    the subscriber's wake path.
+    """
+    parameters = inspect.signature(MIRROR.observe_pane_activity).parameters
+    assert "snapshot" in parameters
+    assert not {"wake_sender", "client", "subscriber", "interaction"} & set(parameters)
+    calls = _module_function_calls()["observe_pane_activity"]
+    assert "wake_sender" not in calls
+    assert "output_match_subscription" not in calls
+
+
+# =========================================================================================
+# Repair: non-finite clock inputs cannot report health
+# =========================================================================================
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_a_non_finite_quiet_bound_is_refused_at_creation(tmp_path: Path, bad: float) -> None:
+    with pytest.raises(MIRROR.MirrorNotArmedError, match="finite"):
+        _create(tmp_path, max_quiet_seconds=bad)
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf")])
+def test_a_non_finite_quiet_bound_on_the_row_is_not_reported_healthy(
+    tmp_path: Path, bad: float
+) -> None:
+    """The affirmative state ``MirrorNotArmedError`` exists to prevent, reached by another door.
+
+    Every ordered comparison with NaN is false, so ``quiet > bound`` is false forever and a
+    dead mirror reported ``working`` at one million seconds. Infinity did the same, honestly.
+    """
+    herdr = FakeHerdr()
+    session = _create(tmp_path, herdr=herdr)
+    MIRROR.dispatch_request(session, _request(), herdr=herdr, now=1.0)
+    REGISTER.upsert_row(tmp_path, ROW_ID, {"max_quiet_seconds": bad}, run_id=RUN_ID)
+    with pytest.raises(MIRROR.MirrorNotArmedError, match="finite"):
+        MIRROR.check_liveness(tmp_path, run_id=RUN_ID, row_id=ROW_ID, now=1_000_000.0)
+
+
+def test_a_non_finite_dispatch_instant_is_not_reported_healthy(tmp_path: Path) -> None:
+    herdr = FakeHerdr()
+    session = _create(tmp_path, herdr=herdr)
+    MIRROR.dispatch_request(session, _request(), herdr=herdr, now=1.0)
+    row = _row(tmp_path)
+    row["mirror_request"]["dispatched_at"] = float("nan")
+    REGISTER.upsert_row(tmp_path, ROW_ID, {"mirror_request": row["mirror_request"]}, run_id=RUN_ID)
+    with pytest.raises(MIRROR.MirrorNotArmedError, match="finite"):
+        MIRROR.check_liveness(tmp_path, run_id=RUN_ID, row_id=ROW_ID, now=1_000_000.0)
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf")])
+def test_a_non_finite_instant_is_refused_by_every_clock_entry_point(
+    tmp_path: Path, bad: float
+) -> None:
+    herdr = FakeHerdr()
+    session = _create(tmp_path, herdr=herdr)
+    with pytest.raises(MIRROR.MirrorNotArmedError, match="finite"):
+        MIRROR.check_liveness(tmp_path, run_id=RUN_ID, row_id=ROW_ID, now=bad)
+    with pytest.raises(MIRROR.MirrorNotArmedError, match="finite"):
+        MIRROR.dispatch_request(session, _request(), herdr=herdr, now=bad)
+
+
+@pytest.mark.parametrize("bad", [0, -1, "4096"])
+def test_a_zero_or_negative_default_return_bound_is_refused_at_creation(
+    tmp_path: Path, bad: Any
+) -> None:
+    """The charter interpolates this as the session's standing default.
+
+    Zero would tell the mirror its default budget is nothing, making every return that honoured
+    the charter oversized.
+    """
+    with pytest.raises(MIRROR.MirrorError, match="max_return_bytes"):
+        _create(tmp_path, max_return_bytes=bad)
+
+
+# =========================================================================================
+# Repair: the read-only contract is observed, even though it cannot be attributed
+# =========================================================================================
+
+
+class MutableFakeGit(FakeGit):
+    """A checkout whose repository-visible state the test can move under the mirror."""
+
+    def __init__(self, root: Path) -> None:
+        super().__init__(root)
+        self.paths: set[str] = set()
+        self.contents: dict[str, str] = {}
+
+    def changed_paths_baseline(self, _cwd: Path, **_kwargs: Any) -> Any:
+        paths = frozenset(self.paths)
+        return LIFECYCLE.ChangedPathsBaseline(
+            paths, tuple(sorted((p, self.contents.get(p, "v1")) for p in paths))
+        )
+
+
+def test_a_repository_change_during_a_request_is_observed_and_recorded(tmp_path: Path) -> None:
+    """Detection was the gap: the mirror declares no artifact, so no scope check ever ran on it."""
+    herdr = FakeHerdr()
+    git = MutableFakeGit(tmp_path)
+    session = _create(tmp_path, herdr=herdr)
+    MIRROR.dispatch_request(session, _request(), herdr=herdr, now=1.0, git=git)
+
+    git.paths.add("src/touched.py")
+    herdr.text = _pane_block(session, "req-1", "a conclusion")
+    returned = MIRROR.collect_return(session, herdr=herdr, now=2.0, git=git)
+
+    assert returned.repository_changes == frozenset({"src/touched.py"})
+    status = MIRROR.mirror_status(tmp_path, run_id=RUN_ID, row_id=ROW_ID)
+    assert status["last_return"]["repository_changes"] == ["src/touched.py"]
+    assert status["last_return"]["repository_observed"] is True
+
+
+def test_an_edit_to_an_already_dirty_file_is_observed(tmp_path: Path) -> None:
+    """A path-set comparison alone would miss this; the fingerprints are why it does not."""
+    herdr = FakeHerdr()
+    git = MutableFakeGit(tmp_path)
+    git.paths.add("src/already.py")
+    session = _create(tmp_path, herdr=herdr)
+    MIRROR.dispatch_request(session, _request(), herdr=herdr, now=1.0, git=git)
+
+    git.contents["src/already.py"] = "v2"
+    herdr.text = _pane_block(session, "req-1", "a conclusion")
+    returned = MIRROR.collect_return(session, herdr=herdr, now=2.0, git=git)
+    assert returned.repository_changes == frozenset({"src/already.py"})
+
+
+def test_a_clean_request_window_reports_no_repository_change(tmp_path: Path) -> None:
+    herdr = FakeHerdr()
+    git = MutableFakeGit(tmp_path)
+    git.paths.add("src/untouched.py")
+    session = _create(tmp_path, herdr=herdr)
+    MIRROR.dispatch_request(session, _request(), herdr=herdr, now=1.0, git=git)
+    herdr.text = _pane_block(session, "req-1", "a conclusion")
+    returned = MIRROR.collect_return(session, herdr=herdr, now=2.0, git=git)
+    assert returned.repository_changes == frozenset()
+    MIRROR.assert_no_repository_change(returned)
+
+
+def test_escalating_an_observed_change_is_the_callers_choice(tmp_path: Path) -> None:
+    """Collection reports; escalation is opt-in, because attribution is not established.
+
+    The mirror shares the operator's checkout on purpose -- a mirror reading an isolated
+    worktree would describe a repository nobody is working in -- so the operator's own edit
+    lands in the same window and failing the return on it would be a false alarm.
+    """
+    herdr = FakeHerdr()
+    git = MutableFakeGit(tmp_path)
+    session = _create(tmp_path, herdr=herdr)
+    MIRROR.dispatch_request(session, _request(), herdr=herdr, now=1.0, git=git)
+    git.paths.add("docs/edited.md")
+    herdr.text = _pane_block(session, "req-1", "a conclusion")
+
+    returned = MIRROR.collect_return(session, herdr=herdr, now=2.0, git=git)
+    with pytest.raises(MIRROR.MirrorWroteRepositoryError, match="not established"):
+        MIRROR.assert_no_repository_change(returned)
+
+
+def test_repository_observation_is_absent_rather_than_faked_without_a_git_adapter(
+    tmp_path: Path,
+) -> None:
+    """A caller that supplies no boundary gets an honest "not observed", not a clean bill."""
+    herdr = FakeHerdr()
+    session = _create(tmp_path, herdr=herdr)
+    MIRROR.dispatch_request(session, _request(), herdr=herdr, now=1.0)
+    herdr.text = _pane_block(session, "req-1", "a conclusion")
+    MIRROR.collect_return(session, herdr=herdr, now=2.0)
+    status = MIRROR.mirror_status(tmp_path, run_id=RUN_ID, row_id=ROW_ID)
+    assert status["last_return"]["repository_observed"] is False

@@ -263,12 +263,19 @@ Four contracts are mechanical rather than aspirational:
   byte count without the material — an error that quoted the return would perform the absorption
   it reports. The bound a request may declare is itself capped, because this requirement erodes by
   being raised, not by being deleted.
-- **The validity predicate never runs in the mirror (KTD6).** Deciding request kinds are refused by
-  name, an instruction carrying a predicate declaration is refused, and the module imports no
-  program-execution machinery and no `completion`, so there is no route by which it could run one.
-  What no parser catches is an instruction that *describes* a check in English; the containment for
-  that is the written routing rule plus the fact that the mirror writes no `phase`, so its opinion
-  cannot become a verified row.
+- **The mirror is never *asked* for a verdict through this API (KTD6)** — deliberately weaker than
+  "the validity predicate never runs in the mirror", which an earlier revision claimed and which
+  is not true. Deciding request kinds are refused by name; an instruction carrying a
+  machine-readable predicate declaration is refused, keyed on the declaration's signature (the
+  name `argv` bound to a value) rather than on one serialisation, so JSON, YAML, TOML, a Python
+  literal, a nested string, escaped braces and Base64 are all caught; the scan **fails closed**,
+  refusing an instruction it could not finish examining rather than passing it; and
+  `dispatch_request` re-runs those checks on the object it is handed, because they live in a
+  constructor and dispatch is the one function that talks to the pane.
+  **What is not caught:** an instruction that describes a check in English. No scanner detects
+  intent, and the live agent beyond the pane is itself a program executor. The mirror not writing
+  `phase` does not contain that — it stops a mirror's opinion becoming a `verified` row, not a
+  claimed verdict being produced. `references/operator-channel.md` states the boundary in full.
 - **The mirror never addresses the operator (R9).** Dispatch writes only to the mirror's own pane.
 - **Dispatch does not block.** No subscription is held open, no pane is polled, and there is no
   timeout parameter. The return arrives later as an event on the subscription `create_mirror`
@@ -277,19 +284,43 @@ Four contracts are mechanical rather than aspirational:
 
 **Column ownership is checkable, not just documented.** Every register write in `mirror.py` goes
 through one seam that refuses, at runtime, any column outside `role`, `max_quiet_seconds`,
-`mirror_request`, and `mirror_last_return` — and only on the mirror's own row. It does not write
-`artifact_path`, does not write `observed_state` (the subscriber owns that, and rewrites it on
-every catch-up), and never promotes its own phase. The mirror row is identified by `role`, not by
-`agent`: `agent` carries the launcher's actual agent name for every launched row, and a second
-writer of a shared column is the defect class this build has paid for most.
+`mirror_request`, `mirror_last_return`, `mirror_identity`, `mirror_subscription`, and
+`mirror_pane_activity` — and only on the mirror's own row. It does not write `artifact_path`, does
+not write `observed_state` (the subscriber owns that, and rewrites it on every catch-up), does not
+write `last_event_at` (the subscriber owns that too, which is why the revision feed has its own
+column and `check_liveness` reads both and takes the later), and never promotes its own phase. The
+mirror row is identified by `role`, not by `agent`: `agent` carries the launcher's actual agent
+name for every launched row, and a second writer of a shared column is the defect class this build
+has paid for most.
+
+**A restarted orchestrator can rebuild the session.** The row carries the nonce and return
+markers, so `resume_mirror` reconstructs a live `MirrorSession` from the register alone — the pane
+and the subscriber outlive an orchestrator that dies, and a session that outlives its only handle
+is not persistent in any useful sense (R6a). The row also carries the subscription the mirror's
+returns require, and `acknowledge_subscription` refuses a subscriber list that lacks it, which
+turns a forgotten cross-unit handoff into a raised error instead of a clock that quietly never
+advances.
 
 **Hang detection is a clock, because nothing else can reach it.** Every other failure here appears
 as a disagreement between two values; a hung mirror's values agree perfectly while the channel is
 dead. So `check_liveness` compares silence against the row's declared `max_quiet_seconds`, taking
 the current instant as an argument rather than reading the system clock. It reads and raises — it
-writes nothing, closes nothing, demotes nothing. An unarmed row raises a distinct error rather than
-reporting health, and an idle mirror is never alarmed, because a mirror between requests is
+writes nothing, closes nothing, demotes nothing. Every clock input must be finite: a NaN or
+infinite threshold made a dead mirror report `working` forever, reaching the affirmative state the
+unarmed error exists to prevent by a different door. An unarmed row raises a distinct error rather
+than reporting health, an unconfirmed subscription raises a *different* distinct error rather than
+being reported as a hang, and an idle mirror is never alarmed, because a mirror between requests is
 legitimately silent forever.
+
+**What tells a thinking mirror from a dead one is pane revision.** The subscriber only advances
+`last_event_at` on a matched sentinel, and the mirror's only subscribed sentinel is its return
+marker, so that feed alone makes the clock a per-request tolerance. `observe_pane_activity` reads
+herdr's pane-output `revision` counter from a `session.snapshot` — the feed `register.py` names for
+this and names this unit as the reader of — and records it on the mirror's own row. A pane still
+emitting keeps the clock fed; a pane that has stopped lets it trip. It is a snapshot read rather
+than a heartbeat subscription precisely because the subscriber wakes the orchestrator on every
+handled event, so a heartbeat would wake the operator's channel on a timer. `MirrorLiveness`
+reports which feed the answer rested on.
 
 `references/operator-channel.md` carries the routing rule itself: the full exception list of work
 the orchestrator does inline, why each entry is bounded by construction, the temptations that are

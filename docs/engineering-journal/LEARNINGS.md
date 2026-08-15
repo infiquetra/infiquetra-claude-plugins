@@ -21,6 +21,72 @@
 
 ## 2026-08-15
 
+### A guard that enumerates encodings loses to the next encoding; key on the signature  {#key-on-the-signature-not-the-serialisation}
+
+**Context.** The orchestrate mirror refuses instructions that carry a validity-predicate
+declaration, because routing verification through the mirror turns it back into a claim. The
+first implementation scanned for an embedded JSON object with an `argv` key — the literal shape
+of the predicate schema — and treated anything else as clean.
+
+**Evidence.** Reproduced on the shipped build: the same declaration written as YAML, as
+Base64, as TOML, as a Python literal, as a string nested inside another JSON object, and with
+unicode-escaped braces all passed, while plain JSON was correctly refused. Worse, a *literal*
+JSON declaration parked behind 512 unmatched `{` characters passed, because the scan's own
+decode-attempt budget was consumed before the real object was reached — 511 decoys were refused
+and 512 were accepted. See `mirror.py:scan_for_predicate_declaration` and
+`tests/test_orchestrate_mirror.py::test_a_predicate_declaration_is_refused_however_it_is_written`.
+
+**Mechanism.** Two independent errors with the same root. First, the guard was written against a
+*serialisation* rather than against the thing being declared; every additional encoding is a new
+bypass, and the attacker picks last. Second, a bound added as a denial-of-service guard returned
+"not found" on exhaustion, which conflates "I looked and there is nothing" with "I stopped
+looking". That made the safety bound into the bypass.
+
+**Fix.** Key on the declaration's signature — the name `argv` bound to a value — which is
+invariant across JSON, YAML, TOML, Python literals, nested strings and escaped text; decode one
+layer of Base64 and re-scan; resolve `\uXXXX` escapes first; and return an explicit
+`complete` flag so exhaustion refuses instead of passing. The published claim was also narrowed
+to what the mechanism does, because the stronger sentence was false.
+
+**What surprised.** The completion module already had the right instinct recorded: a predicate
+closure over its file cap *raises* rather than truncating, on the stated grounds that a silent
+trim reports a narrower check than the real one. The mirror's scan did precisely what that
+document refuses, in the same codebase, three units later.
+
+**Generalizable rule.** A detector must key on the invariant, not on a format. And any bound
+inside a detector needs a third answer: found, not-found, and **could not finish** — where
+could-not-finish fails closed. A scanner that reports clean when it ran out of budget is
+reporting a fact it never established.
+
+**Refs.** [`{#hung-mirror-needs-a-clock}`](#hung-mirror-needs-a-clock); `references/predicates.md`
+(the closure cap that gets this right).
+
+### A validation that lives only in a constructor is a suggestion  {#constructor-checks-need-a-boundary}
+
+**Context.** Every load-bearing check on a mirror request — the closed vocabulary of reading
+kinds, and the predicate-declaration scan — lived in `MirrorRequest.__post_init__`.
+
+**Evidence.** `dispatch_request`, the one function that writes to the mirror's pane, read
+`request_id`, `kind`, `instruction` and `max_return_bytes` off whatever object it was handed. A
+plain `SimpleNamespace` with `kind="predicate"` dispatched successfully, the register recorded
+`kind=predicate`, and a second namespace put a literal predicate declaration on the pane.
+
+**Mechanism.** Python attribute access is structural. A constructor guards *construction*, not
+*use*, and any object with the right attribute names satisfies the consumer. The closed
+vocabulary and the scan were therefore both absent from the only path that mattered.
+
+**Fix.** `dispatch_request` rebuilds the request through its own constructor rather than
+trusting the instance. Rebuilding rather than a bare `isinstance` matters twice: it refuses a
+look-alike, and it re-runs the checks even on a genuine instance built through
+`object.__new__`, which `isinstance` would wave through.
+
+**Generalizable rule.** Put the check where the consequence is. If validation lives in a
+constructor and the dangerous action lives in a function, the function must re-run the
+validation — otherwise the type is documentation, not a boundary. Cheap to fix, and it closes a
+class of bypass rather than one instance.
+
+**Refs.** [`{#key-on-the-signature-not-the-serialisation}`](#key-on-the-signature-not-the-serialisation).
+
 ### The failure with no disagreement in it needs a clock, and the obvious clock is harmful  {#hung-mirror-needs-a-clock}
 
 **Context.** The orchestrate plugin detects every failure it detects as a *disagreement*
@@ -62,12 +128,25 @@ reports `idle` while working, another reported settled from launch straight thro
 so a second detector that happened to agree would supply false confidence rather than a second
 reader. More signals is not more reliability when the added signal is known to lie.
 
+**Correction, same day.** The conclusion above was half right and is worth reading with its
+correction attached. The *reason not to add a heartbeat subscription* holds and was independently
+confirmed against the cited code twice. The *consequence drawn from it* — that nothing could distinguish a
+thinking mirror from a dead one — was too strong, and this repository had already recorded the
+answer: [`{#pane-revision-is-the-liveness-signal}`](#pane-revision-is-the-liveness-signal) names
+herdr's pane-output `revision` counter as the liveness feed, and `register.py` names this very
+unit as its reader. A supervision tick can read a `session.snapshot`, compare the counter, and
+advance the clock **without going through the subscriber's wake path at all**. The mirror now
+does exactly that. The error was reasoning only about the mechanism in front of me (the
+subscription path) and generalising its limit into a claim about the whole substrate.
+
 **Generalizable rule.** When a detector cannot distinguish two states, say so in the code, the
 reference doc, and the report, and name the specific missing capability that would — rather than
 shipping a cooperative signal that *looks* like it distinguishes them. A detector that reports
 health it has not established is worse than an absent detector, because the absent one does not
 get trusted. And check whether the obvious instrumentation consumes the very resource the system
-is protecting.
+is protecting. **But bound the claim to the path you examined:** "this mechanism cannot" is a
+finding; "nothing can" is a much larger claim that requires searching the substrate — and the
+journal you already have is part of that substrate.
 
 **Refs.** [DECISIONS `{#mirror-row-identified-by-role}`](DECISIONS.md#mirror-row-identified-by-role),
 [`#pane-revision-is-the-liveness-signal`](#pane-revision-is-the-liveness-signal),

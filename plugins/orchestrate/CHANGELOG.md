@@ -1,5 +1,81 @@
 # Changelog
 
+## [0.6.0] - 2026-08-15
+
+### Changed
+
+- **A published guarantee was false and is now accurate.** The mirror's documentation stated
+  that a predicate never reaches it. A predicate did reach it, three ways, and the claim has
+  been narrowed to what the mechanism actually does while the mechanism itself has been made as
+  strong as it honestly can be. The honest sentence is that the mirror is never *asked* for a
+  verdict through this API. An instruction that describes a check in ordinary English is not
+  detectable by any scanner, and the live agent beyond the pane is itself a program executor.
+  Column ownership was previously offered as the containment for this and does not contain it:
+  it stops a mirror's opinion becoming a `verified` row, not a claimed verdict being produced,
+  and a claimed verdict with no second reader is the failure the requirement names.
+- **Hang detection can now tell a thinking mirror from a dead one, and the earlier claim that
+  nothing could was too strong.** The subscriber advances `last_event_at` only on a matched
+  sentinel and the mirror's only subscribed sentinel is its return marker, so that feed alone
+  makes the clock a per-request tolerance. `observe_pane_activity` reads herdr's pane-output
+  `revision` counter from a `session.snapshot` — the feed the register names for this, naming
+  this unit as its reader — and records it on the mirror's own row, so a pane still emitting
+  keeps the clock fed and a pane that has stopped lets it trip. It is a snapshot read rather
+  than a heartbeat subscription because the subscriber wakes the orchestrator on every handled
+  event, so a heartbeat would wake the operator's channel on a timer. `MirrorLiveness` now
+  reports which feed the answer rested on, so "working" from a stale clock and "working" from a
+  live one are not the same word.
+
+### Fixed
+
+- **The predicate-declaration scan keys on the declaration's signature, not on one
+  serialisation.** A predicate is the name `argv` bound to a value; JSON, a YAML block or flow
+  mapping, TOML, a Python literal, a string nested inside another object, unicode-escaped
+  braces, and Base64 are the same declaration in different clothes, and all are refused.
+  Enumerating serialisations is a race the enumerator loses.
+- **The scan fails closed.** An instruction it cannot finish examining within its budget is
+  refused rather than passed. Reporting "clean" on exhaustion had turned a denial-of-service
+  bound into the bypass: a real declaration parked behind 512 decoy braces was never inspected
+  and was accepted, while 511 decoys were correctly refused.
+- **Dispatch re-runs the request's checks on the object it is handed.** Every load-bearing
+  check lived in a constructor while the one function that talks to the pane read attributes
+  off whatever arrived, so any object with the right attribute names bypassed the closed kind
+  vocabulary and the scan together. This closes the class rather than an instance of it.
+- **Every clock input must be finite.** A NaN threshold passed validation because every ordered
+  comparison with NaN is false, and positive infinity passed honestly; either made a dead
+  mirror report `working` forever, reaching the affirmative state the unarmed error exists to
+  prevent by a different door. Thresholds, dispatch instants, observed instants and the
+  supplied `now` are all now required to be finite, and a non-finite threshold is refused at
+  creation.
+- **A zero or negative default return bound is refused at creation.** It is interpolated into
+  the charter as the session's standing default, so zero told the mirror its default budget was
+  nothing, which would make every return that honoured the charter oversized.
+
+### Added
+
+- **`resume_mirror` rebuilds a live session from the register alone.** The mirror's nonce and
+  return markers previously existed only in an in-memory session object, so an orchestrator
+  that died could not collect from a mirror that was still running — which contradicts the
+  requirement that the mirror is persistent for the life of the orchestration. The row now
+  carries them, and the identity is written before the launch side effect alongside the row
+  itself. The run's single mirror is located by its `role` column when no row id is given, and
+  two mirrors in one run are refused rather than guessed.
+- **A missing subscriber wire is loud instead of silent.** The mirror's row records the
+  `pane.output_matched` subscription its returns require. `acknowledge_subscription` compares
+  it against the list the subscriber was actually given and refuses a mismatch; until something
+  confirms it, `check_liveness` raises a distinct unconfirmed-subscription error rather than
+  reporting a state. A mirror nobody is listening to and a hung mirror produce identical
+  silence, and reporting the first as the second sends the operator hunting a hang that is not
+  there.
+- **Repository-visible change over a request window is observed and recorded.** The mirror is
+  read-only by contract and nothing prevents it writing — `mutating=False` keeps it in the
+  ambient checkout but is not a write fence, and because the mirror declares no artifact it
+  never reaches the post-hoc scope check, so a violation was previously not merely unprevented
+  but unobserved. The observation is reported on the return and recorded durably; escalation is
+  opt-in through `assert_no_repository_change`, because this session reads the operator's live
+  working tree, so the operator's own edit lands in the same window and attribution is not
+  established. Isolation was rejected deliberately: a worktree would give the mirror a tree
+  nobody is working in.
+
 ## [0.5.0] - 2026-08-15
 
 ### Added

@@ -19,6 +19,201 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-08-15
+
+### A resource bound with two ways to end will pick the dishonest one; give it one  {#one-exhaustion-path}
+
+**Context.** A scanner that refuses machine-readable predicate declarations acquired several
+resource bounds over three review rounds: a JSON decode-attempt budget, a line-sweep cap, a
+structure-walk depth limit, an encoding-layer limit, a decoded-payload count. Each bound existed
+for a good reason — to stop hostile input costing unbounded work.
+
+**Evidence.** The same defect was found three separate times, in a different bound each time.
+First: 512 decoy braces exhausted the decode budget, which returned "no declaration found", and
+the caller reported a clean scan — a real declaration behind the decoys reached the consumer.
+Then: the line sweep truncated at 200 lines and reported complete. Then: the structure walk
+returned a bare `False` at depth 8, so a nine-level wrapper around a real declaration was accepted
+with `complete=True`; depth 7 refused and depth 9 did not.
+
+**Mechanism.** Each bound had *two* ways to end — "I looked and found nothing" and "I stopped
+looking" — and both returned the same value. The distinction existed only in the author's head at
+the moment of writing, so every new bound had to independently remember to report exhaustion, and
+the second and third ones did not. Fixing each in isolation did not reduce the probability of the
+next one, because the *shape* was never addressed: the fix was a rule, and rules are remembered.
+
+**Fix.** One budget object through which every bound is consumed, and a single construction of
+the result whose completeness is derived from that object. A bound that is reached cannot be
+reported as a finished scan, because there is no second place where completeness is decided. The
+single decision point is asserted structurally by a test (`ScanResult` is constructed exactly
+once in the module), so a future bound is incomplete-reporting by construction.
+
+**What surprised.** Two of the bounds were *also* wrong in the opposite direction — set where
+ordinary work lives, so they refused legitimate requests: a 201-line comparison, a question
+naming seventeen `*args` identifiers, thirty-three short encoded notes. A bound can be
+simultaneously too weak (fails open on exhaustion) and too strong (fires on normal input), and
+the second failure is the one nobody reports as a security defect.
+
+**Generalizable rule.** Any bound inside a detector needs three answers, not two: found,
+not-found, and **could-not-finish** — where could-not-finish fails closed. When the same defect
+appears a second time in a different constant, stop fixing the constant: the repeat is evidence
+that the honest answer is reachable-but-optional, and the repair is to make it the only reachable
+one. And check every bound in both directions — the threshold that stops an attack is usually
+also a threshold ordinary work can cross.
+
+**Refs.** [`{#key-on-the-signature-not-the-serialisation}`](#key-on-the-signature-not-the-serialisation);
+[`{#constructor-checks-need-a-boundary}`](#constructor-checks-need-a-boundary).
+
+### A guard that enumerates encodings loses to the next encoding; key on the signature  {#key-on-the-signature-not-the-serialisation}
+
+**Context.** The orchestrate mirror refuses instructions that carry a validity-predicate
+declaration, because routing verification through the mirror turns it back into a claim. The
+first implementation scanned for an embedded JSON object with an `argv` key — the literal shape
+of the predicate schema — and treated anything else as clean.
+
+**Evidence.** Reproduced on the shipped build: the same declaration written as YAML, as
+Base64, as TOML, as a Python literal, as a string nested inside another JSON object, and with
+unicode-escaped braces all passed, while plain JSON was correctly refused. Worse, a *literal*
+JSON declaration parked behind 512 unmatched `{` characters passed, because the scan's own
+decode-attempt budget was consumed before the real object was reached — 511 decoys were refused
+and 512 were accepted. See `mirror.py:scan_for_predicate_declaration` and
+`tests/test_orchestrate_mirror.py::test_a_predicate_declaration_is_refused_however_it_is_written`.
+
+**Mechanism.** Two independent errors with the same root. First, the guard was written against a
+*serialisation* rather than against the thing being declared; every additional encoding is a new
+bypass, and the attacker picks last. Second, a bound added as a denial-of-service guard returned
+"not found" on exhaustion, which conflates "I looked and there is nothing" with "I stopped
+looking". That made the safety bound into the bypass.
+
+**Fix.** Key on the declaration's signature — the name `argv` bound to a value — which is
+invariant across JSON, YAML, TOML, Python literals, nested strings and escaped text; decode one
+layer of Base64 and re-scan; resolve `\uXXXX` escapes first; and return an explicit
+`complete` flag so exhaustion refuses instead of passing. The published claim was also narrowed
+to what the mechanism does, because the stronger sentence was false.
+
+**What surprised.** The completion module already had the right instinct recorded: a predicate
+closure over its file cap *raises* rather than truncating, on the stated grounds that a silent
+trim reports a narrower check than the real one. The mirror's scan did precisely what that
+document refuses, in the same codebase, three units later.
+
+**Correction, next round.** The fix above was the right direction and stopped one step short,
+and the step it stopped short of is the whole lesson. "Key on the signature" still searched
+*serialized text* for `argv` next to a separator — so it remained defeatable by any encoding
+that binds the key without those characters being adjacent (YAML does this two ways: an escaped
+key, and an anchor bound to an alias), and it still fired on `sys.argv:` in an ordinary
+sentence. Unsound and imprecise, one root cause: **it was still matching a serialisation
+instead of inspecting a structure.**
+
+The move that actually closes it is to **parse with a safe loader and inspect the resulting
+keys**. After a parse an escaped key *is* `argv` and an alias-bound key *is* `argv`, so the
+encodings stop mattering; and a sentence mentioning `argv` does not parse into a mapping with
+an `argv` key at all, so the false-positive side closes with the same change. Binding the rule
+to the schema's own shape — `argv` bound to a *sequence*, which is what `PredicateSpec`
+requires — added the last of the precision, because a type annotation binds `argv` to a string.
+
+**Generalizable rule.** A detector must key on the invariant, not on a format — and "the
+invariant" means the *parsed structure*, not a cleverer pattern over the text. If a defect
+report says a guard is simultaneously too weak and too strong, that pair is the signature of
+matching a representation instead of the thing represented; one change fixes both directions,
+and any fix that improves only one of them is the wrong change. Use safe loaders only: a
+detector that executed untrusted input to inspect it would be a worse defect than the one it
+closes. And any bound inside a detector needs a third answer: found, not-found, and **could not
+finish** — where could-not-finish fails closed. A scanner that reports clean when it ran out of
+budget is reporting a fact it never established.
+
+**Refs.** [`{#hung-mirror-needs-a-clock}`](#hung-mirror-needs-a-clock); `references/predicates.md`
+(the closure cap that gets this right).
+
+### A validation that lives only in a constructor is a suggestion  {#constructor-checks-need-a-boundary}
+
+**Context.** Every load-bearing check on a mirror request — the closed vocabulary of reading
+kinds, and the predicate-declaration scan — lived in `MirrorRequest.__post_init__`.
+
+**Evidence.** `dispatch_request`, the one function that writes to the mirror's pane, read
+`request_id`, `kind`, `instruction` and `max_return_bytes` off whatever object it was handed. A
+plain `SimpleNamespace` with `kind="predicate"` dispatched successfully, the register recorded
+`kind=predicate`, and a second namespace put a literal predicate declaration on the pane.
+
+**Mechanism.** Python attribute access is structural. A constructor guards *construction*, not
+*use*, and any object with the right attribute names satisfies the consumer. The closed
+vocabulary and the scan were therefore both absent from the only path that mattered.
+
+**Fix.** `dispatch_request` rebuilds the request through its own constructor rather than
+trusting the instance. Rebuilding rather than a bare `isinstance` matters twice: it refuses a
+look-alike, and it re-runs the checks even on a genuine instance built through
+`object.__new__`, which `isinstance` would wave through.
+
+**Generalizable rule.** Put the check where the consequence is. If validation lives in a
+constructor and the dangerous action lives in a function, the function must re-run the
+validation — otherwise the type is documentation, not a boundary. Cheap to fix, and it closes a
+class of bypass rather than one instance.
+
+**Refs.** [`{#key-on-the-signature-not-the-serialisation}`](#key-on-the-signature-not-the-serialisation).
+
+### The failure with no disagreement in it needs a clock, and the obvious clock is harmful  {#hung-mirror-needs-a-clock}
+
+**Context.** The orchestrate plugin detects every failure it detects as a *disagreement*
+between two recorded values: expected state against observed state, declared artifact against
+artifact on disk, claimed completion against a predicate that actually runs. The paired mirror
+session — the one that exists so the operator's channel stays answerable while work happens —
+breaks that pattern. When a mirror hangs, its expected state and its observed state agree
+perfectly, every child still looks healthy, and the operator's channel is dead. The one failure
+the mirror exists to prevent arrives through the mirror itself, and the existing divergence
+machinery cannot see it, because that machinery compares two values and here the two values
+agree.
+
+**Evidence.** `plugins/orchestrate/skills/orchestrate/scripts/mirror.py:check_liveness`;
+`tests/test_orchestrate_mirror.py::test_a_mirror_silent_past_its_tolerance_raises_divergence`
+and the three sibling tests for the states a naive detector reports as healthy. The harmful
+alternative is visible in `subscriber.py:handle_event`, which calls `wake_sender` on **every**
+matched event.
+
+**Mechanism.** The only remaining signal is time: `last_event_at` exceeding a declared
+`max_quiet_seconds`. But `last_event_at` is written by the subscriber only when a
+`pane.output_matched` event carries a sentinel matching an active subscription, and the
+subscriber wakes the orchestrator on every such match. So the intuitive improvement — subscribe
+a periodic heartbeat sentinel on the mirror's pane, so the clock can tell "thinking" from
+"dead" within a single request — would wake the operator's channel on a timer. That is the
+exact channel-load failure the mirror was built to prevent, reintroduced by the mechanism meant
+to protect it.
+
+**Fix.** No heartbeat. The mirror subscribes only its return marker, and the clock is armed only
+while a request is outstanding (an idle mirror is legitimately silent forever, so a detector
+armed on an idle row would fire on every healthy run). `max_quiet_seconds` on a mirror row is
+therefore documented as a **per-request tolerance**, not a within-request liveness probe, in
+`plugins/orchestrate/references/operator-channel.md`. Two further states are given distinct
+outcomes rather than being collapsed into "healthy": a row with no declared bound raises a
+"not armed" error, and an idle mirror returns an explicit idle result.
+
+**What surprised.** Corroborating the clock with herdr's `agent_status` would make the detector
+*worse*, not better. Vendor lifecycle detectors are wrong in vendor-specific ways — one runtime
+reports `idle` while working, another reported settled from launch straight through completion —
+so a second detector that happened to agree would supply false confidence rather than a second
+reader. More signals is not more reliability when the added signal is known to lie.
+
+**Correction, same day.** The conclusion above was half right and is worth reading with its
+correction attached. The *reason not to add a heartbeat subscription* holds and was independently
+confirmed against the cited code twice. The *consequence drawn from it* — that nothing could distinguish a
+thinking mirror from a dead one — was too strong, and this repository had already recorded the
+answer: [`{#pane-revision-is-the-liveness-signal}`](#pane-revision-is-the-liveness-signal) names
+herdr's pane-output `revision` counter as the liveness feed, and `register.py` names this very
+unit as its reader. A supervision tick can read a `session.snapshot`, compare the counter, and
+advance the clock **without going through the subscriber's wake path at all**. The mirror now
+does exactly that. The error was reasoning only about the mechanism in front of me (the
+subscription path) and generalising its limit into a claim about the whole substrate.
+
+**Generalizable rule.** When a detector cannot distinguish two states, say so in the code, the
+reference doc, and the report, and name the specific missing capability that would — rather than
+shipping a cooperative signal that *looks* like it distinguishes them. A detector that reports
+health it has not established is worse than an absent detector, because the absent one does not
+get trusted. And check whether the obvious instrumentation consumes the very resource the system
+is protecting. **But bound the claim to the path you examined:** "this mechanism cannot" is a
+finding; "nothing can" is a much larger claim that requires searching the substrate — and the
+journal you already have is part of that substrate.
+
+**Refs.** [DECISIONS `{#mirror-row-identified-by-role}`](DECISIONS.md#mirror-row-identified-by-role),
+[`#pane-revision-is-the-liveness-signal`](#pane-revision-is-the-liveness-signal),
+[`#agent-lifecycle-detectors-lie`](#agent-lifecycle-detectors-lie).
+
 ## 2026-08-14
 
 ### Membership in a launched-phase set is not "has launched" when the column can be absent  {#absent-phase-is-unknown}

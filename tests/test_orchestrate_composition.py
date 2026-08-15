@@ -1735,6 +1735,92 @@ def test_a_mirror_close_that_returns_without_removing_the_tab_is_not_read_as_sto
     assert harness.coordinator.retire() is not None
 
 
+def test_a_mirror_with_no_recorded_tab_id_is_not_read_as_stopped(harness: Harness) -> None:
+    """Absence of a recorded tab_id is not proof the mirror's tab is gone.
+
+    ``create_mirror`` writes the row's role before the launcher returns, so a crash between
+    those two leaves a live tab on a row that cannot name it. ``stop_writers`` used to treat
+    the empty column as absence and write ``exited``, which let retirement archive the run
+    beside a mirror still able to write the live register back.
+    """
+    harness.bootstrap([_child("child-a")])
+    with (
+        _failing_at("after_launcher_returned", harness),
+        pytest.raises(LIFECYCLE.LaunchProtocolError),
+    ):
+        harness.coordinator.create_mirror()
+    harness.coordinator.abandon_child("child-a", "not needed")
+    harness.supervisor.stop(harness.coordinator._subscriber_handle)
+
+    row = harness.rows()["mirror"]
+    assert row.get("role") == MIRROR.MIRROR_ROLE
+    assert not row.get("tab_id")
+
+    # The launcher returned an identity; the tab is discoverable by the same run-bound
+    # label the launcher itself would use to recover this window.
+    label = LIFECYCLE.task_label(RUN_ID, "mirror")
+    harness.herdr.labels[label] = LIFECYCLE.LaunchIdentity(
+        "claude-1", "ws-1", "tab-mirror", "pane-mirror", True
+    )
+
+    def close_that_does_not_take(tab_id: str, *, cwd: Path) -> None:
+        harness.herdr.closed.append(tab_id)  # the request was made; the tab was not removed
+
+    real_close_tab = harness.herdr.close_tab
+    harness.herdr.close_tab = close_that_does_not_take  # type: ignore[method-assign]
+    stopped = harness.coordinator.stop_writers()
+    harness.herdr.close_tab = real_close_tab  # type: ignore[method-assign]
+
+    assert stopped["mirror"] == "close requested but the tab is still present"
+    assert "tab-mirror" in harness.herdr.closed, "the live tab was asked to close"
+    assert harness.herdr.tab_present("tab-mirror", cwd=harness.repo), "the tab never actually took"
+    assert harness.rows()["mirror"].get("observed_state") != "exited"
+    outstanding = harness.coordinator.outstanding_writers()
+    assert "mirror:mirror" in outstanding, (
+        "a mirror whose tab is still present must stay outstanding"
+    )
+    with pytest.raises(RUNNER.RetirementOrderError, match="mirror"):
+        harness.coordinator.retire()
+    assert REGISTER.register_path(RUN_ID).exists(), "not archived beside a live mirror tab"
+
+    # The tab genuinely closing on a later attempt is still read correctly.
+    stopped_again = harness.coordinator.stop_writers()
+    assert stopped_again["mirror"] == "closed"
+    assert "mirror:mirror" not in harness.coordinator.outstanding_writers()
+    assert harness.coordinator.retire() is not None
+
+
+def test_a_mirror_whose_launcher_never_created_a_tab_does_not_block_retirement(
+    harness: Harness,
+) -> None:
+    """A registered mirror whose launcher never ran is gone; the empty column is not the proof.
+
+    ``create_mirror`` writes the row before any launch side effect, so a launch that fails
+    leaves a mirror row with no tab_id. That is not the same state as a live tab the row
+    cannot name: the control plane, asked by the same label the launcher uses, finds
+    nothing. Retirement must still complete.
+    """
+    harness.bootstrap([_child("child-a")])
+    with (
+        _failing_at("after_launch_intent", harness),
+        pytest.raises(LIFECYCLE.SessionLifecycleError),
+    ):
+        harness.coordinator.create_mirror()
+    harness.coordinator.abandon_child("child-a", "not needed")
+    harness.supervisor.stop(harness.coordinator._subscriber_handle)
+
+    row = harness.rows()["mirror"]
+    assert row.get("role") == MIRROR.MIRROR_ROLE
+    assert not row.get("tab_id")
+    assert LIFECYCLE.task_label(RUN_ID, "mirror") not in harness.herdr.labels
+
+    stopped = harness.coordinator.stop_writers()
+    assert stopped["mirror"] == "closed"
+    assert harness.rows()["mirror"].get("observed_state") == "exited"
+    assert "mirror:mirror" not in harness.coordinator.outstanding_writers()
+    assert harness.coordinator.retire() is not None
+
+
 def test_a_slot_that_cannot_be_released_after_a_reap_is_recorded_not_silent(
     harness: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:

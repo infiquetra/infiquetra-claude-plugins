@@ -3421,6 +3421,28 @@ class Coordinator:
         for row_id, row in sorted(mirror_module.find_mirror_rows(rows).items()):
             tab_id = row.get("tab_id")
             cwd = Path(str(row.get("cwd") or self.root))
+            if not isinstance(tab_id, str) or not tab_id:
+                # Absence of a recorded tab_id is not absence of a tab. create_mirror writes
+                # the row's role before the launcher returns, so from that moment the row is
+                # a mirror; a crash between those two leaves a live tab on a row that cannot
+                # name it. The row cannot tell that crash from a launch that never happened
+                # -- both are role without tab_id. Only the substrate can, by the same
+                # run-bound label launch_child already recovers with. An answer the
+                # substrate could not give is not proof of absence, so the writer stays
+                # outstanding rather than being recorded exited.
+                label = session_lifecycle.task_label(self.run_id, row_id)
+                try:
+                    discovered = self.herdr.discover_by_label(label, cwd=cwd)
+                except session_lifecycle.SessionLifecycleError:
+                    stopped[row_id] = "no recorded tab_id and the control plane could not be asked"
+                    continue
+                if discovered is None:
+                    tab_id = ""
+                elif not isinstance(discovered.tab_id, str) or not discovered.tab_id:
+                    stopped[row_id] = "no recorded tab_id and the discovered session has no tab_id"
+                    continue
+                else:
+                    tab_id = discovered.tab_id
             if isinstance(tab_id, str) and tab_id and self.herdr.tab_present(tab_id, cwd=cwd):
                 self.herdr.close_tab(tab_id, cwd=cwd)
             # A close request returning without raising is a request accepted, not an effect

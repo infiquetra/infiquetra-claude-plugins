@@ -21,6 +21,39 @@
 
 ## 2026-08-15
 
+### A register records what this process did; only the substrate knows what the launcher produced  {#the-substrate-is-the-only-witness-across-a-launch}
+
+**Context.** Closing the three instances in [[#a-failed-query-is-not-a-negative-result]] left a
+fourth, inside one of the fixes. A shutdown path was corrected to re-ask whether a companion
+process's tab was really gone before recording it gone — but the re-ask, and the close request
+before it, were both conditional on the row naming a tab. A row that named no tab skipped both and
+was recorded as stopped anyway, so absence of a recorded tab was still standing in for absence of a
+tab. Fixing "did the request take effect?" left "is there anything to request?" answered by the same
+missing field as before.
+
+**Evidence.** The row's identity column is written by this process *after* the launcher returns,
+while the column that classifies the row as a companion is written *before* the launch. An
+interruption between those two writes leaves a real, live session on a row that cannot name it.
+Executed reproduction: with the identity column cleared and the session genuinely present, the
+shutdown path returned `closed`, never issued a close request at all, recorded the row exited, and
+the archive completed beside the live session. Pinned by
+`tests/test_orchestrate_composition.py::test_a_mirror_with_no_recorded_tab_id_is_not_read_as_stopped`,
+with the launcher-never-ran counterpart pinned by
+`test_a_mirror_whose_launcher_never_created_a_tab_does_not_block_retirement`.
+
+**Mechanism.** A durable marker written by this process can only ever record what this process did,
+never what the launcher produced on the far side of that boundary — so no new column could have
+distinguished "crashed after the session existed" from "the session was never created." Both are
+the same row. Only the control plane can tell them apart, asked by the deterministic run-bound label
+the launcher itself applies. That question was already being asked, with the same fail-closed
+posture toward an unanswerable query, for the identical window on an ordinary child; the companion's
+shutdown path simply never asked it.
+
+**Generalizable rule.** When a fact is established outside your process, a field you write is
+evidence about you, not about the world — reach for the external witness, and treat "could not ask"
+as "may exist" rather than "does not exist." Fixing an inference about an effect does not fix the
+sibling inference about whether the subject exists at all; check both at every gate you touch.
+
 ### A failed query is not a negative result, and a matching number is not a matching identity  {#a-failed-query-is-not-a-negative-result}
 
 **Context.** A later pass over the same control flow found three more instances of the shape

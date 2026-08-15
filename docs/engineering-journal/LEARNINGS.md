@@ -21,6 +21,43 @@
 
 ## 2026-08-15
 
+### Two inferences meet at most gates, and fixing one does not fix its sibling  {#two-inferences-meet-at-every-gate}
+
+**Context.** An orchestration unit went through five repair rounds. Each round closed the defects a
+review had named; each next review found new ones of the same kind. After the fifth round a
+three-vendor panel returned seven merge-blocking defects. Mapping all seven against the code showed
+none of them was a logic error — no bad arithmetic, no wrong data structure, no off-by-one. Every one
+sat on the boundary where the run's durable table met the world it described.
+
+**Evidence.** The clearest instance survived *inside the fix for the previous instance*. A shutdown
+path was corrected to stop treating "the close call returned" as proof the session closed, and the
+corrected re-read was still conditional on the row naming a session. Executed reproduction: with the
+identity column cleared and the session genuinely present, the path returned `closed`, never issued a
+close request at all, recorded the row exited, and the archive completed beside a live session. Three
+further cases showed the same shape from the other direction, where a producer had *already recorded*
+its own uncertainty and the consumer had nowhere to read it: a provenance column stamped `inferred:`
+that the retirement gate never read; a spend-exclusion parameter documented as "not charging zero"
+that a ceiling gate subtracted anyway; and a scan-result flag introduced to carry *did the search
+finish* whose scanner set it true for a query that ran and failed, because it inspected only whether
+the query raised, never its exit status.
+
+**Mechanism.** Two questions meet at a typical gate — *did the action take effect?* and *is there
+anything to act on?* — and they are answered from different evidence. Correcting the first leaves the
+second reading whatever cheap signal it always read, usually a missing field. Separately, when three
+different authors in three different modules each write down that a fact is uncertain and each
+consumer discards it, the defect is not three mistakes; it is a **type missing from the data**: the
+table stores facts we authored, facts we observed, and facts we inferred in identical columns, so no
+reader can tell them apart and every reader treats all three as authored.
+
+**Generalizable rule.** Do not keep a durable record of a fact whose owner is already durable and
+queryable — a second record of someone else's fact is a second register, and two registers can
+disagree. Where a fact genuinely is yours, carry its provenance in the value rather than beside it, so
+a consumer cannot read it without deciding what to do about *unknown*. And a property with more
+entrances than anyone has enumerated cannot be secured by enumerating entrances: where this repository
+pins a guarantee structurally — one construction site, asserted by a test that walks the module's own
+syntax tree — the class has not recurred once; where it is left to careful authorship, it recurred in
+every round.
+
 ### A refusal stored in a field the sensor rewrites lasts only until the next sample  {#refusal-must-outlive-the-sensor}
 
 **Context.** Usage accounting moved its refusal from the observer to the

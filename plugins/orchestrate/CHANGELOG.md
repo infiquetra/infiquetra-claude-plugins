@@ -1,5 +1,274 @@
 # Changelog
 
+## [0.8.0] - 2026-08-15
+
+### Fixed
+
+- **The scanner's bounds now have exactly one way to end, and it is the honest one.** The
+  structure walk returned a bare "not found" when it hit its depth limit, and the caller could
+  not tell that answer from "no declaration present" — so a nine-level JSON object whose
+  innermost `argv` was bound to a proper sequence was accepted, with the scan reporting that it
+  had finished cleanly. Depth 7 refused; depth 9 did not.
+
+  This was the third appearance of one shape, once per review round, each with a different
+  constant: a decode budget reported clean on exhaustion, then a line sweep did, then the walk
+  did. Each was repaired alone while the next one waited. The repair this time is structural
+  rather than another remembered rule — every bound (walk depth, walk size, encoding layers,
+  decoded bytes, embedded regions) is consumed through a single budget object, and the scan
+  builds its one and only result from that budget at a single return point. A bound cannot be
+  reached and reported as a clean scan because there is no second place where completeness is
+  decided, and a test asserts that single decision point structurally.
+
+- **Three bounds were refusing the reading work the mirror exists to do.** A 201-line
+  comparison of two children's reports — the example this unit uses for work that must leave the
+  operator's channel — was refused as unexaminable. So was a one-line question naming seventeen
+  `*args`-style identifiers, and thirty-three short Base64 notes. Fail-closed is right; failing
+  closed at a threshold ordinary prose crosses is a defect in the same way an accepted
+  declaration is.
+
+  The line cap is gone: parsing every line of a worst-case instruction at the byte cap measures
+  0.083s, so the byte cap was already the real bound. The decoded-payload cap is now measured in
+  bytes rather than in a count of payloads, because a count is not a measure of work. The walk
+  depth is raised well above anything a real document reaches, which it can be safely now that
+  reaching it refuses.
+
+- **Alias amplification is bounded by the walk, not by counting alias-looking text.** The
+  previous guard counted `*name` occurrences, which fired on Python `*args` and markdown
+  `*emphasis*` — shapes this repository's own source produces dozens of times per file — and did
+  not recognise YAML's numeric aliases (`*1`) at all. A 424-byte document using numeric anchors
+  took over nine seconds to scan. The structure walk now visits each shared node once, which
+  brings the same document under three milliseconds and makes the count unnecessary; the guard
+  that was not protecting anything has been removed rather than tuned.
+
+- **A declaration after a `---` separator was parsed by nothing.** `yaml.safe_load` returns
+  only the first document of a multi-document stream, so a second or third document was never
+  examined while the scan reported that it had finished — the same shape as the bounds above,
+  in a loader rather than a budget. Every document in the stream is now loaded. Found by this
+  unit's own adversarial pass rather than by a review.
+
+- **A Python mapping whose `argv` is a tuple, written after a prose prefix, reached the pane.**
+  `Run this: {'argv': ('uv', 'run', 'pytest', '-q')}` is not valid YAML, is not the whole text,
+  and the textual fallback does not recognise `(`. Balanced `{...}` and `[...]` regions are now
+  parsed individually, so the declaration is found by a loader. Locating the region is textual;
+  deciding what it means is not.
+
+## [0.7.0] - 2026-08-15
+
+### Changed
+
+- **The predicate detector parses and inspects the result; it no longer pattern-matches
+  serialized text.** Matching text was unsound and imprecise at the same time, for one reason.
+  YAML can bind the exact key `argv` without those four letters ever standing next to a
+  separator — through an escape, or through an anchor and an alias — so a text detector missed
+  real declarations. The same pattern fired on `sys.argv:` in an ordinary sentence, so it
+  refused requests to read this repository's own source, which is the mirror's whole job.
+  Parsing closes both directions with one change: after a safe parse an escaped key **is**
+  `argv` and an alias-bound key **is** `argv`, and a sentence mentioning `argv` does not parse
+  into a mapping with an `argv` key at all.
+
+  The detector now unwraps Base64 and hexadecimal runs — repeatedly, until they stop decoding,
+  so layered wrapping is followed rather than capped — resolves `\uXXXX` escapes, and parses
+  under `json`, `yaml.safe_load`, `tomllib`, and `ast.literal_eval`, applying each to the whole
+  text, to each individual line, and to string leaves inside a parsed structure. It refuses
+  when a result is **a mapping with an `argv` key bound to a sequence**, which is the predicate
+  schema's own shape: `PredicateSpec` rejects an `argv` that is a command string, so binding
+  the rule to the schema is what lets a type annotation (`argv: list[str]`, an `argv` bound to
+  a *string*) survive.
+
+  Every loader is a safe loader — `yaml.safe_load`, never `yaml.load` — because a parser that
+  executed untrusted input would be a worse defect than the one being fixed. Alias expansion is
+  the one resource risk a safe loader still carries, so text carrying an unusual number of YAML
+  aliases is refused as unexaminable rather than expanded. A textual fallback remains for
+  material no loader can parse at all, and is documented as a heuristic rather than the
+  guarantee.
+  *The alias count is superseded in 0.8.0: it counted a text shape this repository's own source
+  produces and missed YAML's numeric aliases entirely. A memoised walk bounds the amplification
+  instead.*
+
+  Refused now and not before: a YAML escaped key, a YAML anchor and alias, layered Base64, and
+  hexadecimal. Accepted now and not before: `argv = permission_argv(runtime)`,
+  `argv: list[str]`, `sys.argv:`, `def main(*argv: str)`, an annotation block, and a list of
+  seventeen commit identifiers. A mirror that refuses ordinary synthesis is as broken as one
+  that accepts a predicate.
+
+- **Every published claim now states the same boundary.** The reference, this changelog, the
+  skill page, the module docstring and the test names had drifted apart: the docstring
+  disclosed an encoding depth limit while four other places said Base64 was caught. The
+  contract is now written in two halves in `references/operator-channel.md` — what is
+  mechanically refused (machine-readable declarations), what is not detectable (an English
+  request, for which no general detector is achievable), and what makes the undetectable case
+  survivable (a mirror opinion cannot become `verified`, because completion requires a dispatch
+  receipt the mirror is never issued).
+
+- **The skill page no longer says nothing distinguishes a thinking mirror from a dead one.**
+  That sentence was retracted in 0.6.0 and survived in one place fifteen lines from its own
+  correction.
+
+### Fixed
+
+- **The first look at a pane's revision counter no longer advances the clock.** A counter is
+  only evidence of emission when there is a previous one to compare it against, so the first
+  observation now records a baseline and leaves the reference where it was. Treating it as an
+  advance let a supervision loop that started late report a long-dead mirror as `working` with
+  the pane-revision feed named as the source — health the counter had not established. It
+  delayed a hang rather than suppressing one, but it made calling the reader strictly worse
+  than not calling it, because the dispatch clock would already have tripped.
+- **A revision counter that goes backwards re-baselines instead of sticking.** A herdr
+  reconnect restarts the series; previously a decrease wrote nothing at all, so real output
+  stayed invisible until the new series climbed past the old maximum. The safe direction is
+  kept — a restarted counter is not evidence of emission — while letting the feed recover.
+- **A failed subscription acknowledgement retracts the previous one.** The acknowledgement is
+  durable and the subscriber process is not, so a replacement subscriber could inherit a dead
+  process's confirmation, turning the distinct missing-wire state back into a working-or-hung
+  report. A caller presenting a list without the mirror's subscription is evidence the wire is
+  gone, and is now treated as such.
+- **A request to summarise commit identifiers is no longer refused.** Base64 candidates were
+  counted before being decoded, so seventeen hexadecimal identifiers exhausted a budget and the
+  scan reported itself incomplete. Only runs that decode to valid UTF-8 are payloads now.
+
+## [0.6.0] - 2026-08-15
+
+### Changed
+
+- **A published guarantee was false and is now accurate.** The mirror's documentation stated
+  that a predicate never reaches it. A predicate did reach it, three ways, and the claim has
+  been narrowed to what the mechanism actually does while the mechanism itself has been made as
+  strong as it honestly can be. The honest sentence is that the mirror is never *asked* for a
+  verdict through this API. An instruction that describes a check in ordinary English is not
+  detectable by any scanner, and the live agent beyond the pane is itself a program executor.
+  Column ownership was previously offered as the containment for this and does not contain it:
+  it stops a mirror's opinion becoming a `verified` row, not a claimed verdict being produced,
+  and a claimed verdict with no second reader is the failure the requirement names.
+- **Hang detection can now tell a thinking mirror from a dead one, and the earlier claim that
+  nothing could was too strong.** The subscriber advances `last_event_at` only on a matched
+  sentinel and the mirror's only subscribed sentinel is its return marker, so that feed alone
+  makes the clock a per-request tolerance. `observe_pane_activity` reads herdr's pane-output
+  `revision` counter from a `session.snapshot` — the feed the register names for this, naming
+  this unit as its reader — and records it on the mirror's own row, so a pane still emitting
+  keeps the clock fed and a pane that has stopped lets it trip. It is a snapshot read rather
+  than a heartbeat subscription because the subscriber wakes the orchestrator on every handled
+  event, so a heartbeat would wake the operator's channel on a timer. `MirrorLiveness` now
+  reports which feed the answer rested on, so "working" from a stale clock and "working" from a
+  live one are not the same word.
+
+### Fixed
+
+- **The predicate-declaration scan keys on the declaration's signature, not on one
+  serialisation.** A predicate is the name `argv` bound to a value; JSON, a YAML block or flow
+  mapping, TOML, a Python literal, a string nested inside another object, unicode-escaped
+  braces, and Base64 are the same declaration in different clothes, and all are refused.
+  Enumerating serialisations is a race the enumerator loses.
+  *Superseded in 0.7.0, which replaces text matching with parsing — see that entry for why
+  matching a signature in serialized text was still both unsound and imprecise.*
+- **The scan fails closed.** An instruction it cannot finish examining within its budget is
+  refused rather than passed. Reporting "clean" on exhaustion had turned a denial-of-service
+  bound into the bypass: a real declaration parked behind 512 decoy braces was never inspected
+  and was accepted, while 511 decoys were correctly refused.
+- **Dispatch re-runs the request's checks on the object it is handed.** Every load-bearing
+  check lived in a constructor while the one function that talks to the pane read attributes
+  off whatever arrived, so any object with the right attribute names bypassed the closed kind
+  vocabulary and the scan together. This closes the class rather than an instance of it.
+- **Every clock input must be finite.** A NaN threshold passed validation because every ordered
+  comparison with NaN is false, and positive infinity passed honestly; either made a dead
+  mirror report `working` forever, reaching the affirmative state the unarmed error exists to
+  prevent by a different door. Thresholds, dispatch instants, observed instants and the
+  supplied `now` are all now required to be finite, and a non-finite threshold is refused at
+  creation.
+- **A zero or negative default return bound is refused at creation.** It is interpolated into
+  the charter as the session's standing default, so zero told the mirror its default budget was
+  nothing, which would make every return that honoured the charter oversized.
+
+### Added
+
+- **`resume_mirror` rebuilds a live session from the register alone.** The mirror's nonce and
+  return markers previously existed only in an in-memory session object, so an orchestrator
+  that died could not collect from a mirror that was still running — which contradicts the
+  requirement that the mirror is persistent for the life of the orchestration. The row now
+  carries them, and the identity is written before the launch side effect alongside the row
+  itself. The run's single mirror is located by its `role` column when no row id is given, and
+  two mirrors in one run are refused rather than guessed.
+- **A missing subscriber wire is loud instead of silent.** The mirror's row records the
+  `pane.output_matched` subscription its returns require. `acknowledge_subscription` compares
+  it against the list the subscriber was actually given and refuses a mismatch; until something
+  confirms it, `check_liveness` raises a distinct unconfirmed-subscription error rather than
+  reporting a state. A mirror nobody is listening to and a hung mirror produce identical
+  silence, and reporting the first as the second sends the operator hunting a hang that is not
+  there.
+- **Repository-visible change over a request window is observed and recorded.** The mirror is
+  read-only by contract and nothing prevents it writing — `mutating=False` keeps it in the
+  ambient checkout but is not a write fence, and because the mirror declares no artifact it
+  never reaches the post-hoc scope check, so a violation was previously not merely unprevented
+  but unobserved. The observation is reported on the return and recorded durably; escalation is
+  opt-in through `assert_no_repository_change`, because this session reads the operator's live
+  working tree, so the operator's own edit lands in the same window and attribution is not
+  established. Isolation was rejected deliberately: a worktree would give the mirror a tree
+  nobody is working in.
+
+## [0.5.0] - 2026-08-15
+
+### Added
+
+- **The mirror**: a persistent paired session that performs the orchestrator's own work —
+  synthesis, comparison, bulk reading — so the operator's channel stays answerable while work
+  happens. Children do the outcome's work; the mirror does the orchestrator's. It is launched
+  through the same session path as any child (dry-run preview, write-ahead label, trust-prompt
+  check, nonce-bound readiness sentinel) and holds an ordinary register row, written **before**
+  the launch side effect so a mirror whose launch failed is visible rather than absent.
+- **A distilled return under an enforced byte bound.** A return larger than its request's
+  declared bound is rejected whole rather than truncated, because a truncated return is an
+  oversized one wearing the appearance of success. The rejection carries the byte count and
+  never the material — an error that quoted the return would perform the absorption it reports
+  — and it is recorded durably, so a rejection is distinguishable from a return that never
+  happened. The bound a request may declare is itself capped at 16 KiB (default 4 KiB): this
+  contract does not erode by being deleted, it erodes by being raised. A rejected return leaves
+  the mirror ready and holding its context, so the cost is one round trip rather than the
+  session.
+- **The validity predicate never runs in the mirror.** Routing it there would turn verification
+  back into a claim: the mirror reports a pass, the orchestrator never sees the bytes and cannot
+  re-check, and the evidence-failure class reappears one layer up with no second reader. Three
+  independent guards — a closed vocabulary of reading request kinds with deciding kinds refused
+  by name; refusal of any instruction carrying a predicate declaration; and a module that
+  contains no program-execution route and does not import the completion module. What no guard
+  catches is an instruction that describes a check in prose; the containment for that is the
+  written routing rule plus the fact that the mirror writes no `phase`, so its opinion cannot
+  become a verified row.
+- **Clock-based hang detection**, because nothing else reaches this failure. Every other failure
+  in this system appears as a disagreement between two values; a hung mirror's expected and
+  observed states agree perfectly, every child still looks healthy, and the operator's channel
+  is dead. `check_liveness` therefore compares silence against the row's declared
+  `max_quiet_seconds`, taking the current instant as an argument rather than reading the system
+  clock. It reads and raises: it writes nothing, closes nothing, and demotes nothing, because
+  what to do about a quiet mirror is a decision. A row with no declared tolerance raises a
+  distinct "not armed" error rather than reporting health, and an idle mirror is never alarmed,
+  because a mirror between requests is legitimately silent forever.
+- **Non-blocking dispatch.** No subscription is held open, no pane is polled, and there is no
+  timeout parameter. The outstanding request is durable before the line is sent, so a failed
+  send leaves an armed clock rather than an idle-looking mirror. A second request while one is
+  outstanding is refused explicitly with the outstanding id, never silently dropped.
+- **Checkable column ownership.** Every register write in the mirror module passes through one
+  seam that refuses, at runtime, any column outside `role`, `max_quiet_seconds`,
+  `mirror_request` and `mirror_last_return`, and only on the mirror's own row. It does not write
+  `artifact_path`, does not write `observed_state` (the subscriber owns that and rewrites it on
+  every catch-up pass), and never promotes its own phase. The mirror row is identified by `role`
+  rather than by `agent`, because `agent` carries the launcher's actual agent name for every
+  launched row and a second writer of a shared column is a defect this codebase has paid for.
+- **`references/operator-channel.md`**: the routing rule in writing. Work goes to the mirror by
+  default; the exception list is five entries, each with the reason it is bounded by
+  construction; anything not on the list goes to the mirror even when it looks trivial. It also
+  states plainly what the clock does not establish — nothing distinguishes a mirror quiet
+  because it is thinking from one quiet because it is dead, and the within-request heartbeat
+  that would narrow the gap is deliberately not built, because the subscriber wakes the
+  orchestrator on every matched event and a heartbeat would wake the operator's channel on a
+  timer.
+  *Half superseded in 0.6.0: the heartbeat reasoning holds, but pane revision does distinguish
+  the two, and 0.6.0 builds that feed.*
+- **Deliberate context management.** The mirror is persistent for prompt-cache benefit and
+  continuity, and a mirror that has silently degraded is worse than no mirror because the
+  orchestrator will still believe its answers. Its context is compacted or cleared on
+  instruction, refused while a request is outstanding, and refused outright for runtimes whose
+  context commands are not established here rather than guessed — an unrecognised slash command
+  is a silent no-op that looks like a reset.
+
 ## [0.4.0] - 2026-08-13
 
 ### Added

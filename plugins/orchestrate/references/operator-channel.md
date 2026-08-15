@@ -1,0 +1,312 @@
+# The operator's channel, and the mirror that protects it
+
+The highest-severity failure this plugin exists to prevent is not a wrong model or a run that
+overruns. It is **the operator's channel dying under supervision load**: the operator asks a
+question, the orchestrator is busy doing work, and the question is never answered. Two of the
+questions that went unanswered, verbatim:
+
+> *"Can we use herdr to open up couple other sessions? maybe we need three tabs for codex,
+> claude, antigravity to run those proofs in parallel? thoughts?"*
+
+> *"where do we stand on this... the whole session is very, very long"*
+
+The same unanswered question recurs word for word across four separate sessions. That is what
+this document is for.
+
+```
+   WITHOUT A MIRROR                      WITH A MIRROR
+
+   operator ──?──► orchestrator          operator ──?──► orchestrator
+                        │                                     │  answers immediately
+                   (doing work)                               ▼
+                        │                                 ┌────────┐
+                   ...busy...                             │ MIRROR │ ← the work happens here
+                        │                                 └────────┘
+                    no answer                                 │
+                        │                              distilled conclusion
+                   operator gives up                          │
+                   and checks tabs by hand              operator informed
+```
+
+## The rule
+
+**Work goes to the mirror by default.** The orchestrator's channel is for routing, deciding,
+recording, and answering — and nothing else.
+
+The rule "the orchestrator must not do work" is not enough on its own, because work genuinely
+has to happen. A rule with no home for the work is a rule that gets broken the first time
+something needs comparing. The mirror is the home. Children do the *outcome's* work; the mirror
+does the *orchestrator's* work.
+
+The exception list below is deliberately short, and every entry earns its place by being
+**bounded by construction** — not bounded because it usually turns out small. Anything not on
+this list goes to the mirror **even when it looks trivial**, because "this one is quick" is the
+sentence that ends with a dead channel.
+
+## The exceptions, in full
+
+### 1. Answering the operator
+
+The orchestrator answers. There is one voice on this channel and it is the orchestrator's — the
+mirror never speaks to the operator (R9). One voice, or the channel problem comes back wearing
+a different hat.
+
+*Bounded because:* an answer is the orchestrator's own output. It consumes nothing new.
+
+### 2. Reading and writing the run register
+
+`register.read_rows`, `register.upsert_row`, and the status views built on them.
+
+*Bounded because:* the register is one flat document whose row count the orchestrator itself
+fixed at admission. It is the orchestrator's own state, not material under study.
+
+### 3. Running a declared validity predicate
+
+`completion.evaluate_completion`, and the predicate it runs, execute **inline** in the
+orchestrator's own process tree. This is not a preference; it is KTD6, and it is the one
+exception that must never be optimised away. Routing a predicate through the mirror turns
+verification back into a **claim**: the mirror reports a pass, the orchestrator never sees the
+bytes and cannot re-check, and the evidence-failure class — the largest and most damaging in
+the corpus — reappears one layer up with no second reader.
+
+The mirror does unbounded *reading*. It does not do *deciding*.
+
+*Bounded because:* a predicate is a closed schema — a fixed argument vector with a mandatory
+`timeout_seconds` and `max_output_bytes`, rejected outright rather than clamped when it exceeds
+either, and rejected outright when it is shell text. Its output cannot be large; the schema
+will not let it.
+
+### 4. Session control
+
+Launching a child or the mirror, confirming readiness, sending a dispatch line, checking a tab,
+reaping a verified child: everything in `session_lifecycle.py`.
+
+*Bounded because:* each call returns a fixed-shape identity record or an error. None of them
+returns repository content, a file, or a transcript. The one that reads a pane
+(`HerdrControl.pane_text`) is used for a trust-prompt check and for collecting a mirror return
+that has already been bounded — never to bring repository material into the channel.
+
+### 5. Deciding
+
+Choosing which child gets which work, which vendor, which tier. Admitting a queued child.
+Recording a decision. Parking an operator's question with a reason.
+
+*Bounded because:* a decision is a sentence the orchestrator writes, not a document it reads.
+
+## What is deliberately **not** on the list
+
+Each of these looks like one quick command. Each of them is mirror work.
+
+| It looks like | It is |
+|---|---|
+| "just reading one file to see what it says" | bulk reading — mirror |
+| comparing two children's reports | synthesis — mirror |
+| summarising a long log, a diff, or a PR | distillation — mirror |
+| searching the repository for where something is done | survey — mirror |
+| checking what a child actually produced, in prose | reading — mirror (the *predicate* is inline; reading the artifact to form an opinion is not) |
+| "skimming" a requirements document before deciding | bulk reading — mirror |
+| reconstructing what happened earlier in the run | recall — mirror |
+
+The distinction in row five is the one worth re-reading. Running the predicate is exception 3
+and stays inline. Reading the artifact to form a view about it is mirror work. Those are two
+different acts on the same file, and only one of them is bounded.
+
+## What the mirror guarantees, mechanically
+
+These are enforced in `skills/orchestrate/scripts/mirror.py`, not merely intended.
+
+- **A return over its declared bound is rejected, not truncated.** Truncation would turn an
+  oversized return into an apparent success, which is worse than a failure. The rejection
+  carries the byte count and never the material — an error that quoted the return would perform
+  the very absorption it is reporting. The mirror protects the orchestrator's *time*, not its
+  context: the orchestrator still reads whatever comes back, so a 50 KB "distillation" degrades
+  the main session anyway.
+- **The bound a request may declare is itself capped** (16 KiB, default 4 KiB). This
+  requirement does not erode by someone deleting it. It erodes by someone raising it.
+- **The mirror is never *asked* for a verdict through this API.** That is deliberately weaker
+  than "a predicate never reaches the mirror", which is what this page previously claimed. That
+  claim was false, and a published guarantee that is false is worse than a narrower one that
+  holds. What is actually enforced:
+
+  - Deciding request kinds are refused by name.
+  - An instruction whose content **parses** into the predicate schema's shape is refused. The
+    detector parses; it does not pattern-match text. That distinction was learned twice: a text
+    detector is unsound and imprecise *at the same time*, because YAML can bind the exact key
+    `argv` without those letters ever standing next to a colon (an escape, or an anchor and
+    alias), while the same pattern fires on `sys.argv:` in an ordinary sentence and refuses
+    requests to read this repository's own source.
+
+    Exactly what it does: unwrap any Base64 or hexadecimal run, repeatedly, until it stops
+    decoding; resolve `\uXXXX` escapes; then parse under **`json`, `yaml.safe_load`, `tomllib`,
+    and `ast.literal_eval`** — the whole text, **every document of a multi-document YAML
+    stream**, each individual line, each balanced `{...}` or `[...]` region, and any string leaf
+    inside a parsed structure — and refuse when a result is
+    **a mapping with an `argv` key bound to a sequence**. Locating a region is textual; deciding
+    what it means is not, and that division is the point: match text to find a candidate, never
+    to reach a verdict. That last clause is the predicate schema's own shape, which is why a type
+    annotation survives: `argv: list[str]` binds `argv` to a *string*, and the schema rejects a
+    string `argv` outright.
+
+    Only safe loaders are used — `yaml.safe_load`, never `yaml.load` — because a parser that
+    executed untrusted input would be a worse defect than the one it fixes. Alias amplification
+    is the one resource risk a safe loader still carries, and what bounds it is that the
+    structure walk **visits each shared node once**. An earlier revision instead counted
+    alias-*looking* text, which was both too wide and too narrow: it fired on `*args` and
+    `*emphasis*` — shapes this repository's own source produces dozens of times per file — and
+    did not recognise YAML's numeric aliases at all, so a 424-byte document took over nine
+    seconds to scan. Memoising the walk brings the same document under three milliseconds and
+    needs no count.
+
+    **Not covered, named rather than implied:** a format none of those four loaders parses; a
+    declaration that reaches the module already decoded; and an instruction that describes a
+    check in English. For material no loader can parse at all, a textual fallback applies — it
+    is a heuristic, explicitly not the guarantee.
+  - The scan **fails closed, through exactly one path**. Every bound — walk depth, walk size,
+    encoding layers, decoded bytes, embedded regions — is consumed through a single budget
+    object, and the scan builds its one result from that budget at a single return. A bound
+    cannot be reached and reported as a finished, clean scan, because there is no second place
+    where completeness is decided.
+
+    This is written as structure rather than as a rule to remember because the same fail-open
+    appeared three times, once per review round, each with a different constant: a decode budget
+    reported clean, then a line sweep did, then the structure walk did — a nine-level wrapper
+    around a real declaration was accepted while the scan said it had finished. Each was fixed
+    alone while the next one waited.
+
+    The bounds are also sized so ordinary reading does not reach them. Three of them previously
+    refused legitimate synthesis: a 201-line comparison of two children's reports, a question
+    naming seventeen `*args`-style identifiers, and thirty-three short Base64 notes. A bound
+    that refuses the work this session exists to do is a defect in the same way an accepted
+    declaration is.
+  - `dispatch_request` **re-runs those checks on the object it is handed**. They live in
+    `MirrorRequest`'s constructor, and dispatch is the one function that talks to the pane, so
+    reading attributes off whatever arrived left them out of the path that matters — any object
+    with the right attribute names satisfied it.
+
+  ### The contract, in two halves
+
+  Stating the division is stronger than a guarantee that keeps turning out to be false.
+
+  **Mechanically refused: machine-readable declarations.** Anything that parses, under any of
+  the four loaders, into a mapping with an `argv` key bound to a sequence — through any number
+  of Base64 or hexadecimal layers, through an escape, through a YAML anchor and alias, or
+  nested inside another document's string value. That is a real boundary and it is tested from
+  both sides.
+
+  **Not detectable: an instruction that describes a check in English.** "Run the tests and tell
+  me whether they pass" is accepted, and a mirror so instructed can run the check — the live
+  agent on the far side of the pane is itself a program executor, and its runtime's
+  workspace-write posture contains nothing inside the workspace. **No general detector for
+  "does this text ask for a bounded mechanical check" is achievable**, and this page does not
+  claim one.
+
+  **What makes the undetectable case survivable:** a mirror opinion cannot become `verified`.
+  `completion.evaluate_completion` is the only path to that phase and it requires a dispatch
+  receipt the mirror is never issued; the mirror writes no `phase`; nothing in the module
+  returns anything completion accepts as evidence; and a mirror return is bounded material the
+  orchestrator reads with its own eyes rather than a verdict delivered behind its back.
+
+  Note what that does **not** say. It does not say a predicate cannot run. It says a claimed
+  verdict cannot become a gate. The remaining exposure is an orchestrator that *believes* a
+  mirror's claim, and the control for that is the routing rule on this page — a rule, labelled
+  as a rule.
+- **The mirror has a register row from creation**, written before any launch side effect, so a
+  mirror whose launch failed is visible rather than absent. The row carries what a restart needs:
+  `resume_mirror` rebuilds a live session from it, because the pane and the subscriber outlive an
+  orchestrator that dies and a session that outlives its only handle is not persistent in any
+  useful sense.
+- **A subscriber started without the mirror's subscription is loud, not silent.**
+  `acknowledge_subscription` compares the mirror's expected subscription against the list the
+  subscriber was actually given and refuses a mismatch; until something confirms it,
+  `check_liveness` raises `MirrorSubscriptionUnconfirmedError` rather than reporting a state. A
+  mirror nobody is listening to and a hung mirror produce identical silence, and reporting the
+  first as the second sends the operator hunting a hang that is not there.
+- **The mirror never addresses the operator.** Dispatch writes only to the mirror's own pane.
+- **A repository-visible change during a request window is observed and recorded.** The mirror is
+  read-only by contract and nothing prevents it writing: `mutating=False` keeps it in the ambient
+  checkout, it is not a write fence, and because the mirror declares no artifact it never reaches
+  the post-hoc scope check either — so a violation used to be not merely unprevented but
+  unobserved. Detection is now on the request/return path. It is reported rather than raised, and
+  `assert_no_repository_change` is opt-in, because this session reads the operator's live working
+  tree: the operator's own edit lands in the same window and attribution is not established.
+  Isolation was rejected on purpose — a worktree would give the mirror a tree nobody is working
+  in, which is the one thing it must not read.
+
+## When the mirror is busy
+
+An operator question is **never silently dropped** (R8). If a request is already outstanding,
+a second dispatch is refused explicitly with the outstanding request's id. The orchestrator
+then does one of two things, and says which:
+
+- answers from what it already knows, or
+- **parks the question with a reason** — "the mirror is comparing the two reports; I will have
+  this in a moment" — which is an answer, not silence.
+
+## The hang, and the honest limit of its detector
+
+Every other failure in this system shows up as a **disagreement**: expected state against
+observed state, declared artifact against artifact on disk, claimed completion against a
+predicate that runs. A hung mirror produces no disagreement at all. Its expected state and its
+observed state agree perfectly, every child still looks healthy, and the operator's channel is
+dead — precisely the failure the mirror exists to prevent, arriving through the mirror itself.
+
+So the only detector is a clock: `last_event_at` exceeding the declared `max_quiet_seconds` on
+the mirror's row. `mirror.check_liveness` takes the current instant as an argument rather than
+reading the system clock, so its test does not sleep.
+
+**State plainly what it does and does not establish.** It asserts that the row has not been
+observed emitting for longer than the operator declared it should ever be silent. What counts as
+"observed" is the whole question, and there are two feeds:
+
+- **`last_event_at`** — written by the subscriber when a matching sentinel appears in the
+  mirror's pane. The mirror's only subscribed sentinel is its return marker, so within one
+  request this never moves. On its own it makes `max_quiet_seconds` a **per-request tolerance**
+  rather than a within-request liveness probe.
+- **Pane revision** — herdr's pane-output counter, read by `observe_pane_activity` from a
+  `session.snapshot` and recorded on the mirror's own row. **This is what distinguishes a mirror
+  that is quiet because it is thinking from one that is quiet because it is dead**, and it is the
+  feed `register.py` names for exactly this purpose, naming this unit as its reader. The
+  measurement behind that is in the journal
+  (`LEARNINGS.md#pane-revision-is-the-liveness-signal`): over one real dispatch window the
+  lifecycle counter `state_change_seq` moved twice and then sat still for minutes while the
+  session worked hard, while `revision` moved roughly 47 times.
+
+An earlier revision of this page said nothing distinguishes the two. That was too strong, and the
+correction matters more than the original claim did. The honest sentence: **the subscription path
+alone cannot distinguish them; pane revision can; and a heartbeat subscription is still not how it
+may be attached.**
+
+- A within-request heartbeat *subscription* remains deliberately unbuilt. The subscriber wakes
+  the orchestrator on every handled event, so a heartbeat subscription would wake the operator's
+  channel on a timer — the exact channel-load failure this unit exists to prevent. Reading a
+  snapshot goes nowhere near that wake path, which is why the revision feed is a supervision-tick
+  read rather than a subscription.
+- The revision feed only exists while something is ticking it. `check_liveness` reports which
+  feed its answer rests on in `reference_source`, so "working" from a stale clock and "working"
+  from a live one are not the same word. With no ticks, the clock degrades to the per-request
+  tolerance above — set `max_quiet_seconds` accordingly.
+- Corroborating the clock with herdr's `agent_status` would make it **worse**, not better.
+  Vendor lifecycle detectors are wrong in vendor-specific ways: one runtime reports `idle`
+  while working, another reported settled from launch straight through completion. A second
+  detector that agreed would supply false confidence rather than a second reader. Pane revision
+  is not that: it counts output, not opinion.
+
+The alarm is therefore advisory. `check_liveness` reads and raises; it writes nothing, closes
+nothing, and demotes nothing. What to do about a quiet mirror — probe the pane, re-ask, replace
+it, tell the operator — is a decision, and decisions belong to the orchestrator.
+
+An idle mirror is legitimately silent forever, so the clock is armed only while a request is
+outstanding. A detector that alarmed between requests would fire on every healthy run, and an
+alarm that always fires is an alarm nobody reads.
+
+## Context is a managed resource
+
+The mirror is persistent for the life of the orchestration — for prompt-cache benefit and for
+continuity of context. That persistence has a cost: **a mirror that has silently degraded is
+worse than no mirror, because the orchestrator will still believe its answers.**
+
+So its context is directed, not left to fill: `mirror.request_context_reset` compacts or clears
+it on the orchestrator's instruction, at a natural boundary rather than mid-request. Only the
+Claude Code commands are established here; every other runtime is refused rather than guessed,
+because sending an unrecognised slash command puts prose into a coding agent's input — a silent
+no-op that looks exactly like a reset.

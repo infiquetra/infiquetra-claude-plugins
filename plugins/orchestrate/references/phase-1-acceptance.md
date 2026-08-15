@@ -137,12 +137,26 @@ class TerminalOperatorChannel:
             print(f"not one of {options}")
 ```
 
+Run this from the repository root with the plugin's scripts directory on the module search path --
+none of `mirror`, `runner` or `session_lifecycle` are installed packages:
+
+```bash
+PYTHONPATH=plugins/orchestrate/skills/orchestrate/scripts python3
+```
+
+or, from inside a script, before the imports below:
+
+```python
+import sys
+sys.path.insert(0, "plugins/orchestrate/skills/orchestrate/scripts")
+```
+
 ```python
 from pathlib import Path
 
 import mirror
 import runner
-import session_lifecycle  # all three from skills/orchestrate/scripts, on sys.path
+import session_lifecycle
 
 ORCHESTRATOR_PANE = "w1:p1"    # from step 1 above
 SUBSCRIBER_PANE = "w1:p3"      # from step 2 above
@@ -167,8 +181,18 @@ coordinator.start_run()
 # A concrete plan: two vendors, one mutating child, one read-only child -- the four scenario
 # requirements above in one shape. Replace the task text and scope with the real, unrelated task;
 # leave the row_id/vendor/work_shape/artifact_path/predicate/integration_mode/tokens_max keys as
-# named -- ``planning.plan`` reads exactly these.
-request = runner.parse_outcome("issue #1234")   # any of the four OUTCOME_KINDS forms; see below
+# named -- ``planning.plan`` reads exactly these. This uses the free-prose form of the argument,
+# not an issue reference: an issue reference (``"#1234"``, not ``"issue #1234"`` -- see the forms
+# named below) requires an ``IssueReader`` this module deliberately does not ship, because it never
+# reaches a network by itself.
+request = runner.parse_outcome("Survey and fix the affected module, unrelated to this run.")
+# ``predicate.argv`` runs verbatim as a subprocess after the child stops, with no substitution --
+# each entry below is a repository script this scenario must actually provide (there is no shipped
+# ``checks/`` package; write one exit-0-or-1 script per row before running this), and the artifact
+# path each predicate names must be computed and hardcoded now, not left as a placeholder for the
+# predicate to receive later: it is knowable before dispatch precisely so a predicate can name it.
+survey_relpath = runner.artifact_relpath("phase-1", "survey", "survey.json")
+fix_relpath = runner.artifact_relpath("phase-1", "fix", "fix.json")
 children = [
     {
         "row_id": "survey",
@@ -177,7 +201,7 @@ children = [
         "vendor": "claude",
         "scope": ["src"],
         "artifact_path": "survey.json",
-        "predicate": {"argv": ["python3", "checks/survey_check.py", "<artifact-relpath>"]},
+        "predicate": {"argv": ["python3", "checks/survey_check.py", survey_relpath]},
         "integration_mode": "none",
         "tokens_max": 40000,
     },
@@ -188,7 +212,7 @@ children = [
         "vendor": "codex",
         "scope": ["src"],
         "artifact_path": "fix.json",
-        "predicate": {"argv": ["python3", "checks/fix_check.py", "<artifact-relpath>"]},
+        "predicate": {"argv": ["python3", "checks/fix_check.py", fix_relpath]},
         "integration_mode": "branch",
         "tokens_max": 60000,
     },
@@ -211,22 +235,28 @@ run from whatever already wakes this session (a cron tick, an operator prompt, a
 delivered to the pane this coordinator runs in — this module does not care which):
 
 ```python
-def on_wake(coordinator: runner.Coordinator) -> None:
+def on_wake(coordinator: runner.Coordinator, woken_row_id: str | None) -> None:
     supervision = coordinator.supervise()
     print(f"subscriber_alive={supervision.subscriber_alive} mirror={supervision.mirror_state}")
-    for row_id, row in sorted(coordinator.child_rows().items()):
+    # ``completion_sentinel`` is written at dispatch time, well before the child finishes -- it
+    # names the marker a completion *would* assemble, not proof one has. Evaluating every row that
+    # merely carries one, on every wake, evaluates children that have not written anything yet.
+    # ``woken_row_id`` is the one row this particular event actually names (a subscriber wake
+    # carries the row that produced it); only that row is ready to integrate on this call.
+    if woken_row_id is not None:
+        row = coordinator.child_rows().get(woken_row_id, {})
         if row.get("phase") == "ready" and row.get("completion_sentinel"):
-            # A completion sentinel event for this row arrived; the caller's event source names
-            # which row_id woke this call, and that is the row_id to pass here.
-            result = coordinator.integrate_child(row_id)
+            result = coordinator.integrate_child(woken_row_id)
             if result.verified:
-                coordinator.reap_child(row_id)
+                coordinator.reap_child(woken_row_id)
     report = coordinator.launch_ready_children()
     if report.withheld:
         print(f"withheld this sweep: {report.withheld}")
 ```
 
-Call `on_wake(coordinator)` again after every event; `launch_ready_children()` is what picks up
+Call `on_wake(coordinator, woken_row_id)` again after every event, passing the row the event actually
+names (`None` for a wake that names no row, e.g. a bare cron tick -- that call still runs
+`launch_ready_children()`, it just integrates nothing). `launch_ready_children()` is what picks up
 whatever admission promoted once a slot freed.
 
 **Failure branches**, all decided the same way -- ownership, never a clock:

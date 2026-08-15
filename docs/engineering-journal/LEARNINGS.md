@@ -21,6 +21,58 @@
 
 ## 2026-08-15
 
+### Checking closer to the risky action is not the same as making the check and the action one thing  {#a-closer-recheck-is-still-two-events}
+
+**Context.** Two properties in the orchestrate composition control flow — that a claimed dispatch
+reaches the one native call that cannot be undone at most once, and that a background subscriber
+process is never mistaken for absent — were each repaired more than once. Each repair moved the
+guard closer to the event it was protecting, or added the guard to one more caller that had been
+missing it. Each repair passed every test built from the reported reproduction. Each repair still
+left the property open, because a check re-run a moment earlier is still a *separate* step from the
+action it guards, and a predicate added to one more caller is still one predicate among several that
+can each independently reach a wrong answer.
+
+**Evidence.** The dispatch-claim guard was moved from "checked once, well before the launcher" to
+"re-read immediately before the launcher is called" — and a takeover could still land in the gap
+between that read returning and the launcher actually running, because nothing serialised the two.
+Pinned by
+`tests/test_orchestrate_composition.py::test_a_takeover_cannot_finish_while_the_original_coordinator_is_inside_the_native_launch_call`,
+which pauses a coordinator *inside* the native call (past every earlier check) and proves a second
+coordinator's takeover attempt is genuinely blocked — not merely slower — until the first coordinator
+releases. Separately, the subscriber's liveness question had three independent callers, each reading
+the durable record and treating its absence as proof nothing was running; fixing one caller left the
+other two exposed to the identical crash-after-start, record-never-written window. Pinned by
+`tests/test_orchestrate_composition.py::test_a_subscriber_started_but_never_recorded_is_found_not_read_as_absent`.
+
+**Mechanism.** A guard re-checked closer to the event narrows the window between the check and the
+event; it does not remove the window, because the check and the event remain two separate operations
+a scheduler (or another coordinator) can still interleave between. Closing it required making the
+check and the event *one* operation: the claim is now re-read and the native call made inside one
+uninterrupted hold of the same lock a competing takeover must also acquire to act, so whichever side
+reaches the lock first is the one the launcher answers to, with no gap in between for anything else to
+land in. Symmetrically, a predicate added to one more caller is still only as complete as the list of
+callers someone remembered to update; the fix routes every caller of "is this run's subscriber alive"
+through one function, so a caller nobody thought to update inherits the fix instead of missing it.
+
+**What surprised.** Both properties had already been the subject of a repair round each, and both
+repair rounds' own regression tests stayed green throughout this round's fix — they tested the
+sequence a reviewer executed, not the property. A test that pauses execution at the exact moment
+between the check and the event, rather than before or after both, is the only kind of test that can
+tell "narrowed" from "closed" apart.
+
+**Generalizable rule.** When a fix's substance is "check X later" or "check X in one more place," ask
+two questions before calling the property closed. First: is the check and the risky action one
+indivisible transaction (the same lock, the same locked write), or are they two operations with
+daylight between them regardless of how close together they run? Second: is there one function every
+caller of the underlying question goes through, or does each caller independently re-derive the
+answer from the same evidence? A property closed by narrowing a window or lengthening a caller list
+still has exactly as many entrances as it started with — one, and however many callers exist,
+respectively — just harder to find.
+
+**Refs.** [[#absence-must-be-proved-not-inferred]] — the sibling lesson about *what* evidence a
+check trusts; this entry is about *how many places* get to check it and *how atomically* the check
+binds to the action it gates.
+
 ### "No record of X" is not "X does not exist" — it is "not yet known"  {#absence-must-be-proved-not-inferred}
 
 **Context.** The orchestrate composition control flow's spend gate treated a `launching` row with
@@ -80,7 +132,10 @@ only the reported instance of it."
 **Refs.** [[#never-gate-on-a-status-you-wrote]], [[#a-read-then-act-guard-is-not-a-guard]],
 [[#observation-cannot-fence-a-live-producer]] — the three prior instances of the same shape in this
 unit, at reservation status, structural completeness, and (after this entry) launch-intent spend
-accounting.
+accounting. A fifth instance turned up in a later round, in the subscriber's own liveness question: a
+background process's durable record is written only after the process itself starts, so a missing
+record answers "not yet recorded," never "not running" — see
+[[#a-closer-recheck-is-still-two-events]].
 
 ### A precondition you write yourself is a trap you set for yourself  {#never-gate-on-a-status-you-wrote}
 
@@ -251,11 +306,13 @@ metered row with no telemetry, so once a mirror existed the run's spend gate rai
 and no child could ever start; and the mirror sat permanently in `unreserved_active`, which is the
 evidence a startup reconciler reads.
 
-**Fix.** One predicate with one owner: `register.is_supervisory_row`, testing both columns, called
-from `accounting.run_actual_tokens` and `admission.unreserved_active`
-(`plugins/orchestrate/skills/orchestrate/scripts/register.py`, `SUPERVISORY_AGENTS` /
-`SUPERVISORY_ROLES`). The register's module docstring, which had asserted the false version of this
-in prose, was corrected in the same change.
+**Fix.** One predicate with one owner: `register.is_supervisory_row`, testing the owned `role`
+column alone, called from `accounting.run_actual_tokens` and `admission.unreserved_active`
+(`plugins/orchestrate/skills/orchestrate/scripts/register.py`, `SUPERVISORY_ROLES`). `agent` was
+never a candidate to test alongside `role` -- it is the launcher's uniquified name, an unowned
+column composition does not control, and the whole defect above is what happens when a decision is
+read from a column that cannot carry it. The register's module docstring, which had asserted the
+false version of this in prose, was corrected in the same change.
 
 **Validation.** The reproduction above now prints `run_actual_tokens = 0.0` and
 `unreserved_active = ()`; the orchestrate suite went from 477 to 574 passing with the change in.

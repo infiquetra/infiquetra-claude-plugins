@@ -336,6 +336,18 @@ class FakeSupervisor:
         if handle is not None:
             self.stop(handle)
 
+    def find_orphan(self, *, signature: Any) -> dict[str, Any] | None:
+        """A live handle whose argv carries every token in ``signature``, newest first.
+
+        The real implementation asks the host's process table; this asks every handle this fake
+        has ever started, which is the same question against the same kind of evidence -- a
+        process that exists whether or not a durable record ever named it.
+        """
+        for handle in reversed(self.started):
+            if handle.alive and all(token in handle.argv for token in signature):
+                return {"pid": handle.pid}
+        return None
+
     def kill(self) -> None:
         """Kill the current process the way a SIGKILL does: no stop record, no clean-up."""
         if self.started:
@@ -2329,6 +2341,66 @@ def test_a_dispatch_whose_final_protocol_send_failed_is_offered_and_redelivered(
     assert state == "unknown" and "reported no usage" in detail, (state, detail)
 
 
+def test_a_receipt_sealed_before_its_sentinel_write_landed_is_offered_and_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A sealed receipt and a persisted sentinel are two different register writes, not one.
+
+    ``completion.issue_receipt`` seals the receipt in its own write; the very next write persists
+    the completion sentinel and the changed-paths baseline. A failure strictly between them leaves
+    a receipt that is durable, authoritative proof readiness completed, with no completion sentinel
+    to tell the old two-shape recovery apart from a row where readiness never happened at all --
+    misread as "nothing sealed yet exists to resend safely" when a sealed receipt already does.
+    Nothing was ever sent to the pane, because the send is gated on the write that failed, so a
+    fresh sentinel and a freshly retaken baseline are exactly as safe to mint here as the first
+    ones would have been.
+    """
+    harness = Harness(tmp_path)
+    harness.bootstrap([_child("child-a")])
+    real_write_owned = RUNNER._write_owned
+    calls = {"n": 0}
+
+    def flaky_write_owned(*args: Any, **kwargs: Any) -> Any:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("register write failed")
+        return real_write_owned(*args, **kwargs)
+
+    monkeypatch.setattr(RUNNER, "_write_owned", flaky_write_owned)
+    with pytest.raises(RuntimeError):
+        harness.coordinator.launch_ready_children()
+    monkeypatch.setattr(RUNNER, "_write_owned", real_write_owned)
+
+    row = harness.rows()["child-a"]
+    assert row["phase"] == "ready", "readiness itself already completed before the crash"
+    assert row["pane_id"] == "pane-child-a"
+    assert isinstance(row.get(COMPLETION.DISPATCH_RECEIPT_KEY), dict), "the receipt is sealed"
+    assert not isinstance(row.get("completion_sentinel"), dict)
+    assert not isinstance(row.get("artifact_protocol_sent"), dict)
+    # Readiness itself legitimately dispatches to the pane; what must not have happened is the
+    # artifact protocol -- the send gated on the write that crashed.
+    assert not any("Write your deliverable" in text for _pane, text in harness.herdr.sent), (
+        "the artifact protocol reached the pane before the crash"
+    )
+
+    offered = harness.coordinator.interrupted_dispatches()
+    assert [item.row_id for item in offered] == ["child-a"]
+
+    resumed = harness.restart_coordinator()
+    resumed.reconcile_startup(decide=lambda _orphan: "resume")
+    second = resumed.launch_ready_children()
+
+    assert second.launched == ("child-a",), second.withheld
+    assert harness.wrapper.launches == ["child-a"], "no second native launch"
+    bound = harness.rows()["child-a"]
+    assert isinstance(bound["completion_sentinel"], dict)
+    assert isinstance(bound["changed_paths_baseline"], dict)
+    assert isinstance(bound["artifact_protocol_sent"], dict)
+    assert any("Write your deliverable" in text for _pane, text in harness.herdr.sent), (
+        "the artifact protocol actually reached the pane this time"
+    )
+
+
 def test_abandoning_a_dispatch_stuck_on_an_unconfirmed_protocol_send_frees_the_spend_gate(
     tmp_path: Path,
 ) -> None:
@@ -2363,6 +2435,62 @@ def test_abandoning_a_dispatch_stuck_on_an_unconfirmed_protocol_send_frees_the_s
 
     state, detail = harness.coordinator.spend_status()
     assert state == "ok", detail
+
+
+def test_abandoning_a_live_pane_that_will_not_close_still_gates_the_spend(
+    tmp_path: Path,
+) -> None:
+    """No longer awaited is not the producer stopped, and abandon must not conflate them.
+
+    A child abandoned with a confirmed-closed pane correctly stops counting against spend, but a
+    child abandoned while its tab genuinely will not close is still, for every purpose this gate
+    checks, exactly as unresolved as a row nobody decided anything about: the operator's decision
+    to stop pursuing it does not by itself make its cost knowable or its mutation stopped.
+    """
+    harness = Harness(tmp_path, per_vendor=1, aggregate=1)
+    harness.bootstrap([_child("child-a"), _child("child-b")])
+    harness.coordinator.launch_ready_children()
+
+    real_close_tab = harness.herdr.close_tab
+    harness.herdr.close_tab = lambda tab_id, *, cwd: None  # type: ignore[method-assign]
+
+    harness.coordinator.abandon_child("child-a", "operator gave up, but the pane will not close")
+    harness.herdr.close_tab = real_close_tab  # type: ignore[method-assign]
+
+    row = harness.rows()["child-a"]
+    assert row["coordinator_disposition"]["never_ran"] is False
+    assert row["coordinator_disposition"]["producer_stopped"] is False
+    assert harness.herdr.tab_present("tab-child-a", cwd=harness.repo), "the tab is still live"
+
+    state, detail = harness.coordinator.spend_status()
+    assert state == "unknown" and "child-a" in detail, (state, detail)
+
+    outstanding = harness.coordinator.outstanding_writers()
+    assert "child-a" in outstanding, "retirement must refuse on an unconfirmed-stopped abandon too"
+
+
+def test_abandoning_a_live_pane_that_does_close_correctly_frees_both_gates(
+    tmp_path: Path,
+) -> None:
+    """The companion positive case: a confirmed stop is what actually earns the exclusion.
+
+    Distinguishes the new gate from a regression that would exclude every abandoned row again
+    regardless of outcome -- only a tab that genuinely closes frees both the spend gate and
+    retirement.
+    """
+    harness = Harness(tmp_path, per_vendor=1, aggregate=1)
+    harness.bootstrap([_child("child-a"), _child("child-b")])
+    harness.coordinator.launch_ready_children()
+
+    harness.coordinator.abandon_child("child-a", "operator gave up; the pane closes cleanly")
+
+    row = harness.rows()["child-a"]
+    assert row["coordinator_disposition"]["producer_stopped"] is True
+    assert "tab-child-a" in harness.herdr.closed
+
+    state, detail = harness.coordinator.spend_status()
+    assert state == "ok", detail
+    assert "child-a" not in harness.coordinator.outstanding_writers()
 
 
 def test_a_dispatch_stalled_before_readiness_was_confirmed_is_offered_but_only_abandonable(
@@ -2616,6 +2744,91 @@ def test_two_threads_of_one_coordinator_racing_the_same_launch_reach_the_launche
     assert harness.wrapper.launches == ["child-a"], "exactly one native launch"
 
 
+def test_a_takeover_cannot_finish_while_the_original_coordinator_is_inside_the_native_launch_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A claim re-checked and a launcher called moments later is still two events, not one.
+
+    ``_assert_dispatch_claim_still_mine`` re-checks the claim before ``session_lifecycle.launch_child``
+    is even called; that check passing does not fence the native call itself, which runs after real
+    I/O (admission, git provisioning, a wrapper preview) the check paid no attention to. This pauses
+    a coordinator *after* that early check has already passed and *inside* the one native call that
+    cannot be undone -- the state neither the early check nor an earlier fence at ``activate_slot``
+    (:func:`test_an_explicit_resume_by_another_coordinator_fences_the_original_claimant`) reaches.
+    """
+    harness = Harness(tmp_path)
+    harness.bootstrap([_child("child-a")])
+    first = harness.coordinator
+    child = first.approved_plan().children[0]
+
+    paused = threading.Event()
+    release = threading.Event()
+    real_launch = harness.wrapper.launch
+    calls = {"n": 0}
+
+    def hooked_launch(*args: Any, **kwargs: Any) -> Any:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            paused.set()
+            release.wait(30)
+        return real_launch(*args, **kwargs)
+
+    monkeypatch.setattr(harness.wrapper, "launch", hooked_launch)
+
+    first_errors: list[BaseException] = []
+
+    def run_first() -> None:
+        try:
+            first.launch_child(child)
+        except BaseException as exc:  # noqa: BLE001 - reported, not swallowed
+            first_errors.append(exc)
+
+    first_worker = threading.Thread(target=run_first)
+    first_worker.start()
+    second_worker: threading.Thread | None = None
+    second_errors: list[BaseException] = []
+    second_report: list[Any] = []
+    try:
+        assert paused.wait(30), "the first coordinator never reached the native launch call"
+
+        second = harness.restart_coordinator()
+
+        def run_second() -> None:
+            try:
+                second.reconcile_startup(decide=lambda _orphan: "resume")
+                second_report.append(second.launch_ready_children())
+            except BaseException as exc:  # noqa: BLE001 - reported, not swallowed
+                second_errors.append(exc)
+
+        second_worker = threading.Thread(target=run_second)
+        second_worker.start()
+        # Proof the block is real, not a lucky ordering: everything this thread does before it
+        # would need the held lock is fake, in-memory work, over in microseconds. Giving it two
+        # full seconds to finish *without* releasing the first coordinator and still finding it
+        # alive is not a race that happened to go the right way -- nothing frees it but ``release``,
+        # which has not been set yet.
+        second_worker.join(timeout=2.0)
+        assert second_worker.is_alive(), (
+            "the second coordinator finished before the first was released; it was never "
+            "genuinely blocked on the first coordinator's held lock"
+        )
+    finally:
+        release.set()
+        first_worker.join(60)
+        if second_worker is not None:
+            second_worker.join(60)
+
+    assert not first_errors, first_errors
+    assert not second_errors, second_errors
+    assert harness.wrapper.launches == ["child-a"], "exactly one native launch reached the launcher"
+    row = harness.rows()["child-a"]
+    assert isinstance(row.get("pane_id"), str) and row["pane_id"]
+    # Whatever the second coordinator found once unblocked -- a row already fully dispatched, or
+    # one it could only offer redelivery or an unconfirmed-dispatch refusal for -- it never reached
+    # the native launcher a second time, which ``harness.wrapper.launches`` above already proves.
+    assert second_report, "the second coordinator's sweep never ran"
+
+
 # ====================================================== the subscriber across a restart
 
 
@@ -2703,6 +2916,99 @@ def test_two_coordinators_racing_ensure_subscriber_start_at_most_one_process(
         "the second coordinator adopted rather than starting a second"
     )
     assert len(harness.supervisor.started) == 1
+
+
+def test_a_subscriber_started_but_never_recorded_is_found_not_read_as_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A crash between the process starting and its record landing leaves it unaccounted for.
+
+    ``ensure_subscriber`` starts the process, then writes its record; a failure strictly between
+    those two calls -- the exact ordering the subscriber's design requires, since the real pid
+    does not exist to record before the process exists -- leaves a live, unrecorded process. A
+    missing record can only ever mean "this run has not recorded one yet", never "none is
+    running", and ``running_subscriber`` (which retirement calls through
+    :meth:`Coordinator.outstanding_writers`) must fall back to asking the process table rather
+    than concluding absence from the record alone.
+    """
+    harness = Harness(tmp_path)
+    harness.coordinator.start_run()
+    harness.approve_and_commit([_child("child-a")])
+    harness.coordinator.reconcile_startup(decide=lambda _orphan: "abandon")
+
+    first = harness.restart_coordinator()
+    first._reconciled = True
+
+    real_write_record = RUNNER.write_subscriber_record
+
+    def raise_on_write(*args: Any, **kwargs: Any) -> Any:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(RUNNER, "write_subscriber_record", raise_on_write)
+    with pytest.raises(OSError):
+        first.ensure_subscriber()
+    monkeypatch.setattr(RUNNER, "write_subscriber_record", real_write_record)
+
+    assert len(harness.supervisor.started) == 1, "the process itself was started before the crash"
+    orphan_handle = harness.supervisor.started[0]
+    assert orphan_handle.alive is True
+    assert RUNNER.read_subscriber_record(RUN_ID) is None, "the record write never landed"
+
+    second = harness.restart_coordinator()
+    second._reconciled = True
+    running = second.running_subscriber()
+    assert running is not None, "a live, unrecorded subscriber must not read as absent"
+    assert running["pid"] == orphan_handle.pid
+    assert "subscriber" in second.outstanding_writers(), (
+        "retirement must refuse while a process this run started is still alive, recorded or not"
+    )
+
+
+def test_a_restart_replaces_rather_than_duplicates_an_unrecorded_but_alive_subscriber(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The record's absence does not license a second process beside the first.
+
+    Adopting an unrecorded process on a guess about its subscription set would be trusting exactly
+    the fact that is missing. Stopping it and starting a correctly-subscribed replacement is the
+    same choice this build already makes for a *recorded* subscriber whose subscription set does
+    not match (:func:`test_a_restart_replaces_a_running_subscriber_whose_subscription_set_is_stale`
+    below) -- discovering it through the process table rather than the durable record does not
+    change which choice applies.
+    """
+    harness = Harness(tmp_path)
+    harness.coordinator.start_run()
+    harness.approve_and_commit([_child("child-a")])
+    harness.coordinator.reconcile_startup(decide=lambda _orphan: "abandon")
+
+    first = harness.restart_coordinator()
+    first._reconciled = True
+    real_write_record = RUNNER.write_subscriber_record
+    monkeypatch.setattr(
+        RUNNER,
+        "write_subscriber_record",
+        lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")),
+    )
+    with pytest.raises(OSError):
+        first.ensure_subscriber()
+    monkeypatch.setattr(RUNNER, "write_subscriber_record", real_write_record)
+    orphan_handle = harness.supervisor.started[0]
+
+    second = harness.restart_coordinator()
+    second._reconciled = True
+    started = second.ensure_subscriber()
+
+    assert started is True, "the unrecorded orphan was stopped and replaced, not silently adopted"
+    assert orphan_handle.alive is False, "the orphan was stopped"
+    assert len(harness.supervisor.started) == 2
+    recorded = RUNNER.read_subscriber_record(RUN_ID)
+    assert recorded is not None
+    assert recorded["pid"] == harness.supervisor.started[1].pid
+    # Exactly one subscriber is outstanding -- the replacement, correctly recorded and genuinely
+    # alive -- not the stopped orphan counted a second time and not two live processes at once.
+    outstanding = second.outstanding_writers()
+    assert str(harness.supervisor.started[1].pid) in outstanding.get("subscriber", "")
+    assert str(orphan_handle.pid) not in outstanding.get("subscriber", "")
 
 
 def test_a_restart_replaces_a_running_subscriber_whose_subscription_set_is_stale(
@@ -2946,6 +3252,42 @@ def test_a_write_at_the_moment_the_retried_close_lands_still_refuses_the_reap(
 
     assert harness.rows()["child-m"]["phase"] == "verified", "not falsely recorded reaped"
     assert (harness.repo / "src" / "written-during-the-retried-close.txt").exists()
+
+
+def test_a_close_request_that_returns_without_removing_the_tab_is_not_read_as_a_stop(
+    harness: Harness,
+) -> None:
+    """A close call returning normally is a request accepted, not an effect observed.
+
+    ``close_tab`` can be asked to close a tab and return without raising while the tab is still
+    genuinely present -- a control-plane request accepted without the requested state change
+    landing. Before this, the fence recorded the producer stopped on that return alone; it must
+    instead ask ``tab_present`` again and refuse the reap rather than record ``reaped`` over a
+    producer that never actually stopped.
+    """
+    harness.bootstrap([_child("child-a")])
+    harness.coordinator.launch_ready_children()
+    harness.run_child("child-a")
+    harness.report_usage("child-a")
+    assert harness.coordinator.integrate_child("child-a").verified
+
+    real_close_tab = harness.herdr.close_tab
+
+    def close_that_does_not_take(tab_id: str, *, cwd: Path) -> None:
+        harness.herdr.closed.append(tab_id)  # the request was made; the tab was not removed
+
+    harness.herdr.close_tab = close_that_does_not_take  # type: ignore[method-assign]
+    with pytest.raises(RUNNER.ChildStillMutatingError, match="still present"):
+        harness.coordinator.reap_child("child-a")
+    harness.herdr.close_tab = real_close_tab  # type: ignore[method-assign]
+
+    assert "tab-child-a" in harness.herdr.closed, "the close was requested"
+    assert harness.herdr.tab_present("tab-child-a", cwd=harness.repo), "but it never actually took"
+    assert harness.rows()["child-a"]["phase"] == "verified", "not recorded reaped"
+
+    authorization = harness.coordinator.reap_child("child-a")
+    assert authorization.row_id == "child-a"
+    assert harness.rows()["child-a"]["phase"] == "reaped"
 
 
 def test_a_fenced_row_is_not_reported_as_a_vanished_child(harness: Harness) -> None:

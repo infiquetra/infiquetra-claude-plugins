@@ -133,8 +133,8 @@ two modules that are individually correct, meeting somewhere no single module's 
   uniquified agent name; only the subscriber keeps a literal one. The run's spend therefore
   demanded usage telemetry from the mirror forever and failed closed on every check, and the mirror
   appeared permanently in the unreserved-active evidence. Both now ask
-  `register.is_supervisory_row`, which is the one predicate for the question and reads `role` as
-  well as `agent`.
+  `register.is_supervisory_row`, which is the one predicate for the question and reads the owned
+  `role` column alone -- `agent` is the launcher's uniquified name and cannot carry the decision.
 
 ### Changed
 

@@ -395,6 +395,19 @@ def is_abandoned(row: Mapping[str, Any]) -> bool:
     return isinstance(disposition, Mapping) and disposition.get("state") == "abandoned"
 
 
+def _producer_confirmed_stopped(row: Mapping[str, Any]) -> bool:
+    """Whether abandoning this row also established that nothing is still running for it.
+
+    "No longer awaited" and "the producer stopped" are two different facts (:meth:`abandon_child`
+    proves the second, it does not assume it from the first), and only the second one licenses
+    excluding a row from spend or from :meth:`Coordinator.outstanding_writers`. A row abandoned
+    without that proof is still, for every purpose this predicate gates, exactly as unresolved as
+    a row nobody has decided anything about yet.
+    """
+    disposition = row.get("coordinator_disposition")
+    return isinstance(disposition, Mapping) and disposition.get("producer_stopped") is True
+
+
 def is_terminal(phase: Any) -> bool:
     return phase in register_store.TERMINAL_PHASES
 
@@ -827,6 +840,8 @@ class SubscriberSupervisor(Protocol):
 
     def stop_record(self, record: Mapping[str, Any]) -> None: ...
 
+    def find_orphan(self, *, signature: Sequence[str]) -> dict[str, Any] | None: ...
+
 
 class SubprocessSubscriberSupervisor:
     """Run the subscriber as a real child process and answer for it from the process, not a row.
@@ -883,6 +898,43 @@ class SubprocessSubscriberSupervisor:
         with contextlib.suppress(ProcessLookupError, PermissionError):
             os.kill(pid, signal.SIGKILL)
         _wait_for_exit(pid, timeout=10.0)
+
+    def find_orphan(self, *, signature: Sequence[str]) -> dict[str, Any] | None:
+        """A live process on this host whose command line carries every token in ``signature``.
+
+        The durable record is written only after :meth:`start` returns, so its absence answers
+        "this coordinator has not recorded a subscriber", never "no subscriber process exists" --
+        the subscriber is deliberately the process meant to outlive its parent, so a crash or a
+        failed write in the gap between those two moments is not a corner case to enumerate
+        around, it is the shape of the architecture. This asks the process table itself, the same
+        way :meth:`HerdrControl.discover_by_label` answers for a native session the register
+        cannot yet describe -- an independent source, not an inference from this run's own
+        bookkeeping.
+        """
+        try:
+            completed = subprocess.run(  # nosec B603 B607 - fixed argv, no shell, read-only query
+                ["ps", "-eo", "pid=,command="],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        for line in completed.stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            pid_text, _, command = line.partition(" ")
+            if not all(token in command for token in signature):
+                continue
+            try:
+                pid = int(pid_text)
+            except ValueError:
+                continue
+            if process_is_running(pid):
+                return {"pid": pid}
+        return None
 
 
 def subscriber_record_path(run_id: str) -> Path:
@@ -1559,15 +1611,22 @@ class Coordinator:
 
         A row is interrupted when it has been claimed for dispatch, is not terminal, is not
         abandoned, and has not recorded ``artifact_protocol_sent`` -- the durable proof that the
-        child was actually told where to write. That single fact covers two shapes, not one:
+        child was actually told where to write. That single fact covers three shapes, not one, and
+        which applies is decided later, in :meth:`launch_ready_children`, by what else the row
+        carries:
 
         - **no pane at all.** The launcher never returned, or returned and this coordinator has
           not yet persisted the identity. The launcher's own label recovery is the right next
           step, and that only runs if a coordinator is allowed to hand the row over again.
-        - **a pane, and no confirmation.** The launcher returned, and somewhere between there and
-          the artifact-protocol send landing -- a trust prompt, a readiness timeout, a control-
-          plane send that failed -- this coordinator lost track of whether the child was ever told
-          its task. A pane on its own used to mean "the ordinary guards handle it"; they handle a
+        - **a pane, a sealed receipt, and no confirmation.** The launcher returned and readiness
+          confirmed, but somewhere between the receipt sealing and the artifact-protocol send
+          landing -- a persistence failure, a control-plane send that failed -- this coordinator
+          lost track of whether the child was ever told its task. The sealed receipt is what makes
+          resending safe here, whether or not a completion sentinel was ever durably paired with
+          it.
+        - **a pane and no sealed receipt.** Readiness itself never completed (a trust prompt, a
+          timeout, an effort-application failure), so there is no idempotent identity to resend at
+          all. A pane on its own used to mean "the ordinary guards handle it"; they handle a
           *healthy* pane, which is exactly the one row that already carries this marker and so
           never reaches here.
 
@@ -1644,6 +1703,32 @@ class Coordinator:
 
     # ------------------------------------------------------------------ the subscriber
 
+    def _resolve_subscriber_record(self) -> dict[str, Any] | None:
+        """This run's subscriber, from its durable record or, absent one, the process table.
+
+        The record is written only after :meth:`SubscriberSupervisor.start` returns, so its
+        absence answers "this run has not recorded a subscriber", never "no subscriber exists" --
+        that is the fourth appearance of this build's own naming for the shape, and the subscriber
+        is deliberately the process meant to outlive its parent, so the gap between those two
+        moments is not a corner case, it is the architecture. Every caller that decides whether a
+        subscriber of this run is alive goes through this one function -- :meth:`ensure_subscriber`
+        to decide adopt-or-replace-or-start, :meth:`running_subscriber` to answer retirement, and
+        :meth:`stop_writers` to decide what to stop -- so a fifth route to the same wrong inference
+        has nowhere left to open.
+        """
+        recorded = read_subscriber_record(self.run_id)
+        if recorded is not None:
+            return recorded
+        return self.supervisor.find_orphan(
+            signature=(
+                str(SUBSCRIBER_SCRIPT),
+                "--run-id",
+                self.run_id,
+                "--row-id",
+                self.subscriber_row_id,
+            )
+        )
+
     def ensure_subscriber(self) -> bool:
         """Start or restart the subscriber against the current subscription set.
 
@@ -1657,6 +1742,12 @@ class Coordinator:
         process ever raced. The lock is not reentrant, so nothing inside it may call back into a
         function that takes it again -- :meth:`_acknowledge_mirror_subscription` writes register
         rows through the ordinary locked path, and stays outside.
+
+        A record read as absent still asks the process table (:meth:`_resolve_subscriber_record`)
+        before this concludes nothing is running: a subscriber discovered that way carries no
+        recorded subscription set, so it always falls into the "different subscription set" branch
+        below rather than being silently adopted on a guess -- stopped, then replaced by a process
+        this coordinator starts and records itself.
         """
         wanted = subscriptions_for(self.root, run_id=self.run_id)
         alive = self.supervisor.is_alive(self._subscriber_handle)
@@ -1677,7 +1768,7 @@ class Coordinator:
             # see: two writers of the same row's observed state and token counts, duplicate
             # wakes, and a retirement that "closed every writer" while one of them was still
             # running.
-            recorded = read_subscriber_record(self.run_id)
+            recorded = self._resolve_subscriber_record()
             if self._subscriber_handle is None and recorded is not None:
                 if self.supervisor.is_record_alive(recorded):
                     if list(recorded.get("subscriptions") or []) == [dict(x) for x in wanted]:
@@ -1732,9 +1823,12 @@ class Coordinator:
 
         Asked of the record rather than of this object's handle, because the question retirement
         needs answered is "is any subscriber of this run still alive", not "does this coordinator
-        remember starting one".
+        remember starting one". Routed through :meth:`_resolve_subscriber_record` so a missing or
+        unreadable record falls back to the process table before this answers "none" -- the same
+        fallback :meth:`ensure_subscriber` and :meth:`stop_writers` use, so this and retirement
+        cannot disagree about what exists.
         """
-        recorded = read_subscriber_record(self.run_id)
+        recorded = self._resolve_subscriber_record()
         if recorded is None:
             return None
         return recorded if self.supervisor.is_record_alive(recorded) else None
@@ -2013,16 +2107,17 @@ class Coordinator:
             phase = row.get("phase")
             if phase not in accounting.LAUNCHED_PHASES or phase == "planned":
                 continue
-            if is_abandoned(row):
-                # This coordinator deliberately stopped pursuing this row and recorded why
-                # (:meth:`abandon_child`). ``outstanding_writers`` already excuses an abandoned
-                # row from retirement; gating every other child's spend on one nobody is
-                # pursuing anymore is not caution, it is a stall abandon cannot get the run out
-                # of. Abandon must be a real recovery, not a documented no-op on this gate --
-                # excluded from the row-by-row checks below *and* from the ceiling total that
-                # :func:`accounting.check_spend` computes on its own, or an abandoned row whose
-                # spend genuinely never became known would still trip the same fail-closed rule
-                # from inside that total.
+            if is_abandoned(row) and _producer_confirmed_stopped(row):
+                # This coordinator deliberately stopped pursuing this row, recorded why, and
+                # (:meth:`abandon_child`) either proved it never held a session or stopped the one
+                # it held and confirmed the tab gone. Only *that* disposition excuses it here:
+                # "no longer awaited" is not "no longer spending", and a row abandoned without a
+                # confirmed stop falls through to the same checks an ordinary row gets below, so
+                # its spend still gates the run until absence is actually established. Excluded
+                # from the row-by-row checks *and* from the ceiling total that
+                # :func:`accounting.check_spend` computes on its own, or a confirmed-stopped row
+                # whose spend genuinely never became known would still trip the same fail-closed
+                # rule from inside that total.
                 abandoned_row_ids.add(row_id)
                 continue
             if not row.get("pane_id"):
@@ -2107,6 +2202,8 @@ class Coordinator:
                 row = self.rows().get(child.row_id, {})
                 if self._needs_protocol_redelivery(row):
                     self.redeliver_artifact_protocol(child.row_id)
+                elif self._needs_completion_binding(row):
+                    self.bind_and_redeliver_completion(child.row_id)
                 elif self._stalled_before_confirmation(row):
                     raise UnconfirmedDispatchError(
                         f"row {child.row_id!r} holds a live pane whose readiness was never "
@@ -2180,7 +2277,12 @@ class Coordinator:
             # the only way the answer is still current.
             self._assert_dispatch_claim_still_mine(child.row_id, claim)
             identity, landing, launched_resolution = session_lifecycle.launch_child(
-                self.root, spec, wrapper=self.wrapper, herdr=self.herdr, git=self.git
+                self.root,
+                spec,
+                wrapper=self.wrapper,
+                herdr=self.herdr,
+                git=self.git,
+                claim_guard=lambda: self._verify_claim_unlocked(child.row_id, claim),
             )
             self._assert_launched_custody(child, launched_resolution, landing)
             self.run_log.append(
@@ -2258,7 +2360,7 @@ class Coordinator:
     def _needs_protocol_redelivery(self, row: Mapping[str, Any]) -> bool:
         """Whether a row has a live pane and already-sealed evidence, but no confirmed delivery.
 
-        ``completion_sentinel`` present is what tells the two shapes in
+        ``completion_sentinel`` present is what tells the three shapes in
         :meth:`interrupted_dispatches` apart: it is written only after the dispatch receipt was
         sealed, which happens only after readiness was confirmed. A row with a pane and that
         marker got everything right up to the one control-plane call that can fail ambiguously.
@@ -2271,14 +2373,17 @@ class Coordinator:
             and isinstance(row.get("completion_sentinel"), Mapping)
         )
 
-    def _stalled_before_confirmation(self, row: Mapping[str, Any]) -> bool:
-        """Whether a row has a live pane but never reached a sealed, resendable dispatch.
+    def _needs_completion_binding(self, row: Mapping[str, Any]) -> bool:
+        """Whether a row has a sealed receipt but never reached the write that binds it.
 
-        The mirror image of :meth:`_needs_protocol_redelivery`: a pane exists, but readiness
-        itself never completed (a trust prompt, a timeout, an effort-application failure), so
-        there is no idempotent identity -- no sealed receipt, no completion sentinel -- this
-        coordinator could resend without risking a second, contradictory instruction to a pane
-        whose actual state it cannot see.
+        ``completion.issue_receipt`` and the sentinel-and-baseline write that follows it are two
+        separate register writes, not one. A failure strictly between them leaves the receipt --
+        durable, authoritative proof that readiness completed -- sealed with nothing that could
+        yet resend a task the child was never actually told, and :meth:`_stalled_before_confirmation`
+        would otherwise misclassify that row as one where readiness never happened at all, the
+        exact "no record of X read as X does not exist" shape this build keeps re-finding. The
+        receipt's presence is checked directly rather than inferred from ``completion_sentinel``,
+        because the receipt is the earlier of the two facts and cannot itself be false.
         """
         return (
             bool(row.get("pane_id"))
@@ -2286,7 +2391,83 @@ class Coordinator:
             and not is_abandoned(row)
             and not isinstance(row.get("artifact_protocol_sent"), Mapping)
             and not isinstance(row.get("completion_sentinel"), Mapping)
+            and isinstance(row.get(completion.DISPATCH_RECEIPT_KEY), Mapping)
         )
+
+    def _stalled_before_confirmation(self, row: Mapping[str, Any]) -> bool:
+        """Whether a row has a live pane but never reached a sealed, resendable dispatch.
+
+        The mirror image of :meth:`_needs_protocol_redelivery` and :meth:`_needs_completion_binding`
+        together: a pane exists, but readiness itself never completed (a trust prompt, a timeout,
+        an effort-application failure), so there is no sealed receipt at all -- not merely no
+        completion sentinel -- and therefore no idempotent identity this coordinator could resend
+        without risking a second, contradictory instruction to a pane whose actual state it cannot
+        see.
+        """
+        return (
+            bool(row.get("pane_id"))
+            and not is_terminal(row.get("phase"))
+            and not is_abandoned(row)
+            and not isinstance(row.get("artifact_protocol_sent"), Mapping)
+            and not isinstance(row.get("completion_sentinel"), Mapping)
+            and not isinstance(row.get(completion.DISPATCH_RECEIPT_KEY), Mapping)
+        )
+
+    def bind_and_redeliver_completion(self, row_id: str) -> None:
+        """Finish binding a sealed receipt that never reached its sentinel write, then deliver it.
+
+        Reached only for a row :meth:`_needs_completion_binding` has already established never got
+        as far as the artifact-protocol send, so nothing has reached the pane for this attempt yet:
+        a fresh completion sentinel is exactly as safe to mint as the first one would have been,
+        and the changed-paths snapshot the receipt was sealed against is still the current state of
+        the worktree, because nothing has been told to touch it. Both would stop being safe to take
+        the moment a task reaches the pane, which is why this binds and sends in the same call
+        rather than leaving the binding for a later sweep to find undone again.
+        """
+        row = self.rows().get(row_id, {})
+        claim = claim_of(row)
+        if claim is None or claim.coordinator_id != self.coordinator_id:
+            raise DispatchClaimError(
+                f"row {row_id!r} redelivery requires this coordinator's own dispatch claim; "
+                "reconcile the run and resume it before redelivering"
+            )
+        pane_id = row.get("pane_id")
+        if not isinstance(pane_id, str) or not pane_id:
+            raise CompositionError(f"row {row_id!r} has no pane; there is nothing to redeliver to")
+        receipt = completion.read_receipt(self.root, row_id, run_id=self.run_id)
+        landing_cwd = Path(receipt.landing_cwd)
+        baseline = self.git.changed_paths_baseline(
+            landing_cwd,
+            base_commit=receipt.base_commit,
+            ambient_root=(Path(receipt.ambient_root) if receipt.ambient_root else None),
+        )
+        sentinel = subscriber_module.make_sentinel(self.run_id, row_id, COMPLETION_PURPOSE)
+        _write_owned(
+            self.root,
+            row_id,
+            {
+                "completion_sentinel": {"pane_id": pane_id, "sentinel": sentinel},
+                "changed_paths_baseline": _baseline_to_mapping(baseline),
+            },
+            run_id=self.run_id,
+        )
+        cwd = Path(str(row.get("cwd") or landing_cwd))
+        self.herdr.send_line(
+            pane_id,
+            completion.artifact_instructions(receipt)
+            + "\n"
+            + subscriber_module.sentinel_assembly_instructions(
+                sentinel, when="the deliverable is completely written and you have stopped"
+            ),
+            cwd=cwd,
+        )
+        _write_owned(
+            self.root,
+            row_id,
+            {"artifact_protocol_sent": {"at": self.clock(), "nonce": receipt.nonce}},
+            run_id=self.run_id,
+        )
+        self.run_log.append("completion_bound_and_redelivered", row_id=row_id, nonce=receipt.nonce)
 
     def redeliver_artifact_protocol(self, row_id: str) -> None:
         """Resend the artifact protocol to a pane that was never confirmed to have received it.
@@ -2435,15 +2616,16 @@ class Coordinator:
         _write_owned(self.root, row_id, {"dispatch_claim": None}, run_id=self.run_id)
 
     def _assert_dispatch_claim_still_mine(self, row_id: str, claim: DispatchClaim) -> None:
-        """Refuse to reach the native launcher on a claim that has since changed hands.
+        """Refuse to proceed on a claim that has already changed hands -- a fast, early check.
 
-        ``claim_dispatch`` serialises *taking* the claim; it says nothing about *keeping* it, and
-        the launch pipeline does real work -- admission, several register reads -- between taking
-        it and the one side effect that cannot be undone. Comparing the whole record, not just the
-        coordinator id, is what catches two threads of *this* coordinator racing each other too:
-        each ``claim_dispatch`` call under the lock increments ``attempts``, so a second thread's
-        transaction always leaves the first thread holding a claim value that no longer matches
-        what is durably recorded, even though both threads share one ``coordinator_id``.
+        This is deliberately *not* the check that makes launch-once true. It runs before
+        ``session_lifecycle.launch_child`` does any work, so a claim already lost is reported
+        without paying for admission, git provisioning, or a wrapper preview first -- ordering,
+        the same way the guards at the top of :meth:`launch_child` are ordering rather than the
+        authority. A claim found valid *here* can still be taken by an explicit resume before the
+        native launcher runs; :func:`session_lifecycle.launch_child`'s ``claim_guard`` is what
+        that cannot get past, because it re-reads the claim inside the same lock hold that makes
+        the native call, not a moment before it.
         """
         current = claim_of(self.rows().get(row_id, {}))
         if current != claim:
@@ -2452,6 +2634,29 @@ class Coordinator:
                 f"(attempt {claim.attempts} at {claim.claimed_at:g}); a later transaction -- "
                 "another coordinator's explicit resume decision, or a second thread of this one "
                 "-- holds it now, and only the current holder may reach the native launcher"
+            )
+
+    def _verify_claim_unlocked(self, row_id: str, claim: DispatchClaim) -> None:
+        """The authoritative claim re-check: read without taking the lock, because it is held.
+
+        Passed into :func:`session_lifecycle.launch_child` as ``claim_guard`` and called from
+        *inside* one continuous hold of this run's generation lock that also covers the native
+        launch call and the identity write that follows it. ``adopt_dispatch_claim`` needs the
+        same lock to replace this row's claim, so whichever of the two reaches it first is the
+        one the native launcher answers to -- this is not a narrower window, it is the same
+        transaction as the one that could steal the claim. Calling any of the *locked* public
+        register functions here would deadlock: the lock this runs inside is not reentrant, so
+        the read has to go through the unlocked primitive directly, exactly like
+        :meth:`claim_dispatch` and :meth:`adopt_dispatch_claim` already do.
+        """
+        doc = register_store._read_register_unlocked(self.run_id)
+        current = claim_of(doc.get("rows", {}).get(row_id, {}))
+        if current != claim:
+            raise DispatchClaimError(
+                f"row {row_id!r}'s dispatch claim changed hands at the moment this coordinator "
+                f"reached the native launcher (attempt {claim.attempts} at {claim.claimed_at:g}); "
+                "another coordinator's explicit resume decision holds it now, and the launcher "
+                "was not called"
             )
 
     @staticmethod
@@ -2891,6 +3096,16 @@ class Coordinator:
         cwd = Path(str(row.get("cwd") or attempt.landing.cwd))
         if isinstance(tab_id, str) and tab_id and self.herdr.tab_present(tab_id, cwd=cwd):
             self.herdr.close_tab(tab_id, cwd=cwd)
+            # A close request returning without raising is a request accepted, not an effect
+            # observed: asking again is the only thing that tells the two apart, and only a "no"
+            # here is the proof :meth:`_reobserve_behind_the_fence` and ``reap_verified`` are
+            # allowed to build on.
+            if self.herdr.tab_present(tab_id, cwd=cwd):
+                raise ChildStillMutatingError(
+                    f"row {row_id!r}'s tab {tab_id!r} was asked to close but is still present; "
+                    "its producer is not confirmed stopped, so this reap is refused rather than "
+                    "recorded"
+                )
             self.run_log.append("producer_stop_confirmed", row_id=row_id, tab_id=tab_id)
 
     def _reobserve_behind_the_fence(
@@ -2946,10 +3161,18 @@ class Coordinator:
         must never have carried a pane, and the launcher's own label discovery must not find a
         session running under this child's run-bound label.
 
-        A child that *did* get a session keeps failing closed, because its spend genuinely is
-        unknown and no amount of wanting the run to continue makes it known.
+        "No longer awaited" is what abandonment always establishes -- the operator's decision that
+        this run stops pursuing this child, which is legitimate and useful on its own. It does not
+        by itself mean "the producer stopped" or "its cost no longer counts": those are separate
+        facts, and a row that might hold a session gets them the same way a reap does, by closing
+        its tab and asking the substrate again rather than assuming the request worked. A child
+        whose producer cannot be confirmed stopped keeps failing closed on spend and keeps
+        blocking retirement, exactly as if nobody had decided anything about it, because nothing
+        about "no longer awaited" makes either of those questions answered.
         """
+        row = self.rows().get(row_id, {})
         never_ran = self._assert_child_never_ran(row_id)
+        producer_stopped = never_ran or self._stop_abandoned_producer(row_id, row)
         _write_owned(
             self.root,
             row_id,
@@ -2959,6 +3182,7 @@ class Coordinator:
                     "reason": reason,
                     "at": self.clock(),
                     "never_ran": never_ran,
+                    "producer_stopped": producer_stopped,
                 }
             },
             run_id=self.run_id,
@@ -2973,7 +3197,13 @@ class Coordinator:
             )
         admission.abandon_slot(self.root, row_id, run_id=self.run_id)
         self.release_dispatch_claim(row_id)
-        self.run_log.append("child_abandoned", row_id=row_id, reason=reason, never_ran=never_ran)
+        self.run_log.append(
+            "child_abandoned",
+            row_id=row_id,
+            reason=reason,
+            never_ran=never_ran,
+            producer_stopped=producer_stopped,
+        )
 
     def _assert_child_never_ran(self, row_id: str) -> bool:
         """Whether this child demonstrably never got a session, from evidence rather than hope."""
@@ -2985,6 +3215,27 @@ class Coordinator:
         ):
             return False
         return not self._native_session_may_exist(row_id, row)
+
+    def _stop_abandoned_producer(self, row_id: str, row: Mapping[str, Any]) -> bool:
+        """Close a possibly-live producer and prove it is gone, or report that it is not.
+
+        Reached only once :meth:`_assert_child_never_ran` has already failed to prove the row
+        never held a session, so a live pane is a real possibility here, not an edge case. This
+        asks the same substrate a reap asks (:meth:`_fence_producer`) rather than trusting a close
+        request's successful return: a tab that is still present after asking it to close is not
+        stopped, whatever the request itself reported. Returns whether absence was confirmed --
+        never a guess, because a caller that cannot tell must keep failing closed the same way an
+        unmetered vendor's silence already does.
+        """
+        tab_id = row.get("tab_id")
+        cwd = Path(str(row.get("cwd") or self.root))
+        if not isinstance(tab_id, str) or not tab_id:
+            # Claimed, but no tab was ever recorded for it. The launcher's own label recovery is
+            # the only other route by which a session could exist for this row.
+            return not self._native_session_may_exist(row_id, row)
+        if self.herdr.tab_present(tab_id, cwd=cwd):
+            self.herdr.close_tab(tab_id, cwd=cwd)
+        return not self.herdr.tab_present(tab_id, cwd=cwd)
 
     # ------------------------------------------------------------------ retirement
 
@@ -3011,8 +3262,16 @@ class Coordinator:
                 )
         for row_id, row in sorted(self.child_rows().items()):
             phase = row.get("phase")
-            if phase != "reaped" and not is_abandoned(row):
-                outstanding[row_id] = f"child is {phase!r} and was not deliberately abandoned"
+            if phase == "reaped":
+                continue
+            if is_abandoned(row):
+                if _producer_confirmed_stopped(row):
+                    continue
+                outstanding[row_id] = (
+                    f"child is {phase!r}, abandoned, but its producer was never confirmed stopped"
+                )
+                continue
+            outstanding[row_id] = f"child is {phase!r} and was not deliberately abandoned"
         with admission.admission_locked():
             doc = register_store._read_register_unlocked(self.run_id)
             reservations = admission._admission_doc(doc)["reservations"]
@@ -3067,8 +3326,11 @@ class Coordinator:
                 stopped["subscriber"] = "stopped"
         # A subscriber this coordinator did not start is still this run's writer. Stopping only
         # what this object happens to hold is how retirement completed while a prior generation's
-        # subscriber was alive and able to write the live register back beside the archive.
-        recorded = read_subscriber_record(self.run_id)
+        # subscriber was alive and able to write the live register back beside the archive. The
+        # same is true of a subscriber this run started but never durably recorded -- resolved the
+        # same way :meth:`running_subscriber` resolves it, so what gets stopped here is exactly
+        # what would otherwise block retirement.
+        recorded = self._resolve_subscriber_record()
         if recorded is not None:
             if self.supervisor.is_record_alive(recorded):
                 self.supervisor.stop_record(recorded)

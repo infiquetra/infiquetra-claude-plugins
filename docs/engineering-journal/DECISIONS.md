@@ -34,7 +34,27 @@ the decision has to be *offered*, or "wait for a decision" becomes "wait forever
 is available to every runtime the plugin supports. Even then it informs the decision rather than
 replacing it.
 
-**Refs.** LEARNINGS `{#a-read-then-act-guard-is-not-a-guard}`, `{#never-gate-on-a-status-you-wrote}`.
+**Correction: a claim re-checked before the launcher is not the same guarantee as a claim held
+through it.** A re-check that reads the current claim, confirms it matches, and returns is still
+followed by real I/O — a wrapper preview, the native launch call itself — before the one side effect
+that cannot be undone. A competing takeover can complete in that gap no matter how late the re-check
+runs, because the check and the launch remain two separate operations. The fix moves the *final*
+claim comparison, and the native call itself, inside one continuous hold of the run's generation
+lock — the same lock a takeover must acquire to write a competing claim — so the two are one
+transaction rather than two events placed close together. Whichever side reaches the lock first
+either completes the launch or finds, once it does get the lock, that the row already carries a pane
+and refuses on the ordinary "already dispatched" guard; either way the native launcher answers to at
+most one of them.
+
+**Rejected: hold the lock across the whole launch sequence.** The register writes that precede the
+native call (recording the launch intent, the provisioned landing, the resolved model and effort)
+each already take this same lock as their own separate transaction, and the lock is not reentrant —
+holding it from the top of the sequence would deadlock the first of those writes against itself.
+Only the final check-and-call needs to be indivisible; everything that merely prepares for it can
+still be undone or retried by whoever ends up owning the claim once contention is resolved.
+
+**Refs.** LEARNINGS `{#a-read-then-act-guard-is-not-a-guard}`, `{#never-gate-on-a-status-you-wrote}`,
+`{#a-closer-recheck-is-still-two-events}`.
 
 ### Reaping is a fenced protocol, not a check followed by a close  {#reaping-is-fenced}
 
@@ -65,7 +85,19 @@ exact window this protocol exists to remove, reopened by the path meant to make 
 close is therefore re-attempted on every retry regardless of whether the fence record already
 exists; only the write of the record itself is skipped once made.
 
-**Refs.** LEARNINGS `{#observation-cannot-fence-a-live-producer}`, `{#absence-must-be-proved-not-inferred}`.
+**Correction: a close request returning without raising is not proof the tab is gone.** The close
+call can be accepted by the control plane and return normally while the tab it named is still
+present — a request acknowledged, not an effect observed. The fence and `reap_verified`'s own close
+both now ask `tab_present` again immediately after asking to close, and refuse (rather than record
+`reaped`) if the answer is still yes. `reap_verified` still writes `phase="reaped"` before its close
+attempt, unchanged: that ordering exists so a retry after a crash between the two does not repeat the
+write, and undoing it to accommodate an unconfirmed close would fight the retry-safety it was chosen
+for. In the one path production dispatch takes, the fence's own check runs first and already refuses
+before this second check is ever reached with a live tab; it is kept as a second, independent check
+for any caller that reaches `reap_verified` without going through the fence first.
+
+**Refs.** LEARNINGS `{#observation-cannot-fence-a-live-producer}`, `{#absence-must-be-proved-not-inferred}`,
+`{#a-closer-recheck-is-still-two-events}`.
 
 
 ### A dispatch that reached a live pane is recovered by resending, never by replacing  {#unconfirmed-dispatch-is-resent-not-replaced}
@@ -101,6 +133,96 @@ blocks retirement once abandoned).
 **Revisit when.** The readiness sentinel's nonce is itself persisted at the moment it is first used,
 which would make a readiness resend idempotent the same way the artifact protocol's is and close
 this residual the same way.
+
+**Correction: "a sealed dispatch receipt exists" and "a completion sentinel is recorded" are not the
+same fact, and the second cannot stand in for the first.** The receipt is sealed in its own register
+write; the sentinel and changed-paths baseline are persisted in a separate, later write. A failure
+strictly between them leaves a sealed receipt — durable, authoritative proof readiness completed —
+with no sentinel, and classifying by the sentinel's absence alone misread that row as one where
+readiness never happened at all, when a sealed receipt already proves otherwise. The recovery now
+checks for the receipt directly. Reached only because nothing was ever sent to the pane in this state
+(the send is gated on the very write that failed), a fresh sentinel and a freshly retaken
+changed-paths snapshot are exactly as safe to mint as the originals would have been, and recovery
+binds and resends them in one step rather than leaving the binding for a later sweep to redo.
+
+**Rejected: seal the receipt and persist the sentinel and baseline in one atomic register write.**
+Genuinely closes the gap rather than adding a third recovery state around it, but requires
+`completion.issue_receipt` to accept and write columns it otherwise has no reason to know about —
+composition-owned fields becoming writable through a second module's own write path, outside the one
+seam (`_write_owned`) that asserts which columns composition may write. Recovering by re-deriving
+both values, on the one path where re-deriving them is provably safe, was judged the smaller
+addition to a module boundary that is already carefully reasoned about elsewhere.
+
+**Refs.** LEARNINGS `{#absence-must-be-proved-not-inferred}`, `{#a-closer-recheck-is-still-two-events}`.
+
+### A subscriber's liveness is decided by the process table when its own record is silent, never by the record's absence alone  {#subscriber-liveness-asks-the-process-table}
+
+**Decision.** Whether this run's subscriber is alive is answered by one function. It reads the
+durable record first; when the record is missing or unreadable, it asks the host's process table for
+a live process whose command line carries this run's own deterministic identity (its script path,
+run id, and row id) before answering "none". Every caller that needs this answer — starting or
+adopting a subscriber, reporting it to retirement, deciding what to stop — goes through that one
+function.
+
+**Rationale.** The record is written only after the process itself starts; the subscriber is
+deliberately the process meant to outlive its parent, so a crash or a write failure in the gap
+between those two moments is not an edge case, it is the architecture. A missing record can answer
+only "this run has not recorded one yet," never "none is running," and a decision this consequential
+— retiring a run, or starting a second writer beside a live first one — cannot be made from a fact
+the record is not positioned to prove.
+
+**Rejected: write an intent record before starting the process, update it with the real identity
+after.** Helps only the half of the failure where the process itself never started; the process id
+does not exist to record before the process exists, so the exact failure this closes — a successful
+start followed by a failed record write — leaves the same kind of stale, pid-less intent record
+behind, discoverable but still not naming the process it should. It also adds a durable state
+("starting") every reader of the record now has to understand, for a case the process table already
+answers directly.
+
+**Rejected: treat a missing or unreadable record as an operator-attention halt rather than resolving
+it automatically.** Correct in spirit — never infer — but the process table is not an inference, it
+is the same kind of independent, authoritative source label-based session discovery already asks for
+a native session; asking it and resolving automatically when it gives a clear answer costs nothing
+adoption-by-record already costs, and reserves operator attention for when the answer is genuinely
+unclear.
+
+**Cost accepted.** A process discovered this way carries no record of its subscription set, so it is
+never adopted on that alone; it is stopped and replaced by a freshly started, correctly subscribed
+process, the same choice already made for a *recorded* subscriber whose subscription set does not
+match. A live, unrecorded subscriber therefore costs one extra process cycle to correct itself,
+rather than being silently trusted.
+
+**Revisit when.** The subscriber's own record is made durable *before* the process starts, with a
+recoverable placeholder identity a genuinely-started process can later be matched against — at which
+point the process-table fallback becomes a defence-in-depth check rather than the primary source for
+the crashed-after-start case.
+
+**Refs.** LEARNINGS `{#absence-must-be-proved-not-inferred}`, `{#a-closer-recheck-is-still-two-events}`.
+
+### Abandonment establishes "no longer awaited"; it does not by itself mean "the producer stopped" or "its cost no longer counts"  {#abandon-is-not-stop-or-zero-cost}
+
+**Decision.** Abandoning a child always records the operator's decision to stop pursuing it. Whether
+that decision *also* excuses the row from the spend gate and from blocking retirement now depends on
+a second, separately established fact: whether the row ever demonstrably held a session at all, and,
+if it did, whether that session's tab was asked to close and confirmed gone afterward. A row
+abandoned without that confirmation is treated, by every check that matters, exactly like a row
+nobody has decided anything about yet — still gating spend, still counted as an outstanding writer —
+until the confirmation exists or the operator retries the abandon once the tab can actually close.
+
+**Rationale.** "The operator no longer wants this result" and "nothing is still running or still
+spending" are different claims with different evidence. Excusing a row from spend or retirement on
+the first claim alone assumed the second one for free, which is exactly the shape this build had
+already paid to unlearn elsewhere: a status this process wrote about its own intent was being read as
+proof of an outcome only the substrate can establish.
+
+**Rejected: leave abandonment meaning what it meant before and disclose the gap.** That was the
+previous position, and it made "abandon it" advice the operator could act on but which did not
+actually stop the run from continuing to pay for, or risk further mutation from, a session that was
+never confirmed stopped.
+
+**Cost accepted.** Abandoning a child whose tab genuinely will not close does not unblock the run by
+itself; the row keeps gating spend and retirement until the tab actually closes. That is the correct
+cost — the alternative is excusing a row on a request that was never confirmed to have worked.
 
 **Refs.** LEARNINGS `{#absence-must-be-proved-not-inferred}`.
 

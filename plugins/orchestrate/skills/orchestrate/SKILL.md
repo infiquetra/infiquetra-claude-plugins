@@ -296,10 +296,12 @@ label discovery whether a session already exists for it, and fails closed on an 
 the same way it fails closed on a metered vendor's genuine silence.
 
 The run's spend total and the unreserved-active reconciliation evidence both exclude the rows that
-supervise a run rather than doing its work, and both ask `register.is_supervisory_row`. The test has
-to read `role` as well as `agent`: the mirror is launched through the ordinary session path, which
-overwrites `agent` with the launcher's uniquified name, so an `agent`-only test misses it entirely
-and the run's spend then demands telemetry from the mirror forever.
+supervise a run rather than doing its work, and both ask `register.is_supervisory_row`. The test
+reads the owned `role` column alone: `agent` cannot carry the decision, because the mirror is
+launched through the ordinary session path, which overwrites `agent` with the launcher's uniquified
+name, so an `agent`-only test misses it entirely and the run's spend then demands telemetry from the
+mirror forever. `role="mirror"` / `role="subscriber"` is written before each one's own launch side
+effect, so a supervising row is classified from the moment it exists.
 
 `plan` and `present_plan` write nothing. `present_plan` only renders. `commit_plan`
 requires a presentation receipt whose digest and generation match this plan, and

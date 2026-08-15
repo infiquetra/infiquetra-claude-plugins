@@ -77,6 +77,10 @@ class VanishedChildError(SessionLifecycleError):
     """A child disappeared before a recorded reap transition."""
 
 
+class ReapNotConfirmedError(SessionLifecycleError):
+    """A tab close request returned without the tab actually going away."""
+
+
 @dataclass(frozen=True)
 class ChildSpec:
     """One child launch request.
@@ -785,11 +789,26 @@ def launch_child(
     wrapper: AgentWrapper,
     herdr: HerdrControl,
     git: GitLanding,
+    claim_guard: Callable[[], None] | None = None,
 ) -> tuple[LaunchIdentity, Landing, Any]:
     """Write the launch intent, recover an existing label, or launch one child.
 
     Identifier fields are written immediately after the launcher returns, while the phase remains
     ``launching``. Dispatch later moves the row to ``launched`` before sending the task.
+
+    ``claim_guard``, when given, is the caller's proof that it still owns this row's dispatch --
+    re-checked, not merely checked, immediately before the one call this function makes that
+    cannot be undone. A guard checked earlier and a launcher called later are two different
+    moments with real I/O between them, and a second dispatcher can act in that gap no matter how
+    small it is. Closing it requires the check and the launch to be the same event, not two events
+    placed close together, so both run inside one hold of this run's generation lock -- the same
+    lock a competing claim transaction must also acquire to replace this row's claim. Whichever of
+    the two reaches the lock first is the one the launcher answers to; the loser either never
+    reaches this call, or reaches it after this function has already recorded a pane, which the
+    ordinary "already dispatched" guard then refuses a second time for. The register write this
+    function would otherwise make through the locked public API happens through the identical,
+    already-open transaction instead (``already_locked=True``), because that lock is not
+    reentrant.
     """
     root = register_store.canonical_work_location(root)
     # The run's work location is the repository that contains this argument, not
@@ -805,9 +824,6 @@ def launch_child(
         recovery_cwd = Path(str(existing.get("cwd", root)))
         recovered = herdr.discover_by_label(label, cwd=recovery_cwd)
         if recovered is not None:
-            register_store.upsert_row(
-                root, spec.row_id, _row_identity(recovered), run_id=spec.run_id
-            )
             landing = Landing(
                 recovery_cwd,
                 str(existing.get("integration_mode", "none")),
@@ -818,6 +834,21 @@ def launch_child(
                 root,
             )
             resolution, _ = _runtime_resolution(spec, landing)
+            if claim_guard is not None:
+                with register_store.generation_locked(spec.run_id):
+                    claim_guard()
+                    register_store.upsert_row(
+                        root,
+                        spec.row_id,
+                        _row_identity(recovered),
+                        run_id=spec.run_id,
+                        already_locked=True,
+                        claimed=root,
+                    )
+            else:
+                register_store.upsert_row(
+                    root, spec.row_id, _row_identity(recovered), run_id=spec.run_id
+                )
             return recovered, landing, resolution
 
     base_commit_value = existing.get("base_commit") if existing else None
@@ -857,8 +888,21 @@ def launch_child(
     )
     wrapper.preview(spec, landing, label, runtime_argv)
     register_store.write_phase(root, spec.row_id, "launching", run_id=spec.run_id)
-    identity = wrapper.launch(spec, landing, label, runtime_argv)
-    register_store.upsert_row(root, spec.row_id, _row_identity(identity), run_id=spec.run_id)
+    if claim_guard is not None:
+        with register_store.generation_locked(spec.run_id):
+            claim_guard()
+            identity = wrapper.launch(spec, landing, label, runtime_argv)
+            register_store.upsert_row(
+                root,
+                spec.row_id,
+                _row_identity(identity),
+                run_id=spec.run_id,
+                already_locked=True,
+                claimed=root,
+            )
+    else:
+        identity = wrapper.launch(spec, landing, label, runtime_argv)
+        register_store.upsert_row(root, spec.row_id, _row_identity(identity), run_id=spec.run_id)
     return identity, landing, resolution
 
 
@@ -1139,6 +1183,15 @@ def reap_verified(
     ``root`` must be the coordinator-recorded work location. A first-writer stamp
     is not enough. A disagreeing or unrecorded directory is refused and the tab is
     not closed.
+
+    A close request returning without raising is not the same fact as the tab actually being
+    gone, so this asks again after asking to close: a still-present tab raises rather than being
+    silently accepted as stopped. ``phase`` is written first, deliberately, so a retry after a
+    crash between the two does not re-run the write -- that ordering is unchanged even when the
+    close itself cannot be confirmed, because undoing it here would fight the same retry-safety
+    it exists for. In normal operation this call is reached only once the caller has already
+    confirmed the tab gone through its own fence, so the raise below is a belt this function keeps
+    for callers that do not go through that fence, not a path production dispatch expects to take.
     """
     register_store.assert_root_belongs_to_run(root, run_id, require_recorded=True)
     row = register_store.read_rows(root, run_id=run_id).get(row_id)
@@ -1158,6 +1211,10 @@ def reap_verified(
         )
     if herdr.tab_present(tab_id, cwd=cwd):
         herdr.close_tab(tab_id, cwd=cwd)
+        if herdr.tab_present(tab_id, cwd=cwd):
+            raise ReapNotConfirmedError(
+                f"child {row_id!r}'s tab {tab_id!r} was asked to close but is still present"
+            )
 
 
 def assert_child_not_vanished(

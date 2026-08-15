@@ -206,6 +206,30 @@ explicitly capped at three iterations by hand.
 **R19.** Every unit in this plan after U6 has its review conducted through the shipped loop bound,
 not by an ad-hoc protocol. A unit whose review cannot be run through it is a defect in U6.
 
+### Waves — the critical path is the dependency chain, not concurrency
+
+Concurrency is bounded **per vendor**, not in total: a unit's builder plus its two-reviewer panel
+(reviewers are never the builder's vendor) consumes exactly one slot per vendor, so three units can
+be in flight at once and still sit at each vendor's cap. The limiter here is the U1→U5 dependency
+chain, not the fleet.
+
+```
+   WAVE 0   U6  review loop bound            <- everything waits on this
+              |
+   WAVE 1   U1 register   U7 panel+rigor   U8 saga transport   <- 3 in parallel,
+              |            (dep: U6)        (dep: none)           builder rotated
+              |                                                   across vendors
+   WAVE 2   U2 session facts are asked
+              |
+   WAVE 3   U3 subscriber becomes a pane
+              |
+   WAVE 4   U4 remove the seam  ============ GATE: are the six unreachable?
+              |                              fail -> escalate, do not continue
+   WAVE 5   U5 label injective + unknown spend
+```
+
+Six waves for eight units. U7 and U8 fold into the chain's shadow rather than extending it.
+
 ---
 
 ## Implementation Units

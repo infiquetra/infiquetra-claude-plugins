@@ -21,7 +21,9 @@ import ast
 import base64
 import importlib.util
 import inspect
+import json
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -799,6 +801,12 @@ def test_a_mirror_cannot_be_created_without_a_usable_quiet_bound(tmp_path: Path,
 # =========================================================================================
 
 
+def _layered_base64(payload: str, layers: int) -> str:
+    for _ in range(layers):
+        payload = base64.b64encode(payload.encode("utf-8")).decode("ascii")
+    return payload
+
+
 def _predicate_json() -> str:
     return '{"argv": ["uv", "run", "pytest", "-q"], "timeout_seconds": 60}'
 
@@ -811,8 +819,15 @@ DECLARATION_FORMS: dict[str, str] = {
     "json": f"Run this and report: {_predicate_json()}",
     "yaml_block": "Run this check:\nargv:\n  - uv\n  - run\n  - pytest\ntimeout_seconds: 60\n",
     "yaml_flow": "Run this: {argv: [uv, run, pytest]}",
+    # yaml.safe_load returns only the first document of a stream; a declaration after a
+    # separator was parsed by nothing while the scan reported it had finished.
+    "yaml_multi_document": "---\nnote: harmless\n---\nargv: [uv, run, pytest]\n",
+    "yaml_third_document": "---\na: 1\n---\nb: 2\n---\nargv: [uv, run]\n",
     "toml": 'Run this:\nargv = ["uv", "run", "pytest"]\n',
     "python_dict": "Run this: {'argv': ['uv', 'run', 'pytest']}",
+    # A tuple-valued argv after a prose prefix: not valid YAML, not the whole text, and the
+    # fallback does not see "(". Only parsing the balanced braced region reaches it.
+    "python_dict_tuple_after_prose": "Run this: {'argv': ('uv', 'run', 'pytest', '-q')}",
     "json_array": '[{"argv": ["uv", "run"]}]',
     "nested_json_string": '{"note": "{\\"argv\\": [\\"uv\\"]}"}',
     "unicode_escaped_braces": '\\u007b"argv": ["uv"]\\u007d',
@@ -856,20 +871,157 @@ def test_a_declaration_in_text_that_parses_under_nothing_is_still_refused() -> N
             _request(instruction=instruction)
 
 
-def test_an_instruction_the_scan_cannot_finish_examining_is_refused() -> None:
-    """Fail closed: "I could not finish looking" is not a pass.
+def _nested_json(wrappers: int, innermost: Any) -> str:
+    obj: Any = innermost
+    for index in range(wrappers):
+        obj = {f"wrap{index}": obj}
+    return json.dumps(obj, separators=(",", ":"))
 
-    ``yaml.safe_load`` constructs nothing, but it does expand aliases without bound, so text
-    carrying more aliases than the cap is refused as unexaminable rather than expanded. It
-    carries no declaration; it is refused because the scan cannot say so.
+
+#: One case per budget in the scanner. Each is text that reaches that bound and carries **no**
+#: declaration, so the only correct answer is "I could not finish looking" -- never "clean".
+EXHAUSTING_INSTRUCTIONS: dict[str, str] = {
+    "walk_depth": _nested_json(MIRROR._MAX_PARSE_DEPTH + 2, {"leaf": "nothing here"}),
+    "encoding_layers": "Decode: "
+    + _layered_base64("a plain note with no declaration", MIRROR._MAX_ENCODING_LAYERS + 1),
+}
+
+
+@pytest.mark.parametrize("budget", sorted(EXHAUSTING_INSTRUCTIONS))
+def test_every_budget_in_the_scanner_refuses_rather_than_reporting_clean(budget: str) -> None:
+    """The rule this unit learned three times, applied to every bound at once.
+
+    A bound that is reached and reported as a finished, clean scan turns a resource limit into
+    the bypass. It happened with a decode budget, then a line sweep, then the structure walk --
+    each fixed alone while the next one waited. These cases carry no declaration at all: the
+    refusal is entirely because the scan cannot say they are clean.
     """
-    aliases = "\n".join(f"k{index}: *a" for index in range(MIRROR._MAX_YAML_ALIASES + 1))
-    scan = MIRROR.scan_for_predicate_declaration(aliases)
+    text = EXHAUSTING_INSTRUCTIONS[budget]
+    scan = MIRROR.scan_for_predicate_declaration(text)
     assert scan.found is False
-    assert scan.complete is False
+    assert scan.complete is False, f"{budget} was exhausted and still reported a finished scan"
     assert scan.suspicious is True
     with pytest.raises(MIRROR.PredicateInMirrorError, match="could not be fully examined"):
-        _request(instruction=aliases)
+        _request(instruction=text)
+
+
+def test_every_bound_on_the_budget_records_exhaustion() -> None:
+    """The uniformity check: exhausting *any* bound must mark the scan unfinished.
+
+    Two of these — the node ceiling and the decoded-byte ceiling — are backstops that no
+    instruction under the byte cap is likely to reach, which is exactly why they are exercised
+    directly rather than only through text. A bound nobody can reach today is still a bound that
+    a later change can reach, and the defect this unit paid for three times was a bound that
+    could be reached without saying so.
+    """
+    budget = MIRROR._ScanBudget(decoded_bytes=10)
+    assert budget.finished is True
+
+    # depth
+    deep = MIRROR._ScanBudget(decoded_bytes=10)
+    assert deep.visit({}, MIRROR._MAX_PARSE_DEPTH + 1) is False
+    assert deep.finished is False
+
+    # node ceiling
+    nodes = MIRROR._ScanBudget(decoded_bytes=10)
+    nodes.nodes = 0
+    assert nodes.visit({}, 0) is False
+    assert nodes.finished is False
+
+    # decoded bytes
+    decoded = MIRROR._ScanBudget(decoded_bytes=4)
+    assert decoded.take_decoded(2) is True
+    assert decoded.take_decoded(99) is False
+    assert decoded.finished is False
+
+    # embedded regions
+    regions = MIRROR._ScanBudget(decoded_bytes=10)
+    regions.regions = 0
+    assert regions.take_region() is False
+    assert regions.finished is False
+
+    # every one of them recorded a reason, so the refusal can say which bound ended the look
+    for exhausted in (deep, nodes, decoded, regions):
+        assert exhausted.reasons
+
+
+def test_a_text_with_more_embedded_regions_than_the_bound_is_refused() -> None:
+    """The region bound, end to end, on text carrying no declaration at all."""
+    text = "note " + " ".join("{}" for _ in range(MIRROR._MAX_EMBEDDED_REGIONS + 5))
+    scan = MIRROR.scan_for_predicate_declaration(text)
+    assert scan.found is False
+    assert scan.complete is False
+    with pytest.raises(MIRROR.PredicateInMirrorError, match="could not be fully examined"):
+        _request(instruction=text)
+
+
+def test_completeness_is_decided_in_exactly_one_place() -> None:
+    """Structural, because remembering is what failed three times.
+
+    Every bound funnels through one budget object and the scan constructs one ``ScanResult``,
+    so a bound added later cannot report a clean scan by forgetting to say otherwise. If this
+    test fails, a second decision point has appeared and the guarantee is back to being a
+    convention.
+    """
+    tree = ast.parse(MIRROR_SOURCE)
+    constructions = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "ScanResult"
+    ]
+    assert len(constructions) == 1, f"ScanResult is constructed {len(constructions)} times"
+    keywords = {kw.arg for kw in constructions[0].keywords}
+    assert "complete" in keywords
+
+
+def test_a_declaration_below_the_old_depth_cliff_is_refused() -> None:
+    """The exact case that reached the pane: nine wrappers around a real declaration.
+
+    Depth 7 refused and depth 9 did not, because the walk returned a bare "not found" at its
+    limit and the caller could not tell that answer from "not present".
+    """
+    declaration = {"argv": ["uv", "run", "pytest", "-q"]}
+    for wrappers in (0, 7, 8, 9, 12, 20):
+        text = _nested_json(wrappers, declaration)
+        assert MIRROR.scan_for_predicate_declaration(text).found is True, wrappers
+        with pytest.raises(MIRROR.PredicateInMirrorError):
+            _request(instruction=text)
+
+
+def test_a_realistically_nested_document_is_still_readable() -> None:
+    """Raising the depth limit is not the fix, but refusing real documents would be a new one.
+
+    A workflow or manifest nests well under the limit; the limit exists to bound hostile input,
+    which is why refusing at it costs nothing.
+    """
+    assert _request(instruction=_nested_json(12, {"steps": ["build", "test"], "runs-on": "linux"}))
+
+
+def test_an_alias_amplified_document_is_examined_in_bounded_time() -> None:
+    """The memoised walk is what bounds alias amplification -- not a count of alias-looking text.
+
+    A 424-byte document using YAML's numeric anchors took over nine seconds to scan, because the
+    counter that was supposed to stop it only recognised letter aliases. A shared node is now
+    examined once.
+    """
+    document = "a0: &1 [x, y, z, w, v, u, t, s, r, q, p, o, n, m, l, k]\n"
+    previous = 1
+    for level in range(1, 8):
+        document += f"a{level}: &{level + 1} [" + ", ".join([f"*{previous}"] * 16) + "]\n"
+        previous = level + 1
+    document += f"top: *{previous}\n"
+
+    started = time.monotonic()
+    scan = MIRROR.scan_for_predicate_declaration(document)
+    elapsed = time.monotonic() - started
+    assert scan.found is False
+    assert elapsed < 2.0, f"alias-amplified scan took {elapsed:.1f}s"
+    # And it is *examined*, not merely survived: without memoisation the node budget is what
+    # ends the walk, which is honest but refuses a document carrying no declaration at all.
+    assert scan.complete is True
+    assert _request(instruction=document)
 
 
 BENIGN_INSTRUCTIONS: dict[str, str] = {
@@ -995,7 +1147,9 @@ def test_every_loader_this_detector_uses_is_a_safe_loader() -> None:
     """
     attributes = _module_attribute_names()
     assert "yaml.safe_load" in attributes
+    assert "yaml.safe_load_all" in attributes
     assert "yaml.load" not in attributes
+    assert "yaml.load_all" not in attributes
     assert "yaml.unsafe_load" not in attributes
     assert "yaml.full_load" not in attributes
     assert "ast.literal_eval" in attributes
@@ -1514,20 +1668,63 @@ def test_a_replacement_subscriber_cannot_inherit_a_dead_acknowledgement(tmp_path
         MIRROR.check_liveness(tmp_path, run_id=RUN_ID, row_id=ROW_ID, now=7.0)
 
 
-def test_truncating_the_line_sweep_is_reported_as_incomplete(tmp_path: Path) -> None:
-    """The same "could not finish looking" rule, applied to the line-oriented sweep.
+#: Reading requests the fail-closed caps used to refuse. Each was a real refusal of ordinary
+#: synthesis work, which is as much a defect in this unit as an accepted declaration.
+CAPPED_READING_REQUESTS: dict[str, str] = {
+    # 201 lines: one over the old line-sweep cap. Comparing two children's reports is the
+    # example this unit uses for work that must leave the operator's channel.
+    "a_201_line_comparison": "\n".join(
+        f"child report line {index}: the two reports agree on this point" for index in range(201)
+    ),
+    # 17 starred identifiers: one over the old alias cap, which counted Python and markdown
+    # shapes rather than YAML aliases.
+    "seventeen_starred_python_names": (
+        "Compare how the launcher modules use *args, *kwargs, *values, *items, *rest, *extra, "
+        "*params, *opts, *flags, *names, *keys, *vals, *data, *meta, *cfg, *env and *ctx."
+    ),
+    "seventeen_markdown_emphases": "Summarise the *bounded*, *closed*, *predicate*, *mirror*, "
+    "*clock*, *quiet*, *return*, *scan*, *parse*, *safe*, *loader*, *budget*, *depth*, *node*, "
+    "*layer*, *region* and *fallback* terms.",
+    # 33 short Base64 notes: one over the old decoded-candidate count. A count is not a measure
+    # of work; these are 33 tiny payloads.
+    "thirty_three_base64_notes": " ".join(
+        base64.b64encode(f"note number {index} with enough text to decode".encode()).decode("ascii")
+        for index in range(33)
+    ),
+}
 
-    A declaration buried past the cap happens to be caught by the textual fallback today, but a
-    heuristic covering for a parse that did not happen is not an examination, and reporting
-    ``complete`` would be reporting a fact the scan never established.
+
+@pytest.mark.parametrize("case", sorted(CAPPED_READING_REQUESTS))
+def test_a_bound_sized_to_stop_an_attack_does_not_refuse_ordinary_reading(case: str) -> None:
+    """Fail-closed is right; fail-closed at a threshold ordinary prose crosses is not.
+
+    Each of these was refused as unexaminable. The bound was not wrong to exist — it was set
+    where reading work lives, and one of them was counting a text shape that this repository's
+    own source produces sixty-eight times.
     """
-    filler = "\n".join(f"note {index}: nothing here" for index in range(MIRROR._MAX_PARSED_LINES))
-    scan = MIRROR.scan_for_predicate_declaration(filler + "\nplain trailing prose\n")
-    assert scan.found is False
-    assert scan.complete is False
-    with pytest.raises(MIRROR.PredicateInMirrorError, match="could not be fully examined"):
-        _request(instruction=filler + "\nplain trailing prose\n")
+    assert _request(instruction=CAPPED_READING_REQUESTS[case])
 
-    short = "\n".join(f"note {index}: nothing here" for index in range(10))
-    assert MIRROR.scan_for_predicate_declaration(short).complete is True
-    assert _request(instruction=short)
+
+def test_a_declaration_past_the_old_line_cap_is_still_parsed() -> None:
+    """Removing the cap is only safe if the sweep actually reaches what the cap was hiding.
+
+    With the sweep truncated at two hundred lines this declaration is reached by no loader, and
+    the textual fallback is suppressed because a balanced region elsewhere parsed. Asserting the
+    *form* is what makes the difference visible: parsed by TOML, not guessed at by a heuristic.
+    """
+    filler = "\n".join(f"child report line {index}: the reports agree" for index in range(250))
+    buried = filler + '\nargv = ["uv", "run", "pytest"]\n'
+    assert MIRROR.scan_for_predicate_declaration(buried).form == "toml"
+    with pytest.raises(MIRROR.PredicateInMirrorError):
+        _request(instruction=buried)
+
+
+def test_the_whole_documents_this_mirror_exists_to_read_can_be_pasted() -> None:
+    """The bluntest version of the same check: the unit's own pages, offered as material."""
+    for path in (
+        "plugins/orchestrate/references/operator-channel.md",
+        "plugins/orchestrate/skills/orchestrate/SKILL.md",
+    ):
+        text = (ROOT / path).read_text(encoding="utf-8")
+        excerpt = text[: MIRROR.MAX_INSTRUCTION_BYTES - 512]
+        assert _request(instruction=f"Summarise this page:\n{excerpt}"), path

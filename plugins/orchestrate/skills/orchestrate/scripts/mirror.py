@@ -32,7 +32,10 @@ class reappears one layer up with no second reader. What is actually enforced he
    :func:`scan_for_predicate_declaration` parses under ``json``, ``yaml.safe_load``,
    ``tomllib``, and ``ast.literal_eval``, unwraps Base64 and hexadecimal layers first, and
    inspects the *resulting keys* — so an escaped key and an alias-bound key are both simply
-   ``argv``. It **fails closed**: material it cannot finish examining is refused, not passed.
+   ``argv``. It **fails closed through one path**: every bound funnels through a single budget
+   object and one result is built from it, so a bound cannot be reached and reported as a
+   finished, clean scan. That is structure rather than a rule to remember, because the same
+   fail-open appeared three times here with three different constants.
 3. This module executes no program and does not import ``completion``.
 
 **What none of that establishes, stated plainly because two earlier revisions got it wrong.**
@@ -135,6 +138,7 @@ from __future__ import annotations
 import ast
 import base64
 import binascii
+import contextlib
 import hashlib
 import json
 import math
@@ -218,27 +222,39 @@ MAX_INSTRUCTION_BYTES = 32 * 1024
 #: guess about how one might be spelled.
 PREDICATE_KEY = "argv"
 
-#: How deep the walk descends through a parsed structure, and how many layers of encoding are
-#: unwrapped. A Base64 layer strictly shrinks the text, so an instruction capped at
+# Bounds on the scan's work. Every one of them funnels through :class:`_ScanBudget`, whose
+# single exhaustion record is the *only* thing that can make a scan report itself incomplete —
+# see that class for why this unit stopped trusting per-bound bookkeeping.
+#
+# They are sized so that ordinary reading work never reaches them. The mirror exists to read;
+# a bound that refuses a legitimate synthesis request is a defect in the same way an accepted
+# declaration is, and three of these were previously set low enough to do exactly that.
+
+#: How deep the walk descends through a parsed structure. Real documents nest far below this —
+#: a workflow file is six to eight deep — so it exists to bound hostile input, and refusing at
+#: the limit therefore costs nothing. It is **not** here because deep structures were assumed
+#: benign; that assumption was disproven by a nine-level wrapper reaching the pane.
+_MAX_PARSE_DEPTH = 64
+
+#: Distinct container nodes visited in one walk. With memoisation this is bounded by the parsed
+#: document's size rather than by its expanded shape, so it is a backstop rather than a limit
+#: any real document approaches.
+_MAX_WALK_NODES = 100_000
+
+#: Layers of encoding unwrapped. Decoding strictly shrinks the text, so an instruction capped at
 #: :data:`MAX_INSTRUCTION_BYTES` cannot reach this many layers; it is a backstop, not a cliff.
-_MAX_PARSE_DEPTH = 8
 _MAX_ENCODING_LAYERS = 8
 
-#: Decodable Base64 payloads examined per text. Only runs that decode to valid UTF-8 count, so
-#: a list of commit identifiers is not a payload. Exceeding it reports the scan incomplete.
-_MAX_DECODED_CANDIDATES = 32
+#: Total bytes of decoded payload examined, as a multiple of the text being scanned. Replaces a
+#: count of candidates, which refused a request to summarise thirty-three Base64 notes: a
+#: *count* is not a measure of work, and ordinary material carries many short encoded runs.
+_MAX_DECODED_EXPANSION = 4
 _MIN_BASE64_RUN = 24
 
-#: Lines individually offered to the line-oriented loaders, for a declaration written as one
-#: TOML or Python line inside a longer instruction.
-_MAX_PARSED_LINES = 200
-
-#: ``yaml.safe_load`` constructs no arbitrary objects, but it does expand aliases, and a small
-#: document with deeply nested aliases expands without bound. An instruction using more aliases
-#: than this is refused as unexaminable rather than expanded — failing closed on the resource
-#: question, the same way the scan fails closed on the examination question.
-_MAX_YAML_ALIASES = 16
-_YAML_ALIAS_RE = re.compile(r"(?<![\w])\*[A-Za-z_][\w-]*")
+#: Balanced ``{...}`` / ``[...]`` regions offered to the loaders individually, so a declaration
+#: embedded in a sentence is parsed rather than left to the textual fallback.
+_MAX_EMBEDDED_REGIONS = 256
+_REGION_OPENERS = {"{": "}", "[": "]"}
 
 #: The textual fallback, applied **only** to material no safe loader could parse into a
 #: structure. It is a heuristic, not the guarantee: it requires ``argv`` bound to something that
@@ -417,8 +433,83 @@ _PARSE_ERRORS = (
 )
 
 
-def _safe_parses(text: str) -> tuple[list[tuple[str, Any]], bool]:
-    """Every structure ``text`` parses into under a safe loader, and whether all loaders ran.
+class _ScanBudget:
+    """Every bound in the scan, with exactly one way for the scan to end unfinished.
+
+    This class exists because the same defect appeared three times in this unit, once per
+    round, each time with a different constant: a bound was reached, the code returned a
+    not-found answer, and the caller reported a clean scan. A decode budget did it, then a line
+    sweep, then the structure walk — and each was fixed in isolation while the next one waited.
+
+    So the fix is structural rather than remembered. A bound cannot be exhausted without calling
+    :meth:`stop`, because the only way to consume any bound is through this object; and
+    :func:`scan_for_predicate_declaration` constructs exactly one :class:`ScanResult`, deriving
+    ``complete`` from :attr:`finished` in one place. A new bound added to this scanner is
+    therefore incomplete-reporting by construction rather than by the author remembering.
+
+    ``reasons`` is kept for the refusal message: an operator who hits a bound should be told
+    which one, not merely that something was too big.
+    """
+
+    __slots__ = ("nodes", "decoded_bytes", "regions", "reasons", "_seen")
+
+    def __init__(self, *, decoded_bytes: int) -> None:
+        self.nodes = _MAX_WALK_NODES
+        self.decoded_bytes = decoded_bytes
+        self.regions = _MAX_EMBEDDED_REGIONS
+        self.reasons: list[str] = []
+        self._seen: set[int] = set()
+
+    @property
+    def finished(self) -> bool:
+        """True when no bound ended the examination early."""
+        return not self.reasons
+
+    def stop(self, reason: str) -> None:
+        if reason not in self.reasons:
+            self.reasons.append(reason)
+
+    def visit(self, value: Any, depth: int) -> bool:
+        """Claim one container node. False when this branch must not be walked.
+
+        Returning False for an already-seen node is not an exhaustion — a shared node has been
+        examined, so skipping it changes no answer. It is what makes a YAML alias graph walk in
+        time proportional to the document rather than to its expanded shape, which is the
+        difference between a 424-byte input costing microseconds and costing ten seconds.
+        """
+        if depth > _MAX_PARSE_DEPTH:
+            self.stop(f"structure nested deeper than {_MAX_PARSE_DEPTH}")
+            return False
+        if self.nodes <= 0:
+            self.stop(f"structure larger than {_MAX_WALK_NODES} nodes")
+            return False
+        identity = id(value)
+        if identity in self._seen:
+            return False
+        self._seen.add(identity)
+        self.nodes -= 1
+        return True
+
+    def take_decoded(self, size: int) -> bool:
+        if size > self.decoded_bytes:
+            self.stop("more encoded payload than the text that carried it")
+            return False
+        self.decoded_bytes -= size
+        return True
+
+    def take_region(self) -> bool:
+        if self.regions <= 0:
+            self.stop(f"more than {_MAX_EMBEDDED_REGIONS} embedded regions")
+            return False
+        self.regions -= 1
+        return True
+
+
+def _safe_parses(text: str, budget: _ScanBudget) -> list[tuple[str, Any]]:
+    """Every structure ``text`` parses into under a safe loader.
+
+    There is no completeness flag returned here any more: exhaustion is recorded on the budget,
+    which is the only place a scan can be marked unfinished.
 
     Four loaders, and every one of them is a *safe* loader by construction — none can be made
     to execute or instantiate anything from the input:
@@ -431,16 +522,23 @@ def _safe_parses(text: str) -> tuple[list[tuple[str, Any]], bool]:
     A predicate declaration is a structure, not a spelling, so the way to find one is to parse
     and look at the result. YAML is a superset of JSON and also accepts Python-style quoting,
     so the three flow forms collapse into one loader; TOML and Python literals get their own.
-    Each is also offered individual lines, because a declaration is often one line of TOML or
-    one Python literal inside a longer instruction.
+    Each is also offered individual lines and each balanced ``{...}`` / ``[...]`` region,
+    because a declaration is often one line of TOML, or one Python literal, inside a longer
+    instruction. The regions matter for a form no other path reaches: a Python mapping whose
+    ``argv`` is a *tuple*, written after a sentence, is not valid YAML and is not the whole
+    text, so only parsing the braced region finds it.
 
-    The second element is ``False`` when a loader was deliberately skipped — today only when
-    the text carries more YAML aliases than :data:`_MAX_YAML_ALIASES`. Skipping is not a pass.
+    **Every line is parsed.** An earlier revision capped the sweep at two hundred lines, which
+    refused a two-hundred-and-one-line comparison of two children's reports — the example this
+    unit uses for work that must leave the operator's channel. Parsing every line of a
+    worst-case instruction at the byte cap measures 0.083s, so the byte cap is the real bound
+    and a second one was buying nothing but false refusals.
+
+    There is no YAML-alias cap here any more. It counted a text shape this repository's own
+    Python and markdown produce (``*args``, ``*emphasis*``) while missing YAML's numeric
+    aliases entirely, so it refused ordinary reading and did not stop the amplification it
+    named. What actually bounds that is the memoised walk in :meth:`_ScanBudget.visit`.
     """
-    if len(_YAML_ALIAS_RE.findall(text)) > _MAX_YAML_ALIASES:
-        # yaml.safe_load constructs nothing, but it does expand aliases without bound.
-        return [], False
-
     parsed: list[tuple[str, Any]] = []
     loaders: tuple[tuple[str, Any], ...] = (
         ("json", json.loads),
@@ -454,22 +552,55 @@ def _safe_parses(text: str) -> tuple[list[tuple[str, Any]], bool]:
         except _PARSE_ERRORS:
             continue
 
+    # ``yaml.safe_load`` returns only the *first* document of a multi-document stream, so a
+    # declaration after a ``---`` separator was parsed by nothing and the scan reported that it
+    # had finished. Every document is loaded. (Found by this unit's own adversarial pass, not by
+    # a review -- it is the same shape as the bounds above: a loader that stopped early while the
+    # caller believed it had covered the text.)
+    with contextlib.suppress(*_PARSE_ERRORS):
+        parsed.extend(("yaml", document) for document in yaml.safe_load_all(text))
+
+    line_loaders = (("toml", tomllib.loads), ("literal", ast.literal_eval))
     lines = text.splitlines()
-    complete = len(lines) <= _MAX_PARSED_LINES
     if len(lines) > 1:
-        for line in lines[:_MAX_PARSED_LINES]:
-            for name, loader in (("toml", tomllib.loads), ("literal", ast.literal_eval)):
+        for line in lines:
+            for name, loader in line_loaders:
                 try:
                     parsed.append((name, loader(line)))
                 except _PARSE_ERRORS:
                     continue
-    # Truncating the line sweep is another "could not finish looking", and it is reported as
-    # one. The textual fallback happens to catch a declaration buried past the cap today, but
-    # that is a heuristic covering for a parse that did not happen, not an examination.
-    return parsed, complete
+
+    for region in _embedded_regions(text, budget):
+        for name, loader in (*loaders, *line_loaders):
+            try:
+                parsed.append((name, loader(region)))
+            except _PARSE_ERRORS:
+                continue
+    return parsed
 
 
-def _declares_predicate(value: Any, *, depth: int = 0) -> bool:
+def _embedded_regions(text: str, budget: _ScanBudget) -> list[str]:
+    """Balanced ``{...}`` and ``[...]`` spans in ``text``, outermost first.
+
+    Finding the span is textual; deciding what it means is not — the span is handed to the same
+    safe loaders as everything else. That distinction is the one this unit learned twice: match
+    text to locate a candidate, never to reach a verdict.
+    """
+    regions: list[str] = []
+    stack: list[tuple[str, int]] = []
+    for index, character in enumerate(text):
+        if character in _REGION_OPENERS:
+            stack.append((character, index))
+        elif stack and character == _REGION_OPENERS[stack[-1][0]]:
+            opener, start = stack.pop()
+            if not stack:
+                if not budget.take_region():
+                    return regions
+                regions.append(text[start : index + 1])
+    return regions
+
+
+def _declares_predicate(value: Any, budget: _ScanBudget, *, depth: int = 0) -> bool:
     """Whether a parsed structure carries the predicate schema's own shape.
 
     That shape is a mapping with an ``argv`` key bound to a **sequence** — which is exactly what
@@ -481,22 +612,30 @@ def _declares_predicate(value: Any, *, depth: int = 0) -> bool:
 
     String leaves are re-parsed, so a declaration carried inside another document's string
     value is still a declaration rather than a quotation of one.
+
+    Every container is claimed through :meth:`_ScanBudget.visit`, so depth and size are bounded
+    in one place and reaching either bound records an unfinished scan rather than a clean one.
+    A nine-level wrapper around a real declaration used to be accepted with ``complete=True``
+    because this walk returned a bare ``False`` at its depth limit and the caller could not tell
+    that answer from "not present".
     """
-    if depth > _MAX_PARSE_DEPTH:
-        return False
     if isinstance(value, Mapping):
+        if not budget.visit(value, depth):
+            return False
         for key, item in value.items():
             if key == PREDICATE_KEY and isinstance(item, list | tuple):
                 return True
-            if _declares_predicate(item, depth=depth + 1):
+            if _declares_predicate(item, budget, depth=depth + 1):
                 return True
             if isinstance(item, str):
-                nested, _ = _safe_parses(item)
-                if any(_declares_predicate(inner, depth=depth + 1) for _n, inner in nested):
+                nested = _safe_parses(item, budget)
+                if any(_declares_predicate(inner, budget, depth=depth + 1) for _n, inner in nested):
                     return True
         return False
     if isinstance(value, list | tuple):
-        return any(_declares_predicate(item, depth=depth + 1) for item in value)
+        if not budget.visit(value, depth):
+            return False
+        return any(_declares_predicate(item, budget, depth=depth + 1) for item in value)
     return False
 
 
@@ -516,7 +655,7 @@ def _decode_layer(run: str) -> str | None:
         return None
 
 
-def _encoded_payloads(text: str) -> tuple[list[str], bool]:
+def _encoded_payloads(text: str, budget: _ScanBudget) -> list[str]:
     """One decoded layer off each Base64 or hexadecimal run in ``text``.
 
     One layer here, and :func:`scan_for_predicate_declaration` re-enters on each payload, so a
@@ -528,18 +667,21 @@ def _encoded_payloads(text: str) -> tuple[list[str], bool]:
 
     Only runs that decode to valid UTF-8 become candidates. That is what keeps a list of commit
     identifiers from being counted as payloads at all: a hexadecimal identifier decodes to bytes
-    that are not text. The previous revision counted candidates *before* decoding them, and so
-    refused a request to summarise seventeen commits.
+    that are not text.
+
+    The bound is on decoded **bytes**, not on a count of payloads. A count is not a measure of
+    work: thirty-three short Base64 notes are less material than one long blob, and capping the
+    count refused a request to summarise them.
     """
     payloads: list[str] = []
     for run in sorted({*_BASE64_RUN_RE.findall(text), *_HEX_RUN_RE.findall(text)}):
         decoded = _decode_layer(run)
         if decoded is None or len(decoded) >= len(run):
             continue
+        if not budget.take_decoded(len(decoded)):
+            return payloads
         payloads.append(decoded)
-        if len(payloads) > _MAX_DECODED_CANDIDATES:
-            return payloads[:_MAX_DECODED_CANDIDATES], False
-    return payloads, True
+    return payloads
 
 
 def _unescaped(text: str) -> str:
@@ -566,6 +708,9 @@ def scan_for_predicate_declaration(text: str, *, _depth: int = 0) -> ScanResult:
 
     - the text itself, under ``json``, ``yaml`` (safe loader), ``toml``, and Python ``literal``;
     - each individual line, under the line-oriented loaders;
+    - each balanced ``{...}`` / ``[...]`` region, so a declaration embedded in a sentence is
+      parsed rather than left to the fallback — this is what reaches a Python mapping whose
+      ``argv`` is a *tuple*, which is valid in no other path;
     - any string leaf inside a parsed structure, re-parsed, so a declaration carried in another
       document's string value is still a declaration;
     - any Base64 or hexadecimal run, unwrapped repeatedly until it stops decoding — **layered
@@ -579,6 +724,13 @@ def scan_for_predicate_declaration(text: str, *, _depth: int = 0) -> ScanResult:
     exists so a declaration buried in text that is not valid in any supported format is still
     refused.
 
+    **Exhaustion has exactly one path.** Every bound — walk depth, walk size, encoding layers,
+    decoded bytes, embedded regions — is consumed through :class:`_ScanBudget`, and this
+    function builds the one and only :class:`ScanResult` from that budget at a single return.
+    A bound cannot be reached and reported as a clean scan, because there is no second place
+    where ``complete`` is decided. That is deliberate: the same fail-open appeared three times
+    in this unit with three different constants, each fixed alone while the next waited.
+
     What this does **not** cover, named rather than papered over:
 
     - **An instruction that describes a check in ordinary English.** No detector for "does this
@@ -591,40 +743,41 @@ def scan_for_predicate_declaration(text: str, *, _depth: int = 0) -> ScanResult:
     - **A structure that reaches this module already decoded.** This inspects text.
 
     Every loader used here is a *safe* loader: none can construct or execute anything from the
-    input. ``yaml.safe_load`` is used, never ``yaml.load``. Alias expansion is the one resource
-    risk it carries, and text with more aliases than :data:`_MAX_YAML_ALIASES` is reported
-    incomplete rather than expanded.
+    input. ``yaml.safe_load`` is used, never ``yaml.load``. Its one resource risk is alias
+    amplification, and what bounds that is the memoised walk — a shared node is examined once —
+    rather than a count of alias-looking text.
 
     It deliberately does not import ``completion``. This module must contain no route to the
     code that runs predicates, and a structural test asserts that, so the schema's shape is
     restated here rather than borrowed.
     """
-    if _depth >= _MAX_ENCODING_LAYERS:
-        return ScanResult(found=False, complete=False)
+    budget = _ScanBudget(decoded_bytes=_MAX_DECODED_EXPANSION * max(len(text), 1))
+    found, form = _scan(text, budget, depth=0)
+    return ScanResult(found=found, complete=budget.finished, form=form)
+
+
+def _scan(text: str, budget: _ScanBudget, *, depth: int) -> tuple[bool, str | None]:
+    """The recursive half of the scan. Never decides completeness — the budget does."""
+    if depth >= _MAX_ENCODING_LAYERS:
+        budget.stop(f"encoding nested deeper than {_MAX_ENCODING_LAYERS} layers")
+        return False, None
     subject = _unescaped(text) if _UNICODE_ESCAPE_RE.search(text) else text
 
-    parsed, loaders_complete = _safe_parses(subject)
+    parsed = _safe_parses(subject, budget)
     for name, value in parsed:
-        if _declares_predicate(value):
-            return ScanResult(found=True, complete=True, form=name)
-    if not loaders_complete:
-        return ScanResult(found=False, complete=False)
+        if _declares_predicate(value, budget):
+            return True, name
 
-    payloads, payloads_complete = _encoded_payloads(subject)
-    for payload in payloads:
-        inner = scan_for_predicate_declaration(payload, _depth=_depth + 1)
-        if inner.found:
-            return ScanResult(found=True, complete=True, form="encoded")
-        if not inner.complete:
-            return ScanResult(found=False, complete=False)
-    if not payloads_complete:
-        return ScanResult(found=False, complete=False)
+    for payload in _encoded_payloads(subject, budget):
+        found, _form = _scan(payload, budget, depth=depth + 1)
+        if found:
+            return True, "encoded"
 
-    # The heuristic pre-filter, for material no loader could turn into a structure.
+    # The heuristic fallback, for material no loader could turn into a structure.
     structured = any(isinstance(value, Mapping | list | tuple) for _name, value in parsed)
     if not structured and _ARGV_SEQUENCE_RE.search(subject):
-        return ScanResult(found=True, complete=True, form="heuristic")
-    return ScanResult(found=False, complete=True)
+        return True, "heuristic"
+    return False, None
 
 
 def carries_predicate_declaration(text: str) -> bool:

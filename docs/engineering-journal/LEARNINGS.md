@@ -21,6 +21,48 @@
 
 ## 2026-08-15
 
+### A resource bound with two ways to end will pick the dishonest one; give it one  {#one-exhaustion-path}
+
+**Context.** A scanner that refuses machine-readable predicate declarations acquired several
+resource bounds over three review rounds: a JSON decode-attempt budget, a line-sweep cap, a
+structure-walk depth limit, an encoding-layer limit, a decoded-payload count. Each bound existed
+for a good reason — to stop hostile input costing unbounded work.
+
+**Evidence.** The same defect was found three separate times, in a different bound each time.
+First: 512 decoy braces exhausted the decode budget, which returned "no declaration found", and
+the caller reported a clean scan — a real declaration behind the decoys reached the consumer.
+Then: the line sweep truncated at 200 lines and reported complete. Then: the structure walk
+returned a bare `False` at depth 8, so a nine-level wrapper around a real declaration was accepted
+with `complete=True`; depth 7 refused and depth 9 did not.
+
+**Mechanism.** Each bound had *two* ways to end — "I looked and found nothing" and "I stopped
+looking" — and both returned the same value. The distinction existed only in the author's head at
+the moment of writing, so every new bound had to independently remember to report exhaustion, and
+the second and third ones did not. Fixing each in isolation did not reduce the probability of the
+next one, because the *shape* was never addressed: the fix was a rule, and rules are remembered.
+
+**Fix.** One budget object through which every bound is consumed, and a single construction of
+the result whose completeness is derived from that object. A bound that is reached cannot be
+reported as a finished scan, because there is no second place where completeness is decided. The
+single decision point is asserted structurally by a test (`ScanResult` is constructed exactly
+once in the module), so a future bound is incomplete-reporting by construction.
+
+**What surprised.** Two of the bounds were *also* wrong in the opposite direction — set where
+ordinary work lives, so they refused legitimate requests: a 201-line comparison, a question
+naming seventeen `*args` identifiers, thirty-three short encoded notes. A bound can be
+simultaneously too weak (fails open on exhaustion) and too strong (fires on normal input), and
+the second failure is the one nobody reports as a security defect.
+
+**Generalizable rule.** Any bound inside a detector needs three answers, not two: found,
+not-found, and **could-not-finish** — where could-not-finish fails closed. When the same defect
+appears a second time in a different constant, stop fixing the constant: the repeat is evidence
+that the honest answer is reachable-but-optional, and the repair is to make it the only reachable
+one. And check every bound in both directions — the threshold that stops an attack is usually
+also a threshold ordinary work can cross.
+
+**Refs.** [`{#key-on-the-signature-not-the-serialisation}`](#key-on-the-signature-not-the-serialisation);
+[`{#constructor-checks-need-a-boundary}`](#constructor-checks-need-a-boundary).
+
 ### A guard that enumerates encodings loses to the next encoding; key on the signature  {#key-on-the-signature-not-the-serialisation}
 
 **Context.** The orchestrate mirror refuses instructions that carry a validity-predicate

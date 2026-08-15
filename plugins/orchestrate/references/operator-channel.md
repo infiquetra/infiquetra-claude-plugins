@@ -138,25 +138,46 @@ These are enforced in `skills/orchestrate/scripts/mirror.py`, not merely intende
 
     Exactly what it does: unwrap any Base64 or hexadecimal run, repeatedly, until it stops
     decoding; resolve `\uXXXX` escapes; then parse under **`json`, `yaml.safe_load`, `tomllib`,
-    and `ast.literal_eval`** — the whole text, each individual line, and any string leaf inside
-    a parsed structure — and refuse when a result is **a mapping with an `argv` key bound to a
-    sequence**. That last clause is the predicate schema's own shape, which is why a type
+    and `ast.literal_eval`** — the whole text, **every document of a multi-document YAML
+    stream**, each individual line, each balanced `{...}` or `[...]` region, and any string leaf
+    inside a parsed structure — and refuse when a result is
+    **a mapping with an `argv` key bound to a sequence**. Locating a region is textual; deciding
+    what it means is not, and that division is the point: match text to find a candidate, never
+    to reach a verdict. That last clause is the predicate schema's own shape, which is why a type
     annotation survives: `argv: list[str]` binds `argv` to a *string*, and the schema rejects a
     string `argv` outright.
 
     Only safe loaders are used — `yaml.safe_load`, never `yaml.load` — because a parser that
-    executed untrusted input would be a worse defect than the one it fixes. Alias expansion is
-    the one resource risk a safe loader still carries, so text with an unusual number of YAML
-    aliases is refused as unexaminable rather than expanded.
+    executed untrusted input would be a worse defect than the one it fixes. Alias amplification
+    is the one resource risk a safe loader still carries, and what bounds it is that the
+    structure walk **visits each shared node once**. An earlier revision instead counted
+    alias-*looking* text, which was both too wide and too narrow: it fired on `*args` and
+    `*emphasis*` — shapes this repository's own source produces dozens of times per file — and
+    did not recognise YAML's numeric aliases at all, so a 424-byte document took over nine
+    seconds to scan. Memoising the walk brings the same document under three milliseconds and
+    needs no count.
 
     **Not covered, named rather than implied:** a format none of those four loaders parses; a
     declaration that reaches the module already decoded; and an instruction that describes a
     check in English. For material no loader can parse at all, a textual fallback applies — it
     is a heuristic, explicitly not the guarantee.
-  - The scan **fails closed**. Material it cannot finish examining is refused rather than
-    passed. An early revision reported "clean" on exhaustion, which turned a denial-of-service
-    bound into the bypass: a real declaration parked behind 512 decoy braces was never
-    inspected, and was accepted.
+  - The scan **fails closed, through exactly one path**. Every bound — walk depth, walk size,
+    encoding layers, decoded bytes, embedded regions — is consumed through a single budget
+    object, and the scan builds its one result from that budget at a single return. A bound
+    cannot be reached and reported as a finished, clean scan, because there is no second place
+    where completeness is decided.
+
+    This is written as structure rather than as a rule to remember because the same fail-open
+    appeared three times, once per review round, each with a different constant: a decode budget
+    reported clean, then a line sweep did, then the structure walk did — a nine-level wrapper
+    around a real declaration was accepted while the scan said it had finished. Each was fixed
+    alone while the next one waited.
+
+    The bounds are also sized so ordinary reading does not reach them. Three of them previously
+    refused legitimate synthesis: a 201-line comparison of two children's reports, a question
+    naming seventeen `*args`-style identifiers, and thirty-three short Base64 notes. A bound
+    that refuses the work this session exists to do is a defect in the same way an accepted
+    declaration is.
   - `dispatch_request` **re-runs those checks on the object it is handed**. They live in
     `MirrorRequest`'s constructor, and dispatch is the one function that talks to the pane, so
     reading attributes off whatever arrived left them out of the path that matters — any object

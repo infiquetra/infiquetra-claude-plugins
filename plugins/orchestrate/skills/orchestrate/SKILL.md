@@ -268,13 +268,18 @@ Four contracts are mechanical rather than aspirational:
   is not true. Deciding request kinds are refused by name. An instruction whose content
   **parses** into the predicate schema's shape is refused: the detector unwraps Base64 and
   hexadecimal layers, resolves `\uXXXX` escapes, parses under `json`, `yaml.safe_load`,
-  `tomllib` and `ast.literal_eval` — whole text, each line, and string leaves — and refuses when
-  a result is a mapping with an `argv` key bound to a sequence. It parses and inspects keys; it
-  does not pattern-match text, which is what lets it catch a YAML escaped key and an
-  anchor-bound key while *accepting* `sys.argv: list[str]` in an ordinary sentence. Only safe
-  loaders are used. The scan **fails closed**, refusing material it could not finish examining;
-  and `dispatch_request` re-runs those checks on the object it is handed, because they live in a
-  constructor and dispatch is the one function that talks to the pane.
+  `tomllib` and `ast.literal_eval` — whole text, every document of a multi-document YAML stream,
+  each line, each balanced `{...}`/`[...]` region, and string leaves — and refuses when a result is a mapping with an `argv` key bound to a
+  sequence. It parses and inspects keys; it does not pattern-match text, which is what lets it
+  catch a YAML escaped key and an anchor-bound key while *accepting* `sys.argv: list[str]` in an
+  ordinary sentence. Only safe loaders are used, and alias amplification is bounded by visiting
+  each shared node once rather than by counting alias-looking text. The scan **fails closed
+  through a single path**: every bound funnels through one budget object and one result is built
+  from it, so a bound cannot be reached and reported as a finished, clean scan. The bounds are
+  sized so ordinary reading — a 201-line comparison, seventeen `*args` names, thirty-three Base64
+  notes — does not reach them. And `dispatch_request` re-runs those checks on the object it is
+  handed, because they live in a constructor and dispatch is the one function that talks to the
+  pane.
   **What is not caught:** a format none of those loaders parses, and an instruction that
   describes a check in English — no general detector for intent is achievable. The mirror not
   writing `phase` does not contain that; it stops a mirror's opinion becoming a `verified` row,

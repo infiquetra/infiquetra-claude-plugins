@@ -1,5 +1,57 @@
 # Changelog
 
+## [0.8.0] - 2026-08-15
+
+### Fixed
+
+- **The scanner's bounds now have exactly one way to end, and it is the honest one.** The
+  structure walk returned a bare "not found" when it hit its depth limit, and the caller could
+  not tell that answer from "no declaration present" — so a nine-level JSON object whose
+  innermost `argv` was bound to a proper sequence was accepted, with the scan reporting that it
+  had finished cleanly. Depth 7 refused; depth 9 did not.
+
+  This was the third appearance of one shape, once per review round, each with a different
+  constant: a decode budget reported clean on exhaustion, then a line sweep did, then the walk
+  did. Each was repaired alone while the next one waited. The repair this time is structural
+  rather than another remembered rule — every bound (walk depth, walk size, encoding layers,
+  decoded bytes, embedded regions) is consumed through a single budget object, and the scan
+  builds its one and only result from that budget at a single return point. A bound cannot be
+  reached and reported as a clean scan because there is no second place where completeness is
+  decided, and a test asserts that single decision point structurally.
+
+- **Three bounds were refusing the reading work the mirror exists to do.** A 201-line
+  comparison of two children's reports — the example this unit uses for work that must leave the
+  operator's channel — was refused as unexaminable. So was a one-line question naming seventeen
+  `*args`-style identifiers, and thirty-three short Base64 notes. Fail-closed is right; failing
+  closed at a threshold ordinary prose crosses is a defect in the same way an accepted
+  declaration is.
+
+  The line cap is gone: parsing every line of a worst-case instruction at the byte cap measures
+  0.083s, so the byte cap was already the real bound. The decoded-payload cap is now measured in
+  bytes rather than in a count of payloads, because a count is not a measure of work. The walk
+  depth is raised well above anything a real document reaches, which it can be safely now that
+  reaching it refuses.
+
+- **Alias amplification is bounded by the walk, not by counting alias-looking text.** The
+  previous guard counted `*name` occurrences, which fired on Python `*args` and markdown
+  `*emphasis*` — shapes this repository's own source produces dozens of times per file — and did
+  not recognise YAML's numeric aliases (`*1`) at all. A 424-byte document using numeric anchors
+  took over nine seconds to scan. The structure walk now visits each shared node once, which
+  brings the same document under three milliseconds and makes the count unnecessary; the guard
+  that was not protecting anything has been removed rather than tuned.
+
+- **A declaration after a `---` separator was parsed by nothing.** `yaml.safe_load` returns
+  only the first document of a multi-document stream, so a second or third document was never
+  examined while the scan reported that it had finished — the same shape as the bounds above,
+  in a loader rather than a budget. Every document in the stream is now loaded. Found by this
+  unit's own adversarial pass rather than by a review.
+
+- **A Python mapping whose `argv` is a tuple, written after a prose prefix, reached the pane.**
+  `Run this: {'argv': ('uv', 'run', 'pytest', '-q')}` is not valid YAML, is not the whole text,
+  and the textual fallback does not recognise `(`. Balanced `{...}` and `[...]` regions are now
+  parsed individually, so the declaration is found by a loader. Locating the region is textual;
+  deciding what it means is not.
+
 ## [0.7.0] - 2026-08-15
 
 ### Changed
@@ -29,6 +81,9 @@
   aliases is refused as unexaminable rather than expanded. A textual fallback remains for
   material no loader can parse at all, and is documented as a heuristic rather than the
   guarantee.
+  *The alias count is superseded in 0.8.0: it counted a text shape this repository's own source
+  produces and missed YAML's numeric aliases entirely. A memoised walk bounds the amplification
+  instead.*
 
   Refused now and not before: a YAML escaped key, a YAML anchor and alias, layered Base64, and
   hexadecimal. Accepted now and not before: `argv = permission_argv(runtime)`,

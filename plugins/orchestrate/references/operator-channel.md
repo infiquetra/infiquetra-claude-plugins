@@ -129,33 +129,66 @@ These are enforced in `skills/orchestrate/scripts/mirror.py`, not merely intende
   holds. What is actually enforced:
 
   - Deciding request kinds are refused by name.
-  - An instruction carrying a machine-readable predicate declaration is refused. The detector
-    keys on the declaration's *signature* — the name `argv` bound to a value — rather than on one
-    serialisation of it, so JSON, a YAML block or flow mapping, TOML, a Python literal, a string
-    nested inside another object, unicode-escaped braces, and Base64 are all caught. Enumerating
-    serialisations is a race the enumerator loses; keying on the signature is not.
-  - The scan **fails closed**. An instruction it cannot finish examining within its budget is
-    refused rather than passed. The previous revision reported "clean" on exhaustion, which
-    turned a denial-of-service bound into the bypass: a real declaration parked behind 512 decoy
-    braces was never inspected, and was accepted.
+  - An instruction whose content **parses** into the predicate schema's shape is refused. The
+    detector parses; it does not pattern-match text. That distinction was learned twice: a text
+    detector is unsound and imprecise *at the same time*, because YAML can bind the exact key
+    `argv` without those letters ever standing next to a colon (an escape, or an anchor and
+    alias), while the same pattern fires on `sys.argv:` in an ordinary sentence and refuses
+    requests to read this repository's own source.
+
+    Exactly what it does: unwrap any Base64 or hexadecimal run, repeatedly, until it stops
+    decoding; resolve `\uXXXX` escapes; then parse under **`json`, `yaml.safe_load`, `tomllib`,
+    and `ast.literal_eval`** — the whole text, each individual line, and any string leaf inside
+    a parsed structure — and refuse when a result is **a mapping with an `argv` key bound to a
+    sequence**. That last clause is the predicate schema's own shape, which is why a type
+    annotation survives: `argv: list[str]` binds `argv` to a *string*, and the schema rejects a
+    string `argv` outright.
+
+    Only safe loaders are used — `yaml.safe_load`, never `yaml.load` — because a parser that
+    executed untrusted input would be a worse defect than the one it fixes. Alias expansion is
+    the one resource risk a safe loader still carries, so text with an unusual number of YAML
+    aliases is refused as unexaminable rather than expanded.
+
+    **Not covered, named rather than implied:** a format none of those four loaders parses; a
+    declaration that reaches the module already decoded; and an instruction that describes a
+    check in English. For material no loader can parse at all, a textual fallback applies — it
+    is a heuristic, explicitly not the guarantee.
+  - The scan **fails closed**. Material it cannot finish examining is refused rather than
+    passed. An early revision reported "clean" on exhaustion, which turned a denial-of-service
+    bound into the bypass: a real declaration parked behind 512 decoy braces was never
+    inspected, and was accepted.
   - `dispatch_request` **re-runs those checks on the object it is handed**. They live in
     `MirrorRequest`'s constructor, and dispatch is the one function that talks to the pane, so
     reading attributes off whatever arrived left them out of the path that matters — any object
     with the right attribute names satisfied it.
 
-  **What is not enforced, stated because it is the part that matters.** An instruction that
-  describes a check in ordinary English is not detectable by any scanner, and a mirror so
-  instructed can run it: the live agent on the far side of the pane is itself a program executor,
-  and its runtime's workspace-write posture contains nothing inside the workspace. The mirror not
-  writing `phase` does **not** contain this. It stops a mirror's opinion becoming a `verified`
-  row; it does not stop a claimed verdict being produced, and a claimed verdict with no second
-  reader is precisely the failure R6b names.
+  ### The contract, in two halves
 
-  What remains true is narrower and worth having: `completion.evaluate_completion` is the only
-  path to `verified`; it requires a dispatch receipt the mirror is never issued; nothing here
+  Stating the division is stronger than a guarantee that keeps turning out to be false.
+
+  **Mechanically refused: machine-readable declarations.** Anything that parses, under any of
+  the four loaders, into a mapping with an `argv` key bound to a sequence — through any number
+  of Base64 or hexadecimal layers, through an escape, through a YAML anchor and alias, or
+  nested inside another document's string value. That is a real boundary and it is tested from
+  both sides.
+
+  **Not detectable: an instruction that describes a check in English.** "Run the tests and tell
+  me whether they pass" is accepted, and a mirror so instructed can run the check — the live
+  agent on the far side of the pane is itself a program executor, and its runtime's
+  workspace-write posture contains nothing inside the workspace. **No general detector for
+  "does this text ask for a bounded mechanical check" is achievable**, and this page does not
+  claim one.
+
+  **What makes the undetectable case survivable:** a mirror opinion cannot become `verified`.
+  `completion.evaluate_completion` is the only path to that phase and it requires a dispatch
+  receipt the mirror is never issued; the mirror writes no `phase`; nothing in the module
   returns anything completion accepts as evidence; and a mirror return is bounded material the
-  orchestrator reads with its own eyes rather than a verdict delivered behind its back. The
-  control for the English case is the routing rule on this page — a rule, labelled as a rule.
+  orchestrator reads with its own eyes rather than a verdict delivered behind its back.
+
+  Note what that does **not** say. It does not say a predicate cannot run. It says a claimed
+  verdict cannot become a gate. The remaining exposure is an orchestrator that *believes* a
+  mirror's claim, and the control for that is the routing rule on this page — a rule, labelled
+  as a rule.
 - **The mirror has a register row from creation**, written before any launch side effect, so a
   mirror whose launch failed is visible rather than absent. The row carries what a restart needs:
   `resume_mirror` rebuilds a live session from it, because the pane and the subscriber outlive an

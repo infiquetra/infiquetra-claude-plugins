@@ -1,5 +1,76 @@
 # Changelog
 
+## [0.7.0] - 2026-08-15
+
+### Changed
+
+- **The predicate detector parses and inspects the result; it no longer pattern-matches
+  serialized text.** Matching text was unsound and imprecise at the same time, for one reason.
+  YAML can bind the exact key `argv` without those four letters ever standing next to a
+  separator — through an escape, or through an anchor and an alias — so a text detector missed
+  real declarations. The same pattern fired on `sys.argv:` in an ordinary sentence, so it
+  refused requests to read this repository's own source, which is the mirror's whole job.
+  Parsing closes both directions with one change: after a safe parse an escaped key **is**
+  `argv` and an alias-bound key **is** `argv`, and a sentence mentioning `argv` does not parse
+  into a mapping with an `argv` key at all.
+
+  The detector now unwraps Base64 and hexadecimal runs — repeatedly, until they stop decoding,
+  so layered wrapping is followed rather than capped — resolves `\uXXXX` escapes, and parses
+  under `json`, `yaml.safe_load`, `tomllib`, and `ast.literal_eval`, applying each to the whole
+  text, to each individual line, and to string leaves inside a parsed structure. It refuses
+  when a result is **a mapping with an `argv` key bound to a sequence**, which is the predicate
+  schema's own shape: `PredicateSpec` rejects an `argv` that is a command string, so binding
+  the rule to the schema is what lets a type annotation (`argv: list[str]`, an `argv` bound to
+  a *string*) survive.
+
+  Every loader is a safe loader — `yaml.safe_load`, never `yaml.load` — because a parser that
+  executed untrusted input would be a worse defect than the one being fixed. Alias expansion is
+  the one resource risk a safe loader still carries, so text carrying an unusual number of YAML
+  aliases is refused as unexaminable rather than expanded. A textual fallback remains for
+  material no loader can parse at all, and is documented as a heuristic rather than the
+  guarantee.
+
+  Refused now and not before: a YAML escaped key, a YAML anchor and alias, layered Base64, and
+  hexadecimal. Accepted now and not before: `argv = permission_argv(runtime)`,
+  `argv: list[str]`, `sys.argv:`, `def main(*argv: str)`, an annotation block, and a list of
+  seventeen commit identifiers. A mirror that refuses ordinary synthesis is as broken as one
+  that accepts a predicate.
+
+- **Every published claim now states the same boundary.** The reference, this changelog, the
+  skill page, the module docstring and the test names had drifted apart: the docstring
+  disclosed an encoding depth limit while four other places said Base64 was caught. The
+  contract is now written in two halves in `references/operator-channel.md` — what is
+  mechanically refused (machine-readable declarations), what is not detectable (an English
+  request, for which no general detector is achievable), and what makes the undetectable case
+  survivable (a mirror opinion cannot become `verified`, because completion requires a dispatch
+  receipt the mirror is never issued).
+
+- **The skill page no longer says nothing distinguishes a thinking mirror from a dead one.**
+  That sentence was retracted in 0.6.0 and survived in one place fifteen lines from its own
+  correction.
+
+### Fixed
+
+- **The first look at a pane's revision counter no longer advances the clock.** A counter is
+  only evidence of emission when there is a previous one to compare it against, so the first
+  observation now records a baseline and leaves the reference where it was. Treating it as an
+  advance let a supervision loop that started late report a long-dead mirror as `working` with
+  the pane-revision feed named as the source — health the counter had not established. It
+  delayed a hang rather than suppressing one, but it made calling the reader strictly worse
+  than not calling it, because the dispatch clock would already have tripped.
+- **A revision counter that goes backwards re-baselines instead of sticking.** A herdr
+  reconnect restarts the series; previously a decrease wrote nothing at all, so real output
+  stayed invisible until the new series climbed past the old maximum. The safe direction is
+  kept — a restarted counter is not evidence of emission — while letting the feed recover.
+- **A failed subscription acknowledgement retracts the previous one.** The acknowledgement is
+  durable and the subscriber process is not, so a replacement subscriber could inherit a dead
+  process's confirmation, turning the distinct missing-wire state back into a working-or-hung
+  report. A caller presenting a list without the mirror's subscription is evidence the wire is
+  gone, and is now treated as such.
+- **A request to summarise commit identifiers is no longer refused.** Base64 candidates were
+  counted before being decoded, so seventeen hexadecimal identifiers exhausted a budget and the
+  scan reported itself incomplete. Only runs that decode to valid UTF-8 are payloads now.
+
 ## [0.6.0] - 2026-08-15
 
 ### Changed
@@ -32,6 +103,8 @@
   mapping, TOML, a Python literal, a string nested inside another object, unicode-escaped
   braces, and Base64 are the same declaration in different clothes, and all are refused.
   Enumerating serialisations is a race the enumerator loses.
+  *Superseded in 0.7.0, which replaces text matching with parsing — see that entry for why
+  matching a signature in serialized text was still both unsound and imprecise.*
 - **The scan fails closed.** An instruction it cannot finish examining within its budget is
   refused rather than passed. Reporting "clean" on exhaustion had turned a denial-of-service
   bound into the bypass: a real declaration parked behind 512 decoy braces was never inspected
@@ -132,6 +205,8 @@
   that would narrow the gap is deliberately not built, because the subscriber wakes the
   orchestrator on every matched event and a heartbeat would wake the operator's channel on a
   timer.
+  *Half superseded in 0.6.0: the heartbeat reasoning holds, but pane revision does distinguish
+  the two, and 0.6.0 builds that feed.*
 - **Deliberate context management.** The mirror is persistent for prompt-cache benefit and
   continuity, and a mirror that has silently degraded is worse than no mirror because the
   orchestrator will still believe its answers. Its context is compacted or cleared on

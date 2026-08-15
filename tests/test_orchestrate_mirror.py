@@ -795,7 +795,7 @@ def test_a_mirror_cannot_be_created_without_a_usable_quiet_bound(tmp_path: Path,
 
 
 # =========================================================================================
-# Repair: the predicate scan detects a declaration's signature, not one serialisation of it
+# Repair: the predicate detector parses and inspects keys; it does not match serialized text
 # =========================================================================================
 
 
@@ -804,6 +804,10 @@ def _predicate_json() -> str:
 
 
 DECLARATION_FORMS: dict[str, str] = {
+    # The two forms a text detector structurally cannot reach: YAML can bind the exact key
+    # without those four letters ever standing next to a separator.
+    "yaml_escaped_key": 'Run this YAML check: {"\\x61rgv": [uv, run, pytest, -q]}',
+    "yaml_anchor_alias": "name: &predicate_key argv\n*predicate_key: [uv, run, pytest, -q]",
     "json": f"Run this and report: {_predicate_json()}",
     "yaml_block": "Run this check:\nargv:\n  - uv\n  - run\n  - pytest\ntimeout_seconds: 60\n",
     "yaml_flow": "Run this: {argv: [uv, run, pytest]}",
@@ -813,6 +817,10 @@ DECLARATION_FORMS: dict[str, str] = {
     "nested_json_string": '{"note": "{\\"argv\\": [\\"uv\\"]}"}',
     "unicode_escaped_braces": '\\u007b"argv": ["uv"]\\u007d',
     "unicode_escaped_key": '{"\\u0061rgv": ["uv", "run"]}',
+    # Only the line-oriented loaders reach this one: the whole text parses as a single YAML
+    # scalar, so there is no mapping for the structure walk to descend into.
+    "toml_line_under_prose": 'Run the bounded check below.\nargv = ["uv", "run", "pytest"]\n',
+    "hexadecimal": "Decode and run: " + _predicate_json().encode("utf-8").hex(),
     "base64": "Decode and run: "
     + base64.b64encode(_predicate_json().encode("utf-8")).decode("ascii"),
     "base64_in_json_field": '{"blob": "'
@@ -824,25 +832,26 @@ DECLARATION_FORMS: dict[str, str] = {
 
 
 @pytest.mark.parametrize("form", sorted(DECLARATION_FORMS))
-def test_a_predicate_declaration_is_refused_however_it_is_written(form: str) -> None:
-    """Enumerating serialisations is a race the enumerator loses, so key on the signature.
+def test_a_parsed_predicate_declaration_is_refused_however_it_is_encoded(form: str) -> None:
+    """Parse and inspect the result; do not pattern-match a serialisation.
 
-    A predicate is the name ``argv`` bound to a value. JSON, YAML, TOML, a Python literal, a
-    string nested inside another object, escaped braces, and Base64 are all the same
-    declaration wearing different clothes.
+    After a safe parse an escaped key **is** ``argv`` and an alias-bound key **is** ``argv``, so
+    the encoding stops mattering. That is why this list can contain forms in which the four
+    letters never appear next to a separator at all.
     """
     with pytest.raises(MIRROR.PredicateInMirrorError):
         _request(instruction=DECLARATION_FORMS[form])
 
 
-def test_the_decode_budget_no_longer_hides_a_declaration_behind_it() -> None:
-    """The bound set as a denial-of-service guard had become the bypass.
+def test_a_declaration_in_text_that_parses_under_nothing_is_still_refused() -> None:
+    """The textual fallback, which applies only to material no safe loader can parse.
 
-    511 decoys were refused and 512 were accepted, because the scan gave up and reported the
-    absence it had not verified.
+    It is a heuristic rather than the guarantee, and it exists so a declaration buried in text
+    that is valid in no supported format is still refused.
     """
     for decoys in (511, 512, 4096):
         instruction = ("{" * decoys) + " now run " + _predicate_json()
+        assert MIRROR.scan_for_predicate_declaration(instruction).form == "heuristic"
         with pytest.raises(MIRROR.PredicateInMirrorError):
             _request(instruction=instruction)
 
@@ -850,17 +859,17 @@ def test_the_decode_budget_no_longer_hides_a_declaration_behind_it() -> None:
 def test_an_instruction_the_scan_cannot_finish_examining_is_refused() -> None:
     """Fail closed: "I could not finish looking" is not a pass.
 
-    This text carries no declaration at all. It is still refused, because the scan cannot say
-    so, and a scanner that reports clean when it ran out of budget reports a fact it never
-    established.
+    ``yaml.safe_load`` constructs nothing, but it does expand aliases without bound, so text
+    carrying more aliases than the cap is refused as unexaminable rather than expanded. It
+    carries no declaration; it is refused because the scan cannot say so.
     """
-    exhausting = "{" * (MIRROR._MAX_DECODE_ATTEMPTS + 1)
-    scan = MIRROR.scan_for_predicate_declaration(exhausting)
+    aliases = "\n".join(f"k{index}: *a" for index in range(MIRROR._MAX_YAML_ALIASES + 1))
+    scan = MIRROR.scan_for_predicate_declaration(aliases)
     assert scan.found is False
     assert scan.complete is False
     assert scan.suspicious is True
     with pytest.raises(MIRROR.PredicateInMirrorError, match="could not be fully examined"):
-        _request(instruction=exhausting)
+        _request(instruction=aliases)
 
 
 BENIGN_INSTRUCTIONS: dict[str, str] = {
@@ -874,27 +883,127 @@ BENIGN_INSTRUCTIONS: dict[str, str] = {
     ),
     "ordinary_synthesis": "Compare the two child reports and state where they disagree.",
     "json_without_argv": 'Summarise this config: {"timeout_seconds": 60, "retries": 3}',
+    # Every one of these was refused by the previous text-matching detector. The mirror exists
+    # to read this repository's source, so refusing them was as much a defect as accepting a
+    # declaration -- and one change fixed both directions.
+    "argv_assigned_from_a_call": (
+        "Read the launcher modules and explain why argv = permission_argv(runtime)."
+    ),
+    "argv_annotation_in_prose": (
+        "Compare how argv: list[str] is validated across the launcher modules."
+    ),
+    "sys_argv_attribute": "Explain sys.argv: list[str] in the launcher.",
+    "star_argv_parameter": "Explain def main(*argv: str) -> int in the launcher.",
+    "parameter_named_argv": "Describe parameter argv: list[str] on the entry point.",
+    "os_argv_attribute": "What does os.argv: refer to here?",
+    "argv_documentation_heading": "Summarise the section titled argv: and what it covers.",
+    "an_annotation_block": "Explain these annotations:\nargv: list[str]\nenv: dict[str, str]\n",
+    # Parses into a structure that carries no declaration -- the line is commented out. The
+    # textual fallback would match it, which is exactly why the fallback is confined to
+    # material no loader could parse.
+    "a_config_with_the_line_commented_out": (
+        'Summarise this config:\n# argv = ["uv", "run", "pytest"]\nname = "report"\n'
+    ),
+    "seventeen_commit_ids": "Summarise these commits: "
+    + " ".join(["a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"] * 17),
 }
 
 
 @pytest.mark.parametrize("case", sorted(BENIGN_INSTRUCTIONS))
 def test_reading_work_is_not_mistaken_for_a_declaration(case: str) -> None:
-    """A detector that refused ordinary reading work would make the mirror useless.
+    """A mirror that refuses ordinary synthesis is as broken as one that accepts a predicate.
 
     The English case is the disclosed residual: it asks for a check in prose and is accepted,
-    because no scanner detects intent. That is stated rather than papered over.
+    because no detector for intent is achievable. That is stated rather than papered over.
     """
     assert _request(instruction=BENIGN_INSTRUCTIONS[case])
 
 
-def test_the_scan_names_which_form_it_matched() -> None:
-    assert MIRROR.scan_for_predicate_declaration(_predicate_json()).form == "key"
+def test_an_argv_bound_to_a_string_is_not_the_predicate_schemas_shape() -> None:
+    """Precision comes from binding the rule to the schema, not from a looser pattern.
+
+    ``PredicateSpec`` rejects an ``argv`` that is a command string outright, so a mapping whose
+    ``argv`` is a string is not a declaration -- which is exactly why a type annotation survives.
+    """
+    assert _request(instruction='{"argv": "uv run pytest -q"}')
+    assert MIRROR.scan_for_predicate_declaration("argv: list[str]").found is False
+    with pytest.raises(MIRROR.PredicateInMirrorError):
+        _request(instruction='{"argv": ["uv", "run"]}')
+
+
+def test_the_scan_names_the_loader_that_parsed_the_declaration() -> None:
+    """Which path caught it is the difference between the guarantee and the heuristic."""
+    assert MIRROR.scan_for_predicate_declaration(_predicate_json()).form == "json"
+    assert MIRROR.scan_for_predicate_declaration("argv:\n  - uv\n  - run\n").form == "yaml"
+    assert MIRROR.scan_for_predicate_declaration('argv = ["uv", "run"]').form == "toml"
+    # The whole text is one YAML scalar, so only the line-oriented loaders reach the
+    # declaration. The textual fallback would also refuse it -- but as a heuristic, not as a
+    # parse, and the form is how that difference stays visible.
     assert (
         MIRROR.scan_for_predicate_declaration(
-            base64.b64encode(_predicate_json().encode()).decode()
+            'Run the bounded check below.\nargv = ["uv", "run", "pytest"]\n'
         ).form
-        == "base64"
+        == "toml"
     )
+
+
+def test_escaped_text_is_resolved_so_the_catch_is_structural_not_heuristic() -> None:
+    """Both routes refuse it; only one of them is the guarantee.
+
+    Resolving ``\\uXXXX`` first turns a declaration written with escaped braces into something a
+    loader can parse, so it is caught by the parser rather than falling through to the textual
+    fallback. The form is how that difference is observable.
+    """
+    escaped = '\\u007b"argv": ["uv"]\\u007d'
+    assert MIRROR.scan_for_predicate_declaration(escaped).form == "json"
+    with pytest.raises(MIRROR.PredicateInMirrorError):
+        _request(instruction=escaped)
+
+
+@pytest.mark.parametrize("layers", [1, 2, 3, 4])
+def test_layered_base64_is_unwrapped_rather_than_capped_at_one_layer(layers: int) -> None:
+    """The previous revision followed one layer and called the second a stated limit.
+
+    Each layer strictly shrinks the text, so unwrapping terminates on its own and there is no
+    cliff to document -- which is what lets every published page say Base64 is caught without
+    an asterisk.
+    """
+    payload = _predicate_json()
+    for _ in range(layers):
+        payload = base64.b64encode(payload.encode("utf-8")).decode("ascii")
+    assert MIRROR.scan_for_predicate_declaration(f"Decode and run: {payload}").form == "encoded"
+    with pytest.raises(MIRROR.PredicateInMirrorError):
+        _request(instruction=f"Decode and run: {payload}")
+
+
+def _module_attribute_names() -> set[str]:
+    """Every ``module.attribute`` reference in the mirror source, as dotted text."""
+    return {
+        f"{node.value.id}.{node.attr}"
+        for node in ast.walk(ast.parse(MIRROR_SOURCE))
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+    }
+
+
+def test_every_loader_this_detector_uses_is_a_safe_loader() -> None:
+    """A parser that executed untrusted input would be a worse defect than the one it fixes.
+
+    Asserted structurally rather than by comment. ``yaml.load`` will construct arbitrary Python
+    objects named in the document; ``yaml.safe_load`` will not, and it is the only one this
+    module may reach. The loaders are referenced as values and called through a variable, so
+    this checks the attribute references rather than the call names.
+    """
+    attributes = _module_attribute_names()
+    assert "yaml.safe_load" in attributes
+    assert "yaml.load" not in attributes
+    assert "yaml.unsafe_load" not in attributes
+    assert "yaml.full_load" not in attributes
+    assert "ast.literal_eval" in attributes
+    assert "json.loads" in attributes
+    assert "tomllib.loads" in attributes
+    # ``ast`` is imported for ``literal_eval`` only; nothing here may compile or execute source.
+    for name, called in _module_function_calls().items():
+        assert not ({"eval", "exec", "compile"} & called), name
 
 
 # =========================================================================================
@@ -1061,6 +1170,14 @@ def test_pane_revision_advances_the_clock_and_tells_thinking_from_dead(tmp_path:
     herdr = FakeHerdr()
     session = _create(tmp_path, herdr=herdr, max_quiet_seconds=100.0)
     MIRROR.dispatch_request(session, _request(), herdr=herdr, now=1_000.0)
+
+    # The first look establishes the baseline and does not advance the clock: a counter is only
+    # evidence of emission when there is a previous one to compare it against.
+    first = MIRROR.observe_pane_activity(
+        tmp_path, run_id=RUN_ID, row_id=ROW_ID, snapshot=_snapshot(session.pane_id, 5), now=1_010.0
+    )
+    assert first.advanced is False
+    assert first.revision == 5
 
     # Thinking: the pane keeps emitting, so successive ticks keep the clock fed.
     for tick, revision in ((1_050.0, 12), (1_150.0, 47)):
@@ -1295,3 +1412,122 @@ def test_repository_observation_is_absent_rather_than_faked_without_a_git_adapte
     MIRROR.collect_return(session, herdr=herdr, now=2.0)
     status = MIRROR.mirror_status(tmp_path, run_id=RUN_ID, row_id=ROW_ID)
     assert status["last_return"]["repository_observed"] is False
+
+
+# =========================================================================================
+# Repair: a counter is only evidence when there is a previous one to compare it against
+# =========================================================================================
+
+
+def test_the_first_look_at_a_counter_does_not_advance_the_clock(tmp_path: Path) -> None:
+    """A late first tick used to report a long-dead mirror as ``working``.
+
+    The first observation has nothing to compare against, so treating it as an advance turned a
+    supervision loop that started late into a source of health the counter never established.
+    It delayed a hang rather than suppressing it, which is why it was survivable -- and it made
+    calling the reader strictly worse than not calling it, because the dispatch clock had
+    already tripped.
+    """
+    herdr = FakeHerdr()
+    session = _create(tmp_path, herdr=herdr, max_quiet_seconds=30.0)
+    MIRROR.dispatch_request(session, _request(), herdr=herdr, now=1.0)
+
+    first = MIRROR.observe_pane_activity(
+        tmp_path, run_id=RUN_ID, row_id=ROW_ID, snapshot=_snapshot(session.pane_id, 7), now=1e6
+    )
+    assert first.advanced is False
+    assert first.advanced_at is None
+    with pytest.raises(MIRROR.MirrorQuietTooLongError, match="dispatch"):
+        MIRROR.check_liveness(tmp_path, run_id=RUN_ID, row_id=ROW_ID, now=1e6)
+
+
+def test_a_supervision_loop_that_starts_late_does_not_postpone_the_hang(tmp_path: Path) -> None:
+    """A regular supervision loop: the hang must fire on the bound, not one tick later."""
+    herdr = FakeHerdr()
+    session = _create(tmp_path, herdr=herdr, max_quiet_seconds=30.0)
+    MIRROR.dispatch_request(session, _request(), herdr=herdr, now=1_000.0)
+    for tick in (1_010.0, 1_020.0):
+        MIRROR.observe_pane_activity(
+            tmp_path,
+            run_id=RUN_ID,
+            row_id=ROW_ID,
+            snapshot=_snapshot(session.pane_id, 4),
+            now=tick,
+        )
+    with pytest.raises(MIRROR.MirrorQuietTooLongError):
+        MIRROR.check_liveness(tmp_path, run_id=RUN_ID, row_id=ROW_ID, now=1_031.0)
+
+
+def test_a_counter_that_restarts_re_baselines_instead_of_sticking(tmp_path: Path) -> None:
+    """A herdr reconnect restarts the pane's series; the old high-water mark must not stick.
+
+    Previously a decrease wrote nothing at all, so real output stayed invisible until the new
+    series climbed past the old maximum. Re-baselining without advancing keeps the safe
+    direction -- a restarted pane is not evidence of emission -- while letting the feed recover.
+    """
+    herdr = FakeHerdr()
+    session = _create(tmp_path, herdr=herdr, max_quiet_seconds=100.0)
+    MIRROR.dispatch_request(session, _request(), herdr=herdr, now=1_000.0)
+    for tick, revision in ((1_010.0, 40), (1_020.0, 47)):
+        MIRROR.observe_pane_activity(
+            tmp_path,
+            run_id=RUN_ID,
+            row_id=ROW_ID,
+            snapshot=_snapshot(session.pane_id, revision),
+            now=tick,
+        )
+
+    reset = MIRROR.observe_pane_activity(
+        tmp_path, run_id=RUN_ID, row_id=ROW_ID, snapshot=_snapshot(session.pane_id, 1), now=1_030.0
+    )
+    assert reset.advanced is False
+    assert _row(tmp_path)["mirror_pane_activity"]["revision"] == 1
+
+    climbing = MIRROR.observe_pane_activity(
+        tmp_path, run_id=RUN_ID, row_id=ROW_ID, snapshot=_snapshot(session.pane_id, 2), now=1_040.0
+    )
+    assert climbing.advanced is True
+    live = MIRROR.check_liveness(tmp_path, run_id=RUN_ID, row_id=ROW_ID, now=1_050.0)
+    assert live.reference_source == "pane_revision"
+
+
+def test_a_replacement_subscriber_cannot_inherit_a_dead_acknowledgement(tmp_path: Path) -> None:
+    """The acknowledgement is durable; the subscriber process is not.
+
+    A caller presenting a list without the mirror's subscription is evidence the wire is gone,
+    so the previous confirmation is retracted rather than left standing for a replacement
+    process to inherit.
+    """
+    herdr = FakeHerdr()
+    session = _create(tmp_path, herdr=herdr)
+    assert MIRROR.mirror_status(tmp_path, run_id=RUN_ID, row_id=ROW_ID)["subscription_acknowledged"]
+
+    with pytest.raises(MIRROR.MirrorSubscriptionMissingError, match="retracted"):
+        MIRROR.acknowledge_subscription(session, [], now=5.0)
+    assert (
+        MIRROR.mirror_status(tmp_path, run_id=RUN_ID, row_id=ROW_ID)["subscription_acknowledged"]
+        is False
+    )
+
+    MIRROR.dispatch_request(session, _request(), herdr=herdr, now=6.0)
+    with pytest.raises(MIRROR.MirrorSubscriptionUnconfirmedError):
+        MIRROR.check_liveness(tmp_path, run_id=RUN_ID, row_id=ROW_ID, now=7.0)
+
+
+def test_truncating_the_line_sweep_is_reported_as_incomplete(tmp_path: Path) -> None:
+    """The same "could not finish looking" rule, applied to the line-oriented sweep.
+
+    A declaration buried past the cap happens to be caught by the textual fallback today, but a
+    heuristic covering for a parse that did not happen is not an examination, and reporting
+    ``complete`` would be reporting a fact the scan never established.
+    """
+    filler = "\n".join(f"note {index}: nothing here" for index in range(MIRROR._MAX_PARSED_LINES))
+    scan = MIRROR.scan_for_predicate_declaration(filler + "\nplain trailing prose\n")
+    assert scan.found is False
+    assert scan.complete is False
+    with pytest.raises(MIRROR.PredicateInMirrorError, match="could not be fully examined"):
+        _request(instruction=filler + "\nplain trailing prose\n")
+
+    short = "\n".join(f"note {index}: nothing here" for index in range(10))
+    assert MIRROR.scan_for_predicate_declaration(short).complete is True
+    assert _request(instruction=short)

@@ -28,34 +28,39 @@ class reappears one layer up with no second reader. What is actually enforced he
 
 1. :class:`MirrorRequest` accepts a closed vocabulary of *reading* kinds. Deciding kinds are
    enumerated in :data:`DECIDING_KINDS` and refused by name.
-2. An instruction carrying a machine-readable predicate *declaration* is refused, in the
-   forms :func:`carries_predicate_declaration` documents: an embedded JSON object with an
-   ``argv`` key, the same declaration written as a YAML mapping, and either of those wrapped
-   in Base64. The scan **fails closed**: an instruction whose scan budget is exhausted before
-   the text is fully examined is refused, not passed. "I could not finish looking" is not a
-   pass.
+2. An instruction whose content **parses** into the predicate schema's shape is refused.
+   :func:`scan_for_predicate_declaration` parses under ``json``, ``yaml.safe_load``,
+   ``tomllib``, and ``ast.literal_eval``, unwraps Base64 and hexadecimal layers first, and
+   inspects the *resulting keys* — so an escaped key and an alias-bound key are both simply
+   ``argv``. It **fails closed**: material it cannot finish examining is refused, not passed.
 3. This module executes no program and does not import ``completion``.
 
-**What none of that establishes, stated plainly because the previous revision got it wrong.**
+**What none of that establishes, stated plainly because two earlier revisions got it wrong.**
 
 - Guard 2 detects *declarations*, not *intent*. An instruction that describes a check in
-  ordinary English — "run the tests and tell me whether they pass" — is not detectable by any
-  scanner, and this module does not pretend otherwise. A mirror so instructed can run the
-  check, because the live agent on the far side of ``HerdrControl.send_line`` is itself a
-  program executor. Guard 3 constrains *this module*; it does not constrain the session this
-  module talks to.
+  ordinary English — "run the tests and tell me whether they pass" — is not detectable, and no
+  general detector for it is achievable. A mirror so instructed can run the check, because the
+  live agent on the far side of ``HerdrControl.send_line`` is itself a program executor.
+  Guard 3 constrains *this module*; it does not constrain the session this module talks to.
+- Guard 2 also does not cover a declaration written in a format none of those four loaders
+  parses, or one that reaches this module already decoded. It inspects text.
 - Not writing ``phase`` is therefore **not** the containment an earlier revision claimed it
   was. It stops a mirror's opinion becoming a ``verified`` row *through this module*; it does
   not stop a mirror producing a claimed verdict, and a claimed verdict with no second reader
   is exactly the failure R6b names.
 
-What genuinely remains true is narrower and worth stating in its own right:
-``completion.evaluate_completion`` is the only path to ``verified``; no function here returns
-anything completion accepts as evidence; and a mirror return is bounded material the
-orchestrator reads with its own eyes rather than a verdict delivered behind its back. The
-control for the prose case is the written routing rule in
-``references/operator-channel.md`` — a rule, honestly labelled as a rule, not a mechanism
-mislabelled as a guarantee.
+So the contract divides in two, and stating the division is stronger than a guarantee that
+keeps turning out to be false:
+
+- **Machine-readable declarations are mechanically refused.** That is a real, defensible
+  boundary, and it is the one guard 2 delivers.
+- **An English request is not detectable, and what makes it survivable is that a mirror
+  opinion cannot become ``verified``.** ``completion.evaluate_completion`` is the only path to
+  that phase, and it requires a dispatch receipt the mirror is never issued; no function here
+  returns anything completion accepts as evidence; and a mirror return is bounded material the
+  orchestrator reads with its own eyes rather than a verdict delivered behind its back. The
+  routing rule in ``references/operator-channel.md`` covers the rest — a rule, honestly
+  labelled as a rule, not a mechanism mislabelled as a guarantee.
 
 **The mirror has its own register row, from creation (R6c).** It is the only long-lived
 session that would otherwise have no liveness representation, and the one whose failure is
@@ -127,12 +132,14 @@ outstanding. That is what ``mirror_request`` records.
 
 from __future__ import annotations
 
+import ast
 import base64
 import binascii
 import hashlib
 import json
 import math
 import re
+import tomllib
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -142,6 +149,7 @@ from typing import Any
 import register as register_store
 import session_lifecycle
 import subscriber
+import yaml
 
 # --------------------------------------------------------------------------- vocabulary
 
@@ -204,32 +212,39 @@ MAX_DECLARABLE_RETURN_BYTES = 16 * 1024
 #: Instructions are prose, not payloads. The cap also bounds the predicate-declaration scan.
 MAX_INSTRUCTION_BYTES = 32 * 1024
 
-#: Upper bound on JSON decode attempts while scanning one text for a predicate declaration, so
-#: a pathological instruction of open braces cannot make the scan quadratic. Exhausting it is
-#: **not** a pass: :func:`carries_predicate_declaration` reports the scan as incomplete and
-#: :class:`MirrorRequest` refuses the instruction. An earlier revision returned "clean" on
-#: exhaustion, which turned this denial-of-service bound into the bypass — 512 unmatched braces
-#: ahead of a real declaration consumed the budget before the declaration was ever inspected.
-_MAX_DECODE_ATTEMPTS = 512
+#: The predicate schema's key. ``completion.PredicateSpec`` is a mapping whose ``argv`` is an
+#: argument *vector*, and the schema rejects an ``argv`` that is a command string outright, so
+#: "a mapping with an ``argv`` key bound to a sequence" is the declaration itself rather than a
+#: guess about how one might be spelled.
+PREDICATE_KEY = "argv"
 
-#: Upper bound on Base64 blobs decoded and re-scanned per text, and the shortest run worth
-#: decoding. A declaration is small; a long blob is not made safe by being long.
-_MAX_BASE64_CANDIDATES = 16
+#: How deep the walk descends through a parsed structure, and how many layers of encoding are
+#: unwrapped. A Base64 layer strictly shrinks the text, so an instruction capped at
+#: :data:`MAX_INSTRUCTION_BYTES` cannot reach this many layers; it is a backstop, not a cliff.
+_MAX_PARSE_DEPTH = 8
+_MAX_ENCODING_LAYERS = 8
+
+#: Decodable Base64 payloads examined per text. Only runs that decode to valid UTF-8 count, so
+#: a list of commit identifiers is not a payload. Exceeding it reports the scan incomplete.
+_MAX_DECODED_CANDIDATES = 32
 _MIN_BASE64_RUN = 24
 
-#: How deep a wrapped encoding is followed. One level covers "here is the check, Base64'd";
-#: beyond that the scan stops and reports itself incomplete rather than recursing.
-_MAX_SCAN_DEPTH = 2
+#: Lines individually offered to the line-oriented loaders, for a declaration written as one
+#: TOML or Python line inside a longer instruction.
+_MAX_PARSED_LINES = 200
 
-#: The predicate schema's own key, bound to a value, in any serialisation that writes a key
-#: next to a separator. ``completion.PredicateSpec`` is an object with an ``argv`` argument
-#: vector, so ``argv`` immediately followed by ``:`` or ``=`` is the declaration's signature
-#: whether it is written as JSON, YAML block or flow, TOML, or a Python literal -- including
-#: when it is quoted or backslash-escaped inside another string.
-#:
-#: The lookbehind is what keeps this from firing on ordinary prose about this codebase:
-#: ``permission_argv:`` does not match, because ``argv`` there is preceded by an underscore.
-_ARGV_KEY_RE = re.compile(r"(?<![A-Za-z0-9_])argv[\"'\\\s]*[:=]")
+#: ``yaml.safe_load`` constructs no arbitrary objects, but it does expand aliases, and a small
+#: document with deeply nested aliases expands without bound. An instruction using more aliases
+#: than this is refused as unexaminable rather than expanded — failing closed on the resource
+#: question, the same way the scan fails closed on the examination question.
+_MAX_YAML_ALIASES = 16
+_YAML_ALIAS_RE = re.compile(r"(?<![\w])\*[A-Za-z_][\w-]*")
+
+#: The textual fallback, applied **only** to material no safe loader could parse into a
+#: structure. It is a heuristic, not the guarantee: it requires ``argv`` bound to something that
+#: opens a sequence, so a type annotation (``argv: list[str]``) and an attribute
+#: (``sys.argv:``) do not match, while a declaration inside otherwise unparseable text does.
+_ARGV_SEQUENCE_RE = re.compile(r"(?<![A-Za-z0-9_.])argv[\"'\\\s]*[:=]\s*[\[\-]")
 
 #: ``\uXXXX`` escapes, so a declaration written with escaped braces is examined as the text it
 #: denotes rather than as the literal backslash sequence.
@@ -237,6 +252,10 @@ _UNICODE_ESCAPE_RE = re.compile(r"\\u([0-9a-fA-F]{4})")
 
 #: A run of Base64 alphabet long enough to be worth decoding.
 _BASE64_RUN_RE = re.compile(rf"[A-Za-z0-9+/=]{{{_MIN_BASE64_RUN},}}")
+
+#: A run of hexadecimal long enough to carry a declaration. Kept separate from the Base64
+#: alphabet because hexadecimal decodes under different rules; both are unwrapped the same way.
+_HEX_RUN_RE = re.compile(rf"\b[0-9a-fA-F]{{{_MIN_BASE64_RUN},}}\b")
 
 #: Context-management commands, per runtime. Only Claude Code's are established in this
 #: repository (``docs/analysis/2026-06-25-claude-cache-and-orchestration-chatgpt-source.md``).
@@ -388,50 +407,139 @@ class ScanResult:
         return self.found or not self.complete
 
 
-def _decoded_objects(text: str) -> tuple[list[dict[str, Any]], bool]:
-    """Every JSON object embedded in ``text``, and whether the scan reached the end.
+_PARSE_ERRORS = (
+    ValueError,
+    TypeError,
+    SyntaxError,
+    MemoryError,
+    RecursionError,
+    yaml.YAMLError,
+)
 
-    The second element is the honest part. Returning only the list made a budget exhaustion
-    indistinguishable from a clean text, which is how the bound became the bypass.
+
+def _safe_parses(text: str) -> tuple[list[tuple[str, Any]], bool]:
+    """Every structure ``text`` parses into under a safe loader, and whether all loaders ran.
+
+    Four loaders, and every one of them is a *safe* loader by construction — none can be made
+    to execute or instantiate anything from the input:
+
+    - ``json.loads``
+    - ``yaml.safe_load`` — the safe constructor set only; never ``yaml.load``
+    - ``tomllib.loads`` — the standard library's parser
+    - ``ast.literal_eval`` — literals only
+
+    A predicate declaration is a structure, not a spelling, so the way to find one is to parse
+    and look at the result. YAML is a superset of JSON and also accepts Python-style quoting,
+    so the three flow forms collapse into one loader; TOML and Python literals get their own.
+    Each is also offered individual lines, because a declaration is often one line of TOML or
+    one Python literal inside a longer instruction.
+
+    The second element is ``False`` when a loader was deliberately skipped — today only when
+    the text carries more YAML aliases than :data:`_MAX_YAML_ALIASES`. Skipping is not a pass.
     """
-    decoder = json.JSONDecoder()
-    found: list[dict[str, Any]] = []
-    position = 0
-    attempts = 0
-    while True:
-        start = text.find("{", position)
-        if start < 0:
-            return found, True
-        if attempts >= _MAX_DECODE_ATTEMPTS:
-            return found, False
-        attempts += 1
-        position = start + 1
+    if len(_YAML_ALIAS_RE.findall(text)) > _MAX_YAML_ALIASES:
+        # yaml.safe_load constructs nothing, but it does expand aliases without bound.
+        return [], False
+
+    parsed: list[tuple[str, Any]] = []
+    loaders: tuple[tuple[str, Any], ...] = (
+        ("json", json.loads),
+        ("yaml", yaml.safe_load),
+        ("toml", tomllib.loads),
+        ("literal", ast.literal_eval),
+    )
+    for name, loader in loaders:
         try:
-            value, _ = decoder.raw_decode(text[start:])
-        except (json.JSONDecodeError, ValueError):
+            parsed.append((name, loader(text)))
+        except _PARSE_ERRORS:
             continue
-        if isinstance(value, dict):
-            found.append(value)
+
+    lines = text.splitlines()
+    complete = len(lines) <= _MAX_PARSED_LINES
+    if len(lines) > 1:
+        for line in lines[:_MAX_PARSED_LINES]:
+            for name, loader in (("toml", tomllib.loads), ("literal", ast.literal_eval)):
+                try:
+                    parsed.append((name, loader(line)))
+                except _PARSE_ERRORS:
+                    continue
+    # Truncating the line sweep is another "could not finish looking", and it is reported as
+    # one. The textual fallback happens to catch a declaration buried past the cap today, but
+    # that is a heuristic covering for a parse that did not happen, not an examination.
+    return parsed, complete
 
 
-def _base64_payloads(text: str) -> tuple[list[str], bool]:
-    """Decoded Base64 runs in ``text``, and whether every candidate run was examined."""
+def _declares_predicate(value: Any, *, depth: int = 0) -> bool:
+    """Whether a parsed structure carries the predicate schema's own shape.
+
+    That shape is a mapping with an ``argv`` key bound to a **sequence** — which is exactly what
+    ``completion.PredicateSpec`` requires, and it is why a type annotation survives this check:
+    ``argv: list[str]`` parses to an ``argv`` bound to the *string* ``"list[str]"``, and the
+    predicate schema rejects a string ``argv`` outright as "a command string, not an argument
+    vector". Binding the detector to the schema's own shape is what makes it precise as well as
+    sound.
+
+    String leaves are re-parsed, so a declaration carried inside another document's string
+    value is still a declaration rather than a quotation of one.
+    """
+    if depth > _MAX_PARSE_DEPTH:
+        return False
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            if key == PREDICATE_KEY and isinstance(item, list | tuple):
+                return True
+            if _declares_predicate(item, depth=depth + 1):
+                return True
+            if isinstance(item, str):
+                nested, _ = _safe_parses(item)
+                if any(_declares_predicate(inner, depth=depth + 1) for _n, inner in nested):
+                    return True
+        return False
+    if isinstance(value, list | tuple):
+        return any(_declares_predicate(item, depth=depth + 1) for item in value)
+    return False
+
+
+def _decode_layer(run: str) -> str | None:
+    """One layer of Base64 or hexadecimal off ``run``, or ``None`` when it is neither."""
+    if len(run) % 2 == 0 and _HEX_RUN_RE.fullmatch(run):
+        try:
+            return bytes.fromhex(run).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            return None
+    trimmed = run[: len(run) - len(run) % 4]
+    if len(trimmed) < _MIN_BASE64_RUN:
+        return None
+    try:
+        return base64.b64decode(trimmed, validate=True).decode("utf-8")
+    except (binascii.Error, ValueError, UnicodeDecodeError):
+        return None
+
+
+def _encoded_payloads(text: str) -> tuple[list[str], bool]:
+    """One decoded layer off each Base64 or hexadecimal run in ``text``.
+
+    One layer here, and :func:`scan_for_predicate_declaration` re-enters on each payload, so a
+    declaration wrapped two or three times is reached by the recursion rather than by a second
+    loop in this function. Layering is followed rather than capped at one layer, and there is no
+    cliff to document — which is what lets every published page say encodings are followed
+    without an asterisk. Decoding strictly shrinks the text, so the recursion terminates on its
+    own well inside :data:`_MAX_ENCODING_LAYERS` for any instruction under the size cap.
+
+    Only runs that decode to valid UTF-8 become candidates. That is what keeps a list of commit
+    identifiers from being counted as payloads at all: a hexadecimal identifier decodes to bytes
+    that are not text. The previous revision counted candidates *before* decoding them, and so
+    refused a request to summarise seventeen commits.
+    """
     payloads: list[str] = []
-    candidates = _BASE64_RUN_RE.findall(text)
-    complete = len(candidates) <= _MAX_BASE64_CANDIDATES
-    for run in candidates[:_MAX_BASE64_CANDIDATES]:
-        trimmed = run[: len(run) - len(run) % 4]
-        if len(trimmed) < _MIN_BASE64_RUN:
+    for run in sorted({*_BASE64_RUN_RE.findall(text), *_HEX_RUN_RE.findall(text)}):
+        decoded = _decode_layer(run)
+        if decoded is None or len(decoded) >= len(run):
             continue
-        try:
-            raw = base64.b64decode(trimmed, validate=True)
-        except (binascii.Error, ValueError):
-            continue
-        try:
-            payloads.append(raw.decode("utf-8"))
-        except UnicodeDecodeError:
-            continue
-    return payloads, complete
+        payloads.append(decoded)
+        if len(payloads) > _MAX_DECODED_CANDIDATES:
+            return payloads[:_MAX_DECODED_CANDIDATES], False
+    return payloads, True
 
 
 def _unescaped(text: str) -> str:
@@ -440,57 +548,83 @@ def _unescaped(text: str) -> str:
 
 
 def scan_for_predicate_declaration(text: str, *, _depth: int = 0) -> ScanResult:
-    """Look for a machine-readable predicate declaration, and report whether the look finished.
+    """Parse ``text`` every safe way, and report whether the result declares a predicate.
 
-    A predicate is a closed schema: an object with an ``argv`` argument vector. The detector
-    keys on *the declaration's signature* — the name ``argv`` bound to a value — rather than on
-    one serialisation of it, because enumerating serialisations is a race the enumerator loses:
+    **It parses and inspects the resulting structure. It does not pattern-match a
+    serialisation.** That distinction is the whole of this function, and it was learned the
+    expensive way: a text detector is unsound and imprecise *at the same time*, for one reason.
+    YAML can bind the exact key ``argv`` without those four letters ever appearing next to a
+    colon — through an escape, or an anchor and alias — so text matching misses real
+    declarations. And the same pattern fires on ``sys.argv:`` in a sentence, so it refuses
+    ordinary requests to read this repository's own source, which is the mirror's actual job.
+    Parsing closes both at once: after a safe parse an escaped key **is** ``argv``, an
+    alias-bound key **is** ``argv``, and a sentence mentioning ``argv`` does not parse into a
+    mapping with an ``argv`` key at all.
 
-    - **key** — ``argv`` immediately followed by ``:`` or ``=``. That is the same declaration
-      written as JSON, as a YAML block or flow mapping, as TOML, as a Python literal, or quoted
-      and backslash-escaped inside another string's value.
-    - **json** — an embedded JSON object whose decoded keys include ``argv``. Kept alongside
-      the key form because a decoder resolves an escaped key (``"\\u0061rgv"``) that no textual
-      pattern can see.
-    - **base64** — either of the above wrapped in Base64, decoded once and re-scanned.
+    What counts as a declaration is the predicate schema's own shape — a mapping with an
+    ``argv`` key bound to a **sequence** — checked against the parse of:
 
-    ``\\uXXXX`` escapes are resolved before any of that, so escaped braces are examined as the
-    text they denote.
+    - the text itself, under ``json``, ``yaml`` (safe loader), ``toml``, and Python ``literal``;
+    - each individual line, under the line-oriented loaders;
+    - any string leaf inside a parsed structure, re-parsed, so a declaration carried in another
+      document's string value is still a declaration;
+    - any Base64 or hexadecimal run, unwrapped repeatedly until it stops decoding — **layered
+      wrapping is followed, not capped at one layer**.
 
-    Two things it does **not** cover, both named rather than papered over:
+    ``\\uXXXX`` escapes are resolved first, so a declaration written with escaped braces is
+    examined as the text it denotes.
 
-    - An instruction that describes a check in ordinary English. No scanner detects intent, and
-      this module does not claim to. See the module docstring.
-    - A declaration wrapped in **two** layers of encoding. One layer is followed; the second is
-      a stated limit, not a claim of absence.
+    When **no** loader parses the material into a structure, and only then, a textual fallback
+    applies (:data:`_ARGV_SEQUENCE_RE`). It is a heuristic, explicitly not the guarantee: it
+    exists so a declaration buried in text that is not valid in any supported format is still
+    refused.
+
+    What this does **not** cover, named rather than papered over:
+
+    - **An instruction that describes a check in ordinary English.** No detector for "does this
+      text ask for a bounded mechanical check" is achievable, and this module does not claim
+      one. What makes that residual survivable is stated in the module docstring: a mirror
+      opinion cannot become ``verified``, because completion requires a dispatch receipt the
+      mirror is never issued.
+    - **A serialisation format not in the list above.** If material parses under none of them
+      and the heuristic does not match, it is treated as prose.
+    - **A structure that reaches this module already decoded.** This inspects text.
+
+    Every loader used here is a *safe* loader: none can construct or execute anything from the
+    input. ``yaml.safe_load`` is used, never ``yaml.load``. Alias expansion is the one resource
+    risk it carries, and text with more aliases than :data:`_MAX_YAML_ALIASES` is reported
+    incomplete rather than expanded.
 
     It deliberately does not import ``completion``. This module must contain no route to the
-    code that runs predicates, and a structural test asserts that, so the schema's signature is
+    code that runs predicates, and a structural test asserts that, so the schema's shape is
     restated here rather than borrowed.
     """
+    if _depth >= _MAX_ENCODING_LAYERS:
+        return ScanResult(found=False, complete=False)
     subject = _unescaped(text) if _UNICODE_ESCAPE_RE.search(text) else text
-    if _ARGV_KEY_RE.search(subject):
-        return ScanResult(found=True, complete=True, form="key")
-    objects, json_complete = _decoded_objects(subject)
-    if any("argv" in value for value in objects):
-        return ScanResult(found=True, complete=True, form="json")
-    if not json_complete:
+
+    parsed, loaders_complete = _safe_parses(subject)
+    for name, value in parsed:
+        if _declares_predicate(value):
+            return ScanResult(found=True, complete=True, form=name)
+    if not loaders_complete:
         return ScanResult(found=False, complete=False)
 
-    if _depth + 1 >= _MAX_SCAN_DEPTH:
-        # One encoding level is covered; a declaration wrapped twice is the stated limit above.
-        # Reporting *incomplete* here instead would refuse ordinary instructions, because a
-        # repository path is itself a run of Base64-alphabet characters and every mention of
-        # one would come down this branch.
-        return ScanResult(found=False, complete=True)
-    payloads, base64_complete = _base64_payloads(subject)
+    payloads, payloads_complete = _encoded_payloads(subject)
     for payload in payloads:
         inner = scan_for_predicate_declaration(payload, _depth=_depth + 1)
         if inner.found:
-            return ScanResult(found=True, complete=True, form="base64")
+            return ScanResult(found=True, complete=True, form="encoded")
         if not inner.complete:
             return ScanResult(found=False, complete=False)
-    return ScanResult(found=False, complete=base64_complete)
+    if not payloads_complete:
+        return ScanResult(found=False, complete=False)
+
+    # The heuristic pre-filter, for material no loader could turn into a structure.
+    structured = any(isinstance(value, Mapping | list | tuple) for _name, value in parsed)
+    if not structured and _ARGV_SEQUENCE_RE.search(subject):
+        return ScanResult(found=True, complete=True, form="heuristic")
+    return ScanResult(found=False, complete=True)
 
 
 def carries_predicate_declaration(text: str) -> bool:
@@ -712,10 +846,21 @@ def acknowledge_subscription(
             "launched, or its row predates this contract"
         )
     if not any(dict(candidate) == expected for candidate in installed):
+        # A caller presenting a list without the subscription is evidence the wire is gone, so
+        # any earlier confirmation is retracted first. Leaving it in place let a replacement
+        # subscriber inherit the dead process's acknowledgement, turning the distinct
+        # missing-wire state back into a working-or-hung report.
+        _write_owned(
+            session.root,
+            session.row_id,
+            {"mirror_subscription": {"subscription": expected, "acknowledged_at": None}},
+            run_id=session.run_id,
+        )
         raise MirrorSubscriptionMissingError(
             f"the subscriber was given {len(installed)} subscription(s), none of which is the "
             f"mirror's return subscription on pane {expected.get('pane_id')!r}; its returns "
-            "would never wake the orchestrator and its clock would never receive an event"
+            "would never wake the orchestrator and its clock would never receive an event. Any "
+            "previous acknowledgement has been retracted"
         )
     _write_owned(
         session.root,
@@ -1452,9 +1597,24 @@ def observe_pane_activity(
     Composition owns the *cadence* of these ticks. It does not own the signal, which is why the
     reader, the comparison, and the write are all here.
 
-    Returns what was observed. Writes only when the counter actually advanced: re-observing an
-    unchanged counter must not look like activity, or a supervision loop would keep a dead
-    mirror alive by asking about it.
+    **It takes two looks to see a delta, and the first look does not advance the clock.** A
+    counter is only evidence of emission when compared against a previous one; the first
+    observation has nothing to compare against, so it records the baseline and leaves the
+    reference where it was. An earlier revision treated the first integer as an advance, which
+    let a supervision loop that started late report a long-dead mirror as ``working`` — health
+    the counter had not established, labelled as if the pane were emitting. It delayed a hang by
+    one look rather than suppressing it, but a late first tick was strictly worse than not
+    calling this at all, because without it the dispatch clock would already have tripped.
+
+    A counter that goes **backwards** is treated the same way: the pane's series has restarted
+    (a herdr reconnect does this), so the baseline is re-recorded and the clock is not advanced.
+    Ignoring it entirely, as an earlier revision did, made the old high-water mark sticky — real
+    output stayed invisible until the new series climbed past it.
+
+    Returns what was observed. Writes only when the recorded counter changes, and advances the
+    clock only on a strict increase from a known baseline: re-observing an unchanged counter
+    must not look like activity, or a supervision loop would keep a dead mirror alive merely by
+    asking about it.
     """
     now = _finite_seconds(now, label="now")
     row = _mirror_row(root, run_id=run_id, row_id=row_id)
@@ -1472,16 +1632,26 @@ def observe_pane_activity(
 
     previous = row.get("mirror_pane_activity")
     previous_revision = previous.get("revision") if isinstance(previous, Mapping) else None
-    advanced = not isinstance(previous_revision, int) or revision > previous_revision
-    if not advanced:
+    known_baseline = isinstance(previous_revision, int) and not isinstance(previous_revision, bool)
+    advanced = known_baseline and revision > int(previous_revision)  # type: ignore[arg-type]
+    if not advanced and known_baseline and revision == int(previous_revision):  # type: ignore[arg-type]
         return MirrorActivity(revision=revision, advanced=False, advanced_at=None)
-    _write_owned(
-        root,
-        row_id,
-        {"mirror_pane_activity": {"revision": revision, "advanced_at": now, "observed_at": now}},
-        run_id=run_id,
+
+    previous_instant = previous.get("advanced_at") if isinstance(previous, Mapping) else None
+    advanced_at = (
+        now
+        if advanced
+        else (previous_instant if isinstance(previous_instant, int | float) else None)
     )
-    return MirrorActivity(revision=revision, advanced=True, advanced_at=now)
+    record: dict[str, Any] = {"revision": revision, "observed_at": now}
+    if advanced_at is not None:
+        record["advanced_at"] = float(advanced_at)
+    _write_owned(root, row_id, {"mirror_pane_activity": record}, run_id=run_id)
+    return MirrorActivity(
+        revision=revision,
+        advanced=advanced,
+        advanced_at=now if advanced else None,
+    )
 
 
 # --------------------------------------------------------------------------- context, status

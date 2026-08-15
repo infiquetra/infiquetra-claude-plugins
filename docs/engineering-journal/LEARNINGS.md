@@ -53,10 +53,30 @@ closure over its file cap *raises* rather than truncating, on the stated grounds
 trim reports a narrower check than the real one. The mirror's scan did precisely what that
 document refuses, in the same codebase, three units later.
 
-**Generalizable rule.** A detector must key on the invariant, not on a format. And any bound
-inside a detector needs a third answer: found, not-found, and **could not finish** — where
-could-not-finish fails closed. A scanner that reports clean when it ran out of budget is
-reporting a fact it never established.
+**Correction, next round.** The fix above was the right direction and stopped one step short,
+and the step it stopped short of is the whole lesson. "Key on the signature" still searched
+*serialized text* for `argv` next to a separator — so it remained defeatable by any encoding
+that binds the key without those characters being adjacent (YAML does this two ways: an escaped
+key, and an anchor bound to an alias), and it still fired on `sys.argv:` in an ordinary
+sentence. Unsound and imprecise, one root cause: **it was still matching a serialisation
+instead of inspecting a structure.**
+
+The move that actually closes it is to **parse with a safe loader and inspect the resulting
+keys**. After a parse an escaped key *is* `argv` and an alias-bound key *is* `argv`, so the
+encodings stop mattering; and a sentence mentioning `argv` does not parse into a mapping with
+an `argv` key at all, so the false-positive side closes with the same change. Binding the rule
+to the schema's own shape — `argv` bound to a *sequence*, which is what `PredicateSpec`
+requires — added the last of the precision, because a type annotation binds `argv` to a string.
+
+**Generalizable rule.** A detector must key on the invariant, not on a format — and "the
+invariant" means the *parsed structure*, not a cleverer pattern over the text. If a defect
+report says a guard is simultaneously too weak and too strong, that pair is the signature of
+matching a representation instead of the thing represented; one change fixes both directions,
+and any fix that improves only one of them is the wrong change. Use safe loaders only: a
+detector that executed untrusted input to inspect it would be a worse defect than the one it
+closes. And any bound inside a detector needs a third answer: found, not-found, and **could not
+finish** — where could-not-finish fails closed. A scanner that reports clean when it ran out of
+budget is reporting a fact it never established.
 
 **Refs.** [`{#hung-mirror-needs-a-clock}`](#hung-mirror-needs-a-clock); `references/predicates.md`
 (the closure cap that gets this right).

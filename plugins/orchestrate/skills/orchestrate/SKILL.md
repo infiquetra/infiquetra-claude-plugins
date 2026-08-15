@@ -265,17 +265,22 @@ Four contracts are mechanical rather than aspirational:
   being raised, not by being deleted.
 - **The mirror is never *asked* for a verdict through this API (KTD6)** — deliberately weaker than
   "the validity predicate never runs in the mirror", which an earlier revision claimed and which
-  is not true. Deciding request kinds are refused by name; an instruction carrying a
-  machine-readable predicate declaration is refused, keyed on the declaration's signature (the
-  name `argv` bound to a value) rather than on one serialisation, so JSON, YAML, TOML, a Python
-  literal, a nested string, escaped braces and Base64 are all caught; the scan **fails closed**,
-  refusing an instruction it could not finish examining rather than passing it; and
-  `dispatch_request` re-runs those checks on the object it is handed, because they live in a
+  is not true. Deciding request kinds are refused by name. An instruction whose content
+  **parses** into the predicate schema's shape is refused: the detector unwraps Base64 and
+  hexadecimal layers, resolves `\uXXXX` escapes, parses under `json`, `yaml.safe_load`,
+  `tomllib` and `ast.literal_eval` — whole text, each line, and string leaves — and refuses when
+  a result is a mapping with an `argv` key bound to a sequence. It parses and inspects keys; it
+  does not pattern-match text, which is what lets it catch a YAML escaped key and an
+  anchor-bound key while *accepting* `sys.argv: list[str]` in an ordinary sentence. Only safe
+  loaders are used. The scan **fails closed**, refusing material it could not finish examining;
+  and `dispatch_request` re-runs those checks on the object it is handed, because they live in a
   constructor and dispatch is the one function that talks to the pane.
-  **What is not caught:** an instruction that describes a check in English. No scanner detects
-  intent, and the live agent beyond the pane is itself a program executor. The mirror not writing
-  `phase` does not contain that — it stops a mirror's opinion becoming a `verified` row, not a
-  claimed verdict being produced. `references/operator-channel.md` states the boundary in full.
+  **What is not caught:** a format none of those loaders parses, and an instruction that
+  describes a check in English — no general detector for intent is achievable. The mirror not
+  writing `phase` does not contain that; it stops a mirror's opinion becoming a `verified` row,
+  not a claimed verdict being produced. What makes the English case survivable is that
+  completion requires a dispatch receipt the mirror is never issued.
+  `references/operator-channel.md` states the contract in full, in two halves.
 - **The mirror never addresses the operator (R9).** Dispatch writes only to the mirror's own pane.
 - **Dispatch does not block.** No subscription is held open, no pane is polled, and there is no
   timeout parameter. The return arrives later as an event on the subscription `create_mirror`
@@ -322,10 +327,18 @@ than a heartbeat subscription precisely because the subscriber wakes the orchest
 handled event, so a heartbeat would wake the operator's channel on a timer. `MirrorLiveness`
 reports which feed the answer rested on.
 
+The first look at a counter records a baseline and does **not** advance the clock: a counter is
+only evidence of emission when there is a previous one to compare it against, so treating the
+first integer as an advance let a supervision loop that started late report a long-dead mirror as
+`working`. A counter that goes backwards — a herdr reconnect restarts the series — re-baselines
+without advancing, rather than leaving the old high-water mark stuck.
+
 `references/operator-channel.md` carries the routing rule itself: the full exception list of work
 the orchestrator does inline, why each entry is bounded by construction, the temptations that are
-*not* on it, and the plain statement of what the clock does and does not establish — in particular
-that nothing distinguishes a mirror quiet because it is thinking from one quiet because it is dead.
+*not* on it, and the plain statement of what the clock does and does not establish — in
+particular that the subscription path alone cannot distinguish a mirror quiet because it is
+thinking from one quiet because it is dead, that pane revision can, and that a heartbeat
+subscription is still not how it may be attached.
 
 ## What is deliberately not here
 

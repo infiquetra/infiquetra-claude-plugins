@@ -171,10 +171,48 @@ plus its selection, leaving the 1,496-line module's contract intact.
 
 ---
 
+## Execution order — the loop bound ships first and governs everything after it
+
+U-IDs below are stable and are **not** the execution order. The review loop bound (U6) has no
+dependencies, and every other unit in this plan is reviewed. So it is built **first**, and from the
+moment it exists, every subsequent unit's review runs through it:
+
+```
+   U6  review loop bound  ────────────┐
+        (3 iterations/unit,           │  governs the review of
+         delta-scoped re-review,      │  every unit below it
+         dedup by class,              │
+         three verdicts,              │
+         escalation budget = 1)       │
+                                      ▼
+   U1  register keeps intent      ──► reviewed under the bound
+   U2  session facts are asked    ──► reviewed under the bound
+   U3  subscriber becomes a pane  ──► reviewed under the bound
+   U4  remove the seam            ──► reviewed under the bound  ── GATE
+   U5  label + spend              ──► reviewed under the bound
+   U7  panel + rigor pass         ──► reviewed under the bound
+   U8  saga transport             ──► reviewed under the bound
+```
+
+This is deliberate and it is the plan's own answer to how the last campaign failed: the previous unit
+ran five review rounds because no bound existed. Building the bound first means this plan cannot
+repeat that, and it **dogfoods the machinery by real use** rather than by its unit tests alone — the
+loop bound is exercised seven times before anything else depends on it being right.
+
+**U6 itself is reviewed under the unbounded process**, because it is what makes the process bounded.
+That is unavoidable and it is the reason U6 is specified tightly and kept small. Its review is
+explicitly capped at three iterations by hand.
+
+**R19.** Every unit in this plan after U6 has its review conducted through the shipped loop bound,
+not by an ad-hoc protocol. A unit whose review cannot be run through it is a defect in U6.
+
+---
+
 ## Implementation Units
 
-Units are dependency-ordered. U1–U5 land on the halted composition branch; U6–U7 are new modules in
-the orchestrate plugin; U8 touches the saga plugin and has a different blast radius.
+U-IDs are stable identifiers, not an order — see **Execution order** above. U1–U5 land on the halted
+composition branch; U6–U7 are new modules in the orchestrate plugin; U8 touches the saga plugin and
+has a different blast radius.
 
 ### U1. Register keeps intent and outcome
 
@@ -252,7 +290,7 @@ the fixed escalation budget.
 
 **Requirements:** R9, R10, R11, R12.
 **Files:** new `plugins/orchestrate/skills/orchestrate/scripts/review_loop.py`.
-**Depends on:** nothing (parallel with U1–U5).
+**Depends on:** nothing. **Built first** — see Execution order.
 **Test scenarios** (`tests/test_orchestrate_review_loop.py`): a fourth iteration is refused; a
 re-review receives only the delta; the same class in a third iteration yields `halt-and-escalate`
 regardless of its rank; a second escalation for one unit is refused; the escalation budget is a
@@ -316,10 +354,11 @@ for a latency and availability risk. Mitigation: the read-through functions are 
 at decision points rather than in loops, and KTD2 explicitly rejects the caching that would trade the
 risk back.
 
-**The review machinery is built by the process it constrains.** U6 and U7 are reviewed under the
-existing unbounded process, since they are what makes it bounded. Mitigation: they are small,
-well-specified, and their own test scenarios are the specification — and the plan's execution carries
-the escalation gate at U4 as a live example of the rule.
+**The review machinery is built by the process it constrains.** U6 alone is reviewed under the
+unbounded process, since it is what makes the process bounded; its review is capped at three
+iterations by hand. Every other unit, U7 included, is reviewed through the shipped bound (R19).
+Mitigation: U6 is small and tightly specified, its test scenarios are its specification, and it is
+exercised seven times by real use before anything depends on it being right.
 
 **Saga skill changes have a wider blast radius than orchestrate.** U8 touches two shipped skills.
 Mitigation: the injected-runner seam means the module contract is unchanged, and the test scenarios

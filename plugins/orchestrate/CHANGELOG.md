@@ -1,5 +1,68 @@
 # Changelog
 
+## [0.5.0] - 2026-08-15
+
+### Added
+
+- **The mirror**: a persistent paired session that performs the orchestrator's own work —
+  synthesis, comparison, bulk reading — so the operator's channel stays answerable while work
+  happens. Children do the outcome's work; the mirror does the orchestrator's. It is launched
+  through the same session path as any child (dry-run preview, write-ahead label, trust-prompt
+  check, nonce-bound readiness sentinel) and holds an ordinary register row, written **before**
+  the launch side effect so a mirror whose launch failed is visible rather than absent.
+- **A distilled return under an enforced byte bound.** A return larger than its request's
+  declared bound is rejected whole rather than truncated, because a truncated return is an
+  oversized one wearing the appearance of success. The rejection carries the byte count and
+  never the material — an error that quoted the return would perform the absorption it reports
+  — and it is recorded durably, so a rejection is distinguishable from a return that never
+  happened. The bound a request may declare is itself capped at 16 KiB (default 4 KiB): this
+  contract does not erode by being deleted, it erodes by being raised. A rejected return leaves
+  the mirror ready and holding its context, so the cost is one round trip rather than the
+  session.
+- **The validity predicate never runs in the mirror.** Routing it there would turn verification
+  back into a claim: the mirror reports a pass, the orchestrator never sees the bytes and cannot
+  re-check, and the evidence-failure class reappears one layer up with no second reader. Three
+  independent guards — a closed vocabulary of reading request kinds with deciding kinds refused
+  by name; refusal of any instruction carrying a predicate declaration; and a module that
+  contains no program-execution route and does not import the completion module. What no guard
+  catches is an instruction that describes a check in prose; the containment for that is the
+  written routing rule plus the fact that the mirror writes no `phase`, so its opinion cannot
+  become a verified row.
+- **Clock-based hang detection**, because nothing else reaches this failure. Every other failure
+  in this system appears as a disagreement between two values; a hung mirror's expected and
+  observed states agree perfectly, every child still looks healthy, and the operator's channel
+  is dead. `check_liveness` therefore compares silence against the row's declared
+  `max_quiet_seconds`, taking the current instant as an argument rather than reading the system
+  clock. It reads and raises: it writes nothing, closes nothing, and demotes nothing, because
+  what to do about a quiet mirror is a decision. A row with no declared tolerance raises a
+  distinct "not armed" error rather than reporting health, and an idle mirror is never alarmed,
+  because a mirror between requests is legitimately silent forever.
+- **Non-blocking dispatch.** No subscription is held open, no pane is polled, and there is no
+  timeout parameter. The outstanding request is durable before the line is sent, so a failed
+  send leaves an armed clock rather than an idle-looking mirror. A second request while one is
+  outstanding is refused explicitly with the outstanding id, never silently dropped.
+- **Checkable column ownership.** Every register write in the mirror module passes through one
+  seam that refuses, at runtime, any column outside `role`, `max_quiet_seconds`,
+  `mirror_request` and `mirror_last_return`, and only on the mirror's own row. It does not write
+  `artifact_path`, does not write `observed_state` (the subscriber owns that and rewrites it on
+  every catch-up pass), and never promotes its own phase. The mirror row is identified by `role`
+  rather than by `agent`, because `agent` carries the launcher's actual agent name for every
+  launched row and a second writer of a shared column is a defect this codebase has paid for.
+- **`references/operator-channel.md`**: the routing rule in writing. Work goes to the mirror by
+  default; the exception list is five entries, each with the reason it is bounded by
+  construction; anything not on the list goes to the mirror even when it looks trivial. It also
+  states plainly what the clock does not establish — nothing distinguishes a mirror quiet
+  because it is thinking from one quiet because it is dead, and the within-request heartbeat
+  that would narrow the gap is deliberately not built, because the subscriber wakes the
+  orchestrator on every matched event and a heartbeat would wake the operator's channel on a
+  timer.
+- **Deliberate context management.** The mirror is persistent for prompt-cache benefit and
+  continuity, and a mirror that has silently degraded is worse than no mirror because the
+  orchestrator will still believe its answers. Its context is compacted or cleared on
+  instruction, refused while a request is outstanding, and refused outright for runtimes whose
+  context commands are not established here rather than guessed — an unrecognised slash command
+  is a silent no-op that looks like a reset.
+
 ## [0.4.0] - 2026-08-13
 
 ### Added

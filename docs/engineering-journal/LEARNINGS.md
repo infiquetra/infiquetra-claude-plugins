@@ -19,6 +19,60 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-08-15
+
+### The failure with no disagreement in it needs a clock, and the obvious clock is harmful  {#hung-mirror-needs-a-clock}
+
+**Context.** The orchestrate plugin detects every failure it detects as a *disagreement*
+between two recorded values: expected state against observed state, declared artifact against
+artifact on disk, claimed completion against a predicate that actually runs. The paired mirror
+session — the one that exists so the operator's channel stays answerable while work happens —
+breaks that pattern. When a mirror hangs, its expected state and its observed state agree
+perfectly, every child still looks healthy, and the operator's channel is dead. The one failure
+the mirror exists to prevent arrives through the mirror itself, and the existing divergence
+machinery cannot see it, because that machinery compares two values and here the two values
+agree.
+
+**Evidence.** `plugins/orchestrate/skills/orchestrate/scripts/mirror.py:check_liveness`;
+`tests/test_orchestrate_mirror.py::test_a_mirror_silent_past_its_tolerance_raises_divergence`
+and the three sibling tests for the states a naive detector reports as healthy. The harmful
+alternative is visible in `subscriber.py:handle_event`, which calls `wake_sender` on **every**
+matched event.
+
+**Mechanism.** The only remaining signal is time: `last_event_at` exceeding a declared
+`max_quiet_seconds`. But `last_event_at` is written by the subscriber only when a
+`pane.output_matched` event carries a sentinel matching an active subscription, and the
+subscriber wakes the orchestrator on every such match. So the intuitive improvement — subscribe
+a periodic heartbeat sentinel on the mirror's pane, so the clock can tell "thinking" from
+"dead" within a single request — would wake the operator's channel on a timer. That is the
+exact channel-load failure the mirror was built to prevent, reintroduced by the mechanism meant
+to protect it.
+
+**Fix.** No heartbeat. The mirror subscribes only its return marker, and the clock is armed only
+while a request is outstanding (an idle mirror is legitimately silent forever, so a detector
+armed on an idle row would fire on every healthy run). `max_quiet_seconds` on a mirror row is
+therefore documented as a **per-request tolerance**, not a within-request liveness probe, in
+`plugins/orchestrate/references/operator-channel.md`. Two further states are given distinct
+outcomes rather than being collapsed into "healthy": a row with no declared bound raises a
+"not armed" error, and an idle mirror returns an explicit idle result.
+
+**What surprised.** Corroborating the clock with herdr's `agent_status` would make the detector
+*worse*, not better. Vendor lifecycle detectors are wrong in vendor-specific ways — one runtime
+reports `idle` while working, another reported settled from launch straight through completion —
+so a second detector that happened to agree would supply false confidence rather than a second
+reader. More signals is not more reliability when the added signal is known to lie.
+
+**Generalizable rule.** When a detector cannot distinguish two states, say so in the code, the
+reference doc, and the report, and name the specific missing capability that would — rather than
+shipping a cooperative signal that *looks* like it distinguishes them. A detector that reports
+health it has not established is worse than an absent detector, because the absent one does not
+get trusted. And check whether the obvious instrumentation consumes the very resource the system
+is protecting.
+
+**Refs.** [DECISIONS `{#mirror-row-identified-by-role}`](DECISIONS.md#mirror-row-identified-by-role),
+[`#pane-revision-is-the-liveness-signal`](#pane-revision-is-the-liveness-signal),
+[`#agent-lifecycle-detectors-lie`](#agent-lifecycle-detectors-lie).
+
 ## 2026-08-13
 
 ### A generation is more than the live register  {#generation-is-more-than-the-live-file}

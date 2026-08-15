@@ -1,23 +1,23 @@
 ---
 name: orchestrate
-description: The orchestrate register, tracked herdr subscriber, write-ahead child session lifecycle, and completion gate for multi-vendor runs, with interaction readiness, scoped worktrees, nonce-bound sentinels, reconnect catch-up, bounded predicates on settled run-bound artifacts, verified integration, and recorded reaping. No routing, spend gate, or mirror behavior yet. Triggers on "orchestrate register", "orchestrate subscriber", "orchestrate session lifecycle", "orchestrate completion", "orchestrate predicate", "herdr event catch-up", "the run register".
+description: The orchestrate register, tracked herdr subscriber, write-ahead child session lifecycle, completion gate, and paired mirror session for multi-vendor runs, with interaction readiness, scoped worktrees, nonce-bound sentinels, reconnect catch-up, bounded predicates on settled run-bound artifacts, verified integration, recorded reaping, distilled mirror returns under an enforced byte bound, and clock-based mirror hang detection. No routing or spend gate yet. Triggers on "orchestrate register", "orchestrate subscriber", "orchestrate session lifecycle", "orchestrate completion", "orchestrate predicate", "orchestrate mirror", "the operator channel", "mirror hang detection", "herdr event catch-up", "the run register".
 ---
 
-# orchestrate — register, event subscriber, session lifecycle, and completion
+# orchestrate — register, event subscriber, session lifecycle, completion, and the mirror
 
 `orchestrate` coordinates multi-vendor herdr sessions: Claude, Codex, Grok, Muse, Qwen, and agy
 children dispatched under one operator-driven run, aggregated back through a mirror and woken by a
-subscriber holding herdr's event socket across turns. This skill currently ships **four pieces of
-that system: the register, subscriber, child session lifecycle, and completion gate**. The register is the whole state model (KTD5) and the
+subscriber holding herdr's event socket across turns. This skill currently ships **five pieces of
+that system: the register, subscriber, child session lifecycle, completion gate, and mirror**. The register is the whole state model (KTD5) and the
 Claude↔Codex handoff seam (R12). The subscriber holds protocol 19 event streams, wakes the
 orchestrator, and performs reconnect catch-up (KTD3/KTD12). The session lifecycle owns write-ahead
 launch, recovery, interaction readiness, landing isolation, scope checks, and recorded reaping.
 Completion is the only path to `verified` (R5): a bounded, typed predicate run inline by the
 orchestrator on a settled, run-bound artifact, inside a clean boundary, with integration to the
-recorded destination verified before a child can be reaped.
-Routing, spend gating, hang detection, mirror behavior, and the `/orchestrate`
-command itself land in later units of
-`docs/plans/2026-08-12-orchestrate-plugin-plan.md` and is deliberately absent here.
+recorded destination verified before a child can be reaped. The mirror is the home for the
+orchestrator's own unbounded work, so the operator's channel stays answerable.
+Routing, spend gating, and the `/orchestrate` command itself land in later units of
+`docs/plans/2026-08-12-orchestrate-plugin-plan.md` and are deliberately absent here.
 
 ## What the register is
 
@@ -244,8 +244,61 @@ own process group, whose surviving members are killed before the evidence is re-
 See `references/predicates.md` for the full contract, including what each control does **not**
 establish.
 
+## The mirror — the operator's channel, and the clock that watches it
+
+`scripts/mirror.py` is the home for the orchestrator's own work: synthesis, comparison, bulk
+reading. Children do the outcome's work; the mirror does the orchestrator's, so the operator's
+channel stays answerable while work happens. The highest-severity failure in the corpus behind
+this plugin is that channel dying under supervision load, and the rule "the orchestrator must not
+do work" is insufficient on its own, because work genuinely has to happen somewhere.
+
+The mirror is launched through the same `session_lifecycle` path as any child — write-ahead label,
+dry-run preview, trust-prompt check, nonce-bound readiness sentinel — and it holds an ordinary
+register row. That row is written **before** the launch side effect, so a mirror whose launch
+failed is visible rather than absent (R6c).
+
+Four contracts are mechanical rather than aspirational:
+
+- **A return over its declared bound is rejected, never truncated**, and the rejection carries the
+  byte count without the material — an error that quoted the return would perform the absorption
+  it reports. The bound a request may declare is itself capped, because this requirement erodes by
+  being raised, not by being deleted.
+- **The validity predicate never runs in the mirror (KTD6).** Deciding request kinds are refused by
+  name, an instruction carrying a predicate declaration is refused, and the module imports no
+  program-execution machinery and no `completion`, so there is no route by which it could run one.
+  What no parser catches is an instruction that *describes* a check in English; the containment for
+  that is the written routing rule plus the fact that the mirror writes no `phase`, so its opinion
+  cannot become a verified row.
+- **The mirror never addresses the operator (R9).** Dispatch writes only to the mirror's own pane.
+- **Dispatch does not block.** No subscription is held open, no pane is polled, and there is no
+  timeout parameter. The return arrives later as an event on the subscription `create_mirror`
+  built. That the orchestrator *answers* while a request is outstanding is a property of the
+  calling control flow and is established end to end, not by this module.
+
+**Column ownership is checkable, not just documented.** Every register write in `mirror.py` goes
+through one seam that refuses, at runtime, any column outside `role`, `max_quiet_seconds`,
+`mirror_request`, and `mirror_last_return` — and only on the mirror's own row. It does not write
+`artifact_path`, does not write `observed_state` (the subscriber owns that, and rewrites it on
+every catch-up), and never promotes its own phase. The mirror row is identified by `role`, not by
+`agent`: `agent` carries the launcher's actual agent name for every launched row, and a second
+writer of a shared column is the defect class this build has paid for most.
+
+**Hang detection is a clock, because nothing else can reach it.** Every other failure here appears
+as a disagreement between two values; a hung mirror's values agree perfectly while the channel is
+dead. So `check_liveness` compares silence against the row's declared `max_quiet_seconds`, taking
+the current instant as an argument rather than reading the system clock. It reads and raises — it
+writes nothing, closes nothing, demotes nothing. An unarmed row raises a distinct error rather than
+reporting health, and an idle mirror is never alarmed, because a mirror between requests is
+legitimately silent forever.
+
+`references/operator-channel.md` carries the routing rule itself: the full exception list of work
+the orchestrator does inline, why each entry is bounded by construction, the temptations that are
+*not* on it, and the plain statement of what the clock does and does not establish — in particular
+that nothing distinguishes a mirror quiet because it is thinking from one quiet because it is dead.
+
 ## What is deliberately not here
 
 No `commands/` entry (`/orchestrate` lands with the units that need an invocable surface — KTD2),
-no planning or vendor routing, no admission control, no mirror behaviour beyond the register row it
-will eventually hold, no spend gate, and no hang detector.
+no planning or vendor routing, no admission control, and no spend gate. The mirror's mechanisms are
+here; the supervision loop that calls the clock on a schedule, and the control flow that proves the
+operator is answered while a mirror request is outstanding, belong to the composition unit.

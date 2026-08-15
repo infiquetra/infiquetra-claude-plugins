@@ -1,5 +1,56 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-08-15
+
+### The mirror's register row is identified by `role`, not by `agent`  {#mirror-row-identified-by-role}
+
+The register's own docstring describes `agent` as "a role such as mirror/subscriber for the two
+non-child rows", and the subscriber does set `agent="subscriber"` on its row. The obvious move
+was to follow that and write `agent="mirror"`.
+
+It does not work, and the reason matters more than the naming. The mirror is launched through
+`session_lifecycle.launch_child`, the same path every child takes — which is correct, because a
+mirror is a session and giving it a private launch path would fork the write-ahead ordering,
+label recovery, trust-prompt check and readiness gate. But `launch_child` *writes* `agent`:
+first the runtime, then the launcher's actual uniquified agent name. Writing `mirror` over that
+afterwards would make the mirror module a second writer of a column `session_lifecycle` owns.
+That defect shape — a shared register column written by more than one module, with the
+ownership recorded nowhere checkable — is the one this codebase has paid for most.
+
+**Decision.** The mirror module writes a new column it owns, `role`, and never touches `agent`.
+A mirror row is selected by `role == "mirror"`. The module's full owned set is `role`,
+`max_quiet_seconds`, `mirror_request`, `mirror_last_return`, and it writes them only on the
+mirror's own row.
+
+Ownership is enforced rather than described: every register write in the module goes through one
+private seam that raises when handed a column outside the owned set, and a test asserts by AST
+walk that no other function in the module calls `upsert_row` or `upsert_rows`. A comment saying
+"only write these columns" is the thing that drifts; a runtime refusal plus a structural test is
+not. The module therefore does not write `artifact_path` (a mirror produces a distilled return,
+not a settled artifact), does not write `observed_state` (the subscriber owns it and rewrites it
+on every catch-up pass, so a value recorded there would be erased while the pane is still open),
+and never promotes its own `phase`.
+
+That last exclusion carries weight beyond tidiness: because the mirror writes no `phase`, and
+`completion.evaluate_completion` is the only path to `verified`, a mirror that asserts "the
+tests pass" changes no state and gates nothing. That is the containment that survives an
+instruction written in plain English, which no parser can catch.
+
+**Rejected: write `agent="mirror"` after launch and accept two writers.** It is one line, and a
+shared column with two writers is the defect shape this plugin has paid for most often.
+**Rejected: give the mirror a private launch path so it owns `agent` outright.** Buys one column
+at the price of duplicating the launch discipline — write-ahead label, dry-run preview,
+trust-prompt check, readiness sentinel — in a second place, where it would drift.
+**Rejected: leave the mirror row unmarked and identify it by row id convention.** A convention
+is not queryable, and the operator view needs to find the mirror row without knowing what the
+orchestrator named it.
+
+**Revisit when** the register grows an explicit ownership table. `role` should be registered in
+it as owned by the mirror module; the writes above are already consistent with such a table.
+
+**Refs.** LEARNINGS [`{#hung-mirror-needs-a-clock}`](LEARNINGS.md#hung-mirror-needs-a-clock);
+`plugins/orchestrate/references/operator-channel.md`.
+
 ## 2026-08-13
 
 ### The live register is addressed by run identity, not by repository root  {#register-addressed-by-run-id}

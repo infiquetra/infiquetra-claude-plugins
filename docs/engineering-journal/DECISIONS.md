@@ -96,8 +96,18 @@ for. In the one path production dispatch takes, the fence's own check runs first
 before this second check is ever reached with a live tab; it is kept as a second, independent check
 for any caller that reaches `reap_verified` without going through the fence first.
 
+**Correction: the same unconfirmed-close gap existed at a third writer this decision never named.**
+The two corrections above closed it for a child's reap. Shutdown closes a second kind of writer — the
+operator's own mirror session — through a different function entirely, and that function recorded the
+mirror stopped from the same kind of bare close-request return the corrections above had already
+ruled insufficient. Nothing about the rationale is specific to a child: any writer this control flow
+asks to close is closed by the same substrate call, accepted the same way, and provably stopped only
+by the same re-ask. That function now performs the identical re-ask before recording the writer gone,
+and reports the writer as still outstanding rather than gone when the tab is still present after the
+request.
+
 **Refs.** LEARNINGS `{#observation-cannot-fence-a-live-producer}`, `{#absence-must-be-proved-not-inferred}`,
-`{#a-closer-recheck-is-still-two-events}`.
+`{#a-closer-recheck-is-still-two-events}`, `{#a-failed-query-is-not-a-negative-result}`.
 
 
 ### A dispatch that reached a live pane is recovered by resending, never by replacing  {#unconfirmed-dispatch-is-resent-not-replaced}
@@ -197,7 +207,36 @@ recoverable placeholder identity a genuinely-started process can later be matche
 point the process-table fallback becomes a defence-in-depth check rather than the primary source for
 the crashed-after-start case.
 
-**Refs.** LEARNINGS `{#absence-must-be-proved-not-inferred}`, `{#a-closer-recheck-is-still-two-events}`.
+**Correction: the process table can fail to answer, and that failure was being read as its own clear
+"none".** The rationale above treats the process table as authoritative whenever it *answers* — but
+the query against it can itself fail (a transient error from the tool that lists processes), and the
+first version of this fallback returned the identical value for "asked, and named nothing" and "could
+not ask." That collapsed exactly the distinction the rejected alternative above was arguing against:
+a genuinely unclear answer was being resolved automatically instead of reserved for operator
+attention. The fallback's result now carries a completion flag alongside what it found — mirroring the
+predicate scanner's own result type for the same shape (LEARNINGS
+`{#a-failed-query-is-not-a-negative-result}`) — and the one function every caller already goes through
+raises rather than returning an answer when the query did not complete, so no caller downstream has a
+chance to treat "I could not tell" as either "yes" or "no."
+
+**Correction: a recorded process id existing was being trusted as that pid still being this run's own
+process.** The decision above already reasons about the record-*missing* case; a *present* record's
+liveness check asked only whether some process now holds the recorded pid, not whether it is still the
+process the record named. An operating system reuses process ids, so a stale record surviving a
+subscriber's crash or reap can point at a number a later, unrelated process has since acquired — and
+the consequence is not inert: this run's own shutdown path signals whatever holds that number.
+Liveness for a *present* record now asks the same process-table identity check this decision already
+specifies for a missing one — the same script path, run id, and row id match — rather than trusting
+the number alone.
+
+**Rejected (for the second correction): invent a new identity primitive scoped to the record-present
+case.** Unnecessary — the identity check this decision already specifies for a missing record answers
+the identical question ("is a live process, right now, one this run started") regardless of why the
+caller doesn't yet trust its own record; reusing it is strictly less code and one fewer definition of
+"this run's subscriber" to keep in agreement.
+
+**Refs.** LEARNINGS `{#absence-must-be-proved-not-inferred}`, `{#a-closer-recheck-is-still-two-events}`,
+`{#a-failed-query-is-not-a-negative-result}`.
 
 ### Abandonment establishes "no longer awaited"; it does not by itself mean "the producer stopped" or "its cost no longer counts"  {#abandon-is-not-stop-or-zero-cost}
 

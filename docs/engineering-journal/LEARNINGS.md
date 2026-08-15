@@ -21,6 +21,60 @@
 
 ## 2026-08-15
 
+### A failed query is not a negative result, and a matching number is not a matching identity  {#a-failed-query-is-not-a-negative-result}
+
+**Context.** A later pass over the same control flow found three more instances of the shape
+[[#absence-must-be-proved-not-inferred]] already named, each hiding behind a different cheap signal
+that usually — but not always — coincides with the fact the code needed. A close request that
+returns without raising usually means the tab closed. A process-table search that returns nothing
+usually means no matching process exists. A process id that matches a stale record usually means it
+is the same process the record described. None of the three "usually" is a "always," and in each
+case the code had already paid, elsewhere in this same file, to tell the two apart — just not at
+this particular caller.
+
+**Evidence.** A coordinator's shutdown path closed a still-live companion process's tab, recorded it
+as gone from the close request's bare return, and a later archive step trusted that record — while
+the tab was, provably, still open. Pinned by
+`tests/test_orchestrate_composition.py::test_a_mirror_close_that_returns_without_removing_the_tab_is_not_read_as_stopped`.
+A process-table search that raised on the underlying query returned the identical value a search
+that ran to completion and found nothing returns; downstream, that value became "no such process
+exists," licensing both an unsafe archive and a second process started beside a live, undiscovered
+first one. Pinned by
+`tests/test_orchestrate_composition.py::test_a_process_table_query_failure_is_not_read_as_no_subscriber`.
+A durable record naming a process id was trusted as proof of that specific process merely because a
+process with that number happened to be running — true the instant the record was written, not
+provably true afterward, because process ids are reused. Pinned by
+`tests/test_orchestrate_composition.py::test_a_stale_record_pointing_at_a_reused_pid_is_not_adopted_or_signalled`.
+
+**Mechanism.** All three are a cheap, available signal standing in for a fact only a stronger check
+can establish, and all three had the stronger check available somewhere in the same codebase before
+this fix: a close-then-reask pattern already existed for one caller of the exact same substrate; a
+result type that distinguishes "searched and found nothing" from "the search did not run to
+completion" already existed in a sibling module for an unrelated scan; and the very function that
+resolves a live process by matching its command line against a deterministic signature already
+existed for the case where the durable record was missing entirely. Each of the three fixes was
+therefore reuse, not invention — the primitive already existed once each defect was named, which is
+also why leaving any of the three unclosed after naming them would have been a choice, not a gap in
+capability.
+
+**What surprised.** The identity fix (matching pid) was the plainest case of a primitive built for
+one branch of a decision and never carried to the other: the same commit that added the process-table
+scan for a *missing* record left the *present*-record path checking only whether a number existed,
+not whether it named the same process. A primitive is not "applied" by existing somewhere in the
+file; it is applied only at every caller that needs the fact it establishes.
+
+**Generalizable rule.** When a check reduces a question to "did the call return without raising,"
+"is the result non-empty," or "does this number match," ask what a *failure to determine the answer*
+looks like in that same representation — and whether it is indistinguishable from a genuine negative.
+If it is, the representation needs a third state (or a raise) before any caller downstream can be
+trusted to read it correctly, and every existing caller needs to be re-audited once that third state
+is added, because a caller written against the old two-state shape will silently keep reading the new
+"unknown" as whichever of the old two values it used to return.
+
+**Refs.** [[#absence-must-be-proved-not-inferred]] — the parent class. [[#a-closer-recheck-is-still-two-events]]
+— the sibling lesson about routing every caller through one function once the fact is established
+correctly; this entry is about the query itself returning the wrong *kind* of "nothing."
+
 ### Checking closer to the risky action is not the same as making the check and the action one thing  {#a-closer-recheck-is-still-two-events}
 
 **Context.** Two properties in the orchestrate composition control flow — that a claimed dispatch
@@ -135,7 +189,10 @@ unit, at reservation status, structural completeness, and (after this entry) lau
 accounting. A fifth instance turned up in a later round, in the subscriber's own liveness question: a
 background process's durable record is written only after the process itself starts, so a missing
 record answers "not yet recorded," never "not running" — see
-[[#a-closer-recheck-is-still-two-events]].
+[[#a-closer-recheck-is-still-two-events]]. Subsequent work found the same shape twice more, in the
+substrate query the class's own fix depends on: a closed tab's own control-plane request can return
+without the tab having actually closed, and a live-process search can fail to complete rather than
+complete and find nothing — see [[#a-failed-query-is-not-a-negative-result]].
 
 ### A precondition you write yourself is a trap you set for yourself  {#never-gate-on-a-status-you-wrote}
 

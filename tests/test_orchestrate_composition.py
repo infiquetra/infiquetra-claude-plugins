@@ -306,6 +306,7 @@ class FakeSupervisor:
     def __init__(self) -> None:
         self.started: list[FakeHandle] = []
         self.stopped: list[FakeHandle] = []
+        self.orphan_query_fails = False
 
     def start(self, argv: Any) -> FakeHandle:
         handle = FakeHandle(list(argv), len(self.started))
@@ -327,26 +328,43 @@ class FakeSupervisor:
         pid = int(record.get("pid") or 0)
         return next((h for h in self.started if h.pid == pid), None)
 
-    def is_record_alive(self, record: Any) -> bool:
+    def is_record_alive(self, record: Any, *, signature: Any) -> bool:
+        """Mirrors the production adapter: a live pid *and* a process-table match on identity.
+
+        Routed through :meth:`find_orphan` rather than through ``self.started`` directly, so this
+        fake fails the same way the real one does when the process-table query itself fails --
+        raising, not silently reporting the record dead or alive.
+        """
         handle = self._by_pid(record)
-        return handle is not None and handle.alive
+        if handle is None or not handle.alive:
+            return False
+        scan = self.find_orphan(signature=signature)
+        if not scan.complete:
+            raise RUNNER.SubscriberLivenessUnknownError(
+                "the process table could not be queried to confirm this record's identity"
+            )
+        return scan.process is not None and int(scan.process.get("pid") or 0) == handle.pid
 
     def stop_record(self, record: Any) -> None:
         handle = self._by_pid(record)
         if handle is not None:
             self.stop(handle)
 
-    def find_orphan(self, *, signature: Any) -> dict[str, Any] | None:
+    def find_orphan(self, *, signature: Any) -> Any:
         """A live handle whose argv carries every token in ``signature``, newest first.
 
         The real implementation asks the host's process table; this asks every handle this fake
         has ever started, which is the same question against the same kind of evidence -- a
-        process that exists whether or not a durable record ever named it.
+        process that exists whether or not a durable record ever named it. Returns an
+        ``OrphanScan`` exactly as the real adapter does, so ``orphan_query_fails`` can stand in
+        for a ``ps`` failure without a second, divergent fake shape.
         """
+        if self.orphan_query_fails:
+            return RUNNER.OrphanScan(process=None, complete=False)
         for handle in reversed(self.started):
             if handle.alive and all(token in handle.argv for token in signature):
-                return {"pid": handle.pid}
-        return None
+                return RUNNER.OrphanScan(process={"pid": handle.pid}, complete=True)
+        return RUNNER.OrphanScan(process=None, complete=True)
 
     def kill(self) -> None:
         """Kill the current process the way a SIGKILL does: no stop record, no clean-up."""
@@ -1675,6 +1693,48 @@ def test_a_run_whose_mirror_is_still_open_is_not_retired(harness: Harness) -> No
     assert "tab-mirror" in harness.herdr.closed
 
 
+def test_a_mirror_close_that_returns_without_removing_the_tab_is_not_read_as_stopped(
+    harness: Harness,
+) -> None:
+    """``stop_writers`` used to write the mirror ``exited`` on a close request's bare return.
+
+    The same distinction the reap fence already draws for a child's tab -- a close call can
+    return without raising while the tab it named is genuinely still present -- was missed here.
+    ``outstanding_writers`` trusts ``observed_state == "exited"`` as proof this writer is gone;
+    writing that column from an unconfirmed close request let retirement archive the run beside a
+    mirror whose tab was still open.
+    """
+    harness.bootstrap([_child("child-a")])
+    harness.coordinator.create_mirror()
+    harness.coordinator.abandon_child("child-a", "not needed")
+    harness.supervisor.stop(harness.coordinator._subscriber_handle)
+
+    def close_that_does_not_take(tab_id: str, *, cwd: Path) -> None:
+        harness.herdr.closed.append(tab_id)  # the request was made; the tab was not removed
+
+    real_close_tab = harness.herdr.close_tab
+    harness.herdr.close_tab = close_that_does_not_take  # type: ignore[method-assign]
+    stopped = harness.coordinator.stop_writers()
+    harness.herdr.close_tab = real_close_tab  # type: ignore[method-assign]
+
+    assert stopped["mirror"] == "close requested but the tab is still present"
+    assert harness.herdr.tab_present("tab-mirror", cwd=harness.repo), "the tab never actually took"
+
+    outstanding = harness.coordinator.outstanding_writers()
+    assert "mirror:mirror" in outstanding, (
+        "a mirror whose tab is still present must stay outstanding"
+    )
+    with pytest.raises(RUNNER.RetirementOrderError, match="mirror"):
+        harness.coordinator.retire()
+    assert REGISTER.register_path(RUN_ID).exists(), "not archived beside a live mirror tab"
+
+    # The tab genuinely closing on a later attempt is still read correctly.
+    stopped_again = harness.coordinator.stop_writers()
+    assert stopped_again["mirror"] == "closed"
+    assert "mirror:mirror" not in harness.coordinator.outstanding_writers()
+    assert harness.coordinator.retire() is not None
+
+
 def test_a_slot_that_cannot_be_released_after_a_reap_is_recorded_not_silent(
     harness: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2964,6 +3024,65 @@ def test_a_subscriber_started_but_never_recorded_is_found_not_read_as_absent(
     )
 
 
+def test_a_process_table_query_failure_is_not_read_as_no_subscriber(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A process-table query that fails is not the same fact as "asked, and found nothing".
+
+    Once the durable record is also missing, ``find_orphan`` used to return the identical
+    ``None`` for both outcomes -- a search that ran and named nothing, and a search that never
+    ran at all. Every caller downstream of :meth:`Coordinator._resolve_subscriber_record` read
+    that ``None`` as "no subscriber exists": retirement would have archived beside a live,
+    unrecorded orphan, and a supervision tick would have started a duplicate of it. A query that
+    never completed must raise rather than resolve to either answer.
+    """
+    harness = Harness(tmp_path)
+    harness.coordinator.start_run()
+    harness.approve_and_commit([_child("child-a")])
+    harness.coordinator.reconcile_startup(decide=lambda _orphan: "abandon")
+
+    first = harness.restart_coordinator()
+    first._reconciled = True
+    real_write_record = RUNNER.write_subscriber_record
+    monkeypatch.setattr(
+        RUNNER,
+        "write_subscriber_record",
+        lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")),
+    )
+    with pytest.raises(OSError):
+        first.ensure_subscriber()
+    monkeypatch.setattr(RUNNER, "write_subscriber_record", real_write_record)
+
+    assert len(harness.supervisor.started) == 1, "the process itself was started before the crash"
+    assert RUNNER.read_subscriber_record(RUN_ID) is None, "the record write never landed"
+
+    second = harness.restart_coordinator()
+    second._reconciled = True
+    harness.supervisor.orphan_query_fails = True
+
+    with pytest.raises(RUNNER.SubscriberLivenessUnknownError):
+        second.running_subscriber()
+    with pytest.raises(RUNNER.SubscriberLivenessUnknownError):
+        second.outstanding_writers()
+    with pytest.raises(RUNNER.SubscriberLivenessUnknownError):
+        second.retire()
+    with pytest.raises(RUNNER.SubscriberLivenessUnknownError):
+        second.supervise()
+    with pytest.raises(RUNNER.SubscriberLivenessUnknownError):
+        second.ensure_subscriber()
+
+    assert REGISTER.register_path(RUN_ID).exists(), "not archived on a question nobody answered"
+    assert len(harness.supervisor.started) == 1, (
+        "no duplicate started on a question nobody answered"
+    )
+
+    # Once the process table can be asked again, the orphan is found and everything resolves.
+    harness.supervisor.orphan_query_fails = False
+    running = second.running_subscriber()
+    assert running is not None
+    assert running["pid"] == harness.supervisor.started[0].pid
+
+
 def test_a_restart_replaces_rather_than_duplicates_an_unrecorded_but_alive_subscriber(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3009,6 +3128,56 @@ def test_a_restart_replaces_rather_than_duplicates_an_unrecorded_but_alive_subsc
     outstanding = second.outstanding_writers()
     assert str(harness.supervisor.started[1].pid) in outstanding.get("subscriber", "")
     assert str(orphan_handle.pid) not in outstanding.get("subscriber", "")
+
+
+def test_a_stale_record_pointing_at_a_reused_pid_is_not_adopted_or_signalled(
+    harness: Harness,
+) -> None:
+    """A pid existing is not the same fact as that pid being this run's subscriber.
+
+    ``is_record_alive`` used to ask only whether the recorded pid was running. A stale record --
+    left behind by a subscriber that crashed or was already reaped, or simply planted -- paired
+    with a process id the operating system later reuses for an unrelated process, made that
+    question answer "yes" for a process this run never started: :meth:`ensure_subscriber` could
+    adopt it, and :meth:`stop_writers` could send it a real signal. Identity is now asked the
+    same way :meth:`find_orphan` already asks it for a missing record -- a live process whose
+    command line carries this run's own script path, run id, and row id -- so a pid match alone
+    is no longer enough.
+    """
+    harness.coordinator.start_run()
+    harness.approve_and_commit([_child("child-a")])
+    harness.coordinator.reconcile_startup(decide=lambda _orphan: "abandon")
+
+    stray = harness.supervisor.start(["some-other-program", "--not-a-subscriber"])
+    wanted = RUNNER.subscriptions_for(harness.repo, run_id=RUN_ID)
+    RUNNER.write_subscriber_record(
+        RUN_ID,
+        {
+            "pid": stray.pid,
+            "coordinator_id": "an-earlier-coordinator",
+            "run_id": RUN_ID,
+            "row_id": harness.coordinator.subscriber_row_id,
+            "started_at": "2020-01-01T00:00:00Z",
+            "subscriptions": [dict(item) for item in wanted],
+        },
+    )
+
+    running = harness.coordinator.running_subscriber()
+    assert running is None, "a pid match alone must not be read as this run's own subscriber"
+
+    # The reproduction that matters: shutdown asks the same planted record to stop, and must not
+    # send a real signal to a process this run never started.
+    harness.coordinator.stop_writers()
+    assert stray.alive is True, "shutdown never signals a process this run did not start"
+    assert stray not in harness.supervisor.stopped
+    assert RUNNER.read_subscriber_record(RUN_ID) is None, "the unidentifiable record is dropped"
+
+    started = harness.coordinator.ensure_subscriber()
+    assert started is True, "a stale, unidentifiable record must not be silently adopted"
+    assert stray.alive is True, (
+        "adoption never touches the process the stale record happened to name"
+    )
+    assert stray not in harness.supervisor.stopped, "the unrelated process was never signalled"
 
 
 def test_a_restart_replaces_a_running_subscriber_whose_subscription_set_is_stale(
@@ -3463,6 +3632,57 @@ def test_the_subprocess_supervisor_answers_liveness_from_the_process(tmp_path: P
             handle.wait(timeout=10)
 
 
+def test_the_subprocess_supervisor_finds_a_real_process_by_command_line_signature(
+    tmp_path: Path,
+) -> None:
+    """``find_orphan`` asks the real process table, not a list this object remembers starting.
+
+    A marker unique to this test run stands in for a subscriber's own script path, run id, and
+    row id -- the same three tokens production asks for. A signature that names a marker no
+    process carries is a completed search that named nothing, not a failure; both are proven here
+    against the real ``ps`` this adapter shells out to, not a fake.
+    """
+    supervisor = RUNNER.SubprocessSubscriberSupervisor()
+    marker = f"orchestrate-test-marker-{threading.get_ident()}-{time.time_ns()}"
+    proc = subprocess.Popen([sys.executable, "-c", f"import time; time.sleep(30)  # {marker}"])
+    try:
+        scan = supervisor.find_orphan(signature=(marker,))
+        assert scan.complete is True
+        assert scan.process is not None
+        assert scan.process["pid"] == proc.pid
+
+        clean = supervisor.find_orphan(signature=(f"{marker}-nobody-carries-this",))
+        assert clean.complete is True
+        assert clean.process is None
+    finally:
+        proc.kill()
+        proc.wait(timeout=10)
+
+
+def test_the_subprocess_supervisor_requires_identity_not_just_a_shared_pid(
+    tmp_path: Path,
+) -> None:
+    """A real, live, unrelated process must not be read as this run's subscriber.
+
+    The record names a pid; a genuinely different process -- spawned by this test, never by
+    anything claiming to be a subscriber -- happens to hold that number for the duration of the
+    test. A pid-only check would call it alive. The identity check must not, because the harm is
+    not hypothetical: whatever ``is_record_alive`` calls alive here is what ``stop_record`` will
+    later send a real signal to.
+    """
+    supervisor = RUNNER.SubprocessSubscriberSupervisor()
+    unrelated = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        assert RUNNER.process_is_running(unrelated.pid) is True
+        record = {"pid": unrelated.pid}
+        signature = (f"no-subscriber-anywhere-carries-this-{threading.get_ident()}",)
+        assert supervisor.is_record_alive(record, signature=signature) is False
+        assert unrelated.poll() is None, "the unrelated process was never signalled by the check"
+    finally:
+        unrelated.kill()
+        unrelated.wait(timeout=10)
+
+
 def test_stop_record_waits_for_the_process_to_actually_exit(tmp_path: Path) -> None:
     """``stop_record`` used to return the instant the signal was sent, not once it landed.
 
@@ -3484,7 +3704,7 @@ def test_stop_record_waits_for_the_process_to_actually_exit(tmp_path: Path) -> N
         assert RUNNER.process_is_running(proc.pid) is True
         supervisor.stop_record({"pid": proc.pid})
         assert RUNNER.process_is_running(proc.pid) is False
-        assert supervisor.is_record_alive({"pid": proc.pid}) is False
+        assert supervisor.is_record_alive({"pid": proc.pid}, signature=()) is False
     finally:
         reaper.join(timeout=10)
         if proc.poll() is None:  # pragma: no cover - defensive clean-up

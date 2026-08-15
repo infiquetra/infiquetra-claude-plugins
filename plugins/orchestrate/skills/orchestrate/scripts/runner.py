@@ -262,6 +262,19 @@ class SubscriptionSetError(CompositionError):
     """The subscription list the subscriber would be started with is wrong."""
 
 
+class SubscriberLivenessUnknownError(CompositionError):
+    """Whether this run's subscriber is alive could not be established, by any source asked.
+
+    The durable record answered "none recorded", or named a process id whose own identity could
+    not be confirmed, and the process table -- the only independent source either question can be
+    settled from -- could not be queried at all. That is not the same fact as "queried, and none
+    found" or "queried, and it is not ours": both of those are established absences, safe to act
+    on. A query that never completed has established nothing, and every caller that decides
+    whether to start a second writer, adopt one, or archive this run must not read it as one.
+    See :class:`SpendUnobservableError` for the same shape applied to a run's spend.
+    """
+
+
 class RetirementOrderError(CompositionError):
     """A writer or a reservation is still open, so the run cannot be retired."""
 
@@ -819,6 +832,20 @@ def subscriber_argv(
     ]
 
 
+@dataclass(frozen=True)
+class OrphanScan:
+    """What a process-table search for a live subscriber found, and whether the search completed.
+
+    Mirrors the predicate scanner's ``ScanResult`` (``mirror.py``): a query that raised has
+    established nothing about whether a matching process exists, and returning ``process=None``
+    for that outcome would be reporting an absence the search never observed. ``complete`` is the
+    field every caller must read before trusting ``process is None`` to mean "none is running".
+    """
+
+    process: dict[str, Any] | None
+    complete: bool
+
+
 class SubscriberSupervisor(Protocol):
     """The subscriber's parent lifecycle, addressable by handle *and* by durable record.
 
@@ -836,11 +863,11 @@ class SubscriberSupervisor(Protocol):
 
     def describe(self, handle: Any) -> dict[str, Any]: ...
 
-    def is_record_alive(self, record: Mapping[str, Any]) -> bool: ...
+    def is_record_alive(self, record: Mapping[str, Any], *, signature: Sequence[str]) -> bool: ...
 
     def stop_record(self, record: Mapping[str, Any]) -> None: ...
 
-    def find_orphan(self, *, signature: Sequence[str]) -> dict[str, Any] | None: ...
+    def find_orphan(self, *, signature: Sequence[str]) -> OrphanScan: ...
 
 
 class SubprocessSubscriberSupervisor:
@@ -874,8 +901,28 @@ class SubprocessSubscriberSupervisor:
     def describe(self, handle: Any) -> dict[str, Any]:
         return {"pid": int(handle.pid)}
 
-    def is_record_alive(self, record: Mapping[str, Any]) -> bool:
-        return process_is_running(int(record.get("pid") or 0))
+    def is_record_alive(self, record: Mapping[str, Any], *, signature: Sequence[str]) -> bool:
+        """The recorded pid is running, *and* it is still the process this record named.
+
+        A pid that exists proves only that some process holds that number now -- the operating
+        system reuses process ids, and a stale record left by a subscriber that crashed or was
+        already reaped can point at a number an unrelated process has since acquired. Asking only
+        ``process_is_running`` here is the record-present half of the same question
+        :meth:`find_orphan` already answers for the record-missing half: this reuses that same
+        scan, by the same signature, and requires the pid it finds to be the pid the record named,
+        rather than trusting the number alone.
+        """
+        pid = int(record.get("pid") or 0)
+        if pid <= 0 or not process_is_running(pid):
+            return False
+        scan = self.find_orphan(signature=signature)
+        if not scan.complete:
+            raise SubscriberLivenessUnknownError(
+                f"process {pid} still holds the recorded pid, but the process table could not be "
+                "queried to confirm it is still this run's subscriber; the identity check that "
+                "would tell them apart from a reused pid did not complete"
+            )
+        return scan.process is not None and int(scan.process.get("pid") or 0) == pid
 
     def stop_record(self, record: Mapping[str, Any]) -> None:
         """Stop a process this object holds no handle for, and wait for it to actually be gone.
@@ -899,7 +946,7 @@ class SubprocessSubscriberSupervisor:
             os.kill(pid, signal.SIGKILL)
         _wait_for_exit(pid, timeout=10.0)
 
-    def find_orphan(self, *, signature: Sequence[str]) -> dict[str, Any] | None:
+    def find_orphan(self, *, signature: Sequence[str]) -> OrphanScan:
         """A live process on this host whose command line carries every token in ``signature``.
 
         The durable record is written only after :meth:`start` returns, so its absence answers
@@ -910,6 +957,10 @@ class SubprocessSubscriberSupervisor:
         way :meth:`HerdrControl.discover_by_label` answers for a native session the register
         cannot yet describe -- an independent source, not an inference from this run's own
         bookkeeping.
+
+        Returns an :class:`OrphanScan` rather than a bare ``dict | None``: "the table was asked
+        and named nothing" and "the table could not be asked" are different facts, and folding
+        them into the same ``None`` is what let a query failure be read as a clean absence.
         """
         try:
             completed = subprocess.run(  # nosec B603 B607 - fixed argv, no shell, read-only query
@@ -920,7 +971,7 @@ class SubprocessSubscriberSupervisor:
                 check=False,
             )
         except (OSError, subprocess.SubprocessError):
-            return None
+            return OrphanScan(process=None, complete=False)
         for line in completed.stdout.splitlines():
             line = line.strip()
             if not line:
@@ -933,8 +984,8 @@ class SubprocessSubscriberSupervisor:
             except ValueError:
                 continue
             if process_is_running(pid):
-                return {"pid": pid}
-        return None
+                return OrphanScan(process={"pid": pid}, complete=True)
+        return OrphanScan(process=None, complete=True)
 
 
 def subscriber_record_path(run_id: str) -> Path:
@@ -1703,6 +1754,16 @@ class Coordinator:
 
     # ------------------------------------------------------------------ the subscriber
 
+    def _subscriber_signature(self) -> tuple[str, str, str, str, str]:
+        """This run's subscriber, described the one way a process table can be asked about it."""
+        return (
+            str(SUBSCRIBER_SCRIPT),
+            "--run-id",
+            self.run_id,
+            "--row-id",
+            self.subscriber_row_id,
+        )
+
     def _resolve_subscriber_record(self) -> dict[str, Any] | None:
         """This run's subscriber, from its durable record or, absent one, the process table.
 
@@ -1715,19 +1776,27 @@ class Coordinator:
         to decide adopt-or-replace-or-start, :meth:`running_subscriber` to answer retirement, and
         :meth:`stop_writers` to decide what to stop -- so a fifth route to the same wrong inference
         has nowhere left to open.
+
+        The process table itself can fail to answer -- a transient ``ps`` failure, not a process
+        table that was asked and named nothing. :meth:`SubscriberSupervisor.find_orphan` reports
+        that as an :class:`OrphanScan` whose ``complete`` is ``False`` rather than folding it into
+        the same ``None`` a clean absence returns; this function is the one place that scan is
+        read, so this is the one place that distinction either survives or is lost. It is not
+        lost: an incomplete scan raises rather than returning ``None``, because every caller here
+        would otherwise read that ``None`` as "no subscriber exists" and act on it -- starting a
+        second writer, or archiving beside a live one.
         """
         recorded = read_subscriber_record(self.run_id)
         if recorded is not None:
             return recorded
-        return self.supervisor.find_orphan(
-            signature=(
-                str(SUBSCRIBER_SCRIPT),
-                "--run-id",
-                self.run_id,
-                "--row-id",
-                self.subscriber_row_id,
+        scan = self.supervisor.find_orphan(signature=self._subscriber_signature())
+        if not scan.complete:
+            raise SubscriberLivenessUnknownError(
+                f"run {self.run_id!r} has no durable subscriber record, and the process table "
+                "could not be queried to check for one started but never recorded; that is not "
+                'the same fact as "none is running", and nothing here may treat it as one'
             )
-        )
+        return scan.process
 
     def ensure_subscriber(self) -> bool:
         """Start or restart the subscriber against the current subscription set.
@@ -1770,7 +1839,9 @@ class Coordinator:
             # running.
             recorded = self._resolve_subscriber_record()
             if self._subscriber_handle is None and recorded is not None:
-                if self.supervisor.is_record_alive(recorded):
+                if self.supervisor.is_record_alive(
+                    recorded, signature=self._subscriber_signature()
+                ):
                     if list(recorded.get("subscriptions") or []) == [dict(x) for x in wanted]:
                         self._installed_subscriptions = wanted
                         adopted = True
@@ -1831,7 +1902,8 @@ class Coordinator:
         recorded = self._resolve_subscriber_record()
         if recorded is None:
             return None
-        return recorded if self.supervisor.is_record_alive(recorded) else None
+        alive = self.supervisor.is_record_alive(recorded, signature=self._subscriber_signature())
+        return recorded if alive else None
 
     def _acknowledge_mirror_subscription(self) -> None:
         """Tell the mirror the wire exists, or let it say loudly that it does not.
@@ -3331,10 +3403,11 @@ class Coordinator:
         # same way :meth:`running_subscriber` resolves it, so what gets stopped here is exactly
         # what would otherwise block retirement.
         recorded = self._resolve_subscriber_record()
+        signature = self._subscriber_signature()
         if recorded is not None:
-            if self.supervisor.is_record_alive(recorded):
+            if self.supervisor.is_record_alive(recorded, signature=signature):
                 self.supervisor.stop_record(recorded)
-                if self.supervisor.is_record_alive(recorded):
+                if self.supervisor.is_record_alive(recorded, signature=signature):
                     stopped[f"subscriber:{recorded.get('pid')}"] = (
                         "stop requested from the durable record but the process is still alive"
                     )
@@ -3350,6 +3423,18 @@ class Coordinator:
             cwd = Path(str(row.get("cwd") or self.root))
             if isinstance(tab_id, str) and tab_id and self.herdr.tab_present(tab_id, cwd=cwd):
                 self.herdr.close_tab(tab_id, cwd=cwd)
+            # A close request returning without raising is a request accepted, not an effect
+            # observed -- the same distinction the reap fence and the abandon path already draw
+            # for a child's tab. Asking again is the only thing that tells them apart, and only a
+            # "no" here is what :meth:`outstanding_writers` is allowed to read as this writer
+            # being gone; the documented shutdown order (stop writers, then retire) depends on
+            # this column meaning what it claims.
+            still_present = (
+                isinstance(tab_id, str) and tab_id and self.herdr.tab_present(tab_id, cwd=cwd)
+            )
+            if still_present:
+                stopped[row_id] = "close requested but the tab is still present"
+                continue
             register_store.record_observed_state(
                 self.root, row_id, "exited", source="observed:mirror_closed", run_id=self.run_id
             )
@@ -3510,6 +3595,7 @@ __all__ = [
     "OperatorContext",
     "OperatorDisposition",
     "Orphan",
+    "OrphanScan",
     "OutcomeArgumentError",
     "OutcomeRequest",
     "PRODUCIBLE_INTEGRATION_MODES",
@@ -3524,6 +3610,7 @@ __all__ = [
     "SpendHaltError",
     "SpendUnobservableError",
     "SubprocessSubscriberSupervisor",
+    "SubscriberLivenessUnknownError",
     "SubscriberSupervisor",
     "SubscriptionSetError",
     "SupervisionReport",

@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.131.3] - 2026-08-15
+
+### Changed
+
+- **The `outcome` skill no longer accepts model-initiated invocation.** A command's `description:`
+  frontmatter is not the only field Claude matches a natural-language request against — a skill's
+  own `description:` is a second, independent selection surface, and `plugins/saga/skills/outcome/
+  SKILL.md`'s was still full orchestration language ("Coordinate a whole outcome…", "dispatches the
+  ready frontier to executors", "the coordinator routes"). Rewriting that text would only repeat the
+  same word-substitution game the command description already plays, and a synonym the wordlist
+  doesn't yet know about would keep working. `disable-model-invocation: true` closes it structurally
+  instead: Claude can no longer choose this skill on its own initiative, for any phrasing, while
+  `/outcome` — which loads the skill directly rather than through model-initiated selection — is
+  completely unaffected. The skill's description, body, and every script it documents are otherwise
+  untouched.
+- **`/outcome`'s description no longer leads with `start`.** The old rewrite still opened its verb
+  list with `start`, and `start <id> <objective>` is how operators used to begin a brand-new outcome
+  — exactly the on-ramp that's supposed to route to `/orchestrate` now. The description is reframed
+  as operations on an outcome **already** split into a DAG (`start` stays available in
+  `argument-hint` for an operator who already knows to reach for it directly).
+- **`/outcome`'s description drops the stale `export`/`import` pair.** Both have been a retired,
+  read-only-alias surface for a while now (`export` aliases `discover`; `import` always refuses) —
+  the description now names the verbs that are actually current: `discover`, `handoff`, `attach`,
+  matching what the skill's own frontmatter already listed.
+- **Saga's own plugin description, marketplace entry, and command reference no longer pitch
+  `/outcome` as general orchestration**, matching the command description's own story:
+  `plugin.json`'s description, the `outcome-orchestration` keyword (now `outcome-coordination`),
+  and `docs/commands.md` / `docs/model/saga-docs-model.yaml`'s `/outcome` entries all move from
+  "coordinate a whole outcome" / "outcome coordination ask" framing to "operate on an outcome
+  already split into a DAG," with an explicit pointer to `/orchestrate` for work that isn't
+  decomposed yet.
+
 ## [0.131.2] - 2026-08-15
 
 ### Changed

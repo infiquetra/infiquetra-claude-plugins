@@ -1,6 +1,7 @@
 ---
 name: outcome
 description: Coordinate a whole outcome as a durable DAG of leaf sagas. A level-triggered reconcile loop that dispatches the ready frontier to executors, harvests completion, and pages the operator only at gates and exceptions. The coordinator routes and never runs leaf work; status is derived on read. Thin coordinator verbs only — start, graph, advance, attend, resume, discover, handoff, attach — leaf work stays the native /resume, /work, /code-review, /qa.
+disable-model-invocation: true
 ---
 
 # Outcome

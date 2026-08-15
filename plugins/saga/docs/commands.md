@@ -402,13 +402,13 @@ Outcome coordinator over a DAG of leaf sagas — the layer above a single work-t
 
 | Field | Value |
 |-------|-------|
-| Purpose | Coordinate a whole outcome as a durable DAG of leaf sagas via a level-triggered reconcile loop that dispatches the ready frontier and pages only on exceptions. |
-| Use when | An outcome spans multiple concurrent subplots that each run their own saga; the operator wants to advance the frontier, attend a leaf, or resume an outcome. |
-| Do not use when | The work is a single linear work-thread (use `/work`), or the graph still needs authoring from scratch (use `/plan` and the decompose flow). |
+| Purpose | Operate on an outcome already split into a DAG of leaf sagas via a level-triggered reconcile loop that dispatches the ready frontier and pages only on exceptions. |
+| Use when | An outcome is already a DAG that spans multiple concurrent subplots, each running its own saga; the operator wants to advance the frontier, attend a leaf, or resume an outcome. |
+| Do not use when | The work is a single linear work-thread (use `/work`); the graph still needs authoring from scratch (use `/plan` and the decompose flow); or the outcome hasn't been decomposed yet and may span more than one vendor (use `/orchestrate`, which discovers the work's shape during planning instead of requiring the DAG up front). |
 | Inputs | Outcome id, objective, or a portable outcome bundle. |
 | Outputs | Branch-local outcome spec, dispatched leaf sagas, derived-on-read status, Mermaid graph. |
 | Saga state | Coordinates leaf sagas; live node state is derived on read from spec + completion events, never a stored status field. |
-| Routes in | outcome coordination ask, `/plan` decompose. |
+| Routes in | explicit `/outcome` invocation on an already-decomposed DAG, `/plan` decompose. |
 | Routes out | `/resume`, `/work`, `/code-review`, `/qa`. |
 | Gates | Coordinator routes and dispatches but never runs leaf work; pages only at gates, unsatisfiable barriers, ambiguity, and parent-close. |
 | Boundary | Owns frontier dispatch, harvest, and operator-attention routing; does not run leaf implementations, file issues, or deploy. |

@@ -68,8 +68,20 @@ brainstorm IDs are given in parentheses.
   (`pane.output_matched`), never to inferred `agent_status`, and each match is bound to a
   run-specific sentinel emitted after dispatch. (R21b)
 - **R4.** State is a single flat register — one row per child, one for the mirror, one for the
-  subscriber — persisted as a plain JSON file in the repository, written atomically. No graph, no
-  leases, no fencing. (§5, C1, C5)
+  subscriber — persisted as one plain JSON file **per run**, addressed by `run_id` in an
+  orchestrator-owned host-local directory (default `~/.orchestrate/registers/<run_id>.json`,
+  the same class of location as the run secret). Written atomically. No graph, no leases, no
+  fencing. A `run_id` is host-global on this machine. `retire_run` forgets the per-run
+  secret first, then archives the document into the repository at
+  `.orchestrate/runs/<run_id>/register-final.json` and deletes the live file and the
+  recorded-root sidecar. Forgetting the key requires the coordinator-recorded work
+  location. Sidecar create, key mint, key delete, and retirement share one per-run lock.
+  A second retire repairs a leftover key only when that record is still there
+  to name the generation, so a reused id is a new authentication identity.
+  *(Amended 2026-08-14: the live file is no longer repo-local.
+  Repo-locality of the live register put orchestrator-private state inside every child's
+  landing. Provenance is the retirement archive. Interoperability on one host (R12) is
+  unchanged.)* (§5, C1, C5)
 - **R5.** "Done" means a bounded mechanical predicate passes, bound to *this* dispatch by a run id,
   evaluated outside the child's write scope, on a settled artifact, with integration verified
   before reaping. **Judgment work additionally requires a depth sample by an independent verifier**
@@ -184,13 +196,20 @@ times during requirements and again at review. Building both runtimes in paralle
 unproven design doubles the rework on the next change and makes the Codex side port a moving target.
 The shared foundation (U1) lands first because both runtimes need it.
 
-**KTD10 — The register lives at `.orchestrate/register.json`, a new runtime-neutral top-level
-directory.** It must be readable and writable by both runtimes with the same meaning, which rules
-out `.claude/` and `.codex/` — mirroring it per runtime forks the exact file the handoff
-requirement depends on and needs a sync step that can fail. Rejected: `docs/orchestrations/`, which
-gives strong provenance but turns a prose directory into machine state and produces churn commits
-while a run is live. **In this repository `.orchestrate/` is gitignored**; a repository wanting git
-provenance can force-add.
+**KTD10 — The live register is addressed by `run_id` in an orchestrator-owned host-local
+directory.** Default `~/.orchestrate/registers/<run_id>.json`, relocatable by
+`ORCHESTRATE_REGISTER_DIR`. It must be readable and writable by both runtimes with the same
+meaning **on one host and one checkout** (R12), which still rules out `.claude/` and
+`.codex/` — mirroring it per runtime forks the exact file the handoff depends on. Two
+checkouts of one `run_id` are a collision. The original wording placed that
+file at `.orchestrate/register.json` inside the repository for interoperability and
+provenance. Interoperability on one host does not require a repo-local path: two runtimes
+already share `~/.orchestrate/run-secrets`. Provenance is the retirement archive at
+`.orchestrate/runs/<run_id>/register-final.json`. Repo-locality of the *live* file put
+orchestrator-private state inside every child's landing. Rejected: `docs/orchestrations/`,
+which gives strong provenance but turns a prose directory into machine state. **In this
+repository `.orchestrate/` is gitignored** for the retirement archive and other run
+material.
 
 **KTD11 — The build itself is orchestrated across multi-vendor herdr sessions.** This is the
 dogfood: friction encountered while driving the build by hand is direct evidence for the tool being
@@ -283,10 +302,12 @@ defaulting; an unknown runtime raises; `fallbacks` are returned in declared orde
 ### U2. Plugin scaffold and the register
 
 **What.** Create `plugins/orchestrate/` by copying the shape of a current skills plugin
-(`house-style` or `saga`). Define the register: a flat JSON document, one row per child plus one for
-the mirror and one for the subscriber. Implement atomic read/write (temp file plus rename) at
-**`.orchestrate/register.json`**, with per-run material under `.orchestrate/runs/<run-id>/`. Add
-`.orchestrate/` to this repository's `.gitignore`.
+(`house-style` or `saga`). Define the register: a flat JSON document **per run**, one row per
+child plus one for the mirror and one for the subscriber. Implement atomic read/write (temp
+file plus rename) at **`~/.orchestrate/registers/<run_id>.json`** (relocatable by
+`ORCHESTRATE_REGISTER_DIR`). The retirement archive is
+`.orchestrate/runs/<run-id>/register-final.json` **in the repository**. Add `.orchestrate/` to
+this repository's `.gitignore`. Every decision and mutation API requires `run_id`.
 
 **Register columns.** Identity: `id`, `run_id`, `agent`, `vendor`, `model`, `effort`.
 Substrate: `herdr_session`, `workspace_id`, `tab_id`, `pane_id`, `cwd`. Work: `task`,
@@ -306,9 +327,11 @@ reaping, U7's hang detection, U6's spend gate, and U10's handoff all unimplement
 
 **Watch for.** Do **not** use `tools/create-plugin.sh`: it emits `src/main.py`, `tests/test_main.py`,
 `docs/`, and a manifest keyed `"id"` with `"main": "src/main.py"` — the CLI-plugin layout — while
-`scripts/sync_marketplace.py:51` indexes `plugin_json["name"]` and would raise. Whether the register
-is per-run or global: it is **global**, keyed by `run_id`, and rows are retired to
-`.orchestrate/runs/<run-id>/register-final.json` when a run completes.
+`scripts/sync_marketplace.py:51` indexes `plugin_json["name"]` and would raise. The live register
+is **one document per run**, addressed by `run_id` in an orchestrator-owned host-local
+directory. Rows are retired to `.orchestrate/runs/<run-id>/register-final.json` in the
+repository when a run completes, and the per-run secret is deleted so the id does not inherit
+the retired run's authentication identity.
 
 **Test scenarios** — `tests/test_orchestrate_register.py`:
 a fresh register initialises with a schema version; a row round-trips every column above; an atomic

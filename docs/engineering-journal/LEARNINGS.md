@@ -21,6 +21,651 @@
 
 ## 2026-08-13
 
+### A generation is more than the live register  {#generation-is-more-than-the-live-file}
+
+**Context.** Retirement held the register lock across its own observation and
+deletion. The sidecar used a different lock. The key was created under neither.
+A concurrent mint completed after the key was forgotten and before retirement
+returned; a later reuse inherited that key. `record_run_root` returned success
+while retirement deleted the file it had just written.
+**Evidence.** Two runtimes on one host and one checkout share one `run_id` (R12).
+That is two actors on one generation, not an exotic reuse.
+**Mechanism.** Excluding `run_secret` from work-location *binding* is not a reason
+to exclude its create from generation serialization. `fcntl.flock` is not
+reentrant: the holder must unlink the key, not call the public forget that takes
+the same lock.
+**Fix.** The register write lock is the generation lock. Sidecar `.root.lock` is
+gone. One sidecar reader, with symlink and mode checks, on every provenance
+decision. Both sides of a work-location comparison are canonicalized.
+**Generalizable rule.** The files that define a generation must observe one lock,
+and a lock the caller already holds cannot be taken again.
+**Refs.** DECISIONS `{#register-addressed-by-run-id}`, LEARNINGS
+`{#stale-observation-is-not-a-generation}`.
+
+### A stale observation is not a generation  {#stale-observation-is-not-a-generation}
+
+**Context.** Making retirement's no-live-file branch unconditionally forget the key
+turned a no-op into a destructive act with no binding. The branch ran before the lock
+and before any comparison. A wrong empty directory was accepted. Pausing after the
+"no live file" observation, letting another repository record a root, mint a key and
+write a live row, then releasing retirement deleted the new key.
+**Evidence.** `retire_run` observed `live.exists()` outside `_write_locked` and called
+`forget_run_secret(run_id)` with no repository argument. `SKILL.md` instructed
+`--root "$PWD"` and `subscriber.py` defaulted to `Path.cwd()`; nothing canonicalized
+to the git top level, so a run started from a package subdirectory stamped the package
+and `launch_child` recorded the repository.
+**Mechanism.** "The live file is absent" is a stale observation, not proof the key
+belongs to the retired generation. First-writer agreement is adequate for continuity
+and not for an irreversible act. `$PWD` is a working directory, not a repository.
+Canonicalizing only the subscriber inverts the split: launch still records the package.
+**Fix.** Session-closing paths and key deletion require the coordinator-recorded root
+and share one lock between validation and destruction. No sidecar, no delete. Every
+work-location `root` is canonicalized to the git top level before validate or stamp,
+including the value `record_run_root` writes. A disagreeing stamp is reconciled to
+the recorded path under the register lock.
+**Generalizable rule.** An unlocked observation cannot authorize a later destructive
+act. The fact that names a generation has to still be there at the moment of the
+delete, and the same `$PWD` has to be canonicalized on every side that records it.
+**Refs.** DECISIONS `{#register-addressed-by-run-id}`, LEARNINGS
+`{#inert-repository-argument}`.
+
+### `$PWD` is a working directory, not a repository  {#pwd-is-not-a-repository}
+
+**Context.** The documented subscriber invocation passes `--root "$PWD"`. In a
+monorepo that is often a package subdirectory.
+**Evidence.** `git rev-parse --show-toplevel` is the first canonicalize in this
+module. `launch_child` records its first argument. Those two values disagreed when
+only one side was canonicalized.
+**Mechanism.** A work-location argument that is not reduced to the git top level
+stamps whatever directory the caller happened to stand in.
+**Fix.** `canonical_work_location` runs before the first validation and the first
+stamp, on the CLI and on `record_run_root` / `upsert_rows` / `launch_child`.
+**Generalizable rule.** If the instruction says `$PWD` and the invariant says
+"the repository", canonicalize at the boundary; do not ask the caller to stand in
+the right directory.
+**Refs.** LEARNINGS `{#stale-observation-is-not-a-generation}`.
+
+### A repository argument that does not bind is an inert parameter  {#inert-repository-argument}
+
+**Context.** After a row could no longer be named without its run, eight functions still
+took a repository. On the destructive pair it constrained nothing: `reap_verified`
+pointed at an empty non-repository directory closed the tab.
+**Evidence.** `read_rows` executed `del root`. `upsert_rows` stamped `repo_root` on the
+first write and never compared it again. `_expected_archive_root` already preferred the
+recorded run root and fell back to that stamp — but only `retire_run` called it.
+**Mechanism.** The module carried the binding fact and did not use it. The stamp is
+first-caller-derived: binding against it proves later callers agree with the first
+writer, not that the first writer named the true repository. The recorded sidecar is
+the half with orchestrator provenance. Not every `root` means work location:
+`run_secret`'s `root` means "keep the key outside this tree".
+**Fix.** `assert_root_belongs_to_run` is the shared check. Continuity paths (reads,
+writes, catch-up) bind against the recorded root or the first-writer stamp. Session-closing
+paths and key deletion require the recorded root; a stamp is not enough, and an unlocked
+"live file absent" observation is not a binding. Writes compare after the first stamp.
+The subscriber command line refuses a `--root` that disagrees with the run. `run_secret`
+is not run through this check, because its `root` names the tree the key must stay
+outside of, not the run's work location.
+**Generalizable rule.** An argument that reads as a scope and is not one is the same
+defect as a check that cannot fire. Ask what the parameter *means* before binding
+every parameter of the same name. Then ask whether the provenance that check uses is
+fit for the act it authorizes.
+**Refs.** DECISIONS `{#register-addressed-by-run-id}`, LEARNINGS
+`{#stale-observation-is-not-a-generation}`.
+
+### A required argument is not a required argument if the type still accepts the old shape  {#required-is-the-type}
+
+**Context.** Moving the live register to a run-keyed host-local file left `upsert_row` and
+`read_rows` able to name a row without naming its run. Seventeen of twenty-one writes
+resolved the file by scanning every live document. Subscriber catch-up read run B and
+wrote run A.
+**Evidence.** Row ids in this build are unit ids. Two runs over one plan reuse them.
+`task_label` already prefixes the run id because the row id is not globally unique.
+A `phase=reaped` write addressed at repository B landed in a different run.
+**Mechanism.** `dict[row_id, row]` cannot hold two runs that share a row id. An optional
+`run_id` plus a host-global scan is a guess. The guess does not consult the repository
+the caller named.
+**Fix.** `run_id` is a required keyword on every decision and mutation API.
+`_run_id_for_updates` is gone. The operator merge is `rows_stamped_against`, keyed by
+`(run_id, row_id)`.
+**Generalizable rule.** If the return type cannot represent the collision, callers will
+not see the collision. Change the type, not the docstring.
+**Refs.** DECISIONS `{#register-addressed-by-run-id}`.
+
+### A file's address is a capability  {#file-address-is-a-capability}
+
+**Context.** Eight repairs each defended one field of a sealed receipt against a landing
+that can name anything. The module said why the receipt existed at all: the register lived
+inside every child's landing, so the durable copy sat where the child it binds can rewrite
+it.
+**Evidence.** Every `upsert_row` call in the plugin is orchestrator-side. No child writes
+the register through any code path. A child's designed output is one artifact, written to
+a temp path and renamed. The location was decided in one function (`register_path`). The
+Codex repository at the current `origin/main` has no orchestrate plugin and no references
+to the live register path.
+**Mechanism.** Child-writability was not a feature anyone would lose. It was an ambient
+consequence of putting orchestrator-private state at a path the child can write.
+Relocation alone does not close addressing: a file keyed by repository root at a new
+directory still maps a poisoned root to a different host-local file. The address has to
+be a pure function of an identifier the orchestrator already owns. This host already
+keyed the run secret by `run_id` alone.
+**Fix.** Live register at `~/.orchestrate/registers/<run_id>.json`. R4 amended. Retirement
+archive stays in the repository.
+**Generalizable rule.** If the only reason a control exists is that a file sits where an
+untrusted party can write it, move the file. Then ask whether the *key* is still a value
+that party can name.
+**Refs.** DECISIONS `{#register-addressed-by-run-id}`.
+
+### A git failure that never ran is not a LandingError  {#git-failure-is-not-landing-error}
+
+**Context.** The membership probe converted `LandingError` into `ReceiptRootError` so a path
+that is not a working tree would raise rather than record. The conversion was written as if
+every git failure were a `LandingError`.
+**Evidence.** `_git` raises `LandingError` only when git ran and returned non-zero.
+`_run_command` raises the parent `SessionLifecycleError` when git cannot run — missing
+binary, missing path, timeout. A nonexistent store path escaped as
+`SessionLifecycleError`, and `isinstance(exc, CompletionError)` was false.
+**Mechanism.** Catching a subclass does not catch the parent. The claim "a git failure
+raises rather than records" was true of one failure class and false of the one that
+does not produce a working-tree answer at all.
+**Fix.** Catch `SessionLifecycleError`. The journal holds the correction; the commit
+message that stated the opposite cannot be amended.
+**Generalizable rule.** When you convert an adapter error into a domain error, catch the
+adapter's base class, not the subclass that one call path happens to raise.
+**Refs.** `{#path-ancestry-is-not-membership}`.
+
+### The store is a register directory, not a repository  {#store-is-a-register}
+
+**Context.** Replacing path ancestry with git identity closed nested repositories and
+accepted a sibling linked worktree as the store. The work happened in one working tree;
+a durable `verified` landed in another run's register.
+**Evidence.** A linked worktree outside the checkout shares the object store and has its
+own `.orchestrate/register.json`. Issuance accepted `ambient_root` pointing at that
+worktree, evaluation returned `verified=True`, and another run's honest row in that
+tree was overwritten.
+**Mechanism.** Ancestry and identity are two properties. Identity asks "same repository".
+Ancestry asks "does the store contain the work". A legitimate mutating child works in
+one tree and stores in another, so no predicate over `(cwd, store)` separates the
+honest split from the poisoned one. What distinguishes them is a fact about the run:
+which register directory it was launched against.
+**Fix.** `record_run_root` writes that directory next to the run secret, from the
+orchestrator's own root, never from a landing. Issuance and evaluation compare the
+claimed store to it by exact equality. Containment and identity stay as named layers
+for when the record is absent. They do not close the class: a mutating worktree has
+five ancestor stores that pass both.
+**Generalizable rule.** When two honest paths differ on a filesystem relation, the
+relation is not the property. Find the fact that is about the run, and give it
+provenance that is not derived from the object being checked.
+**Refs.** DECISIONS `{#landing-sits-in-its-repository}`, `{#check-against-a-copy}`.
+
+### Path ancestry is not repository membership  {#path-ancestry-is-not-membership}
+
+**Context.** The previous repair refused a landing whose working directory was not a descendant
+of the store it named, on the theory that containment against the filesystem is membership.
+**Evidence.** An independent git repository created as a subdirectory of another checkout is a
+descendant path and a different repository. Issuance accepted a landing whose `cwd` was the
+nested checkout and whose `ambient_root` was the outer one, sealed `receipt.root` as the outer
+path, and recorded `verified` in the outer register. Evaluation of an honest nested landing
+with an authentic outer receipt recorded `receipt_mismatch` in the outer register and demoted
+an unrelated `verified` row. Both members are pinned by tests that construct a repository
+inside a repository.
+**Mechanism.** `Path.is_relative_to` answers a filesystem question. The store decision needs
+a git question: do these two paths share an object store? A linked worktree is not the
+repository root and *is* the same repository. A nested `git init` is under the root and *is
+not*. The predicate that is true of both cannot be the property.
+**Fix.** Membership is `git rev-parse --path-format=absolute --git-common-dir` at each path,
+compared as resolved paths. The relative form is `.git` for every repository and would make
+two repositories compare equal. Linked worktrees share the main checkout's common directory,
+so mutating children keep working without the check knowing the worktree layout.
+**Generalizable rule.** When the property is "same repository", ask Git. A path-geometry
+check is a different question that happens to agree on the fixtures you already have.
+**Refs.** DECISIONS `{#landing-sits-in-its-repository}`, `{#check-against-a-copy}`.
+
+### Two independently settable fields on one object are still a pair  {#pair-on-the-type}
+
+**Context.** The previous round deleted the repository parameter from issuance, settlement and
+evaluation so a caller could not name a second, disagreeing store. The next review constructed
+the same disagreement through `Landing.ambient_root`, which any caller can set independently of
+`Landing.cwd`.
+**Evidence.** Against `3ba61a6c`: an honest landing in repository A,
+`dataclasses.replace(honest, ambient_root=repo_b)`, then `issue_receipt` with no `root`
+argument. The sealed receipt had `root=B` and `landing_cwd=A`, evaluation returned `verified`,
+repository B's row went to `phase=verified`, and the artifact settled under A. Pinned by
+`test_a_landing_cannot_name_a_repository_it_does_not_sit_in`.
+**Mechanism.** Deleting a parameter removes one pair. It does not remove a pair that lives on a
+public type. `cwd` and `ambient_root` are both fields of `Landing`; a receipt sealed from both
+is internally consistent, so every later comparison of landing against receipt is a check of a
+value against a copy of that value — the same vacuous check `{#check-against-a-copy}` already
+named, one field over. The three production producers keep the fields tied; the public
+constructor does not.
+**Fix.** `landing_root` refuses a landing whose working directory is not the same git
+repository as the store it names. The first form of that check was path ancestry, which is
+not membership; see `{#path-ancestry-is-not-membership}`.
+**Generalizable rule.** A value that cannot be supplied as a parameter can still be supplied as
+a field. After deleting a pair from a signature, ask which remaining public type carries both
+sides, and test those two fields against something neither of them produced.
+**Refs.** DECISIONS `{#landing-sits-in-its-repository}`, `{#check-against-a-copy}`.
+
+### Selecting the store from the receipt writes the refusal to the wrong child  {#store-from-the-receipt}
+
+**Context.** After the repository parameter was deleted, `evaluate_completion` bound every
+refusal to `receipt.root` before comparing the landing to the receipt. A foreign receipt's
+mismatch refusal therefore wrote into the foreign register.
+**Evidence.** Against `3ba61a6c`: repository A holds an honest `verified` child; repository B
+is evaluated with A's authentic receipt. The false pass is refused (`receipt_mismatch`). A's
+row is demoted from `verified` to `working`. B gains no completion record. Pinned by
+`test_evaluating_with_another_repositorys_receipt_raises_and_writes_neither_register`.
+**Mechanism.** The evaluation is of the landing and the specification. The receipt is the
+claim about what the evidence should look like. When those arguments name different
+repositories, the receipt's store is another child's. Binding `fail` to that store before
+asking whether the landing belongs there makes the refusal itself the write that destroys
+unrelated durable state. The defect is not only *when* the store is chosen; it is *which
+argument* is treated as the authority on the write target when the arguments disagree.
+**Fix.** `assert_landing_in_receipt_repository` runs before any register is selected. A landing
+whose working directory is not inside `receipt.root` raises. Neither register is written. Same-
+repository mismatches still record as `receipt_mismatch`, because that case has a store this
+evaluation may write.
+**Generalizable rule.** When two arguments can disagree about which store to write, do not
+select the store from the argument that may belong to someone else. If neither argument is
+known to be the right store, raise rather than record.
+**Refs.** DECISIONS `{#landing-sits-in-its-repository}`, `{#root-is-a-deciding-input}`.
+
+### A check of a value against a copy of that value is not a check  {#check-against-a-copy}
+
+**Context.** Four review rounds on one unit each found a false pass in the same class, and each was
+closed by adding a comparison. The fifth round found two more in that class. The pattern to notice
+is not that a case was missed — it is that adding a comparison had failed four times and was still
+the reflex.
+
+**Evidence.** `completion.py`, the repository root that selects which register receives a verdict.
+It arrived as a caller-supplied argument and was sealed into the dispatch receipt at issue time.
+Every check added afterwards compared a supplied root against `receipt.root` — that is, against the
+copy made from that same supplied argument. Two reproductions survived all of them: a receipt
+*issued* under repository B while carrying a landing in repository A, and a verifier's receipt read
+out of a foreign register. Both were wrong at the moment the copy was made, and the copy is the
+thing every check compared against.
+
+**Mechanism.** A comparison can only detect a change *between two observations*. At the first
+observation there is no second value, so a value that is wrong on arrival passes every downstream
+comparison in the system — and passes it while producing a coverage report that says the input is
+bound. The check does not merely fail to catch the case; it actively certifies it, because the two
+sides agree. The producer is therefore never protected by comparisons against what it produced, no
+matter how many of them there are.
+
+**Generalizable rule.** When a value is checked against something derived from it, the check is
+vacuous at the producer. Either compare it against something with *independent provenance*, or
+delete the input and derive it — a value that cannot be supplied separately cannot be supplied
+wrongly, and unlike a comparison, that property is readable off the signature rather than
+established one test case at a time. See DECISIONS `{#repository-is-derived}`.
+
+### A presence assertion cannot detect a contradiction  {#presence-cannot-detect-contradiction}
+
+**Context.** A test named `test_no_surface_claims_the_verifier_check_proves_the_verifier_ran`
+existed specifically to keep an honesty repair honest, and it was green over a file that made the
+overclaim it was named after.
+
+**Evidence.** The test asserted that each surface *contains* a disclaimer somewhere in it —
+`"not that it ran" in text or "does not establish that the verifier ran" in text`. `completion.py`
+contains that disclaimer in `_assert_verifier_session`, and four hundred lines away the dataclass
+that *is* the persisted evidence said `"""One independent verifier's blind read of a
+judgment-shaped child's artifact."""`. Both statements, same file, test green. Restoring the
+overclaiming docstring and re-scoring both forms of the assertion: the presence form still passes,
+the absence form fails and names the file.
+
+**Mechanism.** "Contains X" is satisfied by one occurrence anywhere. A contradiction is two
+statements coexisting, so no requirement that one of them be present can rule the other out. The
+honest paragraph is what makes the test green, which means the test measures whether the repair was
+*made*, never whether it was *undermined* — and the surface a downstream consumer actually reads
+may be the undermining one.
+
+**Generalizable rule.** A prose guard needs both halves: ban the sentences that would be false, and
+require the one that is true. Bans catch only the phrasings someone thought of, so they are a floor
+and should say so; but a presence assertion alone has no floor at all. Check the claim on the
+object a consumer actually reads — here, the type in the persisted record, not the reference
+document.
+
+### Enumerate the signature before the attribute reads  {#signature-before-attributes}
+
+**Context.** The previous entry replaced a categorical class enumeration ("the identity labels")
+with a mechanical one: read the function, list every input it branches on. The mechanical rule was
+right and it still missed an input — the *first argument* of the function it was applied to.
+
+**Evidence.** `evaluate_completion(root, spec, landing, changed_paths_baseline, receipt, ...)` in
+`plugins/orchestrate/skills/orchestrate/scripts/completion.py`. The enumeration was produced by
+extracting every `spec.` and `landing.` attribute read from the source — better than working from
+memory, and structurally blind to a bare parameter, because `root` is not an attribute of anything.
+`root` selects the register that receives the settlement record, the verdict and the phase, so a
+complete and authentic receipt for repository A, evaluated with repository B as `root`, settled the
+artifact in A and recorded `phase=verified` plus the durable completion record in B, leaving A's row
+— the one whose work actually ran — at `working`. Reproduced with everything else held identical.
+
+**Mechanism.** A tool that reads `x.y` finds every input that hangs off an object and none that
+arrives on its own. Deciding inputs do not have to be attributes: `root` is the plainest kind of
+argument there is, and it happened to be the one that decides *where the answer is written* rather
+than *what the answer is* — a category the enumeration was not looking for at all. The per-run
+secret did not incidentally cover it either: the secret file is named for the run and lives outside
+every repository by design, so the same receipt authenticates under either root.
+
+**Fix.** `root` is sealed into the dispatch receipt and compared before anything is read or written,
+and again at the settlement record, which is a public entry point reachable without going through
+evaluation. Pinned by three tests: the reproduction, a case where the refusal would otherwise be
+*recorded* in the foreign register, and a direct call to `settle_artifact` with a foreign root.
+
+**Generalizable rule.** The mechanical class check needs two passes and the order matters:
+**enumerate the signature first, then the attribute reads.** The signature is the outer class and
+the attribute reads are the inner one. A tool that only sees attribute reads will report a complete
+answer to a different question.
+
+**Later.** The fix described above was the wrong shape and was replaced in the next round: the
+parameter was deleted rather than compared, so `root` is no longer in any of these signatures. The
+enumeration lesson stands on its own — it is why the input was found at all — but see
+`{#check-against-a-copy}` for why comparing it could not close the class.
+
+**Refs.** [[name-the-class-mechanically]], [[check-against-a-copy]], DECISIONS
+`{#root-is-a-deciding-input}`, `{#repository-is-derived}`.
+
+### An unsealed column cannot answer a question about execution  {#unsealed-column-cannot-prove-execution}
+
+**Context.** A judgment-shaped child may only reach `verified` if an independent verifier read its
+artifact. The check for "was there really a verifier" was hardened to require an authenticated
+dispatch receipt — which a child cannot forge — and the surfaces then described the whole check as
+establishing that a verifier session ran.
+
+**Evidence.** `DepthSample._assert_verifier_session` authenticates the receipt and takes the run and
+vendor from the sealed payload, then answers "did it actually run?" from `row["phase"]`, an ordinary
+register column. A verifier with a genuine receipt that never started sits at `planned` and is
+correctly refused; moving that one column to `working` produced `verified=True` with the depth
+sample persisted into the durable record. Reproduced independently by two reviewers and by the
+orchestrator.
+
+**Mechanism.** The receipt is issued *before* dispatch, so it can only ever attest to dispatch.
+Everything that distinguishes "was dispatched" from "ran" is observed *after* launch, and in this
+system both observers live in other units — the launch transition and the liveness event stream.
+No amount of sealing inside the evaluating module reaches evidence the module never sees.
+
+**Fix (partial, deliberate).** The residual is named rather than closed: `phase` joins `model` in
+the unsealed list on the function, in the operator reference, in the skill and in the changelog, and
+the check is described as establishing *a verifier was dispatched for this run with this vendor* —
+smaller, and true. The reproduction is pinned as **documented behaviour**, not as a refusal, so the
+code and the prose cannot drift apart again silently. The honest never-started case is still
+refused, because that is a real failure mode a launch that dies actually produces.
+
+**What surprised.** The hardening made the forgery *more* convincing, not less: before the sample
+was persisted, a planted verifier left no trace; after, it left a durable audit record of a session
+that never ran.
+
+**Generalizable rule.** Before claiming a control establishes X, ask which of its inputs are
+attestable and when each was written. A record written before an event cannot testify that the
+event happened. If the attesting observer is in another component, the honest move is to name the
+residual and say what closing it would take — not to let the prose cover the gap.
+
+**Refs.** [[gitignored-is-untrusted]], DECISIONS `{#verifier-execution-is-a-named-residual}`.
+
+### Name a class by reading the branches, not by describing the defect  {#name-the-class-mechanically}
+
+**Context.** A review round asked for a "class enumeration" for each control: having fixed one
+instance, enumerate every member of its class. I did that three rounds running and each round the
+next review found members I had missed — always described by the reviewers with the same phrase,
+"adjacent to, not a repetition of".
+
+**Evidence.** The receipt-identity control is the clearest case. I fixed "a receipt for child B
+verifies child A" by binding run, row and landing, and named the class **"the identity labels"** —
+a reasonable, categorical description. The actual class was *every independent input the evaluator
+branches on*, which also contains `work_shape` (it decides whether the depth gate runs at all),
+`mutating` and `scope` (they decide what the boundary check permits), and the changed-paths baseline
+(it decides what "changed" means). All three were reproduced as passes against `95c3cd1e`.
+
+**Mechanism.** Naming a class categorically is an act of judgment, and judgment is exactly what is
+compromised right after fixing a bug: the instance you just fixed dominates the description. "The
+identity labels" is a *description of the fix*, not of the function. The mechanical form has no such
+failure mode — **read the function and list every input it branches on** — because it does not ask
+what kind of defect this is, only what the code reads before deciding. The answer is finite,
+checkable by another reader, and does not depend on how the first instance happened to look.
+
+**Fix.** Applied per control this round and reported as an input list rather than a category. It
+immediately produced four bindings I would not have named categorically (`runtime`,
+`integration_mode`, `base_commit`, `ambient_root`), and it is what turned "one test per control"
+into "one test per input".
+
+**Generalizable rule.** When a fix needs a completeness argument, derive the class from the code's
+structure, not from the defect's description. "What does this function read before it decides?" and
+"what can touch this file between these two instants?" are mechanical questions with enumerable
+answers. "What kind of bug was that?" is not.
+
+**Refs.** [[two-detectors-hide-each-other]], DECISIONS `{#receipt-binds-deciding-inputs}`.
+
+### Two detectors of one condition hide each other, exactly like two writers  {#two-detectors-hide-each-other}
+
+**Context.** The previous round's surviving mutation was two *writers* of one register column, where
+deleting one left the other to hide behind. This round produced the same shape one layer over: two
+*detectors* of one substitution.
+
+**Evidence.** The receipt now compares thirteen inputs. Deleting the `write_scope` comparison killed
+no test. `write_scope` is a pure function of `mutating`, `scope`, the landing, the run and the row —
+all of which are compared individually — so no substitution exists that only it can catch, and its
+comparison can never be the thing that fires. Removed; the field stays on the receipt as the sealed
+record of what issue time permitted.
+
+The same run found the inverse: the baseline digest covers both the path set and per-path content
+fingerprints, and deleting the fingerprint half killed nothing, because every test's laundered
+baseline also *added a path*. That one was a genuine coverage gap, not redundancy — a file already
+dirty at dispatch and modified afterwards changes no path, only its fingerprint — and it got a test.
+
+**Mechanism.** A deletion proof measures one causal path from code to observable outcome. Redundant
+detectors mean two paths to the same outcome, so removing either changes nothing and the proof
+reports coverage that is not there. The diagnosis is the same as the two-writer case, and so is the
+question to ask when a mutation survives: *is something else producing this outcome?* The two
+answers differ — redundancy means delete the check, a gap means add the test — and only reading the
+survivor tells you which.
+
+**Generalizable rule.** A surviving mutation has exactly two honest resolutions: the behaviour is
+genuinely redundant and should go, or the behaviour is load-bearing for a case no test constructs.
+Strengthening the test without deciding which one you are looking at produces a test that passes for
+the wrong reason.
+
+**Refs.** [[deletion-proof-needs-one-writer]], [[one-owner-per-column]].
+
+### Waiting for a process is not a barrier; the process group is  {#a-wait-is-not-a-barrier}
+
+**Context.** Completion runs a bounded predicate, then snapshots the evidence to prove the predicate
+did not disturb it. The snapshot was taken immediately after `Popen.wait()` returned.
+
+**Evidence.** A predicate that spawns a descendant and exits 0 returns control while the descendant
+is still running. It is reparented away, outlives the snapshot, and rewrote the settled artifact
+afterwards — reproduced as `verified=True` followed by a durable digest that no longer matched the
+file on disk. Fixed by `start_new_session=True` plus a group SIGKILL and drain on every exit path,
+success included, *before* the caller re-observes;
+`test_a_predicate_descendant_cannot_rewrite_the_evidence_after_the_pass` pins it.
+
+**Mechanism.** `wait()` answers "has this process finished?" and nothing else. Treating it as "has
+the work finished?" is a scope error hidden by the fact that it is true for almost every process you
+ever write. Two snapshots bracket an interval; anything that can still act after the second one is
+outside the observation regardless of how carefully the two snapshots are compared.
+
+**What surprised.** Ordering did all the work. The kill did not need to be clever — it needed to
+happen before the after-snapshot rather than after it, so a descendant's write is either inside the
+observed interval or impossible.
+
+**Generalizable rule.** When code observes an interval to certify something, enumerate what can act
+after the interval closes, not just what acted inside it. For subprocesses the answer is the process
+group, and a group leader (`start_new_session=True`) is what makes it addressable after the leader
+itself is gone.
+
+**Refs.** DECISIONS `{#predicate-process-group}`.
+
+### A test must run where the thing it certifies runs  {#test-the-real-execution-context}
+
+**Context.** The orchestrate completion unit carried a requirement from the previous unit: two
+read-only children with disjoint scopes must both complete cleanly. A test was written that used
+two children, both completed, and it passed. Two independent reviewers then reproduced a failure in
+which neither child could complete at all.
+
+**Evidence.** `tests/test_orchestrate_completion.py::test_two_read_only_children_with_disjoint_scopes_both_complete_cleanly`
+used a helper that wrote both deliverables with `Path.write_text` from the pytest process. The
+product launched those same children with `--sandbox read-only` / `--permission-mode plan`
+(`plugins/orchestrate/skills/orchestrate/scripts/session_lifecycle.py:permission_argv`), under which
+neither child could create the file the settlement protocol requires. Fixed by
+`_Prepared.run_child_process`, which produces the deliverable from a separate process given only
+the dispatch text, plus
+`::test_a_child_process_that_cannot_write_its_artifact_directory_fails_completion`, which reproduces
+the no-write posture with a real child and an unwritable directory.
+
+**Mechanism.** The test satisfied the *description* of the scenario — two children, disjoint scopes,
+both verified — while running the load-bearing step in a process with permissions no child has. The
+count was right and the context was wrong, and the count is what the test name talks about. Reading
+the test tells you nothing is missing, because what is missing is not in the test; it is in where the
+test runs.
+
+**Fix.** `541b36b9` + repair round 1: a child-process writer used by the pass path and by the
+carried multi-child requirement, and a launch posture that permits the write every child is
+required to make.
+
+**What surprised.** The reviewer's phrasing was the whole diagnosis: *"this probe does use two
+children; the miss is the child process boundary, not the child count."* The defect was invisible
+to a reading that checks whether the scenario is present, and obvious to one that asks which process
+performs each step.
+
+**Generalizable rule.** For every test, ask which process, which permissions, and which working
+directory the certified step actually runs under, and whether that matches production. A privileged
+test process silently supplies capability the real actor does not have, and the resulting green is
+indistinguishable from a real one. This generalizes past permissions: same question for the network,
+the clock, the environment, and the filesystem.
+
+**Refs.** [[gitignored-is-untrusted]], DECISIONS `{#read-only-children-are-write-capable}`.
+
+### Git-ignored means unobserved, which means untrusted  {#gitignored-is-untrusted}
+
+**Context.** The orchestrate register — the whole durable state model for a run — lives at
+`.orchestrate/register.json`. The plugin's only integrity control over child behaviour is a Git
+boundary check. The completion unit persisted the dispatch receipt, the expected evidence identity
+a restarted orchestrator must read, into that register.
+
+**Evidence.** A reviewer reproduced two forgeries against the shipped code, both reaching
+`verified`: overwrite `dispatch_receipt.binding_token` with a previous run's token and produce an
+artifact carrying it; or replace the stored predicate with `{"argv": ["/usr/bin/true"]}` and
+recompute `predicate_closure` / `predicate_digest` so the tamper check agrees. Both are now refused
+by `completion.read_receipt`, pinned by
+`::test_a_planted_binding_token_in_the_register_does_not_authenticate` and
+`::test_a_replaced_predicate_in_the_register_does_not_authenticate`.
+
+**Mechanism.** `git status` deliberately omits ignored paths, so a child writing the register is
+observed by nothing. The receipt was being *stored* rather than *protected*, and storage in a
+location the adversary can write is not storage — it is a suggestion. Every check downstream then
+compared the child's evidence against a value the child chose.
+
+**Fix.** Each durable record carries an HMAC-SHA-256 digest over exactly its own fields, keyed by a
+per-run secret held outside the repository (`completion.run_secret`), with the secret directory
+refused if it resolves inside the repository — because every child's landing is inside the
+repository.
+
+**What surprised.** The read-only launch flag had been quietly doing the work of a trust boundary
+for half the population. Removing it (see DECISIONS `{#read-only-children-are-write-capable}`) did
+not create the hole; it revealed that the hole had always existed for mutating children and made it
+impossible to keep ignoring.
+
+**Generalizable rule.** Before persisting a value that a later check compares against, ask who else
+can write that location. If the answer includes the party the check is about, inspection cannot fix
+it — a forged record and a real one are the same bytes in the same place — and the value must be
+authenticated with a key that party cannot reach. Corollary: an exclusion in one control ("ignored
+paths are outside this boundary") is a specification of exactly where to put an attack.
+
+### A deletion proof only proves what has a single writer  {#deletion-proof-needs-one-writer}
+
+**Context.** Nineteen mutations were run against the completion repairs, each removing one
+load-bearing behaviour and requiring its pinning test to fail. Eighteen were killed. One survived:
+storing the settled artifact's path as a landing-relative string instead of an absolute one left the
+test that exists to catch exactly that still passing.
+
+**Evidence.** `completion.settle_artifact` wrote the `artifact_path` column, and `completion._record`
+wrote it again moments later from the same value. Mutating the first writer changed nothing, because
+the second writer overwrote the mutation before any assertion ran. Fixed by giving the column one
+owner — settlement, the moment the fact becomes true — after which the mutation was killed.
+
+**Mechanism.** A mutation tests the causal path from one piece of code to one observable outcome.
+Two writers of one column mean two causal paths, so removing either leaves the outcome intact and
+the proof reports coverage that is not there. The duplicate write was itself harmless; what it
+damaged was the ability to *verify* anything about that column.
+
+**What surprised.** The unit had already recorded [[one-owner-per-column]] as a learning, about a
+different column, in the same file, in the previous round. The rule was known and written down and
+still violated three functions away — which is an argument for mutation testing over recall.
+
+**Generalizable rule.** A surviving mutation is at least as often a defect in the *system's* shape as
+in the test's: before strengthening the test, check whether some other code path is masking the
+change. And a value with two writers cannot be pinned by deleting either one.
+
+**Refs.** [[one-owner-per-column]], [[test-the-real-execution-context]].
+
+### A property a file cannot carry must be produced, not inspected  {#produce-dont-inspect}
+
+**Context.** The orchestrate plan requires a child's artifact to be *settled* — written to a
+temporary path and renamed into place, with the predicate accepting only the renamed path. The
+obvious implementation inspects the finished artifact and decides whether it was renamed.
+
+**Evidence.** `plugins/orchestrate/skills/orchestrate/scripts/completion.py:settle_artifact`, pinned
+by `tests/test_orchestrate_completion.py::test_an_artifact_written_directly_to_the_destination_is_not_settled`
+and `::test_settlement_does_not_claim_to_detect_delete_then_recreate`. Deleting the destination-state
+comparison and the in-flight requirement each fail a distinct test (M3, M4 of the unit's deletion
+proofs).
+
+**Mechanism.** A file on disk does not record how it arrived. `stat` carries no provenance and
+content carries none, so no amount of reading the artifact distinguishes `rename(2)` from a direct
+write. Every inspection-shaped implementation of this requirement is therefore either a weaker
+adjacent claim wearing the stronger claim's name, or an outright fiction. The way to obtain the
+property is to **perform the operation yourself**: the child writes only an in-flight sibling, the
+orchestrator verifies the destination is untouched since a pre-dispatch snapshot, and the
+orchestrator does the rename. The sibling also settles the cross-filesystem hazard by construction —
+`os.replace` is atomic only within one filesystem, and a sibling is always on the destination's.
+
+**Generalizable rule.** When a requirement names a property the evidence cannot carry, stop trying
+to detect it and restructure the protocol so your own code is the thing that establishes it. If that
+is impossible, state the weaker property you actually enforce, in the same words the contract uses.
+
+### The controls that pin a behaviour are the ones whose deletion breaks a test  {#deletion-proof-finds-gaps}
+
+**Context.** U5 of the orchestrate plan shipped 22 named controls and 76 tests, all green. A
+mechanical deletion pass over the implementation — remove one control, run its pinning test, restore
+— found two controls no test actually pinned.
+
+**Evidence.** Deleting `settle_artifact`'s in-flight-file requirement left every test green, because
+the only test that exercised it wrote directly to the destination and was caught one line earlier by
+the destination-state comparison. Deleting the in-loop output cap in `run_predicate` also left every
+test green, because the predicate under test exited on its own and was caught by the post-exit size
+check. Both gaps were closed by tests naming the uncovered case:
+`test_a_child_that_produced_nothing_fails_with_a_recorded_verdict` and
+`test_a_predicate_that_never_stops_spewing_is_killed_at_the_cap_not_at_the_deadline`.
+
+**Mechanism.** Layered controls mask each other. When two checks can both reject an input, a test
+written against that input pins only whichever fires first, and the second becomes untested while
+looking covered — the coverage report counts the line as executed. Green tests plus complete-looking
+coverage is exactly the state in which a later refactor deletes a real control silently. The failure
+each survivor hid was severe in both cases: an unhandled `FileNotFoundError` instead of a recorded
+verdict when a child produced nothing, and an unbounded predicate bounded only by its deadline.
+
+**Generalizable rule.** For each control, ask what input reaches *it* and nothing else, and write
+that test. A control whose deletion leaves the suite green is untested regardless of coverage.
+
+### `observed_state` has an owner, and it is not whoever writes last  {#one-owner-per-column}
+
+**Context.** U5 needed a failed predicate to be visible to the operator, whose only view is the
+register. `observed_state` / `observed_state_source` are the columns U4 uses for exactly this kind
+of signal, so recording the failure there was the obvious choice.
+
+**Evidence.** `plugins/orchestrate/skills/orchestrate/scripts/subscriber.py:catch_up` rewrites
+`observed_state` for every row carrying a `pane_id`, from the live snapshot's `agent_status`.
+Demonstrated against the shipped consumer rather than asserted, in
+`tests/test_orchestrate_completion.py::test_a_snapshot_catch_up_pass_does_not_erase_a_recorded_completion_failure`:
+after a recorded failure, one catch-up pass restores `observed_state` to `working` while the
+verdict survives in its own key.
+
+**Mechanism.** A column written by two subsystems on different schedules belongs to whichever writes
+most often, not to whichever writes most meaningfully. Catch-up runs on every reconnect for the
+whole lifetime of a live pane; a completion verdict is written once. The verdict would have been
+correct at the instant it was written and wrong from the next reconnect onward — the worst shape of
+wrong, because the record exists and is stale rather than absent.
+
+**Generalizable rule.** Before recording a durable conclusion in an existing column, find every
+writer of that column and its cadence. If a higher-frequency writer owns it, give the conclusion its
+own key rather than joining a race you lose.
 ### A self-check calibrated by its own author checks nothing  {#gate-completeness-must-derive-from-ci}
 
 **Context.** Local pre-push gating was done by an ad-hoc script rebuilt from memory each session,

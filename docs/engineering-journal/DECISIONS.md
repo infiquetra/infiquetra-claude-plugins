@@ -2,6 +2,477 @@
 
 ## 2026-08-13
 
+### The live register is addressed by run identity, not by repository root  {#register-addressed-by-run-id}
+
+Requirement R4 said the register is "persisted as a plain JSON file in the repository."
+That location put orchestrator-private state inside every child's landing. Child-writability
+was not a feature: every `upsert_row` call is orchestrator-side, and a child's designed
+output is one artifact. The seal existed to survive an address, not to grant the child a
+write.
+
+**Decision.** The live register is one JSON document per `run_id` at
+`~/.orchestrate/registers/<run_id>.json` (relocatable by `ORCHESTRATE_REGISTER_DIR`). A
+`run_id` is host-global, the same undocumented namespace the run secret already used.
+`retire_run` forgets the per-run secret first, then archives the document into the
+repository at `.orchestrate/runs/<run_id>/register-final.json`, then deletes the live
+file and the recorded-root sidecar, which frees that generation. Sidecar create, key
+mint, key delete, and retirement share the register write lock. Forgetting the key
+requires the coordinator-recorded work location. R4 is amended. Interoperability on
+one host (R12) is one checkout: two runtimes in the same working tree share one live
+document and already share `~/.orchestrate/run-secrets`. Two checkouts of one `run_id`
+are a collision. Provenance is the retirement archive, which was always the repo-local
+file.
+
+The recorded run root (`record_run_root`) stays. It is no longer the live address. It is
+the work location and the collision detector for two orchestrators that reuse one
+`run_id` against different checkouts. Both sides of a work-location comparison are
+canonicalized to the git top level. Git identity, containment, and
+`assert_store_is_this_runs_register` stay as work-location checks. The seal stays because
+Claude and Muse have no workspace-write flag. `run_secret` stays unbound because its
+`root` means "keep the key outside this tree", not because a second checkout must be
+able to write. Its *create* is serialized with retirement; that is lifecycle, not
+binding.
+
+**Rejected: relocate but key by repository root.** A poisoned root still maps to a
+different host-local file. Addressing is unchanged; R4 is not worth amending for that.
+**Rejected: keep the repo-local file and refuse the unrecorded-root fallback.** Cheaper,
+closes one executed member, leaves child-writability intact.
+**Rejected: mint a UUID instance identity and map `run_id` onto it.** Same-host handoff
+wants one `run_id` to be one register. A second name is an extra latch.
+**Rejected: delete the seal because the file moved.** Claude and Muse can still reach
+`~/.orchestrate` if they know the path. A control kept without a live threat is the
+`write_scope` lesson; this one still has a threat.
+
+**What was given up.** A reader of a checkout can no longer find the *live* register by
+opening a file in that checkout. They can still find the retirement archive, and they
+can still inspect the live file in the host-local directory. Two independent projects
+that pick the same `run_id` share one live document until one of them retires it. That
+collision already existed for the run secret.
+
+**Revisit when** a second host must share a live run (R12 deferred that), or when Claude
+or Muse grows a workspace-write flag that can refuse `~/.orchestrate`.
+
+### A landing must sit inside the repository that will receive its verdict  {#landing-sits-in-its-repository}
+
+Deleting the repository parameter closed the two named false-pass paths and left two adjacent
+ones: a foreign receipt's *refusal* wrote into the foreign register, and a landing whose
+`cwd` and `ambient_root` named different repositories issued a self-consistent receipt that
+verified in the claimed one while the work happened in the other.
+
+**Decision.** Two checks, at the two producers, neither of which compares a value to a copy of
+itself. Membership is the git common directory at each path
+(`git rev-parse --path-format=absolute --git-common-dir`), not whether one path is a descendant
+of the other. A repository nested inside another repository is a descendant path and a different
+repository. The relative form of that query is `.git` for every repository; without
+`--path-format=absolute` two different repositories compare equal.
+
+*At issue.* `landing_root` refuses a landing whose working directory is not the same git
+repository as the store it names. This function's caller then writes that store — it seals the
+receipt into the row and clears any earlier settlement — so an evaluate-time-only check is
+already too late. Linked worktrees share the main checkout's common directory, so a mutating
+child is accepted without the check knowing `provision`'s layout. A working directory that is
+an ordinary subdirectory of the *same* repository is still accepted.
+
+*At evaluation.* `assert_landing_in_receipt_repository` runs before any register is selected.
+A landing that is not the same git repository as `receipt.root` raises. Every other refusal in
+the evaluator is recorded, because a recorded refusal is durable evidence; this one has no
+register it may write. Same-repository mismatches still record as `receipt_mismatch`.
+
+`settlement_record` and `settle_artifact` receive a receipt and no second opinion about the
+repository. They keep reading the sealed root. The reason they need no membership check is
+not that issuance is the only producer: a `DispatchReceipt` is only unsealed from an
+authenticated, root-checked record, whereas a `Landing` is reconstructed in production from
+child-writable register data.
+
+**Rejected: path ancestry as membership.** True for sibling checkouts and false for a
+repository nested inside another repository, which is a descendant and a different store.
+**Rejected: treating both findings as one ordering defect.** The foreign-refusal path is
+"the store was chosen from the receipt before asking whether the landing belongs there."
+The ambient-root path is not: the receipt is internally consistent, and the producer that
+was wrong is issuance. **Rejected: recording the refusal in the landing's claimed
+repository.** That would close the honest-landing case and write a verdict into a store the
+landing merely *claimed* when the landing is the one that lies. **Rejected: requiring the
+exact worktree layout at issue.** Stronger than the property; it freezes `provision`'s
+current paths into this module and would refuse a subdirectory of the same repository.
+**Rejected: comparing `--show-toplevel`.** A linked worktree's toplevel is the worktree
+path, so the mutating-child landing would be refused.
+
+**Later.** Git identity is necessary and not sufficient. The store is a register directory,
+not a repository. `record_run_root` records the launch root next to the run secret;
+issuance never writes that file. Containment is reinstated as a second named property.
+When no root has been recorded, containment plus identity still accept five ancestor
+stores of a mutating child's worktree. The recorded root is what picks the one register.
+
+**Revisit when** a later unit persists `cwd` and reconstructs `Landing`. `ambient_root` is
+not a register column; that reconstructor must take it from the orchestrator's own resolved
+root, the same value `provision` sets. A planted `cwd` in a different repository is now
+refused; a planted `cwd` in another worktree of the *same* repository whose store equals
+the recorded root is still accepted and belongs to that later unit.
+
+### The repository is derived from the landing and the receipt, never supplied  {#repository-is-derived}
+
+Four consecutive review rounds found a false pass in the same class — evidence from one repository
+producing a durable verdict in another — and each round closed the named case by adding one more
+comparison. The fifth round found two more. The comparisons were not wrong; they were the wrong
+*kind* of answer. Every one of them put a repository the caller supplied beside the copy the
+receipt made from that same supplied value at issue time, which catches a caller who changes it
+between issuing and evaluating and cannot catch one that was wrong when it was copied. The copy is
+made at issue time, which is the first observation, so at the one point where the value could be
+wrong there was nothing to compare it against (LEARNINGS `{#check-against-a-copy}`).
+
+**Decision.** Delete the parameter instead of checking it. `issue_receipt` derives the repository
+from `landing.ambient_root`, which `GitLanding.provision` sets to the repository for both landing
+kinds; `evaluate_completion`, `settle_artifact` and `settlement_record` take it from the sealed
+receipt. None of the four accepts it as an argument, so no caller can supply a second, disagreeing
+value. A landing that does not name its repository is refused rather than defaulted to its working
+directory, because that default would seal a mutating child's worktree as its repository and file
+the verdict where nothing else about the run is recorded.
+
+**`read_receipt` keeps the check, and it is the only one that does.** It is handed a repository and
+a row id and has no receipt yet, so the repository genuinely has to be supplied; there the two
+values have independent origins and comparing them is real. It is also the only place a receipt is
+fetched rather than received, which is exactly the verifier's receipt — and the per-run secret is
+named for the run alone and lives outside every repository, so it is shared by `run_id` on
+this host. R12 is one checkout and a second checkout cannot write the register; the secret
+is still shared, which is why an authentic verifier dispatch can still be presented under
+the wrong directory and the sealed root still has to be checked.
+
+**Rejected: a fifth comparison, at issue time, between the supplied root and the landing.** It
+would have closed the reproduction and left the class open, which is what the four previous rounds
+already demonstrate. **Rejected: deriving from `landing.cwd`.** Correct for read-only children and
+wrong for mutating ones, and the two are indistinguishable in any test that uses only the first.
+
+**Revisit when** a caller genuinely has a repository but no landing and no receipt. That caller
+needs `read_receipt`'s shape — supply the repository, check the seal against it — not a new
+parameter on the evaluator.
+
+**Later.** Deleting the parameter did not delete the pair. `Landing.cwd` and
+`Landing.ambient_root` remain independently settable, evaluation still receives a landing and
+a receipt that can name different repositories, and binding every refusal to `receipt.root`
+before asking whether the landing belongs there demoted an unrelated `verified` row. The
+parameter stays deleted. The two remaining pairs are reduced by `{#landing-sits-in-its-repository}`;
+path ancestry was not repository membership, and a nested independent repository still passed.
+
+### The repository root is a deciding input, and it refuses by raising  {#root-is-a-deciding-input}
+
+**Superseded on 2026-08-13 by `{#repository-is-derived}`**, in the following round of the same
+review. The reasoning below about *where the harm is* still holds and is why the replacement
+derives rather than defaults. What it got wrong is the shape of the remedy: a comparison against a
+copy of the supplied value cannot detect a value that was wrong when it was copied, so the
+comparisons described here were removed along with the parameter they compared. `assert_receipt_root`
+survives at `read_receipt` only.
+
+`evaluate_completion` takes the repository root as its first argument, and the root selects the
+register that receives the settlement record, the verdict and the phase. It was absent from the
+"every deciding input" list because that list was derived by extracting attribute reads from the
+source, and a bare parameter is not an attribute of anything (LEARNINGS
+`{#signature-before-attributes}`). A complete, authentic receipt for one repository recorded a pass
+in a second one while the artifact settled in the first.
+
+**Decision.** The root is sealed into the dispatch receipt at issue time and compared in two places.
+
+*In `evaluate_completion`, first, and it raises rather than recording.* Every other refusal in that
+function is recorded, on the principle that a control which raises leaves the register showing a
+working child with no verdict — a fail-open one level up. That argument assumes there is a right
+register to record into, and a receipt from another repository is exactly the case where there is
+not: recording the verdict would file one repository's answer in another's store and demote whatever
+unrelated row happened to share the row id. So this one comparison raises, and the code says why.
+
+*At the settlement record, again.* `settlement_record` and `settle_artifact` take the root and the
+receipt as two independent arguments, are public, and both read and write the register, so a later
+unit can reach them without going through evaluation. `_record` is handed a row id rather than a
+receipt and has nothing to compare, so it is protected by its caller instead.
+
+**Rejected: a single check at the top only.** The brief allowed it on condition that nothing reaches
+the writers by another path. Settlement is a public entry point and a documented step of the
+sequence, so that condition does not hold. **Rejected: putting the root in the `receipt_mismatch`
+comparison list.** It would be a check that can never fire alone once the raise is in place, which
+is the same defect as the `write_scope` comparison removed in the previous round.
+
+**Revisit when** any function in this module gains a second store-selecting argument, or when the
+per-run secret becomes repository-scoped — today it is named for the run alone and lives outside
+every repository, so it authenticates the same receipt under any root.
+
+### Whether the verifier ran is a named residual, not a claim  {#verifier-execution-is-a-named-residual}
+
+The depth gate requires an independent verifier to have read the settled artifact. Requiring an
+authenticated dispatch receipt for the verifier row closed the planted-row forgery. It did not
+answer the separate question — did that verifier ever run — which is still read from `phase`, an
+ordinary register column any write-capable actor can set. Moving that one column from `planned` to
+`working` on a genuinely dispatched, never-started verifier reaches `verified`.
+
+**Decision.** Name the residual rather than half-close it. `phase` joins `model` in the unsealed
+list on the function, in `references/predicates.md`, in `SKILL.md` and in the changelog, and the
+control is described as establishing *a verifier was dispatched for this run with this vendor*. The
+reproduction is pinned as a test of **documented behaviour**, so the code and the prose cannot drift
+apart silently again. The `phase` check stays, because it refuses the honest never-started case that
+a failed launch actually produces.
+
+**Rejected: sealing it here.** The only evidence separating "dispatched" from "ran" is observed
+after launch, and both observers are other units — the launch transition and the liveness event
+stream. Reaching into either to close this was explicitly out of scope, and building a weaker local
+proxy (for example treating a settled verifier artifact as proof of execution) would rest on a
+child-writable trigger and reproduce the same overclaim one layer down.
+
+**This residual and the accepted one on a child's own `phase` column are the same defect against two
+different columns of the same untrusted store.** One authenticated-register change closes both, and
+that change spans the register and the reap gate rather than this unit.
+
+**Revisit when** the register's own writes are authenticated, or when either observing unit gains an
+attestation written under the run secret — at that point the evidence exists and the claim can grow
+to match it.
+
+### The dispatch receipt binds every input the verdict depends on  {#receipt-binds-deciding-inputs}
+
+Binding run, row and landing stopped one child's evidence verifying another child's row and stopped
+nothing else. Everything else that decides the outcome arrived as a separate, trusted argument: a
+receipt issued for judgment work verified under a mechanical work shape (which skips the depth gate
+entirely), and an out-of-scope write verified under a widened scope or against a baseline taken after
+the write. All three were reproduced.
+
+**Decision.** The receipt seals, and evaluation compares, every input `evaluate_completion` branches
+on — derived by reading the branches rather than by naming a category (LEARNINGS
+`{#name-the-class-mechanically}`): run, row, landing, runtime, work shape, mutability, declared
+scope, integration mode, destination, base commit, ambient root, and the changed-paths baseline. Any
+disagreement is `receipt_mismatch`, before anything else is read. One test per input.
+
+**The baseline is bound by digest, not re-taken.** It is the one deciding input with no label — it
+is repository state at an instant, and the same landing has different, equally valid snapshots
+before and after a write, so landing identity cannot constrain when the snapshot was taken. Taking
+it inside `issue_receipt` would make two producers of one snapshot, which is the exact shape that
+hid a defect in the previous round; the readiness path stays its only producer, the receipt binds it,
+evaluation compares it.
+
+**`write_scope` is sealed but deliberately not compared.** It is a pure function of mutability,
+scope, landing, run and row, every one of which is compared individually, so a comparison against it
+could never be the thing that catches a substitution. A check that can never fire alone reports
+coverage it does not have. The field remains as the sealed record of what issue time permitted.
+
+**Revisit when** `evaluate_completion` grows a branch on anything not in that list — the list is the
+function's read set, so extending the function extends the receipt.
+
+### The predicate runs in its own process group, and the group dies before the evidence is re-read  {#predicate-process-group}
+
+`Popen.wait()` establishes that the predicate's *direct process* finished. A descendant it spawned
+outlives it, is reparented away, and can write the artifact after the after-snapshot has already
+certified it — reproduced as a pass whose durable digest no longer matched the file on disk.
+
+**Decision.** `start_new_session=True` makes the predicate a group leader whose group id is its own
+pid and therefore still addressable after it exits. The group is SIGKILLed and waited out on **every**
+exit path, success included, inside `run_predicate` — so by the time the caller snapshots, a
+descendant's write is either inside the observed interval or impossible. A group that will not drain
+within five seconds is `predicate_descendants`, a refusal, because an observation taken while
+something the predicate started is still running cannot be trusted.
+
+**What remains, enumerated in `predicates.md` rather than implied:** a descendant already inside a
+kernel write when SIGKILL lands; a process that leaves its own group with `setsid`; the child session
+itself if it never actually stopped (U4 owns that); a sibling writing into this child's artifact
+directory (exclusive by assignment, not enforcement); the operator or anything else on the host; and
+a concurrent re-dispatch of the same row.
+
+**Rejected: poll the artifact for a while after the predicate exits.** It converts a boundary into a
+race with a timeout, and any delay chosen is both too long for the common case and too short for the
+adversarial one.
+
+**Revisit when** the plugin runs anywhere without POSIX process groups, where this control does not
+exist and the claim would have to be withdrawn rather than reworded.
+
+### A depth sample's verifier must be a dispatch this orchestrator issued  {#verifier-needs-an-authenticated-dispatch}
+
+The verifier check read register columns — row exists, run matches, phase past `launching`, vendor
+and model match. The register is the store the dispatch receipt is sealed against *because* every
+child can write it, so the check certified precisely what the rest of the unit distrusts. A planted
+row with the right columns reached `verified`, and because the sample is now persisted, the forgery
+left a durable audit trail of a session that never ran.
+
+**Decision.** The load-bearing requirement is an authenticated dispatch receipt for the verifier row,
+under this run's orchestrator secret, which a child cannot produce. The sample's vendor is compared
+against the sealed `runtime` in that receipt rather than against the writable column.
+
+**This places a contract on U8:** a verifier is an ordinary dispatched child and must be issued a
+receipt like any other. A verifier without one cannot be told apart from a planted row.
+
+**What stays unsealed, stated where it is claimed:** the verifier's `model` is still compared against
+a register column, because the model is resolved at launch and the receipt does not carry it. A child
+that can write the register can still misattribute the model of a genuinely dispatched verifier.
+
+**Rejected: name the residual and change no code.** Offered and legitimate, but the receipt primitive
+already existed and reached most of the gap for two comparisons, so documenting a hole that could be
+closed would have been the weaker half of an option pair.
+
+**Rejected: make U8 the sole producer of `DepthSample` and say so.** It relocates the trust rather
+than establishing it, and U8 does not exist yet, so nothing would enforce it.
+
+**Revisit when** the register's own rows are authenticated — the accepted cross-unit residual — at
+which point the phase and model comparisons become as strong as the vendor one.
+
+### Read-only children are launched write-capable, and the durable receipt is authenticated instead  {#read-only-children-are-write-capable}
+
+Every orchestrate child, read-only or not, is dispatched with one artifact it is required to write.
+Read-only children were launched with an absolute no-write flag — `--sandbox read-only`,
+`--permission-mode plan`, `--disable-write`, `--mode plan` — so in the product path they could not
+produce the deliverable at all, and the test that should have caught it wrote the deliverable from
+the pytest process (see LEARNINGS `{#test-the-real-execution-context}`).
+
+**Decision.** `permission_argv` returns one posture for every child: the runtime's ordinary
+workspace-write mode. The `mutating` parameter is dropped rather than kept as a branch that returns
+the same thing, because a parameter that changes nothing is the same defect this round was
+convened to fix. **Conditional on** the durable dispatch receipt and settlement record being
+authenticated (below), which is what the flag had been standing in for.
+
+**Why not a scoped write.** No supported CLI accepts a repository-relative path allowlist; the
+function's own docstring said so before this change. There is no flag that permits the artifact and
+forbids everything else, so the choice was never "scoped or unscoped" — it was "write-capable, or a
+dispatch that cannot succeed".
+
+**What actually contains a child.** Writes outside the workspace: the launch posture. Writes inside
+the workspace: the Git boundary check, whose repository write allowlist for a read-only child is
+empty, so any repository-visible write fails its completion. A review child that helpfully edits a
+source file was caught before this change and is still caught.
+
+**What this gives up, stated.** Git-ignored paths are observed by neither control. That gap already
+existed for mutating children and was exploited against shipped code; the read-only flag was not
+protecting the run, it was protecting the half of the population that happened to be covered.
+Removing it makes the gap uniform, which is what forced it to be closed properly.
+
+**Revisit when** any supported runtime ships a real path allowlist, or when a per-child filesystem
+boundary (mount namespace, sandbox profile) becomes available on the host — either would let the
+launch posture carry weight the boundary check currently carries alone.
+
+**Refs.** `{#authenticated-durable-records}`, LEARNINGS `{#gitignored-is-untrusted}`.
+
+### The register is authenticated, not trusted  {#authenticated-durable-records}
+
+The register is Git-ignored, it lives inside every child's landing, and every child can write files
+there. A reviewer produced two working forgeries against shipped code — a planted binding token and
+a substituted always-passing predicate with a recomputed closure digest — both reaching `verified`.
+
+**Decision.** The dispatch receipt and the settlement record each carry an HMAC-SHA-256 digest over
+exactly the fields they store, keyed by a per-run secret at `~/.orchestrate/run-secrets/<run>.key`
+(mode `0600`, relocatable by `ORCHESTRATE_RUN_SECRET_DIR`). `read_receipt` and `settlement_record`
+refuse a record that does not authenticate. The digest covers the stored mapping as stored, so an
+added key is a mismatch rather than a quietly ignored field, and a secret directory that resolves
+inside the repository is refused outright.
+
+**Threat model, stated.** Defeats: a child forging or editing a durable record it can write. Does
+not defeat: a child *deleting* the record — after which nothing verifies, which is the correct
+failure rather than a false pass. Rests on: "outside the workspace" being the one containment the
+supported CLIs express. Weaker for Claude and Muse, which expose no write-posture flag at all; for
+those the separation rests on the child never being pointed at the secret, and that is written down
+rather than papered over.
+
+**Rejected: a filesystem boundary per child** (mount namespace or sandbox profile covering
+`.orchestrate/`). It is the right long-term control and would close the whole ignored-path class
+rather than these two records, but it is host-specific, unavailable on this platform without
+elevated privileges, and far outside a completion unit's scope.
+
+**Rejected: keeping the receipt in memory only.** The receipt is persisted precisely so a restarted
+orchestrator can read it; in-memory-only deletes the requirement instead of meeting it.
+
+**Revisit when** a per-child filesystem boundary exists, which would make the keyed digest a
+belt-and-braces measure rather than the primary control.
+
+### Evaluation is idempotent, and a row is `verified` only while its latest verdict says so  {#evaluation-is-idempotent}
+
+Settlement is a one-shot rename, so a second evaluation of a perfectly correct child found the
+in-flight file gone and the destination present — indistinguishable from a child that wrote its
+destination directly — and failed `artifact_unsettled`. Two consequences followed. Judgment work had
+no reachable path at all, because its verifier must read the *settled* artifact and the evaluation
+that settles it is the one that would have to be repeated. And the catch-up contract, which
+re-evaluates run-bound artifacts on every startup and reconnect, could leave a row at
+`phase=verified` with `completion.result=failed` — a contradiction the reap gate reads as a pass.
+
+**Decision.** Settlement writes a durable authenticated record and replays it, conditional on the
+destination still holding the digest that was settled. Evaluation is therefore safe to re-run for
+one dispatch, and re-running it re-runs the mechanical controls rather than returning a cached
+verdict. Judgment work becomes a two-step sequence: evaluate (artifact settles, verdict is
+`depth_sample_missing`), dispatch the verifier against the settled path, evaluate again with the
+sample. Separately, `_record` maintains the invariant **`phase == "verified"` if and only if the
+latest verdict is a pass**: a failing re-evaluation demotes a previously verified row to `working`,
+and a `reaped` row is left alone.
+
+**Why demotion invents no phase.** `PHASES` is closed and operator-approved, with no member meaning
+"evaluated and failed" — and it does not need one, because that state is already representable as
+`phase="working"` plus a recorded failure, which is exactly what `is_working_not_failed()` and
+`failed_rows()` were built to read. Demotion reuses the shipped representation rather than extending
+a vocabulary this unit does not own.
+
+**Rejected: refuse re-evaluation of a verified row.** Simplest, and wrong: the catch-up contract
+specifies re-evaluation, so refusing it deletes a requirement rather than satisfying it, and it
+would leave tampering after a pass permanently invisible.
+
+**Rejected: hand the verifier the in-flight path.** It would keep settlement one-shot, but the
+verifier's whole contract is that it reads the artifact the predicate read; sampling a file that is
+still being written back to is a different, weaker claim wearing the same name.
+
+**Revisit when** a phase for "evaluated and failed" is added by the unit that owns `PHASES`, which
+would let demotion carry the reason rather than only the negation.
+
+### A read-only child's declared scope is a read scope, and its deliverable leaves the shared checkout  {#read-only-exclusive-landing}
+
+Orchestrate's boundary check could not tell a child's changes from a sibling's in one working tree.
+Read-only children share the ambient checkout by design (U4's accepted cut), so two well-behaved
+read-only children with disjoint scopes each attributed the other's artifact to itself and each
+failed. Reproduced with a control that isolated the cause to sibling activity rather than to the
+child.
+
+**Decision.** Two halves, both structural. Every child's deliverable lands in a directory that is
+exclusively its own, inside its own landing, at `.orchestrate/artifacts/<run-id>/<row-id>/`, and
+that directory must be ignored by the repository — checked when the dispatch receipt is issued, and
+failing closed otherwise, because the whole attribution argument rests on it. And a read-only
+child's declared scope is treated as a **read** scope: its repository write allowlist is empty, so
+any repository-visible change during its window is a real finding rather than a sibling's ordinary
+output. Recorded in `plugins/orchestrate/references/substrate-contract.md` and
+`references/predicates.md`; pinned by
+`tests/test_orchestrate_completion.py::test_two_read_only_children_with_disjoint_scopes_both_complete_cleanly`
+and `::test_a_read_only_child_writing_into_the_repository_still_fails_the_boundary`.
+
+**Rejected: narrow what read-only completion asserts** — check only the declared artifact path and
+its digest, and state that a read-only child's wider scope is unenforced. Honest, and it would have
+closed the false positive, but it trades a control away permanently to fix an attribution problem
+that had a structural answer. The chosen route *strengthens* the repository assertion (empty
+allowlist) while removing the thing that made it fire, which is strictly better than weakening it.
+
+**Rejected: give read-only children their own worktree.** It contradicts U4's shipped and reviewed
+landing model, costs a worktree and an environment provision per read-only child, and gives a
+read-only reviewer a checkout it must not modify anyway. The exclusive *output* directory is the
+part of worktree isolation this problem actually needed.
+
+**Residual, stated rather than hidden.** The artifact directory is exclusive by assignment, not by
+enforcement: nothing in the filesystem stops a child writing into a sibling's directory, and because
+that directory is invisible to Git the boundary check cannot see it either. Detecting deliberate
+cross-child writes needs a per-child filesystem boundary — the same missing control already named
+for Git-ignored paths.
+
+**Revisit when** a per-child filesystem boundary exists (a sandbox profile or a per-child mount),
+at which point exclusivity can be enforced rather than assigned; or when a read-only child has a
+legitimate reason to produce a repository-visible artifact, which would mean it is not read-only.
+
+### A failed predicate leaves the phase alone and records its verdict in its own key  {#failed-completion-has-no-phase}
+
+`PHASES` in orchestrate's register is a closed, validated vocabulary — `planned`, `launching`,
+`launched`, `ready`, `working`, `verified`, `reaped` — with no member meaning *evaluated and
+failed*. U5 needed a failed child to be distinguishable from a working one in the operator's only
+view.
+
+**Decision.** A failed completion does not move `phase`; `verified` is written only on a full pass;
+and the verdict lives in the row's own `completion` key, carrying the result, a reason from a closed
+failure vocabulary, the artifact digest, and the predicate outcome. `failed_rows()` is the
+operator's "what stalled" view.
+
+**Rejected: add a phase.** `_validate_phase` rejects unknown values, and the closed vocabulary is an
+operator-approved decision from U2, not an oversight for a later unit to widen.
+
+**Rejected: record the failure in `observed_state` / `observed_state_source`,** which is what U4 uses
+for trust prompts and readiness timeouts. Those columns are owned by the liveness detectors: the
+subscriber's snapshot catch-up rewrites `observed_state` for every row with a live pane, so a
+verdict recorded there is erased the next time catch-up runs while the child's pane is still open.
+Demonstrated against the shipped consumer, not assumed — see LEARNINGS `{#one-owner-per-column}`.
+
+**Revisit when** the register gains a general per-column ownership rule, or when an operator surface
+needs failed children ordered alongside phase transitions in one timeline, which would argue for a
+transition log rather than a new phase.
+
 ### `max` collapses to a vendor's strongest accepted CLI rung, and only where that vendor cannot represent it  {#effort-collapse-max}
 
 `execution_classes` in `plugins/fleet-core/scripts/fleet_commons/models.json` names `max` as an authoritative scalar (review-max prefers `gpt-5.6-sol` at `max`). The six runtimes the plugin must route to — `claude`, `codex`, `grok`, `muse`, `qwen`, `agy` — do not share that ladder. The build roster excluding muse/qwen/agy is a cost choice about who *builds* this plan, not about who the plugin must launch. Verified on this host 2026-08-13 from each binary's own `--help`, slash-command surface, and config, not inferred across vendors:
@@ -37,7 +508,7 @@
 
 **Revisit when** a live grok-4.6 menu advertises `max`, Claude's `--effort` help drops `max`, muse ships a current non-contributor model or documents `max`, qwen grows a launch-time effort flag (then consider switching its `effort_application` mode to `argv` so the first turn is covered), or agy documents `xhigh`/`max`.
 
-**Refs.** Brief `.orchestrate/briefs/U1.md` (three-CLI error repaired against plan lines 233 and 277), plan `docs/plans/2026-08-12-orchestrate-plugin-plan.md` U1 / U4 / R3 / KTD7, Codex source `infiquetra-codex-plugins/plugins/fleet-core/scripts/fleet_commons/models.json`.
+**Refs.** Plan `docs/plans/2026-08-12-orchestrate-plugin-plan.md` U1 / U4 / R3 / KTD7 (the three-CLI error was repaired against plan lines 233 and 277), Codex source `infiquetra-codex-plugins/plugins/fleet-core/scripts/fleet_commons/models.json`.
 
 ### Session-mined evidence for a public repository is archived operator-local, and the plan says so  {#mined-evidence-stays-operator-local}
 

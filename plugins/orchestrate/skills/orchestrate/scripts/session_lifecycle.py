@@ -82,8 +82,15 @@ class ChildSpec:
     """One child launch request.
 
     ``scope`` contains repository-relative files or directory prefixes.  Mutating children receive
-    a dedicated branch worktree.  ``environment_command`` is run in a newly created worktree;
-    the default makes a uv-managed Python worktree independently runnable.
+    a dedicated branch worktree.  ``environment_command`` is run in a newly created worktree; the
+    default makes a uv-managed Python worktree independently runnable.
+
+    The default carries ``--locked --extra dev`` because that is what this repository's CI
+    provisions with (``.github/workflows/ci.yml``), and the whole reason the field exists is that
+    a fresh worktree does not inherit the repository's ``.venv``, so a child in one cannot run its
+    predicate at all.  A bare ``uv sync`` installs the runtime dependency set only: the resulting
+    environment has no pytest, no ruff and no mypy, which is exactly the set of programs a
+    predicate is most likely to be.
     """
 
     run_id: str
@@ -95,7 +102,7 @@ class ChildSpec:
     mutating: bool
     workspace: str
     readiness_timeout: float = 30.0
-    environment_command: tuple[str, ...] = ("uv", "sync")
+    environment_command: tuple[str, ...] = ("uv", "sync", "--locked", "--extra", "dev")
 
 
 @dataclass(frozen=True)
@@ -150,35 +157,39 @@ def task_label(run_id: str, row_id: str) -> str:
     return f"orchestrate-{run_id}-{row_id}"
 
 
-def permission_argv(runtime: str, *, mutating: bool) -> list[str]:
-    """Apply real vendor read/write posture flags where the CLI exposes one.
+def permission_argv(runtime: str) -> list[str]:
+    """Apply the vendor's workspace-write posture where the CLI exposes one.
 
-    These flags are defence in depth.  They do not replace the final Git boundary check, because
-    none of the supported CLIs accepts a repository-relative path allowlist. For mutating work,
-    Codex, Grok, Qwen, and Agy expose sandbox flags. Claude exposes no cwd-write boundary flag.
-    Muse's sandbox is on by default and its existing-worktree binding is applied separately.
+    Every child gets the same posture, mutating or not, and the ``mutating`` distinction is
+    deliberately **not** expressed as a flag any more.  A read-only child must still write exactly
+    one thing -- its own deliverable -- and none of the supported CLIs accepts a repository-relative
+    path allowlist, so there is no flag that permits that write and forbids every other one.  A
+    read-only posture flag therefore never contained a read-only child; it only stopped it
+    producing the artifact it was dispatched to produce, which is a launch that cannot succeed
+    rather than a launch that is safe.
+
+    What this posture **does** contain: writes outside the workspace the child was launched in.
+    That is the only *containment* in the word's real sense -- a boundary the runtime refuses to
+    let the child cross.  Inside the workspace nothing is contained.
+    :func:`check_completion_scope` is **post-hoc, partial, repository-visible change detection**:
+    it runs after the child has stopped, it reports rather than prevents, it observes only tracked
+    and non-ignored paths, and in a shared checkout it cannot establish which actor made a change.
+    A read-only child's empty repository write allowlist means any repository-visible write fails
+    that child's completion -- which is a refusal to verify, not a write that did not happen.
+    Git-ignored paths are outside even that -- see ``IGNORED_PATHS_LIMITATION`` -- which is why the
+    durable dispatch receipt is authenticated rather than merely stored (``completion.py``).
+
+    Claude and Muse expose no positive flag: Claude has no cwd-write boundary flag at all, and
+    Muse's sandbox is already on by default.  Qwen's boolean ``--sandbox`` is its
+    write-within-project profile on this host.
     """
-    if mutating:
-        return {
-            # Claude has no CLI flag that constrains writes to the launch cwd.
-            "claude": [],
-            "codex": ["--sandbox", "workspace-write"],
-            "grok": ["--sandbox", "workspace"],
-            # Muse enables its sandbox by default; _runtime_resolution also binds its existing
-            # worktree. There is no positive CLI flag to enable a narrower write posture.
-            "muse": [],
-            # Qwen's boolean sandbox uses its write-within-project profile on this host.
-            "qwen": ["--sandbox"],
-            "agy": ["--sandbox"],
-        }.get(runtime, [])
     return {
-        "claude": ["--permission-mode", "plan"],
-        "codex": ["--sandbox", "read-only"],
-        "grok": ["--permission-mode", "plan"],
-        "muse": ["--disable-write"],
-        "agy": ["--mode", "plan"],
-        # Qwen's --sandbox is not a read-only mode, so it would overstate the control.
-        "qwen": [],
+        "claude": [],
+        "codex": ["--sandbox", "workspace-write"],
+        "grok": ["--sandbox", "workspace"],
+        "muse": [],
+        "qwen": ["--sandbox"],
+        "agy": ["--sandbox"],
     }.get(runtime, [])
 
 
@@ -188,8 +199,12 @@ def _run_command(
     cwd: Path,
     runner: Runner | None = None,
     timeout: float = 60.0,
+    env: Mapping[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     run = runner or subprocess.run
+    extra: dict[str, Any] = {}
+    if env is not None:
+        extra["env"] = dict(env)
     try:
         result = run(  # nosec B603 -- argv is a sequence and shell is never enabled
             list(argv),
@@ -198,6 +213,7 @@ def _run_command(
             text=True,
             timeout=timeout,
             check=False,
+            **extra,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise SessionLifecycleError(f"command failed to run: {argv[0]}: {exc}") from exc
@@ -509,8 +525,14 @@ class GitLanding:
     def __init__(self, *, runner: Runner | None = None) -> None:
         self.runner = runner
 
-    def _git(self, root: Path, args: Sequence[str]) -> subprocess.CompletedProcess[str]:
-        result = _run_command(["git", *args], cwd=root, runner=self.runner)
+    def _git(
+        self,
+        root: Path,
+        args: Sequence[str],
+        *,
+        env: Mapping[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        result = _run_command(["git", *args], cwd=root, runner=self.runner, env=env)
         if result.returncode != 0:
             raise LandingError(result.stderr.strip() or f"git {' '.join(args)} failed")
         return result
@@ -521,6 +543,78 @@ class GitLanding:
         if not value:
             raise LandingError("git rev-parse HEAD returned no commit")
         return value
+
+    def rev_parse(self, root: Path, rev: str) -> str | None:
+        """Resolve one revision to a commit, or ``None`` when it does not exist.
+
+        ``base_commit`` cannot express "this branch may not exist yet", which is exactly the
+        question the completion integration gate asks about a child's destination branch.
+        """
+        result = _run_command(
+            ["git", "rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}"],
+            cwd=root,
+            runner=self.runner,
+        )
+        return result.stdout.strip() or None
+
+    def common_dir(self, root: Path) -> Path:
+        """The shared object store of the git repository that contains ``root``.
+
+        Linked worktrees share the main checkout's common directory. An independent repository
+        nested inside another checkout has its own. The path is absolute: the relative form is
+        ``.git`` for every repository, which would make two different repositories compare equal.
+        """
+        # Membership probes fail permissively under GIT_DIR / GIT_COMMON_DIR: every
+        # repository reports the inherited store, so two different checkouts compare
+        # equal. Other git calls in this adapter fail loudly on a bad environment;
+        # only this one would accept. Strip the inherited git identity, not the rest
+        # of the process environment.
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if key
+            not in {
+                "GIT_DIR",
+                "GIT_COMMON_DIR",
+                "GIT_WORK_TREE",
+                "GIT_OBJECT_DIRECTORY",
+                "GIT_CEILING_DIRECTORIES",
+            }
+        }
+        value = self._git(
+            root,
+            ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            env=env,
+        ).stdout.strip()
+        if not value:
+            raise LandingError(f"git rev-parse --git-common-dir returned no path at {root}")
+        return Path(value).resolve()
+
+    def is_invisible_to_boundary(self, root: Path, relative: str) -> bool:
+        """Whether ``relative`` is genuinely outside what this boundary observes.
+
+        Two independent conditions, because an ignore rule on its own answers a different
+        question than the one the caller is asking.  ``git check-ignore`` reports whether the
+        *rules* cover a path; a path that is already **tracked** stays visible to ``git status``
+        and to the committed-diff comparison no matter what ``.gitignore`` says.  An operator who
+        force-adds an artifact directory would otherwise get a check that still answers "ignored"
+        while every write under that directory is reported as a change -- which is how a control
+        ends up firing on the orchestrator's own correct work rather than on a child's.
+
+        Answering "no" here is a refusal to dispatch, not a failure of the child, and the caller
+        says how to clear it.
+        """
+        tracked = self._git(root, ["ls-files", "-z", "--", relative]).stdout
+        if tracked.replace("\0", "").strip():
+            return False
+        result = _run_command(
+            ["git", "check-ignore", "--quiet", "--no-index", "--", relative],
+            cwd=root,
+            runner=self.runner,
+        )
+        if result.returncode not in (0, 1):
+            raise LandingError(result.stderr.strip() or "git check-ignore failed")
+        return result.returncode == 0
 
     def provision(self, root: Path, spec: ChildSpec, *, base_commit: str | None = None) -> Landing:
         root = root.resolve()
@@ -669,7 +763,7 @@ class GitLanding:
 def _runtime_resolution(spec: ChildSpec, landing: Landing) -> tuple[Any, list[str]]:
     resolution = tier_resolver.resolve_for_runtime(spec.work_shape, spec.runtime)
     argv = tier_resolver.adapt_runtime_argv(spec.runtime, resolution.model, resolution.effort)
-    argv.extend(permission_argv(spec.runtime, mutating=spec.mutating))
+    argv.extend(permission_argv(spec.runtime))
     if spec.runtime == "muse" and spec.mutating:
         argv.extend(["--worktree", "existing", "--worktree-existing", str(landing.cwd)])
     return resolution, argv
@@ -697,14 +791,23 @@ def launch_child(
     Identifier fields are written immediately after the launcher returns, while the phase remains
     ``launching``. Dispatch later moves the row to ``launched`` before sending the task.
     """
-    root = root.resolve()
+    root = register_store.canonical_work_location(root)
+    # The run's work location is the repository that contains this argument, not
+    # a package subdirectory and not a value derived from the landing. Issuance
+    # compares the claimed store against the record this writes.
+    # Imported lazily: completion already imports this module.
+    import completion as completion_mod
+
+    completion_mod.record_run_root(root, spec.run_id)
     label = task_label(spec.run_id, spec.row_id)
-    existing = register_store.read_rows(root).get(spec.row_id)
+    existing = register_store.read_rows(root, run_id=spec.run_id).get(spec.row_id)
     if existing and existing.get("phase") == "launching" and not existing.get("pane_id"):
         recovery_cwd = Path(str(existing.get("cwd", root)))
         recovered = herdr.discover_by_label(label, cwd=recovery_cwd)
         if recovered is not None:
-            register_store.upsert_row(root, spec.row_id, _row_identity(recovered))
+            register_store.upsert_row(
+                root, spec.row_id, _row_identity(recovered), run_id=spec.run_id
+            )
             landing = Landing(
                 recovery_cwd,
                 str(existing.get("integration_mode", "none")),
@@ -736,6 +839,7 @@ def launch_child(
             "phase": "planned",
             "expected_state": "ready",
         },
+        run_id=spec.run_id,
     )
     landing = git.provision(root, spec, base_commit=base_commit)
     resolution, runtime_argv = _runtime_resolution(spec, landing)
@@ -749,11 +853,12 @@ def launch_child(
             "integration_mode": landing.integration_mode,
             "destination": landing.destination,
         },
+        run_id=spec.run_id,
     )
     wrapper.preview(spec, landing, label, runtime_argv)
-    register_store.upsert_row(root, spec.row_id, {"phase": "launching"})
+    register_store.upsert_row(root, spec.row_id, {"phase": "launching"}, run_id=spec.run_id)
     identity = wrapper.launch(spec, landing, label, runtime_argv)
-    register_store.upsert_row(root, spec.row_id, _row_identity(identity))
+    register_store.upsert_row(root, spec.row_id, _row_identity(identity), run_id=spec.run_id)
     return identity, landing, resolution
 
 
@@ -783,6 +888,7 @@ def confirm_ready(
                 "observed_state": "trust_prompt",
                 "observed_state_source": "observed:pane_content",
             },
+            run_id=spec.run_id,
         )
         raise TrustPromptError(f"child {spec.row_id} is blocked on a workspace trust prompt")
 
@@ -827,6 +933,7 @@ def confirm_ready(
                     "observed_state": "not_ready",
                     "observed_state_source": "inferred:effort_not_applied",
                 },
+                run_id=spec.run_id,
             )
             raise
         except NotReadyError:
@@ -837,6 +944,7 @@ def confirm_ready(
                     "observed_state": "not_ready",
                     "observed_state_source": "inferred:effort_timeout",
                 },
+                run_id=spec.run_id,
             )
             raise
     elif effort_application.get("mode") != "argv":
@@ -860,6 +968,7 @@ def confirm_ready(
                 "dispatched_at": time.time(),
                 "expected_state": "working",
             },
+            run_id=spec.run_id,
         )
         prompt = (
             subscriber.sentinel_assembly_instructions(sentinel, when="you are ready to begin")
@@ -884,6 +993,7 @@ def confirm_ready(
                 "observed_state": "not_ready",
                 "observed_state_source": "inferred:readiness_timeout",
             },
+            run_id=spec.run_id,
         )
         raise
     register_store.upsert_row(
@@ -894,6 +1004,7 @@ def confirm_ready(
             "observed_state": "ready",
             "observed_state_source": "observed:pane.output_matched",
         },
+        run_id=spec.run_id,
     )
     return ReadyChild(identity, baseline_paths, sentinel)
 
@@ -931,7 +1042,7 @@ def _accept_effort_acknowledgement(
     return text.count(acknowledgement) > previous_counts[0]
 
 
-def _normalize_scope(scope: Sequence[str]) -> tuple[str, ...]:
+def normalize_scope(scope: Sequence[str]) -> tuple[str, ...]:
     normalized: list[str] = []
     for item in scope:
         path = PurePosixPath(item)
@@ -941,7 +1052,7 @@ def _normalize_scope(scope: Sequence[str]) -> tuple[str, ...]:
     return tuple(normalized)
 
 
-def _in_scope(path: str, scope: Sequence[str]) -> bool:
+def path_in_scope(path: str, scope: Sequence[str]) -> bool:
     return any(path == allowed or path.startswith(f"{allowed}/") for allowed in scope)
 
 
@@ -1003,8 +1114,8 @@ def check_completion_scope(
             changed_paths_baseline.ambient_fingerprints,
             git,
         )
-    scope = _normalize_scope(spec.scope)
-    landing_outside = {path for path in landing_changed if not _in_scope(path, scope)}
+    scope = normalize_scope(spec.scope)
+    landing_outside = {path for path in landing_changed if not path_in_scope(path, scope)}
     outside = frozenset(landing_outside | ambient_changed)
     new_changed = landing_changed | ambient_changed
     result = ScopeCheck(predicate_passed, final | ambient_final, frozenset(new_changed), outside)
@@ -1030,10 +1141,17 @@ def reap_verified(
     root: Path,
     row_id: str,
     *,
+    run_id: str,
     herdr: HerdrControl,
 ) -> None:
-    """Record ``reaped`` before closing a verified child's tab."""
-    row = register_store.read_rows(root).get(row_id)
+    """Record ``reaped`` before closing a verified child's tab.
+
+    ``root`` must be the coordinator-recorded work location. A first-writer stamp
+    is not enough. A disagreeing or unrecorded directory is refused and the tab is
+    not closed.
+    """
+    register_store.assert_root_belongs_to_run(root, run_id, require_recorded=True)
+    row = register_store.read_rows(root, run_id=run_id).get(row_id)
     if row is None or row.get("phase") not in {"verified", "reaped"}:
         raise SessionLifecycleError(f"child {row_id!r} must be verified before reap")
     tab_id = row.get("tab_id")
@@ -1041,7 +1159,9 @@ def reap_verified(
         raise LaunchProtocolError(f"child {row_id!r} has no tab_id")
     cwd = Path(str(row.get("cwd", root)))
     if row.get("phase") != "reaped":
-        register_store.upsert_row(root, row_id, {"phase": "reaped", "expected_state": "exited"})
+        register_store.upsert_row(
+            root, row_id, {"phase": "reaped", "expected_state": "exited"}, run_id=run_id
+        )
     if herdr.tab_present(tab_id, cwd=cwd):
         herdr.close_tab(tab_id, cwd=cwd)
 
@@ -1050,10 +1170,17 @@ def assert_child_not_vanished(
     root: Path,
     row_id: str,
     *,
+    run_id: str,
     herdr: HerdrControl,
 ) -> None:
-    """Raise when a registered child disappears without a recorded reap."""
-    row = register_store.read_rows(root).get(row_id)
+    """Raise when a registered child disappears without a recorded reap.
+
+    ``root`` must be the coordinator-recorded work location. A first-writer stamp
+    is not enough. A disagreeing directory is refused rather than treated as a
+    missing child.
+    """
+    register_store.assert_root_belongs_to_run(root, run_id, require_recorded=True)
+    row = register_store.read_rows(root, run_id=run_id).get(row_id)
     if row is None:
         raise SessionLifecycleError(f"unknown child row {row_id!r}")
     if row.get("phase") == "reaped":

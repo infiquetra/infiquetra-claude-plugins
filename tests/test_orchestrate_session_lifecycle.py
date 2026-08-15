@@ -39,6 +39,15 @@ SUBSCRIBER = _load("subscriber")
 LIFECYCLE = _load("session_lifecycle")
 
 
+def _record(root: Path, run_id: str) -> Path:
+    directory = Path(str(REGISTER.register_dir()))
+    path = directory / f"{run_id}.root"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(str(Path(root).resolve()), encoding="utf-8")
+    path.chmod(0o600)
+    return path
+
+
 def _spec(**overrides: Any) -> Any:
     values = {
         "run_id": "run-a",
@@ -63,6 +72,22 @@ IDENTITY = None
 def _identity() -> None:
     global IDENTITY
     IDENTITY = LIFECYCLE.LaunchIdentity("actual-child", "workspace-a", "tab-a", "pane-a", True)
+
+
+@pytest.fixture(autouse=True)
+def _orchestrator_secret_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep per-run records out of the operator's home, and outside the test root.
+
+    ``launch_child`` records the run root next to the run secret. The secret directory
+    is refused if it sits inside the repository, and these tests use ``tmp_path`` as
+    that repository, so the directory must be a sibling, not a child.
+    """
+    monkeypatch.setenv(
+        "ORCHESTRATE_RUN_SECRET_DIR", str(tmp_path.parent / f"{tmp_path.name}-run-secrets")
+    )
+    monkeypatch.setenv(
+        "ORCHESTRATE_REGISTER_DIR", str(tmp_path.parent / f"{tmp_path.name}-registers")
+    )
 
 
 class FakeGit:
@@ -155,7 +180,7 @@ class FakeHerdr:
                 )
 
     def close_tab(self, tab_id: str, *, cwd: Path) -> None:
-        row = REGISTER.read_rows(cwd)["child-a"]
+        row = REGISTER.read_rows(cwd, run_id="run-a")["child-a"]
         assert row["phase"] == "reaped"
         self.closed.append(tab_id)
 
@@ -205,7 +230,7 @@ def test_register_row_and_run_label_exist_before_a_failing_launch(tmp_path: Path
     wrapper = FakeWrapper(launch_error=RuntimeError("launch exploded"))
 
     def assert_write_ahead(label: str) -> None:
-        row = REGISTER.read_rows(tmp_path)["child-a"]
+        row = REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]
         assert row["task"] == label == "orchestrate-run-a-child-a"
         assert row["phase"] == "launching"
 
@@ -214,13 +239,21 @@ def test_register_row_and_run_label_exist_before_a_failing_launch(tmp_path: Path
         _launch(tmp_path, wrapper=wrapper)
 
     assert wrapper.launches == 1
-    assert REGISTER.read_rows(tmp_path)["child-a"]["phase"] == "launching"
+    assert REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]["phase"] == "launching"
+
+
+def test_launch_records_the_run_register_directory(tmp_path: Path) -> None:
+    """The run's store is this argument, recorded before any landing exists."""
+    _launch(tmp_path)
+    import completion as completion_mod
+
+    assert completion_mod.read_run_root("run-a") == tmp_path.resolve()
 
 
 def test_planned_row_exists_before_mutating_worktree_provision(tmp_path: Path) -> None:
     class FailingProvisionGit(FakeGit):
         def provision(self, root: Path, spec: Any, *, base_commit: str | None = None) -> Any:
-            row = REGISTER.read_rows(root)[spec.row_id]
+            row = REGISTER.read_rows(root, run_id="run-a")[spec.row_id]
             assert row["phase"] == "planned"
             assert row["task"] == "orchestrate-run-a-child-a"
             assert row["scope"] == ["src"]
@@ -230,7 +263,7 @@ def test_planned_row_exists_before_mutating_worktree_provision(tmp_path: Path) -
     with pytest.raises(LIFECYCLE.LandingError, match="environment setup failed"):
         _launch(tmp_path, _spec(mutating=True), git=FailingProvisionGit(tmp_path))
 
-    assert REGISTER.read_rows(tmp_path)["child-a"]["phase"] == "planned"
+    assert REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]["phase"] == "planned"
 
 
 # Scenario 2: recover an orphaned launch -----------------------------------------------------
@@ -244,13 +277,13 @@ def test_retry_discovers_written_label_after_crash_before_identifier_write(
     original = REGISTER.upsert_row
     crashed = False
 
-    def crash_before_identifiers(root: Path, row_id: str, fields: Any) -> Any:
+    def crash_before_identifiers(root: Path, row_id: str, fields: Any, **kwargs: Any) -> Any:
         nonlocal crashed
         if not crashed and "pane_id" in fields:
             crashed = True
             herdr.discovered = IDENTITY
             raise RuntimeError("crash after side effect")
-        return original(root, row_id, fields)
+        return original(root, row_id, fields, **kwargs)
 
     monkeypatch.setattr(REGISTER, "upsert_row", crash_before_identifiers)
     with pytest.raises(RuntimeError, match="crash after side effect"):
@@ -259,7 +292,7 @@ def test_retry_discovers_written_label_after_crash_before_identifier_write(
     recovered, _landing, _resolution = _launch(tmp_path, wrapper=wrapper, herdr=herdr)
     assert recovered == IDENTITY
     assert wrapper.launches == 1
-    assert REGISTER.read_rows(tmp_path)["child-a"]["pane_id"] == "pane-a"
+    assert REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]["pane_id"] == "pane-a"
 
 
 # Scenario 3: launch success without readiness -----------------------------------------------
@@ -281,7 +314,7 @@ def test_launch_without_sentinel_is_not_ready_not_running(tmp_path: Path) -> Non
             git=FakeGit(tmp_path),
             sentinel_nonce="timeout",
         )
-    row = REGISTER.read_rows(tmp_path)["child-a"]
+    row = REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]
     assert row["phase"] == "launched"
     assert row["observed_state"] == "not_ready"
     assert row["observed_state_source"] == "inferred:readiness_timeout"
@@ -309,7 +342,9 @@ def test_trust_prompt_is_surfaced_before_any_dispatch(tmp_path: Path) -> None:
         )
     assert interaction.matches == []
     assert herdr.sent == []
-    assert REGISTER.read_rows(tmp_path)["child-a"]["observed_state"] == "trust_prompt"
+    assert (
+        REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]["observed_state"] == "trust_prompt"
+    )
 
 
 # Scenario 5: mutating worktree plus environment ---------------------------------------------
@@ -534,7 +569,9 @@ def test_read_only_child_commit_is_compared_with_its_launch_base(tmp_path: Path)
         )
 
     assert landing.base_commit is not None
-    assert REGISTER.read_rows(repo)[child.row_id]["base_commit"] == landing.base_commit
+    assert (
+        REGISTER.read_rows(repo, run_id="run-a")[child.row_id]["base_commit"] == landing.base_commit
+    )
 
 
 def test_committed_ambient_checkout_change_is_included_in_scope_check(tmp_path: Path) -> None:
@@ -733,35 +770,140 @@ def test_scope_and_cli_boundary_lessons_are_recorded_in_the_journal() -> None:
 
 
 def test_reap_records_transition_before_closing_tab(tmp_path: Path) -> None:
+    _record(tmp_path, "run-a")
     REGISTER.upsert_row(
         tmp_path,
         "child-a",
         {"run_id": "run-a", "phase": "verified", "tab_id": "tab-a", "cwd": str(tmp_path)},
+        run_id="run-a",
     )
     herdr = FakeHerdr()
-    LIFECYCLE.reap_verified(tmp_path, "child-a", herdr=herdr)
+    LIFECYCLE.reap_verified(tmp_path, "child-a", herdr=herdr, run_id="run-a")
     assert herdr.closed == ["tab-a"]
-    assert REGISTER.read_rows(tmp_path)["child-a"]["phase"] == "reaped"
+    assert REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]["phase"] == "reaped"
 
 
 # Scenario 8: unrecorded disappearance --------------------------------------------------------
 
 
 def test_vanished_child_raises_unless_reap_was_recorded(tmp_path: Path) -> None:
+    _record(tmp_path, "run-a")
     REGISTER.upsert_row(
         tmp_path,
         "child-a",
         {"run_id": "run-a", "phase": "launched", "tab_id": "tab-a", "cwd": str(tmp_path)},
+        run_id="run-a",
     )
     herdr = FakeHerdr()
     herdr.present = False
     with pytest.raises(LIFECYCLE.VanishedChildError, match="before the register recorded"):
-        LIFECYCLE.assert_child_not_vanished(tmp_path, "child-a", herdr=herdr)
+        LIFECYCLE.assert_child_not_vanished(tmp_path, "child-a", herdr=herdr, run_id="run-a")
 
-    REGISTER.upsert_row(tmp_path, "child-a", {"phase": "reaped"})
+    REGISTER.upsert_row(tmp_path, "child-a", {"phase": "reaped"}, run_id="run-a")
     checks_before = herdr.presence_checks
-    LIFECYCLE.assert_child_not_vanished(tmp_path, "child-a", herdr=herdr)
+    LIFECYCLE.assert_child_not_vanished(tmp_path, "child-a", herdr=herdr, run_id="run-a")
     assert herdr.presence_checks == checks_before
+
+
+def test_reap_refuses_a_directory_that_is_not_the_runs_work_location(
+    tmp_path: Path,
+) -> None:
+    """A repository argument that does not bind the run must not close the tab."""
+    repo = tmp_path / "repo"
+    other = tmp_path / "other"
+    repo.mkdir()
+    other.mkdir()
+    _record(repo, "run-a")
+    REGISTER.upsert_row(
+        repo,
+        "child-a",
+        {"run_id": "run-a", "phase": "verified", "tab_id": "tab-a", "cwd": str(repo)},
+        run_id="run-a",
+    )
+    herdr = FakeHerdr()
+    with pytest.raises(REGISTER.RegisterError, match="bound to"):
+        LIFECYCLE.reap_verified(other, "child-a", herdr=herdr, run_id="run-a")
+    assert herdr.closed == []
+    assert REGISTER.read_rows(repo, run_id="run-a")["child-a"]["phase"] == "verified"
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    with pytest.raises(REGISTER.RegisterError, match="bound to"):
+        LIFECYCLE.reap_verified(empty, "child-a", herdr=herdr, run_id="run-a")
+    assert herdr.closed == []
+
+
+def test_a_vanish_check_refuses_a_directory_that_is_not_the_runs_work_location(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    other = tmp_path / "other"
+    repo.mkdir()
+    other.mkdir()
+    _record(repo, "run-a")
+    REGISTER.upsert_row(
+        repo,
+        "child-a",
+        {"run_id": "run-a", "phase": "launched", "tab_id": "tab-a", "cwd": str(repo)},
+        run_id="run-a",
+    )
+    with pytest.raises(REGISTER.RegisterError, match="bound to"):
+        LIFECYCLE.assert_child_not_vanished(other, "child-a", herdr=FakeHerdr(), run_id="run-a")
+
+
+def test_reap_refuses_when_the_run_has_no_work_location(tmp_path: Path) -> None:
+    """A destructive path must not guess a repository the run never bound."""
+    path = REGISTER.register_path("run-a")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "run_id": "run-a",
+                "rows": {
+                    "child-a": {
+                        "id": "child-a",
+                        "run_id": "run-a",
+                        "phase": "verified",
+                        "tab_id": "tab-a",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    herdr = FakeHerdr()
+    with pytest.raises(REGISTER.RegisterError, match="no recorded work location"):
+        LIFECYCLE.reap_verified(empty, "child-a", herdr=herdr, run_id="run-a")
+    assert herdr.closed == []
+
+
+def test_reap_refuses_when_only_a_first_writer_stamp_exists(tmp_path: Path) -> None:
+    """A stamp is continuity. Closing a tab requires the recorded root."""
+    REGISTER.upsert_row(
+        tmp_path,
+        "child-a",
+        {"run_id": "run-a", "phase": "verified", "tab_id": "tab-a", "cwd": str(tmp_path)},
+        run_id="run-a",
+    )
+    herdr = FakeHerdr()
+    with pytest.raises(REGISTER.RegisterError, match="no recorded work location"):
+        LIFECYCLE.reap_verified(tmp_path, "child-a", herdr=herdr, run_id="run-a")
+    assert herdr.closed == []
+    assert REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]["phase"] == "verified"
+
+
+def test_a_vanish_check_refuses_when_only_a_first_writer_stamp_exists(tmp_path: Path) -> None:
+    REGISTER.upsert_row(
+        tmp_path,
+        "child-a",
+        {"run_id": "run-a", "phase": "launched", "tab_id": "tab-a", "cwd": str(tmp_path)},
+        run_id="run-a",
+    )
+    with pytest.raises(REGISTER.RegisterError, match="no recorded work location"):
+        LIFECYCLE.assert_child_not_vanished(tmp_path, "child-a", herdr=FakeHerdr(), run_id="run-a")
 
 
 # Scenario 9: readiness is an interaction, not agent_status ----------------------------------
@@ -921,7 +1063,7 @@ def test_readiness_uses_output_match_and_never_agent_status_alone(tmp_path: Path
             sentinel_nonce="socket",
         )
 
-    row = REGISTER.read_rows(tmp_path)["child-a"]
+    row = REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]
     assert ready.readiness_sentinel not in herdr.sent[-1]
     assert "part 1:" in herdr.sent[-1] and "part 2:" in herdr.sent[-1]
     assert row["phase"] == "ready"
@@ -952,7 +1094,7 @@ def test_real_socket_readiness_timeout_is_bounded_and_records_not_ready(tmp_path
         elapsed = time.monotonic() - started
 
     assert elapsed < 0.14
-    row = REGISTER.read_rows(tmp_path)["child-a"]
+    row = REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]
     assert row["observed_state"] == "not_ready"
     assert row["observed_state_source"] == "inferred:readiness_timeout"
 
@@ -981,7 +1123,7 @@ def test_chatty_socket_readiness_still_honors_the_outer_deadline(
             sentinel_nonce="chatty-bounded",
         )
 
-    row = REGISTER.read_rows(tmp_path)["child-a"]
+    row = REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]
     assert row["observed_state"] == "not_ready"
     assert row["observed_state_source"] == "inferred:readiness_timeout"
 
@@ -1029,7 +1171,7 @@ def test_qwen_disabled_thinking_has_an_actionable_effort_error(tmp_path: Path) -
             git=FakeGit(tmp_path),
         )
 
-    row = REGISTER.read_rows(tmp_path)["child-a"]
+    row = REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]
     assert row["observed_state"] == "not_ready"
     assert row["observed_state_source"] == "inferred:effort_not_applied"
 
@@ -1051,7 +1193,7 @@ def test_qwen_effort_timeout_is_recorded_before_readiness_dispatch(tmp_path: Pat
             git=FakeGit(tmp_path),
         )
 
-    row = REGISTER.read_rows(tmp_path)["child-a"]
+    row = REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]
     assert interaction.matches == ["Reasoning effort"]
     assert row["observed_state"] == "not_ready"
     assert row["observed_state_source"] == "inferred:effort_timeout"
@@ -1129,7 +1271,7 @@ def test_default_herdr_session_is_fixed_across_launch_and_register(tmp_path: Pat
     assert LIFECYCLE.HerdrInteraction().socket_path == EVENTS.DEFAULT_SOCKET_PATH
 
     _launch(tmp_path, child)
-    assert REGISTER.read_rows(tmp_path)["child-a"]["herdr_session"] == "default"
+    assert REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]["herdr_session"] == "default"
 
 
 def test_withdrawn_revision_baseline_has_no_schema_or_control_wiring() -> None:
@@ -1218,26 +1360,32 @@ def test_dispatch_echo_never_contains_the_assembled_readiness_sentinel(tmp_path:
         git=FakeGit(tmp_path),
         sentinel_nonce="not-echoed",
     )
-    row = REGISTER.read_rows(tmp_path)["child-a"]
+    row = REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]
     assert ready.readiness_sentinel not in herdr.sent[-1]
     assert "part 1:" in herdr.sent[-1]
     assert "part 2:" in herdr.sent[-1]
     assert row["phase"] == "ready"
 
 
-def test_permission_argv_uses_real_read_only_flags_without_claiming_qwen_scope() -> None:
-    assert LIFECYCLE.permission_argv("codex", mutating=False) == ["--sandbox", "read-only"]
-    assert LIFECYCLE.permission_argv("claude", mutating=False) == [
-        "--permission-mode",
-        "plan",
-    ]
-    assert LIFECYCLE.permission_argv("qwen", mutating=False) == []
-    assert LIFECYCLE.permission_argv("codex", mutating=True) == [
-        "--sandbox",
-        "workspace-write",
-    ]
-    assert LIFECYCLE.permission_argv("grok", mutating=True) == ["--sandbox", "workspace"]
-    assert LIFECYCLE.permission_argv("qwen", mutating=True) == ["--sandbox"]
-    assert LIFECYCLE.permission_argv("agy", mutating=True) == ["--sandbox"]
-    assert LIFECYCLE.permission_argv("claude", mutating=True) == []
-    assert LIFECYCLE.permission_argv("muse", mutating=True) == []
+def test_permission_argv_is_the_workspace_write_posture_for_every_child() -> None:
+    """One posture, not two, and the read-only distinction is not expressed as a flag.
+
+    Every child -- mutating or not -- is dispatched with an artifact it must write, and no
+    supported CLI accepts a repository-relative path allowlist, so a read-only flag never
+    contained a read-only child; it only made its dispatch impossible to satisfy. Containment
+    inside the workspace is the Git boundary check, whose repository write allowlist for a
+    read-only child is empty.
+    """
+    assert LIFECYCLE.permission_argv("codex") == ["--sandbox", "workspace-write"]
+    assert LIFECYCLE.permission_argv("grok") == ["--sandbox", "workspace"]
+    assert LIFECYCLE.permission_argv("qwen") == ["--sandbox"]
+    assert LIFECYCLE.permission_argv("agy") == ["--sandbox"]
+    # No overstated control: Claude has no cwd-write boundary flag, and Muse's sandbox is already
+    # on by default. An empty list is the honest answer, not an unhandled runtime.
+    assert LIFECYCLE.permission_argv("claude") == []
+    assert LIFECYCLE.permission_argv("muse") == []
+    assert LIFECYCLE.permission_argv("unknown-runtime") == []
+    for runtime in ("claude", "codex", "grok", "muse", "qwen", "agy"):
+        argv = LIFECYCLE.permission_argv(runtime)
+        assert "read-only" not in argv and "plan" not in argv
+        assert "--disable-write" not in argv

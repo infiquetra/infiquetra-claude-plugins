@@ -1,5 +1,193 @@
 # Changelog
 
+## [0.4.0] - 2026-08-13
+
+### Added
+
+- The live register is one JSON document per run, addressed by `run_id` in an
+  orchestrator-owned host-local directory (default `~/.orchestrate/registers/<run_id>.json`,
+  relocatable by `ORCHESTRATE_REGISTER_DIR`). A child cannot write it by working in its
+  landing. A `run_id` is host-global: two callers that name the same id share one live
+  document in one checkout. Two checkouts of one `run_id` are a collision. Every
+  decision and mutation API requires `run_id`. `retire_run` forgets the per-run secret
+  first, then archives the document into the recorded work location, then deletes the
+  live file and the recorded-root sidecar, so a reused id is a new authentication
+  identity. Sidecar create, key mint, key delete, and retirement share one per-run lock,
+  so a concurrent mint cannot complete while retirement still holds it. Forgetting the
+  key requires the coordinator-recorded work location, including when the live file is
+  already gone. Both sides of a work-location comparison are canonicalized to the git
+  top level. Claude and Muse have no
+  workspace-write flag; mode `0600` does not exclude a child running as this account, so
+  the seal does not defend that residual.
+- Completion is the only path to `verified`. A child reaches it when its predicate's dependency
+  closure is unchanged, its artifact was settled by the orchestrator's own rename, that artifact
+  carries this dispatch's pre-established run binding, the predicate passes, the repository
+  boundary is clean, the recorded destination has actually changed, and — for judgment-shaped work
+  — a claimed independent verifier's depth sample is on record. A failure records a verdict when
+  the landing belongs to the receipt's git repository; a landing in a different repository raises
+  rather than records, because neither register is then a store this evaluation may write. A
+  row's phase is `verified` if and only if its latest verdict is a pass: a first failure leaves
+  the phase alone, and a failing re-evaluation demotes a previously verified row so the reap
+  gate cannot consume a contradiction as a pass.
+- The receipt binds **every input the verdict depends on**, not the labels that name the dispatch.
+  The specification, landing, baseline and receipt arrive as four independent arguments. A landing
+  that belongs to the receipt's git repository has its outcome recorded under the specification's
+  row in that register; a landing that does not raises rather than records. So the run, row,
+  landing, work shape, mutability, declared scope, base commit, ambient root and changed-paths
+  baseline must all agree with the receipt before anything else is read. Otherwise a
+  receipt issued for judgment work verified under a mechanical shape, which skips the depth gate
+  entirely, and an out-of-scope write verified under a widened scope. `runtime`, `integration_mode`
+  and `destination` are also compared, but as consistency fields rather than deciding inputs:
+  evaluation reads them from the receipt, never from the supplied arguments, so a mismatch is a
+  muddled caller rather than a substitution. `write_scope` is sealed and deliberately **not**
+  compared — it is a pure function of inputs that are each compared individually, so a comparison
+  against it could never be the check that catches anything.
+- **The repository is derived, not supplied.** It is the work location the receipt binds —
+  where git runs, where artifacts settle, where retirement archives — not the address of the
+  live register. The live register is addressed by `run_id`. A caller who could name a
+  second repository could still bind a landing in one tree to a receipt sealed for another;
+  that is why issuance derives the work location from the landing and compares it to the
+  recorded run root. The per-run secret does not cover this: it is named for the run alone
+  and lives outside every repository, so it is shared by `run_id` on this host. R12 is
+  one checkout: a second checkout cannot write the register. The secret is still shared,
+  which is why it cannot stand in for a work-location check.
+  Comparing a supplied root against the receipt was not enough, because the receipt's copy was made
+  from that same supplied value at issue time — that catches a caller who changes it in between and
+  cannot catch one that was wrong to begin with. So `issue_receipt` derives it from
+  `landing.ambient_root`, refuses a landing that fails git identity or containment, and compares
+  the derived store to the run root recorded at launch — a value whose provenance is not the
+  landing. `evaluate_completion`, `settle_artifact` and `settlement_record` take it from the
+  sealed receipt; none of the four accepts it as an argument. Git identity and containment are
+  two properties: a nested repository shares ancestry and not identity; a sibling worktree
+  shares identity and not ancestry. The live register is addressed by run id, not by working
+  tree. Evaluation raises rather than records when the landing does not belong in the receipt's
+  store.
+  A landing that does not name its repository is refused rather than defaulted to its working
+  directory. `read_receipt` is
+  the one function that still takes a repository, because it is handed one with a row id and has no
+  receipt yet — it checks the sealed root against the register it read, which is what stops an
+  authentic verifier dispatch copied from another checkout of the same run from satisfying the
+  depth gate here.
+- The changed-paths baseline is bound by digest, because it is the one deciding input with no label:
+  a baseline is repository state at an instant, and the same landing has different valid snapshots
+  before and after a write, so binding the landing says nothing about when the snapshot was taken.
+  Without it, an out-of-scope write verified against a baseline taken after the write. The snapshot
+  is still produced once by the readiness path and passed in, rather than re-taken at issue, because
+  two producers of one snapshot is the shape that hid a defect in the previous round.
+- The predicate runs in its own process group, and the group is killed and waited out before the
+  evidence is re-observed — on every exit path, success included. Waiting for the direct process
+  only established that *that* process finished: a descendant outlived it, was reparented away, and
+  rewrote the artifact after the snapshot that certified it, leaving a recorded pass whose durable
+  digest did not match the file. A group that will not drain is `predicate_descendants`, a refusal.
+  Group membership is the whole of that claim: a descendant that leaves the group with its own
+  `setsid` is not reached by the kill, and `references/predicates.md` enumerates every actor the
+  control does and does not cover.
+- A `reaped` row keeps its terminal phase whichever way a later verdict goes. Demotion on a failing
+  re-evaluation already worked; a *passing* re-evaluation wrote `verified` over `reaped`, and needed
+  no forgery to do it — catch-up re-evaluates run-bound artifacts on startup and settlement replays
+  cleanly, so a closed tab returned as a live verified child.
+- The durable records the register holds are authenticated. The live file sits outside every
+  landing, so a sandboxed child cannot rewrite it by address. Claude and Muse have no
+  workspace-write flag, so the dispatch receipt and settlement record each carry a keyed
+  digest under a per-run orchestrator secret held outside every landing. A digest that
+  does not match this run's key authenticates against nothing and is refused. A
+  same-account child that can read the key can produce a matching digest; the seal does
+  not establish authorship against that residual. An added field is a mismatch rather
+  than an ignored key, and a secret directory inside the repository is refused outright.
+- Evaluation is safe to re-run for one dispatch. Settlement is recorded and replayed rather than
+  re-attempted, which is what makes the restart path and judgment work reachable at all: the rename
+  is one-shot, so without a record a second evaluation of a correct child fails as though it had
+  written its destination directly.
+- Predicates are a typed, closed schema: a fixed argument vector with a bounded timeout and output
+  cap. Shell text, an `argv` string, a shell program, an inline-source flag, an unknown key, and an
+  out-of-range limit are all rejected rather than clamped or ignored. The check runs inline in the
+  orchestrator's process tree; a non-zero exit, a hang, an unlaunchable program, and output past
+  the cap are each a failure and never a pass, with output streamed so an unbounded predicate is
+  killed while still writing rather than buffered.
+- A predicate cannot be weakened by the child it certifies. Its resolved import closure — not only
+  its entry-point path — must lie outside everything the child may write, and a digest over that
+  closure's contents is captured before dispatch and re-checked before evaluation, so a change to
+  any statically known dependency fails even when that file sits outside the child's declared
+  scope. The closure includes every parent package initializer along a dotted import, because Python
+  executes those before the leaf module. The analysis is bounded and fails closed, and every route
+  to other code it does *not* follow — dynamic import, `sys.path` insertion, installed distributions,
+  native extensions' own imports, data files, non-Python entry points — is enumerated member by
+  member in `references/predicates.md`.
+- Settlement is performed rather than inferred, because a file on disk does not record whether it
+  arrived by rename or by direct write. The child writes only an in-flight sibling of its
+  destination; the orchestrator requires the destination to be byte-for-byte its pre-dispatch state
+  and then renames the in-flight file into place itself. The predicate therefore reads only a
+  renamed path. A directly written artifact, a missing deliverable, and an in-flight symlink are
+  each refused with a real observation.
+- Run binding is established before the child runs and stored in the register, never read from a
+  file beside the artifact. An artifact from another run, another child, or another attempt is
+  rejected, and the failure names the binding it does carry.
+- Every child's deliverable lands in a directory that is exclusively its own and required to be
+  invisible to the repository boundary. That is asked as the stronger question than "matched by an
+  ignore rule": a tracked path stays visible to the boundary whatever the ignore rules say, so an
+  artifact tree someone force-added is refused at dispatch with an actionable message rather than
+  failing every later child on a control firing on the orchestrator's own rename. A read-only child's declared scope is a read scope, not a repository
+  write allowlist. Concurrent read-only children with disjoint scopes therefore both complete
+  cleanly, which they previously did not, while a read-only child that does write into the shared
+  checkout still fails.
+- The completion evaluator is held to the same boundary it enforces. Three surfaces are snapshotted
+  immediately before the predicate runs and compared after it: the landing, the ambient checkout,
+  and the artifact directory itself. The third is not redundant — that directory is required to be
+  invisible to Git, so a predicate that rewrote the settled artifact after its digest was taken was
+  previously a clean pass with a recorded digest that no longer matched the file. Any
+  predicate-authored change fails as a predicate defect rather than being attributed to the child.
+- Integration to the recorded destination is verified before reaping is possible — a `branch` tip
+  that has not advanced and a `path` whose content has not changed both block verification, while
+  `none` states that read-only work integrates nowhere instead of silently skipping the check.
+- Judgment-shaped work, classified through fleet-core's authoritative work-shape vocabulary
+  including its role-tier aliases, cannot reach `verified` on mechanical coverage alone. A depth
+  sample records verifier identity, the digest binding it to this artifact, sampled claims, evidence
+  locations, and dispositions from a closed set, and all of it is persisted to the register so a
+  child that was genuinely sampled and one whose sample certified nothing are not the same green row.
+  The named verifier must be a dispatch this orchestrator issued: an authenticated receipt for the
+  verifier row, sealed under this repository, whose run matches and whose sealed runtime matches the
+  sample's vendor, plus a phase that is one of the phases past launch and a matching recorded model.
+  A register row alone is something a child can write. **What that establishes is that a verifier was
+  dispatched in this repository, for this run, with this vendor — not that it ran.** The phase and
+  model are register columns, not sealed fields, so moving a receipt-bearing verifier's phase from
+  `planned` to `working` presents a session that never read anything; the phase check refuses the
+  honest never-started case and not a planted one. It asks for membership in `launched`, `ready`,
+  `working`, `verified`, `reaped` rather than refusing `planned` and `launching` by name, because a
+  refusal written as exclusions accepts every value nobody thought of, including ones that are not
+  phases at all. Sealing it needs post-launch evidence that lives in other units, and it is the same
+  defect as the accepted residual on a child's own `phase` column, against a different column of the
+  same untrusted store. A sample from the child
+  itself, one recorded against another artifact, one with no claims, any unsupported claim, and a
+  sample with no supported claim at all each block verification. Malformed external depth data is
+  recorded as a closed failure rather than raised, because a control that raises instead of recording
+  leaves the register showing a working child with no verdict.
+- `references/predicates.md` states the completion contract, including for every control what it
+  does **not** establish — notably that settlement does not prove how the child produced its
+  in-flight file, that closure analysis does not follow dynamic imports, and that a depth sample
+  cannot prove the verifier was blind.
+
+### Changed
+
+- Every child is launched with its runtime's ordinary workspace-write posture, mutating or not.
+  A read-only flag forbade the artifact every child is required to write, and no supported CLI
+  accepts a repository-relative path allowlist, so it never contained a read-only child — it only
+  made its dispatch impossible to satisfy. That posture contains writes *outside* the workspace and
+  nothing inside it; the boundary check is post-hoc, partial, repository-visible change detection
+  that fails a child's completion rather than preventing its write, and a read-only child's
+  repository write allowlist is empty.
+- `GitLanding` answers two further boundary questions it already owned: whether a revision exists,
+  and whether a path is genuinely invisible to the boundary — ignored *and* untracked. The scope
+  helpers it shares with completion are now part of its public surface.
+- A child's default environment command is `uv sync --locked --extra dev`, matching how this
+  repository's CI provisions. A bare `uv sync` leaves a fresh worktree with no pytest, ruff or mypy,
+  which is the set of programs a predicate is most likely to be, and that field exists precisely
+  because a worktree cannot otherwise run its predicate at all.
+
+### Not in this release
+
+- Planning and vendor routing, admission control, spend and concurrency bounds, hang detection,
+  mirror behavior, and the `/orchestrate` command.
+
 ## [0.3.0] - 2026-08-13
 
 ### Added

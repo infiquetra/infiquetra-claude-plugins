@@ -1,27 +1,38 @@
 ---
 name: orchestrate
-description: The orchestrate register, tracked herdr subscriber, and write-ahead child session lifecycle for multi-vendor runs, with interaction readiness, scoped worktrees, nonce-bound sentinels, reconnect catch-up, and recorded reaping. No predicate implementations, integration gate, or mirror behavior yet. Triggers on "orchestrate register", "orchestrate subscriber", "orchestrate session lifecycle", "herdr event catch-up", "the run register".
+description: The orchestrate register, tracked herdr subscriber, write-ahead child session lifecycle, and completion gate for multi-vendor runs, with interaction readiness, scoped worktrees, nonce-bound sentinels, reconnect catch-up, bounded predicates on settled run-bound artifacts, verified integration, and recorded reaping. No routing, spend gate, or mirror behavior yet. Triggers on "orchestrate register", "orchestrate subscriber", "orchestrate session lifecycle", "orchestrate completion", "orchestrate predicate", "herdr event catch-up", "the run register".
 ---
 
-# orchestrate — register, event subscriber, and session lifecycle
+# orchestrate — register, event subscriber, session lifecycle, and completion
 
 `orchestrate` coordinates multi-vendor herdr sessions: Claude, Codex, Grok, Muse, Qwen, and agy
 children dispatched under one operator-driven run, aggregated back through a mirror and woken by a
-subscriber holding herdr's event socket across turns. This skill currently ships **three pieces of
-that system: the register, subscriber, and child session lifecycle**. The register is the whole state model (KTD5) and the
+subscriber holding herdr's event socket across turns. This skill currently ships **four pieces of
+that system: the register, subscriber, child session lifecycle, and completion gate**. The register is the whole state model (KTD5) and the
 Claude↔Codex handoff seam (R12). The subscriber holds protocol 19 event streams, wakes the
 orchestrator, and performs reconnect catch-up (KTD3/KTD12). The session lifecycle owns write-ahead
 launch, recovery, interaction readiness, landing isolation, scope checks, and recorded reaping.
-Predicate implementations, spend gating, hang detection, mirror behavior, and the `/orchestrate`
+Completion is the only path to `verified` (R5): a bounded, typed predicate run inline by the
+orchestrator on a settled, run-bound artifact, inside a clean boundary, with integration to the
+recorded destination verified before a child can be reaped.
+Routing, spend gating, hang detection, mirror behavior, and the `/orchestrate`
 command itself land in later units of
 `docs/plans/2026-08-12-orchestrate-plugin-plan.md` and is deliberately absent here.
 
 ## What the register is
 
-A single flat JSON document, global across a repository (not per-run), at
-`.orchestrate/register.json`. One row per tracked entity: one per dispatched child, one for the
-mirror, one for the subscriber. Per-run material — retired rows, run-scoped artifacts — lives
-under `.orchestrate/runs/<run-id>/`.
+A single flat JSON document **per run**, addressed by `run_id` alone, held outside every
+working tree (default `~/.orchestrate/registers/<run_id>.json`, relocatable by
+`ORCHESTRATE_REGISTER_DIR`). One row per tracked entity: one per dispatched child, one for the
+mirror, one for the subscriber. A `run_id` is host-global: two callers that name the same id
+share one live document in **one checkout**. Two checkouts of one `run_id` are a
+collision, not a handoff. `retire_run` forgets the per-run secret first, then archives
+the document into the repository at `.orchestrate/runs/<run-id>/register-final.json`,
+then deletes the live file and the recorded-root sidecar, so a reused id is a new
+authentication identity. Forgetting the key requires the coordinator-recorded work
+location, including when the live file is already gone. Every decision and mutation
+API requires `run_id`; a row cannot be named without naming its run. A user-facing
+`--root` is canonicalized to the git top level before it is validated or stamped.
 
 The implementation is `scripts/register.py`. Read its module docstring before writing to the
 register from any later unit — it documents every column's meaning, including two facts measured
@@ -41,7 +52,7 @@ the assembled marker stays out of echoed dispatch input.
 
 - **Atomic, durable writes.** Every write is temp-sibling-file, `fsync`, then `os.replace` (not
   just temp-plus-`os.replace` — `fsync` before the replace is what keeps a machine crash right
-  after a successful replace from leaving `register.json` present but empty, matching
+  after a successful replace from leaving the live register present but empty, matching
   `run_ledger.py` / `manifest_store.py` elsewhere in this repository). No reader ever observes a
   torn file. Concurrent read-modify-write cycles are serialized with an exclusive advisory lock
   (`fcntl.flock`) around the register's own `.lock` sidecar, so two sequential writers never lose
@@ -55,14 +66,22 @@ the assembled marker stays out of echoed dispatch input.
   envelope, so a document-root key one runtime writes (a handoff cursor, say) survives an ordinary
   write by the other, on both the `upsert_row` and the `retire_run` path.
 - **A schema version this code does not support halts loudly (C3).** `register.py` writes a halt
-  receipt to `.orchestrate/halt-receipt.json` and raises, without ever touching
-  `register.json` itself.
-- **Retiring a run only touches that run's own rows, and is genuinely idempotent.** `retire_run`
-  moves every row whose `run_id` matches into `.orchestrate/runs/<run-id>/register-final.json`,
-  durably, before the live register is rewritten — every other run's rows are left exactly as
-  they were. Retiring the same run again after it already succeeded returns the existing archive
-  path unchanged rather than recomputing an empty set and overwriting it; retiring a run with
-  nothing live and no prior archive writes nothing and returns `None`.
+  receipt beside the live file (`<run_id>.halt-receipt.json`) and raises, without ever touching
+  the live register itself.
+- **Retiring a run archives that run's document and frees that generation.** `retire_run`
+  forgets the per-run secret first, then writes `.orchestrate/runs/<run-id>/register-final.json`
+  in the coordinator-recorded work location (verified against the caller-supplied root by
+  filesystem identity, after canonicalizing both sides to the git top level), then deletes
+  the live host-local file and the recorded-root sidecar. Sidecar create, key mint, key
+  delete, and retirement share one per-run lock, so a concurrent mint cannot complete
+  while retirement still holds it. When retirement returns, that generation's key and
+  sidecar are gone. A mint that waited is a new generation. A first-writer stamp is not
+  enough to authorize retirement or key deletion. A crash after the secret is gone leaves
+  receipts that no longer unseal; a second `retire_run` repairs a leftover key only when
+  the recorded root is still there to name the generation. No recorded root and no live
+  file is a true no-op — the key is not touched. A reused id therefore mints a new key.
+  A root that does not match the recorded work location raises and leaves the live file,
+  sidecar, and key untouched.
 - **Both hang-detection time columns always exist on a row.** `deadline` and `max_quiet_seconds`
   are alternative strategies — a caller sets whichever fits a given dispatch — and `upsert_row`
   seeds whichever one a caller didn't set to `None` at row creation, so this pair specifically
@@ -75,8 +94,10 @@ the assembled marker stays out of echoed dispatch input.
 from pathlib import Path
 import register  # scripts/register.py, on sys.path for the invoking skill/command
 
-root = Path.cwd()
-register.upsert_row(root, "child-1", {"run_id": "run-abc", "phase": "planned", "agent": "claude"})
+root = register.canonical_work_location(Path.cwd())
+register.upsert_row(
+    root, "child-1", {"phase": "planned", "agent": "claude"}, run_id="run-abc"
+)
 rows = register.read_rows(root, run_id="run-abc")
 register.retire_run(root, "run-abc")
 ```
@@ -121,6 +142,11 @@ python3 plugins/orchestrate/skills/orchestrate/scripts/subscriber.py \
   --subscriptions-json '[{"type":"pane.exited"}]'
 ```
 
+`--root` may be the current working directory, including a package subdirectory of a
+monorepo. The process canonicalizes it to the git top level before the first validation
+and the first stamp, so the documented invocation from `packages/tool` still names the
+repository `launch_child` records.
+
 ## Child session lifecycle
 
 `scripts/session_lifecycle.py` launches through `agent --herdr-control-only` only after a dry-run
@@ -136,19 +162,90 @@ readiness. Qwen receives its resolved `/effort` command in-session and must emit
 acknowledgement before work is dispatched.
 
 Mutating children receive a branch worktree plus an explicit environment setup; read-only children
-stay in the ambient checkout. The lifecycle is fixed to Herdr's default session. Vendor permission
-flags are applied where they express a real read-only or workspace-write posture. The scope control
+stay in the ambient checkout. The lifecycle is fixed to Herdr's default session. Every child gets
+its runtime's ordinary workspace-write posture, mutating or not: each is dispatched with an artifact
+it must write and no supported CLI accepts a path allowlist, so a read-only flag would forbid the
+one write the protocol requires. The scope control
 records a launch commit for every child and unions committed changes with uncommitted tracked and
 non-ignored changes. A mutating child's declared scope applies only to its isolated landing; every
 attributed ambient-checkout change violates that boundary. Git-ignored paths remain an explicit
 limitation requiring a separate filesystem boundary. Reaping records the transition before closing
-the tab. Live reaping remains gated on the later integration unit.
+the tab.
 
 See `references/substrate-contract.md` for the adapter, recovery, residual readiness risk, and
 failure contract.
 
+## Completion — the only path to `verified`
+
+`scripts/completion.py` decides whether a child is done, and records why either way. A predicate is
+a typed, closed schema: a fixed argument vector with a bounded timeout and output cap, rejected
+rather than clamped when it exceeds either, and rejected outright when it is shell text. It runs
+inline in the orchestrator's own process tree — the mirror never decides (KTD6).
+
+Before dispatch the orchestrator issues a receipt: a run-binding token the child must carry inside
+its deliverable, the destination's exact pre-dispatch state, and a digest over the predicate's
+resolved dependency closure. A predicate whose closure lives where the child can write is rejected
+before evaluation, and a closure that changes between dispatch and evaluation fails as tampered.
+
+The receipt must belong to the child being evaluated: the specification, landing, baseline and
+receipt arrive as four independent arguments, so run, row and landing are checked against it first.
+The repository is deliberately not a fifth. Issuing derives the store from the landing, refuses
+a landing that fails git identity or containment, and compares that store to the run root
+recorded at launch — a value whose provenance is not the landing. Evaluation takes the store
+from the sealed receipt only after those same checks, and raises rather than records when they
+fail — do not add a root parameter back when you wire this up. Record the run root with
+`record_run_root` before the first issue, using the same path you will pass to `launch_child`.
+Issuance never writes that record. Git identity and containment are two properties: a nested
+repository shares ancestry and not identity; a sibling worktree shares identity and not
+ancestry. A working directory that is an ordinary subdirectory of the *same* store is still
+accepted. A store that is merely an ancestor of a mutating child's worktree is still accepted
+when no run root has been recorded. `ambient_root` is not a register column. Reconstruct it
+from the orchestrator's own resolved root — the same value `GitLanding.provision` sets — never
+from a child's working directory.
+
+Settlement is performed, not inferred. The child writes only an in-flight sibling of its
+destination; the orchestrator requires the destination to be untouched and then renames the
+in-flight file into place itself, so the predicate only ever reads a renamed path. That rename is
+one-shot, so it is recorded and replayed — which is what makes re-evaluation after a restart, and
+the two-step sequence judgment work needs, reachable at all. Every child's deliverable lands in a
+directory that is exclusively its own and invisible to the repository boundary, which is what lets
+concurrent read-only children in one checkout each complete cleanly.
+
+The live register sits outside every landing, addressed by `run_id`. A sandboxed child cannot
+write it by working in its landing. Claude and Muse expose no workspace-write flag, so those
+runtimes can still reach the host-local directory if they know the path. Mode `0600` on the
+run key excludes other operating-system accounts, not a child running as this account. For
+runtimes whose sandbox does not deny `~/.orchestrate`, this module does not defend against a
+child that reads the run key and seals payloads that verify. A digest that does not match
+this run's key authenticates against nothing. The seal does not establish that the
+orchestrator was the writer when the child can read the key.
+
+Integration to the recorded destination is verified before `verified` is written, so a child whose
+change never landed cannot be reaped. Judgment-shaped work additionally requires a claimed independent
+verifier's depth sample, bound by digest to the settled artifact and supporting at least one sampled
+claim — all of it persisted, so a sampled child and an unsampled one are not the same green row.
+
+**Dispatch a verifier the way you dispatch any other child: issue it a receipt.** The named verifier
+must carry an authenticated dispatch receipt for this run, sealed under this repository, and its
+vendor is compared against that sealed receipt rather than against a register column — so a verifier
+that is only *registered*, with no receipt issued, is refused and every judgment child that names it
+stays unverified. What this establishes is that a verifier was dispatched in this repository, for
+this run, with this vendor; it does not establish that the verifier ran, because the phase and model
+it is checked against are register columns any write-capable actor can set.
+`references/predicates.md` sets out where that stops.
+
+A row's phase is `verified` if and only if its latest verdict is a pass: a failing re-evaluation
+demotes a previously verified row rather than leaving a contradiction the reap gate would read as a
+pass, and a `reaped` row keeps its terminal phase whichever way the verdict goes. The receipt binds
+every input the verdict depends on — the repository root, work shape, scope, mutability, integration
+target and the changed-paths baseline, not only the identity labels — and the predicate runs in its
+own process group, whose surviving members are killed before the evidence is re-observed.
+
+See `references/predicates.md` for the full contract, including what each control does **not**
+establish.
+
 ## What is deliberately not here
 
 No `commands/` entry (`/orchestrate` lands with the units that need an invocable surface — KTD2),
-no predicate implementations or integration gate, no mirror behaviour beyond the register row it
+no planning or vendor routing, no admission control, no mirror behaviour beyond the register row it
 will eventually hold, no spend gate, and no hang detector.

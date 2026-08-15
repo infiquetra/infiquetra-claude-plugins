@@ -151,13 +151,17 @@ def catch_up(
     root: Path,
     snapshot: Mapping[str, Any],
     *,
-    run_id: str | None = None,
+    run_id: str,
 ) -> list[CatchUpRecord]:
     """Re-read every registered pane from one live snapshot and record observed state.
 
     A missing pane is recorded as ``exited``. A status mismatch remains a mismatch: catch-up does
     not promote lifecycle phases or trust detector status as a completion verdict.
+
+    ``root`` must be this run's work location. It is also the base for a relative
+    ``artifact_path``. A disagreeing directory is refused before any row is written.
     """
+    register_store.assert_root_belongs_to_run(root, run_id, require_binding=False)
     panes_value = snapshot.get("panes")
     agents_value = snapshot.get("agents")
     if not isinstance(panes_value, list) or not isinstance(agents_value, list):
@@ -227,7 +231,8 @@ def catch_up(
                 artifact_exists=artifact_exists,
             )
         )
-    register_store.upsert_rows(root, updates)
+    if updates:
+        register_store.upsert_rows(root, updates, run_id=run_id)
     return records
 
 
@@ -322,6 +327,7 @@ class Subscriber:
                 "observed_state": "working",
                 "observed_state_source": "observed:subscriber_start",
             },
+            run_id=self.run_id,
         )
 
     def run_catch_up(self) -> None:
@@ -420,7 +426,10 @@ class Subscriber:
             # counters. Freshness comes from the complete run/child/purpose/nonce identity above;
             # producers enforce echo ordering through sentinel_assembly_instructions().
             register_store.upsert_row(
-                self.root, row_id, {"last_event_at": herdr_events.unix_time()}
+                self.root,
+                row_id,
+                {"last_event_at": herdr_events.unix_time()},
+                run_id=self.run_id,
             )
             return True
         elif event.name in {"pane_exited", "pane_closed", "tab_closed"}:
@@ -432,6 +441,7 @@ class Subscriber:
                     "observed_state": "exited",
                     "observed_state_source": f"{source_prefix}:{event.name}",
                 },
+                run_id=self.run_id,
             )
             return True
         elif event.name == "pane_agent_status_changed":
@@ -444,6 +454,7 @@ class Subscriber:
                         "observed_state": observed,
                         "observed_state_source": "observed:pane_agent_status_changed",
                     },
+                    run_id=self.run_id,
                 )
                 return True
         return False
@@ -483,6 +494,7 @@ class Subscriber:
                     "observed_state": "exited",
                     "observed_state_source": "observed:subscriber_stop",
                 },
+                run_id=self.run_id,
             )
 
 
@@ -513,9 +525,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--socket", type=Path, default=herdr_events.DEFAULT_SOCKET_PATH)
     parser.add_argument("--subscriptions-json", required=True, type=_parse_subscriptions)
     args = parser.parse_args(argv)
+    root = register_store.canonical_work_location(args.root)
+    try:
+        register_store.assert_root_belongs_to_run(root, args.run_id, require_binding=False)
+    except register_store.RegisterError as exc:
+        print(f"error: {exc}", file=sys.stderr, flush=True)
+        return 1
 
     subscriber = Subscriber(
-        root=args.root,
+        root=root,
         run_id=args.run_id,
         row_id=args.row_id,
         pane_id=args.pane_id,

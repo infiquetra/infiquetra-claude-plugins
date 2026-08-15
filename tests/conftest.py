@@ -16,6 +16,18 @@ if str(_REDIS_BRIDGE_ROOT) not in sys.path:
 
 
 @pytest.fixture(autouse=True)
+def _isolate_orchestrate_host_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep live registers and run secrets out of the operator's ``~/.orchestrate``.
+
+    Siblings of ``tmp_path``, not children: many tests use ``tmp_path`` as a
+    repository, and the secret directory must not sit inside a repository.
+    """
+    base = tmp_path.parent / f"{tmp_path.name}-orchestrate-host"
+    monkeypatch.setenv("ORCHESTRATE_REGISTER_DIR", str(base / "registers"))
+    monkeypatch.setenv("ORCHESTRATE_RUN_SECRET_DIR", str(base / "secrets"))
+
+
+@pytest.fixture(autouse=True)
 def _clear_ambient_saga_concurrency_override(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep ordinary emitter tests independent of the operator's shell concurrency override."""
 

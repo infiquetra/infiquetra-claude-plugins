@@ -21,6 +21,50 @@
 
 ## 2026-08-14
 
+### Membership in a launched-phase set is not "has launched" when the column can be absent  {#absent-phase-is-unknown}
+
+**Context.** The spend gate charged zero for any row whose `phase` was not
+one of six launched values. A planned child is one of those zeros. A row
+with no phase column is also one of those zeros.
+**Evidence.** A metered row with `tokens_observed=200` and no `phase`
+charged `0.0`, so `check_spend(ceiling=1)` authorized. The same fixture
+shape is planted at `tests/test_orchestrate_planning.py` for usage-line
+tests. Before the launched-set check, that row charged its observed
+tokens.
+**Mechanism.** "Not in the launched set" collapses three states: planned
+(spent zero), launched (charge), and unknown (the column is missing). The
+rest of `_actual_for_row` raises on missing evidence. This branch returned
+zero.
+**Fix.** Charge zero only for `phase == "planned"`. Any other missing or
+unknown phase fails closed. Both the metered and silent-vendor planned
+zeros are pinned.
+**Generalizable rule.** A membership test against a known-good set treats
+absence as "not that set." If absence is a different state, name it and
+fail closed.
+
+### `write_text` on a durable sidecar can mint a second identity after a torn write  {#generation-sidecar-is-atomic}
+
+**Context.** `_mint_generation` wrote the run's generation sidecar with
+`Path.write_text` and no lock. Every other durable register write uses
+temp + `fsync` + `os.replace`.
+**Evidence.** Emptying the sidecar after a successful commit made the next
+`issue_presentation_receipt` mint a fresh generation. `commit_plan`'s
+sidecar check passed. `stamp_generation` then refused against the
+generation already in the register document. Deleting the sidecar did not
+recover it. `retire_run` cannot archive a committed-but-unlaunched run
+(no recorded work location). Recovery required hand-editing the register.
+**Mechanism.** `write_text` truncates before it writes. An interrupted
+write leaves an empty file. The mint treated "exists but empty" as "mint
+again," so the receipt and the register named different generations
+forever.
+**Fix.** Write the sidecar through the atomic primitive under the
+generation lock. Treat an empty or unreadable sidecar as absent. If the
+live register already carries a stamp, restore that generation instead of
+minting a second one.
+**Generalizable rule.** An identity file that other durable state is bound
+to must be written atomically, and an empty or unreadable identity file is
+absent — not a reason to issue a new identity.
+
 ### A shared column with no named writer will be rewritten by the next neighbour  {#shared-column-needs-one-writer}
 
 **Context.** Planning, admission, and the subscriber could all reach `phase`,
@@ -34,9 +78,9 @@ treated the value as witnessed death.
 module that does not own a column can still write it, so moving the write
 does not establish an owner.
 **Fix.** `register.py` names one writer function and one asserted fact per
-shared column. The merger refuses `artifact_path` except from settlement,
-refuses `planned` over a terminal phase, and admission writes only the
-fields it owns.
+shared column. The merger refuses an owned column unless the caller names
+that writer. Admission's reservation record is written only through
+`_write_admission`.
 **Generalizable rule.** If two modules can reach a column, name the single
 function that may write it and refuse the others. A docstring is not a lock.
 **Refs.** DECISIONS `{#register-column-ownership}`.

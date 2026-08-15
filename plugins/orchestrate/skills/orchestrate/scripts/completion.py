@@ -2048,16 +2048,19 @@ def _record(root: Path, row_id: str, result: CompletionResult, *, run_id: str) -
     """
     fields: dict[str, Any] = {"completion": result.to_mapping(), "run_id": run_id}
     current_phase = register_store.read_rows(root, run_id=run_id).get(row_id, {}).get("phase")
+    next_phase: str | None = None
     if current_phase == "reaped":
         # Terminal. The verdict is still recorded; the phase is not moved in either direction.
         pass
     elif result.verified:
-        fields["phase"] = "verified"
+        next_phase = "verified"
         fields["expected_state"] = "verified"
     elif current_phase == "verified":
-        fields["phase"] = "working"
+        next_phase = "working"
         fields["expected_state"] = "working"
     register_store.upsert_row(root, row_id, fields, run_id=run_id)
+    if next_phase is not None:
+        register_store.write_phase(root, row_id, next_phase, run_id=run_id)
     return result
 
 

@@ -37,7 +37,6 @@ def _load(name: str, path: Path) -> ModuleType:
 
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
-
 EVENTS = _load("herdr_events", SCRIPT_DIR / "herdr_events.py")
 REGISTER = _load("register", SCRIPT_DIR / "register.py")
 SUBSCRIBER = _load("orchestrate_subscriber", SCRIPT_DIR / "subscriber.py")
@@ -101,7 +100,7 @@ class _SubscriptionServer:
         assert not self._errors, f"fake herdr socket failed during startup: {self._errors!r}"
         return self
 
-    def __exit__(self, exc_type, exc, traceback) -> None:  # noqa: ANN001
+    def __exit__(self, exc_type, exc, traceback) -> None:
         self._thread.join(timeout=3)
         assert not self._thread.is_alive(), "fake herdr socket did not finish"
         assert not self._errors, f"fake herdr socket failed: {self._errors!r}"
@@ -118,18 +117,14 @@ class _SubscriptionServer:
                         request_line = stream.readline()
                         request = json.loads(request_line)
                         self.requests.append(request)
-                        response = {
-                            "id": request["id"],
-                            "result": {"type": "subscription_started"},
-                        }
+                        response = {"id": request["id"], "result": {"type": "subscription_started"}}
                         stream.write(json.dumps(response).encode() + b"\n")
                         stream.flush()
                         if self.request_gate is None or self.request_gate(request):
                             for envelope in envelopes:
                                 stream.write(json.dumps(envelope).encode() + b"\n")
                                 stream.flush()
-                    # Exiting the connection context performs a real peer close mid-stream.
-        except BaseException as exc:  # noqa: BLE001
+        except BaseException as exc:
             self._errors.append(exc)
             self._ready.set()
         finally:
@@ -153,7 +148,7 @@ class _RequestServer:
         assert self._error is None, f"fake herdr request socket failed: {self._error!r}"
         return self
 
-    def __exit__(self, exc_type, exc, traceback) -> None:  # noqa: ANN001
+    def __exit__(self, exc_type, exc, traceback) -> None:
         self._thread.join(timeout=3)
         assert not self._thread.is_alive(), "fake herdr request socket did not finish"
         assert self._error is None, f"fake herdr request socket failed: {self._error!r}"
@@ -169,7 +164,7 @@ class _RequestServer:
                     self.request = json.loads(stream.readline())
                     stream.write(json.dumps(self.response).encode() + b"\n")
                     stream.flush()
-        except BaseException as exc:  # noqa: BLE001
+        except BaseException as exc:
             self._error = exc
             self._ready.set()
         finally:
@@ -181,9 +176,9 @@ def _subscriber(
     *,
     diagnostics: list[dict[str, Any]] | None = None,
     wakes: list[str] | None = None,
-    snapshot_reader=None,  # noqa: ANN001
+    snapshot_reader=None,
     subscriptions: Sequence[Mapping[str, Any]] | None = None,
-    client=None,  # noqa: ANN001
+    client=None,
 ) -> Any:
     return SUBSCRIBER.Subscriber(
         root=tmp_path,
@@ -204,7 +199,7 @@ def _short_socket_path() -> Path:
     return Path("/tmp") / f"orchestrate-u3-{uuid.uuid4().hex}.sock"
 
 
-def _session_snapshot_response(*, panes=None, agents=None) -> dict[str, Any]:  # noqa: ANN001
+def _session_snapshot_response(*, panes=None, agents=None) -> dict[str, Any]:
     return {
         "id": "orchestrate-snapshot",
         "result": {
@@ -232,9 +227,6 @@ class _RequestClient:
         return dict(self.result)
 
 
-# --------------------------------------------------------------------------- scenario 1
-
-
 def test_subscribe_request_uses_dotted_types_and_validates_against_captured_schema() -> None:
     sentinel = SUBSCRIBER.make_sentinel("run-a", "child-a", "complete", nonce="n1")
     subscriptions = [
@@ -243,9 +235,6 @@ def test_subscribe_request_uses_dotted_types_and_validates_against_captured_sche
         SUBSCRIBER.output_match_subscription("pane-a", sentinel),
     ]
     request = EVENTS.build_subscribe_request("request-1", subscriptions)
-
-    # The authority is the schema captured from the installed herdr binary, not a second expected
-    # dict authored beside the serializer. Removing or misspelling any required field fails here.
     captured = json.loads(SCHEMA.read_text(encoding="utf-8"))
     request_schema = {
         "$schema": captured["$schema"],
@@ -260,34 +249,20 @@ def test_subscribe_request_uses_dotted_types_and_validates_against_captured_sche
         jsonschema.Draft202012Validator(_schema_ref("Subscription")).validate(subscription)
 
 
-# --------------------------------------------------------------------------- scenario 2
-
-
 def test_underscored_subscribe_type_is_a_hard_error() -> None:
     with pytest.raises(EVENTS.SubscriptionError, match="dotted request types"):
         EVENTS.build_subscribe_request("request-1", [{"type": "pane_exited"}])
 
 
-# --------------------------------------------------------------------------- scenario 3
-
-
 def test_malformed_subscription_is_reported_instead_of_silently_dropped() -> None:
-    malformed = {
-        "type": "pane.output_matched",
-        "pane_id": "pane-a",
-        "source": "recent_unwrapped",
-        # Deliberately no match object.
-    }
-    with pytest.raises(EVENTS.SubscriptionError, match=r"subscription 1: match must be an object"):
+    malformed = {"type": "pane.output_matched", "pane_id": "pane-a", "source": "recent_unwrapped"}
+    with pytest.raises(EVENTS.SubscriptionError, match="subscription 1: match must be an object"):
         EVENTS.build_subscribe_request("request-1", [{"type": "tab.closed"}, malformed])
-
-
-# --------------------------------------------------------------------------- scenario 4
 
 
 def test_pane_output_matched_regex_decodes_matched_line() -> None:
     matched_line = "READY-42"
-    pattern = r"^READY-[0-9]+$"
+    pattern = "^READY-[0-9]+$"
     subscription = {
         "type": "pane.output_matched",
         "pane_id": "pane-a",
@@ -303,14 +278,12 @@ def test_pane_output_matched_regex_decodes_matched_line() -> None:
     def _regex_gate(request: Mapping[str, Any]) -> bool:
         sent = request["params"]["subscriptions"][0]["match"]
         assert sent["type"] == "regex"
-        # This line matches the regular expression, but does not contain the pattern literally.
         return (
             re.search(sent["value"], matched_line) is not None and sent["value"] not in matched_line
         )
 
     with _SubscriptionServer(socket_path, [[event]], request_gate=_regex_gate):
         EVENTS.HerdrEventClient(socket_path).subscribe_once([subscription], received.append)
-
     assert len(received) == 1
     assert received[0].matched_line == matched_line
     assert received[0].revision == 12
@@ -338,12 +311,8 @@ def test_subscriber_rejects_output_matches_it_cannot_represent(
         "source": "recent_unwrapped",
         "match": dict(match),
     }
-
     with pytest.raises(EVENTS.SubscriptionError, match=message):
         _subscriber(tmp_path, subscriptions=[subscription])
-
-
-# --------------------------------------------------------------------------- scenario 5
 
 
 def test_live_zero_revision_output_match_is_honoured_by_identity(tmp_path: Path) -> None:
@@ -351,12 +320,9 @@ def test_live_zero_revision_output_match_is_honoured_by_identity(tmp_path: Path)
     REGISTER.upsert_row(
         tmp_path,
         "child-a",
-        {
-            "run_id": "run-a",
-            "pane_id": "pane-a",
-            "phase": "working",
-        },
+        {"run_id": "run-a", "pane_id": "pane-a", "phase": "working"},
         run_id="run-a",
+        writer="write_phase",
     )
     diagnostics: list[dict[str, Any]] = []
     wakes: list[str] = []
@@ -365,17 +331,10 @@ def test_live_zero_revision_output_match_is_honoured_by_identity(tmp_path: Path)
         tmp_path, diagnostics=diagnostics, wakes=wakes, subscriptions=[subscription]
     )
     socket_path = _short_socket_path()
-
-    # The live daemon capture reports read.revision=0 even for a real content match. This socket
-    # path proves identity, not an unrelated pane counter, is the accepted freshness boundary.
     with _SubscriptionServer(
         socket_path, [[_output_event("pane-a", sentinel, revision=0)]]
     ) as peer:
-        EVENTS.HerdrEventClient(socket_path).subscribe_once(
-            [subscription],
-            subscriber.handle_event,
-        )
-
+        EVENTS.HerdrEventClient(socket_path).subscribe_once([subscription], subscriber.handle_event)
     row = REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]
     assert isinstance(row["last_event_at"], float)
     assert len(wakes) == 1
@@ -394,6 +353,7 @@ def test_pre_dispatch_prompt_echo_cannot_satisfy_sentinel_match(tmp_path: Path) 
         "child-a",
         {"run_id": "run-a", "pane_id": "pane-a", "phase": "working"},
         run_id="run-a",
+        writer="write_phase",
     )
     diagnostics: list[dict[str, Any]] = []
     wakes: list[str] = []
@@ -405,10 +365,8 @@ def test_pre_dispatch_prompt_echo_cannot_satisfy_sentinel_match(tmp_path: Path) 
     envelope["data"]["matched_line"] = prompt
     envelope["data"]["read"]["text"] = prompt
     socket_path = _short_socket_path()
-
     with _SubscriptionServer(socket_path, [[envelope]]):
         EVENTS.HerdrEventClient(socket_path).subscribe_once([subscription], subscriber.handle_event)
-
     assert wakes == []
     assert [item["code"] for item in diagnostics] == ["sentinel_mismatch"]
     assert "last_event_at" not in REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]
@@ -431,16 +389,12 @@ def test_live_output_match_capture_validates_and_decodes_zero_revision() -> None
     assert "dispatch_revision_baseline" not in captured[0]["data"]["read"]["text"]
 
 
-# --------------------------------------------------------------------------- scenario 6
-
-
 def test_socket_close_mid_stream_triggers_reconnect_and_catch_up(tmp_path: Path) -> None:
     socket_path = _short_socket_path()
     received: list[str] = []
     catch_ups: list[int] = []
     first = {"event": "tab_closed", "data": {"type": "tab_closed", "tab_id": "t1"}}
     second = {"event": "tab_closed", "data": {"type": "tab_closed", "tab_id": "t2"}}
-
     with _SubscriptionServer(socket_path, [[first], [second]]) as peer:
         EVENTS.HerdrEventClient(socket_path).run_forever(
             [{"type": "tab.closed"}],
@@ -449,7 +403,6 @@ def test_socket_close_mid_stream_triggers_reconnect_and_catch_up(tmp_path: Path)
             reconnect_delay=0,
             max_connections=2,
         )
-
     assert received == ["t1", "t2"]
     assert catch_ups == [1, 2]
     assert len(peer.requests) == 2
@@ -476,7 +429,6 @@ def test_catch_up_failure_is_reported_while_events_continue_and_connections_are_
             max_connections=2,
             diagnostic=diagnostics.append,
         )
-
     assert received == ["t1", "t2"]
     assert catch_up_calls == [1, 2]
     assert diagnostics == [
@@ -489,12 +441,7 @@ def test_catch_up_failure_is_reported_while_events_continue_and_connections_are_
     ]
 
 
-# --------------------------------------------------------------------------- scenario 7
-
-
-def test_child_exit_during_disconnect_is_detected_by_reconnect_catch_up(
-    tmp_path: Path,
-) -> None:
+def test_child_exit_during_disconnect_is_detected_by_reconnect_catch_up(tmp_path: Path) -> None:
     REGISTER.upsert_row(
         tmp_path,
         "child-a",
@@ -505,6 +452,7 @@ def test_child_exit_during_disconnect_is_detected_by_reconnect_catch_up(
             "observed_state": "working",
         },
         run_id="run-a",
+        writer="record_observed_state",
     )
     snapshots: list[dict[str, Any]] = [
         {
@@ -523,9 +471,6 @@ def test_child_exit_during_disconnect_is_detected_by_reconnect_catch_up(
     wakes: list[str] = []
     subscriber = _subscriber(tmp_path, wakes=wakes, snapshot_reader=_next_snapshot)
     socket_path = _short_socket_path()
-
-    # The first accepted stream closes for real. The child disappears before the reconnect's
-    # snapshot, and no pane_exited event is ever sent; only catch-up can discover the loss.
     with _SubscriptionServer(socket_path, [[], []]) as peer:
         EVENTS.HerdrEventClient(socket_path).run_forever(
             [{"type": "pane.exited"}],
@@ -534,7 +479,6 @@ def test_child_exit_during_disconnect_is_detected_by_reconnect_catch_up(
             reconnect_delay=0,
             max_connections=2,
         )
-
     assert snapshot_calls == [0, 1]
     row = REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]
     assert row["observed_state"] == "exited"
@@ -544,15 +488,13 @@ def test_child_exit_during_disconnect_is_detected_by_reconnect_catch_up(
     assert len(peer.requests) == 2
 
 
-# --------------------------------------------------------------------------- scenario 8
-
-
 def test_unregistered_pane_event_mutates_no_row_and_reports_once(tmp_path: Path) -> None:
     REGISTER.upsert_row(
         tmp_path,
         "child-a",
         {"run_id": "run-a", "pane_id": "pane-a", "observed_state": "working"},
         run_id="run-a",
+        writer="record_observed_state",
     )
     before = REGISTER.register_path("run-a").read_bytes()
     diagnostics: list[dict[str, Any]] = []
@@ -564,16 +506,11 @@ def test_unregistered_pane_event_mutates_no_row_and_reports_once(tmp_path: Path)
             "data": {"type": "pane_exited", "pane_id": "not-registered", "workspace_id": "w1"},
         }
     )
-
     subscriber.handle_event(event)
     subscriber.handle_event(event)
-
     assert REGISTER.register_path("run-a").read_bytes() == before
     assert wakes == []
     assert [item["code"] for item in diagnostics] == ["unregistered_pane"]
-
-
-# --------------------------------------------------------------------------- scenario 9
 
 
 def test_missing_socket_fails_with_actionable_message(tmp_path: Path) -> None:
@@ -617,10 +554,8 @@ def test_session_snapshot_response_validates_against_fixture_and_is_unwrapped(
         {"run_id": "run-a", "pane_id": "pane-a", "expected_state": "done"},
         run_id="run-a",
     )
-
     with _RequestServer(socket_path, response) as server:
         snapshot = subscriber._read_snapshot()
-
     assert snapshot == response["result"]["snapshot"]
     assert server.request == {
         "id": "orchestrate-snapshot",
@@ -633,12 +568,8 @@ def test_session_snapshot_response_validates_against_fixture_and_is_unwrapped(
 
 
 def test_session_snapshot_response_without_snapshot_is_a_protocol_error(tmp_path: Path) -> None:
-    subscriber = _subscriber(
-        tmp_path,
-        client=_RequestClient({"type": "session_snapshot"}),
-    )
-
-    with pytest.raises(EVENTS.ProtocolError, match=r"result\.snapshot"):
+    subscriber = _subscriber(tmp_path, client=_RequestClient({"type": "session_snapshot"}))
+    with pytest.raises(EVENTS.ProtocolError, match="result\\.snapshot"):
         subscriber._read_snapshot()
 
 
@@ -661,15 +592,13 @@ def test_run_forever_fails_fast_on_first_missing_socket(tmp_path: Path) -> None:
 
 
 def test_main_returns_nonzero_and_registers_exit_when_socket_start_fails(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    def _fail_start(self, *args, **kwargs) -> None:  # noqa: ANN001, ANN002, ANN003
+
+    def _fail_start(self, *args, **kwargs) -> None:
         raise EVENTS.SocketUnavailableError("cannot open repair-test socket")
 
     monkeypatch.setattr(EVENTS.HerdrEventClient, "run_forever", _fail_start)
-
     result = SUBSCRIBER.main(
         [
             "--root",
@@ -688,15 +617,11 @@ def test_main_returns_nonzero_and_registers_exit_when_socket_start_fails(
             '[{"type":"pane.exited"}]',
         ]
     )
-
     assert result == 1
     assert "error: cannot open repair-test socket" in capsys.readouterr().err
     row = REGISTER.read_rows(tmp_path, run_id="run-a")["subscriber-a"]
     assert row["expected_state"] == "working"
     assert row["observed_state"] == "exited"
-
-
-# --------------------------------------------------------------------------- supporting unit contracts
 
 
 def test_identity_matched_sentinel_updates_liveness_and_wakes(tmp_path: Path) -> None:
@@ -710,9 +635,7 @@ def test_identity_matched_sentinel_updates_liveness_and_wakes(tmp_path: Path) ->
         wakes=wakes,
         subscriptions=[SUBSCRIBER.output_match_subscription("pane-a", sentinel)],
     )
-
     subscriber.handle_event(EVENTS.decode_event(_output_event("pane-a", sentinel, revision=42)))
-
     assert isinstance(
         REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]["last_event_at"], float
     )
@@ -735,10 +658,8 @@ def test_multiple_sentinel_interactions_for_one_pane_are_each_honoured(tmp_path:
             SUBSCRIBER.output_match_subscription("pane-a", complete),
         ],
     )
-
     subscriber.handle_event(EVENTS.decode_event(_output_event("pane-a", ready, revision=11)))
     subscriber.handle_event(EVENTS.decode_event(_output_event("pane-a", complete, revision=12)))
-
     assert len(wakes) == 2
 
 
@@ -748,12 +669,10 @@ def test_registered_pane_exited_event_records_exit_before_wake(tmp_path: Path) -
         "child-a",
         {"run_id": "run-a", "pane_id": "pane-a", "observed_state": "working"},
         run_id="run-a",
+        writer="record_observed_state",
     )
     states_at_wake: list[str] = []
-    subscriber = _subscriber(
-        tmp_path,
-        wakes=None,
-    )
+    subscriber = _subscriber(tmp_path, wakes=None)
     subscriber.wake_sender = lambda text: states_at_wake.append(
         REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]["observed_state"]
     )
@@ -763,9 +682,7 @@ def test_registered_pane_exited_event_records_exit_before_wake(tmp_path: Path) -
             "data": {"type": "pane_exited", "pane_id": "pane-a", "workspace_id": "w1"},
         }
     )
-
     subscriber.handle_event(event)
-
     assert states_at_wake == ["exited"]
     row = REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]
     assert row["observed_state"] == "exited"
@@ -778,6 +695,7 @@ def test_registered_pane_closed_event_records_exit_before_wake(tmp_path: Path) -
         "child-a",
         {"run_id": "run-a", "pane_id": "pane-a", "observed_state": "working"},
         run_id="run-a",
+        writer="record_observed_state",
     )
     states_at_wake: list[str] = []
     subscriber = _subscriber(tmp_path)
@@ -790,9 +708,7 @@ def test_registered_pane_closed_event_records_exit_before_wake(tmp_path: Path) -
             "data": {"type": "pane_closed", "pane_id": "pane-a", "workspace_id": "w1"},
         }
     )
-
     subscriber.handle_event(event)
-
     assert states_at_wake == ["exited"]
     assert (
         REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]["observed_state_source"]
@@ -800,19 +716,13 @@ def test_registered_pane_closed_event_records_exit_before_wake(tmp_path: Path) -
     )
 
 
-def test_registered_tab_closed_events_resolve_rows_and_each_wake_with_exit(
-    tmp_path: Path,
-) -> None:
+def test_registered_tab_closed_events_resolve_rows_and_each_wake_with_exit(tmp_path: Path) -> None:
     REGISTER.upsert_row(
         tmp_path,
         "child-a",
-        {
-            "run_id": "run-a",
-            "tab_id": "tab-a",
-            "pane_id": "pane-a",
-            "observed_state": "working",
-        },
+        {"run_id": "run-a", "tab_id": "tab-a", "pane_id": "pane-a", "observed_state": "working"},
         run_id="run-a",
+        writer="record_observed_state",
     )
     states_at_wake: list[str] = []
     diagnostics: list[dict[str, Any]] = []
@@ -826,10 +736,8 @@ def test_registered_tab_closed_events_resolve_rows_and_each_wake_with_exit(
             "data": {"type": "tab_closed", "tab_id": "tab-a", "workspace_id": "w1"},
         }
     )
-
     subscriber.handle_event(event)
     subscriber.handle_event(event)
-
     assert states_at_wake == ["exited", "exited"]
     assert diagnostics == []
     assert (
@@ -844,6 +752,7 @@ def test_registered_non_state_event_does_not_send_an_empty_wake(tmp_path: Path) 
         "child-a",
         {"run_id": "run-a", "pane_id": "pane-a", "observed_state": "working"},
         run_id="run-a",
+        writer="record_observed_state",
     )
     before = REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]
     wakes: list[str] = []
@@ -854,9 +763,7 @@ def test_registered_non_state_event_does_not_send_an_empty_wake(tmp_path: Path) 
             "data": {"type": "pane_updated", "pane_id": "pane-a", "workspace_id": "w1"},
         }
     )
-
     subscriber.handle_event(event)
-
     assert REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"] == before
     assert wakes == []
 
@@ -875,9 +782,7 @@ def test_sentinel_identity_mismatch_rejects_event_before_liveness_update(tmp_pat
         wakes=wakes,
         subscriptions=[SUBSCRIBER.output_match_subscription("pane-a", expected)],
     )
-
     subscriber.handle_event(EVENTS.decode_event(_output_event("pane-a", wrong_run, revision=5)))
-
     assert [item["code"] for item in diagnostics] == ["sentinel_mismatch"]
     assert "last_event_at" not in REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]
     assert wakes == []
@@ -896,9 +801,7 @@ def test_output_match_needs_no_cross_counter_revision_baseline(tmp_path: Path) -
         wakes=wakes,
         subscriptions=[SUBSCRIBER.output_match_subscription("pane-a", sentinel)],
     )
-
     subscriber.handle_event(EVENTS.decode_event(_output_event("pane-a", sentinel, revision=5)))
-
     assert diagnostics == []
     assert isinstance(
         REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]["last_event_at"], float
@@ -907,8 +810,7 @@ def test_output_match_needs_no_cross_counter_revision_baseline(tmp_path: Path) -
 
 
 @pytest.mark.parametrize(
-    ("purpose", "nonce"),
-    [("ready", "expected"), ("complete", "earlier-dispatch")],
+    ("purpose", "nonce"), [("ready", "expected"), ("complete", "earlier-dispatch")]
 )
 def test_output_match_requires_active_purpose_and_nonce(
     tmp_path: Path, purpose: str, nonce: str
@@ -926,9 +828,7 @@ def test_output_match_requires_active_purpose_and_nonce(
         wakes=wakes,
         subscriptions=[SUBSCRIBER.output_match_subscription("pane-a", expected)],
     )
-
     subscriber.handle_event(EVENTS.decode_event(_output_event("pane-a", wrong, revision=5)))
-
     assert [item["code"] for item in diagnostics] == ["sentinel_mismatch"]
     assert "last_event_at" not in REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]
     assert wakes == []
@@ -959,11 +859,9 @@ def test_catch_up_reports_run_bound_artifact_presence(tmp_path: Path) -> None:
         ],
         "agents": [],
     }
-
     records = {
         record.row_id: record for record in SUBSCRIBER.catch_up(tmp_path, snapshot, run_id="run-a")
     }
-
     assert records["present"].artifact_exists is True
     assert records["missing"].artifact_exists is False
 
@@ -977,6 +875,7 @@ def test_catch_up_batches_all_row_updates_into_one_register_write(
             row_id,
             {"run_id": "run-a", "pane_id": pane_id, "observed_state": "planned"},
             run_id="run-a",
+            writer="record_observed_state",
         )
     snapshot = {
         "panes": [
@@ -988,14 +887,19 @@ def test_catch_up_batches_all_row_updates_into_one_register_write(
     real_upsert_rows = REGISTER.upsert_rows
     batches: list[dict[str, dict[str, Any]]] = []
 
-    def _record_batch(root: Path, updates: Mapping[str, Mapping[str, Any]], *, run_id: str):
+    def _record_batch(
+        root: Path,
+        updates: Mapping[str, Mapping[str, Any]],
+        *,
+        run_id: str,
+        writer: str = "",
+        **_kwargs: Any,
+    ):
         batches.append({row_id: dict(fields) for row_id, fields in updates.items()})
-        return real_upsert_rows(root, updates, run_id=run_id)
+        return real_upsert_rows(root, updates, run_id=run_id, writer=writer)
 
     monkeypatch.setattr(SUBSCRIBER.register_store, "upsert_rows", _record_batch)
-
     SUBSCRIBER.catch_up(tmp_path, snapshot, run_id="run-a")
-
     assert batches == [
         {
             "child-a": {
@@ -1013,14 +917,13 @@ def test_catch_up_batches_all_row_updates_into_one_register_write(
     assert rows["child-b"]["observed_state"] == "blocked"
 
 
-def test_catch_up_refuses_a_directory_that_is_not_the_runs_work_location(
-    tmp_path: Path,
-) -> None:
+def test_catch_up_refuses_a_directory_that_is_not_the_runs_work_location(tmp_path: Path) -> None:
     REGISTER.upsert_row(
         tmp_path,
         "child-a",
         {"run_id": "run-a", "pane_id": "pane-a", "observed_state": "working"},
         run_id="run-a",
+        writer="record_observed_state",
     )
     other = tmp_path / "other"
     other.mkdir()
@@ -1037,10 +940,7 @@ def test_the_subscriber_command_refuses_a_disagreeing_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     REGISTER.upsert_row(
-        tmp_path,
-        "child-a",
-        {"run_id": "run-a", "pane_id": "pane-a"},
-        run_id="run-a",
+        tmp_path, "child-a", {"run_id": "run-a", "pane_id": "pane-a"}, run_id="run-a"
     )
     other = tmp_path / "other"
     other.mkdir()
@@ -1075,12 +975,7 @@ def test_the_subscriber_command_accepts_a_package_directory(
     package = repo / "packages" / "tool"
     package.mkdir(parents=True)
     _git_init(repo)
-    REGISTER.upsert_row(
-        repo,
-        "child-a",
-        {"run_id": "run-a", "pane_id": "pane-a"},
-        run_id="run-a",
-    )
+    REGISTER.upsert_row(repo, "child-a", {"run_id": "run-a", "pane_id": "pane-a"}, run_id="run-a")
     seen: list[Path] = []
 
     def _run(self: Any) -> None:
@@ -1155,12 +1050,14 @@ def test_catch_up_for_one_run_does_not_write_another_runs_row(tmp_path: Path) ->
         "child-a",
         {"run_id": "run-a", "pane_id": "pane-a", "observed_state": "working"},
         run_id="run-a",
+        writer="record_observed_state",
     )
     REGISTER.upsert_row(
         tmp_path,
         "child-a",
         {"run_id": "run-b", "pane_id": "pane-b", "observed_state": "working"},
         run_id="run-b",
+        writer="record_observed_state",
     )
     snapshot = {
         "panes": [{"pane_id": "pane-b", "agent_status": "exited", "revision": 1}],
@@ -1177,6 +1074,7 @@ def test_once_diagnostic_resets_after_reconnect_catch_up(tmp_path: Path) -> None
         "child-a",
         {"run_id": "run-a", "pane_id": "pane-a", "observed_state": "working"},
         run_id="run-a",
+        writer="record_observed_state",
     )
     diagnostics: list[dict[str, Any]] = []
     subscriber = _subscriber(
@@ -1193,22 +1091,16 @@ def test_once_diagnostic_resets_after_reconnect_catch_up(tmp_path: Path) -> None
             "data": {"type": "pane_exited", "pane_id": "unknown-pane", "workspace_id": "w1"},
         }
     )
-
     subscriber.handle_event(event)
     subscriber.handle_event(event)
     subscriber.run_catch_up()
     subscriber.handle_event(event)
-
-    assert [item["code"] for item in diagnostics] == [
-        "unregistered_pane",
-        "unregistered_pane",
-    ]
+    assert [item["code"] for item in diagnostics] == ["unregistered_pane", "unregistered_pane"]
 
 
 def test_subscriber_carries_an_ordinary_register_row(tmp_path: Path) -> None:
     subscriber = _subscriber(tmp_path)
     subscriber.register_self()
-
     row = REGISTER.read_rows(tmp_path, run_id="run-a")["subscriber-a"]
     assert row["run_id"] == "run-a"
     assert row["agent"] == "subscriber"
@@ -1219,8 +1111,9 @@ def test_subscriber_carries_an_ordinary_register_row(tmp_path: Path) -> None:
 
 
 def test_subscriber_row_uses_pane_presence_and_records_process_exit(tmp_path: Path) -> None:
+
     class _StoppingClient:
-        def run_forever(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+        def run_forever(self, *args, **kwargs) -> None:
             return
 
     subscriber = SUBSCRIBER.Subscriber(
@@ -1239,11 +1132,9 @@ def test_subscriber_row_uses_pane_presence_and_records_process_exit(tmp_path: Pa
         diagnostic_sink=lambda payload: None,
     )
     subscriber.register_self()
-
     records = SUBSCRIBER.catch_up(tmp_path, subscriber.snapshot_reader(), run_id="run-a")
     assert records[0].observed_state == "working"
     assert records[0].diverged is False
-
     subscriber.run()
     row = REGISTER.read_rows(tmp_path, run_id="run-a")["subscriber-a"]
     assert row["expected_state"] == "working"

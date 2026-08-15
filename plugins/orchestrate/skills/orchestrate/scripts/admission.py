@@ -360,8 +360,52 @@ def _reserve_under_admission_lock(
     aggregate_limit: int | None = None,
     now: float | None = None,
     lease_until: float | None = None,
+    already_holding_generation: bool = False,
 ) -> AdmissionDecision:
     """Caller already holds the host admission lock."""
+    if already_holding_generation:
+        return _reserve_unlocked(
+            claimed,
+            row_id,
+            run_id=run_id,
+            vendor=vendor,
+            work_shape=work_shape,
+            tokens_max=tokens_max,
+            per_vendor_limit=per_vendor_limit,
+            aggregate_limit=aggregate_limit,
+            now=now,
+            lease_until=lease_until,
+        )
+    run_id = register_store._safe_run_id(run_id)
+    with register_store.generation_locked(run_id):
+        return _reserve_unlocked(
+            claimed,
+            row_id,
+            run_id=run_id,
+            vendor=vendor,
+            work_shape=work_shape,
+            tokens_max=tokens_max,
+            per_vendor_limit=per_vendor_limit,
+            aggregate_limit=aggregate_limit,
+            now=now,
+            lease_until=lease_until,
+        )
+
+
+def _reserve_unlocked(
+    claimed: Path,
+    row_id: str,
+    *,
+    run_id: str,
+    vendor: str,
+    work_shape: str,
+    tokens_max: int | None = None,
+    per_vendor_limit: int | None = None,
+    aggregate_limit: int | None = None,
+    now: float | None = None,
+    lease_until: float | None = None,
+) -> AdmissionDecision:
+    """Caller holds the admission lock and this run's generation lock."""
     if not row_id or not vendor:
         raise AdmissionError("row_id and vendor must be non-empty")
     run_id = register_store._safe_run_id(run_id)
@@ -369,89 +413,88 @@ def _reserve_under_admission_lock(
     if isinstance(tokens_max, bool) or tokens <= 0:
         raise AdmissionError("tokens_max must be a positive integer")
     when = time.time() if now is None else now
-    with register_store.generation_locked(run_id):
-        policy = resolve_host_policy(per_vendor=per_vendor_limit, aggregate=aggregate_limit)
-        per_vendor, aggregate, _occupying = _occupancy()
-        doc = register_store._read_register_unlocked(run_id)
-        state = _admission_doc(doc)
-        row = doc.get("rows", {}).get(row_id, {})
-        if row.get("phase") in TERMINAL_PHASES:
-            raise AdmissionError(
-                f"row {row_id!r} is {row.get('phase')}; release and replan rather than reuse it"
-            )
-        existing = state["reservations"].get(row_id)
-        if isinstance(existing, dict) and _reservation_counts(existing):
-            if _identity_matches(existing, vendor=vendor, work_shape=work_shape, tokens=tokens):
-                return AdmissionDecision("reserved", row_id, vendor, tokens, "already reserved")
-            raise AdmissionError(
-                f"row {row_id!r} is reserved for vendor {existing.get('vendor')!r} "
-                f"shape {existing.get('work_shape')!r}; release and replan to change it"
-            )
-        queued = next(
-            (
-                entry
-                for entry in state["queue"]
-                if isinstance(entry, dict) and entry.get("row_id") == row_id
-            ),
-            None,
+    policy = resolve_host_policy(per_vendor=per_vendor_limit, aggregate=aggregate_limit)
+    per_vendor, aggregate, _occupying = _occupancy()
+    doc = register_store._read_register_unlocked(run_id)
+    state = _admission_doc(doc)
+    row = doc.get("rows", {}).get(row_id, {})
+    if row.get("phase") in TERMINAL_PHASES:
+        raise AdmissionError(
+            f"row {row_id!r} is {row.get('phase')}; release and replan rather than reuse it"
         )
-        if queued is not None:
-            if _identity_matches(queued, vendor=vendor, work_shape=work_shape, tokens=tokens):
-                return AdmissionDecision("queued", row_id, vendor, tokens, "already queued")
-            raise AdmissionError(
-                f"row {row_id!r} is queued for a different vendor or shape; "
-                "release and replan to change it"
-            )
-        vendor_count = per_vendor.get(vendor, 0)
-        row_fields = {
-            "vendor": vendor,
-            "agent": vendor,
-            "work_shape": work_shape,
-            "tokens_reserved": tokens,
-        }
-        if vendor_count >= policy.per_vendor or aggregate >= policy.aggregate:
-            reason = (
-                f"per-vendor bound {policy.per_vendor} reached for {vendor}"
-                if vendor_count >= policy.per_vendor
-                else f"aggregate bound {policy.aggregate} reached"
-            )
-            state["queue"].append(
-                {
-                    "row_id": row_id,
-                    "run_id": run_id,
-                    "vendor": vendor,
-                    "work_shape": work_shape,
-                    "tokens_reserved": tokens,
-                    "enqueued_at": when,
-                    "work_location": str(claimed),
-                }
-            )
-            _write_admission(
-                claimed,
-                run_id,
-                queue=state["queue"],
-                reservations=state["reservations"],
-                row_updates={row_id: {**row_fields, "admission": "queued"}},
-            )
-            return AdmissionDecision("queued", row_id, vendor, tokens, reason)
-        state["reservations"][row_id] = _reservation_record(
-            run_id=run_id,
-            row_id=row_id,
-            vendor=vendor,
-            work_shape=work_shape,
-            tokens=tokens,
-            when=when,
-            work_location=claimed,
-            lease_until=lease_until,
+    existing = state["reservations"].get(row_id)
+    if isinstance(existing, dict) and _reservation_counts(existing):
+        if _identity_matches(existing, vendor=vendor, work_shape=work_shape, tokens=tokens):
+            return AdmissionDecision("reserved", row_id, vendor, tokens, "already reserved")
+        raise AdmissionError(
+            f"row {row_id!r} is reserved for vendor {existing.get('vendor')!r} "
+            f"shape {existing.get('work_shape')!r}; release and replan to change it"
+        )
+    queued = next(
+        (
+            entry
+            for entry in state["queue"]
+            if isinstance(entry, dict) and entry.get("row_id") == row_id
+        ),
+        None,
+    )
+    if queued is not None:
+        if _identity_matches(queued, vendor=vendor, work_shape=work_shape, tokens=tokens):
+            return AdmissionDecision("queued", row_id, vendor, tokens, "already queued")
+        raise AdmissionError(
+            f"row {row_id!r} is queued for a different vendor or shape; "
+            "release and replan to change it"
+        )
+    vendor_count = per_vendor.get(vendor, 0)
+    row_fields = {
+        "vendor": vendor,
+        "agent": vendor,
+        "work_shape": work_shape,
+        "tokens_reserved": tokens,
+    }
+    if vendor_count >= policy.per_vendor or aggregate >= policy.aggregate:
+        reason = (
+            f"per-vendor bound {policy.per_vendor} reached for {vendor}"
+            if vendor_count >= policy.per_vendor
+            else f"aggregate bound {policy.aggregate} reached"
+        )
+        state["queue"].append(
+            {
+                "row_id": row_id,
+                "run_id": run_id,
+                "vendor": vendor,
+                "work_shape": work_shape,
+                "tokens_reserved": tokens,
+                "enqueued_at": when,
+                "work_location": str(claimed),
+            }
         )
         _write_admission(
             claimed,
             run_id,
             queue=state["queue"],
             reservations=state["reservations"],
-            row_updates={row_id: {**row_fields, "admission": "reserved"}},
+            row_updates={row_id: {**row_fields, "admission": "queued"}},
         )
-        return AdmissionDecision("reserved", row_id, vendor, tokens, "reserved")
+        return AdmissionDecision("queued", row_id, vendor, tokens, reason)
+    state["reservations"][row_id] = _reservation_record(
+        run_id=run_id,
+        row_id=row_id,
+        vendor=vendor,
+        work_shape=work_shape,
+        tokens=tokens,
+        when=when,
+        work_location=claimed,
+        lease_until=lease_until,
+    )
+    _write_admission(
+        claimed,
+        run_id,
+        queue=state["queue"],
+        reservations=state["reservations"],
+        row_updates={row_id: {**row_fields, "admission": "reserved"}},
+    )
+    return AdmissionDecision("reserved", row_id, vendor, tokens, "reserved")
 
 
 def activate_slot(root: Path, row_id: str, *, run_id: str, now: float | None = None) -> None:

@@ -340,11 +340,16 @@ class Subscriber:
                 "agent": "subscriber",
                 "pane_id": self.pane_id,
                 "cwd": str(self.root),
-                "phase": "working",
                 "expected_state": "working",
-                "observed_state": "working",
-                "observed_state_source": "observed:subscriber_start",
             },
+            run_id=self.run_id,
+        )
+        register_store.write_phase(self.root, self.row_id, "working", run_id=self.run_id)
+        register_store.record_observed_state(
+            self.root,
+            self.row_id,
+            "working",
+            source="observed:subscriber_start",
             run_id=self.run_id,
         )
 
@@ -431,7 +436,13 @@ class Subscriber:
             if pane_id is None:
                 return False
             line = event.matched_line or ""
-            recorded = accounting.apply_output_match(self.root, row_id, line, run_id=self.run_id)
+            recorded = accounting.apply_output_match(
+                self.root,
+                row_id,
+                line,
+                run_id=self.run_id,
+                vendor=str(row.get("vendor") or row.get("agent") or "") or None,
+            )
             payload = _sentinel_payload(line)
             if payload is None:
                 if recorded is not None:

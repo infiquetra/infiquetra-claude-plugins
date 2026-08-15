@@ -383,15 +383,20 @@ def presentation_receipt_path(run_id: str) -> Path:
 
 
 def _mint_generation(run_id: str) -> str:
-    path = register_store.generation_sidecar_path(run_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        existing = path.read_text(encoding="utf-8").strip()
+    """Return this run's generation, creating the sidecar only when none exists.
+
+    An empty or unreadable sidecar is absent. If the live register already
+    carries a stamp, restore that generation rather than minting a second one.
+    The write is atomic and holds the generation lock.
+    """
+    with register_store.generation_locked(run_id):
+        existing = register_store.read_generation_sidecar(run_id)
         if existing:
             return existing
-    generation = uuid.uuid4().hex
-    path.write_text(generation + "\n", encoding="utf-8")
-    return generation
+        stamped = register_store.stamped_generation(run_id)
+        generation = stamped if stamped else uuid.uuid4().hex
+        register_store.write_generation_sidecar(run_id, generation)
+        return generation
 
 
 def present_plan(built: Plan) -> tuple[Plan, str]:
@@ -438,10 +443,9 @@ def load_presentation_receipt(run_id: str) -> PresentationReceipt:
         )
     raw = json.loads(path.read_text(encoding="utf-8"))
     generation = str(raw.get("generation") or "")
-    sidecar = register_store.generation_sidecar_path(run_id)
-    if not generation or not sidecar.exists():
+    stored = register_store.read_generation_sidecar(run_id)
+    if not generation or stored is None:
         raise PlanningError("presentation receipt is not bound to a live generation")
-    stored = sidecar.read_text(encoding="utf-8").strip()
     if stored != generation:
         raise PlanningError("presentation receipt generation does not match this run")
     return PresentationReceipt(
@@ -483,11 +487,14 @@ def commit_plan(
         raise PlanningError("presentation receipt is not bound to a live generation")
     claimed = register_store.canonical_work_location(root)
     committed: list[PlannedChild] = []
-    with admission.admission_locked():
+    with (
+        admission.admission_locked(),
+        register_store.generation_locked(built.run_id),
+    ):
         _require_matching_host_policy(built)
-        sidecar = register_store.generation_sidecar_path(built.run_id)
-        if not sidecar.exists() or sidecar.read_text(encoding="utf-8").strip() != shown.generation:
+        if register_store.read_generation_sidecar(built.run_id) != shown.generation:
             raise PlanningError("presentation receipt generation does not match this run")
+        register_store.stamp_generation(built.run_id, shown.generation, already_locked=True)
         for child in built.children:
             decision = admission._reserve_under_admission_lock(
                 claimed,
@@ -497,9 +504,11 @@ def commit_plan(
                 work_shape=child.execution_class,
                 tokens_max=child.tokens_max,
                 now=now,
+                already_holding_generation=True,
             )
-            register_store.stamp_generation(built.run_id, shown.generation)
-            register_store.write_phase(root, child.row_id, "planned", run_id=built.run_id)
+            register_store.write_phase(
+                root, child.row_id, "planned", run_id=built.run_id, claimed=claimed
+            )
             register_store.upsert_row(
                 root,
                 child.row_id,
@@ -522,6 +531,9 @@ def commit_plan(
                     "workspace_boundary": child.workspace_boundary,
                 },
                 run_id=built.run_id,
+                writer=register_store.TOKENS_MAX_WRITER,
+                already_locked=True,
+                claimed=claimed,
             )
             committed.append(
                 replace(

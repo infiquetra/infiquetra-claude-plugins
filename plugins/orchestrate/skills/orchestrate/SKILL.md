@@ -96,9 +96,8 @@ from pathlib import Path
 import register  # scripts/register.py, on sys.path for the invoking skill/command
 
 root = register.canonical_work_location(Path.cwd())
-register.upsert_row(
-    root, "child-1", {"phase": "planned", "agent": "claude"}, run_id="run-abc"
-)
+register.upsert_row(root, "child-1", {"agent": "claude"}, run_id="run-abc")
+register.write_phase(root, "child-1", "planned", run_id="run-abc")
 rows = register.read_rows(root, run_id="run-abc")
 register.retire_run(root, "run-abc")
 ```
@@ -276,21 +275,27 @@ uses *that* run's stored location. Promotion takes the globally oldest eligible
 entry by enqueue time.
 
 `scripts/accounting.py` is the spend gate. Every planned child declares a positive
-integer `tokens_max`. That number is `tokens_reserved`. A planned or queued child
-has spent zero. Once launched, a vendor with no usage line is charged that
-declared maximum; an observed value cannot lower it. `tokens_observed` is produced
+integer `tokens_max`. That number is `tokens_reserved`. A child whose phase is
+explicitly `planned` has spent zero. Queued is an admission status, not a phase.
+A missing or unknown phase fails closed. Once launched, a vendor with no usage
+line is charged that declared maximum; an observed value cannot lower it. `tokens_observed` is produced
 from a usage `pane.output_matched` line. Cumulative totals keep a monotonic
-maximum; delta samples add. A replayed event identity is not spend. A launched
-metered child with no telemetry fails closed. `authorize_spend` is never passed
-`None` to mean a silent vendor.
+maximum; equal delta samples add. A content hash is not a delivery identity.
+A line matching both grammars is refused. Unparseable telemetry after a prior
+sample fails closed. A launched metered child with no telemetry fails closed.
+`authorize_spend` is never passed `None` to mean a silent vendor.
 
 `plan` and `present_plan` write nothing. `present_plan` only renders. `commit_plan`
 requires a presentation receipt whose digest and generation match this plan, and
 whose rendered host bounds still equal the durable policy. This unit can write
 that receipt; the composition unit is the producer that should write it after the
-operator channel delivers the text. `retire_run` forgets the receipt with the
-generation. None of them launch a child. `commit_plan` does not write the settled
-`artifact_path` column.
+operator channel delivers the text. The generation sidecar is written atomically
+under the generation lock. An empty or unreadable sidecar is absent; a generation
+already stamped on the register is restored rather than minting a second one.
+`retire_run` forgets the receipt with the generation and takes the admission lock
+first, so it cannot split a reserved verdict from its reservation. None of them launch a child. `commit_plan` does
+not write the settled `artifact_path` column. The reservation, generation,
+phase, and plan row are one critical section.
 
 `activate_slot` marks a matching reservation `held`. It does not launch and does
 not write `phase`.

@@ -48,11 +48,7 @@ def _isolate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(REGISTER.REGISTER_DIR_ENV, str(tmp_path / "registers"))
 
 
-def _child(
-    row_id: str,
-    work_shape: str,
-    **fields: Any,
-) -> dict[str, Any]:
+def _child(row_id: str, work_shape: str, **fields: Any) -> dict[str, Any]:
     spec: dict[str, Any] = {
         "row_id": row_id,
         "work_shape": work_shape,
@@ -79,30 +75,23 @@ def _commit(
 ) -> Any:
     if per_vendor_limit is not None or aggregate_limit is not None:
         ADMISSION.write_host_policy(
-            per_vendor=(
-                per_vendor_limit if per_vendor_limit is not None else ADMISSION.DEFAULT_PER_VENDOR
-            ),
-            aggregate=(
-                aggregate_limit if aggregate_limit is not None else ADMISSION.DEFAULT_AGGREGATE
-            ),
+            per_vendor=per_vendor_limit
+            if per_vendor_limit is not None
+            else ADMISSION.DEFAULT_PER_VENDOR,
+            aggregate=aggregate_limit
+            if aggregate_limit is not None
+            else ADMISSION.DEFAULT_AGGREGATE,
         )
     built = PLANNING.plan(
-        "deliver the outcome",
-        children,
-        run_id=run_id,
-        is_vendor_available=is_vendor_available,
+        "deliver the outcome", children, run_id=run_id, is_vendor_available=is_vendor_available
     )
     PLANNING.issue_presentation_receipt(built)
     return PLANNING.commit_plan(built, tmp_path, now=now)
 
 
-# --------------------------------------------------------------------------- routing
-
-
 def test_judgment_resolves_to_a_high_tier_and_mechanical_to_a_lower_tier() -> None:
     judgment = PLANNING.route("judgment", vendor="claude")
     mechanical = PLANNING.route("mechanical", vendor="claude")
-
     assert judgment.policy_effort == "high"
     assert judgment.effort == "high"
     assert judgment.execution_class == "review-high"
@@ -115,7 +104,6 @@ def test_judgment_resolves_to_a_high_tier_and_mechanical_to_a_lower_tier() -> No
 def test_same_work_shape_resolves_to_different_models_for_different_runtimes() -> None:
     claude = PLANNING.route("review-high", vendor="claude")
     grok = PLANNING.route("review-high", vendor="grok")
-
     assert claude.model == "fable"
     assert grok.model == "grok-4.6"
     assert claude.model != grok.model
@@ -124,11 +112,7 @@ def test_same_work_shape_resolves_to_different_models_for_different_runtimes() -
 
 def test_unavailable_preferred_vendor_falls_back_in_declared_order_and_records_it() -> None:
     available = {"qwen"}
-    routed = PLANNING.route(
-        "work-medium",
-        is_vendor_available=available.__contains__,
-    )
-
+    routed = PLANNING.route("work-medium", is_vendor_available=available.__contains__)
     assert routed.vendor == "qwen"
     assert routed.substitutions
     substitution = routed.substitutions[0]
@@ -141,18 +125,12 @@ def test_unavailable_preferred_vendor_falls_back_in_declared_order_and_records_i
 
 def test_operator_vendor_override_is_recorded_as_explicit() -> None:
     routed = PLANNING.route("judgment", vendor="grok")
-
     assert routed.vendor == "grok"
     assert routed.override == {"kind": "explicit", "field": "vendor", "value": "grok"}
     assert routed.substitutions == ()
 
 
-# --------------------------------------------------------------------------- admission
-
-
-def test_exceeding_a_per_vendor_bound_queues_while_aggregate_room_remains(
-    tmp_path: Path,
-) -> None:
+def test_exceeding_a_per_vendor_bound_queues_while_aggregate_room_remains(tmp_path: Path) -> None:
     committed = _commit(
         tmp_path,
         [
@@ -163,7 +141,6 @@ def test_exceeding_a_per_vendor_bound_queues_while_aggregate_room_remains(
         per_vendor_limit=1,
         aggregate_limit=7,
     )
-
     by_id = {child.row_id: child for child in committed.children}
     assert by_id["c1"].admission == "reserved"
     assert by_id["c2"].admission == "queued"
@@ -183,14 +160,10 @@ def test_slot_reservation_survives_restart(tmp_path: Path) -> None:
     )
     on_disk = json.loads(REGISTER.register_path("run-plan").read_text(encoding="utf-8"))
     assert "held" in on_disk["admission"]["reservations"]
-
-    # A new process image is a new import of the same file against the same
-    # durable document. Occupancy must still see the reservation.
     reloaded = _load("admission")
     per_vendor, aggregate = reloaded.occupancy(tmp_path)
     assert per_vendor["claude"] == 1
     assert aggregate == 1
-
     second = reloaded.reserve_slot(
         tmp_path,
         "next",
@@ -214,7 +187,6 @@ def test_releasing_a_slot_advances_the_queue(tmp_path: Path) -> None:
         aggregate_limit=7,
     )
     assert ADMISSION.queued_row_ids(tmp_path, run_id="run-plan") == ("waiting",)
-
     promoted = ADMISSION.release_slot(tmp_path, "first", run_id="run-plan")
     assert promoted is not None
     assert promoted.status == "reserved"
@@ -243,12 +215,10 @@ def test_dead_holder_slot_is_reclaimed_and_the_queue_advances(tmp_path: Path) ->
             "pane_id": "w1:p9",
         },
         run_id="run-plan",
+        writer="record_observed_state",
     )
     reclaimed = ADMISSION.reclaim_dead_slots(
-        tmp_path,
-        run_id="run-plan",
-        lease_seconds=10.0,
-        now=120.0,
+        tmp_path, run_id="run-plan", lease_seconds=10.0, now=120.0
     )
     assert reclaimed == ["dead"]
     assert ADMISSION.queued_row_ids(tmp_path, run_id="run-plan") == ()
@@ -318,7 +288,6 @@ def test_two_runs_racing_for_the_last_vendor_slot_admit_exactly_one(
         per_vendor_limit=3,
         aggregate_limit=7,
     )
-
     real_occupancy = ADMISSION._occupancy
     reads = 0
     reads_lock = threading.Lock()
@@ -337,7 +306,6 @@ def test_two_runs_racing_for_the_last_vendor_slot_admit_exactly_one(
         return snapshot
 
     monkeypatch.setattr(ADMISSION, "_occupancy", _occupancy_that_opens_the_race_window)
-
     results: list[str] = []
     start = threading.Barrier(2, timeout=5)
 
@@ -360,14 +328,11 @@ def test_two_runs_racing_for_the_last_vendor_slot_admit_exactly_one(
     second.start()
     first.join(timeout=10)
     second.join(timeout=10)
-    assert not first.is_alive() and not second.is_alive()
+    assert not first.is_alive() and (not second.is_alive())
     assert sorted(results) == ["queued", "reserved"]
     per_vendor, aggregate = ADMISSION.occupancy(tmp_path)
     assert per_vendor["claude"] == 3
     assert aggregate == 3
-
-
-# --------------------------------------------------------------------------- spend
 
 
 def test_vendor_without_usage_consumes_its_declared_reservation(tmp_path: Path) -> None:
@@ -376,8 +341,9 @@ def test_vendor_without_usage_consumes_its_declared_reservation(tmp_path: Path) 
     row = REGISTER.read_rows(tmp_path, run_id="run-plan")["silent"]
     assert row["tokens_reserved"] == reserved
     assert row.get("tokens_observed") is None
-    REGISTER.upsert_row(tmp_path, "silent", {"phase": "working"}, run_id="run-plan")
-
+    REGISTER.upsert_row(
+        tmp_path, "silent", {"phase": "working"}, run_id="run-plan", writer="write_phase"
+    )
     ACCOUNTING.check_spend(tmp_path, run_id="run-plan", ceiling=reserved + 1, row_id="silent")
     with pytest.raises(ACCOUNTING.AccountingError, match="reached the captured cost"):
         ACCOUNTING.check_spend(tmp_path, run_id="run-plan", ceiling=reserved, row_id="silent")
@@ -385,7 +351,9 @@ def test_vendor_without_usage_consumes_its_declared_reservation(tmp_path: Path) 
 
 def test_reaching_the_spend_ceiling_halts_and_reports(tmp_path: Path) -> None:
     _commit(tmp_path, [_child("metered", "work-medium", vendor="claude")])
-    REGISTER.upsert_row(tmp_path, "metered", {"phase": "working"}, run_id="run-plan")
+    REGISTER.upsert_row(
+        tmp_path, "metered", {"phase": "working"}, run_id="run-plan", writer="write_phase"
+    )
     ACCOUNTING.record_observed_tokens(tmp_path, "metered", 1000, run_id="run-plan")
     with pytest.raises(ACCOUNTING.AccountingError, match="1000") as halted:
         ACCOUNTING.check_spend(tmp_path, run_id="run-plan", ceiling=1000, row_id="metered")
@@ -395,9 +363,11 @@ def test_reaching_the_spend_ceiling_halts_and_reports(tmp_path: Path) -> None:
 
 def test_missing_telemetry_fails_closed_rather_than_passing(tmp_path: Path) -> None:
     _commit(tmp_path, [_child("quiet", "work-medium", vendor="claude")])
-    REGISTER.upsert_row(tmp_path, "quiet", {"phase": "working"}, run_id="run-plan")
+    REGISTER.upsert_row(
+        tmp_path, "quiet", {"phase": "working"}, run_id="run-plan", writer="write_phase"
+    )
     with pytest.raises(ACCOUNTING.AccountingError, match="no tokens_observed") as closed:
-        ACCOUNTING.check_spend(tmp_path, run_id="run-plan", ceiling=1_000_000, row_id="quiet")
+        ACCOUNTING.check_spend(tmp_path, run_id="run-plan", ceiling=1000000, row_id="quiet")
     assert "fail closed" in str(closed.value)
 
 
@@ -432,21 +402,11 @@ def test_usage_line_from_output_match_is_the_observed_column(tmp_path: Path) -> 
     assert row["tokens_observed"] == 321
 
 
-# --------------------------------------------------------------------------- planning never launches; operator sees the plan first
-
-
-def test_commit_refuses_until_the_operator_has_been_shown_the_plan(
-    tmp_path: Path,
-) -> None:
-    built = PLANNING.plan(
-        "deliver the outcome",
-        [_child("c1", "judgment")],
-        run_id="run-plan",
-    )
+def test_commit_refuses_until_the_operator_has_been_shown_the_plan(tmp_path: Path) -> None:
+    built = PLANNING.plan("deliver the outcome", [_child("c1", "judgment")], run_id="run-plan")
     with pytest.raises(PLANNING.PlanningError, match="presentation receipt"):
         PLANNING.commit_plan(built, tmp_path)
     assert not REGISTER.register_path("run-plan").exists()
-
     _shown, text = PLANNING.present_plan(built)
     assert "c1" in text
     assert "claude" in text
@@ -463,7 +423,6 @@ def test_planning_never_launches_a_child(tmp_path: Path) -> None:
     source = inspect.getsource(PLANNING)
     assert "launch_child" not in source
     assert "session_lifecycle" not in source
-
     launched: list[str] = []
 
     def _record_launch(*_args: Any, **_kwargs: Any) -> None:
@@ -474,9 +433,7 @@ def test_planning_never_launches_a_child(tmp_path: Path) -> None:
     sys.modules["session_lifecycle"] = fake
     try:
         built = PLANNING.plan(
-            "deliver the outcome",
-            [_child("c1", "mechanical")],
-            run_id="run-plan",
+            "deliver the outcome", [_child("c1", "mechanical")], run_id="run-plan"
         )
         PLANNING.issue_presentation_receipt(built)
         PLANNING.commit_plan(built, tmp_path)
@@ -486,9 +443,6 @@ def test_planning_never_launches_a_child(tmp_path: Path) -> None:
     row = REGISTER.read_rows(tmp_path, run_id="run-plan")["c1"]
     assert row["phase"] == "planned"
     assert row["admission"] == "reserved"
-
-
-# --------------------------------------------------------------------------- git timeout and missing-sibling location
 
 
 def test_canonical_work_location_passes_a_timeout_to_git(
@@ -578,7 +532,11 @@ def test_promoting_a_finished_child_does_not_rewrite_its_phase(tmp_path: Path) -
         per_vendor_limit=1,
     )
     REGISTER.upsert_row(
-        tmp_path, "finished", {"phase": "reaped", "pane_id": "pane-2"}, run_id="run-plan"
+        tmp_path,
+        "finished",
+        {"phase": "reaped", "pane_id": "pane-2"},
+        run_id="run-plan",
+        writer="write_phase",
     )
     promoted = ADMISSION.release_slot(tmp_path, "alive", run_id="run-plan")
     finished = REGISTER.read_rows(tmp_path, run_id="run-plan")["finished"]
@@ -593,6 +551,7 @@ def test_an_active_phase_without_a_reservation_is_not_occupancy(tmp_path: Path) 
         "escaped",
         {"agent": "claude", "vendor": "claude", "phase": "launching"},
         run_id="run-a",
+        writer="write_phase",
     )
     per_vendor, aggregate = ADMISSION.occupancy(tmp_path)
     assert aggregate == 0
@@ -602,12 +561,7 @@ def test_an_active_phase_without_a_reservation_is_not_occupancy(tmp_path: Path) 
 
 def test_admission_never_writes_phase_on_reserve(tmp_path: Path) -> None:
     ADMISSION.reserve_slot(
-        tmp_path,
-        "c1",
-        run_id="run-a",
-        vendor="claude",
-        work_shape="work-medium",
-        tokens_max=20000,
+        tmp_path, "c1", run_id="run-a", vendor="claude", work_shape="work-medium", tokens_max=20000
     )
     row = REGISTER.read_rows(tmp_path, run_id="run-a")["c1"]
     assert "phase" not in row
@@ -616,12 +570,7 @@ def test_admission_never_writes_phase_on_reserve(tmp_path: Path) -> None:
 
 def test_activate_slot_holds_the_reservation_and_does_not_launch(tmp_path: Path) -> None:
     ADMISSION.reserve_slot(
-        tmp_path,
-        "c1",
-        run_id="run-a",
-        vendor="claude",
-        work_shape="work-medium",
-        tokens_max=20000,
+        tmp_path, "c1", run_id="run-a", vendor="claude", work_shape="work-medium", tokens_max=20000
     )
     ADMISSION.activate_slot(tmp_path, "c1", run_id="run-a", now=50.0)
     doc = json.loads(REGISTER.register_path("run-a").read_text(encoding="utf-8"))
@@ -647,12 +596,7 @@ def test_reserve_does_not_write_a_host_policy_file(tmp_path: Path) -> None:
         ADMISSION.DEFAULT_PER_VENDOR, ADMISSION.DEFAULT_AGGREGATE
     )
     second = ADMISSION.reserve_slot(
-        tmp_path,
-        "b1",
-        run_id="run-b",
-        vendor="claude",
-        work_shape="work-medium",
-        tokens_max=20000,
+        tmp_path, "b1", run_id="run-b", vendor="claude", work_shape="work-medium", tokens_max=20000
     )
     assert second.status == "reserved"
 
@@ -660,20 +604,10 @@ def test_reserve_does_not_write_a_host_policy_file(tmp_path: Path) -> None:
 def test_explicit_host_policy_write_is_the_durable_rule(tmp_path: Path) -> None:
     ADMISSION.write_host_policy(per_vendor=1, aggregate=7)
     first = ADMISSION.reserve_slot(
-        tmp_path,
-        "a1",
-        run_id="run-a",
-        vendor="claude",
-        work_shape="work-medium",
-        tokens_max=20000,
+        tmp_path, "a1", run_id="run-a", vendor="claude", work_shape="work-medium", tokens_max=20000
     )
     second = ADMISSION.reserve_slot(
-        tmp_path,
-        "b1",
-        run_id="run-b",
-        vendor="claude",
-        work_shape="work-medium",
-        tokens_max=20000,
+        tmp_path, "b1", run_id="run-b", vendor="claude", work_shape="work-medium", tokens_max=20000
     )
     assert first.status == "reserved"
     assert second.status == "queued"
@@ -731,17 +665,11 @@ def test_an_observed_exit_is_reclaimed_even_when_the_pane_id_remains(tmp_path: P
         tokens_max=20000,
         now=100.0,
     )
-    REGISTER.upsert_row(
-        tmp_path,
-        "gone",
-        {
-            "phase": "working",
-            "pane_id": "w1:p9",
-            "observed_state": "exited",
-            "observed_state_source": "observed:pane_exited",
-        },
-        run_id="run-a",
+    REGISTER.write_phase(tmp_path, "gone", "working", run_id="run-a")
+    REGISTER.record_observed_state(
+        tmp_path, "gone", "exited", source="observed:pane_exited", run_id="run-a"
     )
+    REGISTER.upsert_row(tmp_path, "gone", {"pane_id": "w1:p9"}, run_id="run-a")
     reclaimed = ADMISSION.reclaim_dead_slots(
         tmp_path, run_id="run-a", lease_seconds=10.0, now=1000.0
     )
@@ -797,9 +725,10 @@ def test_unaccounted_child_fails_the_run_spend_gate(tmp_path: Path) -> None:
         "escaped",
         {"agent": "claude", "vendor": "claude", "phase": "working"},
         run_id="run-a",
+        writer="write_phase",
     )
     with pytest.raises(ACCOUNTING.AccountingError, match="no tokens_observed"):
-        ACCOUNTING.check_spend(tmp_path, run_id="run-a", ceiling=1_000_000)
+        ACCOUNTING.check_spend(tmp_path, run_id="run-a", ceiling=1000000)
 
 
 def test_usage_parser_does_not_count_remaining_context_or_drop_input() -> None:
@@ -828,21 +757,10 @@ def test_concurrent_observed_token_writes_sum_exactly(tmp_path: Path) -> None:
     REGISTER.upsert_row(tmp_path, "metered", {"vendor": "claude"}, run_id="run-a")
     workers = 20
     increment = 10
-    script = (
-        "import sys\n"
-        f"sys.path.insert(0, {str(SCRIPTS)!r})\n"
-        "from pathlib import Path\n"
-        "import accounting\n"
-        "accounting.record_observed_tokens("
-        f"Path({str(tmp_path)!r}), 'metered', {increment}, run_id='run-a')\n"
-    )
+    script = f"import sys\nsys.path.insert(0, {str(SCRIPTS)!r})\nfrom pathlib import Path\nimport accounting\naccounting.record_observed_tokens(Path({str(tmp_path)!r}), 'metered', {increment}, run_id='run-a')\n"
     env = os.environ.copy()
     procs = [
-        subprocess.Popen(  # noqa: S603 -- fixed argv, no shell
-            [sys.executable, "-c", script],
-            env=env,
-            cwd=str(ROOT),
-        )
+        subprocess.Popen([sys.executable, "-c", script], env=env, cwd=str(ROOT))
         for _ in range(workers)
     ]
     assert [proc.wait() for proc in procs] == [0] * workers
@@ -854,7 +772,7 @@ def _record_root(root: Path, run_id: str) -> None:
     path = REGISTER.register_dir() / f"{run_id}.root"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(str(root.resolve()), encoding="utf-8")
-    path.chmod(0o600)
+    path.chmod(384)
 
 
 def test_commit_does_not_write_the_settled_artifact_column(tmp_path: Path) -> None:
@@ -872,7 +790,6 @@ def test_commit_does_not_write_the_settled_artifact_column(tmp_path: Path) -> No
     assert "artifact_path" not in row
     assert row["declared_artifact_path"] == "artifacts/child-a.json"
     assert before["child-a"].artifact_exists is None
-
     artifact = tmp_path / "artifacts" / "child-a.json"
     artifact.parent.mkdir()
     artifact.write_text("{}", encoding="utf-8")
@@ -892,7 +809,9 @@ def test_commit_does_not_write_the_settled_artifact_column(tmp_path: Path) -> No
 
 def test_a_terminal_row_cannot_be_replanned(tmp_path: Path) -> None:
     _commit(tmp_path, [_child("c1", "work-medium", vendor="claude")])
-    REGISTER.upsert_row(tmp_path, "c1", {"phase": "reaped"}, run_id="run-plan")
+    REGISTER.upsert_row(
+        tmp_path, "c1", {"phase": "reaped"}, run_id="run-plan", writer="write_phase"
+    )
     with pytest.raises(ADMISSION.AdmissionError, match="reaped"):
         _commit(tmp_path, [_child("c1", "work-medium", vendor="claude")])
     assert REGISTER.read_rows(tmp_path, run_id="run-plan")["c1"]["phase"] == "reaped"
@@ -900,14 +819,9 @@ def test_a_terminal_row_cannot_be_replanned(tmp_path: Path) -> None:
 
 def test_activate_slot_refuses_a_terminal_row(tmp_path: Path) -> None:
     ADMISSION.reserve_slot(
-        tmp_path,
-        "c1",
-        run_id="run-a",
-        vendor="claude",
-        work_shape="work-medium",
-        tokens_max=20000,
+        tmp_path, "c1", run_id="run-a", vendor="claude", work_shape="work-medium", tokens_max=20000
     )
-    REGISTER.upsert_row(tmp_path, "c1", {"phase": "reaped"}, run_id="run-a")
+    REGISTER.upsert_row(tmp_path, "c1", {"phase": "reaped"}, run_id="run-a", writer="write_phase")
     with pytest.raises(ADMISSION.AdmissionError, match="reaped"):
         ADMISSION.activate_slot(tmp_path, "c1", run_id="run-a")
 
@@ -928,12 +842,9 @@ def test_inferred_snapshot_absence_does_not_free_a_live_holder(tmp_path: Path) -
         "live",
         {"phase": "working", "pane_id": "w1:p9"},
         run_id="run-a",
+        writer="write_phase",
     )
-    SUBSCRIBER.catch_up(
-        tmp_path,
-        {"panes": [], "agents": []},
-        run_id="run-a",
-    )
+    SUBSCRIBER.catch_up(tmp_path, {"panes": [], "agents": []}, run_id="run-a")
     row = REGISTER.read_rows(tmp_path, run_id="run-a")["live"]
     assert row["observed_state"] == "exited"
     assert row["observed_state_source"] == "inferred:snapshot_absence"
@@ -946,11 +857,11 @@ def test_inferred_snapshot_absence_does_not_free_a_live_holder(tmp_path: Path) -
     assert per_vendor["claude"] == 1
 
 
-def test_silent_vendor_observed_value_cannot_lower_the_declared_maximum(
-    tmp_path: Path,
-) -> None:
+def test_silent_vendor_observed_value_cannot_lower_the_declared_maximum(tmp_path: Path) -> None:
     _commit(tmp_path, [_child("silent", "work-medium", vendor="muse", tokens_max=20000)])
-    REGISTER.upsert_row(tmp_path, "silent", {"phase": "working"}, run_id="run-plan")
+    REGISTER.upsert_row(
+        tmp_path, "silent", {"phase": "working"}, run_id="run-plan", writer="write_phase"
+    )
     ACCOUNTING.record_observed_tokens(tmp_path, "silent", 1, run_id="run-plan")
     row = REGISTER.read_rows(tmp_path, run_id="run-plan")["silent"]
     assert row["tokens_max"] == 20000
@@ -980,11 +891,7 @@ def test_retire_forgets_the_presentation_receipt(tmp_path: Path) -> None:
     REGISTER.retire_run(tmp_path, "run-plan")
     assert not receipt_path.exists()
     assert not generation_path.exists()
-    rebuilt = PLANNING.plan(
-        "deliver the outcome",
-        [_child("c1", "work-medium")],
-        run_id="run-plan",
-    )
+    rebuilt = PLANNING.plan("deliver the outcome", [_child("c1", "work-medium")], run_id="run-plan")
     with pytest.raises(PLANNING.PlanningError, match="presentation receipt"):
         PLANNING.commit_plan(rebuilt, tmp_path)
 
@@ -1001,10 +908,7 @@ def test_queue_promotes_the_oldest_eligible_entry(tmp_path: Path) -> None:
         now=10.0,
     )
     _commit(
-        tmp_path,
-        [_child("newer-wait", "work-medium", vendor="claude")],
-        run_id="run-a",
-        now=20.0,
+        tmp_path, [_child("newer-wait", "work-medium", vendor="claude")], run_id="run-a", now=20.0
     )
     promoted = ADMISSION.release_slot(tmp_path, "older-held", run_id="run-z")
     assert promoted is not None
@@ -1022,7 +926,7 @@ def test_replayed_usage_events_are_not_counted_twice(tmp_path: Path) -> None:
     ACCOUNTING.apply_output_match(tmp_path, "metered", "input 200 output 0 tokens", run_id="run-a")
     ACCOUNTING.apply_output_match(tmp_path, "metered", "input 100 output 0 tokens", run_id="run-a")
     row = REGISTER.read_rows(tmp_path, run_id="run-a")["metered"]
-    assert row["tokens_observed"] == 500
+    assert row["tokens_observed"] == 600
 
 
 def test_a_planned_child_has_spent_zero(tmp_path: Path) -> None:
@@ -1031,13 +935,36 @@ def test_a_planned_child_has_spent_zero(tmp_path: Path) -> None:
     assert ACCOUNTING.run_actual_tokens(tmp_path, run_id="run-plan") == 0.0
 
 
+def test_a_planned_silent_vendor_has_spent_zero(tmp_path: Path) -> None:
+    _commit(tmp_path, [_child("quiet", "work-medium", vendor="muse")])
+    ACCOUNTING.check_spend(tmp_path, run_id="run-plan", ceiling=1)
+    assert ACCOUNTING.run_actual_tokens(tmp_path, run_id="run-plan") == 0.0
+
+
+def test_a_phaseless_metered_row_fails_closed(tmp_path: Path) -> None:
+    REGISTER.upsert_row(tmp_path, "metered", {"vendor": "claude"}, run_id="run-a")
+    ACCOUNTING.record_observed_tokens(tmp_path, "metered", 200, run_id="run-a")
+    with pytest.raises(ACCOUNTING.AccountingError, match="unknown phase"):
+        ACCOUNTING.check_spend(tmp_path, run_id="run-a", ceiling=1)
+    with pytest.raises(ACCOUNTING.AccountingError, match="unknown phase"):
+        ACCOUNTING.run_actual_tokens(tmp_path, run_id="run-a")
+
+
+def test_a_phaseless_silent_vendor_fails_closed(tmp_path: Path) -> None:
+    REGISTER.upsert_row(
+        tmp_path,
+        "silent",
+        {"vendor": "muse", "tokens_max": 20000},
+        run_id="run-a",
+        writer=REGISTER.TOKENS_MAX_WRITER,
+    )
+    with pytest.raises(ACCOUNTING.AccountingError, match="unknown phase"):
+        ACCOUNTING.check_spend(tmp_path, run_id="run-a", ceiling=1)
+
+
 def test_child_contract_matches_the_launch_boundary() -> None:
     with pytest.raises(PLANNING.PlanningError, match="repository-relative"):
-        PLANNING.plan(
-            "outcome",
-            [_child("c1", "work-medium", scope="../outside")],
-            run_id="run-a",
-        )
+        PLANNING.plan("outcome", [_child("c1", "work-medium", scope="../outside")], run_id="run-a")
     with pytest.raises(PLANNING.PlanningError, match="repository-relative"):
         PLANNING.plan(
             "outcome",
@@ -1045,15 +972,9 @@ def test_child_contract_matches_the_launch_boundary() -> None:
             run_id="run-a",
         )
     with pytest.raises(PLANNING.PlanningError, match="positive integer tokens_max"):
-        PLANNING.plan(
-            "outcome",
-            [_child("c1", "work-medium", tokens_max=1.9)],
-            run_id="run-a",
-        )
+        PLANNING.plan("outcome", [_child("c1", "work-medium", tokens_max=1.9)], run_id="run-a")
     built = PLANNING.plan(
-        "outcome",
-        [_child("c1", "work-medium", scope=("src/", "tests/"))],
-        run_id="run-a",
+        "outcome", [_child("c1", "work-medium", scope=("src/", "tests/"))], run_id="run-a"
     )
     assert built.children[0].scope == ("src", "tests")
 
@@ -1076,12 +997,7 @@ def test_host_policy_file_has_a_closed_schema(tmp_path: Path) -> None:
 def test_admission_refuses_foreign_row_columns(tmp_path: Path) -> None:
     claimed = REGISTER.canonical_work_location(tmp_path)
     ADMISSION.reserve_slot(
-        tmp_path,
-        "c1",
-        run_id="run-a",
-        vendor="claude",
-        work_shape="work-medium",
-        tokens_max=20000,
+        tmp_path, "c1", run_id="run-a", vendor="claude", work_shape="work-medium", tokens_max=20000
     )
     with ADMISSION.admission_locked(), REGISTER.generation_locked("run-a"):
         doc = REGISTER._read_register_unlocked("run-a")
@@ -1098,12 +1014,7 @@ def test_admission_refuses_foreign_row_columns(tmp_path: Path) -> None:
 
 def test_a_reservation_names_its_occupant(tmp_path: Path) -> None:
     ADMISSION.reserve_slot(
-        tmp_path,
-        "c1",
-        run_id="run-a",
-        vendor="claude",
-        work_shape="work-medium",
-        tokens_max=20000,
+        tmp_path, "c1", run_id="run-a", vendor="claude", work_shape="work-medium", tokens_max=20000
     )
     doc = json.loads(REGISTER.register_path("run-a").read_text(encoding="utf-8"))
     reservation = doc["admission"]["reservations"]["c1"]
@@ -1112,3 +1023,112 @@ def test_a_reservation_names_its_occupant(tmp_path: Path) -> None:
     assert reservation["vendor"] == "claude"
     assert reservation["work_location"]
     assert reservation["lease_until"] is None
+
+
+def test_identical_delta_usage_lines_are_added(tmp_path: Path) -> None:
+    REGISTER.upsert_row(tmp_path, "metered", {"vendor": "claude"}, run_id="run-a")
+    ACCOUNTING.apply_output_match(tmp_path, "metered", "input 100 output 50 tokens", run_id="run-a")
+    ACCOUNTING.apply_output_match(tmp_path, "metered", "input 100 output 50 tokens", run_id="run-a")
+    row = REGISTER.read_rows(tmp_path, run_id="run-a")["metered"]
+    assert row["tokens_observed"] == 300
+
+
+def test_an_ambiguous_usage_line_is_refused(tmp_path: Path) -> None:
+    REGISTER.upsert_row(tmp_path, "metered", {"vendor": "claude"}, run_id="run-a")
+    ACCOUNTING.apply_output_match(tmp_path, "metered", "tokens used: 100", run_id="run-a")
+    with pytest.raises(ACCOUNTING.AccountingError, match="both the delta and cumulative"):
+        ACCOUNTING.apply_output_match(
+            tmp_path,
+            "metered",
+            "input 100 output 50 tokens; total tokens: 900",
+            run_id="run-a",
+        )
+    with pytest.raises(ACCOUNTING.AccountingError, match="unparseable"):
+        ACCOUNTING.check_spend(tmp_path, run_id="run-a", ceiling=1_000_000, row_id="metered")
+
+
+def test_an_emptied_generation_sidecar_is_restored_from_the_register(tmp_path: Path) -> None:
+    _commit(tmp_path, [_child("c1", "work-medium")])
+    sidecar = REGISTER.generation_sidecar_path("run-plan")
+    stamped = sidecar.read_text(encoding="utf-8").strip()
+    sidecar.write_text("", encoding="utf-8")
+    rebuilt = PLANNING.plan("deliver the outcome", [_child("c1", "work-medium")], run_id="run-plan")
+    receipt = PLANNING.issue_presentation_receipt(rebuilt)
+    assert receipt.generation == stamped
+    assert sidecar.read_text(encoding="utf-8").strip() == stamped
+    second = PLANNING.commit_plan(rebuilt, tmp_path, receipt=receipt)
+    assert second.children[0].admission == "reserved"
+    assert second.children[0].admission_reason == "already reserved"
+    doc = json.loads(REGISTER.register_path("run-plan").read_text(encoding="utf-8"))
+    assert doc["generation"] == stamped
+
+
+def test_a_deleted_generation_sidecar_is_restored_from_the_register(tmp_path: Path) -> None:
+    _commit(tmp_path, [_child("c1", "work-medium")])
+    sidecar = REGISTER.generation_sidecar_path("run-plan")
+    stamped = sidecar.read_text(encoding="utf-8").strip()
+    sidecar.unlink()
+    rebuilt = PLANNING.plan("deliver the outcome", [_child("c1", "work-medium")], run_id="run-plan")
+    receipt = PLANNING.issue_presentation_receipt(rebuilt)
+    assert receipt.generation == stamped
+    second = PLANNING.commit_plan(rebuilt, tmp_path, receipt=receipt)
+    assert second.children[0].admission == "reserved"
+    assert second.children[0].admission_reason == "already reserved"
+
+
+def test_an_unreadable_generation_sidecar_is_treated_as_absent(tmp_path: Path) -> None:
+    _commit(tmp_path, [_child("c1", "work-medium")])
+    sidecar = REGISTER.generation_sidecar_path("run-plan")
+    stamped = sidecar.read_text(encoding="utf-8").strip()
+    sidecar.write_bytes(b"\xff\xfe")
+    rebuilt = PLANNING.plan("deliver the outcome", [_child("c1", "work-medium")], run_id="run-plan")
+    receipt = PLANNING.issue_presentation_receipt(rebuilt)
+    assert receipt.generation == stamped
+    assert sidecar.read_text(encoding="utf-8").strip() == stamped
+
+
+def test_retire_cannot_split_a_commit_from_its_reservation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    built = PLANNING.plan(
+        "deliver the outcome",
+        [_child("c1", "work-medium", vendor="claude")],
+        run_id="run-plan",
+    )
+    PLANNING.issue_presentation_receipt(built)
+    _record_root(tmp_path, "run-plan")
+    reserved = threading.Event()
+    real = ADMISSION._reserve_unlocked
+
+    def _signal_after_reserve(*args: Any, **kwargs: Any) -> Any:
+        result = real(*args, **kwargs)
+        reserved.set()
+        return result
+
+    monkeypatch.setattr(ADMISSION, "_reserve_unlocked", _signal_after_reserve)
+    results: dict[str, Any] = {}
+
+    def _commit() -> None:
+        results["plan"] = PLANNING.commit_plan(built, tmp_path)
+
+    def _retire() -> None:
+        reserved.wait(timeout=5)
+        results["archive"] = REGISTER.retire_run(tmp_path, "run-plan")
+
+    first = threading.Thread(target=_commit)
+    second = threading.Thread(target=_retire)
+    first.start()
+    second.start()
+    first.join(timeout=10)
+    second.join(timeout=10)
+    assert not first.is_alive() and not second.is_alive()
+    assert results["plan"].children[0].admission == "reserved"
+    live = REGISTER.register_path("run-plan")
+    if live.exists():
+        doc = json.loads(live.read_text(encoding="utf-8"))
+    else:
+        archive = results["archive"]
+        assert archive is not None
+        doc = json.loads(archive.read_text(encoding="utf-8"))
+    assert "c1" in doc.get("admission", {}).get("reservations", {})
+    assert doc["rows"]["c1"]["phase"] == "planned"

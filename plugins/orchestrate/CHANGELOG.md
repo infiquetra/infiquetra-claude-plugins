@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.5.3] - 2026-08-15
+
+### Fixed
+
+- An owned register column arriving at the generic merger without that
+  column's writer is refused. Production writers of `phase` and
+  `observed_state` go through the named setters. The reservation record is
+  owned by the admission write gateway, not by reserve alone.
+- Equal delta usage lines add. A content hash is not a delivery identity.
+  A line matching both usage grammars is refused. Unparseable telemetry
+  after a prior sample fails the spend gate closed.
+- `commit_plan` writes the reservation, generation, phase, and plan row
+  under one admission-then-generation critical section. Retirement takes
+  the admission lock first, so it cannot split a reserved verdict from its
+  reservation.
+- A child is charged zero only when its phase is `planned`. A missing
+  phase is unknown and fails closed.
+- The generation sidecar is written atomically under the generation lock.
+  An empty or unreadable sidecar is absent; a generation already stamped
+  on the register is restored rather than minting a second one.
+
 ## [0.5.2] - 2026-08-15
 
 ### Fixed

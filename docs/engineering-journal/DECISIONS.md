@@ -19,9 +19,9 @@ plan and walks away must not lose it to a clock. The reservation record
 carries run, row, vendor, and work location so a later reconciler can name
 the occupant. Owner recovery belongs to the composition unit.
 
-**Rejected: a required writer token on every `upsert_row`.** Tests and later
-lifecycle units plant `phase` through the merger. Forcing a token would
-rewrite surfaces this unit does not own.
+The merger now requires the writer identity for every owned column. Tests
+that plant `phase` or `observed_state` name the setter they are standing in
+for. A mixed payload from two owners is two writes.
 **Rejected: a wall-clock lease on every planned reservation.** That
 recreates eager reclaim the moment an operator pauses.
 

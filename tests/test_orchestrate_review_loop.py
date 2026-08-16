@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import inspect
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -40,13 +41,18 @@ def _artifact(**parts: str) -> Any:
     return LOOP.Artifact.from_mapping(parts)
 
 
-def _finding(defect_class: str, rank: str = "lowest") -> Any:
-    return LOOP.Finding(defect_class=defect_class, rank=rank)
+def _finding(defect_class: str, rank: str = "lowest", *, blocking: bool = False) -> Any:
+    return LOOP.Finding(defect_class=defect_class, rank=rank, blocking=blocking)
 
 
-def _report(*defect_classes: str, rank: str = "lowest", disposes: tuple[str, ...] = ()) -> Any:
+def _report(
+    *defect_classes: str,
+    rank: str = "lowest",
+    blocking: bool = False,
+    disposes: tuple[str, ...] = (),
+) -> Any:
     return LOOP.ReviewReport.of(
-        [_finding(name, rank=rank) for name in defect_classes],
+        [_finding(name, rank=rank, blocking=blocking) for name in defect_classes],
         disposes=disposes,
     )
 
@@ -123,59 +129,87 @@ def test_a_changed_path_delta_does_not_include_unchanged_lines() -> None:
     assert "+GAMMA" in surface
 
 
-@pytest.mark.parametrize("rank", ["lowest", "advisory", "blocking", ""])
-def test_the_same_declared_class_in_a_third_iteration_yields_halt_and_escalate_regardless_of_its_rank(
+@pytest.mark.parametrize("rank", ["lowest", "advisory", "P0", "blocking", ""])
+def test_a_recurring_non_blocking_class_on_the_last_iteration_escalates_regardless_of_rank(
     rank: str,
 ) -> None:
     loop = LOOP.ReviewLoop()
     unit = f"unit-rank-{rank or 'empty'}"
     defect = "recurring-class"
-    _drive_same_class_to_last_iteration(loop, unit, defect)
-    verdict = loop.conclude_iteration(unit, _report(defect, rank=rank))
+    _repair_once(loop, unit, _artifact(doc="first"), defect)
+    loop.begin_iteration(unit, _artifact(doc="disposed"))
+    disposed = loop.conclude_iteration(unit, _empty_report(defect))
+    assert disposed.kind == LOOP.VERDICT_PASS
+    loop.begin_iteration(unit, _artifact(doc="last"))
+    verdict = loop.conclude_iteration(unit, _report(defect, rank=rank, blocking=False))
     assert verdict.kind == LOOP.VERDICT_HALT_AND_ESCALATE
     assert verdict.iteration == LOOP.MAX_ITERATIONS
     assert defect in verdict.recurring_classes
 
 
-def test_findings_on_the_last_iteration_escalate_even_when_the_class_is_new() -> None:
-    """A last-iteration finding cannot be repaired. The verdict must say so.
-
-    The earlier scenario that a novel last-iteration class stayed in
-    ``halt-and-repair`` made the verdict a lie: the next begin is refused.
-    Recurrence is sufficient to escalate. It is not required.
-    """
+@pytest.mark.parametrize("rank", ["lowest", "P0", "blocking", "unshippable"])
+def test_only_new_non_blocking_findings_on_the_last_iteration_close_without_escalation(
+    rank: str,
+) -> None:
     loop = LOOP.ReviewLoop()
     unit = "unit-novel"
-    _repair_once(loop, unit, _artifact(doc="v0"), "first")
-    _repair_once(loop, unit, _artifact(doc="v1"), "second")
+    loop.begin_iteration(unit, _artifact(doc="v0"))
+    assert loop.conclude_iteration(unit, _empty_report()).kind == LOOP.VERDICT_PASS
+    loop.begin_iteration(unit, _artifact(doc="v1"))
+    assert loop.conclude_iteration(unit, _empty_report()).kind == LOOP.VERDICT_PASS
     loop.begin_iteration(unit, _artifact(doc="v2"))
-    verdict = loop.conclude_iteration(unit, _report("third", rank="lowest"))
-    assert verdict.kind == LOOP.VERDICT_HALT_AND_ESCALATE
+    verdict = loop.conclude_iteration(unit, _report("new-class", rank=rank, blocking=False))
+    assert verdict.kind == LOOP.VERDICT_PASS
     assert verdict.iteration == LOOP.MAX_ITERATIONS
     assert verdict.recurring_classes == frozenset()
-    assert loop._units[unit].terminal is True
-    with pytest.raises(LOOP.UnitTerminalError):
+    assert loop._units[unit].terminal is False
+    with pytest.raises(LOOP.IterationBoundError):
         loop.begin_iteration(unit, _artifact(doc="v3"))
 
 
-def test_three_novel_classes_end_in_a_verdict_not_a_refused_repair() -> None:
+def test_a_new_blocking_finding_on_the_last_iteration_escalates() -> None:
     loop = LOOP.ReviewLoop()
-    unit = "unit-fresh"
-    first = _repair_once(loop, unit, _artifact(doc="v0"), "alpha")
-    second = _repair_once(loop, unit, _artifact(doc="v1"), "beta")
-    third = _repair_once(loop, unit, _artifact(doc="v2"), "gamma")
-    assert first.kind == LOOP.VERDICT_HALT_AND_REPAIR
-    assert first.iteration == 1
-    assert second.kind == LOOP.VERDICT_HALT_AND_REPAIR
-    assert second.iteration == 2
-    assert third.kind == LOOP.VERDICT_HALT_AND_ESCALATE
-    assert third.iteration == 3
-    state = loop._units[unit]
-    assert state.last_verdict == LOOP.VERDICT_HALT_AND_ESCALATE
-    assert state.terminal is True
-    assert "gamma" in state.escalated_classes
-    with pytest.raises(LOOP.UnitTerminalError):
-        loop.begin_iteration(unit, _artifact(doc="v3"))
+    unit = "unit-new-blocking"
+    for index in range(LOOP.MAX_ITERATIONS - 1):
+        loop.begin_iteration(unit, _artifact(doc=f"v{index}"))
+        assert loop.conclude_iteration(unit, _empty_report()).kind == LOOP.VERDICT_PASS
+    loop.begin_iteration(unit, _artifact(doc="last"))
+    verdict = loop.conclude_iteration(
+        unit,
+        _report("new-blocking-class", rank="advisory", blocking=True),
+    )
+    assert verdict.kind == LOOP.VERDICT_HALT_AND_ESCALATE
+    assert verdict.recurring_classes == frozenset()
+
+
+def test_findings_filed_when_the_last_iteration_closes_are_reachable_from_the_verdict() -> None:
+    loop = LOOP.ReviewLoop()
+    unit = "unit-filed"
+    for index in range(LOOP.MAX_ITERATIONS - 1):
+        loop.begin_iteration(unit, _artifact(doc=f"v{index}"))
+        loop.conclude_iteration(unit, _empty_report())
+    loop.begin_iteration(unit, _artifact(doc="last"))
+    report = LOOP.ReviewReport.of(
+        (
+            _finding("documentation", blocking=False),
+            _finding("naming", rank="note", blocking=False),
+        )
+    )
+    verdict = loop.conclude_iteration(unit, report)
+    assert verdict.kind == LOOP.VERDICT_PASS
+    assert verdict.findings == report.findings
+
+
+@pytest.mark.parametrize("blocking", [False, True])
+def test_findings_before_the_last_iteration_still_halt_for_repair(blocking: bool) -> None:
+    loop = LOOP.ReviewLoop()
+    loop.begin_iteration("unit-early-finding", _artifact(doc="v0"))
+    verdict = loop.conclude_iteration(
+        "unit-early-finding",
+        _report("early-class", blocking=blocking),
+    )
+    assert verdict.kind == LOOP.VERDICT_HALT_AND_REPAIR
+    assert verdict.iteration < LOOP.MAX_ITERATIONS
 
 
 def test_a_second_escalation_for_one_unit_is_refused() -> None:
@@ -476,11 +510,61 @@ def test_begin_iteration_resets_the_unperformed_counter() -> None:
     assert loop._units["unit-reset"].unperformed == 1
 
 
+def test_blocking_is_a_required_keyword_boolean_and_is_not_derived_from_rank() -> None:
+    signature = inspect.signature(LOOP.Finding)
+    parameter = signature.parameters["blocking"]
+    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
+    assert parameter.default is inspect.Parameter.empty
+
+    with pytest.raises(TypeError, match="blocking"):
+        LOOP.Finding("declared-class", "lowest")
+    with pytest.raises(TypeError, match="positional"):
+        LOOP.Finding("declared-class", "lowest", False)
+    for value in ("blocking", "P0", 0, 1, None):
+        with pytest.raises(LOOP.ReviewLoopError, match="blocking as a boolean"):
+            LOOP.Finding("declared-class", "lowest", blocking=value)
+
+    tree = ast.parse(SOURCE)
+    conclude = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "conclude_iteration"
+    )
+    assert not any(
+        isinstance(node, ast.Attribute) and node.attr == "rank" for node in ast.walk(conclude)
+    )
+
+
+def test_the_last_iteration_escalation_guard_reads_only_its_declared_evidence() -> None:
+    tree = ast.parse(SOURCE)
+    assignments = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "final_escalation"
+            for target in node.targets
+        )
+    ]
+    assert len(assignments) == 1
+    value = assignments[0].value
+    assert isinstance(value, ast.Call)
+    assert isinstance(value.func, ast.Name) and value.func.id == "bool"
+    assert len(value.args) == 1 and isinstance(value.args[0], ast.BoolOp)
+    assert isinstance(value.args[0].op, ast.Or)
+    assert {ast.unparse(operand) for operand in value.args[0].values} == {
+        "recurring",
+        "unresolved_prior",
+        "blocking_classes",
+        "state.unperformed",
+    }
+
+
 def test_a_blank_defect_class_is_refused() -> None:
     with pytest.raises(LOOP.ReviewLoopError, match="declare a defect class"):
-        LOOP.Finding("", "lowest")
+        LOOP.Finding("", "lowest", blocking=False)
     with pytest.raises(LOOP.ReviewLoopError, match="declare a defect class"):
-        LOOP.Finding("   ", "lowest")
+        LOOP.Finding("   ", "lowest", blocking=False)
 
 
 def test_a_review_report_cannot_be_built_from_a_bare_string() -> None:

@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.5.1] - 2026-08-16
+
+### Fixed
+
+- **The saga command is translated per vendor when it is sent, not left to the interview.** 1.5.0
+  documented that codex takes `$saga:plan` and grok, qwen and opencode take `/plan`, then relied on
+  the interview to render each unit's task correctly. It did not: a live run dispatched `/saga:plan`
+  — claude's form — to a codex unit, which reads it as prose and does something of its own. Silent,
+  like every other wrong-prefix failure here. `normalize_task` now rewrites an explicitly namespaced
+  saga command into the receiving vendor's form at the moment of sending, so the interview writes
+  `/saga:<cap>` once for everybody and cannot get it wrong.
+
+  Only an explicitly namespaced command (`/saga:x` or `$saga:x`) is rewritten. Plain prose, file
+  paths and bare slash commands are left exactly alone — guessing at what is and is not a command is
+  how this goes wrong in the other direction.
+
+### Added
+
+- **Whether a vendor has saga at all is now resolved from disk, not believed.** `saga <cap>` locates
+  each vendor's install and reports what it finds: claude under its plugin cache, codex as skills
+  with no commands directory, grok in its marketplace cache, qwen as an extension, opencode as flat
+  command files. **agy and muse have no saga install** — only a stale backup in agy's case — so a
+  saga task sent to either does nothing whatever prefix it carries. That was invisible before.
+- **`start` and `expand` refuse a saga task aimed at a vendor without saga**, naming the unit and
+  the vendor, before a tab opens. The prefix was never the only way this failed.
+
+
 ## [1.5.0] - 2026-08-16
 
 ### Changed

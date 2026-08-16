@@ -386,7 +386,324 @@ clock — a pid plus boot identity, say — and it is available to every runtime
 **Refs.** LEARNINGS `{#exclude-by-the-column-that-carries-the-fact}`.
 
 
+### Finding blocking is an explicit boolean and performed verdicts carry findings  {#finding-blocking-is-explicit}
+
+**Decision.** Each finding must declare `blocking` with a required keyword-only boolean. The review
+loop never derives blocking effect from `rank`, and every verdict concluded from a performed report
+returns the report's findings.
+
+**Context.** The rank is an unconstrained string supplied by reviewers that may use different
+rubrics. Treating selected rank text as blocking would move an unreliable interpretation into the
+stopping rule. Closing on new non-blocking findings also requires a durable handoff to the caller;
+otherwise the decision would accept a report while making its filed work unreachable.
+
+**Rationale.** A required keyword-only boolean makes blocking a deliberate, type-checked statement.
+It cannot be enabled by positional drift, a default, or words in the rank. Returning the immutable
+finding tuple on the verdict keeps the decision and the evidence together without adding another
+store.
+
+**Rejected alternatives.** Parsing rank names was rejected because rank has no shared vocabulary.
+A default of `False` was rejected because omission would silently become a policy declaration.
+Returning findings only for a passing last iteration was rejected because callers should not need
+verdict-specific access rules.
+
+**Consequences.** Finding constructors must state `blocking=True` or `blocking=False`. New
+non-blocking findings on the last allowed iteration produce `pass` and remain available to file;
+recurring classes and undisposed earlier classes still escalate independently of blocking or rank.
+
+**Refs.** LEARNINGS `{#terminal-trigger-must-use-target-evidence}`; decision
+`{#resolution-is-authored-not-inferred}`.
+
+---
+
 ## 2026-08-15
+
+### Removing a stored fact and building the way to ask for it are one change  {#removal-and-read-through-are-one-change}
+
+**Date.** 2026-08-15
+
+**Decision.** When a durable record of a live fact is removed, the mechanism that asks the fact's
+owner ships in the **same change**. They are not sequential units.
+
+**Context.** A plan split them: remove the stored session columns first, add the read-through second.
+The first half was built and reviewed. With the columns gone and the asking deferred, every decision
+site had exactly two behaviours available — consult a stand-in, or refuse — and the delivered change
+did both. The stand-in was a module-level dictionary with no expiry, no invalidation, and no way to
+record that a fact had become unavailable; the refusals landed on recovery paths and wedged them, so
+a concurrency slot could no longer be released.
+
+**Rationale.** The stored copy is not the problem by itself; the problem is a decision made from a
+fact nobody asked for. Removing the storage without providing the asking does not remove that
+property, it relocates it — from a file to memory, with a shorter lifetime and no upper bound on the
+staleness. A prior decision in this same plan had already rejected a per-read facts object for
+exactly this reason and rejected time-to-live caching because "a TTL is a shadow whose staleness is a
+tunable." The store that was built has no TTL at all: within one process it is permanent.
+
+**Rejected alternatives.**
+
+- *Patch the halfway state — restore the deleted asking sites and keep the store for the rest.* Once
+  every site that has an owner asks it, the read-through is substantially built anyway, so this is
+  the merged unit under a name that hides its scope. It also still ships a store the next unit must
+  delete.
+- *Ship the halfway state and file the defects.* The suite passed 6,162 tests over a one-way ratchet,
+  because a fixture supplied the fact production has to ask for. Green tests on an arrangement that
+  cannot reach the broken state are not evidence.
+
+**Consequences.** A unit that removes durable state now carries the replacement query. Reviews of
+such a unit should check that no module-level mutable state retains the removed fact, rather than
+only that the schema no longer carries it.
+
+**Revisit when.** A removal is genuinely additive — the stored fact has no live owner to ask, so
+there is no read-through to build and nothing to sequence.
+
+---
+
+### A review is finished only when someone says the finding is fixed  {#resolution-is-authored-not-inferred}
+
+**Date.** 2026-08-15
+
+**Decision.** A bounded review loop refuses the `pass` verdict while any defect class raised in an
+earlier iteration has not been **explicitly disposed of** by the report concluding the current
+iteration. Resolution is an authored claim, never an inference drawn from a reviewer's silence.
+
+**Context.** The loop scopes each re-review to the change since the previous iteration, which is
+what keeps review cost bounded. Combined with an absent notion of resolution, that scoping produced
+a defect neither feature causes alone:
+
+```
+iter1  report = [blocking finding]        -> halt-and-repair
+iter2  nothing was fixed, so the delta is empty
+iter2  report = ()                        -> pass, defect still present
+```
+
+The crueler form needs no empty delta. Editing an unrelated path leaves the defective path out of
+the delta, so the reviewer cannot see it, and its silence is read as a fix.
+
+**Rationale.** The loop was conflating *the reviewer reported nothing about this class* with *this
+class is resolved*. Those differ exactly when the reviewer was never shown the code — which is the
+normal case under delta scoping, not an edge case. Requiring disposal converts the inference into a
+statement someone is accountable for.
+
+**Rejected alternatives.**
+
+- *Re-present every open finding's original location in each delta.* Restores review cost to the
+  whole artifact and defeats the scoping the loop exists to provide.
+- *Track resolution per finding with evidence bound to a scope token.* Correct and larger. Needs
+  finding identity beyond the class and durable state the loop does not have. Deferred deliberately.
+- *Treat an unchanged path as implicitly unresolved.* Cheaper, but silently wrong the moment a fix
+  lands in a different path than the finding named.
+
+**Consequences.** A report gains a disposal set. Disposing a class that was never open is refused,
+because a typo must not close a finding and must not look like success. Disposing and re-raising the
+same class in one report is refused as internally contradictory. A last iteration that ends with
+open, undisposed classes yields `halt-and-escalate` rather than an exception — the caller learns the
+outcome from a verdict, not by catching a refusal.
+
+**Revisit when.** Findings acquire durable identity, or the loop gains state that survives a process
+restart. Either makes per-finding disposal with bound evidence affordable, and the class-level rule
+here becomes the coarse approximation it currently is.
+
+---
+
+### Move the boundary first, then repair what survives it  {#move-the-boundary-then-repair}
+
+**Decision.** The halted composition unit is neither repaired in place nor
+rebuilt. The boundary correction lands as units on the existing branch, and
+the defects that the correction makes unreachable are closed as a
+*consequence* rather than as repairs. Only the defects that survive the
+boundary move get repair units, ranked on their own merits.
+
+The evidence is a classification of the composition module's 3,656 lines
+(2,882 inside function bodies; its coordinator class alone is 2,244 lines
+across 72 methods). Roughly 42% of the code in function bodies exists to
+reconcile the durable table's copy of session facts against the world;
+roughly 58% is composition that the boundary move does not touch. **Six of
+the seven merge-blocking defects fall in the first bucket. Two fall in the
+second** — one of them appears in both counts because it spans the two.
+
+Rebuilding would discard ~1,664 lines of composition the correction does not
+touch. A further repair round would spend effort on ~1,218 lines about to
+shrink or disappear, and five rounds of evidence say that round would be
+followed by another.
+
+**The claim is falsifiable and gated.** After the boundary units land, the
+panel's own reproductions for the six substrate defects must show them
+unreachable. If any survives, the boundary move did not do what this decision
+claims, and the unit escalates rather than continuing — the escalation rule
+from [`{#review-loops-bounded-by-construction}`](#review-loops-bounded-by-construction)
+applied to the plan's own execution.
+
+**Rejected: a sixth repair round.** Three rounds already closed the entrances
+that were named and were each followed by a review finding new ones.
+**Rejected: rebuild the unit.** It discards the composition majority, which
+no review has faulted.
+**Rejected: rebuild onto a fresh branch to escape the halted one.** The
+branch's gate is green and its safety ref is preserved; the defects are in
+the code, not in the branch.
+
+**Revisit when** the U4 gate fails, which would mean the classification above
+is wrong.
+
+**Refs.** [`docs/plans/2026-08-15-orchestrate-boundary-and-review-machinery-plan.md`](../plans/2026-08-15-orchestrate-boundary-and-review-machinery-plan.md);
+[`{#register-keeps-intent-not-substrate}`](#register-keeps-intent-not-substrate).
+
+### Review loops terminate by construction; escalation is bounded at one  {#review-loops-bounded-by-construction}
+
+**Decision.** Every review layer runs under a loop bound: **three iterations
+per unit**, re-review scoped to the delta, findings deduplicated **by class
+rather than by location**, three verdicts instead of two (`pass`,
+`halt-and-repair`, `halt-and-escalate`), and **one escalation per unit**.
+
+`halt-and-escalate` fires mechanically — the same defect class recurring in a
+third round, regardless of the rank it was given — and hands the finding to
+the layer above rather than requesting another repair.
+
+The consensus panel (multiple reviewers, per-lens scoring, quorum,
+vendor-exclusion roster) is a **separate** mechanism from the loop bound. It
+applies to code review and qa, is optional for doc review, and does not apply
+to the orchestration-plan review, which has a single voter: the operator.
+
+Gate or score is chosen **per dimension**. Threshold questions take a gate;
+continuum questions take a score. Where both exist the rank binds the
+decision and the score measures convergence.
+
+Two campaigns motivated this and failed in opposite directions. A
+requirements review was unbounded in **breadth** — 162 whole-document
+re-reads against 10 delta-scoped ones, and three incompatible round counters
+running at once. A code review was unbounded in **depth** — rounds counted
+correctly, budget extended twice, seven merge-blocking defects at the end,
+because each repair created the next round's review surface. The clearest
+demonstration: the eighth instance of a recurring class was inside the fix
+for the seventh.
+
+Three reviewers from three vendors then filed the correct structural
+diagnosis at the **lowest** rank, because a merge-gate rubric has no rank for
+"the design is wrong." The loop had one available action for a finding that
+needed a different one.
+
+**Rejected: review until the panel returns nothing blocking.** This is not a
+stopping rule. It terminates only when reviewers run out of findings, and
+they never do, because the artifact changes under them every round.
+**Rejected: a uniform numeric threshold across all dimensions.** It is
+nudgeable in both directions — a reviewer who wants to halt scores just under
+the line, and a panel under time pressure inflates to end the loop.
+**Rejected: leave escalation unbounded.** Bounding only the inner loop moves
+the problem outward, where each turn is more expensive because it discards a
+plan and its work.
+**Rejected: make the escalation budget configurable.** A bound does not erode
+by being deleted, it erodes by being raised. Raising it requires saying so in
+the prompt or the plan.
+
+**Revisit when** a unit legitimately needs a second escalation often enough
+that the friction is the bottleneck rather than the signal.
+
+**Refs.** [`docs/plans/2026-08-15-orchestrate-architecture-correction.md`](../plans/2026-08-15-orchestrate-architecture-correction.md),
+Part II; LEARNINGS
+[`{#two-inferences-meet-at-every-gate}`](LEARNINGS.md#two-inferences-meet-at-every-gate).
+
+### External reviewers are engaged as managed sessions, and may be the whole panel  {#external-reviewers-are-managed-sessions}
+
+**Decision.** `/code-review` and `/doc-review` engage an external reviewer
+through a managed agent session rather than a subagent. The operator-facing
+offer is unchanged — the same durable gate-record contract, prompt-and-remember
+path, provider selection, egress policy, tier selection, and atomic
+persistence of request state. Only the transport changes.
+
+A new offer mode, **external only**, excludes the home vendor's panel
+entirely rather than adding an advisory seat beside it. When a review runs
+inside a session over code that session's vendor wrote, external-only is the
+correctness option, not a cost option: it is "never review your own vendor"
+applied at the skill level, so the rule is implemented once rather than twice.
+
+**Losing quorum under external-only halts and tells the operator.** During
+the campaign that motivated this, an external reviewer was terminated by its
+provider's content filter three separate times.
+
+**Rejected: keep the subagent transport.** A subagent dies with its caller and
+reports only what it chose to summarise. A managed session is visible — its
+pane can be watched, read and interrupted — and it outlives the caller. The
+campaign's central failure was a summary that dropped the fact which refuted
+it.
+**Rejected: fall back to the home panel when external-only loses quorum.**
+That silently converts a correctness choice into a cost choice, and the
+operator never learns it happened.
+
+**Revisit when** a vendor's session transport becomes less reliable than a
+subagent for a review-shaped task.
+
+**Refs.** [`{#review-loops-bounded-by-construction}`](#review-loops-bounded-by-construction);
+[`{#subscriber-is-a-managed-pane}`](#subscriber-is-a-managed-pane).
+
+### The durable run table keeps intent and outcome; it stops storing substrate  {#register-keeps-intent-not-substrate}
+
+**Decision.** The orchestration run table persists only facts nothing else
+owns — role, task, scope, reserved and maximum tokens, disposition, base
+commit, destination, verdict, settlement. It stops persisting the columns
+the terminal multiplexer already owns and can be asked for: pane id, tab id,
+working directory, process id, observed session state, vendor. Those are
+queried at read time from the component that owns them.
+
+The general rule: **do not keep a durable record of a fact whose owner is
+already durable and queryable.** A second record of someone else's fact is a
+second register, and two registers can disagree.
+
+The composition unit's five repair rounds produced seven merge-blocking
+defects. Every one is an instance of that disagreement — a failed process
+query read as a negative result, a reused process id read as an identity, a
+snapshot gap read as a closed session, a session label that is not injective
+over the two identifiers it concatenates. None is a logic error. The full
+analysis is in
+[`docs/plans/2026-08-15-orchestrate-architecture-correction.md`](../plans/2026-08-15-orchestrate-architecture-correction.md).
+
+**Rejected: keep the substrate columns and reconcile them harder.** Three
+rounds already did this. Each closed the named entrances and the next review
+found new ones, because a property with more entrances than anyone has
+enumerated cannot be secured by enumerating entrances.
+**Rejected: drop the durable table entirely and hand off in prose.** Prose
+carries intent — this campaign was run from markdown briefs — but it cannot
+*refuse*. A resumed session must be told it is already at its concurrency
+bound and how much ceiling remains, and only machinery enforces that.
+**Rejected: treat this as a defect backlog rather than a boundary change.**
+Six of the seven defects are in the category the plan's own `cost x silence`
+ranking placed lowest, precisely because the operator objects out loud every
+time. Repairing them individually spends the budget in the deprioritised
+quadrant.
+
+**Revisit when** the multiplexer stops being queryable for session facts, or
+when a fact currently classed as substrate turns out to have no owner.
+
+**Refs.** LEARNINGS
+[`{#two-inferences-meet-at-every-gate}`](LEARNINGS.md#two-inferences-meet-at-every-gate).
+
+### The subscriber runs in a managed pane, not as a bare subprocess  {#subscriber-is-a-managed-pane}
+
+**Decision.** The event subscriber is started as the same script with the
+same arguments inside a multiplexer-managed pane, instead of as a tracked
+subprocess identified by process id. It remains a plain process — not an
+agent session — so it costs no tokens and needs no model. "Is this run's
+subscriber alive?" becomes a pane lookup against the component that owns the
+answer, rather than a substring search of the process table.
+
+There is no bootstrap cycle. The subscriber is never subscribed to: on each
+handled event it pushes, issuing a prompt request targeting the
+orchestrator's pane. The startup sequence differs by one line; the wake path,
+the socket, and the script are unchanged.
+
+A deadman is required in both designs, because a waker cannot report its own
+death. The agreed form is the cheap one: whenever the orchestrator wakes for
+any reason, it checks the subscriber's pane before trusting silence.
+
+**Rejected: run the subscriber as a full agent session.** It holds a socket
+and forwards. It makes no decisions and keeps no state anyone else needs, so
+paying vendor tokens for it buys nothing.
+**Rejected: keep the subprocess and strengthen process identity.** A round
+was already spent building a command-line identity check for exactly this,
+and the underlying problem — that we are asking the operating system a
+question the multiplexer could answer — remained.
+
+**Revisit when** the subscriber needs to outlive the multiplexer itself.
+
+**Refs.** [`{#register-keeps-intent-not-substrate}`](#register-keeps-intent-not-substrate).
 
 ### `usage_unparseable` is sticky and owned; a later sample is not a recovery  {#usage-unparseable-is-sticky-and-owned}
 

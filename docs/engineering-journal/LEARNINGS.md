@@ -505,8 +505,164 @@ mapping in a different order computes a different digest for the same plan.
 
 **Refs.** DECISIONS `{#composition-owns-the-seams}`.
 
+### A targeted terminal condition must use the evidence it computes  {#terminal-trigger-must-use-target-evidence}
+
+**Context.** A bounded review loop computed recurring defect classes, then escalated on the broader
+set of every class reported in the last allowed iteration. Because performed reviews commonly file
+non-blocking notes, reaching the bound made escalation routine rather than exceptional.
+
+**Evidence.** In
+`plugins/orchestrate/skills/orchestrate/scripts/review_loop.py`, `recurring` was computed immediately
+before a final-iteration condition built from all declared classes. Focused tests in
+`tests/test_orchestrate_review_loop.py` now distinguish a new non-blocking class from a recurring
+non-blocking class and from a new explicitly blocking class.
+
+**Mechanism.** The trigger substituted an available superset for the evidence named by the policy.
+The superset included the intended recurrence cases, so the safety scenario stayed green while the
+rule accumulated false positives.
+
+**Fix.** Escalation now reads recurrence, unresolved earlier classes, a required boolean blocking
+declaration, and unperformed-review state directly. A new non-blocking class closes without
+escalation and remains reachable on the verdict.
+
+**Generalizable rule.** When policy names evidence already computed by the implementation, assert
+that the decision reads that exact evidence. A convenient superset preserves positive tests while
+destroying the negative boundary that keeps an alert useful.
+
+**Refs.** DECISIONS `{#finding-blocking-is-explicit}`.
+
+---
 
 ## 2026-08-15
+
+### A retired consumer's marker outlives it wherever a writer still names it
+
+**Context.** The Hermes orchestrator's card validator gated dispatch on a `hermes-task`
+label. That orchestrator was frozen on 2026-07-18 — empty repository list, plan phase off,
+webhook relay stopped and disabled — so nothing has read the label since. It kept appearing
+on every new issue anyway, which is what the operator noticed.
+
+**Evidence.** 1,176 issues organization-wide carry `hermes-task`; the replacement mechanism
+(`intake:mimir`) is on 5. The label was written from a dozen directions: `labels:` line 4 of
+five GitHub issue forms, `_ISSUE_TYPE_LABELS` in five copies of `sdlc_manager.py`, the
+post-create metadata step, four prompt/skill documents, a generated reference doc, and the
+`Hermes actionable: yes/no` marker emitted by `sync_template_docs.py`. Six test files
+asserted its presence.
+
+**Mechanism.** Retiring a *consumer* is one change; retiring the *marker it consumed* is as
+many changes as there are writers. Nobody removed the writers because the label was still
+harmless-looking, and each writer independently looked correct — the templates matched the
+code, the code matched the prompts, the prompts matched the tests. The system was
+self-consistent around a dead centre. Worse, the operator agent still asserted "the
+orchestrator silently skips cards without `hermes-task`", which made removal look dangerous
+long after it was inert, so the fear that preserved it was itself documentation of a
+consumer that no longer ran.
+
+**Fix.** Remove all writers in one change, and repoint the concept rather than deleting it:
+`_HERMES_ACTIONABLE_TYPES` became `_CONTRACT_ISSUE_TYPES` (it always meant "types carrying
+the eight-section card contract"), and `Hermes actionable: yes/no` became
+`Card contract: required/not required`. The interactive create path now applies the canonical
+type labels where it previously applied only the dispatch marker — closing a gap where a card
+whose browser template failed to prefill landed with no type label at all.
+
+**What surprised.** The tests were the largest blocker, not the code. Six suites pinned the
+marker, so the taxonomy could not move until they did — and one of them, `test_template_sync`,
+reads the *other repository's* issue templates live through `INFIQUETRA_SDLC_PATH`. Two repos
+had to change together for the local suite to pass, while in CI the same tests skip because
+that checkout does not exist. A cross-repo coupling that is invisible to CI is the kind that
+only bites the person doing the migration.
+
+**Generalizable rule.** When you freeze a consumer, inventory its writers in the same change
+and either remove them or write down that they are now inert — a marker with no reader is not
+harmless, it is a claim the system keeps making about itself. And when a document asserts that
+removing something is dangerous, check whether the danger retired with the consumer; a stale
+warning is load-bearing in exactly the wrong direction.
+
+### Piping a gate to `tail` reports the pager's exit status, not the gate's  {#gate-exit-code-masked-by-pipe}
+
+**Date.** 2026-08-15
+
+**Context.** Running the repository's full pre-merge gate in a freshly created `git worktree`, to
+check a new module before committing it.
+
+**Evidence.** The command was `scripts/gate.sh 2>&1 | tail -40`. It reported exit code 0. The gate
+had not run a single step. Its actual output, visible in the captured text but not in the status:
+
+```
+gate.sh: the dev toolchain is not installed in this environment: ruff mypy pytest
+  run: uv sync --locked --extra dev
+  (a fresh git worktree does not inherit the parent checkout's .venv)
+```
+
+`scripts/gate.sh` exits **3** in that situation. The shell reports the *last* command in a pipeline,
+so `tail`'s 0 was what surfaced. Re-running as `scripts/gate.sh > gate.log 2>&1; echo $?` after
+`uv sync --locked --extra dev` produced the real result: `GATE EXIT=0`, 24 steps ran, 0 blocking
+failures.
+
+**Mechanism.** Two independent facts were conflated into one observation. *Did the gate pass?* and
+*did the pipeline finish?* have the same numeric answer and different meanings. A gate that refuses
+to start is indistinguishable, through a pipe, from a gate that ran everything and found nothing
+wrong — and the failure mode is asymmetric: it reads as a green light, so it is acted on rather
+than investigated.
+
+Worth recording what `scripts/gate.sh` does right, because it is why this was recoverable: it
+distinguishes **3** (environment unprovisioned) from **1** (a step failed) and **2** (coverage short
+of `.github/workflows/ci.yml`). Had it exited 1, the honest reading would have been "this codebase
+is broken", which is a *wrong* fact rather than an absent one. Three states, three codes.
+
+**Fix.** Redirect to a file and read `$?` directly:
+
+```bash
+scripts/gate.sh > /tmp/gate.log 2>&1; echo "GATE EXIT=$?"; tail -12 /tmp/gate.log
+```
+
+`set -o pipefail` also works but depends on remembering it at each call site; the redirect removes
+the pipeline whose status could stand in for the gate's. A fresh worktree additionally needs
+`uv sync --locked --extra dev` — it does not inherit the parent checkout's `.venv`.
+
+**Generalizable rule.** Never read a gate, test run, or build through a pipe. The shell reports the
+last stage, so any pager or filter silently substitutes its own success for the command's verdict.
+More broadly: when a check reports success, confirm it *ran* — "nothing failed" and "nothing was
+attempted" produce identical output everywhere they are not deliberately told apart.
+
+---
+
+### Two inferences meet at most gates, and fixing one does not fix its sibling  {#two-inferences-meet-at-every-gate}
+
+**Context.** An orchestration unit went through five repair rounds. Each round closed the defects a
+review had named; each next review found new ones of the same kind. After the fifth round a
+three-vendor panel returned seven merge-blocking defects. Mapping all seven against the code showed
+none of them was a logic error — no bad arithmetic, no wrong data structure, no off-by-one. Every one
+sat on the boundary where the run's durable table met the world it described.
+
+**Evidence.** The clearest instance survived *inside the fix for the previous instance*. A shutdown
+path was corrected to stop treating "the close call returned" as proof the session closed, and the
+corrected re-read was still conditional on the row naming a session. Executed reproduction: with the
+identity column cleared and the session genuinely present, the path returned `closed`, never issued a
+close request at all, recorded the row exited, and the archive completed beside a live session. Three
+further cases showed the same shape from the other direction, where a producer had *already recorded*
+its own uncertainty and the consumer had nowhere to read it: a provenance column stamped `inferred:`
+that the retirement gate never read; a spend-exclusion parameter documented as "not charging zero"
+that a ceiling gate subtracted anyway; and a scan-result flag introduced to carry *did the search
+finish* whose scanner set it true for a query that ran and failed, because it inspected only whether
+the query raised, never its exit status.
+
+**Mechanism.** Two questions meet at a typical gate — *did the action take effect?* and *is there
+anything to act on?* — and they are answered from different evidence. Correcting the first leaves the
+second reading whatever cheap signal it always read, usually a missing field. Separately, when three
+different authors in three different modules each write down that a fact is uncertain and each
+consumer discards it, the defect is not three mistakes; it is a **type missing from the data**: the
+table stores facts we authored, facts we observed, and facts we inferred in identical columns, so no
+reader can tell them apart and every reader treats all three as authored.
+
+**Generalizable rule.** Do not keep a durable record of a fact whose owner is already durable and
+queryable — a second record of someone else's fact is a second register, and two registers can
+disagree. Where a fact genuinely is yours, carry its provenance in the value rather than beside it, so
+a consumer cannot read it without deciding what to do about *unknown*. And a property with more
+entrances than anyone has enumerated cannot be secured by enumerating entrances: where this repository
+pins a guarantee structurally — one construction site, asserted by a test that walks the module's own
+syntax tree — the class has not recurred once; where it is left to careful authorship, it recurred in
+every round.
 
 ### A refusal stored in a field the sensor rewrites lasts only until the next sample  {#refusal-must-outlive-the-sensor}
 
@@ -907,6 +1063,45 @@ directory.
 the answer when the question is declined. Bound every subprocess that runs
 inside a lock.
 **Refs.** DECISIONS `{#host-wide-admission-lock}`.
+
+### The interactive issue-create path never validated the body it carded
+
+**Context.** `mission-control` has two ways to create an issue. `issue create-prepared`
+composes the body itself and has always refused to create a draft with blocking readiness
+gaps. Interactive `issue create` opens the GitHub browser template, asks the operator to
+paste back the new issue number, and applies labels and board membership.
+
+**Evidence.** `plugins/mission-control/scripts/sdlc_manager.py` — between
+`_prompt_issue_number` and `_apply_post_create_metadata` there was no body check of any
+kind, while `validate_card_body` had existed since the card contract shipped and
+`issue_create_prepared` already raised on it. Board evidence: a 34-issue sample scored
+against the eight-section contract is bimodal — 17 cards carry all eight sections, 15 carry
+none, 2 carry four.
+
+**Mechanism.** Two producers, one contract, one enforcement point. The prepared path
+composes the body, so validating there was the obvious move. The interactive path receives a
+body it did not compose — from a form that `gh issue create --template ... --web` does not
+reliably prefill — so there was no natural moment to validate and none was added. A blank
+template then landed on the board wearing exactly the same labels as a conformant card.
+Nothing downstream could distinguish them, which is why the conformance split is bimodal
+rather than a gradient: two populations, not decay.
+
+**Fix.** `_gate_created_issue_body` between paste-back and metadata, reusing
+`validate_card_body_for_context`. Scoped to the Hermes-actionable types (`exploration` and
+`context-update` ship different field sets by design); a fetch failure proceeds with a
+warning rather than counting as a validation failure; `--format json` refuses structurally
+without prompting; a failing body requires an explicit operator opt-in.
+
+**What surprised.** The check was already written, already tested, and already blocking —
+on one path. The defect was not a missing validator but a missing call site, which is
+invisible in a code review scoped to the validator.
+
+**Generalizable rule.** When a contract has more than one producer, the enforcement point
+belongs at the last common choke point before the artifact becomes visible — not inside
+whichever producer was most convenient to write it in. Ask "which paths reach this state?"
+before "where does the check go?": an unvalidated sibling path does not look broken, it
+looks like the other path's output.
+
 
 ## 2026-08-13
 

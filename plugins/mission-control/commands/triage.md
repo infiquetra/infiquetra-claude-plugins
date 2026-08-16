@@ -64,7 +64,7 @@ When the user invokes `/triage repo#number`:
 4. Apply auto-label rules:
    - `python3 $SCRIPT labels auto-label --repo <repo> --number <N>`
 5. Manually apply recommended labels when the template did not apply them:
-   - `gh issue edit <N> --repo infiquetra/<repo> --add-label "capability,hermes-task,needs-plan"`
+   - `gh issue edit <N> --repo infiquetra/<repo> --add-label "capability,needs-plan"`
 6. Add to the named active board (`--project` is required; ask which board if unstated):
    - `python3 $SCRIPT board add --project <operations|asgard|campps> --repo <repo> --number <N>`
 7. Set initiative/objective fields when applicable:

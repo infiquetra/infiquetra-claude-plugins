@@ -19,6 +19,18 @@
 - The approved runtime route remains durable because planning, admission, and launch all produce it
   from authored intent.
 
+## [0.11.1] - 2026-08-16
+
+### Fixed
+
+- The last allowed iteration escalates for a recurring class, an earlier class that remains
+  undisposed, an explicitly blocking finding, or an unperformed review. New non-blocking findings
+  close the review without escalation.
+- Blocking is a required keyword-only boolean on each finding. The loop does not infer it from the
+  finding's free-form rank.
+- Every verdict produced from a performed report returns that report's findings, including findings
+  filed when the last allowed iteration closes.
+
 ## [0.11.0] - 2026-08-15
 
 Six defects in how the assembled control flow meets the modules it composes. Every one of them is

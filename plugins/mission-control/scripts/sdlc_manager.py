@@ -3393,11 +3393,11 @@ _TEAM_CHOICES = ("asgard", "campps")
 _TEAM_SAFE_STATUSES = {"asgard": "Shaping", "campps": "Idea"}
 _DISPATCH_ACTIONABLE_TYPES = frozenset({"capability", "enhancement", "defect"})
 _ISSUE_TYPE_LABELS = {
-    "capability": ["capability", "hermes-task", "needs-plan"],
-    "enhancement": ["enhancement", "hermes-task", "needs-plan"],
-    "defect": ["defect", "hermes-task", "needs-plan"],
-    "exploration": ["exploration", "research", "hermes-not-actionable"],
-    "context-update": ["context-update", "documentation", "hermes-not-actionable"],
+    "capability": ["capability", "needs-plan"],
+    "enhancement": ["enhancement", "needs-plan"],
+    "defect": ["defect", "needs-plan"],
+    "exploration": ["exploration", "research"],
+    "context-update": ["context-update", "documentation"],
 }
 _PREPARED_DRAFT_DIR = Path("docs") / "sdlc-issue-drafts"
 _HANDOFF_MATURITY_CHOICES = (
@@ -3428,7 +3428,7 @@ _SOURCE_HINT_DIRS = {
     "draft": (Path("docs") / "sdlc-issue-drafts",),
 }
 
-_HERMES_ACTIONABLE_TYPES = frozenset(
+_CONTRACT_ISSUE_TYPES = frozenset(
     {
         "capability",
         "enhancement",
@@ -5203,6 +5203,66 @@ def _prompt_issue_number(repo: str) -> int | None:
     return None
 
 
+def _gate_created_issue_body(repo: str, issue_number: int, issue_type: str, fmt: str) -> bool:
+    """Gate post-create metadata on the card contract. Returns True to proceed.
+
+    `issue create-prepared` has always refused to create a draft with blocking
+    readiness gaps (`RuntimeError: Prepared issue has blocking readiness gaps`).
+    The interactive path had no equivalent: it opened the browser template, took
+    the pasted issue number, and applied labels + board membership with no body
+    check at all. A blank or half-filled template therefore landed on the board
+    wearing exactly the same labels as a conformant card, which is the single
+    most direct generator of board inconsistency.
+
+    Scope: only the contract-bearing types carry the eight-section contract.
+    `exploration` and `context-update` ship deliberately different field sets and
+    are not validated here — validating them would reject correct cards.
+
+    Failure is a stop, not a veto: the operator is shown the specific gaps and
+    must opt in explicitly (default no). Declining leaves the issue without
+    labels or board membership, which is recoverable and visible; silently
+    carding a malformed issue is neither. A fetch failure is not treated as a
+    validation failure — an API hiccup should not strand a good issue.
+    """
+    if issue_type not in _CONTRACT_ISSUE_TYPES:
+        return True
+
+    issue_ref = f"{repo}#{issue_number}"
+    try:
+        data = _rest_get(f"repos/{ORG}/{repo}/issues/{issue_number}")
+    except RuntimeError as e:
+        _warn(f"Could not fetch {issue_ref} to validate it ({e}); applying metadata unchecked.")
+        return True
+
+    body = data.get("body") or ""
+    is_valid, errors = (
+        (False, ["Issue has empty body"])
+        if not body.strip()
+        else validate_card_body_for_context(body, issue_type, None)
+    )
+    if is_valid:
+        return True
+
+    if fmt == "json":
+        _out({"valid": False, "errors": errors, "issue": issue_ref, "metadata_applied": False}, fmt)
+        return False
+
+    print(f"\nINVALID: {issue_ref} does not satisfy the card contract:")
+    for err in errors:
+        print(f"   - {err}")
+    print(
+        f"\nFix the body first:  gh issue edit {issue_number} --repo {ORG}/{repo}\n"
+        f"Then card it:        sdlc_manager.py flow validate-card "
+        f"--repo {repo} --number {issue_number}"
+    )
+    answer = _safe_input("\nApply labels and board membership anyway? (y/N): ")
+    if (answer or "").strip().lower() in ("y", "yes"):
+        _warn(f"Proceeding with a card that fails the contract: {issue_ref}")
+        return True
+    print("Metadata not applied. The issue exists but is not on a board.")
+    return False
+
+
 def _apply_post_create_metadata(
     repo: str,
     issue_number: int,
@@ -5216,7 +5276,7 @@ def _apply_post_create_metadata(
     isolated — failures in one don't abort the others.
 
     Steps execute IN ORDER (later steps depend on earlier ones):
-      1. Apply hermes-task / hermes-not-actionable label
+      1. Apply the canonical type labels
       2. Add the issue to the project board (`board_add`) — required
          before step 3 can target the project item
       3. Set each project field value via `flow_set_field` — depends on
@@ -5237,9 +5297,13 @@ def _apply_post_create_metadata(
     # load_config would address that more cleanly, deferred to follow-up.)
     cached_config = load_config()
 
-    # 1. Hermes-actionability label (only types we want the orchestrator
-    # to act on — capability/enhancement/defect)
-    if issue_type in _HERMES_ACTIONABLE_TYPES:
+    # 1. Type labels. The browser template applies these when it prefills, but
+    # `gh issue create --template ... --web` does not always prefill, so a card
+    # could previously land with no type label at all — this path only ever
+    # guaranteed the retired Hermes dispatch marker. Applying the canonical set
+    # is idempotent when the template already did it.
+    labels = _ISSUE_TYPE_LABELS.get(issue_type, [])
+    if labels:
         try:
             _gh(
                 [
@@ -5249,29 +5313,12 @@ def _apply_post_create_metadata(
                     "--repo",
                     f"{ORG}/{repo}",
                     "--add-label",
-                    "hermes-task",
+                    ",".join(labels),
                 ]
             )
-            print("  ✓ Applied label `hermes-task`")
+            print(f"  ✓ Applied labels `{'`, `'.join(labels)}`")
         except GhApiError as e:
-            _warn(f"  ✗ Could not apply hermes-task label: {e}")
-    else:
-        # Exploration and context-update get explicit opt-out.
-        try:
-            _gh(
-                [
-                    "issue",
-                    "edit",
-                    str(issue_number),
-                    "--repo",
-                    f"{ORG}/{repo}",
-                    "--add-label",
-                    "hermes-not-actionable",
-                ]
-            )
-            print("  ✓ Applied label `hermes-not-actionable`")
-        except GhApiError as e:
-            _warn(f"  ✗ Could not apply hermes-not-actionable label: {e}")
+            _warn(f"  ✗ Could not apply type labels: {e}")
 
     # 2. Add to project board
     if project_name:
@@ -5368,7 +5415,7 @@ def issue_create(
       6. Capability-adaptive: prompt for Size if type is capability and the project exposes the field
       7. Open `gh issue create --web` in browser; operator fills body
       8. Operator pastes back the issue number
-      9. Apply hermes-task / hermes-not-actionable label, project field values, sub-issue link
+      9. Apply the canonical type labels, project field values, sub-issue link
      10. Paired-card prompt (opt-in) — suppressed when called recursively
          (`_in_paired_card=True`) to prevent unbounded nesting
 
@@ -5495,6 +5542,11 @@ def issue_create(
         issue_number = _prompt_issue_number(repo)
         if issue_number is None:
             print("Skipping post-create metadata.")
+            return
+
+        # Step 8b: gate on the card contract before carding it. The prepared
+        # path has always blocked here; this path never checked.
+        if not _gate_created_issue_body(repo, issue_number, issue_type, fmt):
             return
 
         # Step 9: apply metadata

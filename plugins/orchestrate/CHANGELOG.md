@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.1.0] - 2026-08-16
+
+### Added
+
+- **`expand` — append units to a run already in flight.** The up-front table can only name the later
+  phases, never their units: what `/work` splits into is decided by the plan, which does not exist
+  when the operator approves. A phase that names the next phase's units is now read when it
+  finishes, the operator approves those rows alone, and they join the same run — so `after` still
+  reaches back and one `collect` covers everything. Refuses a duplicate name or a dependency that is
+  in no run.
+- **`engine_prefs` — saga's external-engine offer, answered before dispatch.** A `/doc-review` or
+  `/code-review` session with nothing stored stops and asks the operator, in a background tab nobody
+  is watching, and waits forever. The plan's `engine_prefs` block is now written to
+  `<worktree>/.saga/engine-prefs.json` when the worktree is made; saga reads it and skips the
+  question. Verified end to end against saga's own `engine_offer.py`, which returns
+  `prompt_required=False, source=stored` for a worktree orchestrate prepared.
+
+### Changed
+
+- **The interview asks at the right layer.** Vendors are chosen once for the whole orchestration as
+  an allow-list, not one per unit. `/plan` is asked whether it wants competing independent plans
+  from several vendors, which this session then merges itself rather than dispatching a merge unit.
+  The reviews are asked once for their second-opinion policy, applied across every lifecycle.
+  `/work` and `/code-review` are asked nothing — their vendors and lenses come from the plan.
+- **Every question carries a recommendation**, and a declined question no longer stalls the run: the
+  command takes the most defensible answer, says which it took, and continues to the table, which is
+  the real gate and fully editable.
+- **The command documents the layering** — orchestration, lifecycle, phase, unit — so a parent issue
+  with children reads as one lifecycle per child rather than one flat list.
+
 ## [1.0.1] - 2026-08-16
 
 ### Fixed

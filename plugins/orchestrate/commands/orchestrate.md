@@ -5,94 +5,143 @@ argument-hint: "<prompt> | #<issue> | #<parent> --children | <path/to/doc.md>"
 ---
 
 Spread one piece of work across several agent sessions, decide together how to split it, then run
-it. Each unit gets its own git worktree and branch, so sessions cannot overwrite each other, and
-each unit can invoke any saga capability — or none.
+it. Each unit gets its own git worktree and branch, so sessions cannot overwrite each other.
+
+## The layers
+
+```
+/orchestrate <input>
+  └── lifecycle       one per issue — one input can carry several
+        └── phase     /plan, /doc-review, /work, /code-review — the umbrella steps
+              └── unit    one session, one worktree, one branch
+```
+
+A single issue is one lifecycle. A parent issue with children is one lifecycle per child, each with
+its own phases. A phase is not always one unit: three vendors writing competing plans is one phase
+and three units, and `/work` is one phase and however many units the plan calls for.
+
+**Choices are made at the layer that owns them and inherited downward.** The operator picks which
+vendors may be used at all, and the second-opinion policy per phase. `/work` and `/code-review` take
+their vendors and their lenses from the plan, not from the interview.
 
 ## Phase 1 — read the input
-
-The argument is one of:
 
 | Argument | What to read |
 |---|---|
 | free prose | the prose itself |
 | `#123` | that issue: title, body, labels, linked issues |
-| `#100 --children` | the parent, then every sub-issue |
+| `#100 --children` | the parent, then every sub-issue — one lifecycle each |
 | a path ending `.md` | the document — a plan, a requirements doc, a brainstorm |
 
-Read it before asking anything. Come to the interview already knowing what the work is.
+Read it before asking anything. Come to the interview already knowing what the work is, and say so
+in a few lines: what the work actually is, where the real seams are, and where you think it does
+*not* split well. That framing is worth more than any question you could ask instead.
 
 ## Phase 2 — interview the operator
 
-**Do not presume the shape of the plan.** Do not assume a `/plan → /work → /code-review` pipeline,
-or any other. Ask what you cannot infer from what you just read, one question per turn, using
-`AskUserQuestion` so the operator answers by picking.
+**Recommend.** Every question carries your recommendation and one line of why. The operator is
+choosing between options you have already thought about, not doing the thinking.
 
-Ask only what changes the plan. Typical questions, not a checklist:
+**Ask one question per turn** with `AskUserQuestion`. For an abstract fork, put a small worked
+picture in the `preview` field — a table, a before-and-after, an arrow chain. Labels alone lose.
 
-- **Is the WHAT settled?** If the input is a prompt or a thin issue, the first unit may need
-  `/brainstorm` or `/spec` before anything else. If it is a reviewed plan document, it does not.
-- **Where are the real seams?** Name the split you are considering and ask whether it is right —
-  "these two both touch the register schema, one unit or two?" Do not guess at dependencies you can
-  ask about.
-- **Which agents are in play?** Run `agent --crews` to see what this machine actually has
-  configured, and offer those. Never hardcode a roster.
-- **Does anything want an independent look?** A second opinion is a unit like any other, not an
-  automatic step.
-- **Anything to keep out of scope?**
+**If a question is declined, do not stall and do not re-ask.** Take the most defensible answer, say
+in one line which you took and why, and continue. The table is the real gate and every row is
+editable there.
 
-Stop asking once the answers determine the table. Three or four questions is normal.
+**Do not presume the shape of the plan.** These are the questions that usually matter, in this
+order — not a checklist, and stop as soon as the answers determine the table:
+
+1. **Is the WHAT settled?** A thin issue or a bare prompt may want `/brainstorm` or `/spec` first. A
+   reviewed plan document does not.
+2. **Which phases?** `/plan`, `/doc-review`, `/work`, `/code-review`, `/qa`, `/investigate` — or a
+   plain prompt with no saga command at all. This is the question that shapes everything after it.
+3. **Which vendors may be used at all?** Run `agent --crews` for what this machine actually has, and
+   offer that. One allow-list for the whole orchestration — **not one vendor per unit**. Never
+   hardcode a roster.
+4. **Does `/plan` want competing plans?** One vendor plans by default. The operator may instead have
+   two or three vendors each write a plan independently, in their own worktrees, with no knowledge
+   of each other. If so, **this session reads all of them and writes the merged plan itself** — no
+   merge unit, no extra tab. Say which parts came from where.
+5. **What second opinion do the reviews get?** One answer covering every `/doc-review` and every
+   `/code-review` in the run: intent, model tier, effort, and how many. This is answered once and
+   applies across all lifecycles — see *Answering saga's offer up front* below.
+6. **Anything out of scope?**
+
+Do **not** ask about `/work` vendors or `/code-review` lenses. Those come from the plan.
+Do **not** ask about inline versus a workflow backend — orchestrate is always inline.
+
+### Answering saga's offer up front
+
+`/doc-review` and `/code-review` open by resolving saga's external-engine offer. With nothing
+stored they **stop and ask the operator** — in a background tab nobody is watching, which means the
+unit waits forever. So question 5's answer is written into the plan as `engine_prefs` and lands in
+every worktree before its session starts:
+
+```json
+"engine_prefs": {
+  "doc-review":  {"intent": "external-only",  "model": "opus", "effort": "xhigh"},
+  "code-review": {"intent": "second-opinion", "model": "opus", "effort": "high"}
+}
+```
+
+Stages: `ideate`, `brainstorm`, `work`, `doc-review`, `code-review` — there is no `plan` stage.
+Intents: `none`, `offload`, `second-opinion`, `external-only`. Models are tier names —
+`fable`, `opus`, `sonnet`, `haiku`. Efforts: `low`, `medium`, `high`, `xhigh`.
+
+`/code-review` runs its own consensus once dispatched — its reviewer lenses, quorum and
+gated-versus-advisory verdicts are its business, not something to rebuild here.
 
 ## Phase 3 — hand over the table
 
-Print exactly this shape and let the operator edit any row:
+Show phases and policy. **Later phases have no units yet** — what `/work` splits into is decided by
+the plan, which does not exist when the operator is reading this. Say so rather than guessing:
 
 ```
 run <run_id>   <-  <what the input was>
+vendors allowed: claude, codex, grok        reviews: external-only, opus/xhigh, 2
 
- unit  what it does                    saga cap       agent     model         effort  after
- ----  -----------------------------   ------------   -------   -----------   ------  -----
- u1    settle the WHAT on #102         /brainstorm    claude    opus          high    -
- u2    design across #101 #103         /plan          codex     gpt-5.6-sol   xhigh   -
- u3    tear up u2's plan               /doc-review    grok      grok-4.6      xhigh   u2
- u4    build #101                      /work          codex     gpt-5.6-sol   high    u3
- u5    review u4                       /code-review   claude    opus          high    u4
+ phase  what it does                    saga cap       agent     model         effort  after
+ -----  -----------------------------   ------------   -------   -----------   ------  -----
+ p1a    plan #48                        /plan          claude    opus          high    -
+ p1b    plan #48, independently         /plan          codex     gpt-5.6-sol   xhigh   -
+ (merge of p1a and p1b happens in this session — no unit)
+ p2     tear up the merged plan         /doc-review    grok      grok-4.6      xhigh   p1a p1b
+ p3     build it                        /work          <from the plan>                 p2
+ p4     review the build                /code-review   <from the plan>                 p3
 ```
 
 Rules for the table:
 
-- **`saga cap` is whatever fits** — `/ideate`, `/brainstorm`, `/spec`, `/plan`, `/doc-review`,
-  `/work`, `/code-review`, `/qa`, `/investigate`, `/retro` — or a plain prompt with no command.
-  Choose per unit from what the work needs.
 - **Match the agent to the work, not to habit.** Judgement, design and adversarial review want a
-  stronger model; mechanical and survey work does not. Say why in one line if the choice is not
-  obvious.
-- **A reviewing unit should not be the agent that produced what it reviews.** Not a rule to enforce
-  mechanically — just do not hand a session its own output to bless.
+  stronger model; mechanical and survey work does not. One line of why if it is not obvious.
+- **A reviewing unit is never the agent that produced what it reviews.** Do not hand a session its
+  own output to bless.
 - **`after` is the only ordering.** Units with no dependency run at the same time.
+- **Every vendor in the table must be in the allow-list** from question 3.
 
 Then ask to approve, edit, or cancel. **Nothing launches before the operator says yes.**
 
 ## Phase 4 — run it
 
-Write the approved table to `.orchestrate/plan.json`:
+Write only the units that can actually launch now — the `<from the plan>` rows are not units yet and
+do not belong in the JSON. `task` is the literal text sent to the session.
 
 ```json
 {
   "run_id": "orch-2026-08-16-a",
-  "source": "#100 register consolidation",
+  "source": "#48 deploy-guard remediation",
+  "engine_prefs": {"code-review": {"intent": "second-opinion", "model": "opus", "effort": "high"}},
   "units": [
-    {"name": "u1", "vendor": "claude", "model": "opus", "effort": "high",
-     "task": "/brainstorm #102", "after": []},
-    {"name": "u3", "vendor": "grok", "model": "grok-4.6", "effort": "xhigh",
-     "task": "/doc-review docs/plans/....md", "after": ["u2"]}
+    {"name": "p1a", "vendor": "claude", "model": "opus", "effort": "high",
+     "task": "/plan #48", "after": []},
+    {"name": "p2", "vendor": "grok", "model": "grok-4.6", "effort": "xhigh",
+     "task": "/doc-review docs/plans/....md", "after": ["p1a"]}
   ]
 }
 ```
 
-`task` is the literal text sent to the session. Then:
-
-Find the script first. `/orchestrate` runs against whatever repo the operator is in, which is
-almost never this plugin's own repo, so the path has to be resolved rather than assumed:
+Find the script — the operator is rarely in this plugin's own repo:
 
 ```bash
 S="$CLAUDE_PLUGIN_ROOT/skills/orchestrate/scripts/orchestrate.py"
@@ -114,17 +163,41 @@ python3 "$S" clean --branches                      # close tabs, remove worktree
 `python3`, not `uv run` — the script imports nothing outside the standard library, and the target
 repo may not be a uv project at all.
 
-Between `go` and `settle`, watch with a Monitor rather than polling in a loop. When `settle` marks
-units done, run `go` again — that is what releases the next wave.
+Between `go` and `settle`, watch with a Monitor rather than polling in a loop.
 
-## Phase 5 — report
+## Phase 5 — expand at each phase boundary
 
-Tell the operator what each unit produced and what merged. If a session went idle without doing the
-work, say so plainly — an idle session is not a finished one, and `status` shows you both the unit's
-recorded state and what herdr says right now.
+When a phase finishes and it is the one that decides the next phase's units, read what it produced
+and bring the operator a table for **those rows only**:
+
+1. `settle`, then read the finished phase's output from its worktree — for `/plan`, the plan
+   document it wrote.
+2. Derive the next phase's units from it: what `/work` splits into, which vendor and tier each piece
+   wants, what depends on what. The plan is human prose; read it and propose. If it is vague, say
+   so and propose the best reading — the operator is about to edit it anyway.
+3. Show that table alone. Approve or edit.
+4. Append and launch:
+
+```bash
+python3 "$S" expand --plan .orchestrate/expand-p3.json
+python3 "$S" go
+```
+
+`expand` refuses a name already in the run and a dependency that is in no run, so a bad table fails
+before anything launches.
+
+**Competing plans are read, not merged by git.** When `/plan` ran in several vendors' worktrees, open
+each one's plan document directly and write the merged plan yourself. Do not `collect` those
+branches into each other.
+
+## Phase 6 — report
+
+What each unit produced, and what merged. If a session went idle without doing the work, say so
+plainly — an idle session is not a finished one, and `status` shows both the recorded state and what
+herdr says right now. A unit sitting at `blocked` is waiting on a question in its own tab.
 
 ## Things this command deliberately does not do
 
 It does not verify that a session "really" finished, count anyone's tokens, enforce a budget,
-reserve concurrency slots, run a voting panel, or keep a durable register. If a unit went wrong you
-have its worktree, its branch, and its tab — look at them.
+reserve concurrency slots, run its own voting panel, or keep a durable register. If a unit went
+wrong you have its worktree, its branch, and its tab — look at them.

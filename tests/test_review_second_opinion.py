@@ -525,7 +525,7 @@ def test_complete_second_opinion_orders_artifact_availability_and_apply(
 
     def persist() -> None:
         nonlocal writes
-        assert store.read(prepared.request_id).state == "requested"
+        assert store.read(prepared.request_id).state == "collected"
         artifact.write_text("available\n", encoding="utf-8")
         writes += 1
 
@@ -562,12 +562,13 @@ def test_claim_with_reconciliation_but_no_artifact_recovers_unavailable_without_
     prepared = _prepared(monkeypatch)
     store = SO.SecondOpinionClaimStore(tmp_path / "claims.json")
     ledger = RL.RunLedger(tmp_path / "run-facts.jsonl")
-    calls = 0
+    launches = 0
 
-    def runner(_invocation: dict[str, Any]) -> dict[str, Any]:
-        nonlocal calls
-        calls += 1
-        return _runner(_invocation)
+    def runner(invocation: dict[str, Any]) -> dict[str, Any]:
+        nonlocal launches
+        if invocation.get("operation") != "collect":
+            launches += 1
+        return _runner(invocation)
 
     initial = SO.dispatch_second_opinion(
         prepared,
@@ -597,9 +598,10 @@ def test_claim_with_reconciliation_but_no_artifact_recovers_unavailable_without_
         claim_store=store,
         recover_pending=True,
     )
-    assert calls == 1
-    assert evidence.halt == SO.INTERRUPTED_DISPATCH_NOTE
-    assert store.read(prepared.request_id).state == "unavailable"
+    assert launches == 1
+    assert evidence.halt is None
+    assert evidence.source_findings
+    assert store.read(prepared.request_id).state == "collected"
 
 
 def test_artifact_persisted_before_marker_resumes_without_runner_replay(

@@ -420,6 +420,121 @@ clock — a pid plus boot identity, say — and it is available to every runtime
 **Refs.** LEARNINGS `{#exclude-by-the-column-that-carries-the-fact}`.
 
 
+### The documented launch command is the claim protocol's owner  {#documented-command-owns-the-claim}
+
+**Decision.** The launch and collect commands printed in the review skills
+are the claim protocol's entry point. They reserve a pending slot before
+start, refuse a second start of the same request, go through
+`engine_dispatch.dispatch` so the tripwire arms and an `engine` fact is
+written, and collect advances the claim to `collected`. A start that
+never produces a session releases the slot.
+
+**Rejected: leave the commands as a thin runner wrapper and keep the
+Python helper as the only protocol owner.** The skills tell an agent to
+run the commands. A protocol the documented path does not execute is not
+the protocol.
+
+**Revisit when** a native session API replaces the `agent` wrapper.
+
+**Refs.** [`{#dispatch-pending-status}`](#dispatch-pending-status).
+
+### Pending engine facts are excluded from terminal samples  {#pending-facts-excluded-from-terminal-samples}
+
+**Decision.** Staleness and promotion drop `status=pending` engine facts
+before they compute success or failure. A launch that later collects
+still contributes its terminal `ok` (or failure) fact; the pending
+marker is not a run that happened and did not qualify.
+
+**Rejected: reduce the facts for one execution to their latest status.**
+Existing ledgers reuse `execution_id` across independent runs. Collapsing
+on that key would hide real failures that share an identifier.
+
+**Revisit when** each launch writes a unique identity that the matching
+collect reuses and that no other launch can share.
+
+**Refs.** [`{#documented-command-owns-the-claim}`](#documented-command-owns-the-claim).
+
+### Dispatch itself can say a launch started and has not resolved  {#dispatch-pending-status}
+
+**Decision.** The dispatch layer accepts runner status `pending`. Arming
+authority stays in `engine_dispatch.dispatch`. A second-opinion launch
+goes through that function with the real runner, so the tripwire wraps
+the vendor start and a supplied ledger records an `engine` fact for the
+launch whether or not anyone later collects.
+
+A claim with a usable result is `collected` until
+`complete_second_opinion`. That interval is not `requested`. The pending
+slot is reserved before `start`.
+
+**Rejected: move arming and run-fact writes into `second_opinion`.**
+That would retire the rule that the dispatch layer arms. The same
+missing state, one layer down, is the smaller change.
+
+**Rejected: keep the tripwire armed for the whole session lifetime.**
+Arming still matches the duration of the adapter call. The durable
+signal that a launch happened is the run-fact, not a tripwire left
+armed after dispatch has returned.
+
+**Revisit when** collect needs a live liveness probe of a session that
+has already been started.
+
+**Refs.** [`{#second-opinion-pending-until-collected}`](#second-opinion-pending-until-collected).
+
+### A launched second opinion is pending until collected  {#second-opinion-pending-until-collected}
+
+**Decision.** A managed-session second opinion that has started and has not
+yet written a result is claim state `pending`. That state is not terminal.
+`dispatch_second_opinion` launches and leaves the claim pending.
+`collect_second_opinion` reads the later result and moves the claim to
+`requested` (ready to complete) or `unavailable`. `recover_pending` on a
+`requested` claim is still interrupt recovery and does not collect; on a
+`pending` claim it collects.
+
+A pending claim that is never collected stays pending until
+`abandon_pending_second_opinion`, which records `NEVER_COLLECTED_NOTE`.
+That is not an empty review. Concurrent pending claims are capped at
+`MAX_PENDING_CLAIMS`; a launch that would exceed the cap is refused and
+recorded as unavailable with `PENDING_BOUND_NOTE`.
+
+**Rejected: reuse `requested` and make `recover_pending` collect.**
+`recover_pending` already means "this reservation never launched; do not
+replay." Using it for a live session would terminate the one case it was
+written for.
+**Rejected: block inside the Runner until the file appears.** The dispatch
+call is one synchronous return; a wait would stall the reviewing session
+for the whole external review.
+
+**Revisit when** a durable result transport other than a digest-bound file
+is the session's return path.
+
+**Refs.** [`{#external-reviewers-are-managed-sessions}`](#external-reviewers-are-managed-sessions).
+
+### External-only admission is a constructed roster or a halt, never a degraded panel  {#external-only-roster-or-halt}
+
+**Decision.** Under the external-only offer mode the permitted reviewers are a
+constructed type. Construction filters the home vendor first. If what remains is
+smaller than the required quorum, the result is a halt that tells the operator no
+review happened. There is no roster that contains the excluded vendor, and there
+is no function that puts that vendor back after a failed start, a dead session,
+or a missing result.
+
+`/code-review` and `/doc-review` inject the managed-session runner. Selection of
+that runner under external-only reuses the same admission: an excluded-vendor
+engine id is a halt, not a session. `dispatch_second_opinion` still takes an
+injected runner. A later ruling added a non-terminal `pending` claim and a
+collect entry point; see
+[`{#second-opinion-pending-until-collected}`](#second-opinion-pending-until-collected).
+
+**Rejected: filter the home vendor in the skill prose and leave the candidate
+list as a plain tuple.** A later retry or error handler can append the excluded
+vendor without the type system noticing.
+**Rejected: fall back to the home panel when admission returns a halt.** That
+converts a correctness choice into a cost choice and labels it external-only.
+
+**Revisit when** a named panel role needs a quorum larger than "every remaining
+non-home member," or when a second construction site for the roster appears.
+
+**Refs.** [`{#external-reviewers-are-managed-sessions}`](#external-reviewers-are-managed-sessions).
 ### Finding blocking is an explicit boolean and performed verdicts carry findings  {#finding-blocking-is-explicit}
 
 **Decision.** Each finding must declare `blocking` with a required keyword-only boolean. The review
@@ -643,9 +758,10 @@ offer is unchanged — the same durable gate-record contract, prompt-and-remembe
 path, provider selection, egress policy, tier selection, and atomic
 persistence of request state. Only the transport changes.
 
-A new offer mode, **external only**, excludes the home vendor's panel
-entirely rather than adding an advisory seat beside it. When a review runs
-inside a session over code that session's vendor wrote, external-only is the
+A new offer mode, **external only**, excludes the home vendor from the
+external-reviewer seat rather than adding an advisory seat beside it. The
+in-session lens fan-out is a separate roster. When a review runs inside a
+session over code that session's vendor wrote, external-only is the
 correctness option, not a cost option: it is "never review your own vendor"
 applied at the skill level, so the rule is implemented once rather than twice.
 

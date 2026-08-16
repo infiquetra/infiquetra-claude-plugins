@@ -105,7 +105,9 @@ def _cell_verdict(
     min_samples: int,
     failure_share_floor: float,
 ) -> tuple[str, dict[str, Any]]:
-    dispatch_facts = [f for f in joined if f.get("kind") == "engine"]
+    dispatch_facts = [
+        fact for fact in joined if fact.get("kind") == "engine" and fact.get("status") != "pending"
+    ]
     benchmark_facts = [f for f in joined if f.get("kind") == "benchmark"]
     ok_facts = [f for f in dispatch_facts if _dispatch_ok(f)] + [
         f for f in benchmark_facts if _benchmark_ok(f)

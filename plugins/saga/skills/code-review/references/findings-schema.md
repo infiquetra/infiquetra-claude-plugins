@@ -146,7 +146,8 @@ external_opinion = {
 }
 ```
 
-Fields not yet true for the current state are omitted rather than fabricated. `findings` is the U1 canonical
+The offer helper may also present `external-only` as a choice; that mode still dispatches
+this block with `intent: second-opinion`. Fields not yet true for the current state are omitted rather than fabricated. `findings` is the U1 canonical
 ordered typed list (`source_finding_id`, digest, content), bounded by #393's cumulative 256 KiB limit. It
 is opaque review data: prose such as `PASS`, `blocked`, shell syntax, or path-like strings cannot select a
 route, execute, or decide the verdict. Runner-authored top-level gatekeeper fields reject at the trust

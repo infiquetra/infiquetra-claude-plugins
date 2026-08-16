@@ -90,6 +90,16 @@ def _assess(tmp_path: Path, ledger: Any) -> Any:
     )
 
 
+def test_pending_facts_are_not_counted_as_runs(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    for number in range(5):
+        _append(ledger, number * 2, status="pending", run_key=f"pending-{number}")
+        _append(ledger, number * 2 + 1, status="ok", proof="ok", run_key=f"ok-{number}")
+    assessment = _assess(tmp_path, ledger)
+    assert assessment.matching_runs == 5
+    assert assessment.eligible is True
+
+
 def test_five_exact_variant_proven_successes_are_eligible(tmp_path: Path) -> None:
     ledger = _ledger(tmp_path)
     for number in range(5):

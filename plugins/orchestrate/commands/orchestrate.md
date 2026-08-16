@@ -207,19 +207,28 @@ Then, from the operator's repo:
 
 ```bash
 python3 "$S" roster                                # what this machine can launch
-python3 "$S" start --plan .orchestrate/plan.json   # worktree + branch per unit
+python3 "$S" start --plan .orchestrate/plan.json   # run branch, then a branch per unit
 python3 "$S" go                                    # launch everything eligible
-python3 "$S" status                                # the table, live
+python3 "$S" wait                                  # block until one settles (herdr events)
 python3 "$S" settle                                # idle sessions become done
-python3 "$S" go                                    # dependents are now eligible
-python3 "$S" collect                               # merge each unit's branch
-python3 "$S" clean --branches                      # close tabs, remove worktrees
+python3 "$S" land                                  # finished units -> the run branch
+python3 "$S" go                                    # the next phase, now able to see their work
+python3 "$S" collect                               # the run branch -> your tree, once
+python3 "$S" clean --merged --branches             # close what has landed
 ```
 
 `python3`, not `uv run` — the script imports nothing outside the standard library, and the target
 repo may not be a uv project at all.
 
-Between `go` and `settle`, watch with a Monitor rather than polling in a loop.
+**`land` is not optional and it is not cleanup.** It is how a phase becomes real to the next one.
+Units branch from the run branch, so a reviewer can only find a plan there if the planner's work was
+landed first — the way a team pushes back to the feature branch rather than reading each other's
+branches. Skip it and the next phase opens on nothing and writes something plausible about nothing.
+
+`land` also names any unit that finished without committing. That is the failure worth seeing: not a
+missing merge, but a session that produced nothing and reported itself done.
+
+Between `go` and `settle`, use `wait` — it blocks on herdr's event socket rather than polling.
 
 ## Phase 5 — expand at each phase boundary
 

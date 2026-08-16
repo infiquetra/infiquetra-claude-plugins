@@ -112,6 +112,16 @@ grants writing there and nothing wider.
 the right form — `/saga:plan` for claude, `$saga:plan` for codex, `/plan` for grok, qwen and
 opencode. A bare `/plan` is a command nowhere and arrives as prose.
 
+## Waiting, and empty dependencies
+
+`orchestrate.py wait` subscribes to herdr's event socket and blocks until one of the running units
+changes state — nothing is polled. Subscriptions are keyed by pane, which is why a unit records its
+`pane_id` at launch; if the socket is unreachable it falls back to one `herdr agent wait` per unit.
+
+`go` refuses to launch a unit whose dependency committed nothing. A dependent unit opens on its
+dependency's branch, so an empty branch means the thing it is supposed to work on does not exist —
+and a session given nothing writes something plausible about nothing rather than failing.
+
 ## What this deliberately does not do
 
 It does not verify that a session "really" finished, count tokens, enforce a spend ceiling, reserve

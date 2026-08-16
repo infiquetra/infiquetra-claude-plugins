@@ -1,5 +1,48 @@
 # Changelog
 
+## [1.5.0] - 2026-08-16
+
+### Changed
+
+- **A run now has a shared branch, and units land on it — the way a team uses a feature branch.**
+  Previously each unit branched from its predecessor's branch, so a reviewer read the planner's
+  branch directly. When the planner committed nothing, the reviewer opened on an empty tree, found
+  no plan, and wrote a confident review of a document that had never existed. Now `start` creates
+  `orch/<run-id>`, every unit branches from it, `land` merges finished units back onto it between
+  phases, and `collect` merges that one branch home at the end. A reviewer sees a plan because the
+  plan was landed, not because it guessed which branch to read.
+- **`land` names any unit that finished without committing.** That is the failure worth surfacing —
+  not a missing merge, but a session that produced nothing and reported itself done.
+
+### Fixed
+
+- **Untracked files no longer block `land` or `collect`.** The dirty-tree check counted untracked
+  files, and `.orchestrate/` is untracked in every real repository, so both would have refused on
+  every run. Only tracked modifications block a merge.
+- **Unit branches are `orch/<run>-<unit>`, not `orch/<run>/<unit>`.** Git cannot hold both
+  `orch/<run>` and `orch/<run>/<unit>` as branches — one ref would have to be a file and a directory
+  at once, and worktree creation failed outright.
+- **A unit still will not run against a dependency that produced nothing**, as a backstop. A dependent unit opens on
+  its dependency's branch; if that branch is still at the base commit there is nothing to work on.
+  Launching anyway does not fail loudly — the session finds no plan, no diff, no artifact, and
+  writes something plausible about nothing. That happened: a doc-review unit on grok reviewed a plan
+  document that had never been written, and produced a confident review of it. `go` now checks each
+  dependency for commits and skips the unit with a plain reason instead of opening that tab.
+
+### Changed
+
+- **`wait` is told by herdr instead of asking it.** Salvaged `herdr_events.py` from the archived
+  implementation: a newline-delimited JSON client for herdr's event socket, subscribing to
+  `pane.agent_status_changed` and blocking in the kernel until a line arrives. Two pieces of
+  protocol knowledge came with the salvage and are the reason it was not rewritten from the schema —
+  subscriptions use the dotted vocabulary rather than the underscored broadcast names, and the
+  first line back is a `subscription_started` handshake that must not be read as an event.
+  A third was found by testing against the live socket: **subscriptions are per pane**, so a request
+  without `pane_id` is rejected outright. Units therefore record their `pane_id` at launch.
+  Dropped from the salvage as unneeded here: reconnect-with-catch-up, threading, and connection
+  accounting. `herdr agent wait` remains as the fallback when the socket is unreachable.
+
+
 ## [1.4.0] - 2026-08-16
 
 Round four, from the first run that reached dispatch. Two competing plans were produced at xhigh

@@ -22,6 +22,13 @@ import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+# Ships beside this file. Kept optional so a partial install degrades to per-unit waits rather
+# than refusing to run at all.
+try:
+    import herdr_events
+except ImportError:  # pragma: no cover - only when the sibling module is missing
+    herdr_events = None  # type: ignore[assignment]
+
 RUN_FILE = Path(".orchestrate/run.json")
 
 # How each agent takes a model and a reasoning effort on its own command line, read from each
@@ -129,6 +136,9 @@ class Unit:
     worktree: str | None = None
     branch: str | None = None
     tab_id: str | None = None
+    pane_id: str | None = None
+    """The pane this session occupies. Recorded because herdr's event subscriptions are keyed by
+    pane, not by agent name -- ``events.subscribe`` rejects a request without one."""
     agent_name: str | None = None
     """What herdr calls this session. The wrapper uniquifies names, so it can differ from
     ``name`` -- which is the plan's identity and the dependency key, and never changes."""
@@ -142,6 +152,12 @@ class Run:
     source: str
     base: str
     units: list[Unit]
+    branch: str = ""
+    """The run's shared branch -- what a team would call the feature branch.
+
+    Every unit branches from here and lands back here when it finishes, so the next phase opens on
+    everything the earlier phases actually produced rather than on one predecessor's branch. At the
+    end this is the single branch that merges into the operator's tree."""
     engine_prefs: dict[str, dict[str, str]] = field(default_factory=dict)
     """Saga's per-stage external-engine answers, decided once in the interview.
 
@@ -159,6 +175,7 @@ class Run:
             source=raw["source"],
             base=raw["base"],
             units=[Unit(**u) for u in raw["units"]],
+            branch=raw.get("branch", ""),
             engine_prefs=raw.get("engine_prefs", {}),
         )
 
@@ -168,6 +185,7 @@ class Run:
             "run_id": self.run_id,
             "source": self.source,
             "base": self.base,
+            "branch": self.branch,
             "engine_prefs": self.engine_prefs,
             "units": [asdict(u) for u in self.units],
         }
@@ -240,6 +258,20 @@ def write_engine_prefs(worktree: Path, prefs: dict[str, dict[str, str]]) -> None
     path.write_text(json.dumps({"stages": prefs, "version": 1}, indent=2) + "\n")
 
 
+def produced_anything(dep: Unit, r: Run) -> bool:
+    """Did this unit actually commit something to its branch?
+
+    A dependent unit opens on its dependency's branch, so if that branch is still sitting at the
+    base commit there is nothing there to work on. Launching anyway does not fail loudly -- the
+    session finds no plan, no diff, no artifact, and writes something plausible about nothing. That
+    happened: a doc-review unit reviewed a plan document that was never written.
+    """
+    if not dep.branch:
+        return False
+    got = run(["git", "rev-list", "--count", f"{r.base}..{dep.branch}"], check=False)
+    return got.returncode == 0 and got.stdout.strip() not in ("", "0")
+
+
 def make_worktree(unit: Unit, r: Run, root: Path) -> None:
     """One worktree and one branch per unit. This is the whole isolation story.
 
@@ -248,8 +280,10 @@ def make_worktree(unit: Unit, r: Run, root: Path) -> None:
     ``start``, because the dependency's branch does not have its commits until it has run.
     """
     path = root.parent / f"orch-{unit.name}"
-    branch = f"orch/{unit.name}"
-    base = r.unit(unit.after[-1]).branch if unit.after else r.base
+    # dash, not a second slash: git cannot hold `orch/<run>` as a branch and `orch/<run>/<unit>`
+    # as another, because one ref would have to be both a file and a directory
+    branch = f"orch/{r.run_id}-{unit.name}"
+    base = r.branch or r.base
     if path.exists():
         print(f"  worktree already there: {path}")
     else:
@@ -370,6 +404,7 @@ def launch(unit: Unit) -> None:
         unit.tab_id = info.get("tab_id")
         unit.agent_name = info.get("agent_name", unit.name)
         pane_id = info.get("pane_id")
+        unit.pane_id = pane_id
     except (ValueError, IndexError):
         unit.note = "launched, but the wrapper's JSON could not be read"
     send(unit, pane_id)
@@ -432,7 +467,12 @@ def cmd_start(args: argparse.Namespace) -> int:
         engine_prefs=plan.get("engine_prefs", {}),
     )
     assert_vendors_available(r.units)
+    r.branch = f"orch/{r.run_id}"
+    exists = run(["git", "rev-parse", "--verify", "--quiet", r.branch], check=False)
+    if exists.returncode != 0:
+        run(["git", "branch", r.branch, base])
     r.save()
+    print(f"run branch {r.branch} from {base[:8]} — units land here, it merges out once")
     order = " -> ".join(u.name for u in r.units)
     print(f"run {r.run_id}: {len(r.units)} units on base {base[:8]}  ({order})")
     print("`orchestrate.py go` to launch what is eligible.")
@@ -598,6 +638,10 @@ def cmd_go(args: argparse.Namespace) -> int:
         if unit.tab_id:
             print(f"  {unit.name}: already has tab {unit.tab_id}; not launching twice")
             continue
+        empty = [d for d in unit.after if not produced_anything(r.unit(d), r)]
+        if empty:
+            print(f"  {unit.name}: skipped — {', '.join(empty)} committed nothing to build on")
+            continue
         make_worktree(unit, r, root)
         r.save()  # persist the worktree before the launch, so a failure is not relaunched blind
         print(f"launching {unit.name} ({unit.vendor}) -> {unit.task}")
@@ -644,51 +688,44 @@ def cmd_settle(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_collect(args: argparse.Namespace) -> int:
-    r = Run.load()
-    dirty = run(["git", "status", "--porcelain"]).stdout.strip()
-    if dirty:
-        print("your working tree has uncommitted changes; git will refuse to merge into it.")
-        print("commit or stash them, then rerun collect. what is uncommitted:\n")
-        print("\n".join(f"  {line}" for line in dirty.splitlines()[:15]))
-        return 1
-    merged, skipped = [], []
-    for unit in r.units:
-        if unit.status != DONE or not unit.branch:
-            skipped.append(unit.name)
-            continue
-        ahead = run(["git", "rev-list", "--count", f"HEAD..{unit.branch}"]).stdout.strip()
-        if ahead == "0":
-            skipped.append(f"{unit.name} (no commits)")
-            continue
-        proc = run(["git", "merge", "--no-ff", "--no-edit", unit.branch], check=False)
-        if proc.returncode == 0:
-            merged.append(f"{unit.name} (+{ahead})")
-        else:
-            print(f"  CONFLICT merging {unit.branch} -- resolve it yourself, then rerun collect")
-            return 1
-    print(f"merged: {', '.join(merged) or 'nothing'}")
-    if skipped:
-        print(f"skipped: {', '.join(skipped)}")
-    return 0
-
-
 def cmd_wait(args: argparse.Namespace) -> int:
-    """Block until a running unit settles. Driven by herdr's events, not by polling.
+    """Block until a running unit settles, told by herdr rather than asking it.
 
-    ``herdr agent wait`` is level-triggered: it returns at once if the agent is already in the
-    requested state, and otherwise blocks inside the server until the state actually changes --
-    measured at 0.010s for an already-settled agent and a full quiet block otherwise. So there is no
-    race between checking and waiting, and no loop burning cycles to notice something.
+    Subscribes to ``pane.agent_status_changed`` on each running unit's pane over herdr's event
+    socket and blocks in the kernel until a line arrives. Subscriptions are keyed by pane, which is
+    why a unit records its ``pane_id`` at launch -- a request without one is rejected outright.
 
-    One wait per running unit, then block on whichever finishes first. The rest are stopped, because
-    the caller wants to know that *something* moved; run ``wait`` again for the next one.
+    Falls back to ``herdr agent wait`` when the socket is unreachable: an older herdr, a stopped
+    server, or a unit launched before pane ids were recorded. That path is level-triggered and
+    correct too, just one process per unit instead of one socket.
     """
     r = Run.load()
     running = [u for u in r.units if u.status == RUNNING]
     if not running:
-        print("nothing running — `go` to launch what is eligible")
+        print("nothing running -- `go` to launch what is eligible")
         return 0
+
+    by_pane = {u.pane_id: u for u in running if u.pane_id}
+    print(f"waiting on {', '.join(u.name for u in running)} (up to {args.timeout}s)")
+
+    if by_pane and herdr_events is not None:
+        try:
+            for event in herdr_events.agent_status_events(
+                list(by_pane), timeout=float(args.timeout)
+            ):
+                unit = by_pane.get(event.pane_id)
+                if unit is None:
+                    continue
+                if event.agent_status in {"idle", "done"}:
+                    print(f"{unit.name} is {event.agent_status} -- `settle`, `land`, then `go`")
+                    return 0
+                if event.agent_status == "blocked":
+                    print(f"{unit.name} is blocked -- it is asking a question in its own tab")
+                    return 0
+            print("no unit changed state before the timeout")
+            return 0
+        except herdr_events.HerdrEventError as exc:
+            print(f"event socket unavailable ({exc}); falling back to per-unit waits")
 
     procs: dict[int, Unit] = {}
     for unit in running:
@@ -710,30 +747,102 @@ def cmd_wait(args: argparse.Namespace) -> int:
             stderr=subprocess.DEVNULL,
         )
         procs[proc.pid] = unit
-    print(f"waiting on {', '.join(u.name for u in running)} (up to {args.timeout}s)")
-
     try:
         pid, _ = os.wait()
     except ChildProcessError:
         return 0
     settled = procs.pop(pid, None)
-    for p in procs:
+    for other in procs:
         with contextlib.suppress(ProcessLookupError):
-            os.kill(p, signal.SIGTERM)
-    if settled:
-        print(f"{settled.name} settled — `settle` to record it, then `go`")
-    else:
-        print("a wait returned but its unit could not be identified; run `status`")
+            os.kill(other, signal.SIGTERM)
+    print(
+        f"{settled.name} settled -- `settle`, `land`, then `go`"
+        if settled
+        else "a wait returned but its unit could not be identified; run `status`"
+    )
+    return 0
+
+
+def cmd_land(args: argparse.Namespace) -> int:
+    """Merge finished units back onto the run branch.
+
+    This is the step that makes a phase real to the next one. A reviewer does not read the planner's
+    branch; it opens on the run branch, and it can only find a plan there because the planner's work
+    was landed first. Run it after ``settle`` and before the next ``go``.
+
+    A unit that finished without committing anything is named here rather than passed over. That is
+    the failure worth catching -- not a missing merge, but a session that produced nothing and
+    reported itself done.
+    """
+    r = Run.load()
+    if not r.branch:
+        raise SystemExit("this run has no run branch; it predates `land` -- start a new run")
+    dirty = run(["git", "status", "--porcelain", "--untracked-files=no"]).stdout.strip()
+    if dirty:
+        print("your working tree has uncommitted changes; commit or stash them, then rerun land")
+        return 1
+
+    on = run(["git", "rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()
+    run(["git", "checkout", r.branch])
+    landed, empty, already = [], [], []
+    try:
+        for unit in r.units:
+            if unit.status != DONE or not unit.branch:
+                continue
+            ahead = run(
+                ["git", "rev-list", "--count", f"{r.branch}..{unit.branch}"], check=False
+            ).stdout.strip()
+            if ahead in ("", "0"):
+                (already if produced_anything(unit, r) else empty).append(unit.name)
+                continue
+            merge = run(["git", "merge", "--no-ff", "--no-edit", unit.branch], check=False)
+            if merge.returncode != 0:
+                run(["git", "merge", "--abort"], check=False)
+                print(f"  CONFLICT landing {unit.name}; resolve it on {r.branch} yourself")
+                return 1
+            landed.append(f"{unit.name} (+{ahead})")
+    finally:
+        run(["git", "checkout", on], check=False)
+
+    print(f"landed on {r.branch}: {', '.join(landed) or 'nothing new'}")
+    if already:
+        print(f"already there: {', '.join(already)}")
+    if empty:
+        print(f"COMMITTED NOTHING: {', '.join(empty)} -- those sessions finished without saving")
     return 0
 
 
 def merged_into_head(branch: str) -> bool:
     """Is every commit on this branch already in the current tree?"""
-    got = run(["git", "rev-list", "--count", f"{branch}..HEAD@{{0}}"], check=False)
-    if got.returncode != 0:
-        return False
     ahead = run(["git", "rev-list", "--count", f"HEAD..{branch}"], check=False)
     return ahead.returncode == 0 and ahead.stdout.strip() == "0"
+
+
+def cmd_collect(args: argparse.Namespace) -> int:
+    """Merge the run branch into the operator's tree -- one merge, at the end.
+
+    Units land on the run branch as they finish (``land``); this brings that single branch home, the
+    way a feature branch merges once rather than each contributor merging separately.
+    """
+    r = Run.load()
+    if not r.branch:
+        raise SystemExit("this run has no run branch; it predates `collect` — start a new run")
+    dirty = run(["git", "status", "--porcelain", "--untracked-files=no"]).stdout.strip()
+    if dirty:
+        print("your working tree has uncommitted changes; git will refuse to merge into it.")
+        print("commit or stash them, then rerun collect. what is uncommitted:\n")
+        print("\n".join(f"  {line}" for line in dirty.splitlines()[:15]))
+        return 1
+    ahead = run(["git", "rev-list", "--count", f"HEAD..{r.branch}"]).stdout.strip()
+    if ahead in ("", "0"):
+        print(f"{r.branch} has nothing your tree does not already have — did you `land` first?")
+        return 0
+    proc = run(["git", "merge", "--no-ff", "--no-edit", r.branch], check=False)
+    if proc.returncode != 0:
+        print(f"  CONFLICT merging {r.branch} — resolve it, then rerun collect")
+        return 1
+    print(f"merged {r.branch} (+{ahead})")
+    return 0
 
 
 def cmd_clean(args: argparse.Namespace) -> int:
@@ -804,7 +913,10 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--timeout", type=int, default=1800, help="seconds to wait at most")
     s.set_defaults(func=cmd_wait)
 
-    s = sub.add_parser("collect", help="merge each finished unit's branch")
+    s = sub.add_parser("land", help="merge finished units onto the run branch")
+    s.set_defaults(func=cmd_land)
+
+    s = sub.add_parser("collect", help="merge the run branch into your tree")
     s.set_defaults(func=cmd_collect)
 
     s = sub.add_parser("clean", help="close tabs and remove worktrees")

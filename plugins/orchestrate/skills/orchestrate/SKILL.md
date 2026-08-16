@@ -35,6 +35,7 @@ python3 "$S" start --plan .orchestrate/plan.json   # record the run
 python3 "$S" go                                    # launch every eligible unit
 python3 "$S" status                                # the table, with live herdr state
 python3 "$S" settle                                # idle sessions become done
+python3 "$S" expand --plan .orchestrate/next.json  # append units a finished phase named
 python3 "$S" collect                               # merge each finished unit's branch
 python3 "$S" clean --branches                      # close tabs, remove worktrees
 ```
@@ -47,6 +48,19 @@ again is what releases the next wave.
 
 **A unit with dependencies branches from the last one it names**, at launch time rather than up
 front — so a `/work` unit opens on top of its `/plan` unit's actual output.
+
+**The later phases have no units until an earlier one names them.** What `/work` splits into is
+decided by the plan, which does not exist when the operator approves the first table. So the run
+starts with only what can launch now, and `expand` appends the rest once the operator has approved
+them — same run, so `after` still reaches back and one `collect` covers everything. `expand` refuses
+a duplicate name or a dependency that is in no run.
+
+**Saga's external-engine offer is answered before dispatch.** A `/doc-review` or `/code-review`
+session with no stored preference stops and asks the operator, in a tab nobody is watching. The
+plan's `engine_prefs` block is written to `<worktree>/.saga/engine-prefs.json` at worktree creation,
+which saga reads and skips the question. Keyed by stage (`ideate`, `brainstorm`, `work`,
+`doc-review`, `code-review`) with an `intent` of `none`, `offload`, `second-opinion` or
+`external-only`, plus a tier `model` and `effort`.
 
 ## State
 

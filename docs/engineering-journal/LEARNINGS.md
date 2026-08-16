@@ -21,6 +21,48 @@
 
 ## 2026-08-16
 
+### An interactive lifecycle command, dispatched to a background tab, waits forever  {#dispatched-saga-commands-block-on-their-own-offers}
+
+**Context.** `/orchestrate` launches saga commands into herdr tabs the operator is not watching.
+Reviewing what a dispatched `/code-review` would actually do on startup turned up a stall that no
+amount of orchestrate-side correctness would have prevented.
+
+**Evidence.** `plugins/saga/skills/code-review/SKILL.md:81-82` opens by running
+`engine_offer.py offer --stage code-review --repo-root . --attended`. With `--attended` and no stored
+preference, `resolve_offer` returns `prompt_required=True`
+(`plugins/saga/scripts/engine_offer.py:206`) and the session stops to ask the operator which external
+second opinion it should get. In a background tab that question is never seen and never answered.
+
+**Mechanism.** The offer is an *attended* interaction by design — correct when a human is looking at
+the session, which is the only way saga commands were run before orchestrate existed. Dispatch
+changes the premise without changing the command. The general shape: a lifecycle command that is
+safe to run interactively is not automatically safe to run dispatched, and the difference does not
+show up as an error — it shows up as a tab that never finishes.
+
+**Fix.** Saga already carries the escape hatch: `resolve_offer` returns early from a stored
+preference and that path hardcodes `prompt_required=False`
+(`engine_offer.py:187`, `:311-330`). Orchestrate now writes the answer — decided once in the
+interview — into `<worktree>/.saga/engine-prefs.json` at worktree creation
+(`write_engine_prefs` in `scripts/orchestrate.py`). Written directly rather than by shelling out to
+`engine_offer.py remember`, which would mean resolving a second plugin's script path across install
+layouts; the file is small and carries `"version": 1`.
+
+**Validation.** Executed against saga's real module, not a fixture: orchestrate built a worktree,
+then `engine_offer.py offer --stage code-review --repo-root <that worktree> --attended` returned
+`prompt_required=False, source=stored, intent=second-opinion`.
+
+**What surprised.** The vocabulary is tier names, not model identifiers — `MODELS` is
+`(fable, opus, sonnet, haiku)`, so a plausible-looking `--model gpt-5.6-sol` is rejected outright.
+Worth knowing before writing the file by hand.
+
+**Generalizable rule.** Before dispatching any interactive command into an unattended session,
+enumerate every point at which it can ask a question, and answer each one in advance — or accept
+that the session can hang silently. Prefer the callee's own stored-preference path over suppressing
+prompts, because it keeps one code path for both attended and dispatched use.
+
+**Refs.** [[#plugin-paths-authored-from-inside-its-own-repo]] — the other defect the same first real
+run exposed, and the same root shape: a premise that held everywhere it was tested.
+
 ### A plugin authored in its own repo bakes in paths that work for every test but no real user  {#plugin-paths-authored-from-inside-its-own-repo}
 
 **Context.** `/orchestrate` shipped at 1.0.0 having been proven end to end — two real agent sessions,

@@ -58,6 +58,14 @@ class Run:
     source: str
     base: str
     units: list[Unit]
+    engine_prefs: dict[str, dict[str, str]] = field(default_factory=dict)
+    """Saga's per-stage external-engine answers, decided once in the interview.
+
+    Keyed by saga stage (``code-review``, ``doc-review``, ``work``, …), each value carrying
+    ``intent`` and optionally ``model`` and ``effort``. Written into every worktree so a dispatched
+    saga command finds the answer already stored and never stops to ask a question in a tab nobody
+    is watching. See ``write_engine_prefs``.
+    """
 
     @classmethod
     def load(cls, path: Path = RUN_FILE) -> Run:
@@ -67,6 +75,7 @@ class Run:
             source=raw["source"],
             base=raw["base"],
             units=[Unit(**u) for u in raw["units"]],
+            engine_prefs=raw.get("engine_prefs", {}),
         )
 
     def save(self, path: Path = RUN_FILE) -> None:
@@ -75,6 +84,7 @@ class Run:
             "run_id": self.run_id,
             "source": self.source,
             "base": self.base,
+            "engine_prefs": self.engine_prefs,
             "units": [asdict(u) for u in self.units],
         }
         path.write_text(json.dumps(payload, indent=2) + "\n")
@@ -107,6 +117,27 @@ def repo_root() -> Path:
 # ----------------------------------------------------------------- launching
 
 
+def write_engine_prefs(worktree: Path, prefs: dict[str, dict[str, str]]) -> None:
+    """Answer saga's external-engine offer before the session is even launched.
+
+    A dispatched ``/code-review`` or ``/doc-review`` opens by resolving an engine offer, and with
+    nothing stored it stops and asks the operator -- in a background tab, which means it waits
+    forever. Saga reads a stored answer from ``<repo>/.saga/engine-prefs.json`` and skips the
+    question entirely (``engine_offer.resolve_offer`` returns early, ``prompt_required=False``).
+
+    Written directly rather than by shelling out to saga's ``engine_offer.py remember``, which would
+    mean resolving another plugin's script path across install layouts. The format is small and
+    carries its own version. If saga ever moves past version 1 the stored answer stops being
+    honoured, and the visible symptom is a review unit sitting at ``blocked`` in ``status`` -- which
+    is the first place to look if that ever happens.
+    """
+    if not prefs:
+        return
+    path = worktree / ".saga" / "engine-prefs.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"stages": prefs, "version": 1}, indent=2) + "\n")
+
+
 def make_worktree(unit: Unit, r: Run, root: Path) -> None:
     """One worktree and one branch per unit. This is the whole isolation story.
 
@@ -123,6 +154,7 @@ def make_worktree(unit: Unit, r: Run, root: Path) -> None:
         run(["git", "worktree", "add", str(path), "-b", branch, base or r.base])
     unit.worktree = str(path)
     unit.branch = branch
+    write_engine_prefs(path, r.engine_prefs)
     print(f"  {unit.name}: {path.name} on {branch} from {base}")
 
 
@@ -203,11 +235,45 @@ def cmd_start(args: argparse.Namespace) -> int:
         source=plan.get("source", ""),
         base=base,
         units=[Unit(**u) for u in plan["units"]],
+        engine_prefs=plan.get("engine_prefs", {}),
     )
     r.save()
     order = " -> ".join(u.name for u in r.units)
     print(f"run {r.run_id}: {len(r.units)} units on base {base[:8]}  ({order})")
     print("`orchestrate.py go` to launch what is eligible.")
+    return 0
+
+
+def cmd_expand(args: argparse.Namespace) -> int:
+    """Add units to a run already in flight.
+
+    The up-front table can only name the later phases, never their units: what ``/work`` splits into
+    is decided by the plan, which does not exist yet when the operator approves. So a phase that
+    produces the next phase's units is read when it finishes, the operator approves the new rows,
+    and they are appended to the same run -- not started as a second one. That keeps ``after``
+    reaching back to the units they depend on, and keeps one ``collect`` for the whole thing.
+    """
+    r = Run.load()
+    added = json.loads(Path(args.plan).read_text())
+    incoming = [Unit(**u) for u in added["units"]]
+
+    existing = {u.name for u in r.units}
+    seen: set[str] = set()
+    for unit in incoming:
+        if unit.name in existing or unit.name in seen:
+            raise SystemExit(f"unit {unit.name!r} is already in this run; give the new one a name")
+        seen.add(unit.name)
+    reachable = existing | seen
+    for unit in incoming:
+        for dep in unit.after:
+            if dep not in reachable:
+                raise SystemExit(f"unit {unit.name!r} waits on {dep!r}, which is in no run")
+
+    r.units.extend(incoming)
+    r.engine_prefs.update(added.get("engine_prefs", {}))
+    r.save()
+    print(f"added {len(incoming)}: {', '.join(u.name for u in incoming)}")
+    print("`orchestrate.py go` to launch whatever is now eligible.")
     return 0
 
 
@@ -320,6 +386,10 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--plan", required=True)
     s.add_argument("--base", help="commit to branch every unit from (default HEAD)")
     s.set_defaults(func=cmd_start)
+
+    s = sub.add_parser("expand", help="append units to a run in flight, once a phase names them")
+    s.add_argument("--plan", required=True)
+    s.set_defaults(func=cmd_expand)
 
     s = sub.add_parser("go", help="launch every unit whose dependencies are met")
     s.add_argument("--limit", type=int, default=0, help="launch at most this many now")

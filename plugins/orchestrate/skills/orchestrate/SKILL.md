@@ -31,6 +31,7 @@ Resolve it first — the operator is rarely in this plugin's own repo:
 S="$CLAUDE_PLUGIN_ROOT/skills/orchestrate/scripts/orchestrate.py"
 [ -f "$S" ] || S=$(ls -d ~/.claude/plugins/cache/*/orchestrate/*/skills/orchestrate/scripts/orchestrate.py | sort -V | tail -1)
 
+python3 "$S" roster                                # agents this machine can launch
 python3 "$S" start --plan .orchestrate/plan.json   # record the run
 python3 "$S" go                                    # launch every eligible unit
 python3 "$S" status                                # the table, with live herdr state
@@ -73,9 +74,11 @@ what herdr calls the session is recorded separately as `agent_name`.
 
 ## Agents
 
-Whatever `agents --crews` reports on this machine — the wrapper is `agents`, with an `s`, because
-plain `agent` is a different tool here. Override with `ORCHESTRATE_AGENT_LAUNCHER` if it is named
-something else. Model and effort flags are per vendor:
+`orchestrate.py roster` asks the wrapper what it can launch, every time — the `Tools:` section of
+`agents --help`, **never `--crews`**, which is the operator's own workspace presets and silently
+drops installed agents. `start` and `expand` refuse a unit naming an agent the wrapper cannot
+launch, so a typo fails before any worktree exists. The wrapper is `agents`, with an `s`; override
+with `ORCHESTRATE_AGENT_LAUNCHER`. Model and effort flags are per vendor:
 
 | Agent | model | effort |
 |---|---|---|

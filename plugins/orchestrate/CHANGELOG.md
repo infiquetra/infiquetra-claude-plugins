@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.2.0] - 2026-08-16
+
+Round two of live operator use. Three corrections, all from watching the interview run.
+
+### Added
+
+- **`roster` — the agents this machine can launch, asked of the wrapper every time.** Reads the
+  `Tools:` section of `agents --help`. The interview was using `agents --crews`, which is the
+  operator's own saved workspace layout and has nothing to do with orchestration: it offered three
+  agents when seventeen were available, silently dropping qwen and every other installed agent. That
+  was a quiet wrong answer, so it is now code rather than an instruction.
+- **`start` and `expand` refuse a unit naming an agent the wrapper cannot launch**, so a typo fails
+  before any worktree exists rather than as a per-unit launch failure afterwards.
+
+### Changed
+
+- **A review phase is a panel, not a seat.** The interview asked which single vendor would do
+  doc-review and which would do code-review. It now asks how many reviewers a phase gets and turns
+  each into its own unit, tab, worktree and vendor — three reviewers is three rows. The count is a
+  default for unattended runs; the operator re-confirms the actual rows at the expansion gate, in
+  the session they are actually watching.
+- **`engine_prefs` defaults to `none` for review stages.** The panel is orchestrate's job; letting
+  each panel member also take a saga second opinion doubles the sessions without being asked. The
+  stored answer still does its real job of stopping a dispatched tab hanging on the offer.
+- **No remembered vendor opinions in the interview.** It volunteered that a vendor had gone idle in
+  unrelated work — not checkable from the repository in front of it, not asked for, and it steers a
+  choice that belongs to the operator. Vendor commentary is now limited to what `roster` reports.
+
 ## [1.1.1] - 2026-08-16
 
 ### Fixed

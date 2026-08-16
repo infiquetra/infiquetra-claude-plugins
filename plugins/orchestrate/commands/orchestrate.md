@@ -21,8 +21,11 @@ its own phases. A phase is not always one unit: three vendors writing competing 
 and three units, and `/work` is one phase and however many units the plan calls for.
 
 **Choices are made at the layer that owns them and inherited downward.** The operator picks which
-vendors may be used at all, and the second-opinion policy per phase. `/work` and `/code-review` take
-their vendors and their lenses from the plan, not from the interview.
+vendors may be used at all, and how many reviewers each review phase gets. `/work` takes its vendors
+from the plan and `/code-review` takes its lenses from the plan, not from the interview.
+
+**A review phase is a panel.** "Two reviewers on the plan" is two units, two tabs, two worktrees,
+two vendors — never one vendor holding a review seat.
 
 ## Phase 1 — read the input
 
@@ -49,6 +52,12 @@ picture in the `preview` field — a table, a before-and-after, an arrow chain. 
 in one line which you took and why, and continue. The table is the real gate and every row is
 editable there.
 
+**Say only what you can show from this repository and this issue.** Do not bring in remembered
+opinions about a vendor — that one went idle once, that one is unreliable — from other work or
+recalled context. The operator did not ask for a reputation report, it is not checkable from here,
+and it quietly steers a choice that is theirs. Vendor commentary is limited to what `roster`
+reports: whether the agent takes model and effort flags.
+
 **Do not presume the shape of the plan.** These are the questions that usually matter, in this
 order — not a checklist, and stop as soon as the answers determine the table:
 
@@ -56,16 +65,22 @@ order — not a checklist, and stop as soon as the answers determine the table:
    reviewed plan document does not.
 2. **Which phases?** `/plan`, `/doc-review`, `/work`, `/code-review`, `/qa`, `/investigate` — or a
    plain prompt with no saga command at all. This is the question that shapes everything after it.
-3. **Which vendors may be used at all?** Run `agents --crews` for what this machine actually has,
-   and offer that. One allow-list for the whole orchestration — **not one vendor per unit**. Never
-   hardcode a roster. (The wrapper is `agents`, with an `s` — plain `agent` is a different tool.)
+3. **Which vendors may be used at all?** Get the list from `python3 "$S" roster` — never from
+   `agents --crews`. A crew is the operator's own saved workspace layout and has nothing to do with
+   orchestration; offering it silently drops installed agents. One allow-list for the whole
+   orchestration, **not one vendor per unit**. Say which entries carry no model or effort control,
+   because those rows will have blank tier columns.
 4. **Does `/plan` want competing plans?** One vendor plans by default. The operator may instead have
    two or three vendors each write a plan independently, in their own worktrees, with no knowledge
    of each other. If so, **this session reads all of them and writes the merged plan itself** — no
    merge unit, no extra tab. Say which parts came from where.
-5. **What second opinion do the reviews get?** One answer covering every `/doc-review` and every
-   `/code-review` in the run: intent, model tier, effort, and how many. This is answered once and
-   applies across all lifecycles — see *Answering saga's offer up front* below.
+5. **How many reviewers does each review phase get?** **A review is a panel, not a seat.** Ask for a
+   count per review phase, not a vendor — "two reviewers on the plan" — and turn each into its own
+   unit with its own tab, worktree and vendor. Three reviewers is three rows. Assign them yourself
+   from the allow-list, never the vendor that produced the thing being reviewed.
+
+   The count is a **default for when nobody is watching**, not a lock. The operator re-confirms the
+   actual reviewer rows at the expansion gate (Phase 5), in this session, where they are present.
 6. **Anything out of scope?**
 
 Do **not** ask about `/work` vendors or `/code-review` lenses. Those come from the plan.
@@ -75,22 +90,28 @@ Do **not** ask about inline versus a workflow backend — orchestrate is always 
 
 `/doc-review` and `/code-review` open by resolving saga's external-engine offer. With nothing
 stored they **stop and ask the operator** — in a background tab nobody is watching, which means the
-unit waits forever. So question 5's answer is written into the plan as `engine_prefs` and lands in
-every worktree before its session starts:
+unit waits forever. So the plan carries `engine_prefs`, which lands in every worktree before its
+session starts:
 
 ```json
 "engine_prefs": {
-  "doc-review":  {"intent": "external-only",  "model": "opus", "effort": "xhigh"},
-  "code-review": {"intent": "second-opinion", "model": "opus", "effort": "high"}
+  "doc-review":  {"intent": "none"},
+  "code-review": {"intent": "none"}
 }
 ```
+
+**Use `none` for review stages.** The panel is orchestrate's job: the operator asked for N
+reviewers and gets N units. Letting each of those *also* take a saga second opinion doubles the
+sessions without being asked for. The value of the stored answer here is that it stops the tab
+hanging, not that it adds an opinion.
 
 Stages: `ideate`, `brainstorm`, `work`, `doc-review`, `code-review` — there is no `plan` stage.
 Intents: `none`, `offload`, `second-opinion`, `external-only`. Models are tier names —
 `fable`, `opus`, `sonnet`, `haiku`. Efforts: `low`, `medium`, `high`, `xhigh`.
 
-`/code-review` runs its own consensus once dispatched — its reviewer lenses, quorum and
-gated-versus-advisory verdicts are its business, not something to rebuild here.
+`/code-review` still runs its own lens consensus inside each unit — its lenses, quorum and
+gated-versus-advisory verdicts are its business, not something to rebuild here. The plan chooses
+which lenses; the interview does not ask.
 
 ## Phase 3 — hand over the table
 
@@ -99,16 +120,18 @@ the plan, which does not exist when the operator is reading this. Say so rather 
 
 ```
 run <run_id>   <-  <what the input was>
-vendors allowed: claude, codex, grok        reviews: external-only, opus/xhigh, 2
+vendors allowed: claude, codex, grok, qwen        reviewers: 2 on the plan, 2 on the code
 
  phase  what it does                    saga cap       agent     model         effort  after
  -----  -----------------------------   ------------   -------   -----------   ------  -----
  p1a    plan #48                        /plan          claude    opus          high    -
  p1b    plan #48, independently         /plan          codex     gpt-5.6-sol   xhigh   -
  (merge of p1a and p1b happens in this session — no unit)
- p2     tear up the merged plan         /doc-review    grok      grok-4.6      xhigh   p1a p1b
- p3     build it                        /work          <from the plan>                 p2
- p4     review the build                /code-review   <from the plan>                 p3
+ p2a    tear up the merged plan         /doc-review    grok      grok-4.6      xhigh   p1a p1b
+ p2b    tear up the merged plan         /doc-review    qwen      -             -       p1a p1b
+ p3     build it                        /work          <from the plan>                 p2a p2b
+ p4a    review the build                /code-review   <from the plan>                 p3
+ p4b    review the build                /code-review   <from the plan>                 p3
 ```
 
 Rules for the table:
@@ -141,7 +164,8 @@ do not belong in the JSON. `task` is the literal text sent to the session.
 }
 ```
 
-Find the script — the operator is rarely in this plugin's own repo:
+Find the script first — the operator is rarely in this plugin's own repo, and `roster` in Phase 2
+needs it too:
 
 ```bash
 S="$CLAUDE_PLUGIN_ROOT/skills/orchestrate/scripts/orchestrate.py"
@@ -151,6 +175,7 @@ S="$CLAUDE_PLUGIN_ROOT/skills/orchestrate/scripts/orchestrate.py"
 Then, from the operator's repo:
 
 ```bash
+python3 "$S" roster                                # what this machine can launch
 python3 "$S" start --plan .orchestrate/plan.json   # worktree + branch per unit
 python3 "$S" go                                    # launch everything eligible
 python3 "$S" status                                # the table, live

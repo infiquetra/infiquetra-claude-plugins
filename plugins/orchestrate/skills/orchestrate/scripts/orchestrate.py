@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -176,6 +177,36 @@ def launcher() -> str:
     return name
 
 
+def roster() -> list[tuple[str, str]]:
+    """Which agents this machine can run, asked of the wrapper every time.
+
+    The list is the ``Tools:`` section of the wrapper's own help. Two things it is deliberately not:
+
+    - **Not ``--crews``.** A crew is the operator's saved workspace layout and has nothing to do with
+      orchestration. Offering it drops installed agents silently, which is the quiet kind of wrong
+      answer worth spending code on rather than instructions.
+    - **Not a ``PATH`` check.** Several entries are modes of one wrapper rather than binaries of
+      their own, so looking for a file by that name reports them missing when they work fine. The
+      wrapper is the authority on what the wrapper can launch.
+
+    Returns ``(name, flags)``, where ``flags`` says what model/effort control orchestrate can pass.
+    """
+    out = run([launcher(), "--help"], check=False).stdout
+    names: list[str] = []
+    in_tools = False
+    for line in out.splitlines():
+        if line.startswith("Tools:"):
+            in_tools = True
+            continue
+        if in_tools:
+            if not line.strip():
+                break
+            # a tool line is "  name   description"; continuation lines are indented further
+            if re.match(r"^ {2}\S", line):
+                names.append(line.split()[0])
+    return [(n, ",".join(VENDOR_FLAGS.get(n, {})) or "none") for n in names]
+
+
 def agent_argv(unit: Unit) -> list[str]:
     argv = [
         launcher(),
@@ -255,11 +286,42 @@ def cmd_start(args: argparse.Namespace) -> int:
         units=[Unit(**u) for u in plan["units"]],
         engine_prefs=plan.get("engine_prefs", {}),
     )
+    assert_vendors_available(r.units)
     r.save()
     order = " -> ".join(u.name for u in r.units)
     print(f"run {r.run_id}: {len(r.units)} units on base {base[:8]}  ({order})")
     print("`orchestrate.py go` to launch what is eligible.")
     return 0
+
+
+def cmd_roster(args: argparse.Namespace) -> int:
+    """Print the agents this machine can run, asked now rather than remembered."""
+    rows = roster()
+    if not rows:
+        print("could not read the wrapper's tool list; check that it runs and prints `Tools:`")
+        return 1
+    print(f"{'agent':22s} tier control")
+    for name, flags in rows:
+        print(f"{name:22s} {flags}")
+    print(f"\n{len(rows)} available. Ones showing 'none' launch without model or effort flags.")
+    return 0
+
+
+def assert_vendors_available(units: list[Unit]) -> None:
+    """Refuse a plan naming an agent the wrapper cannot launch.
+
+    A typo otherwise surfaces as a launch failure per unit, after worktrees exist and tabs have
+    opened. Cheaper to fail before anything is created.
+    """
+    available = {n for n, _ in roster()}
+    if not available:
+        return  # the wrapper could not be read; do not block on a check that itself failed
+    unknown = sorted({u.vendor for u in units if u.vendor not in available})
+    if unknown:
+        raise SystemExit(
+            f"the wrapper cannot launch: {', '.join(unknown)}. "
+            f"available: {', '.join(sorted(available))} (`orchestrate.py roster`)"
+        )
 
 
 def cmd_expand(args: argparse.Namespace) -> int:
@@ -287,6 +349,7 @@ def cmd_expand(args: argparse.Namespace) -> int:
             if dep not in reachable:
                 raise SystemExit(f"unit {unit.name!r} waits on {dep!r}, which is in no run")
 
+    assert_vendors_available(incoming)
     r.units.extend(incoming)
     r.engine_prefs.update(added.get("engine_prefs", {}))
     r.save()
@@ -404,6 +467,9 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--plan", required=True)
     s.add_argument("--base", help="commit to branch every unit from (default HEAD)")
     s.set_defaults(func=cmd_start)
+
+    s = sub.add_parser("roster", help="list the agents this machine can actually run")
+    s.set_defaults(func=cmd_roster)
 
     s = sub.add_parser("expand", help="append units to a run in flight, once a phase names them")
     s.add_argument("--plan", required=True)

@@ -1,5 +1,63 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-08-16
+
+### Consensus requires every seat to clear; one blocking gate can halt  {#consensus-authority-is-asymmetric}
+
+**Date.** 2026-08-16
+
+**Decision.** A consensus panel grants permission to proceed only after every constructed voting
+seat returns a complete response and every gate dimension is below its blocking rank. One blocking
+gate rank is enough to halt immediately. A response count below the roster's original quorum also
+halts, and a missing seat still prevents proceeding when the remaining responses happen to exceed
+that minimum. The denominator never shrinks to match the responses that arrived.
+
+The normal roster builder excludes the unit builder's vendor. An external-only roster additionally
+excludes the home vendor. Vendor identity is the independence unit already used by both exclusions,
+so a roster permits at most one voting seat per vendor. Repeated seats from one vendor cannot
+multiply that vendor's judgment into quorum authority.
+
+Python constructors are not an authority boundary: object allocation, deserialization, and direct
+state mutation can bypass them. The function that can grant permission therefore rebuilds and
+revalidates the layer policy, the roster's immutable denominator, every seat's eligibility, and
+every response before evaluating the outcome. The roster names its review layer, and evaluation
+refuses a configuration from a different layer. Outcomes retain candidates excluded before voting,
+malformed responses, and scores paired with the seats that supplied them.
+
+Each dimension chooses one instrument. A gate declares a blocking rank and owns the decision. A
+score declares a numeric convergence threshold and is reported without changing that decision.
+The orchestration-plan rigor pass remains outside the panel. It binds findings to an expected file
+digest, matches anchors against the exact reviewed text, refuses overlapping edits and symlinked
+plans, and records each accepted before-and-after replacement. Its slotted report contains only
+applied fixes and recommended remainders. The operator remains the plan's only voter.
+
+**Rationale.** Permission and refusal need different evidence. One sound blocking observation is
+enough to make proceeding unsafe, while permission needs affirmative evidence from every seat that
+was granted voting authority. Treating a missing response as a smaller complete panel turns an
+absence into approval. Counting several seats from one vendor would make the same error one level
+earlier: one independent judgment would wear a larger denominator's authority.
+
+**Rejected alternatives.**
+
+- *Require agreement to halt.* This suppresses a valid blocker whenever another seat disagrees or
+  never responds.
+- *Proceed once the minimum quorum responds.* The minimum protects against an under-strength
+  roster; it does not authorize silently replacing the declared denominator.
+- *Let scores bind the decision.* A convergence measure and a blocking fact answer different
+  questions. Combining them makes a low score act like an unstated gate.
+- *Rely on constructors for roster eligibility.* Constructors improve the ordinary API but cannot
+  protect a consequence in a language that permits allocation without initialization. The grant
+  function must validate what it was handed.
+- *Make seat independence the caller's responsibility.* The module already compares vendor identity
+  to decide which judgments are independent. Allowing duplicate vendors would contradict that model
+  and leave quorum strength dependent on an undocumented caller convention.
+
+**Revisit when.** A panel needs explicit abstention with independent evidence that the lens does
+not apply. That would require a typed abstention which removes a seat before the roster is sealed,
+not omission after responses begin.
+
+---
+
 ## 2026-08-15
 
 ### A review is finished only when someone says the finding is fixed  {#resolution-is-authored-not-inferred}

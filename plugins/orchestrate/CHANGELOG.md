@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.12.0] - 2026-08-16
+
+### Added
+
+- A consensus panel whose roster excludes the unit builder's vendor. An external-only roster also
+  excludes the home vendor. The decision boundary rebuilds and revalidates roster eligibility,
+  layer policy, and the immutable denominator before it can grant permission.
+- One independent vendor per voting seat, explicit configuration-to-roster layer linkage, and panel
+  outcomes that retain structural exclusions and name malformed responses.
+- Asymmetric panel authority: one blocking gate rank halts, while proceeding requires a complete,
+  non-blocking response from every constructed voting seat. Missing seats never shrink the
+  denominator, an under-strength roster cannot satisfy its original quorum, and malformed responses
+  cannot discard blocking evidence returned by another seat.
+- Per-dimension instruments. Gate dimensions use a blocking rank and refuse numeric thresholds;
+  score dimensions use a numeric convergence threshold and refuse ranks. Scores report convergence
+  without deciding whether work proceeds. Every enabled panel includes a gate, every score is paired
+  with its seat, and an empty score series never reports convergence.
+- A single-voter rigor pass for orchestration plans. It atomically applies evidence-backed edits
+  whose anchors are unique in the reviewed bytes and do not overlap. It preserves unrelated line
+  endings, records each replacement, refuses symlinks and stale digests, and hands ambiguous or
+  judgment-dependent findings to the operator. Its slotted report type has no decision field.
+
 ## [0.11.0] - 2026-08-15
 
 ### Added

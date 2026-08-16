@@ -157,7 +157,7 @@ def task_label(run_id: str, row_id: str) -> str:
     """Return the deterministic run-bound label used for launch recovery."""
     if not run_id or not row_id:
         raise ValueError("run_id and row_id must be non-empty")
-    return f"orchestrate-{run_id}-{row_id}"
+    return f"orchestrate-{len(run_id)}-{run_id}-{len(row_id)}-{row_id}"
 
 
 def permission_argv(runtime: str) -> list[str]:
@@ -458,6 +458,12 @@ def snapshot_session_pane_id(
     """Return a pane identifier from a snapshot already obtained by the caller."""
     resolved = _snapshot_session(snapshot, task_label(run_id, row_id))
     return None if resolved is None else str(resolved[1]["pane_id"])
+
+
+def snapshot_session_tab_id(snapshot: Mapping[str, Any], *, run_id: str, row_id: str) -> str | None:
+    """Return a tab identifier from a snapshot already obtained by the caller."""
+    resolved = _snapshot_session(snapshot, task_label(run_id, row_id))
+    return None if resolved is None else str(resolved[0]["tab_id"])
 
 
 def read_herdr_session(herdr: HerdrControl, *, root: Path, run_id: str, row_id: str) -> str:
@@ -889,6 +895,7 @@ def launch_child(
     wrapper: AgentWrapper,
     herdr: HerdrControl,
     git: GitLanding,
+    claim_guard: Callable[[], None] | None = None,
 ) -> tuple[LaunchIdentity, Landing, Any]:
     """Write the launch intent, recover an existing label, or launch one child.
 
@@ -977,8 +984,26 @@ def launch_child(
     )
     wrapper.preview(spec, landing, label, runtime_argv)
     register_store.write_phase(root, spec.row_id, "launching", run_id=spec.run_id)
-    identity = wrapper.launch(spec, landing, label, runtime_argv)
-    register_store.upsert_row(root, spec.row_id, _row_identity(identity), run_id=spec.run_id)
+    if claim_guard is None:
+        identity = wrapper.launch(spec, landing, label, runtime_argv)
+        register_store.upsert_row(
+            root,
+            spec.row_id,
+            _row_identity(identity),
+            run_id=spec.run_id,
+        )
+    else:
+        with register_store.generation_locked(spec.run_id):
+            claim_guard()
+            identity = wrapper.launch(spec, landing, label, runtime_argv)
+            register_store.upsert_row(
+                root,
+                spec.row_id,
+                _row_identity(identity),
+                run_id=spec.run_id,
+                already_locked=True,
+                claimed=root,
+            )
     return identity, landing, resolution
 
 

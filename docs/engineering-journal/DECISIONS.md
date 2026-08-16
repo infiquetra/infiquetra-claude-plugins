@@ -2,6 +2,47 @@
 
 ## 2026-08-16
 
+### Resolved producer absence tolerates unknown spend without erasing known spend {#spend-exclusion-requires-shutdown}
+
+**Decision.** No child row is removed from the run's token total merely because its producer is
+absent or confirmed stopped. A row whose session state is resolved enough not to block another
+launch enters the accounting tolerance set. Its numeric observation still contributes in full. A
+non-metered route's declared charge also still contributes. Only an absent observation is treated
+as zero after the producer ambiguity has been resolved.
+
+This same tolerance covers a launch that is actively being resolved and an abandoned producer whose
+shutdown was confirmed. A sibling remains blocked whenever terminal-label discovery cannot
+establish enough absence to put the row in that set. Tolerance is computed for the current decision;
+it is not stored as a fabricated token observation.
+
+**Rejected alternative.** A separate exclusion set erased known spend whenever a stopped abandoned
+row entered it. Treating every unresolved launch as zero would also turn unproved absence into
+authorization to spend.
+
+**Revisit when** the terminal substrate provides authoritative per-session usage independently of
+pane output.
+
+---
+
+### The composed runner resolves session identity from one live snapshot {#runner-one-live-snapshot}
+
+**Decision.** A composed-runner decision that inspects several sessions takes one complete terminal
+snapshot and resolves every run-bound pane and tab from it. A healthy supervision tick is pinned to
+one snapshot. Durable completion sentinels and reap fences store only protocol intent; they do not
+nest pane or tab identifiers that can become stale independently.
+
+Run-bound labels use length-prefixed run and row identifiers. The encoding is injective over valid
+identifiers and remains safe for the terminal control plane.
+
+**Rejected alternative.** Querying once per row creates an unbounded control-plane loop and lets one
+decision combine facts from different moments. Copying the answers into protocol records creates a
+second owner for live state without a valid invalidation rule.
+
+**Revisit when** the terminal control plane provides a stronger atomic run identity or an event
+stream with equivalent completeness guarantees.
+
+---
+
 ### Reaping uses the authenticated dispatch landing as its working directory {#reap-cwd-from-dispatch-receipt}
 
 **Decision.** When a verified row carries a dispatch receipt, reaping uses the receipt's

@@ -17,6 +17,68 @@
 
 ---
 
+### Extend the run-label injectivity property over the full identifier alphabet  {#orchestrate-label-injectivity-full-alphabet}
+
+**Priority.** P3. **Effort.** Tiny. **Worth it when.** The run-bound label encoder changes again,
+or before the current property test is treated as exhaustive evidence over accepted identifiers.
+**Context.** `test_run_labels_are_injective_over_generated_identifier_pairs` generates only `a`,
+`b`, and `-`, while the accepted identifier grammar also includes digits, dots, and underscores.
+The encoder is length-prefixed and current examples are injective, but the generated evidence does
+not cover the full accepted alphabet. Expand the property alphabet without changing the encoder.
+
+### Document the installed-label compatibility effect in the Orchestrate changelog  {#orchestrate-label-format-compatibility-note}
+
+**Priority.** P3. **Effort.** Tiny. **Worth it when.** Version 0.14.0 is prepared for installation
+or its changelog is next edited. **Context.** `session_lifecycle.task_label` now emits a
+length-prefixed label. The changelog says labels cannot collide, but does not say that a session
+started under the prior label format is not discoverable by the new format after an upgrade. Add
+that operator-visible compatibility effect without changing runtime behavior.
+
+### Give stop-writers one explicit unavailable-control-plane contract  {#orchestrate-stop-writers-unavailable-contract}
+
+**Priority.** P2. **Effort.** Small. **Worth it when.** Shutdown reporting is consumed by an
+operator or automated retirement loop. **Context.** `Coordinator.stop_writers` otherwise returns a
+per-writer status map, but subscriber resolution can raise when the process table is unavailable.
+That exception bypasses the report and makes the later fallback reporting path unreachable for the
+same condition. Decide and pin one behavior: either return an explicit unknown status or document
+and test the fail-closed exception.
+
+### Replace routed-name comparisons with a durable launch-return fact  {#orchestrate-launch-return-fact}
+
+**Priority.** P2. **Effort.** Small. **Worth it when.** Interrupted-dispatch recovery or launch
+routing is changed. **Context.** Three runner guards use equality or inequality between the row's
+agent name and routed runtime name as evidence that the native launcher returned. Those names are
+routing data, not a launch receipt, so compatibility normalization or a same-name launch can make
+the inference false. Introduce one durable authored fact for launcher return and migrate all three
+guards together.
+
+### Rebuild the mirror return subscription from the live pane  {#orchestrate-mirror-return-live-pane}
+
+**Priority.** P2. **Effort.** Small. **Worth it when.** Mirror restart or subscription rebuilding is
+next changed. **Context.** Child completion and usage subscriptions combine durable protocol data
+with a pane resolved from the current terminal snapshot. The mirror return subscription instead
+comes from `mirror.expected_subscription(row)`, whose durable payload includes the pane selected at
+launch. Rebuild that subscription from the current run-bound pane while retaining only the durable
+return nonce and protocol intent.
+
+### Bound snapshots across the whole composed supervision loop  {#orchestrate-whole-loop-snapshot-budget}
+
+**Priority.** P2. **Effort.** Medium. **Worth it when.** The composed loop gains its first real
+continuous driver or terminal-query latency becomes visible. **Context.** The snapshot budget and
+its syntax guard pin one `Coordinator.supervise` call, but adjacent calls such as subscription
+rebuilding, catch-up, spend classification, and mirror liveness each take their own snapshot. Define
+the loop boundary, pass one complete snapshot through compatible readers, and test the total calls
+for that boundary rather than only one method.
+
+### Pin terminal absence as sufficient for retirement but not for launch  {#orchestrate-retirement-absence-asymmetry}
+
+**Priority.** P3. **Effort.** Tiny. **Worth it when.** Retirement or duplicate-launch safety is
+changed. **Context.** `Coordinator.outstanding_writers` treats a complete terminal answer with no
+session as no outstanding mirror writer, while launch recovery demands stronger evidence before it
+allows another producer. This asymmetry is deliberate: retirement asks whether a writer is present
+now, while launch asks whether a second producer could duplicate an unresolved attempt. Add a
+focused contract test and retain this rationale beside both decisions.
+
 ## Initiative — infiquetra-lifecycle engine merge (gstack + CE → infiquetra)
 
 > **What this is.** `infiquetra-lifecycle` was built as a thin facilitative reskin of two source arts — **compound-engineering (CE)** and **[gstack](https://github.com/garrytan/gstack)** — and dropped most of their engines. Only `/ideate`, `/brainstorm`, and `/doc-review` carry real engines today; `/ideate` was the first rebuild (shipped 0.3.0). This initiative rebuilds the rest by **merging the best of CE and gstack into a new infiquetra engine we own and evolve** (Jeff: "otherwise I would just use one or the other and forget about all this"). Neither source has priority — Jeff leans CE. See DECISIONS [#lifecycle-engine-merge-campaign](DECISIONS.md#lifecycle-engine-merge-campaign) and LEARNINGS [#lifecycle-thin-reskin-systemic](LEARNINGS.md#lifecycle-thin-reskin-systemic).

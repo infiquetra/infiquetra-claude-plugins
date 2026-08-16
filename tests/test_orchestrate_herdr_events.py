@@ -227,7 +227,7 @@ def _live_snapshot(
     for row_id, pane_id, status, revision, tab_id in sessions:
         tabs.append(
             {
-                "label": f"orchestrate-{run_id}-{row_id}",
+                "label": SUBSCRIBER.session_lifecycle.task_label(run_id, row_id),
                 "tab_id": tab_id,
                 "workspace_id": "workspace-a",
                 "agent_status": status,
@@ -565,7 +565,7 @@ def test_session_snapshot_response_validates_against_fixture_and_is_unwrapped(
         "tab_id": "tab-a",
         "workspace_id": "workspace-a",
         "number": 1,
-        "label": "orchestrate-run-a-child-a",
+        "label": SUBSCRIBER.session_lifecycle.task_label("run-a", "child-a"),
         "focused": False,
         "pane_count": 1,
         "agent_status": "done",

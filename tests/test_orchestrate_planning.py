@@ -77,7 +77,7 @@ def _session_snapshot(
     return {
         "tabs": [
             {
-                "label": f"orchestrate-{run_id}-{row_id}",
+                "label": ADMISSION.session_lifecycle.task_label(run_id, row_id),
                 "tab_id": tab_id,
                 "workspace_id": workspace_id,
                 "agent_status": status,
@@ -477,21 +477,9 @@ def test_vendor_without_usage_consumes_its_declared_reservation(tmp_path: Path) 
     REGISTER.upsert_row(
         tmp_path, "silent", {"phase": "working"}, run_id="run-plan", writer="write_phase"
     )
-    ACCOUNTING.check_spend(tmp_path, run_id="run-plan", ceiling=reserved + 1, row_id="silent")
+    ACCOUNTING.check_spend(tmp_path, run_id="run-plan", row_id="silent")
     with pytest.raises(ACCOUNTING.AccountingError, match="reached the captured cost"):
-        ACCOUNTING.check_spend(tmp_path, run_id="run-plan", ceiling=reserved, row_id="silent")
-
-
-def test_reaching_the_spend_ceiling_halts_and_reports(tmp_path: Path) -> None:
-    _commit(tmp_path, [_child("metered", "work-medium", vendor="claude")])
-    REGISTER.upsert_row(
-        tmp_path, "metered", {"phase": "working"}, run_id="run-plan", writer="write_phase"
-    )
-    ACCOUNTING.record_observed_tokens(tmp_path, "metered", 1000, run_id="run-plan")
-    with pytest.raises(ACCOUNTING.AccountingError, match="1000") as halted:
-        ACCOUNTING.check_spend(tmp_path, run_id="run-plan", ceiling=1000, row_id="metered")
-    assert "HALT" in str(halted.value)
-    ACCOUNTING.check_spend(tmp_path, run_id="run-plan", ceiling=1001, row_id="metered")
+        ACCOUNTING.check_spend(tmp_path, run_id="run-plan", row_id="silent")
 
 
 def test_missing_telemetry_fails_closed_rather_than_passing(tmp_path: Path) -> None:
@@ -500,7 +488,7 @@ def test_missing_telemetry_fails_closed_rather_than_passing(tmp_path: Path) -> N
         tmp_path, "quiet", {"phase": "working"}, run_id="run-plan", writer="write_phase"
     )
     with pytest.raises(ACCOUNTING.AccountingError, match="no tokens_observed") as closed:
-        ACCOUNTING.check_spend(tmp_path, run_id="run-plan", ceiling=1000000, row_id="quiet")
+        ACCOUNTING.check_spend(tmp_path, run_id="run-plan", row_id="quiet")
     assert "fail closed" in str(closed.value)
 
 
@@ -538,58 +526,6 @@ def test_usage_line_from_output_match_is_the_observed_column(tmp_path: Path) -> 
     assert row["tokens_observed"] == 321
 
 
-def test_an_ordinary_token_line_leaves_the_subscriber_alive_and_the_spend_gate_refuses(
-    tmp_path: Path,
-) -> None:
-    _commit(tmp_path, [_child("metered", "work-medium", vendor="claude")])
-    REGISTER.upsert_row(
-        tmp_path,
-        "metered",
-        {"phase": "working"},
-        run_id="run-plan",
-        writer="write_phase",
-    )
-    snapshot = _session_snapshot("run-plan", "metered", cwd=tmp_path)
-    subscriber = SUBSCRIBER.Subscriber(
-        root=tmp_path,
-        run_id="run-plan",
-        row_id="subscriber-a",
-        pane_id="subscriber-pane",
-        orchestrator_pane="orchestrator-pane",
-        subscriptions=[SUBSCRIBER.usage_match_subscription("pane-a")],
-        client=EVENTS.HerdrEventClient(tmp_path / "unused.sock"),
-        snapshot_reader=lambda: snapshot,
-        wake_sender=lambda _text: None,
-        diagnostic_sink=lambda _payload: None,
-    )
-    good = {
-        "event": "pane.output_matched",
-        "data": {
-            "pane_id": "pane-a",
-            "matched_line": "tokens used: 321",
-            "read": {"revision": 0, "text": "tokens used: 321\n"},
-        },
-    }
-    noisy = {
-        "event": "pane.output_matched",
-        "data": {
-            "pane_id": "pane-a",
-            "matched_line": "warning: refresh token expired",
-            "read": {"revision": 0, "text": "warning: refresh token expired\n"},
-        },
-    }
-    subscriber.handle_event(EVENTS.decode_event(good))
-    subscriber.handle_event(EVENTS.decode_event(noisy))
-    subscriber.handle_event(EVENTS.decode_event(noisy))
-    row = REGISTER.read_rows(tmp_path, run_id="run-plan")["metered"]
-    assert row["tokens_observed"] == 321
-    assert row[ACCOUNTING.USAGE_UNPARSEABLE_KEY] is True
-    with pytest.raises(ACCOUNTING.AccountingError, match="unparseable"):
-        ACCOUNTING.check_spend(tmp_path, run_id="run-plan", ceiling=1_000_000, row_id="metered")
-    with pytest.raises(ACCOUNTING.AccountingError, match="unparseable"):
-        ACCOUNTING.check_spend(tmp_path, run_id="run-plan", ceiling=1_000_000)
-
-
 def test_a_writerless_agent_upsert_cannot_change_what_the_run_is_charged(
     tmp_path: Path,
 ) -> None:
@@ -603,11 +539,11 @@ def test_a_writerless_agent_upsert_cannot_change_what_the_run_is_charged(
     )
     REGISTER.write_phase(tmp_path, "c1", "working", run_id="run-a")
     with pytest.raises(ACCOUNTING.AccountingError, match="8000"):
-        ACCOUNTING.check_spend(tmp_path, run_id="run-a", ceiling=1000)
+        ACCOUNTING.check_spend(tmp_path, run_id="run-a")
     REGISTER.upsert_row(tmp_path, "c1", {"agent": "subscriber"}, run_id="run-a")
     assert REGISTER.read_rows(tmp_path, run_id="run-a")["c1"]["agent"] == "subscriber"
     with pytest.raises(ACCOUNTING.AccountingError, match="8000"):
-        ACCOUNTING.check_spend(tmp_path, run_id="run-a", ceiling=1000)
+        ACCOUNTING.check_spend(tmp_path, run_id="run-a")
 
 
 def test_a_writerless_tokens_reserved_upsert_cannot_change_what_the_run_is_charged(
@@ -623,12 +559,12 @@ def test_a_writerless_tokens_reserved_upsert_cannot_change_what_the_run_is_charg
     )
     REGISTER.write_phase(tmp_path, "c1", "working", run_id="run-a")
     with pytest.raises(ACCOUNTING.AccountingError, match="8000"):
-        ACCOUNTING.check_spend(tmp_path, run_id="run-a", ceiling=1000)
+        ACCOUNTING.check_spend(tmp_path, run_id="run-a")
     with pytest.raises(REGISTER.RegisterError, match="tokens_reserved"):
         REGISTER.upsert_row(tmp_path, "c1", {"tokens_reserved": 1}, run_id="run-a")
     assert REGISTER.read_rows(tmp_path, run_id="run-a")["c1"]["tokens_reserved"] == 8000
     with pytest.raises(ACCOUNTING.AccountingError, match="8000"):
-        ACCOUNTING.check_spend(tmp_path, run_id="run-a", ceiling=1000)
+        ACCOUNTING.check_spend(tmp_path, run_id="run-a")
 
 
 def test_a_supervisory_row_is_not_charged_against_the_run(tmp_path: Path) -> None:
@@ -971,18 +907,6 @@ def test_silent_vendor_without_a_declared_maximum_is_refused() -> None:
         )
 
 
-def test_unaccounted_child_fails_the_run_spend_gate(tmp_path: Path) -> None:
-    REGISTER.upsert_row(
-        tmp_path,
-        "escaped",
-        {"agent": "claude", "vendor": "claude", "phase": "working"},
-        run_id="run-a",
-        writer="write_phase",
-    )
-    with pytest.raises(ACCOUNTING.AccountingError, match="no tokens_observed"):
-        ACCOUNTING.check_spend(tmp_path, run_id="run-a", ceiling=1000000)
-
-
 def test_usage_parser_does_not_count_remaining_context_or_drop_input() -> None:
     assert ACCOUNTING.parse_usage_line("input 120 output 340 tokens") == 460
     assert ACCOUNTING.parse_usage_line("tokens used: 321") == 321
@@ -1184,13 +1108,13 @@ def test_replayed_usage_events_are_not_counted_twice(tmp_path: Path) -> None:
 
 def test_a_planned_child_has_spent_zero(tmp_path: Path) -> None:
     _commit(tmp_path, [_child("quiet", "work-medium", vendor="claude")])
-    ACCOUNTING.check_spend(tmp_path, run_id="run-plan", ceiling=1)
+    ACCOUNTING.check_spend(tmp_path, run_id="run-plan")
     assert ACCOUNTING.run_actual_tokens(tmp_path, run_id="run-plan") == 0.0
 
 
 def test_a_planned_silent_vendor_has_spent_zero(tmp_path: Path) -> None:
     _commit(tmp_path, [_child("quiet", "work-medium", vendor="muse")])
-    ACCOUNTING.check_spend(tmp_path, run_id="run-plan", ceiling=1)
+    ACCOUNTING.check_spend(tmp_path, run_id="run-plan")
     assert ACCOUNTING.run_actual_tokens(tmp_path, run_id="run-plan") == 0.0
 
 
@@ -1198,7 +1122,7 @@ def test_a_phaseless_metered_row_fails_closed(tmp_path: Path) -> None:
     REGISTER.upsert_row(tmp_path, "metered", {"vendor": "claude"}, run_id="run-a")
     ACCOUNTING.record_observed_tokens(tmp_path, "metered", 200, run_id="run-a")
     with pytest.raises(ACCOUNTING.AccountingError, match="unknown phase"):
-        ACCOUNTING.check_spend(tmp_path, run_id="run-a", ceiling=1)
+        ACCOUNTING.check_spend(tmp_path, run_id="run-a")
     with pytest.raises(ACCOUNTING.AccountingError, match="unknown phase"):
         ACCOUNTING.run_actual_tokens(tmp_path, run_id="run-a")
 
@@ -1212,7 +1136,7 @@ def test_a_phaseless_silent_vendor_fails_closed(tmp_path: Path) -> None:
         writer=REGISTER.TOKENS_MAX_WRITER,
     )
     with pytest.raises(ACCOUNTING.AccountingError, match="unknown phase"):
-        ACCOUNTING.check_spend(tmp_path, run_id="run-a", ceiling=1)
+        ACCOUNTING.check_spend(tmp_path, run_id="run-a")
 
 
 def test_child_contract_matches_the_launch_boundary() -> None:
@@ -1296,8 +1220,8 @@ def test_an_unparseable_mark_survives_a_later_parseable_sample(tmp_path: Path) -
         writer="write_phase",
     )
     ACCOUNTING.apply_output_match(tmp_path, "metered", "input 100 output 0 tokens", run_id="run-a")
-    ACCOUNTING.check_spend(tmp_path, run_id="run-a", ceiling=500, row_id="metered")
-    ACCOUNTING.check_spend(tmp_path, run_id="run-a", ceiling=500)
+    ACCOUNTING.check_spend(tmp_path, run_id="run-a", row_id="metered")
+    ACCOUNTING.check_spend(tmp_path, run_id="run-a")
     ACCOUNTING.apply_output_match(
         tmp_path, "metered", "input 400 output 0 tokens; total: 900", run_id="run-a"
     )
@@ -1305,23 +1229,23 @@ def test_an_unparseable_mark_survives_a_later_parseable_sample(tmp_path: Path) -
     assert row["tokens_observed"] == 100
     assert row[ACCOUNTING.USAGE_UNPARSEABLE_KEY] is True
     with pytest.raises(ACCOUNTING.AccountingError, match="unparseable"):
-        ACCOUNTING.check_spend(tmp_path, run_id="run-a", ceiling=500, row_id="metered")
+        ACCOUNTING.check_spend(tmp_path, run_id="run-a", row_id="metered")
     with pytest.raises(ACCOUNTING.AccountingError, match="unparseable"):
-        ACCOUNTING.check_spend(tmp_path, run_id="run-a", ceiling=500)
+        ACCOUNTING.check_spend(tmp_path, run_id="run-a")
     ACCOUNTING.apply_output_match(tmp_path, "metered", "input 100 output 0 tokens", run_id="run-a")
     row = REGISTER.read_rows(tmp_path, run_id="run-a")["metered"]
     assert row["tokens_observed"] == 200
     assert row[ACCOUNTING.USAGE_UNPARSEABLE_KEY] is True
     with pytest.raises(ACCOUNTING.AccountingError, match="unparseable"):
-        ACCOUNTING.check_spend(tmp_path, run_id="run-a", ceiling=500, row_id="metered")
+        ACCOUNTING.check_spend(tmp_path, run_id="run-a", row_id="metered")
     with pytest.raises(ACCOUNTING.AccountingError, match="unparseable"):
-        ACCOUNTING.check_spend(tmp_path, run_id="run-a", ceiling=500)
+        ACCOUNTING.check_spend(tmp_path, run_id="run-a")
     with pytest.raises(REGISTER.RegisterError, match="usage_unparseable"):
         REGISTER.upsert_row(
             tmp_path, "metered", {ACCOUNTING.USAGE_UNPARSEABLE_KEY: False}, run_id="run-a"
         )
     with pytest.raises(ACCOUNTING.AccountingError, match="unparseable"):
-        ACCOUNTING.check_spend(tmp_path, run_id="run-a", ceiling=500)
+        ACCOUNTING.check_spend(tmp_path, run_id="run-a")
 
 
 def test_an_ambiguous_usage_line_is_refused(tmp_path: Path) -> None:
@@ -1338,7 +1262,7 @@ def test_an_ambiguous_usage_line_is_refused(tmp_path: Path) -> None:
     row = REGISTER.read_rows(tmp_path, run_id="run-a")["metered"]
     assert row[ACCOUNTING.USAGE_UNPARSEABLE_KEY] is True
     with pytest.raises(ACCOUNTING.AccountingError, match="unparseable"):
-        ACCOUNTING.check_spend(tmp_path, run_id="run-a", ceiling=1_000_000, row_id="metered")
+        ACCOUNTING.check_spend(tmp_path, run_id="run-a", row_id="metered")
 
 
 def test_an_emptied_generation_sidecar_is_restored_from_the_register(tmp_path: Path) -> None:

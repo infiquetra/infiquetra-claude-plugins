@@ -164,7 +164,7 @@ class FakeHerdr:
         return {
             "tabs": [
                 {
-                    "label": "orchestrate-run-a-child-a",
+                    "label": LIFECYCLE.task_label("run-a", "child-a"),
                     "tab_id": "tab-a",
                     "workspace_id": "workspace-a",
                     "agent_status": self.status,
@@ -309,7 +309,7 @@ def test_register_row_and_run_label_exist_before_a_failing_launch(tmp_path: Path
 
     def assert_write_ahead(label: str) -> None:
         row = REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]
-        assert row["task"] == label == "orchestrate-run-a-child-a"
+        assert row["task"] == label == LIFECYCLE.task_label("run-a", "child-a")
         assert row["phase"] == "launching"
 
     wrapper.before_launch = assert_write_ahead
@@ -333,7 +333,7 @@ def test_planned_row_exists_before_mutating_worktree_provision(tmp_path: Path) -
         def provision(self, root: Path, spec: Any, *, base_commit: str | None = None) -> Any:
             row = REGISTER.read_rows(root, run_id="run-a")[spec.row_id]
             assert row["phase"] == "planned"
-            assert row["task"] == "orchestrate-run-a-child-a"
+            assert row["task"] == LIFECYCLE.task_label("run-a", "child-a")
             assert row["scope"] == ["src"]
             assert row["base_commit"] == "fake-base"
             raise LIFECYCLE.LandingError("environment setup failed")

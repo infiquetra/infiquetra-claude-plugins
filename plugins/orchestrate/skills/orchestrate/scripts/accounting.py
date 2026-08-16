@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -235,71 +235,3 @@ def apply_output_match(
     return tokens
 
 
-def _actual_for_row(row: Mapping[str, Any], *, vendor: str) -> float:
-    if row.get(USAGE_UNPARSEABLE_KEY) is True:
-        raise AccountingError(f"row {row.get('id')!r} has unparseable usage telemetry; fail closed")
-    phase = row.get("phase")
-    if phase == "planned":
-        return 0.0
-    if phase == "launching":
-        raise AccountingError(
-            f"row {row.get('id')!r} is launching; its live session presence must be resolved "
-            "before accounting can include or exclude it"
-        )
-    if phase not in LAUNCHED_PHASES:
-        raise AccountingError(f"row {row.get('id')!r} has unknown phase {phase!r}; fail closed")
-    declared = row.get("tokens_max", row.get("tokens_reserved"))
-    if not vendor_reports_usage(vendor):
-        if isinstance(declared, (int, float)) and not isinstance(declared, bool) and declared > 0:
-            return float(declared)
-        raise AccountingError(
-            f"vendor {vendor!r} exposes no usage line and row {row.get('id')!r} "
-            "has no declared tokens_max; fail closed"
-        )
-    observed = row.get("tokens_observed")
-    if isinstance(observed, (int, float)) and not isinstance(observed, bool):
-        return float(observed)
-    raise AccountingError(
-        f"vendor {vendor!r} reports usage but row {row.get('id')!r} has no "
-        "tokens_observed; fail closed"
-    )
-
-
-def run_actual_tokens(root: Path, *, run_id: str) -> float:
-    """Sum this run's actuals. Missing telemetry fails closed."""
-    rows = register_store.read_rows(root, run_id=run_id)
-    total = 0.0
-    for row in rows.values():
-        if register_store.is_supervisory_row(row):
-            continue
-        vendor = str(row.get("vendor") or row.get("agent") or "")
-        total += _actual_for_row(row, vendor=vendor)
-    return total
-
-
-def check_spend(
-    root: Path,
-    *,
-    run_id: str,
-    ceiling: float,
-    vendor: str | None = None,
-    row_id: str | None = None,
-) -> None:
-    """Refuse when observed actuals, or a silent vendor's declared maximum, meet the ceiling.
-
-    A silent vendor is charged its ``tokens_max``, which is a declaration, not
-    observed usage. Passes a real number to :func:`intent_envelope.authorize_spend`.
-    """
-    if row_id is not None:
-        rows = register_store.read_rows(root, run_id=run_id)
-        row = rows.get(row_id)
-        if row is None:
-            raise AccountingError(f"unknown child row {row_id!r}")
-        chosen = vendor or str(row.get("vendor") or row.get("agent") or "")
-        actual = _actual_for_row(row, vendor=chosen)
-    else:
-        actual = run_actual_tokens(root, run_id=run_id)
-    spend = intent_envelope.SpendEnvelope(cost_ceiling_tokens=float(ceiling))
-    decision = intent_envelope.authorize_spend(spend, actual_tokens=actual)
-    if not decision.authorized:
-        raise AccountingError(decision.reason)

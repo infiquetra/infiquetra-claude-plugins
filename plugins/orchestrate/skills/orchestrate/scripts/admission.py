@@ -269,7 +269,7 @@ def unreserved_active(root: Path | None = None) -> tuple[tuple[str, str], ...]:
         for run_id in register_store.iter_live_run_ids():
             doc = register_store._read_register_unlocked(run_id)
             for row_id, row in doc.get("rows", {}).items():
-                if row.get("agent") in {"subscriber", "mirror"}:
+                if register_store.is_supervisory_row(row):
                     continue
                 if row.get("phase") not in ACTIVE_PHASES:
                     continue

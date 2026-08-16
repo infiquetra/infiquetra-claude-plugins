@@ -146,7 +146,7 @@ class FakeHerdr:
         return {
             "tabs": [
                 {
-                    "label": f"orchestrate-{RUN_ID}-{ROW_ID}",
+                    "label": LIFECYCLE.task_label(RUN_ID, ROW_ID),
                     "tab_id": IDENTITY.tab_id,
                     "workspace_id": IDENTITY.workspace_id,
                 }
@@ -1392,7 +1392,7 @@ def _snapshot(pane_id: str, revision: int | None) -> dict[str, Any]:
     return {
         "tabs": [
             {
-                "label": f"orchestrate-{RUN_ID}-{ROW_ID}",
+                "label": LIFECYCLE.task_label(RUN_ID, ROW_ID),
                 "tab_id": IDENTITY.tab_id,
                 "workspace_id": IDENTITY.workspace_id,
             }

@@ -105,7 +105,6 @@ class Plan:
     run_id: str
     outcome: str
     children: tuple[PlannedChild, ...]
-    ceiling: float | None = None
     per_vendor_limit: int = admission.DEFAULT_PER_VENDOR
     aggregate_limit: int = admission.DEFAULT_AGGREGATE
 
@@ -355,7 +354,6 @@ def plan(
     children: Sequence[Mapping[str, Any]],
     *,
     run_id: str,
-    ceiling: float | None = None,
     is_vendor_available: Callable[[str], bool] | None = None,
 ) -> Plan:
     """Build a plan from child declarations. Writes nothing. Launches nothing."""
@@ -409,7 +407,6 @@ def plan(
         run_id=register_store._safe_run_id(run_id),
         outcome=outcome,
         children=tuple(planned),
-        ceiling=ceiling,
         per_vendor_limit=resolved.per_vendor,
         aggregate_limit=resolved.aggregate,
     )
@@ -422,8 +419,6 @@ def render_plan(built: Plan) -> str:
         f"Outcome: {built.outcome}",
         f"Children: {len(built.children)}",
     ]
-    if built.ceiling is not None:
-        lines.append(f"Spend ceiling: {built.ceiling:g} tokens")
     lines.append(
         f"Host bounds: per-vendor {built.per_vendor_limit}, aggregate {built.aggregate_limit}"
     )
@@ -438,7 +433,7 @@ def render_plan(built: Plan) -> str:
         lines.append(f"    integration_mode: {child.integration_mode}")
         lines.append(f"    predicate: {json.dumps(dict(child.predicate), sort_keys=True)}")
         if child.override is not None:
-            lines.append(f"    override: {child.override}")
+            lines.append(f"    override: {json.dumps(dict(child.override), sort_keys=True)}")
         for item in child.substitutions:
             lines.append(
                 f"    substitution: {item.get('field')} "

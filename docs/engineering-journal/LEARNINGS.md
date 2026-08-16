@@ -21,6 +21,48 @@
 
 ## 2026-08-16
 
+### Launch ambiguity is not spend exclusion {#launch-ambiguity-is-not-spend-exclusion}
+
+**Context.** The composed runner used one set for rows whose missing session did not need to block a
+launch and for rows whose token spend did not count toward the approved ceiling.
+
+**Evidence.**
+`tests/test_orchestrate_composition.py::test_a_reaped_child_still_counts_toward_the_approved_ceiling`
+reaches the ceiling with one child, reaps it, and proves the next child remains withheld. Before the
+sets were separated, the test observed an allowed launch because the closed tab put the reaped row
+into the shared exclusion set.
+
+**Mechanism.** A reaped row has no live pane, but its durable token observation remains valid. Pane
+absence answers whether session ambiguity blocks the next action; it says nothing about whether
+already-observed spend disappears.
+
+**Fix.** Rows whose producer ambiguity is resolved use a tolerant accounting disposition. Known
+usage still counts. Confirmed shutdown makes an absent observation tolerable; it does not exclude
+the row or erase an observation already recorded.
+
+**Generalizable rule.** Do not reuse an exception set across two safety questions merely because
+both questions inspect the same row state.
+
+### Render order is part of the digest contract {#render-order-is-part-of-the-digest}
+
+**Context.** Approval binds the rendered plan bytes. Two equivalent override mappings can be
+constructed in different insertion orders, so rendering them directly made approval depend on a
+caller implementation detail rather than on the approved meaning.
+
+**Evidence.**
+`tests/test_orchestrate_composition.py::test_the_approval_digest_does_not_depend_on_how_the_override_mapping_was_built`
+constructs both orders and requires one digest. The pre-fix reproduction returned two different
+digests; sorting the override keys in `planning.py` makes the same test pass.
+
+**Mechanism.** JSON object member order preserves mapping insertion order unless the serializer is
+told to sort keys. Because the rendered plan is hashed, that incidental order becomes durable.
+
+**Fix.** Plan rendering now sorts override keys, matching the existing deterministic predicate
+rendering.
+
+**Generalizable rule.** Every unordered value that reaches signed or hashed bytes needs an explicit
+canonical order at the rendering boundary.
+
 ### A plan can re-commit the mistake its own history section describes  {#a-plan-can-recommit-its-own-recorded-mistake}
 
 **Context.** A successor plan was written to reach first use of the orchestrate plugin. Its history

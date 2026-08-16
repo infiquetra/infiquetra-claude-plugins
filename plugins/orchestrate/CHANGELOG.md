@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.14.0] - 2026-08-16
+
+### Added
+
+- The composed runner now owns startup reconciliation, bounded launch, live subscription routing,
+  mirror supervision, completion validation, reaping, and shutdown through the existing module
+  contracts.
+- Composition tests pin deterministic approval digests, injective run-bound labels, the absence of
+  embedded live-session facts, and one terminal snapshot per healthy supervision tick.
+
+### Fixed
+
+- Approval digests are stable when equivalent override mappings are built in different orders.
+- Run-bound labels encode identifier lengths, so valid run and row identifiers cannot collide.
+- Supervisory rows are excluded from admission evidence by their durable role, even after launch
+  replaces their agent name.
+- Reaped and confirmed-stopped abandoned children retain known token spend in the run total.
+  Resolved launch ambiguity can tolerate an absent observation, but never erases a known amount.
+- The runner's owned-write seam recursively rejects removed live-session fields inside nested
+  payloads, including payloads assembled by helpers rather than written as source literals.
+- The dispatch-claim lock covers only launches that carry a claim guard, so lifecycle-only launch
+  hooks can inspect the write-ahead row without attempting to re-enter the same lock.
+
 ## [0.13.0] - 2026-08-16
 
 ### Changed

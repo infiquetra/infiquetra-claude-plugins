@@ -125,6 +125,25 @@ Before offering an external-engine second opinion for document review, run
 If the helper reports `prompt_required`, `/doc-review` owns the `AskUserQuestion` or channel-inline
 prompt and persists the selected preference with `engine_offer.py remember`. The offer is advisory
 only; the host still verifies every finding and owns the readiness verdict.
+On this stage the helper may also list `external-only`, which excludes the home vendor from
+the external-reviewer seat. If the remaining reviewers cannot meet quorum, halt and tell the
+operator — do not fall back to the excluded vendor. Under external-only the home vendor cannot
+be reached through the external-reviewer seat. The in-session lens fan-out is governed by the
+consensus-panel roster, which is separate work. Dispatch an accepted external reviewer through
+`plugins/saga/scripts/engine_session_runner.py` (a managed terminal session), not as a
+subagent. Select that runner with `select_review_runner`; under `external-only` admit the
+roster with `external_only.admit_external_only` first.
+Launch and collect through the module's CLI, the same way the offer helper is invoked:
+
+```bash
+python3 plugins/saga/scripts/engine_session_runner.py launch \
+  --invocation-file <invocation.json> --repo-root . --stage doc-review \
+  --mode <second-opinion|external-only> --home-vendor <vendor> --engine-id <engine>
+python3 plugins/saga/scripts/engine_session_runner.py collect --handle-file <handle.json>
+```
+
+A launch that returns `session_outcome=pending` has not finished. Collect later. Do not
+treat pending as died, and do not re-launch.
 
 ## Second-opinion point-out
 
@@ -135,8 +154,11 @@ dispatches: it adds `external_opinion.state=recommended`, requester, and reason 
 durable typed result.
 
 Interactive acceptance persists `state=requested` and U1's request identity atomically in the review artifact
-before the wrapper path. The matching claim is the only runner owner; an unresolved resume is visible
-`unavailable` rather than a redispatch. Reuse the exact optional `external_opinion` and
+before the wrapper path. The matching claim is the only runner owner. A `requested` claim that never
+launched is visible `unavailable` on resume, never a redispatch. A `pending` claim is collected, never
+relaunched. Inject the managed-session runner from
+`engine_session_runner.select_review_runner`; a halt from that selector is visible
+`unavailable`, never a home-vendor session under `external-only`. Reuse the exact optional `external_opinion` and
 `claude_adjudication` contracts in `../code-review/references/findings-schema.md`, but keep document
 review's native P0-P3 finding/artifact schema intact.
 

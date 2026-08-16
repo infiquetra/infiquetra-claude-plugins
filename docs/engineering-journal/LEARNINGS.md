@@ -21,6 +21,23 @@
 
 ## 2026-08-15
 
+### A missing result file after a successful launch is not a dead session  {#pending-is-not-died}
+
+**Context.** The managed-session runner started a reviewer and immediately
+read a result file the session had not written yet. Absence of the file was
+classified as died, and the at-most-once claim moved to unavailable.
+**Evidence.** A launcher that returned a handle, then a later write of a
+real finding, then a retry and `recover_pending`, never returned the
+finding: both later calls reused the terminal unavailable note.
+**Mechanism.** `Runner` is one call, and both claim exits were terminal.
+The normal state of a managed review — launched, still running — had no
+value. `recover_pending` already existed, but it converts `requested` into
+unavailable; it does not collect.
+**Generalizable rule.** "No result yet" is not "no result." A successful
+start without a result file is pending. Collection is a second entry
+point. Interrupt recovery stays a third thing.
+**Refs.** DECISIONS [`{#second-opinion-pending-until-collected}`](DECISIONS.md#second-opinion-pending-until-collected).
+
 ### Two inferences meet at most gates, and fixing one does not fix its sibling  {#two-inferences-meet-at-every-gate}
 
 **Context.** An orchestration unit went through five repair rounds. Each round closed the defects a
@@ -57,6 +74,27 @@ entrances than anyone has enumerated cannot be secured by enumerating entrances:
 pins a guarantee structurally — one construction site, asserted by a test that walks the module's own
 syntax tree — the class has not recurred once; where it is left to careful authorship, it recurred in
 every round.
+
+### A session that did not start is not a review that found nothing  {#session-absence-is-not-empty-review}
+
+**Context.** External reviewers for `/code-review` and `/doc-review` now run as
+managed terminal sessions. Three failures look similar if they share one status:
+the launcher never started, the session died or wrote no result file, and the
+session finished with an empty findings list.
+**Evidence.** `engine_session_runner.runner` returns `session_outcome` values
+`not-started`, `pending`, `died`, and `ran-empty`. Through
+`dispatch_second_opinion` those become `second-opinion dispatch error`,
+`PENDING_NOTE`, `second-opinion dispatch no-output`, and
+`EMPTY_OPINION_NOTE` respectively. A missing result file after a successful
+start is `SessionPending`, not died and not `findings: []`.
+**Mechanism.** "No record of X" is not "X does not exist." A result file that
+was never written is unknown, not an empty review. Collapsing those into one
+unavailable note would make a launch failure look like a clean second opinion.
+**Generalizable rule.** Name the session outcome on the runner result before any
+claim-store projection. Absence of a result artifact is a distinct failure, never
+an empty findings list.
+**Refs.** [`{#two-inferences-meet-at-every-gate}`](#two-inferences-meet-at-every-gate);
+DECISIONS [`{#external-only-roster-or-halt}`](DECISIONS.md#external-only-roster-or-halt).
 
 ### A refusal stored in a field the sensor rewrites lasts only until the next sample  {#refusal-must-outlive-the-sensor}
 

@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.133.0] - 2026-08-15
+
+### Added - pending second-opinion claims and a collect entry point
+
+- A launched managed session that has not yet written a result is `pending`, not
+  died. `collect_second_opinion` (and `recover_pending` on a pending claim) reads
+  the later result. `abandon_pending_second_opinion` closes a launch that will
+  never be collected; that note is not an empty review. Concurrent pending claims
+  are capped at `MAX_PENDING_CLAIMS`.
+- `engine_session_runner.py` now has `launch` and `collect` commands. The
+  production launcher names the reviewer tool, model, effort, and review prompt.
+
+### Fixed
+
+- The managed-session argv no longer drops the resolved tool, task, model, or
+  effort, and no longer opens a bare Herdr view.
+- A result file must name `findings` and bind `request_digest`; a missing key or
+  a pre-existing file is not this session's empty review.
+- External-only admission stays bound to the admitted vendor on the returned
+  runner. Vendor comparison is strip + casefold on both sides.
+- A stored or default `external-only` offer reason names the external-reviewer
+  seat and the in-session lens bound; it does not say the home panel is excluded.
+
+## [0.132.0] - 2026-08-15
+
+### Added - managed-session external reviewers and an external-only offer mode
+
+- `/code-review` and `/doc-review` dispatch an external reviewer through a managed
+  terminal session (`engine_session_runner`) rather than a subagent. The operator-facing
+  offer wording, gate-record contract, provider/egress/tier selection, and atomic
+  request persistence are unchanged.
+- The engine-offer helper gains an `external-only` choice on those two stages.
+  Under external-only the home vendor cannot be reached through the
+  external-reviewer seat. The in-session lens fan-out is governed by the
+  consensus-panel roster, which is separate work. If the remaining reviewers
+  cannot meet quorum, the path halts and tells the operator; it never falls back
+  to the excluded vendor.
+
 ## [0.131.1] - 2026-08-08
 
 ### Added - house-style presentation contract, on two agents and the emitter (#704)

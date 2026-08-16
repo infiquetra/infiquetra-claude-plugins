@@ -13,10 +13,12 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 import chaperone_economics as ce
+import external_only
 import yaml
 
 STAGES = ("ideate", "brainstorm", "work", "doc-review", "code-review")
-INTENTS = ("none", "offload", "second-opinion")
+INTENTS = ("none", "offload", "second-opinion", "external-only")
+REVIEW_STAGES = frozenset({"code-review", "doc-review"})
 UNIT_SHAPES = ("unknown", "mechanical", "judgment")
 _fleet_commons_shim = cast(Any, importlib.import_module("fleet_commons_shim"))
 _tier_palette = _fleet_commons_shim.load("tier_palette")
@@ -53,7 +55,7 @@ JUDGMENT_TERMS = frozenset(
         "tradeoff",
     }
 )
-Intent = Literal["none", "offload", "second-opinion"]
+Intent = Literal["none", "offload", "second-opinion", "external-only"]
 UnitShape = Literal["unknown", "mechanical", "judgment"]
 OfferSource = Literal["default", "stored"]
 
@@ -181,6 +183,7 @@ def resolve_offer(
 
     if loaded_preferences is not None and stage in loaded_preferences.stages:
         preference = loaded_preferences.stages[stage]
+        _validate_stage_intent(stage, preference.intent)
         return _offer_from_preference(stage, preference, economics=economics)
 
     shape = classify_unit_shape(unit_shape=unit_shape, labels=labels, text=text)
@@ -201,7 +204,7 @@ def resolve_offer(
         unit_shape=shape,
         source="default",
         prompt_required=attended,
-        choices=_choices_for(default.intent),
+        choices=_choices_for(default.intent, stage=stage),
         reason=_reason_for(stage, shape, default),
         cost_delta_preview=cost_delta_preview,
     )
@@ -281,6 +284,7 @@ def load_preferences(repo_root: Path | str) -> EnginePreferences:
 def save_preference(repo_root: Path | str, stage: str, preference: Preference) -> Path:
     """Persist one stage preference through an atomic local file replace."""
     _validate_stage(stage)
+    _validate_stage_intent(stage, preference.intent)
     prefs = load_preferences(repo_root)
     prefs.stages[stage] = preference
     prefs_path = _prefs_path(repo_root)
@@ -307,6 +311,9 @@ def save_preference(repo_root: Path | str, stage: str, preference: Preference) -
 def _offer_from_preference(
     stage: str, preference: Preference, *, economics: dict[str, Any] | None = None
 ) -> EngineOffer:
+    reason = f"stored preference for {stage}"
+    if preference.intent == "external-only":
+        reason = f"{reason}; {external_only.EXTERNAL_ONLY_GUARANTEE}"
     return EngineOffer(
         stage=stage,
         intent=preference.intent,
@@ -316,13 +323,19 @@ def _offer_from_preference(
         source="stored",
         prompt_required=False,
         choices=(),
-        reason=f"stored preference for {stage}",
+        reason=reason,
         cost_delta_preview=_cost_delta_preview(preference, economics),
     )
 
 
-def _choices_for(default_intent: Intent) -> tuple[str, ...]:
-    ordered = [default_intent, *[intent for intent in INTENTS if intent != default_intent]]
+def _choices_for(default_intent: Intent, *, stage: str) -> tuple[str, ...]:
+    if stage in REVIEW_STAGES:
+        allowed: tuple[str, ...] = INTENTS
+    else:
+        allowed = tuple(intent for intent in INTENTS if intent != "external-only")
+    if default_intent not in allowed:
+        raise EngineOfferError(f"intent {default_intent!r} is not valid for stage {stage!r}")
+    ordered = [default_intent, *[intent for intent in allowed if intent != default_intent]]
     return tuple(ordered)
 
 
@@ -331,6 +344,8 @@ def _reason_for(stage: str, shape: UnitShape, preference: Preference) -> str:
         return f"{stage} unit classified {shape}; mechanical work can be chaperoned cheaply"
     if preference.intent == "second-opinion":
         return f"{stage} unit classified {shape}; judgment work benefits from advisory review"
+    if preference.intent == "external-only":
+        return f"{stage} unit classified {shape}; {external_only.EXTERNAL_ONLY_GUARANTEE}"
     return f"{stage} unit classified {shape}; no engine offer selected by default"
 
 
@@ -470,6 +485,11 @@ def _validate_stage(stage: str) -> None:
 def _validate_intent(intent: str) -> None:
     if intent not in INTENTS:
         raise EngineOfferError(f"intent {intent!r} not in {INTENTS}")
+
+
+def _validate_stage_intent(stage: str, intent: str) -> None:
+    if intent == "external-only" and stage not in REVIEW_STAGES:
+        raise EngineOfferError("external-only is only valid for code-review and doc-review")
 
 
 def _validate_model_effort(model: str | None, effort: str | None) -> None:

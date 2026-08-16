@@ -2,6 +2,35 @@
 
 ## 2026-08-15
 
+### A launched second opinion is pending until collected  {#second-opinion-pending-until-collected}
+
+**Decision.** A managed-session second opinion that has started and has not
+yet written a result is claim state `pending`. That state is not terminal.
+`dispatch_second_opinion` launches and leaves the claim pending.
+`collect_second_opinion` reads the later result and moves the claim to
+`requested` (ready to complete) or `unavailable`. `recover_pending` on a
+`requested` claim is still interrupt recovery and does not collect; on a
+`pending` claim it collects.
+
+A pending claim that is never collected stays pending until
+`abandon_pending_second_opinion`, which records `NEVER_COLLECTED_NOTE`.
+That is not an empty review. Concurrent pending claims are capped at
+`MAX_PENDING_CLAIMS`; a launch that would exceed the cap is refused and
+recorded as unavailable with `PENDING_BOUND_NOTE`.
+
+**Rejected: reuse `requested` and make `recover_pending` collect.**
+`recover_pending` already means "this reservation never launched; do not
+replay." Using it for a live session would terminate the one case it was
+written for.
+**Rejected: block inside the Runner until the file appears.** The dispatch
+call is one synchronous return; a wait would stall the reviewing session
+for the whole external review.
+
+**Revisit when** a durable result transport other than a digest-bound file
+is the session's return path.
+
+**Refs.** [`{#external-reviewers-are-managed-sessions}`](#external-reviewers-are-managed-sessions).
+
 ### Review loops terminate by construction; escalation is bounded at one  {#review-loops-bounded-by-construction}
 
 **Decision.** Every review layer runs under a loop bound: **three iterations
@@ -64,9 +93,10 @@ offer is unchanged — the same durable gate-record contract, prompt-and-remembe
 path, provider selection, egress policy, tier selection, and atomic
 persistence of request state. Only the transport changes.
 
-A new offer mode, **external only**, excludes the home vendor's panel
-entirely rather than adding an advisory seat beside it. When a review runs
-inside a session over code that session's vendor wrote, external-only is the
+A new offer mode, **external only**, excludes the home vendor from the
+external-reviewer seat rather than adding an advisory seat beside it. The
+in-session lens fan-out is a separate roster. When a review runs inside a
+session over code that session's vendor wrote, external-only is the
 correctness option, not a cost option: it is "never review your own vendor"
 applied at the skill level, so the rule is implemented once rather than twice.
 
@@ -88,6 +118,33 @@ subagent for a review-shaped task.
 
 **Refs.** [`{#review-loops-bounded-by-construction}`](#review-loops-bounded-by-construction);
 [`{#subscriber-is-a-managed-pane}`](#subscriber-is-a-managed-pane).
+
+### External-only admission is a constructed roster or a halt, never a degraded panel  {#external-only-roster-or-halt}
+
+**Decision.** Under the external-only offer mode the permitted reviewers are a
+constructed type. Construction filters the home vendor first. If what remains is
+smaller than the required quorum, the result is a halt that tells the operator no
+review happened. There is no roster that contains the excluded vendor, and there
+is no function that puts that vendor back after a failed start, a dead session,
+or a missing result.
+
+`/code-review` and `/doc-review` inject the managed-session runner. Selection of
+that runner under external-only reuses the same admission: an excluded-vendor
+engine id is a halt, not a session. `dispatch_second_opinion` still takes an
+injected runner. A later ruling added a non-terminal `pending` claim and a
+collect entry point; see
+[`{#second-opinion-pending-until-collected}`](#second-opinion-pending-until-collected).
+
+**Rejected: filter the home vendor in the skill prose and leave the candidate
+list as a plain tuple.** A later retry or error handler can append the excluded
+vendor without the type system noticing.
+**Rejected: fall back to the home panel when admission returns a halt.** That
+converts a correctness choice into a cost choice and labels it external-only.
+
+**Revisit when** a named panel role needs a quorum larger than "every remaining
+non-home member," or when a second construction site for the roster appears.
+
+**Refs.** [`{#external-reviewers-are-managed-sessions}`](#external-reviewers-are-managed-sessions).
 
 ### The durable run table keeps intent and outcome; it stops storing substrate  {#register-keeps-intent-not-substrate}
 

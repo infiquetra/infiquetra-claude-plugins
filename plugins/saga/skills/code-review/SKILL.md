@@ -83,6 +83,25 @@ Before offering an external-engine second opinion for code review, run
 If the helper reports `prompt_required`, `/code-review` owns the `AskUserQuestion` or channel-inline
 prompt and persists the selected preference with `engine_offer.py remember`. The offer is advisory
 only; `/code-review` still verifies every finding and owns the merge-readiness verdict.
+On this stage the helper may also list `external-only`, which excludes the home vendor from
+the external-reviewer seat. If the remaining reviewers cannot meet quorum, halt and tell the
+operator — do not fall back to the excluded vendor. Under external-only the home vendor cannot
+be reached through the external-reviewer seat. The in-session lens fan-out is governed by the
+consensus-panel roster, which is separate work. Dispatch an accepted external reviewer through
+`plugins/saga/scripts/engine_session_runner.py` (a managed terminal session), not as a
+subagent. Select that runner with `select_review_runner`; under `external-only` admit the
+roster with `external_only.admit_external_only` first.
+Launch and collect through the module's CLI, the same way the offer helper is invoked:
+
+```bash
+python3 plugins/saga/scripts/engine_session_runner.py launch \
+  --invocation-file <invocation.json> --repo-root . --stage code-review \
+  --mode <second-opinion|external-only> --home-vendor <vendor> --engine-id <engine>
+python3 plugins/saga/scripts/engine_session_runner.py collect --handle-file <handle.json>
+```
+
+A launch that returns `session_outcome=pending` has not finished. Collect later. Do not
+treat pending as died, and do not re-launch.
 
 <!-- gate-record: id=code-review-engine-offer absence=HALT transport=ask-user-question -->
 The offer prompt rides the durable gate-record contract declared in Interaction method (gate id
@@ -259,11 +278,15 @@ who names `#N` is confirming that request; a Claude-originated suggestion asks f
 Build U1's single-finding context from that exact durable finding and surface the selected provider, egress
 policy, and `opus/high` tier before dispatch. Persist `external_opinion.state=requested` plus the stable
 request identity atomically in the review artifact before the U1 wrapper path; the matching claim is the
-only runner owner. Pass the trusted runtime session id (`session_id = CLAUDE_CODE_SESSION_ID` from
+only runner owner. Inject the managed-session runner from
+`engine_session_runner.select_review_runner`; a halt from that selector is visible
+`unavailable`, never a home-vendor session under `external-only`. Pass the trusted runtime session id (`session_id = CLAUDE_CODE_SESSION_ID` from
 the configured Saga session snapshot) to `prepare_second_opinion`; a missing, empty, or
 control-character-bearing session id halts before the wrapper (#677/U3 retired the lease admission
-the session once resolved). A resumed unresolved request is visible
-`unavailable`, never a retry of the wrapper.
+the session once resolved). A `requested` claim that never launched is visible `unavailable` on
+resume, never a retry of the wrapper. A `pending` claim is collected
+(`engine_session_runner.py collect`, or `recover_pending` on that claim), never relaunched and
+never treated as an empty review.
 
 In `programmatic` / `report-only` mode, never prompt and never dispatch. Place exactly
 `external_opinion.state=recommended`, its requester, and reason on the selected `#N` in the returned typed

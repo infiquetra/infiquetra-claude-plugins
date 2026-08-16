@@ -1975,13 +1975,22 @@ class Coordinator:
             )
 
     def supervise(self) -> SupervisionReport:
-        """One supervision tick: the subscriber's process, then the mirror's clock.
+        """One supervision tick: admission, the subscriber process, then the mirror clock.
 
         Liveness is asked of the durable record rather than of this object's handle. A coordinator
         that adopted a running subscriber holds no handle for it, and asking the handle would
         report a divergence that did not happen -- writing a false ``exited`` onto the
         subscriber's row and raising a false alarm on every tick after a restart.
         """
+        try:
+            reclaimed = admission.reclaim_dead_slots(
+                self.root, run_id=self.run_id, herdr=self.herdr
+            )
+        except admission.AdmissionError as exc:
+            self.run_log.append("admission_reclaim_incomplete", detail=str(exc))
+        else:
+            for row_id in reclaimed:
+                self.run_log.append("admission_reclaimed", row_id=row_id)
         alive = self.running_subscriber() is not None
         respawned = False
         if not alive:
@@ -2019,14 +2028,17 @@ class Coordinator:
             if mirror_module.expected_subscription(mirrors[row_id]) is None:
                 return "unlaunched", f"mirror row {row_id!r} never finished launching"
             return "diverged", f"mirror row {row_id!r} has no live pane"
-        snapshot = self.herdr.snapshot(cwd=self.root)
-        mirror_module.observe_pane_activity(
-            self.root,
-            run_id=self.run_id,
-            row_id=row_id,
-            snapshot=snapshot,
-            now=self.clock(),
-        )
+        try:
+            snapshot = self.herdr.snapshot(cwd=self.root)
+            mirror_module.observe_pane_activity(
+                self.root,
+                run_id=self.run_id,
+                row_id=row_id,
+                snapshot=snapshot,
+                now=self.clock(),
+            )
+        except (session_lifecycle.SessionLifecycleError, mirror_module.MirrorError) as exc:
+            return "unknown", f"the mirror's live activity could not be determined: {exc}"
         try:
             liveness = mirror_module.check_liveness(
                 self.root, run_id=self.run_id, row_id=row_id, now=self.clock()
@@ -2225,17 +2237,18 @@ class Coordinator:
             phase = row.get("phase")
             if phase not in accounting.LAUNCHED_PHASES or phase == "planned":
                 continue
-            if is_abandoned(row) and _producer_confirmed_stopped(row):
+            observed = row.get("tokens_observed")
+            observed_is_number = isinstance(observed, (int, float)) and not isinstance(
+                observed, bool
+            )
+            if is_abandoned(row) and _producer_confirmed_stopped(row) and not observed_is_number:
                 # This coordinator deliberately stopped pursuing this row, recorded why, and
                 # (:meth:`abandon_child`) either proved it never held a session or stopped the one
-                # it held and confirmed the tab gone. Only *that* disposition excuses it here:
-                # "no longer awaited" is not "no longer spending", and a row abandoned without a
-                # confirmed stop falls through to the same checks an ordinary row gets below, so
-                # its spend still gates the run until absence is actually established. Excluded
-                # from the row-by-row checks *and* from the ceiling total that
-                # :func:`accounting.check_spend` computes on its own, or a confirmed-stopped row
-                # whose spend genuinely never became known would still trip the same fail-closed
-                # rule from inside that total.
+                # it held and confirmed the tab gone. Only an unrecorded stopped producer is
+                # excused here: "no longer awaited" is not "no longer spending", and recorded
+                # usage remains part of the run total even after its producer is gone. A row
+                # abandoned without a confirmed stop falls through to the same checks an ordinary
+                # row gets below, so its spend still gates the run until absence is established.
                 abandoned_row_ids.add(row_id)
                 continue
             if phase == "launching":
@@ -2247,27 +2260,10 @@ class Coordinator:
                 else:
                     absent_launches.add(row_id)
                 continue
-            if phase in {"launched", "ready", "working"}:
-                try:
-                    pane_id = session_lifecycle.read_session_pane_id(
-                        self.herdr, root=self.root, run_id=self.run_id, row_id=row_id
-                    )
-                except session_lifecycle.SessionLifecycleError as exc:
-                    return (
-                        "unknown",
-                        f"the terminal multiplexer could not answer for {row_id}: {exc}",
-                    )
-                if pane_id is None:
-                    return (
-                        "unknown",
-                        f"row {row_id!r} is {phase!r}, but Herdr answered that it has no live "
-                        "pane; its spend is not yet knowable",
-                    )
             vendor = str(row.get("vendor") or row.get("agent") or "")
             if not accounting.vendor_reports_usage(vendor):
                 continue
-            observed = row.get("tokens_observed")
-            if not isinstance(observed, (int, float)) or isinstance(observed, bool):
+            if not observed_is_number:
                 pending.append(row_id)
         if unresolved:
             return (
@@ -2369,7 +2365,6 @@ class Coordinator:
         # and is the authority. Checking them here first is what makes a row that must not be
         # relaunched report *that*, rather than whichever later gate happens to notice something.
         assert_forward_transition(row.get("phase"), "launching", row_id=child.row_id)
-        self._assert_not_already_dispatched(child.row_id, row)
         self._assert_no_open_attempt(child.row_id, row)
         self._assert_reserved_for(child, row)
         self.assert_spend_allows_a_launch(launching_row_id=child.row_id)
@@ -2708,7 +2703,6 @@ class Coordinator:
             doc = register_store._read_register_unlocked(self.run_id)
             row = doc.get("rows", {}).get(child.row_id, {})
             assert_forward_transition(row.get("phase"), "launching", row_id=child.row_id)
-            self._assert_not_already_dispatched(child.row_id, row)
             existing = claim_of(row)
             attempts = 0
             if existing is not None:
@@ -2801,21 +2795,6 @@ class Coordinator:
                 f"reached the native launcher (attempt {claim.attempts} at {claim.claimed_at:g}); "
                 "another coordinator's explicit resume decision holds it now, and the launcher "
                 "was not called"
-            )
-
-    def _assert_not_already_dispatched(self, row_id: str, row: Mapping[str, Any]) -> None:
-        """Leave ``launching`` rows to the launcher's run-label recovery transaction.
-
-        A ``launching`` row can mean the native launcher never ran or that it created a session
-        just before the coordinator stopped. :func:`session_lifecycle.launch_child` asks Herdr by
-        the run-bound label and adopts that session before it considers a new launch. Refusing a
-        live answer here made that recovery branch unreachable; treating the phase as proof of
-        absence could open a duplicate. The owner query and decision therefore stay together at
-        the launch boundary.
-        """
-        if row.get("phase") == "launching":
-            session_lifecycle.read_session_pane_id(
-                self.herdr, root=self.root, run_id=self.run_id, row_id=row_id
             )
 
     def _assert_no_open_attempt(self, row_id: str, row: Mapping[str, Any]) -> None:

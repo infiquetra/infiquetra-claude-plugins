@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.12.1] - 2026-08-16
+
+### Fixed
+
+- Launch recovery now uses the same complete-snapshot parser as every named live-session reader.
+  A partial terminal snapshot raises before the native launcher, while a complete snapshot with no
+  matching run label remains the only absence answer that permits a new session.
+- Each supervision tick reconciles admission reservations. Expired holders with confirmed session
+  absence release their capacity and advance queued work, while an unanswerable reservation stays
+  held without preventing answerable neighbors from being reconciled.
+- Terminal events route through run-bound pane subscriptions after a pane disappears. An unrelated
+  host tab close is diagnostic-only and no longer wakes the orchestrator because the subscriber's
+  process row has no terminal pane owner.
+- Recorded metered spend and declared unmetered spend no longer depend on pane liveness. Usage that
+  was already observed remains in the run total after a producer is stopped and abandoned.
+- Malformed live status and corrupt register JSON now raise their owning lifecycle and register
+  errors. Register-row union operators preserve the removed-column refusal contract.
+- A live mirror pane without a valid output revision now makes liveness unknown instead of being
+  counted as silent and aging into a false hang.
+
 ## [0.12.0] - 2026-08-15
 
 ### Changed

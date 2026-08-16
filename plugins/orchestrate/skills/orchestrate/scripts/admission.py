@@ -704,9 +704,15 @@ def _is_dead(
         ) from exc
     observed_terminal = observed in TERMINAL_OBSERVED
     if observed_terminal:
-        source = session_lifecycle.read_session_observed_state_source(
-            herdr, root=root, run_id=run_id, row_id=row_id
-        )
+        try:
+            source = session_lifecycle.read_session_observed_state_source(
+                herdr, root=root, run_id=run_id, row_id=row_id
+            )
+        except session_lifecycle.SessionLifecycleError as exc:
+            raise AdmissionError(
+                f"could not ask the terminal multiplexer for reservation {row_id!r}'s "
+                f"terminal-state source: {exc}"
+            ) from exc
         if isinstance(source, str) and source.startswith(DIRECT_OBSERVED_PREFIX):
             return True
     held_at = reservation.get("held_at", reservation.get("reserved_at"))
@@ -740,6 +746,7 @@ def reclaim_dead_slots(
     when = time.time() if now is None else now
     control = herdr or session_lifecycle.HerdrControl()
     reclaimed: list[str] = []
+    failures: list[str] = []
     with admission_locked():
         with register_store.generation_locked(run_id):
             doc = register_store._read_register_unlocked(run_id)
@@ -749,16 +756,22 @@ def reclaim_dead_slots(
             updates: dict[str, dict[str, Any]] = {}
             for row_id, reservation in state["reservations"].items():
                 row = rows.get(row_id, {})
-                if isinstance(reservation, dict) and _is_dead(
-                    reservation,
-                    row,
-                    root=claimed,
-                    run_id=run_id,
-                    row_id=str(row_id),
-                    herdr=control,
-                    now=when,
-                    hold_lease=lease_seconds,
-                ):
+                dead = False
+                if isinstance(reservation, dict):
+                    try:
+                        dead = _is_dead(
+                            reservation,
+                            row,
+                            root=claimed,
+                            run_id=run_id,
+                            row_id=str(row_id),
+                            herdr=control,
+                            now=when,
+                            hold_lease=lease_seconds,
+                        )
+                    except AdmissionError as exc:
+                        failures.append(f"{row_id}: {exc}")
+                if dead:
                     reclaimed.append(str(row_id))
                     updates[str(row_id)] = {"admission": "reclaimed"}
                 else:
@@ -773,6 +786,11 @@ def reclaim_dead_slots(
                 )
         if reclaimed:
             _advance_until_full(now=now)
+    if failures:
+        raise AdmissionError(
+            "some reservations could not be classified; answerable reservations were still "
+            f"reconciled: {'; '.join(failures)}"
+        )
     return reclaimed
 
 

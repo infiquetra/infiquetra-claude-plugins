@@ -718,6 +718,52 @@ def test_registered_pane_exited_event_wakes_without_copying_exit_state(tmp_path:
     assert REGISTER.REMOVED_ROW_COLUMNS.isdisjoint(row)
 
 
+def test_unrelated_tab_close_does_not_wake_for_the_supervisory_row(tmp_path: Path) -> None:
+    wakes: list[str] = []
+    subscriber = _subscriber(
+        tmp_path,
+        wakes=wakes,
+        snapshot_reader=lambda: {"tabs": [], "panes": [], "agents": []},
+    )
+    subscriber.register_self()
+    subscriber.handle_event(
+        EVENTS.decode_event(
+            {
+                "event": "tab_closed",
+                "data": {"type": "tab_closed", "tab_id": "unrelated-tab"},
+            }
+        )
+    )
+    assert wakes == []
+
+
+def test_missing_owner_terminal_event_wakes_through_its_bound_subscription(tmp_path: Path) -> None:
+    REGISTER.upsert_row(
+        tmp_path,
+        "child-a",
+        {"run_id": "run-a", "phase": "working"},
+        run_id="run-a",
+        writer="write_phase",
+    )
+    sentinel = SUBSCRIBER.make_sentinel("run-a", "child-a", "completion", nonce="nonce-a")
+    wakes: list[str] = []
+    subscriber = _subscriber(
+        tmp_path,
+        wakes=wakes,
+        subscriptions=[SUBSCRIBER.output_match_subscription("pane-a", sentinel)],
+        snapshot_reader=lambda: {"tabs": [], "panes": [], "agents": []},
+    )
+    subscriber.handle_event(
+        EVENTS.decode_event(
+            {
+                "event": "pane_exited",
+                "data": {"type": "pane_exited", "pane_id": "pane-a"},
+            }
+        )
+    )
+    assert len(wakes) == 1
+
+
 def test_registered_pane_closed_event_wakes_without_copying_exit_state(tmp_path: Path) -> None:
     REGISTER.upsert_row(
         tmp_path,

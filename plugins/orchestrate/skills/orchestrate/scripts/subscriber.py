@@ -372,17 +372,12 @@ class Subscriber:
 
     def _registered_rows_for_event(
         self, event: herdr_events.HerdrEvent
-    ) -> tuple[list[tuple[str, dict[str, Any]]], bool]:
-        """Resolve the event against one current snapshot.
-
-        The boolean reports that at least one launched run row has disappeared. It lets a
-        terminal event trigger a conservative wake after Herdr has already removed the pane,
-        without treating every unrelated host event as though it belonged to this run.
-        """
+    ) -> list[tuple[str, dict[str, Any]]]:
+        """Resolve the event through its bound identity or one current snapshot."""
         pane_id = event.pane_id
         tab_id = event.data.get("tab_id")
         rows = register_store.read_rows(self.root, run_id=self.run_id)
-        if event.name == "pane.output_matched" and pane_id is not None:
+        if pane_id is not None:
             expected = self._sentinel_expectations.get(pane_id, [])
             row_ids = {
                 str(payload.get("child_id"))
@@ -390,21 +385,16 @@ class Subscriber:
                 if payload.get("run_id") == self.run_id and payload.get("child_id")
             }
             if row_ids:
-                return (
-                    [(row_id, rows[row_id]) for row_id in sorted(row_ids) if row_id in rows],
-                    False,
-                )
+                return [(row_id, rows[row_id]) for row_id in sorted(row_ids) if row_id in rows]
         snapshot = self.snapshot_reader()
         found: list[tuple[str, dict[str, Any]]] = []
-        owner_missing = False
         for row_id, row in rows.items():
-            if row.get("phase") == "planned":
+            if row.get("phase") == "planned" or register_store.is_supervisory_row(row):
                 continue
             live_pane = session_lifecycle.snapshot_session_pane_id(
                 snapshot, run_id=self.run_id, row_id=row_id
             )
             if live_pane is None:
-                owner_missing = True
                 continue
             if pane_id is not None and live_pane == pane_id:
                 found.append((row_id, row))
@@ -420,7 +410,7 @@ class Subscriber:
                 )
                 if resolved_tab == tab_id:
                     found.append((row_id, row))
-        return found, owner_missing
+        return found
 
     def _report_unregistered_event(self, event: herdr_events.HerdrEvent) -> None:
         pane_id = event.pane_id
@@ -521,14 +511,8 @@ class Subscriber:
 
     def handle_event(self, event: herdr_events.HerdrEvent) -> None:
         """Update matching current-run rows before waking the orchestrator."""
-        registered, owner_missing = self._registered_rows_for_event(event)
+        registered = self._registered_rows_for_event(event)
         if not registered:
-            if owner_missing and event.name in {"pane_exited", "pane_closed", "tab_closed"}:
-                self.wake_sender(
-                    f"Orchestrate event {event.name} for run {self.run_id}. Re-read the live "
-                    "session snapshot before continuing."
-                )
-                return
             self._report_unregistered_event(event)
             return
         handled_rows: list[str] = []

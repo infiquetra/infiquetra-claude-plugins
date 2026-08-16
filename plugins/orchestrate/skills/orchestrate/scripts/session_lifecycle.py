@@ -358,43 +358,18 @@ class HerdrControl:
         return snapshot
 
     def discover_by_label(self, label: str, *, cwd: Path) -> LaunchIdentity | None:
-        snapshot = self.snapshot(cwd=cwd)
-        tabs = snapshot.get("tabs")
-        panes = snapshot.get("panes")
-        if not isinstance(tabs, list) or not isinstance(panes, list):
-            raise LaunchProtocolError("herdr snapshot requires tabs and panes arrays")
-        matches = [tab for tab in tabs if isinstance(tab, Mapping) and tab.get("label") == label]
-        if not matches:
+        resolved = _snapshot_session(self.snapshot(cwd=cwd), label)
+        if resolved is None:
             return None
-        if len(matches) != 1:
-            raise LaunchProtocolError(f"run label {label!r} matches more than one Herdr tab")
-        tab = matches[0]
-        tab_id = tab.get("tab_id")
+        tab, pane, agent = resolved
         workspace_id = tab.get("workspace_id")
-        tab_panes = [
-            pane for pane in panes if isinstance(pane, Mapping) and pane.get("tab_id") == tab_id
-        ]
-        if (
-            not isinstance(tab_id, str)
-            or not isinstance(workspace_id, str)
-            or len(tab_panes) != 1
-            or not isinstance(tab_panes[0].get("pane_id"), str)
-        ):
-            raise LaunchProtocolError(f"run label {label!r} does not resolve to one complete pane")
-        pane_id = str(tab_panes[0]["pane_id"])
-        agents = snapshot.get("agents", [])
+        if not isinstance(workspace_id, str) or not workspace_id:
+            raise LaunchProtocolError(f"run label {label!r} resolves to a tab without a workspace")
+        tab_id = str(tab["tab_id"])
+        pane_id = str(pane["pane_id"])
         agent_name = label
-        if isinstance(agents, list):
-            matching_agent = next(
-                (
-                    agent
-                    for agent in agents
-                    if isinstance(agent, Mapping) and agent.get("pane_id") == pane_id
-                ),
-                None,
-            )
-            if isinstance(matching_agent, Mapping) and isinstance(matching_agent.get("name"), str):
-                agent_name = str(matching_agent["name"])
+        if agent is not None and isinstance(agent.get("name"), str) and agent["name"]:
+            agent_name = str(agent["name"])
         return LaunchIdentity(agent_name, workspace_id, tab_id, pane_id, reused=True)
 
     def pane_text(self, pane_id: str, *, cwd: Path) -> str:
@@ -545,8 +520,12 @@ def read_session_observed_state(
         return None
     tab, pane, agent = resolved
     source = agent if agent is not None else pane
-    value = source.get("agent_status", tab.get("agent_status", "unknown"))
-    return value if isinstance(value, str) and value else "unknown"
+    value = source.get("agent_status", tab.get("agent_status"))
+    if not isinstance(value, str) or not value:
+        raise LaunchProtocolError(
+            f"run label {task_label(run_id, row_id)!r} resolves without a valid agent status"
+        )
+    return value
 
 
 def read_session_observed_state_source(

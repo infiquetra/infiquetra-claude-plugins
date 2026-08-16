@@ -200,6 +200,7 @@ class FakeHerdr:
         self.absent_tabs: set[str] = set()
         self.revisions: dict[str, int] = {}
         self.absent_panes: set[str] = set()
+        self.snapshot_error: Exception | None = None
         #: Sessions discoverable by their run-bound task label, which is how the launcher
         #: recovers a dispatch that crashed after the session existed.
         self.labels: dict[str, Any] = {}
@@ -217,6 +218,8 @@ class FakeHerdr:
         return sorted(panes - self.absent_panes)
 
     def snapshot(self, *, cwd: Path) -> dict[str, Any]:
+        if self.snapshot_error is not None:
+            raise self.snapshot_error
         identities = {
             identity.pane_id: (label, identity) for label, identity in self.labels.items()
         }
@@ -267,9 +270,8 @@ class FakeHerdr:
         return {"panes": panes, "agents": agents, "tabs": tabs}
 
     def discover_by_label(self, label: str, *, cwd: Path) -> Any:
-        del cwd
         self.label_lookups.append(label)
-        return self.labels.get(label)
+        return LIFECYCLE.HerdrControl.discover_by_label(self, label, cwd=cwd)
 
     def pane_text(self, pane_id: str, *, cwd: Path) -> str:
         del cwd
@@ -892,6 +894,26 @@ def test_a_mirror_whose_pane_keeps_emitting_is_not_alarmed(harness: Harness) -> 
     assert harness.coordinator.supervise().mirror_state == "working"
 
 
+def test_a_malformed_live_mirror_revision_is_reported_as_unknown(harness: Harness) -> None:
+    harness.bootstrap([_child("child-a")])
+    session = harness.coordinator.create_mirror(max_quiet_seconds=5.0)
+    real_snapshot = harness.herdr.snapshot
+
+    def malformed_snapshot(*, cwd: Path) -> dict[str, Any]:
+        snapshot = real_snapshot(cwd=cwd)
+        for surface in ("panes", "agents"):
+            for item in snapshot[surface]:
+                if item.get("pane_id") == session.pane_id:
+                    item.pop("revision", None)
+        return snapshot
+
+    harness.herdr.snapshot = malformed_snapshot  # type: ignore[method-assign]
+    report = harness.coordinator.supervise()
+
+    assert report.mirror_state == "unknown"
+    assert "valid output revision" in report.mirror_detail
+
+
 # =========================================================================== 5. R1 forms
 
 
@@ -995,7 +1017,7 @@ def test_a_forward_transition_is_permitted(current: str, target: str) -> None:
     RUNNER.assert_forward_transition(current, target, row_id="child-a")
 
 
-def test_an_already_dispatched_row_is_refused_before_the_launcher_is_touched(
+def test_the_forward_phase_guard_refuses_a_dispatched_row_before_the_launcher(
     harness: Harness,
 ) -> None:
     harness.bootstrap([_child("child-a")])
@@ -1305,6 +1327,54 @@ def test_a_launch_is_withheld_while_a_launched_metered_child_has_reported_no_usa
     harness.report_usage("child-a")
     assert harness.coordinator.spend_status()[0] == "ok"
     assert harness.coordinator.launch_ready_children().launched == ("child-b",)
+
+
+def test_recorded_spend_remains_known_after_the_live_pane_disappears_and_is_abandoned(
+    tmp_path: Path,
+) -> None:
+    harness = Harness(tmp_path, per_vendor=2, aggregate=2)
+    harness.bootstrap([_child("child-a"), _child("child-b")], ceiling=15_000.0)
+    first = harness.coordinator.launch_ready_children()
+    assert first.launched == ("child-a",)
+    harness.report_usage("child-a", tokens=1_200)
+    second = harness.coordinator.launch_ready_children()
+    assert second.launched == ("child-b",)
+    harness.report_usage("child-b", tokens=9_000)
+
+    label = LIFECYCLE.task_label(RUN_ID, "child-b")
+    harness.herdr.labels.pop(label)
+    assert harness.coordinator.spend_status() == ("ok", "")
+    harness.coordinator.abandon_child("child-b", "the owner disappeared after reporting usage")
+
+    harness.herdr.snapshot_error = LIFECYCLE.LaunchProtocolError("owner query unavailable")
+    assert harness.coordinator.spend_status() == ("ok", "")
+    assert ACCOUNTING.run_actual_tokens(harness.repo, run_id=RUN_ID) == 10_200.0
+
+
+def test_unmetered_spend_does_not_depend_on_a_live_pane_query(tmp_path: Path) -> None:
+    harness = Harness(tmp_path)
+    harness.bootstrap([_child("child-a", vendor="muse")])
+    assert harness.coordinator.launch_ready_children().launched == ("child-a",)
+    harness.herdr.snapshot_error = LIFECYCLE.LaunchProtocolError("owner query unavailable")
+    assert harness.coordinator.spend_status() == ("ok", "")
+
+
+def test_supervision_reclaims_an_expired_absent_holder_and_advances_the_queue(
+    tmp_path: Path,
+) -> None:
+    harness = Harness(tmp_path, per_vendor=1, aggregate=1)
+    harness.bootstrap([_child("child-a"), _child("child-b")])
+    ADMISSION.activate_slot(harness.repo, "child-a", run_id=RUN_ID, now=100.0)
+
+    report = harness.coordinator.supervise()
+
+    assert report.subscriber_alive
+    rows = harness.rows()
+    assert rows["child-a"]["admission"] == "reclaimed"
+    assert rows["child-b"]["admission"] == "reserved"
+    assert "admission_reclaimed" in [
+        entry["kind"] for entry in harness.coordinator.run_log.entries()
+    ]
 
 
 def test_a_plan_with_no_ceiling_never_starts_a_child(harness: Harness) -> None:

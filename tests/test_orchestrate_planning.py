@@ -301,6 +301,64 @@ def test_failed_owner_query_keeps_the_slot_and_queue_intact(tmp_path: Path) -> N
     assert rows["waiting"]["admission"] == "queued"
 
 
+def test_one_unanswerable_owner_does_not_hide_a_dead_neighbor(tmp_path: Path) -> None:
+    _commit(
+        tmp_path,
+        [
+            _child("uncertain", "work-medium", vendor="claude"),
+            _child("dead", "work-medium", vendor="claude"),
+            _child("waiting", "work-medium", vendor="claude"),
+        ],
+        per_vendor_limit=2,
+        now=100.0,
+    )
+    ADMISSION.activate_slot(tmp_path, "uncertain", run_id="run-plan", now=100.0)
+    ADMISSION.activate_slot(tmp_path, "dead", run_id="run-plan", now=100.0)
+
+    class MixedAnswers:
+        asks = 0
+
+        def snapshot(self, *, cwd: Path) -> dict[str, Any]:
+            self.asks += 1
+            snapshot = _session_snapshot("run-plan", "uncertain", cwd=cwd)
+            snapshot["agents"][0].pop("agent_status")
+            snapshot["panes"][0].pop("agent_status")
+            snapshot["tabs"][0].pop("agent_status")
+            return snapshot
+
+    with pytest.raises(ADMISSION.AdmissionError, match="valid agent status"):
+        ADMISSION.reclaim_dead_slots(
+            tmp_path,
+            run_id="run-plan",
+            lease_seconds=10.0,
+            now=120.0,
+            herdr=MixedAnswers(),
+        )
+
+    rows = REGISTER.read_rows(tmp_path, run_id="run-plan")
+    assert rows["uncertain"]["admission"] == "held"
+    assert rows["dead"]["admission"] == "reclaimed"
+    assert rows["waiting"]["admission"] == "reserved"
+
+
+def test_failed_terminal_source_query_is_an_admission_error(tmp_path: Path) -> None:
+    _commit(tmp_path, [_child("dead", "work-medium", vendor="claude")], now=100.0)
+    ADMISSION.activate_slot(tmp_path, "dead", run_id="run-plan", now=100.0)
+
+    class SourceFailure:
+        asks = 0
+
+        def snapshot(self, *, cwd: Path) -> dict[str, Any]:
+            del cwd
+            self.asks += 1
+            if self.asks == 1:
+                return _session_snapshot("run-plan", "dead", status="exited", cwd=tmp_path)
+            raise ADMISSION.session_lifecycle.LaunchProtocolError("source query failed")
+
+    with pytest.raises(ADMISSION.AdmissionError, match="terminal-state source"):
+        ADMISSION.reclaim_dead_slots(tmp_path, run_id="run-plan", now=120.0, herdr=SourceFailure())
+
+
 def test_live_holder_with_a_pane_is_not_reclaimed(tmp_path: Path) -> None:
     _commit(tmp_path, [_child("live", "work-medium", vendor="claude")], now=100.0)
     ADMISSION.activate_slot(tmp_path, "live", run_id="run-plan", now=100.0)

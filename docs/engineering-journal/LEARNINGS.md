@@ -134,6 +134,31 @@ destroying the negative boundary that keeps an alert useful.
 ---
 
 ## 2026-08-15
+### An automatic test fixture can preserve a contract production deleted  {#automatic-fixtures-can-mask-deleted-state}
+
+**Context.** The durable register stopped carrying live terminal facts, but an automatic fixture
+still reconstructed those facts for every test from whatever row fields the test happened to
+write. Production had no equivalent. Tests could therefore pass through a compatibility layer no
+real coordinator received.
+
+**Evidence.** Removing the fixture immediately exposed 16 failures in the session-lifecycle test
+file. The failures were not product regressions: they were tests writing removed columns, calling
+deleted observation writers, or assuming a process-local answer existed. Replacing those setups
+with explicit Herdr snapshots produced 50 passing lifecycle tests and made absence-versus-query-
+failure assertions visible in the test bodies.
+
+**Mechanism.** An automatic fixture is part of every test's runtime architecture even when no test
+names it. If it supplies a deleted dependency, it converts missing integration into implicit test
+state and makes the suite validate the fixture's contract instead of production's.
+
+**Fix.** Delete the fixture. Tests that need live identity now provide a complete terminal snapshot
+or a fake terminal control object explicitly. Tests that do not need it receive no session facts.
+
+**Generalizable rule.** When removing a state seam, search fixtures before trusting green tests.
+Compatibility injected automatically is still compatibility, and it is especially dangerous when
+production is meant to fail closed without it.
+
+**Refs.** DECISIONS [#orchestrate-register-intent-outcome-boundary](DECISIONS.md#orchestrate-register-intent-outcome-boundary).
 
 ### A retired consumer's marker outlives it wherever a writer still names it
 
@@ -148,6 +173,15 @@ five GitHub issue forms, `_ISSUE_TYPE_LABELS` in five copies of `sdlc_manager.py
 post-create metadata step, four prompt/skill documents, a generated reference doc, and the
 `Hermes actionable: yes/no` marker emitted by `sync_template_docs.py`. Six test files
 asserted its presence.
+**Evidence.** The row that classifies a companion is written before launch, while the session is
+created outside this process. An interruption between those events can leave a real live session
+beside authored launch intent, and no register column can make that observation current. Executed
+reproduction: with the session genuinely present only in Herdr, the shutdown path re-asked the
+run-bound label, issued the close, and refused to report success when the tab remained present.
+Pinned by
+`tests/test_orchestrate_composition.py::test_a_mirror_with_no_live_tab_fact_is_not_read_as_stopped`,
+with the launcher-never-ran counterpart pinned by
+`test_a_mirror_whose_launcher_never_created_a_tab_still_needs_a_live_answer`.
 
 **Mechanism.** Retiring a *consumer* is one change; retiring the *marker it consumed* is as
 many changes as there are writers. Nobody removed the writers because the label was still
@@ -263,6 +297,8 @@ entrances than anyone has enumerated cannot be secured by enumerating entrances:
 pins a guarantee structurally — one construction site, asserted by a test that walks the module's own
 syntax tree — the class has not recurred once; where it is left to careful authorship, it recurred in
 every round.
+
+## 2026-08-15
 
 ### A refusal stored in a field the sensor rewrites lasts only until the next sample  {#refusal-must-outlive-the-sensor}
 

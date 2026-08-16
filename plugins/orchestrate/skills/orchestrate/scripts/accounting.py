@@ -241,6 +241,11 @@ def _actual_for_row(row: Mapping[str, Any], *, vendor: str) -> float:
     phase = row.get("phase")
     if phase == "planned":
         return 0.0
+    if phase == "launching":
+        raise AccountingError(
+            f"row {row.get('id')!r} is launching; its live session presence must be resolved "
+            "before accounting can include or exclude it"
+        )
     if phase not in LAUNCHED_PHASES:
         raise AccountingError(f"row {row.get('id')!r} has unknown phase {phase!r}; fail closed")
     declared = row.get("tokens_max", row.get("tokens_reserved"))

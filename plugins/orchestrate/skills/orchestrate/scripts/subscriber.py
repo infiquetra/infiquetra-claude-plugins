@@ -21,6 +21,7 @@ from typing import Any
 import accounting
 import herdr_events
 import register as register_store
+import session_lifecycle
 
 SENTINEL_MARKER = "ORCHESTRATE_SENTINEL "
 
@@ -30,7 +31,7 @@ class CatchUpRecord:
     """One registered row compared with the latest live snapshot."""
 
     row_id: str
-    pane_id: str
+    pane_id: str | None
     expected_state: str | None
     observed_state: str
     observed_state_source: str
@@ -174,7 +175,7 @@ def catch_up(
     *,
     run_id: str,
 ) -> list[CatchUpRecord]:
-    """Re-read every registered pane from one live snapshot and record observed state.
+    """Re-read every registered pane from one live snapshot and report observed state.
 
     A missing pane is recorded as ``exited``. A status mismatch remains a mismatch: catch-up does
     not promote lifecycle phases or trust detector status as a completion verdict.
@@ -185,8 +186,15 @@ def catch_up(
     register_store.assert_root_belongs_to_run(root, run_id, require_binding=False)
     panes_value = snapshot.get("panes")
     agents_value = snapshot.get("agents")
-    if not isinstance(panes_value, list) or not isinstance(agents_value, list):
-        raise herdr_events.ProtocolError("session.snapshot requires list 'panes' and 'agents'")
+    tabs_value = snapshot.get("tabs")
+    if (
+        not isinstance(panes_value, list)
+        or not isinstance(agents_value, list)
+        or not isinstance(tabs_value, list)
+    ):
+        raise herdr_events.ProtocolError(
+            "session.snapshot requires list 'tabs', 'panes', and 'agents'"
+        )
 
     live: dict[str, dict[str, Any]] = {}
     for item in panes_value:
@@ -199,12 +207,11 @@ def catch_up(
             live.setdefault(live_pane_id, {}).update(item)
 
     records: list[CatchUpRecord] = []
-    updates: dict[str, tuple[str, str]] = {}
     for row_id, row in register_store.read_rows(root, run_id=run_id).items():
-        pane_id = row.get("pane_id")
-        if not isinstance(pane_id, str) or not pane_id:
+        if row.get("phase") == "planned":
             continue
-        pane = live.get(pane_id)
+        pane_id = session_lifecycle.snapshot_session_pane_id(snapshot, run_id=run_id, row_id=row_id)
+        pane = live.get(pane_id) if pane_id is not None else None
         if pane is None:
             observed_state = "exited"
             observed_state_source = "inferred:snapshot_absence"
@@ -234,7 +241,6 @@ def catch_up(
 
         expected = row.get("expected_state")
         expected_state = expected if isinstance(expected, str) else None
-        updates[row_id] = (observed_state, observed_state_source)
         artifact_path, artifact_exists = _artifact_presence(root, row.get("artifact_path"))
         records.append(
             CatchUpRecord(
@@ -249,8 +255,6 @@ def catch_up(
                 artifact_exists=artifact_exists,
             )
         )
-    if updates:
-        register_store.record_observed_states(root, updates, run_id=run_id)
     return records
 
 
@@ -339,21 +343,12 @@ class Subscriber:
                 "run_id": self.run_id,
                 "agent": "subscriber",
                 "role": "subscriber",
-                "pane_id": self.pane_id,
-                "cwd": str(self.root),
                 "expected_state": "working",
             },
             run_id=self.run_id,
             writer=register_store.ROLE_WRITER,
         )
         register_store.write_phase(self.root, self.row_id, "working", run_id=self.run_id)
-        register_store.record_observed_state(
-            self.root,
-            self.row_id,
-            "working",
-            source="observed:subscriber_start",
-            run_id=self.run_id,
-        )
 
     def run_catch_up(self) -> None:
         """Run the one bounded recovery pass associated with the current connection."""
@@ -377,15 +372,55 @@ class Subscriber:
 
     def _registered_rows_for_event(
         self, event: herdr_events.HerdrEvent
-    ) -> list[tuple[str, dict[str, Any]]]:
+    ) -> tuple[list[tuple[str, dict[str, Any]]], bool]:
+        """Resolve the event against one current snapshot.
+
+        The boolean reports that at least one launched run row has disappeared. It lets a
+        terminal event trigger a conservative wake after Herdr has already removed the pane,
+        without treating every unrelated host event as though it belonged to this run.
+        """
         pane_id = event.pane_id
         tab_id = event.data.get("tab_id")
         rows = register_store.read_rows(self.root, run_id=self.run_id)
-        if pane_id is not None:
-            return [(row_id, row) for row_id, row in rows.items() if row.get("pane_id") == pane_id]
-        if isinstance(tab_id, str):
-            return [(row_id, row) for row_id, row in rows.items() if row.get("tab_id") == tab_id]
-        return []
+        if event.name == "pane.output_matched" and pane_id is not None:
+            expected = self._sentinel_expectations.get(pane_id, [])
+            row_ids = {
+                str(payload.get("child_id"))
+                for payload in expected
+                if payload.get("run_id") == self.run_id and payload.get("child_id")
+            }
+            if row_ids:
+                return (
+                    [(row_id, rows[row_id]) for row_id in sorted(row_ids) if row_id in rows],
+                    False,
+                )
+        snapshot = self.snapshot_reader()
+        found: list[tuple[str, dict[str, Any]]] = []
+        owner_missing = False
+        for row_id, row in rows.items():
+            if row.get("phase") == "planned":
+                continue
+            live_pane = session_lifecycle.snapshot_session_pane_id(
+                snapshot, run_id=self.run_id, row_id=row_id
+            )
+            if live_pane is None:
+                owner_missing = True
+                continue
+            if pane_id is not None and live_pane == pane_id:
+                found.append((row_id, row))
+                continue
+            if isinstance(tab_id, str) and live_pane is not None:
+                resolved_tab = next(
+                    (
+                        item.get("tab_id")
+                        for item in snapshot.get("panes", [])
+                        if isinstance(item, Mapping) and item.get("pane_id") == live_pane
+                    ),
+                    None,
+                )
+                if resolved_tab == tab_id:
+                    found.append((row_id, row))
+        return found, owner_missing
 
     def _report_unregistered_event(self, event: herdr_events.HerdrEvent) -> None:
         pane_id = event.pane_id
@@ -477,32 +512,23 @@ class Subscriber:
             )
             return True
         elif event.name in {"pane_exited", "pane_closed", "tab_closed"}:
-            source_prefix = "inferred" if event.name == "tab_closed" else "observed"
-            register_store.record_observed_state(
-                self.root,
-                row_id,
-                "exited",
-                source=f"{source_prefix}:{event.name}",
-                run_id=self.run_id,
-            )
             return True
         elif event.name == "pane_agent_status_changed":
             observed = event.data.get("agent_status")
             if isinstance(observed, str):
-                register_store.record_observed_state(
-                    self.root,
-                    row_id,
-                    observed,
-                    source="observed:pane_agent_status_changed",
-                    run_id=self.run_id,
-                )
                 return True
         return False
 
     def handle_event(self, event: herdr_events.HerdrEvent) -> None:
         """Update matching current-run rows before waking the orchestrator."""
-        registered = self._registered_rows_for_event(event)
+        registered, owner_missing = self._registered_rows_for_event(event)
         if not registered:
+            if owner_missing and event.name in {"pane_exited", "pane_closed", "tab_closed"}:
+                self.wake_sender(
+                    f"Orchestrate event {event.name} for run {self.run_id}. Re-read the live "
+                    "session snapshot before continuing."
+                )
+                return
             self._report_unregistered_event(event)
             return
         handled_rows: list[str] = []
@@ -519,21 +545,12 @@ class Subscriber:
     def run(self) -> None:
         """Register this process, then hold and recover the subscription indefinitely."""
         self.register_self()
-        try:
-            self.client.run_forever(
-                self.subscriptions,
-                self.handle_event,
-                self.run_catch_up,
-                diagnostic=lambda message: self._diagnostic("socket", message),
-            )
-        finally:
-            register_store.record_observed_state(
-                self.root,
-                self.row_id,
-                "exited",
-                source="observed:subscriber_stop",
-                run_id=self.run_id,
-            )
+        self.client.run_forever(
+            self.subscriptions,
+            self.handle_event,
+            self.run_catch_up,
+            diagnostic=lambda message: self._diagnostic("socket", message),
+        )
 
 
 def _parse_subscriptions(raw: str) -> list[dict[str, Any]]:
@@ -581,7 +598,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     try:
         subscriber.run()
-    except (herdr_events.HerdrEventError, register_store.RegisterError) as exc:
+    except (
+        herdr_events.HerdrEventError,
+        register_store.RegisterError,
+        session_lifecycle.SessionLifecycleError,
+    ) as exc:
         print(f"error: {exc}", file=sys.stderr, flush=True)
         return 1
     except KeyboardInterrupt:

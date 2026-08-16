@@ -20,8 +20,8 @@ def test_sdlc_manager_metadata_and_marketplace_entry_match() -> None:
 
     assert plugin_json["name"] == "mission-control"
     assert (
-        plugin_json["version"] == "2.10.2"
-    )  # house-style presentation contract on sdlc-operator (#704)
+        plugin_json["version"] == "2.11.0"
+    )  # interactive issue create validates the body before carding it
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/mission-control"
     assert "CAMPPS" in plugin_json["description"]

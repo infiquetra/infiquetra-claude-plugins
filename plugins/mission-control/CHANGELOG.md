@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.11.0] - 2026-08-15
+
+### Fixed - interactive `issue create` now validates the body before carding it
+
+- `issue create-prepared` has always refused a draft with blocking readiness gaps. Interactive `issue create` had no equivalent: it opened the browser template, took the pasted issue number, and applied labels + board membership with no body check in between, so a blank or half-filled template landed on the board wearing the same labels as a conformant card.
+- Adds `_gate_created_issue_body`, called between paste-back and metadata, reusing the existing `validate_card_body_for_context` rather than adding a second contract.
+- Scoped to the Hermes-actionable types — `exploration` and `context-update` ship different field sets by design and are not checked.
+- A failed issue fetch proceeds with a warning: an API hiccup is not a validation failure and must not strand a good issue.
+- Under `--format json` it emits a structured refusal and never prompts, so non-interactive callers cannot hang.
+- A failing body is a stop, not a veto: the operator sees the specific gaps plus the exact `gh issue edit` and `flow validate-card` commands, and must opt in explicitly to card it anyway.
+
 ## [2.10.2] - 2026-08-08
 
 ### Added - house-style presentation contract on the SDLC operator agent (#704)

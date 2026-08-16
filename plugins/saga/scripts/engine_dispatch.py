@@ -621,12 +621,57 @@ def _dispatch_once(
                 tripwire_note = f"{_TRIPWIRE_UNARMED}: {exc}"
     try:
         result = runner(invocation)
+    except BaseException:
+        if armed_at is not None and delegation_state is not None:
+            with contextlib.suppress(Exception):
+                delegation_state.disarm(session_id, root=workspace_root)
+        raise
+
+    try:
+        return _finish_adapter_result(
+            result,
+            resolution=resolution,
+            invocation=invocation,
+            record_facts=record_facts,
+            armed_at=armed_at,
+            tripwire_note=tripwire_note,
+            gated=gated,
+            session_id=session_id,
+            workspace_root=workspace_root,
+            expected_identity=expected_identity,
+            chaperone=chaperone,
+            economics_decision=economics_decision,
+            execution_id=execution_id,
+            intent=intent,
+            role_kind=role_kind,
+            downgrade_note=downgrade_note,
+        )
     finally:
         if armed_at is not None and delegation_state is not None:
-            # Disarm failure must never mask the adapter's result.
+            # Disarm after the pending fact is written, not before.
             with contextlib.suppress(Exception):
                 delegation_state.disarm(session_id, root=workspace_root)
 
+
+def _finish_adapter_result(
+    result: dict[str, Any],
+    *,
+    resolution: Resolution,
+    invocation: dict[str, Any],
+    record_facts: Callable[..., None],
+    armed_at: float | None,
+    tripwire_note: str,
+    gated: bool,
+    session_id: str,
+    workspace_root: Path | str | None,
+    expected_identity: str | None,
+    chaperone: dict[str, Any] | None,
+    economics_decision: Any,
+    execution_id: str,
+    intent: str,
+    role_kind: str,
+    downgrade_note: Callable[..., str],
+) -> AdvisoryEvidence | RequeueDisposition:
     _reject_gatekeeper_keys(result)
     status = _string_result(result.get("status"), default="malformed")
     output = _string_result(result.get("output"), default="")

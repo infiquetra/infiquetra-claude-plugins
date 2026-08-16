@@ -2,6 +2,40 @@
 
 ## 2026-08-16
 
+### The documented launch command is the claim protocol's owner  {#documented-command-owns-the-claim}
+
+**Decision.** The launch and collect commands printed in the review skills
+are the claim protocol's entry point. They reserve a pending slot before
+start, refuse a second start of the same request, go through
+`engine_dispatch.dispatch` so the tripwire arms and an `engine` fact is
+written, and collect advances the claim to `collected`. A start that
+never produces a session releases the slot.
+
+**Rejected: leave the commands as a thin runner wrapper and keep the
+Python helper as the only protocol owner.** The skills tell an agent to
+run the commands. A protocol the documented path does not execute is not
+the protocol.
+
+**Revisit when** a native session API replaces the `agent` wrapper.
+
+**Refs.** [`{#dispatch-pending-status}`](#dispatch-pending-status).
+
+### Pending engine facts are excluded from terminal samples  {#pending-facts-excluded-from-terminal-samples}
+
+**Decision.** Staleness and promotion drop `status=pending` engine facts
+before they compute success or failure. A launch that later collects
+still contributes its terminal `ok` (or failure) fact; the pending
+marker is not a run that happened and did not qualify.
+
+**Rejected: reduce the facts for one execution to their latest status.**
+Existing ledgers reuse `execution_id` across independent runs. Collapsing
+on that key would hide real failures that share an identifier.
+
+**Revisit when** each launch writes a unique identity that the matching
+collect reuses and that no other launch can share.
+
+**Refs.** [`{#documented-command-owns-the-claim}`](#documented-command-owns-the-claim).
+
 ### Dispatch itself can say a launch started and has not resolved  {#dispatch-pending-status}
 
 **Decision.** The dispatch layer accepts runner status `pending`. Arming

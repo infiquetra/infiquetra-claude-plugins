@@ -21,6 +21,23 @@
 
 ## 2026-08-16
 
+### A completed-process result is not a live process  {#completed-process-has-no-pid}
+
+**Context.** The documented launch command always raised after the
+reviewer process had already started, so no handle was printed and the
+reserved pending slot could never be collected.
+**Evidence.** `subprocess.run` returns `CompletedProcess`, whose public
+attributes are `args`, `returncode`, `stdout`, and `stderr`. It has no
+`pid`. The default launcher read `completed.pid` on every command-line
+launch.
+**Mechanism.** The production command is the only caller of that default
+`run`. Tests injected a scripted `run` or patched `start`, so the crash
+never appeared in a green suite.
+**Generalizable rule.** If a test only passes because the harness
+replaced the component under test, it is not testing that component.
+Substitute one layer further out than the thing you are proving.
+**Refs.** DECISIONS [`{#documented-command-owns-the-claim}`](DECISIONS.md#documented-command-owns-the-claim).
+
 ### Reserve the pending slot before the session starts  {#reserve-pending-before-start}
 
 **Context.** A bound on pending claims was checked after `start` returned.

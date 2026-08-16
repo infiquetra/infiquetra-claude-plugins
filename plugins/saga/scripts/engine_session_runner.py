@@ -11,9 +11,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
@@ -380,11 +382,12 @@ def select_review_runner(
 
 def subprocess_run(argv: list[str]) -> CommandResult:
     completed = subprocess.run(argv, capture_output=True, text=True, check=False)
+    pid = getattr(completed, "pid", None)
     return CommandResult(
         returncode=completed.returncode,
         stdout=completed.stdout,
         stderr=completed.stderr,
-        pid=completed.pid,
+        pid=pid if isinstance(pid, int) else None,
     )
 
 
@@ -548,52 +551,198 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _cli_session_id(digest: str) -> str:
+    env_id = os.environ.get("CLAUDE_CODE_SESSION_ID", "").strip()
+    if env_id and not any(ord(char) < 32 for char in env_id):
+        return env_id[:256]
+    return f"cli-{digest[:32]}"
+
+
+def _cli_ledger(repo_root: Path) -> Any:
+    import run_ledger
+
+    path = repo_root / ".saga" / "run-facts.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return run_ledger.RunLedger(path=path)
+
+
+def _cli_resolution(engine_id: str, invocation: Mapping[str, Any]) -> Any:
+    from engine_resolver import Resolution
+
+    model = invocation.get("model")
+    effort = invocation.get("effort")
+    task = invocation.get("task")
+    variant = model.strip() if isinstance(model, str) and model.strip() else "default"
+    row: dict[str, Any] = {}
+    if isinstance(model, str) and model.strip():
+        row["model"] = model.strip()
+    if isinstance(effort, str) and effort.strip():
+        row["effort"] = effort.strip()
+    return Resolution(
+        engine_id=engine_id,
+        variant=variant,
+        effort=effort.strip() if isinstance(effort, str) and effort.strip() else "",
+        recipe="cli-review",
+        protocol=["Review."],
+        payload=task if isinstance(task, str) else "",
+        write_capable=False,
+        fallback=None,
+        halt=None,
+        invocation=row or None,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
     if args.command == "launch":
-        invocation = json.loads(Path(args.invocation_file).read_text(encoding="utf-8"))
-        if not isinstance(invocation, dict):
-            parser.error("invocation file must contain an object")
-        digest = invocation.get("request_digest")
-        if not isinstance(digest, str) or not digest.strip():
-            parser.error("invocation must include request_digest so the claim can be reserved")
-        import second_opinion as so
+        return _cli_launch(parser, args)
+    return _cli_collect(parser, args)
 
-        store = _claim_store_from_args(args)
-        try:
-            store.reserve_pending_for_digest(digest)
-        except so.PendingBoundError as exc:
-            print(json.dumps({"halt": str(exc), "session_outcome": "not-started"}))
-            return 2
-        except so.SecondOpinionError as exc:
-            parser.error(str(exc))
-        engine_id = args.engine_id or invocation.get("engine_id") or reviewer_tool(invocation)
-        launcher = CommandSessionLauncher(cwd=Path(args.repo_root))
-        selected = select_review_runner(
-            stage=args.stage,
-            mode=args.mode,
-            home_vendor=args.home_vendor or engine_id,
-            engine_id=str(engine_id),
-            launcher=launcher,
-        )
-        if isinstance(selected, external_only.ExternalOnlyHalt):
-            print(json.dumps({"halt": selected.reason, "excluded": selected.excluded_vendor}))
-            return 2
-        result = selected(invocation)
-        handle = result.get("handle")
-        if isinstance(handle, dict) and result.get("session_outcome") == "pending":
+
+def _cli_launch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
+    import second_opinion as so
+
+    invocation = json.loads(Path(args.invocation_file).read_text(encoding="utf-8"))
+    if not isinstance(invocation, dict):
+        parser.error("invocation file must contain an object")
+    digest = invocation.get("request_digest")
+    if not isinstance(digest, str) or not digest.strip():
+        parser.error("invocation must include request_digest so the claim can be reserved")
+    store = _claim_store_from_args(args)
+    try:
+        store.reserve_pending_for_digest(digest)
+    except so.AlreadyPendingError as exc:
+        print(json.dumps({"halt": str(exc), "session_outcome": "pending"}))
+        return 2
+    except so.PendingBoundError as exc:
+        print(json.dumps({"halt": str(exc), "session_outcome": "not-started"}))
+        return 2
+    except so.SecondOpinionError as exc:
+        parser.error(str(exc))
+
+    engine_id = str(args.engine_id or invocation.get("engine_id") or reviewer_tool(invocation))
+    launcher = CommandSessionLauncher(cwd=Path(args.repo_root))
+    selected = select_review_runner(
+        stage=args.stage,
+        mode=args.mode,
+        home_vendor=args.home_vendor or engine_id,
+        engine_id=engine_id,
+        launcher=launcher,
+    )
+    if isinstance(selected, external_only.ExternalOnlyHalt):
+        store.release_unstarted_for_digest(digest, note=so.START_FAILED_NOTE)
+        print(json.dumps({"halt": selected.reason, "excluded": selected.excluded_vendor}))
+        return 2
+
+    def wrapped(built: dict[str, Any]) -> dict[str, Any]:
+        payload = dict(built)
+        payload["request_digest"] = digest
+        payload["via"] = invocation.get("via") or payload.get("via")
+        payload["task"] = invocation.get("task") or payload.get("task")
+        payload["engine_id"] = engine_id
+        if invocation.get("model"):
+            payload["model"] = invocation["model"]
+        if invocation.get("effort"):
+            payload["effort"] = invocation["effort"]
+        raw = selected(payload)
+        handle = raw.get("handle") if isinstance(raw, dict) else None
+        if isinstance(handle, dict) and raw.get("session_outcome") == "pending":
             store.record_handle_for_digest(digest, handle=handle)
-        print(json.dumps(flatten_launch_result(result), sort_keys=True, default=str))
-        return 0 if result.get("session_outcome") in {"pending", "ran", "ran-empty"} else 1
+        return raw
+
+    repo_root = Path(args.repo_root)
+    try:
+        dispatched = engine_dispatch.dispatch(
+            _cli_resolution(engine_id, invocation),
+            runner=wrapped,
+            ledger=_cli_ledger(repo_root),
+            subplot_id=digest[:64],
+            at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            gated=False,
+            session_id=_cli_session_id(digest),
+            execution_id=f"second-opinion-exec:{digest}",
+            intent="second-opinion",
+            role_kind="advisory-reviewer",
+            attempt_id=f"second-opinion:{digest}",
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI stays advisory
+        current = store.find_by_digest(digest)
+        if current is None or current.session_handle is None:
+            store.release_unstarted_for_digest(digest, note=so.START_FAILED_NOTE)
+        print(json.dumps({"halt": str(exc), "session_outcome": "not-started"}))
+        return 1
+
+    if isinstance(dispatched, engine_dispatch.RequeueDisposition):
+        store.release_unstarted_for_digest(digest, note=so.UNUSABLE_DISPATCH_NOTE)
+        print(json.dumps({"halt": dispatched.reason, "session_outcome": "not-started"}))
+        return 1
+
+    current = store.find_by_digest(digest)
+    outcome = "pending"
+    if dispatched.provenance.get("status") == engine_dispatch.PENDING_STATUS:
+        outcome = "pending"
+    elif dispatched.halt is not None and (current is None or current.session_handle is None):
+        store.release_unstarted_for_digest(digest, note=so.START_FAILED_NOTE)
+        outcome = "not-started"
+    elif dispatched.halt is None and dispatched.source_findings:
+        store.mark_collected_for_digest(digest)
+        outcome = "ran"
+    payload: dict[str, Any] = {
+        "status": "pending" if outcome == "pending" else ("ok" if outcome == "ran" else "error"),
+        "session_outcome": outcome,
+        "output": dispatched.evidence,
+    }
+    if current is not None and current.session_handle:
+        payload["handle"] = dict(current.session_handle)
+    if dispatched.halt is not None:
+        payload["reason"] = dispatched.halt
+    print(json.dumps(flatten_launch_result(payload), sort_keys=True, default=str))
+    return 0 if outcome in {"pending", "ran", "ran-empty"} else 1
+
+
+def _cli_collect(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
+    import second_opinion as so
+
     raw_handle = json.loads(Path(args.handle_file).read_text(encoding="utf-8"))
     if not isinstance(raw_handle, dict):
         parser.error("handle file must contain an object")
     handle = handle_from_payload(raw_handle)
     launcher = CommandSessionLauncher(cwd=handle.result_path.parent)
     result = _collect_result(launcher, handle)
+    store = _claim_store_from_args(args)
+    outcome = result.get("session_outcome")
+    if outcome == "ran":
+        store.mark_collected_for_digest(handle.request_digest)
+        _cli_write_terminal_fact(args, handle, result)
+    elif outcome == "ran-empty":
+        store.mark_unavailable_for_digest(handle.request_digest, note=so.EMPTY_OPINION_NOTE)
     print(json.dumps(flatten_launch_result(result), sort_keys=True, default=str))
-    return 0 if result.get("session_outcome") in {"pending", "ran", "ran-empty"} else 1
+    return 0 if outcome in {"pending", "ran", "ran-empty"} else 1
+
+
+def _cli_write_terminal_fact(
+    args: argparse.Namespace, handle: SessionHandle, result: Mapping[str, Any]
+) -> None:
+    def replay(_invocation: dict[str, Any]) -> dict[str, Any]:
+        return dict(result)
+
+    try:
+        engine_dispatch.dispatch(
+            _cli_resolution(handle.tool, {"model": handle.model, "effort": handle.effort}),
+            runner=replay,
+            ledger=_cli_ledger(Path(args.repo_root)),
+            subplot_id=handle.request_digest[:64],
+            at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            gated=False,
+            session_id=_cli_session_id(handle.request_digest),
+            execution_id=f"second-opinion-exec:{handle.request_digest}",
+            intent="second-opinion",
+            role_kind="advisory-reviewer",
+            attempt_id=f"second-opinion:{handle.request_digest}",
+        )
+    except Exception:  # noqa: BLE001 - claim already advanced
+        return
 
 
 if __name__ == "__main__":

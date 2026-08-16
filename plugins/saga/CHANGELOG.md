@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.135.0] - 2026-08-16
+
+### Fixed - the documented launch and collect commands own the claim
+
+- `subprocess_run` no longer reads a `pid` attribute `CompletedProcess` does not
+  have, so the documented launch command can return a handle after start.
+- Reserving a pending slot and observing one that already exists are different
+  outcomes. A second launch of the same request is refused and does not start
+  another session.
+- The collect command reads `--claim-store` and marks a usable result
+  `collected`.
+- A start that never produces a session releases the reserved slot.
+- The documented commands go through the dispatch layer, so a launch arms the
+  liveness tripwire and writes an `engine` fact by default.
+- Pending engine facts are excluded from staleness and promotion samples.
+
 ## [0.134.0] - 2026-08-16
 
 ### Added - dispatch can express a launched session that has not resolved

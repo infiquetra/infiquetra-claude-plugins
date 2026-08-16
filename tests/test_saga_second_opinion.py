@@ -6,7 +6,10 @@ import ast
 import importlib.util
 import io
 import json
+import os
 import re
+import stat
+import subprocess
 import sys
 import threading
 from collections.abc import Mapping
@@ -1281,3 +1284,521 @@ def test_documented_cli_launch_marks_pending_and_collect_accepts_stdout(
         claim_store=store,
     )
     assert collected.halt == SO.PENDING_NOTE
+
+
+def _persist_requested_claim(store_path: Path, *, request_id: str, digest: str) -> None:
+    store_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"schema": SO.CLAIM_SCHEMA, "claims": {}}
+    if store_path.is_file():
+        payload = json.loads(store_path.read_text(encoding="utf-8"))
+    claims = payload.setdefault("claims", {})
+    claims[request_id] = {
+        "request_id": request_id,
+        "request_digest": digest,
+        "execution_id": f"second-opinion-exec:{digest}",
+        "reconciliation_id": f"second-opinion-recon:{digest}",
+        "state": "requested",
+    }
+    store_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+
+
+def _documented_launch_argv(
+    *,
+    script: Path,
+    invocation_path: Path,
+    repo_root: Path,
+    store_path: Path,
+) -> list[str]:
+    return [
+        sys.executable,
+        str(script),
+        "launch",
+        "--invocation-file",
+        str(invocation_path),
+        "--repo-root",
+        str(repo_root),
+        "--stage",
+        "code-review",
+        "--mode",
+        "second-opinion",
+        "--home-vendor",
+        "claude",
+        "--engine-id",
+        "codex",
+        "--claim-store",
+        str(store_path),
+    ]
+
+
+def _documented_collect_argv(
+    *,
+    script: Path,
+    handle_path: Path,
+    repo_root: Path,
+    store_path: Path,
+) -> list[str]:
+    return [
+        sys.executable,
+        str(script),
+        "collect",
+        "--handle-file",
+        str(handle_path),
+        "--repo-root",
+        str(repo_root),
+        "--claim-store",
+        str(store_path),
+    ]
+
+
+def _write_invocation(path: Path, digest: str) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "via": "codex:delegate",
+                "task": "REVIEW THIS EXACT FINDING",
+                "model": "gpt-5.5",
+                "effort": "high",
+                "request_digest": digest,
+                "engine_id": "codex",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _stub_agent(tmp_path: Path, *, exit_code: int = 0) -> Path:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    agent = bin_dir / "agent"
+    log = tmp_path / "agent.argv"
+    agent.write_text(
+        "#!/bin/sh\n"
+        f'printf "%s\\n" "$@" >> "{log}"\n'
+        'printf "%s\\n" \'{"tab_id":"stub-tab"}\'\n'
+        f"exit {exit_code}\n",
+        encoding="utf-8",
+    )
+    agent.chmod(agent.stat().st_mode | stat.S_IEXEC)
+    return bin_dir
+
+
+def _subprocess_env(tmp_path: Path, bin_dir: Path) -> dict[str, str]:
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
+    env["ORCHESTRATE_REGISTER_DIR"] = str(tmp_path / "orchestrate-register")
+    env["ORCHESTRATE_RUN_SECRET_DIR"] = str(tmp_path / "orchestrate-secrets")
+    env["INFIQUETRA_FLEET_STATE_DIR"] = str(tmp_path / "fleet-state")
+    return env
+
+
+def test_documented_launch_and_collect_run_as_subprocesses(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    prepared = _prepared(monkeypatch)
+    store_path = tmp_path / ".saga" / "second-opinion-claims.json"
+    store = SO.SecondOpinionClaimStore(store_path)
+    assert store.claim(prepared).acquired
+    invocation_path = tmp_path / "invocation.json"
+    invocation_path.write_text(
+        json.dumps(
+            {
+                "via": "codex:delegate",
+                "task": "REVIEW THIS EXACT FINDING",
+                "model": "gpt-5.5",
+                "effort": "high",
+                "request_digest": prepared.request_digest,
+                "engine_id": "codex",
+            }
+        ),
+        encoding="utf-8",
+    )
+    bin_dir = _stub_agent(tmp_path)
+    env = _subprocess_env(tmp_path, bin_dir)
+    script = SCRIPTS / "engine_session_runner.py"
+    launch = subprocess.run(
+        _documented_launch_argv(
+            script=script,
+            invocation_path=invocation_path,
+            repo_root=tmp_path,
+            store_path=store_path,
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert launch.returncode == 0, launch.stderr
+    payload = json.loads(launch.stdout)
+    assert payload["session_outcome"] == "pending"
+    assert payload["result_path"]
+    argv_log = (tmp_path / "agent.argv").read_text(encoding="utf-8")
+    assert "codex" in argv_log
+    assert "--model" in argv_log
+    assert store.read(prepared.request_id).state == "pending"
+    assert store.read(prepared.request_id).session_handle is not None
+    facts = list(
+        SO.run_ledger.read_facts(SO.run_ledger.RunLedger(tmp_path / ".saga" / "run-facts.jsonl"))
+    )
+    assert any(item.get("kind") == "engine" and item.get("status") == "pending" for item in facts)
+
+    rows = [{"content": "P1: finding"}]
+    result_path = Path(payload["result_path"])
+    result_path.write_text(
+        json.dumps(
+            {
+                "request_digest": prepared.request_digest,
+                "findings": rows,
+            }
+        ),
+        encoding="utf-8",
+    )
+    handle_path = tmp_path / "launch-stdout.json"
+    handle_path.write_text(launch.stdout, encoding="utf-8")
+    collect = subprocess.run(
+        _documented_collect_argv(
+            script=script,
+            handle_path=handle_path,
+            repo_root=tmp_path,
+            store_path=store_path,
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert collect.returncode == 0, collect.stderr
+    collected = json.loads(collect.stdout)
+    assert collected["session_outcome"] == "ran"
+    assert store.read(prepared.request_id).state == "collected"
+    facts = list(
+        SO.run_ledger.read_facts(SO.run_ledger.RunLedger(tmp_path / ".saga" / "run-facts.jsonl"))
+    )
+    assert any(item.get("kind") == "engine" and item.get("status") == "ok" for item in facts)
+
+
+def test_documented_launch_refuses_a_second_start_of_the_same_claim(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    prepared = _prepared(monkeypatch)
+    store_path = tmp_path / "claims.json"
+    store = SO.SecondOpinionClaimStore(store_path)
+    assert store.claim(prepared).acquired
+    invocation_path = tmp_path / "inv.json"
+    invocation_path.write_text(
+        json.dumps(
+            {
+                "via": "codex:delegate",
+                "task": "REVIEW THIS EXACT FINDING",
+                "model": "gpt-5.5",
+                "effort": "high",
+                "request_digest": prepared.request_digest,
+                "engine_id": "codex",
+            }
+        ),
+        encoding="utf-8",
+    )
+    bin_dir = _stub_agent(tmp_path)
+    env = _subprocess_env(tmp_path, bin_dir)
+    script = SCRIPTS / "engine_session_runner.py"
+    first = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "launch",
+            "--invocation-file",
+            str(invocation_path),
+            "--repo-root",
+            str(tmp_path),
+            "--stage",
+            "code-review",
+            "--mode",
+            "second-opinion",
+            "--home-vendor",
+            "claude",
+            "--engine-id",
+            "codex",
+            "--claim-store",
+            str(store_path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert first.returncode == 0, first.stderr
+    second = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "launch",
+            "--invocation-file",
+            str(invocation_path),
+            "--repo-root",
+            str(tmp_path),
+            "--stage",
+            "code-review",
+            "--mode",
+            "second-opinion",
+            "--home-vendor",
+            "claude",
+            "--engine-id",
+            "codex",
+            "--claim-store",
+            str(store_path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert second.returncode == 2
+    payload = json.loads(second.stdout)
+    assert "already exists" in payload["halt"]
+    argv_lines = [
+        line
+        for line in (tmp_path / "agent.argv").read_text(encoding="utf-8").splitlines()
+        if line == "codex"
+    ]
+    assert len(argv_lines) == 1
+
+
+def test_failed_documented_launch_releases_the_reservation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    prepared = _prepared(monkeypatch)
+    store_path = tmp_path / "claims.json"
+    store = SO.SecondOpinionClaimStore(store_path)
+    assert store.claim(prepared).acquired
+    invocation_path = tmp_path / "inv.json"
+    invocation_path.write_text(
+        json.dumps(
+            {
+                "via": "codex:delegate",
+                "task": "REVIEW THIS EXACT FINDING",
+                "model": "gpt-5.5",
+                "effort": "high",
+                "request_digest": prepared.request_digest,
+                "engine_id": "codex",
+            }
+        ),
+        encoding="utf-8",
+    )
+    bin_dir = _stub_agent(tmp_path, exit_code=1)
+    env = _subprocess_env(tmp_path, bin_dir)
+    failed = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS / "engine_session_runner.py"),
+            "launch",
+            "--invocation-file",
+            str(invocation_path),
+            "--repo-root",
+            str(tmp_path),
+            "--stage",
+            "code-review",
+            "--mode",
+            "second-opinion",
+            "--home-vendor",
+            "claude",
+            "--engine-id",
+            "codex",
+            "--claim-store",
+            str(store_path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert failed.returncode != 0
+    claim = store.read(prepared.request_id)
+    assert claim is not None
+    assert claim.state == "unavailable"
+    assert claim.session_handle is None
+
+
+def test_unreadable_collected_file_does_not_raise(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    result_path = tmp_path / "slow.json"
+    launcher = ScriptedLauncher(pending=True, result_path=result_path)
+    run = SR.runner(launcher=launcher)
+    store = SO.SecondOpinionClaimStore(tmp_path / "claims.json")
+    prepared = _prepared(monkeypatch)
+    SO.dispatch_second_opinion(prepared, runner=run, claim_store=store)
+    rows = [{"content": "P0: a real blocker from a real reviewer"}]
+    result_path.write_text(
+        json.dumps({"request_digest": prepared.request_digest, "findings": rows}),
+        encoding="utf-8",
+    )
+    launcher.pending = False
+    launcher.findings = tuple(rows)
+    launcher.output = RC.render_source_findings(RC.parse_source_findings(rows))
+    collected = SO.collect_second_opinion(prepared, runner=run, claim_store=store)
+    assert collected.source_findings
+    result_path.write_text("{", encoding="utf-8")
+    launcher.collect_error = SR.SessionCollectError("unreadable")
+    resumed = SO.collect_second_opinion(prepared, runner=run, claim_store=store)
+    assert resumed.halt is not None
+    assert store.read(prepared.request_id).state == "collected"
+
+
+def test_fact_write_failure_keeps_a_collectable_pending_claim(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def boom(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError("fact write failed")
+
+    monkeypatch.setattr(SO.run_ledger, "append_fact", boom)
+    prepared = _prepared(monkeypatch)
+    store = SO.SecondOpinionClaimStore(tmp_path / "claims.json")
+    ledger = SO.run_ledger.RunLedger(tmp_path / "facts.jsonl")
+    evidence = SO.dispatch_second_opinion(
+        prepared,
+        runner=SR.runner(launcher=ScriptedLauncher(pending=True)),
+        claim_store=store,
+        ledger=ledger,
+        subplot_id="review-1",
+        at="2026-08-16T00:00:00Z",
+    )
+    claim = store.read(prepared.request_id)
+    assert evidence.halt == SO.PENDING_NOTE
+    assert claim is not None
+    assert claim.state == "pending"
+    assert claim.session_handle is not None
+
+
+def test_documented_cli_launch_arms_and_writes_an_engine_fact(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    events: list[str] = []
+
+    class FakeState:
+        @staticmethod
+        def arm(engine_id: str, session_id: str, producer: str, root: Any = None) -> Any:
+            events.append(f"ARM({engine_id})")
+            return type("Entry", (), {"armed_at": 1.0})()
+
+        @staticmethod
+        def disarm(session_id: str, root: Any = None) -> None:
+            events.append("DISARM")
+
+    def load(name: str) -> Any:
+        if name == "delegation_state":
+            return FakeState, ""
+        return None, "unused"
+
+    monkeypatch.setattr(SR.engine_dispatch, "_load_fleet_module", load)
+    prepared = _prepared(monkeypatch)
+    store_path = tmp_path / ".saga" / "second-opinion-claims.json"
+    store = SO.SecondOpinionClaimStore(store_path)
+    assert store.claim(prepared).acquired
+    invocation_path = tmp_path / "invocation.json"
+    _write_invocation(invocation_path, prepared.request_digest)
+    bin_dir = _stub_agent(tmp_path)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setenv("ORCHESTRATE_REGISTER_DIR", str(tmp_path / "orchestrate-register"))
+    monkeypatch.setenv("ORCHESTRATE_RUN_SECRET_DIR", str(tmp_path / "orchestrate-secrets"))
+    buffer = io.StringIO()
+    with redirect_stdout(buffer):
+        code = SR.main(
+            [
+                "launch",
+                "--invocation-file",
+                str(invocation_path),
+                "--repo-root",
+                str(tmp_path),
+                "--stage",
+                "code-review",
+                "--mode",
+                "second-opinion",
+                "--home-vendor",
+                "claude",
+                "--engine-id",
+                "codex",
+                "--claim-store",
+                str(store_path),
+            ]
+        )
+    assert code == 0, buffer.getvalue()
+    assert events == ["ARM(codex)", "DISARM"]
+    payload = json.loads(buffer.getvalue())
+    assert payload["session_outcome"] == "pending"
+    facts = list(
+        SO.run_ledger.read_facts(SO.run_ledger.RunLedger(tmp_path / ".saga" / "run-facts.jsonl"))
+    )
+    assert any(item.get("kind") == "engine" and item.get("status") == "pending" for item in facts)
+
+
+def test_eight_documented_collects_do_not_exhaust_the_pending_bound(tmp_path: Path) -> None:
+    store_path = tmp_path / ".saga" / "second-opinion-claims.json"
+    bin_dir = _stub_agent(tmp_path)
+    env = _subprocess_env(tmp_path, bin_dir)
+    script = SCRIPTS / "engine_session_runner.py"
+    collect_outcomes: list[str] = []
+    claim_states: list[str] = []
+    for index in range(8):
+        digest = f"{index:064x}"
+        request_id = f"second-opinion:pair-{index}"
+        _persist_requested_claim(store_path, request_id=request_id, digest=digest)
+        invocation_path = tmp_path / f"inv-{index}.json"
+        _write_invocation(invocation_path, digest)
+        launch = subprocess.run(
+            _documented_launch_argv(
+                script=script,
+                invocation_path=invocation_path,
+                repo_root=tmp_path,
+                store_path=store_path,
+            ),
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert launch.returncode == 0, launch.stderr
+        payload = json.loads(launch.stdout)
+        Path(payload["result_path"]).write_text(
+            json.dumps({"request_digest": digest, "findings": [{"content": "P1: finding"}]}),
+            encoding="utf-8",
+        )
+        handle_path = tmp_path / f"handle-{index}.json"
+        handle_path.write_text(launch.stdout, encoding="utf-8")
+        collect = subprocess.run(
+            _documented_collect_argv(
+                script=script,
+                handle_path=handle_path,
+                repo_root=tmp_path,
+                store_path=store_path,
+            ),
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert collect.returncode == 0, collect.stderr
+        collect_outcomes.append(json.loads(collect.stdout)["session_outcome"])
+        store = SO.SecondOpinionClaimStore(store_path)
+        claim_states.append(store.read(request_id).state)
+    assert collect_outcomes == ["ran"] * 8
+    assert claim_states == ["collected"] * 8
+    stored = json.loads(store_path.read_text(encoding="utf-8"))["claims"]
+    pending = sum(1 for item in stored.values() if item["state"] == "pending")
+    assert pending == 0
+    ninth_digest = f"{8:064x}"
+    _persist_requested_claim(store_path, request_id="second-opinion:pair-8", digest=ninth_digest)
+    ninth_inv = tmp_path / "inv-8.json"
+    _write_invocation(ninth_inv, ninth_digest)
+    ninth = subprocess.run(
+        _documented_launch_argv(
+            script=script,
+            invocation_path=ninth_inv,
+            repo_root=tmp_path,
+            store_path=store_path,
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert ninth.returncode == 0, ninth.stderr
+    assert json.loads(ninth.stdout)["session_outcome"] == "pending"

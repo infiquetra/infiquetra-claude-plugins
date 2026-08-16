@@ -76,6 +76,10 @@ class VanishedChildError(SessionLifecycleError):
     """A child disappeared before a recorded reap transition."""
 
 
+class ReapNotConfirmedError(SessionLifecycleError):
+    """A tab close request returned without the tab actually going away."""
+
+
 @dataclass(frozen=True)
 class ChildSpec:
     """One child launch request.

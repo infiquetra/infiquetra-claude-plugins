@@ -212,6 +212,7 @@ class FakeHerdr:
         row = REGISTER.read_rows(cwd, run_id="run-a")["child-a"]
         assert row["phase"] == "reaped"
         self.closed.append(tab_id)
+        self.present = False
 
     def tab_present(self, tab_id: str, *, cwd: Path) -> bool:
         self.presence_checks += 1

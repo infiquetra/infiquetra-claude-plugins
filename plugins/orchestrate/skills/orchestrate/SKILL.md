@@ -74,19 +74,27 @@ what herdr calls the session is recorded separately as `agent_name`.
 
 ## Agents
 
-`orchestrate.py roster` asks the wrapper what it can launch, every time — the `Tools:` section of
+`orchestrate.py roster` intersects the vendors orchestrate knows how to drive with what the wrapper
+can launch here, asked every time — the `Tools:` section of
 `agents --help`, **never `--crews`**, which is the operator's own workspace presets and silently
 drops installed agents. `start` and `expand` refuse a unit naming an agent the wrapper cannot
 launch, so a typo fails before any worktree exists. The wrapper is `agents`, with an `s`; override
 with `ORCHESTRATE_AGENT_LAUNCHER`. Model and effort flags are per vendor:
 
-| Agent | model | effort |
+| Vendor | model | effort |
 |---|---|---|
-| claude | `--model` | — |
+| claude | `--model` | `--effort` |
 | codex | `--model` | `-c model_reasoning_effort=` |
 | grok | `-m` | `--reasoning-effort` |
-| qwen | `-m` | — |
-| opencode | `-m` | — |
+| muse | `--model` | `--reasoning-effort` |
+| agy | `--model` | `--effort` |
+| qwen | `-m` | via `setup` |
+| opencode | `-m` (as `provider/model`) | via `setup` |
+
+**Every vendor can be given a tier.** Where the command line has no flag, the unit's `setup` list
+carries slash commands sent into the session before its task — `["/effort high"]` — so the session
+is at the requested tier before it is given work. `roster --probe` compares this table against each
+tool's own help and reports drift; run it after an agent updates.
 
 An agent not listed launches with no model flags. **qwen does not report interactive readiness**, so
 `herdr agent prompt` refuses it; the script falls back to typing into its pane, which is what an

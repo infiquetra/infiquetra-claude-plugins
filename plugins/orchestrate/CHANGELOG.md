@@ -1,5 +1,41 @@
 # Changelog
 
+## [1.3.0] - 2026-08-16
+
+Round three of live operator use. Every vendor can now be given a tier, and the vendor list means
+what it says.
+
+### Fixed
+
+- **The tier flag table was stale in four places, silently.** `claude` grew `--effort` and was being
+  launched with no effort control at all — as the default planner. `agy` and `muse` were absent
+  entirely despite both taking `--model` and an effort flag. Read from each tool's own `--help`.
+- **`roster` is now `known vendors ∩ available here`, not everything the wrapper lists.** Orchestrate
+  has to know how to drive a vendor before offering it, so Hermes profiles and provider variants are
+  reported separately rather than presented as choices. Both halves of the intersection matter: a
+  vendor this plugin understands is useless on a machine without it.
+
+### Added
+
+- **`roster --models` asks each vendor which models it actually has.** Model names were the last
+  thing still taken from memory — the same source that got the crew list and the flag table wrong.
+  `grok` and `opencode` can answer; `claude` documents its aliases in its own help; the rest cannot,
+  and for those the operator supplies the name rather than anyone guessing. Bounded by a timeout,
+  because `agy models` can hang and a frozen interview is the failure this plugin keeps fixing.
+- **Notes on an interview answer are instructions.** "Use grok for the second plan instead of codex"
+  is applied and carried into the table, and beats the option it was attached to. The table is
+  edited in plain language and redrawn in full, so what is approved is what runs.
+- **`setup` on a unit — slash commands sent into the session before its task.** `["/effort high"]`
+  for a vendor whose command line has no effort flag. Every vendor can therefore be given a model
+  and an effort: through the command line where one exists, through the session where one does not.
+  No vendor is presented as untierable.
+- **`roster --probe` compares the flag table against each tool's own help and reports drift.** It
+  tests the token orchestrate actually passes, so codex's `-c model_reasoning_effort=` config
+  override is not mistaken for a missing flag. This check caught a regression in the same change
+  that introduced it: `opencode` really does take `-m/--model` on its interactive session, and had
+  been wrongly removed.
+
+
 ## [1.2.0] - 2026-08-16
 
 Round two of live operator use. Three corrections, all from watching the interview run.

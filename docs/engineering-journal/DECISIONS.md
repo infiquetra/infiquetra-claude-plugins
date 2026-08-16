@@ -117,8 +117,166 @@ converts a correctness choice into a cost choice and labels it external-only.
 non-home member," or when a second construction site for the roster appears.
 
 **Refs.** [`{#external-reviewers-are-managed-sessions}`](#external-reviewers-are-managed-sessions).
+### Finding blocking is an explicit boolean and performed verdicts carry findings  {#finding-blocking-is-explicit}
+
+**Decision.** Each finding must declare `blocking` with a required keyword-only boolean. The review
+loop never derives blocking effect from `rank`, and every verdict concluded from a performed report
+returns the report's findings.
+
+**Context.** The rank is an unconstrained string supplied by reviewers that may use different
+rubrics. Treating selected rank text as blocking would move an unreliable interpretation into the
+stopping rule. Closing on new non-blocking findings also requires a durable handoff to the caller;
+otherwise the decision would accept a report while making its filed work unreachable.
+
+**Rationale.** A required keyword-only boolean makes blocking a deliberate, type-checked statement.
+It cannot be enabled by positional drift, a default, or words in the rank. Returning the immutable
+finding tuple on the verdict keeps the decision and the evidence together without adding another
+store.
+
+**Rejected alternatives.** Parsing rank names was rejected because rank has no shared vocabulary.
+A default of `False` was rejected because omission would silently become a policy declaration.
+Returning findings only for a passing last iteration was rejected because callers should not need
+verdict-specific access rules.
+
+**Consequences.** Finding constructors must state `blocking=True` or `blocking=False`. New
+non-blocking findings on the last allowed iteration produce `pass` and remain available to file;
+recurring classes and undisposed earlier classes still escalate independently of blocking or rank.
+
+**Refs.** LEARNINGS `{#terminal-trigger-must-use-target-evidence}`; decision
+`{#resolution-is-authored-not-inferred}`.
+
+---
 
 ## 2026-08-15
+
+### Removing a stored fact and building the way to ask for it are one change  {#removal-and-read-through-are-one-change}
+
+**Date.** 2026-08-15
+
+**Decision.** When a durable record of a live fact is removed, the mechanism that asks the fact's
+owner ships in the **same change**. They are not sequential units.
+
+**Context.** A plan split them: remove the stored session columns first, add the read-through second.
+The first half was built and reviewed. With the columns gone and the asking deferred, every decision
+site had exactly two behaviours available — consult a stand-in, or refuse — and the delivered change
+did both. The stand-in was a module-level dictionary with no expiry, no invalidation, and no way to
+record that a fact had become unavailable; the refusals landed on recovery paths and wedged them, so
+a concurrency slot could no longer be released.
+
+**Rationale.** The stored copy is not the problem by itself; the problem is a decision made from a
+fact nobody asked for. Removing the storage without providing the asking does not remove that
+property, it relocates it — from a file to memory, with a shorter lifetime and no upper bound on the
+staleness. A prior decision in this same plan had already rejected a per-read facts object for
+exactly this reason and rejected time-to-live caching because "a TTL is a shadow whose staleness is a
+tunable." The store that was built has no TTL at all: within one process it is permanent.
+
+**Rejected alternatives.**
+
+- *Patch the halfway state — restore the deleted asking sites and keep the store for the rest.* Once
+  every site that has an owner asks it, the read-through is substantially built anyway, so this is
+  the merged unit under a name that hides its scope. It also still ships a store the next unit must
+  delete.
+- *Ship the halfway state and file the defects.* The suite passed 6,162 tests over a one-way ratchet,
+  because a fixture supplied the fact production has to ask for. Green tests on an arrangement that
+  cannot reach the broken state are not evidence.
+
+**Consequences.** A unit that removes durable state now carries the replacement query. Reviews of
+such a unit should check that no module-level mutable state retains the removed fact, rather than
+only that the schema no longer carries it.
+
+**Revisit when.** A removal is genuinely additive — the stored fact has no live owner to ask, so
+there is no read-through to build and nothing to sequence.
+
+---
+
+### A review is finished only when someone says the finding is fixed  {#resolution-is-authored-not-inferred}
+
+**Date.** 2026-08-15
+
+**Decision.** A bounded review loop refuses the `pass` verdict while any defect class raised in an
+earlier iteration has not been **explicitly disposed of** by the report concluding the current
+iteration. Resolution is an authored claim, never an inference drawn from a reviewer's silence.
+
+**Context.** The loop scopes each re-review to the change since the previous iteration, which is
+what keeps review cost bounded. Combined with an absent notion of resolution, that scoping produced
+a defect neither feature causes alone:
+
+```
+iter1  report = [blocking finding]        -> halt-and-repair
+iter2  nothing was fixed, so the delta is empty
+iter2  report = ()                        -> pass, defect still present
+```
+
+The crueler form needs no empty delta. Editing an unrelated path leaves the defective path out of
+the delta, so the reviewer cannot see it, and its silence is read as a fix.
+
+**Rationale.** The loop was conflating *the reviewer reported nothing about this class* with *this
+class is resolved*. Those differ exactly when the reviewer was never shown the code — which is the
+normal case under delta scoping, not an edge case. Requiring disposal converts the inference into a
+statement someone is accountable for.
+
+**Rejected alternatives.**
+
+- *Re-present every open finding's original location in each delta.* Restores review cost to the
+  whole artifact and defeats the scoping the loop exists to provide.
+- *Track resolution per finding with evidence bound to a scope token.* Correct and larger. Needs
+  finding identity beyond the class and durable state the loop does not have. Deferred deliberately.
+- *Treat an unchanged path as implicitly unresolved.* Cheaper, but silently wrong the moment a fix
+  lands in a different path than the finding named.
+
+**Consequences.** A report gains a disposal set. Disposing a class that was never open is refused,
+because a typo must not close a finding and must not look like success. Disposing and re-raising the
+same class in one report is refused as internally contradictory. A last iteration that ends with
+open, undisposed classes yields `halt-and-escalate` rather than an exception — the caller learns the
+outcome from a verdict, not by catching a refusal.
+
+**Revisit when.** Findings acquire durable identity, or the loop gains state that survives a process
+restart. Either makes per-finding disposal with bound evidence affordable, and the class-level rule
+here becomes the coarse approximation it currently is.
+
+---
+
+### Move the boundary first, then repair what survives it  {#move-the-boundary-then-repair}
+
+**Decision.** The halted composition unit is neither repaired in place nor
+rebuilt. The boundary correction lands as units on the existing branch, and
+the defects that the correction makes unreachable are closed as a
+*consequence* rather than as repairs. Only the defects that survive the
+boundary move get repair units, ranked on their own merits.
+
+The evidence is a classification of the composition module's 3,656 lines
+(2,882 inside function bodies; its coordinator class alone is 2,244 lines
+across 72 methods). Roughly 42% of the code in function bodies exists to
+reconcile the durable table's copy of session facts against the world;
+roughly 58% is composition that the boundary move does not touch. **Six of
+the seven merge-blocking defects fall in the first bucket. Two fall in the
+second** — one of them appears in both counts because it spans the two.
+
+Rebuilding would discard ~1,664 lines of composition the correction does not
+touch. A further repair round would spend effort on ~1,218 lines about to
+shrink or disappear, and five rounds of evidence say that round would be
+followed by another.
+
+**The claim is falsifiable and gated.** After the boundary units land, the
+panel's own reproductions for the six substrate defects must show them
+unreachable. If any survives, the boundary move did not do what this decision
+claims, and the unit escalates rather than continuing — the escalation rule
+from [`{#review-loops-bounded-by-construction}`](#review-loops-bounded-by-construction)
+applied to the plan's own execution.
+
+**Rejected: a sixth repair round.** Three rounds already closed the entrances
+that were named and were each followed by a review finding new ones.
+**Rejected: rebuild the unit.** It discards the composition majority, which
+no review has faulted.
+**Rejected: rebuild onto a fresh branch to escape the halted one.** The
+branch's gate is green and its safety ref is preserved; the defects are in
+the code, not in the branch.
+
+**Revisit when** the U4 gate fails, which would mean the classification above
+is wrong.
+
+**Refs.** [`docs/plans/2026-08-15-orchestrate-boundary-and-review-machinery-plan.md`](../plans/2026-08-15-orchestrate-boundary-and-review-machinery-plan.md);
+[`{#register-keeps-intent-not-substrate}`](#register-keeps-intent-not-substrate).
 
 ### Review loops terminate by construction; escalation is bounded at one  {#review-loops-bounded-by-construction}
 

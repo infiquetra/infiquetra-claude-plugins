@@ -88,7 +88,7 @@ or technical value. The primary unit of work in AI-native development.
 | L | 2-4 weeks | Identity verification service with multiple providers |
 
 ### Template Labels
-- Current template labels: `capability`, `hermes-task`, `needs-plan`
+- Current template labels: `capability`, `needs-plan`
 - Do not use `needs-analysis` as the current template default; it may still appear from legacy
   auto-label fallback rules.
 - See `templates-reference.md` for the generated label and field contract.
@@ -135,7 +135,7 @@ For optimization, refinement, refactoring, and incremental improvements.
 | 4-5 days | Complex | Significant refactor, performance optimization |
 
 ### Template Labels
-- Current template labels: `enhancement`, `hermes-task`, `needs-plan`
+- Current template labels: `enhancement`, `needs-plan`
 - Do not use `needs-analysis` as the current template default; it may still appear from legacy
   auto-label fallback rules.
 - See `templates-reference.md` for the generated label and field contract.
@@ -180,7 +180,7 @@ Hours to 2 days. Priority determines SLA:
 | Low | When capacity | Cosmetic or rare edge case | Typo, rare race condition |
 
 ### Template Labels
-- Current template labels: `defect`, `hermes-task`, `needs-plan`
+- Current template labels: `defect`, `needs-plan`
 - Add exactly one priority label manually when the defect severity is known:
   `critical`, `high-priority`, `medium-priority`, or `low-priority`.
 - Do not use `needs-triage` as the current template default; it may still appear from legacy
@@ -219,7 +219,7 @@ decisions. Produces knowledge, not production code.
 1-3 days maximum (timebox strictly).
 
 ### Template Labels
-- Current template labels: `exploration`, `research`, `hermes-not-actionable`
+- Current template labels: `exploration`, `research`
 - Exploration cards are context for research and decisions, not Hermes task cards.
 - See `templates-reference.md` for the generated label and field contract.
 
@@ -260,7 +260,7 @@ AI effectiveness — Claude Code relies on up-to-date context in the blueprint r
 Hours to 1 day. Should accompany every Capability.
 
 ### Template Labels
-- Current template labels: `context-update`, `documentation`, `hermes-not-actionable`
+- Current template labels: `context-update`, `documentation`
 - Context Update cards are documentation/context work items, not Hermes task cards.
 - See `templates-reference.md` for the generated label and field contract.
 

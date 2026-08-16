@@ -40,7 +40,7 @@ when_to_use: |
 
   Self-heal missing labels (so other operations don't fail mid-flow):
   - "Make sure the high-priority label exists on campps-mvp"
-  - "Verify hermes-task is on this repo's label set"
+  - "Verify the type labels are on this repo's label set"
   - "Create the capability label if it's missing"
 
   Pre-flight an issue body against the card_validator schema:

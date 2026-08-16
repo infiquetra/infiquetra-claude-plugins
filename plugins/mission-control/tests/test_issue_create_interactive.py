@@ -199,8 +199,13 @@ def test_paired_card_recursion_guard() -> None:
 # --- _apply_post_create_metadata ------------------------------------------
 
 
-def test_metadata_applies_hermes_task_for_actionable_types() -> None:
-    """Capability/enhancement/defect get `hermes-task`."""
+def test_metadata_applies_type_labels_for_actionable_types() -> None:
+    """Capability/enhancement/defect get their type label plus `needs-plan`.
+
+    This path used to guarantee only the retired `hermes-task` dispatch marker —
+    not even the type label — so a card whose browser template failed to prefill
+    landed untyped.
+    """
     with (
         patch.object(sdlc_manager, "_gh") as mock_gh,
         patch.object(sdlc_manager, "board_add"),
@@ -217,12 +222,12 @@ def test_metadata_applies_hermes_task_for_actionable_types() -> None:
             field_values={},
             fmt="text",
         )
-    # Verify hermes-task label was applied
     cmd_calls = [c.args[0] for c in mock_gh.call_args_list]
-    label_call = next((c for c in cmd_calls if "edit" in c and "hermes-task" in str(c)), None)
+    label_call = next((c for c in cmd_calls if "edit" in c and "--add-label" in c), None)
     assert label_call is not None
-    assert "--add-label" in label_call
-    assert "hermes-task" in label_call
+    applied = label_call[label_call.index("--add-label") + 1]
+    assert applied == "capability,needs-plan"
+    assert "hermes" not in applied
 
 
 def test_objective_is_not_a_creatable_issue_type() -> None:
@@ -240,7 +245,7 @@ def test_objective_is_not_a_creatable_issue_type() -> None:
         )
 
 
-def test_metadata_applies_hermes_not_actionable_for_exploration() -> None:
+def test_metadata_applies_context_labels_for_exploration() -> None:
     """Exploration/context-update are non-actionable template types."""
     with (
         patch.object(sdlc_manager, "_gh") as mock_gh,
@@ -259,8 +264,11 @@ def test_metadata_applies_hermes_not_actionable_for_exploration() -> None:
             fmt="text",
         )
     cmd_calls = [c.args[0] for c in mock_gh.call_args_list]
-    assert any("hermes-not-actionable" in str(call) for call in cmd_calls)
-    assert not any("hermes-task" in str(call) for call in cmd_calls)
+    label_call = next((c for c in cmd_calls if "edit" in c and "--add-label" in c), None)
+    assert label_call is not None
+    applied = label_call[label_call.index("--add-label") + 1]
+    assert applied == "exploration,research"
+    assert not any("hermes" in str(call) for call in cmd_calls)
 
 
 def test_metadata_label_failure_does_not_abort_other_steps() -> None:
@@ -331,3 +339,98 @@ def test_parent_ref_regex_accepts_realistic_refs() -> None:
     assert parse("just-text") is None
     assert parse("#42") is None  # missing repo
     assert parse("repo-only") is None  # missing #N
+
+
+# --- _gate_created_issue_body ----------------------------------------------
+# The interactive path used to apply labels + board membership with no body
+# check, so a blank template landed on the board looking like a good card.
+# These cover each branch of the gate.
+
+_GOOD_BODY = """### Objective
+platform-quality
+
+### Intent
+Wire the card validator into the interactive create path.
+
+### Out-of-scope / non-goals
+- Does not change the prepared path.
+
+### Files expected to change
+- plugins/mission-control/scripts/sdlc_manager.py
+
+### Tests to add or update
+- plugins/mission-control/tests/test_issue_create_interactive.py
+
+### Context library links
+_none_
+
+### Acceptance criteria
+- [ ] A malformed body blocks metadata: `uv run pytest -q`
+
+### Verification
+```bash
+uv run pytest plugins/mission-control/tests/ -q
+```
+"""
+
+
+def test_gate_skips_non_actionable_types() -> None:
+    """exploration/context-update ship different field sets by design — the
+    eight-section contract must not be applied to them."""
+    for issue_type in ("exploration", "context-update"):
+        with patch.object(sdlc_manager, "_rest_get") as rest:
+            assert sdlc_manager._gate_created_issue_body("repo", 1, issue_type, "text") is True
+            rest.assert_not_called()
+
+
+def test_gate_passes_a_conformant_body() -> None:
+    with patch.object(sdlc_manager, "_rest_get", return_value={"body": _GOOD_BODY}):
+        assert sdlc_manager._gate_created_issue_body("repo", 42, "capability", "text") is True
+
+
+def test_gate_blocks_empty_body_by_default() -> None:
+    """Enter (or 'n') at the override prompt leaves the issue un-carded."""
+    with (
+        patch.object(sdlc_manager, "_rest_get", return_value={"body": ""}),
+        patch.object(sdlc_manager, "_safe_input", return_value=""),
+    ):
+        assert sdlc_manager._gate_created_issue_body("repo", 42, "defect", "text") is False
+
+
+def test_gate_blocks_malformed_body_and_reports_gaps(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch.object(sdlc_manager, "_rest_get", return_value={"body": "### Objective\nonly this"}),
+        patch.object(sdlc_manager, "_safe_input", return_value="n"),
+    ):
+        assert sdlc_manager._gate_created_issue_body("repo", 7, "enhancement", "text") is False
+    out = capsys.readouterr().out
+    assert "INVALID: repo#7" in out
+    assert "gh issue edit 7" in out
+    assert "not applied" in out
+
+
+def test_gate_honours_explicit_override() -> None:
+    """The operator can still proceed knowingly — this is a stop, not a veto."""
+    with (
+        patch.object(sdlc_manager, "_rest_get", return_value={"body": "nope"}),
+        patch.object(sdlc_manager, "_safe_input", return_value="y"),
+    ):
+        assert sdlc_manager._gate_created_issue_body("repo", 7, "capability", "text") is True
+
+
+def test_gate_does_not_prompt_in_json_mode(capsys: pytest.CaptureFixture[str]) -> None:
+    """A non-interactive caller gets a structured refusal, never a hung prompt."""
+    with (
+        patch.object(sdlc_manager, "_rest_get", return_value={"body": "nope"}),
+        patch.object(sdlc_manager, "_safe_input") as ask,
+    ):
+        assert sdlc_manager._gate_created_issue_body("repo", 7, "defect", "json") is False
+        ask.assert_not_called()
+    assert '"metadata_applied": false' in capsys.readouterr().out
+
+
+def test_gate_proceeds_when_the_issue_cannot_be_fetched() -> None:
+    """An API hiccup must not strand a good issue — fetch failure is not a
+    validation failure."""
+    with patch.object(sdlc_manager, "_rest_get", side_effect=RuntimeError("502")):
+        assert sdlc_manager._gate_created_issue_body("repo", 7, "capability", "text") is True

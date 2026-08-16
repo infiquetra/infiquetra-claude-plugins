@@ -331,3 +331,98 @@ def test_parent_ref_regex_accepts_realistic_refs() -> None:
     assert parse("just-text") is None
     assert parse("#42") is None  # missing repo
     assert parse("repo-only") is None  # missing #N
+
+
+# --- _gate_created_issue_body ----------------------------------------------
+# The interactive path used to apply labels + board membership with no body
+# check, so a blank template landed on the board looking like a good card.
+# These cover each branch of the gate.
+
+_GOOD_BODY = """### Objective
+platform-quality
+
+### Intent
+Wire the card validator into the interactive create path.
+
+### Out-of-scope / non-goals
+- Does not change the prepared path.
+
+### Files expected to change
+- plugins/mission-control/scripts/sdlc_manager.py
+
+### Tests to add or update
+- plugins/mission-control/tests/test_issue_create_interactive.py
+
+### Context library links
+_none_
+
+### Acceptance criteria
+- [ ] A malformed body blocks metadata: `uv run pytest -q`
+
+### Verification
+```bash
+uv run pytest plugins/mission-control/tests/ -q
+```
+"""
+
+
+def test_gate_skips_non_actionable_types() -> None:
+    """exploration/context-update ship different field sets by design — the
+    eight-section contract must not be applied to them."""
+    for issue_type in ("exploration", "context-update"):
+        with patch.object(sdlc_manager, "_rest_get") as rest:
+            assert sdlc_manager._gate_created_issue_body("repo", 1, issue_type, "text") is True
+            rest.assert_not_called()
+
+
+def test_gate_passes_a_conformant_body() -> None:
+    with patch.object(sdlc_manager, "_rest_get", return_value={"body": _GOOD_BODY}):
+        assert sdlc_manager._gate_created_issue_body("repo", 42, "capability", "text") is True
+
+
+def test_gate_blocks_empty_body_by_default() -> None:
+    """Enter (or 'n') at the override prompt leaves the issue un-carded."""
+    with (
+        patch.object(sdlc_manager, "_rest_get", return_value={"body": ""}),
+        patch.object(sdlc_manager, "_safe_input", return_value=""),
+    ):
+        assert sdlc_manager._gate_created_issue_body("repo", 42, "defect", "text") is False
+
+
+def test_gate_blocks_malformed_body_and_reports_gaps(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch.object(sdlc_manager, "_rest_get", return_value={"body": "### Objective\nonly this"}),
+        patch.object(sdlc_manager, "_safe_input", return_value="n"),
+    ):
+        assert sdlc_manager._gate_created_issue_body("repo", 7, "enhancement", "text") is False
+    out = capsys.readouterr().out
+    assert "INVALID: repo#7" in out
+    assert "gh issue edit 7" in out
+    assert "not applied" in out
+
+
+def test_gate_honours_explicit_override() -> None:
+    """The operator can still proceed knowingly — this is a stop, not a veto."""
+    with (
+        patch.object(sdlc_manager, "_rest_get", return_value={"body": "nope"}),
+        patch.object(sdlc_manager, "_safe_input", return_value="y"),
+    ):
+        assert sdlc_manager._gate_created_issue_body("repo", 7, "capability", "text") is True
+
+
+def test_gate_does_not_prompt_in_json_mode(capsys: pytest.CaptureFixture[str]) -> None:
+    """A non-interactive caller gets a structured refusal, never a hung prompt."""
+    with (
+        patch.object(sdlc_manager, "_rest_get", return_value={"body": "nope"}),
+        patch.object(sdlc_manager, "_safe_input") as ask,
+    ):
+        assert sdlc_manager._gate_created_issue_body("repo", 7, "defect", "json") is False
+        ask.assert_not_called()
+    assert '"metadata_applied": false' in capsys.readouterr().out
+
+
+def test_gate_proceeds_when_the_issue_cannot_be_fetched() -> None:
+    """An API hiccup must not strand a good issue — fetch failure is not a
+    validation failure."""
+    with patch.object(sdlc_manager, "_rest_get", side_effect=RuntimeError("502")):
+        assert sdlc_manager._gate_created_issue_body("repo", 7, "capability", "text") is True

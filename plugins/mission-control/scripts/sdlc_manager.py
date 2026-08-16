@@ -5203,6 +5203,66 @@ def _prompt_issue_number(repo: str) -> int | None:
     return None
 
 
+def _gate_created_issue_body(repo: str, issue_number: int, issue_type: str, fmt: str) -> bool:
+    """Gate post-create metadata on the card contract. Returns True to proceed.
+
+    `issue create-prepared` has always refused to create a draft with blocking
+    readiness gaps (`RuntimeError: Prepared issue has blocking readiness gaps`).
+    The interactive path had no equivalent: it opened the browser template, took
+    the pasted issue number, and applied labels + board membership with no body
+    check at all. A blank or half-filled template therefore landed on the board
+    wearing exactly the same labels as a conformant card, which is the single
+    most direct generator of board inconsistency.
+
+    Scope: only the Hermes-actionable types carry the eight-section contract.
+    `exploration` and `context-update` ship deliberately different field sets and
+    are not validated here — validating them would reject correct cards.
+
+    Failure is a stop, not a veto: the operator is shown the specific gaps and
+    must opt in explicitly (default no). Declining leaves the issue without
+    labels or board membership, which is recoverable and visible; silently
+    carding a malformed issue is neither. A fetch failure is not treated as a
+    validation failure — an API hiccup should not strand a good issue.
+    """
+    if issue_type not in _HERMES_ACTIONABLE_TYPES:
+        return True
+
+    issue_ref = f"{repo}#{issue_number}"
+    try:
+        data = _rest_get(f"repos/{ORG}/{repo}/issues/{issue_number}")
+    except RuntimeError as e:
+        _warn(f"Could not fetch {issue_ref} to validate it ({e}); applying metadata unchecked.")
+        return True
+
+    body = data.get("body") or ""
+    is_valid, errors = (
+        (False, ["Issue has empty body"])
+        if not body.strip()
+        else validate_card_body_for_context(body, issue_type, None)
+    )
+    if is_valid:
+        return True
+
+    if fmt == "json":
+        _out({"valid": False, "errors": errors, "issue": issue_ref, "metadata_applied": False}, fmt)
+        return False
+
+    print(f"\nINVALID: {issue_ref} does not satisfy the card contract:")
+    for err in errors:
+        print(f"   - {err}")
+    print(
+        f"\nFix the body first:  gh issue edit {issue_number} --repo {ORG}/{repo}\n"
+        f"Then card it:        sdlc_manager.py flow validate-card "
+        f"--repo {repo} --number {issue_number}"
+    )
+    answer = _safe_input("\nApply labels and board membership anyway? (y/N): ")
+    if (answer or "").strip().lower() in ("y", "yes"):
+        _warn(f"Proceeding with a card that fails the contract: {issue_ref}")
+        return True
+    print("Metadata not applied. The issue exists but is not on a board.")
+    return False
+
+
 def _apply_post_create_metadata(
     repo: str,
     issue_number: int,
@@ -5495,6 +5555,11 @@ def issue_create(
         issue_number = _prompt_issue_number(repo)
         if issue_number is None:
             print("Skipping post-create metadata.")
+            return
+
+        # Step 8b: gate on the card contract before carding it. The prepared
+        # path has always blocked here; this path never checked.
+        if not _gate_created_issue_body(repo, issue_number, issue_type, fmt):
             return
 
         # Step 9: apply metadata

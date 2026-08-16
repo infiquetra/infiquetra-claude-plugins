@@ -458,6 +458,45 @@ the answer when the question is declined. Bound every subprocess that runs
 inside a lock.
 **Refs.** DECISIONS `{#host-wide-admission-lock}`.
 
+### The interactive issue-create path never validated the body it carded
+
+**Context.** `mission-control` has two ways to create an issue. `issue create-prepared`
+composes the body itself and has always refused to create a draft with blocking readiness
+gaps. Interactive `issue create` opens the GitHub browser template, asks the operator to
+paste back the new issue number, and applies labels and board membership.
+
+**Evidence.** `plugins/mission-control/scripts/sdlc_manager.py` — between
+`_prompt_issue_number` and `_apply_post_create_metadata` there was no body check of any
+kind, while `validate_card_body` had existed since the card contract shipped and
+`issue_create_prepared` already raised on it. Board evidence: a 34-issue sample scored
+against the eight-section contract is bimodal — 17 cards carry all eight sections, 15 carry
+none, 2 carry four.
+
+**Mechanism.** Two producers, one contract, one enforcement point. The prepared path
+composes the body, so validating there was the obvious move. The interactive path receives a
+body it did not compose — from a form that `gh issue create --template ... --web` does not
+reliably prefill — so there was no natural moment to validate and none was added. A blank
+template then landed on the board wearing exactly the same labels as a conformant card.
+Nothing downstream could distinguish them, which is why the conformance split is bimodal
+rather than a gradient: two populations, not decay.
+
+**Fix.** `_gate_created_issue_body` between paste-back and metadata, reusing
+`validate_card_body_for_context`. Scoped to the Hermes-actionable types (`exploration` and
+`context-update` ship different field sets by design); a fetch failure proceeds with a
+warning rather than counting as a validation failure; `--format json` refuses structurally
+without prompting; a failing body requires an explicit operator opt-in.
+
+**What surprised.** The check was already written, already tested, and already blocking —
+on one path. The defect was not a missing validator but a missing call site, which is
+invisible in a code review scoped to the validator.
+
+**Generalizable rule.** When a contract has more than one producer, the enforcement point
+belongs at the last common choke point before the artifact becomes visible — not inside
+whichever producer was most convenient to write it in. Ask "which paths reach this state?"
+before "where does the check go?": an unvalidated sibling path does not look broken, it
+looks like the other path's output.
+
+
 ## 2026-08-13
 
 ### A generation is more than the live register  {#generation-is-more-than-the-live-file}

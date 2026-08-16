@@ -1,5 +1,34 @@
 # Changelog
 
+## [1.0.0] - 2026-08-16
+
+### Changed
+
+- **`/orchestrate` exists.** The command reads a prompt, an issue, a parent issue's children, or a
+  document; interviews the operator for what it cannot infer; and hands back an editable table of
+  unit, saga capability, agent, model, effort and dependency. Nothing launches until that table is
+  approved.
+- Each unit runs in its own git worktree and branch, in its own herdr session, with any agent
+  configured on the machine. A unit with dependencies branches from the last one it names, so a
+  `/work` unit opens on top of its `/plan` unit's output.
+- State is a single `.orchestrate/run.json`.
+
+### Removed
+
+- The durable register with column ownership, per-column writers and generation locks; the
+  completion evidence gate; the mirror worker; admission slot reservations; the consensus panel and
+  bounded review loop; token accounting and spend ceilings; and the composed runner's crash
+  reconciliation and claim transactions — 14,875 lines of production code and roughly 15,700 lines
+  of tests.
+- None of it defended against a failure that can happen to one operator on one machine. The full
+  implementation is preserved on `origin` at `archive/orchestrate-full-implementation`, so any
+  individual piece can be pulled back if a real run ever justifies it.
+
+### Notes
+
+- qwen does not report interactive readiness, so `herdr agent prompt` refuses it; the dispatcher
+  falls back to typing into the session's pane.
+
 ## [0.13.0] - 2026-08-16
 
 ### Changed

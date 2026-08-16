@@ -27,13 +27,8 @@ CANONICAL_SHIM = ROOT / "plugins" / "fleet-core" / "scripts" / "fleet_commons_sh
 VENDORED_SHIMS = (
     ROOT / "plugins" / "saga" / "scripts" / "fleet_commons_shim.py",
     ROOT / "plugins" / "mission-control" / "scripts" / "fleet_commons_shim.py",
-    ROOT
-    / "plugins"
-    / "orchestrate"
-    / "skills"
-    / "orchestrate"
-    / "scripts"
-    / "fleet_commons_shim.py",
+    # orchestrate no longer vendors the shim: it reaches herdr and git directly and needs nothing
+    # from fleet-core.
     ROOT / "plugins" / "unifi" / "skills" / "unifi-network" / "scripts" / "fleet_commons_shim.py",
     ROOT / "plugins" / "unifi" / "skills" / "unifi-protect" / "scripts" / "fleet_commons_shim.py",
     ROOT / "plugins" / "agy" / "scripts" / "fleet_commons_shim.py",

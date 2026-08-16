@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import glob
 import json
 import os
 import re
@@ -101,6 +102,18 @@ VENDOR_PERMISSION: dict[str, dict[str, list[str]]] = {
 # claude and grok/qwen/opencode were read off their installed command files; codex's saga ships
 # skills under the `saga` namespace with no command directory at all (its PORTABILITY.md says so),
 # and codex prefixes with `$`.
+# Where each vendor keeps its saga install, so "does this vendor have saga" is resolved rather than
+# believed. Checked by `saga --check`. A vendor absent here, or whose globs match nothing, cannot
+# run a saga capability at all -- agy and muse are in that position today, and a saga task sent to
+# them does nothing no matter what prefix it carries.
+SAGA_INSTALL: dict[str, list[str]] = {
+    "claude": ["~/.claude/plugins/cache/*/saga/*/commands"],
+    "codex": ["~/.codex/plugins/cache/*/saga/*/skills"],
+    "grok": ["~/.grok/marketplace-cache/*/plugins/saga/commands"],
+    "qwen": ["~/.qwen/extensions/saga/commands"],
+    "opencode": ["~/.config/opencode/commands"],
+}
+
 SAGA_SYNTAX: dict[str, str] = {
     "claude": "/saga:{cap}",
     "codex": "$saga:{cap}",
@@ -436,7 +449,7 @@ def send(unit: Unit, pane_id: str | None) -> None:
     """
     for line in unit.setup:
         say(unit, pane_id, line)
-    say(unit, pane_id, unit.task)
+    say(unit, pane_id, normalize_task(unit.vendor, unit.task))
 
 
 def poll(unit: Unit) -> str:
@@ -467,6 +480,7 @@ def cmd_start(args: argparse.Namespace) -> int:
         engine_prefs=plan.get("engine_prefs", {}),
     )
     assert_vendors_available(r.units)
+    assert_saga_reachable(r.units)
     r.branch = f"orch/{r.run_id}"
     exists = run(["git", "rev-parse", "--verify", "--quiet", r.branch], check=False)
     if exists.returncode != 0:
@@ -498,6 +512,25 @@ def probe(name: str) -> tuple[str, dict[str, bool]]:
     }
 
 
+def normalize_task(vendor: str, task: str) -> str:
+    """Rewrite a leading namespaced saga command into the form this vendor understands.
+
+    The interview writes the task, and it writes ``/saga:plan`` -- claude's form -- for every
+    vendor. Codex needs ``$saga:plan`` and grok, qwen and opencode need a bare ``/plan``. A wrong
+    prefix does not error: the agent reads it as prose and does something of its own, which is the
+    quiet failure this plugin keeps having to fix. So the translation happens here, at the moment of
+    sending, rather than depending on the interview to remember.
+
+    Only an explicitly namespaced command is rewritten (``/saga:x`` or ``$saga:x``). A task that
+    opens with anything else -- a path, a bare slash command, plain prose -- is left exactly alone,
+    because guessing at what is and is not a command is how this goes wrong in the other direction.
+    """
+    match = re.match(r"^\s*[/$]saga:([a-z][a-z0-9-]*)", task)
+    if not match:
+        return task
+    return saga_command(vendor, match.group(1)) + task[match.end() :]
+
+
 def saga_command(vendor: str, cap: str) -> str:
     """Render a saga capability the way this vendor actually invokes it.
 
@@ -507,10 +540,30 @@ def saga_command(vendor: str, cap: str) -> str:
     return SAGA_SYNTAX.get(vendor, "{cap}").format(cap=cap.lstrip("/$").replace("saga:", ""))
 
 
+def saga_capabilities(vendor: str) -> list[str]:
+    """Which saga capabilities are actually installed for this vendor, read off disk."""
+    found: set[str] = set()
+    for pattern in SAGA_INSTALL.get(vendor, []):
+        for directory in glob.glob(str(Path(pattern).expanduser())):
+            base = Path(directory)
+            found.update(f.stem for f in base.glob("*.md") if f.stem != "README")
+            found.update(d.name for d in base.iterdir() if d.is_dir() and (d / "SKILL.md").exists())
+    return sorted(found)
+
+
 def cmd_saga(args: argparse.Namespace) -> int:
-    """Print how each vendor invokes one saga capability."""
+    """Show how each vendor invokes a saga capability, and whether it has saga at all."""
     for name, _ in roster():
-        print(f"{name:12s} {saga_command(name, args.cap)}")
+        caps = saga_capabilities(name)
+        if not caps:
+            print(f"{name:12s} NO SAGA INSTALLED — a saga task here does nothing, whatever prefix")
+            continue
+        has = args.cap in caps
+        mark = "" if has else f"  (no `{args.cap}` among its {len(caps)} capabilities)"
+        print(f"{name:12s} {saga_command(name, args.cap)}{mark}")
+    missing = [n for n, _ in roster() if not saga_capabilities(n)]
+    if missing:
+        print(f"\nwithout saga: {', '.join(missing)} — give those units plain prose, not a command")
     return 0
 
 
@@ -576,6 +629,27 @@ def cmd_roster(args: argparse.Namespace) -> int:
     return 0
 
 
+def assert_saga_reachable(units: list[Unit]) -> None:
+    """Refuse a saga task aimed at a vendor with no saga installed.
+
+    The prefix is not the only way this goes wrong. agy and muse have no saga install at all, so a
+    ``/saga:plan`` sent to either is prose whatever it is prefixed with -- the session reads it,
+    does something of its own, and reports itself done. Catch it before a tab opens.
+    """
+    bad = []
+    for unit in units:
+        if not re.match(r"^\s*[/$]saga:", unit.task):
+            continue
+        if not saga_capabilities(unit.vendor):
+            bad.append(f"{unit.name} ({unit.vendor})")
+    if bad:
+        raise SystemExit(
+            f"saga is not installed for: {', '.join(bad)}. "
+            "Write those tasks as plain prose, or move them to a vendor that has it "
+            "(`orchestrate.py saga <cap>`)."
+        )
+
+
 def assert_vendors_available(units: list[Unit]) -> None:
     """Refuse a plan naming an agent the wrapper cannot launch.
 
@@ -619,6 +693,7 @@ def cmd_expand(args: argparse.Namespace) -> int:
                 raise SystemExit(f"unit {unit.name!r} waits on {dep!r}, which is in no run")
 
     assert_vendors_available(incoming)
+    assert_saga_reachable(incoming)
     r.units.extend(incoming)
     r.engine_prefs.update(added.get("engine_prefs", {}))
     r.save()

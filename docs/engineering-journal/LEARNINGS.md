@@ -21,6 +21,49 @@
 
 ## 2026-08-15
 
+### A retired consumer's marker outlives it wherever a writer still names it
+
+**Context.** The Hermes orchestrator's card validator gated dispatch on a `hermes-task`
+label. That orchestrator was frozen on 2026-07-18 — empty repository list, plan phase off,
+webhook relay stopped and disabled — so nothing has read the label since. It kept appearing
+on every new issue anyway, which is what the operator noticed.
+
+**Evidence.** 1,176 issues organization-wide carry `hermes-task`; the replacement mechanism
+(`intake:mimir`) is on 5. The label was written from a dozen directions: `labels:` line 4 of
+five GitHub issue forms, `_ISSUE_TYPE_LABELS` in five copies of `sdlc_manager.py`, the
+post-create metadata step, four prompt/skill documents, a generated reference doc, and the
+`Hermes actionable: yes/no` marker emitted by `sync_template_docs.py`. Six test files
+asserted its presence.
+
+**Mechanism.** Retiring a *consumer* is one change; retiring the *marker it consumed* is as
+many changes as there are writers. Nobody removed the writers because the label was still
+harmless-looking, and each writer independently looked correct — the templates matched the
+code, the code matched the prompts, the prompts matched the tests. The system was
+self-consistent around a dead centre. Worse, the operator agent still asserted "the
+orchestrator silently skips cards without `hermes-task`", which made removal look dangerous
+long after it was inert, so the fear that preserved it was itself documentation of a
+consumer that no longer ran.
+
+**Fix.** Remove all writers in one change, and repoint the concept rather than deleting it:
+`_HERMES_ACTIONABLE_TYPES` became `_CONTRACT_ISSUE_TYPES` (it always meant "types carrying
+the eight-section card contract"), and `Hermes actionable: yes/no` became
+`Card contract: required/not required`. The interactive create path now applies the canonical
+type labels where it previously applied only the dispatch marker — closing a gap where a card
+whose browser template failed to prefill landed with no type label at all.
+
+**What surprised.** The tests were the largest blocker, not the code. Six suites pinned the
+marker, so the taxonomy could not move until they did — and one of them, `test_template_sync`,
+reads the *other repository's* issue templates live through `INFIQUETRA_SDLC_PATH`. Two repos
+had to change together for the local suite to pass, while in CI the same tests skip because
+that checkout does not exist. A cross-repo coupling that is invisible to CI is the kind that
+only bites the person doing the migration.
+
+**Generalizable rule.** When you freeze a consumer, inventory its writers in the same change
+and either remove them or write down that they are now inert — a marker with no reader is not
+harmless, it is a claim the system keeps making about itself. And when a document asserts that
+removing something is dangerous, check whether the danger retired with the consumer; a stale
+warning is load-bearing in exactly the wrong direction.
+
 ### Piping a gate to `tail` reports the pager's exit status, not the gate's  {#gate-exit-code-masked-by-pipe}
 
 **Date.** 2026-08-15

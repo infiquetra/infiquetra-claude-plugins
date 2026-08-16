@@ -20,8 +20,8 @@ def test_sdlc_manager_metadata_and_marketplace_entry_match() -> None:
 
     assert plugin_json["name"] == "mission-control"
     assert (
-        plugin_json["version"] == "2.11.0"
-    )  # interactive issue create validates the body before carding it
+        plugin_json["version"] == "2.12.0"
+    )  # retire the hermes-task / hermes-not-actionable dispatch markers
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/mission-control"
     assert "CAMPPS" in plugin_json["description"]
@@ -36,12 +36,14 @@ def test_sdlc_manager_metadata_and_marketplace_entry_match() -> None:
 def test_issue_type_reference_uses_current_template_labels() -> None:
     issue_types = _read(PLUGIN_ROOT / "skills/issues/references/issue-types.md")
 
-    assert "`capability`, `hermes-task`, `needs-plan`" in issue_types
-    assert "`enhancement`, `hermes-task`, `needs-plan`" in issue_types
-    assert "`defect`, `hermes-task`, `needs-plan`" in issue_types
-    assert "`objective`, `hermes-not-actionable`" not in issue_types
-    assert "`exploration`, `research`, `hermes-not-actionable`" in issue_types
-    assert "`context-update`, `documentation`, `hermes-not-actionable`" in issue_types
+    assert "`capability`, `needs-plan`" in issue_types
+    assert "`enhancement`, `needs-plan`" in issue_types
+    assert "`defect`, `needs-plan`" in issue_types
+    assert "`exploration`, `research`" in issue_types
+    assert "`context-update`, `documentation`" in issue_types
+    # the retired Hermes dispatch markers must not come back
+    assert "hermes-task" not in issue_types
+    assert "hermes-not-actionable" not in issue_types
     assert "`capability`, `needs-analysis` (auto-applied by template)" not in issue_types
     assert "`enhancement`, `needs-analysis` (auto-applied by template)" not in issue_types
     assert "`defect`, `needs-triage` (auto-applied by template)" not in issue_types
@@ -63,14 +65,15 @@ def test_field_first_hierarchy_guidance_is_consistent() -> None:
     assert "Objective issue + project field option" not in rollout_hierarchy
 
 
-def test_operator_prompt_honors_hermes_actionability_contract() -> None:
+def test_operator_prompt_honors_the_card_contract_split() -> None:
     operator = _read(PLUGIN_ROOT / "agents/sdlc-operator.md")
 
     assert "(capability/enhancement/defect)" in operator
     assert "(exploration/context-update)" in operator
     assert "(capability/enhancement/defect/exploration/context-update)" not in operator
-    assert "Step 2: Applied labels (hermes-task, capability, needs-plan)" in operator
-    assert "Step 2: Applied labels (hermes-task, capability, needs-analysis)" not in operator
+    assert "Step 2: Applied labels (capability, needs-plan)" in operator
+    assert "hermes-task" not in operator
+    assert "hermes-not-actionable" not in operator
     assert "issue prepare" in operator
     assert "issue create-prepared" in operator
     assert "Asgard `Shaping`, CAMPPS `Idea`" in operator
@@ -85,8 +88,8 @@ def test_triage_command_uses_project_fields_and_current_actionable_labels() -> N
 
     assert "Initiative/Objective project field values" in triage
     assert "initiative/objective labels" not in triage
-    assert '"capability,hermes-task,needs-plan"' in triage
-    assert '"capability,needs-analysis"' not in triage
+    assert '"capability,needs-plan"' in triage
+    assert "hermes-task" not in triage
     assert "Add `needs-analysis` label" not in triage
 
 

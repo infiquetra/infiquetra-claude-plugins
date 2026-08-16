@@ -199,8 +199,13 @@ def test_paired_card_recursion_guard() -> None:
 # --- _apply_post_create_metadata ------------------------------------------
 
 
-def test_metadata_applies_hermes_task_for_actionable_types() -> None:
-    """Capability/enhancement/defect get `hermes-task`."""
+def test_metadata_applies_type_labels_for_actionable_types() -> None:
+    """Capability/enhancement/defect get their type label plus `needs-plan`.
+
+    This path used to guarantee only the retired `hermes-task` dispatch marker —
+    not even the type label — so a card whose browser template failed to prefill
+    landed untyped.
+    """
     with (
         patch.object(sdlc_manager, "_gh") as mock_gh,
         patch.object(sdlc_manager, "board_add"),
@@ -217,12 +222,12 @@ def test_metadata_applies_hermes_task_for_actionable_types() -> None:
             field_values={},
             fmt="text",
         )
-    # Verify hermes-task label was applied
     cmd_calls = [c.args[0] for c in mock_gh.call_args_list]
-    label_call = next((c for c in cmd_calls if "edit" in c and "hermes-task" in str(c)), None)
+    label_call = next((c for c in cmd_calls if "edit" in c and "--add-label" in c), None)
     assert label_call is not None
-    assert "--add-label" in label_call
-    assert "hermes-task" in label_call
+    applied = label_call[label_call.index("--add-label") + 1]
+    assert applied == "capability,needs-plan"
+    assert "hermes" not in applied
 
 
 def test_objective_is_not_a_creatable_issue_type() -> None:
@@ -240,7 +245,7 @@ def test_objective_is_not_a_creatable_issue_type() -> None:
         )
 
 
-def test_metadata_applies_hermes_not_actionable_for_exploration() -> None:
+def test_metadata_applies_context_labels_for_exploration() -> None:
     """Exploration/context-update are non-actionable template types."""
     with (
         patch.object(sdlc_manager, "_gh") as mock_gh,
@@ -259,8 +264,11 @@ def test_metadata_applies_hermes_not_actionable_for_exploration() -> None:
             fmt="text",
         )
     cmd_calls = [c.args[0] for c in mock_gh.call_args_list]
-    assert any("hermes-not-actionable" in str(call) for call in cmd_calls)
-    assert not any("hermes-task" in str(call) for call in cmd_calls)
+    label_call = next((c for c in cmd_calls if "edit" in c and "--add-label" in c), None)
+    assert label_call is not None
+    applied = label_call[label_call.index("--add-label") + 1]
+    assert applied == "exploration,research"
+    assert not any("hermes" in str(call) for call in cmd_calls)
 
 
 def test_metadata_label_failure_does_not_abort_other_steps() -> None:

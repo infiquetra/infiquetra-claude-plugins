@@ -1,5 +1,37 @@
 # Decisions — Infiquetra Claude Plugins
 
+## 2026-08-16
+
+### Finding blocking is an explicit boolean and performed verdicts carry findings  {#finding-blocking-is-explicit}
+
+**Decision.** Each finding must declare `blocking` with a required keyword-only boolean. The review
+loop never derives blocking effect from `rank`, and every verdict concluded from a performed report
+returns the report's findings.
+
+**Context.** The rank is an unconstrained string supplied by reviewers that may use different
+rubrics. Treating selected rank text as blocking would move an unreliable interpretation into the
+stopping rule. Closing on new non-blocking findings also requires a durable handoff to the caller;
+otherwise the decision would accept a report while making its filed work unreachable.
+
+**Rationale.** A required keyword-only boolean makes blocking a deliberate, type-checked statement.
+It cannot be enabled by positional drift, a default, or words in the rank. Returning the immutable
+finding tuple on the verdict keeps the decision and the evidence together without adding another
+store.
+
+**Rejected alternatives.** Parsing rank names was rejected because rank has no shared vocabulary.
+A default of `False` was rejected because omission would silently become a policy declaration.
+Returning findings only for a passing last iteration was rejected because callers should not need
+verdict-specific access rules.
+
+**Consequences.** Finding constructors must state `blocking=True` or `blocking=False`. New
+non-blocking findings on the last allowed iteration produce `pass` and remain available to file;
+recurring classes and undisposed earlier classes still escalate independently of blocking or rank.
+
+**Refs.** LEARNINGS `{#terminal-trigger-must-use-target-evidence}`; decision
+`{#resolution-is-authored-not-inferred}`.
+
+---
+
 ## 2026-08-15
 
 ### Removing a stored fact and building the way to ask for it are one change  {#removal-and-read-through-are-one-change}

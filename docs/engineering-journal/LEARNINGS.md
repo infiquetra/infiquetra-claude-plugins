@@ -19,6 +19,36 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-08-16
+
+### A targeted terminal condition must use the evidence it computes  {#terminal-trigger-must-use-target-evidence}
+
+**Context.** A bounded review loop computed recurring defect classes, then escalated on the broader
+set of every class reported in the last allowed iteration. Because performed reviews commonly file
+non-blocking notes, reaching the bound made escalation routine rather than exceptional.
+
+**Evidence.** In
+`plugins/orchestrate/skills/orchestrate/scripts/review_loop.py`, `recurring` was computed immediately
+before a final-iteration condition built from all declared classes. Focused tests in
+`tests/test_orchestrate_review_loop.py` now distinguish a new non-blocking class from a recurring
+non-blocking class and from a new explicitly blocking class.
+
+**Mechanism.** The trigger substituted an available superset for the evidence named by the policy.
+The superset included the intended recurrence cases, so the safety scenario stayed green while the
+rule accumulated false positives.
+
+**Fix.** Escalation now reads recurrence, unresolved earlier classes, a required boolean blocking
+declaration, and unperformed-review state directly. A new non-blocking class closes without
+escalation and remains reachable on the verdict.
+
+**Generalizable rule.** When policy names evidence already computed by the implementation, assert
+that the decision reads that exact evidence. A convenient superset preserves positive tests while
+destroying the negative boundary that keeps an alert useful.
+
+**Refs.** DECISIONS `{#finding-blocking-is-explicit}`.
+
+---
+
 ## 2026-08-15
 
 ### Piping a gate to `tail` reports the pager's exit status, not the gate's  {#gate-exit-code-masked-by-pipe}

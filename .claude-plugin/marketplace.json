@@ -280,7 +280,7 @@
     {
       "name": "orchestrate",
       "source": "./plugins/orchestrate",
-      "version": "0.11.0",
+      "version": "0.11.1",
       "description": "Cross-vendor orchestration over herdr: routing, admission, a spend ceiling, durable state, write-ahead launches, event catch-up, bounded predicates, and a mirror protecting the operator's channel.",
       "author": {
         "name": "Infiquetra",

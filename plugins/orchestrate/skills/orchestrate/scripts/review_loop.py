@@ -31,12 +31,12 @@ What it owns
   records on one open iteration are refused. An iteration that carries unperformed
   records cannot pass. :meth:`ReviewLoop.conclude_unperformed` is the exit when there
   is no review result; it never returns ``pass``.
-* Mechanical escalation: the last allowed iteration concluding with any declared
-  class still open, any undisposed class, or any unperformed record yields
-  ``halt-and-escalate``. Recurrence is one sufficient trigger; it is not the only one.
-  There is no remaining iteration in which to repair, so that verdict is never
-  ``halt-and-repair``. Rank is not read. The unit is then **terminal**: no later call
-  returns a verdict.
+* Mechanical escalation: the last allowed iteration yields ``halt-and-escalate``
+  when a class recurs, a class from an earlier iteration remains undisposed, a
+  finding declares itself blocking, or the iteration carries an unperformed record.
+  Recurrence is rank-independent. A new non-blocking finding instead closes the
+  review, and every performed verdict returns the findings that produced it. Rank
+  is not read. An escalated unit is then **terminal**: no later call returns a verdict.
 * An escalation budget of :data:`ESCALATION_BUDGET` per unit. The comparison that
   enforces it reads this name. No function here accepts a parameter that replaces it.
   At the shipped value of 1, a second escalation is prevented by terminality, not by
@@ -54,7 +54,7 @@ from __future__ import annotations
 
 import difflib
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 from typing import Literal
 
 MAX_ITERATIONS = 3
@@ -118,15 +118,19 @@ class Artifact:
 
 @dataclass(frozen=True)
 class Finding:
-    """One reviewer finding. The class is declared, never inferred."""
+    """One reviewer finding. Its class and blocking effect are declared, never inferred."""
 
     defect_class: str
     rank: str
+    _: KW_ONLY
+    blocking: bool
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "defect_class", _canonical_defect_class(self.defect_class))
         if not isinstance(self.rank, str):
             raise ReviewLoopError("a finding rank must be a string")
+        if type(self.blocking) is not bool:
+            raise ReviewLoopError("a finding must declare blocking as a boolean")
 
 
 @dataclass(frozen=True)
@@ -193,6 +197,7 @@ class Verdict:
     kind: VerdictKind
     iteration: int
     recurring_classes: frozenset[str]
+    findings: tuple[Finding, ...]
 
 
 @dataclass
@@ -402,18 +407,27 @@ class ReviewLoop:
             raise ReviewLoopError(
                 "cannot dispose " + ", ".join(sorted(unknown)) + ": not an open class"
             )
-        remaining_open = (state.open_classes - disposed) | classes
+        unresolved_prior = state.open_classes - disposed
+        remaining_open = unresolved_prior | classes
         recurring = classes & state.seen_classes
-        unfinished = bool(classes or remaining_open or state.unperformed)
-        if iteration == MAX_ITERATIONS and unfinished:
-            _spend_escalation(state, unit, remaining_open or set(classes))
-            kind: VerdictKind = VERDICT_HALT_AND_ESCALATE
+        blocking_classes = frozenset(
+            finding.defect_class for finding in report.findings if finding.blocking
+        )
+        final_escalation = bool(
+            recurring or unresolved_prior or blocking_classes or state.unperformed
+        )
+        if iteration == MAX_ITERATIONS:
+            if final_escalation:
+                _spend_escalation(state, unit, remaining_open)
+                kind: VerdictKind = VERDICT_HALT_AND_ESCALATE
+            else:
+                kind = VERDICT_PASS
         elif classes:
             kind = VERDICT_HALT_AND_REPAIR
-        elif remaining_open:
+        elif unresolved_prior:
             raise ReviewLoopError(
                 "pass requires explicit disposal of open classes: "
-                + ", ".join(sorted(remaining_open))
+                + ", ".join(sorted(unresolved_prior))
             )
         elif state.unperformed:
             kind = VERDICT_HALT_AND_REPAIR
@@ -421,7 +435,7 @@ class ReviewLoop:
             kind = VERDICT_PASS
         state.open_classes = remaining_open
         state.seen_classes |= classes
-        return self._close(state, kind, iteration, frozenset(recurring))
+        return self._close(state, kind, iteration, frozenset(recurring), report.findings)
 
     def _close(
         self,
@@ -429,6 +443,7 @@ class ReviewLoop:
         kind: VerdictKind,
         iteration: int,
         recurring: frozenset[str],
+        findings: tuple[Finding, ...] = (),
     ) -> Verdict:
         state.completed_iterations = iteration
         state.open = False
@@ -436,4 +451,9 @@ class ReviewLoop:
         state.last_verdict = kind
         if kind == VERDICT_HALT_AND_ESCALATE:
             state.terminal = True
-        return Verdict(kind=kind, iteration=iteration, recurring_classes=recurring)
+        return Verdict(
+            kind=kind,
+            iteration=iteration,
+            recurring_classes=recurring,
+            findings=findings,
+        )

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -158,9 +159,26 @@ def make_worktree(unit: Unit, r: Run, root: Path) -> None:
     print(f"  {unit.name}: {path.name} on {branch} from {base}")
 
 
+def launcher() -> str:
+    """The local wrapper that creates an agent session.
+
+    Called ``agents`` rather than ``agent`` because ``agent`` was taken over by another tool on this
+    machine. That is why this is resolved instead of hardcoded: a stale name does not fail cleanly,
+    it launches somebody else's binary with flags it has never heard of. Checking first turns a
+    confusing wrong-program run into one clear sentence.
+    """
+    name = os.environ.get("ORCHESTRATE_AGENT_LAUNCHER", "agents")
+    if not shutil.which(name):
+        raise SystemExit(
+            f"no {name!r} on PATH -- that is the wrapper that creates agent sessions. "
+            f"If it is called something else here, set ORCHESTRATE_AGENT_LAUNCHER."
+        )
+    return name
+
+
 def agent_argv(unit: Unit) -> list[str]:
     argv = [
-        "agent",
+        launcher(),
         "--no-focus",
         "--current",
         "--herdr",

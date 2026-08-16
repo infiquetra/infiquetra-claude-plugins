@@ -73,7 +73,9 @@ what herdr calls the session is recorded separately as `agent_name`.
 
 ## Agents
 
-Whatever `agent --crews` reports on this machine. Model and effort flags are per vendor:
+Whatever `agents --crews` reports on this machine — the wrapper is `agents`, with an `s`, because
+plain `agent` is a different tool here. Override with `ORCHESTRATE_AGENT_LAUNCHER` if it is named
+something else. Model and effort flags are per vendor:
 
 | Agent | model | effort |
 |---|---|---|

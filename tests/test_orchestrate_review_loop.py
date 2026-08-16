@@ -44,12 +44,15 @@ def _finding(defect_class: str, rank: str = "lowest") -> Any:
     return LOOP.Finding(defect_class=defect_class, rank=rank)
 
 
-def _report(*defect_classes: str, rank: str = "lowest") -> Any:
-    return LOOP.ReviewReport.of([_finding(name, rank=rank) for name in defect_classes])
+def _report(*defect_classes: str, rank: str = "lowest", disposes: tuple[str, ...] = ()) -> Any:
+    return LOOP.ReviewReport.of(
+        [_finding(name, rank=rank) for name in defect_classes],
+        disposes=disposes,
+    )
 
 
-def _empty_report() -> Any:
-    return LOOP.ReviewReport.of(())
+def _empty_report(*disposes: str) -> Any:
+    return LOOP.ReviewReport.of((), disposes=disposes)
 
 
 def _repair_once(loop: Any, unit_id: str, artifact: Any, defect_class: str) -> Any:
@@ -106,6 +109,18 @@ def test_a_re_review_receives_only_the_delta() -> None:
     assert "unchanged" not in surface["edit"]
     assert "unchanged" not in surface["add"]
     assert "unchanged" not in surface["drop"]
+
+
+def test_a_changed_path_delta_does_not_include_unchanged_lines() -> None:
+    previous = _artifact(doc="alpha\nbeta\ngamma\ndelta\nepsilon\n")
+    current = _artifact(doc="alpha\nbeta\nGAMMA\ndelta\nepsilon\n")
+    surface = LOOP.delta_of(previous, current).mapping()["doc"]
+    assert "alpha" not in surface
+    assert "beta" not in surface
+    assert "delta" not in surface
+    assert "epsilon" not in surface
+    assert "-gamma" in surface
+    assert "+GAMMA" in surface
 
 
 @pytest.mark.parametrize("rank", ["lowest", "advisory", "blocking", ""])
@@ -196,7 +211,6 @@ def test_a_bare_sequence_cannot_conclude_an_iteration() -> None:
     assert "sequence is not evidence" in str(caught.value)
     with pytest.raises(LOOP.ReviewLoopError, match="ReviewReport"):
         loop.conclude_iteration("unit-seq", ())
-    # The iteration is still open; a performed empty report can still conclude it.
     verdict = loop.conclude_iteration("unit-seq", _empty_report())
     assert verdict.kind == LOOP.VERDICT_PASS
     assert verdict.iteration == 1
@@ -221,9 +235,35 @@ def test_unperformed_reviews_on_one_iteration_are_capped() -> None:
         loop.record_unperformed("unit-spin")
     with pytest.raises(LOOP.UnperformedBoundError, match="unperformed"):
         loop.record_unperformed("unit-spin")
-    verdict = loop.conclude_iteration("unit-spin", _empty_report())
-    assert verdict.kind == LOOP.VERDICT_PASS
+    tainted = loop.conclude_iteration("unit-spin", _empty_report())
+    assert tainted.kind == LOOP.VERDICT_HALT_AND_REPAIR
+    assert tainted.kind != LOOP.VERDICT_PASS
+
+
+def test_a_caller_with_no_review_result_exits_without_passing() -> None:
+    loop = LOOP.ReviewLoop()
+    loop.begin_iteration("unit-none", _artifact(doc="v0"))
+    loop.record_unperformed("unit-none")
+    loop.record_unperformed("unit-none")
+    loop.record_unperformed("unit-none")
+    with pytest.raises(LOOP.UnperformedBoundError):
+        loop.record_unperformed("unit-none")
+    verdict = loop.conclude_unperformed("unit-none")
+    assert verdict.kind == LOOP.VERDICT_HALT_AND_REPAIR
+    assert verdict.kind != LOOP.VERDICT_PASS
     assert verdict.iteration == 1
+    second = loop.begin_iteration("unit-none", _artifact(doc="v1"))
+    assert second.iteration == 2
+    loop.record_unperformed("unit-none")
+    assert loop.conclude_iteration("unit-none", _empty_report()).kind != LOOP.VERDICT_PASS
+
+
+def test_an_iteration_with_unperformed_records_cannot_pass() -> None:
+    loop = LOOP.ReviewLoop()
+    loop.begin_iteration("unit-taint", _artifact(doc="v0"))
+    loop.record_unperformed("unit-taint")
+    verdict = loop.conclude_iteration("unit-taint", _empty_report())
+    assert verdict.kind == LOOP.VERDICT_HALT_AND_REPAIR
 
 
 def test_a_unit_that_has_escalated_returns_no_later_verdict() -> None:
@@ -277,7 +317,7 @@ def test_a_pass_does_not_reset_the_per_unit_iteration_cap() -> None:
     loop.begin_iteration(unit, _artifact(doc="v1"))
     assert loop.conclude_iteration(unit, _report("x")).kind == LOOP.VERDICT_HALT_AND_REPAIR
     loop.begin_iteration(unit, _artifact(doc="v2"))
-    assert loop.conclude_iteration(unit, _empty_report()).kind == LOOP.VERDICT_PASS
+    assert loop.conclude_iteration(unit, _empty_report("x")).kind == LOOP.VERDICT_PASS
     with pytest.raises(LOOP.IterationBoundError, match="further iteration is refused"):
         loop.begin_iteration(unit, _artifact(doc="v3"))
 
@@ -297,6 +337,160 @@ def test_an_escalation_refusal_closes_the_iteration_and_the_unit() -> None:
     assert state.terminal is True
     with pytest.raises(LOOP.UnitTerminalError):
         loop.conclude_iteration(unit, _empty_report())
+
+
+def test_an_empty_delta_does_not_pass_an_open_class() -> None:
+    loop = LOOP.ReviewLoop()
+    artifact = _artifact(doc="the defect is in this file\n")
+    loop.begin_iteration("unit-silence", artifact)
+    assert loop.conclude_iteration("unit-silence", _report("absence-inferred")).kind == (
+        LOOP.VERDICT_HALT_AND_REPAIR
+    )
+    second = loop.begin_iteration("unit-silence", artifact)
+    assert second.scoped_to_delta is True
+    assert second.surface.mapping() == {}
+    with pytest.raises(LOOP.ReviewLoopError, match="explicit disposal"):
+        loop.conclude_iteration("unit-silence", _empty_report())
+    assert loop._units["unit-silence"].open is True
+    verdict = loop.conclude_iteration("unit-silence", _empty_report("absence-inferred"))
+    assert verdict.kind == LOOP.VERDICT_PASS
+
+
+def test_an_unrelated_path_edit_does_not_pass_an_open_class() -> None:
+    loop = LOOP.ReviewLoop()
+    loop.begin_iteration("unit-side", _artifact(broken="bad\n", notes="ok\n"))
+    loop.conclude_iteration("unit-side", _report("absence-inferred"))
+    second = loop.begin_iteration("unit-side", _artifact(broken="bad\n", notes="changed\n"))
+    assert list(second.surface.mapping()) == ["notes"]
+    assert "broken" not in second.surface.mapping()
+    with pytest.raises(LOOP.ReviewLoopError, match="explicit disposal"):
+        loop.conclude_iteration("unit-side", _empty_report())
+    verdict = loop.conclude_iteration("unit-side", _empty_report("absence-inferred"))
+    assert verdict.kind == LOOP.VERDICT_PASS
+
+
+def test_disposing_and_re_raising_the_same_class_is_refused() -> None:
+    with pytest.raises(LOOP.ReviewLoopError, match="dispose and re-raise"):
+        LOOP.ReviewReport.of([_finding("absence-inferred")], disposes=["absence-inferred"])
+
+
+def test_disposing_a_class_that_was_never_open_is_refused() -> None:
+    loop = LOOP.ReviewLoop()
+    loop.begin_iteration("unit-typo", _artifact(doc="v0"))
+    with pytest.raises(LOOP.ReviewLoopError, match="not an open class"):
+        loop.conclude_iteration("unit-typo", _empty_report("never-raised"))
+
+
+def test_last_iteration_with_undisposed_classes_escalates() -> None:
+    loop = LOOP.ReviewLoop()
+    unit = "unit-last-open"
+    _repair_once(loop, unit, _artifact(doc="v0"), "absence-inferred")
+    _repair_once(loop, unit, _artifact(doc="v1"), "other")
+    loop.begin_iteration(unit, _artifact(doc="v2"))
+    verdict = loop.conclude_iteration(unit, _empty_report())
+    assert verdict.kind == LOOP.VERDICT_HALT_AND_ESCALATE
+    assert loop._units[unit].terminal is True
+
+
+def test_unit_ids_that_differ_only_by_outer_whitespace_are_one_unit() -> None:
+    loop = LOOP.ReviewLoop()
+    first = loop.begin_iteration("U6 ", _artifact(doc="v0"))
+    assert first.unit_id == "U6"
+    loop.conclude_iteration("U6", _report("x"))
+    second = loop.begin_iteration("  U6", _artifact(doc="v1"))
+    assert second.unit_id == "U6"
+    assert second.iteration == 2
+    assert set(loop._units) == {"U6"}
+
+
+def test_defect_classes_that_differ_only_by_outer_whitespace_are_one_class() -> None:
+    loop = LOOP.ReviewLoop()
+    loop.begin_iteration("unit-cls", _artifact(doc="v0"))
+    loop.conclude_iteration("unit-cls", _report(" absence-inferred "))
+    loop.begin_iteration("unit-cls", _artifact(doc="v1"))
+    verdict = loop.conclude_iteration("unit-cls", _report("absence-inferred"))
+    assert verdict.kind == LOOP.VERDICT_HALT_AND_REPAIR
+    assert "absence-inferred" in verdict.recurring_classes
+    assert loop._units["unit-cls"].open_classes == {"absence-inferred"}
+
+
+def test_unit_id_and_defect_class_are_canonicalised_at_one_site_each() -> None:
+    tree = ast.parse(SOURCE)
+    parents: dict[ast.AST, ast.AST] = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
+
+    def _enclosing_function(node: ast.AST) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+        current: ast.AST | None = node
+        while current is not None:
+            if isinstance(current, ast.FunctionDef | ast.AsyncFunctionDef):
+                return current
+            current = parents.get(current)
+        return None
+
+    strip_functions: dict[str, int] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not isinstance(func, ast.Attribute) or func.attr != "strip":
+            continue
+        owner = _enclosing_function(node)
+        assert owner is not None, "str.strip is used outside a function"
+        strip_functions[owner.name] = strip_functions.get(owner.name, 0) + 1
+    assert strip_functions == {
+        "_canonical_unit_id": 1,
+        "_canonical_defect_class": 1,
+    }
+
+    by_name = {
+        node.name: node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+    }
+    for name, parameter in (
+        ("_canonical_unit_id", "unit_id"),
+        ("_canonical_defect_class", "name"),
+    ):
+        function = by_name[name]
+        returns = [
+            stmt.value
+            for stmt in function.body
+            if isinstance(stmt, ast.Return) and stmt.value is not None
+        ]
+        assert returns, f"{name} has no return"
+        for value in returns:
+            assert isinstance(value, ast.Name), f"{name} returns {ast.dump(value)}"
+            assert value.id != parameter, f"{name} returns the raw identifier"
+
+
+def test_begin_iteration_resets_the_unperformed_counter() -> None:
+    loop = LOOP.ReviewLoop()
+    loop.begin_iteration("unit-reset", _artifact(doc="v0"))
+    for _ in range(LOOP.MAX_UNPERFORMED):
+        loop.record_unperformed("unit-reset")
+    loop.conclude_unperformed("unit-reset")
+    loop.begin_iteration("unit-reset", _artifact(doc="v1"))
+    loop.record_unperformed("unit-reset")
+    assert loop._units["unit-reset"].unperformed == 1
+
+
+def test_a_blank_defect_class_is_refused() -> None:
+    with pytest.raises(LOOP.ReviewLoopError, match="declare a defect class"):
+        LOOP.Finding("", "lowest")
+    with pytest.raises(LOOP.ReviewLoopError, match="declare a defect class"):
+        LOOP.Finding("   ", "lowest")
+
+
+def test_a_review_report_cannot_be_built_from_a_bare_string() -> None:
+    with pytest.raises(LOOP.ReviewLoopError, match="sequence of Finding"):
+        LOOP.ReviewReport.of("not-findings")
+
+
+def test_artifact_text_must_be_a_string() -> None:
+    with pytest.raises(LOOP.ReviewLoopError, match="must be a string"):
+        LOOP.Artifact.from_mapping({"doc": 1})  # type: ignore[dict-item]
 
 
 def test_the_escalation_budget_is_a_constant_with_no_parameter_path_to_change_it() -> None:

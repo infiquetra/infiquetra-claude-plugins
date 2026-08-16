@@ -7,25 +7,36 @@ novel. This module is the stopping rule.
 
 What it owns
 ------------
-* At most :data:`MAX_ITERATIONS` **completed iterations per unit, for the life of that
-  unit**. A pass does not reset the counter. A further iteration is refused, not warned
-  about. This is a per-unit cap, not a streak of repairs.
-* What "the delta" means for a unit. Unchanged paths are omitted. A path whose text changed
-  is represented by a unified diff against the previous iteration, not by the new text in
-  full. A re-review is handed that surface, never the whole artifact.
+* At most :data:`MAX_ITERATIONS` **completed iterations per unit, for the life of one
+  :class:`ReviewLoop` instance in one process**. A pass does not reset the counter. A
+  further iteration is refused, not warned about. Reconstructing the object resets the
+  cap and the escalation budget. Spanning a process restart requires durable state this
+  module does not have.
+* What "the delta" means for a unit. Unchanged paths are omitted. A path whose text
+  changed is represented by a unified diff against the previous text, with **no context
+  lines**, so unchanged lines of a changed path are not re-presented. The whole artifact
+  is not handed back. Paths are compared exactly; this module does not normalize them.
 * Recurrence of a *declared* defect class across iterations. The class is a field the
-  reviewer set. Seen classes are never forgotten for that unit. This module has no summary
-  field to infer a class from.
+  reviewer set. Unit ids and defect classes are stored in one canonical form each
+  (outer whitespace stripped) so two spellings of the same identifier cannot split
+  the bound. Seen classes are never forgotten for that unit. This module has no
+  summary field to infer a class from.
+* Open classes require an authored disposition to pass. Silence — an empty report, or
+  a delta that no longer contains the defective path — is not a fix.
+  :meth:`ReviewReport.of` takes ``disposes``. Only ``pass`` needs it.
 * Three verdicts: ``pass``, ``halt-and-repair``, ``halt-and-escalate``. A verdict is
-  emitted only from a :class:`ReviewReport`, which is the fact that a review was
-  performed. A bare sequence is not a report. An unperformed review is a separate call:
-  it emits no verdict and does not consume the iteration. :data:`MAX_UNPERFORMED`
-  consecutive unperformed records on one open iteration are refused.
-* Mechanical escalation: the last allowed iteration concluding with any declared class
-  still open yields ``halt-and-escalate``. Recurrence of a class is one sufficient
-  trigger; it is not the only one. There is no remaining iteration in which to repair,
-  so that verdict is never ``halt-and-repair``. Rank is not read. The class is retained.
-  The unit is then **terminal**: no later call returns a verdict.
+  emitted only from a :class:`ReviewReport` or from :meth:`ReviewLoop.conclude_unperformed`.
+  A bare sequence is not a report. An unperformed review is recorded separately and
+  does not consume the iteration. :data:`MAX_UNPERFORMED` consecutive unperformed
+  records on one open iteration are refused. An iteration that carries unperformed
+  records cannot pass. :meth:`ReviewLoop.conclude_unperformed` is the exit when there
+  is no review result; it never returns ``pass``.
+* Mechanical escalation: the last allowed iteration concluding with any declared
+  class still open, any undisposed class, or any unperformed record yields
+  ``halt-and-escalate``. Recurrence is one sufficient trigger; it is not the only one.
+  There is no remaining iteration in which to repair, so that verdict is never
+  ``halt-and-repair``. Rank is not read. The unit is then **terminal**: no later call
+  returns a verdict.
 * An escalation budget of :data:`ESCALATION_BUDGET` per unit. The comparison that
   enforces it reads this name. No function here accepts a parameter that replaces it.
   At the shipped value of 1, a second escalation is prevented by terminality, not by
@@ -42,7 +53,7 @@ it does not use.
 from __future__ import annotations
 
 import difflib
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -113,7 +124,7 @@ class Finding:
     rank: str
 
     def __post_init__(self) -> None:
-        _require_declared_class(self.defect_class)
+        object.__setattr__(self, "defect_class", _canonical_defect_class(self.defect_class))
         if not isinstance(self.rank, str):
             raise ReviewLoopError("a finding rank must be a string")
 
@@ -122,22 +133,47 @@ class Finding:
 class ReviewReport:
     """A review that was performed. The type itself is that fact.
 
-    Construct with :meth:`of`. A list or tuple is not a :class:`ReviewReport` and
-    cannot be passed to :meth:`ReviewLoop.conclude_iteration`.
+    Construct with :meth:`of`. A list or tuple is not a :class:`ReviewReport`.
+    ``disposes`` is the authored claim that named classes are resolved. It is
+    required to ``pass`` while earlier classes remain open. It is not inferred
+    from an empty findings list.
     """
 
     findings: tuple[Finding, ...]
+    disposes: frozenset[str] = field(default_factory=frozenset)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.disposes, str | bytes) or not isinstance(self.disposes, Iterable):
+            raise ReviewLoopError("disposes must be a collection of class names")
+        object.__setattr__(
+            self,
+            "disposes",
+            frozenset(_canonical_defect_class(name) for name in self.disposes),
+        )
+        raised = {finding.defect_class for finding in self.findings}
+        overlap = raised & self.disposes
+        if overlap:
+            raise ReviewLoopError(
+                "a report cannot dispose and re-raise " + ", ".join(sorted(overlap))
+            )
 
     @classmethod
-    def of(cls, findings: Sequence[Finding]) -> ReviewReport:
+    def of(
+        cls,
+        findings: Sequence[Finding],
+        *,
+        disposes: Iterable[str] = (),
+    ) -> ReviewReport:
         if isinstance(findings, str | bytes) or not isinstance(findings, Sequence):
             raise ReviewLoopError("ReviewReport.of requires a sequence of Finding values")
+        if isinstance(disposes, str | bytes):
+            raise ReviewLoopError("disposes must be a collection of class names")
         collected: list[Finding] = []
         for finding in findings:
             if not isinstance(finding, Finding):
                 raise ReviewLoopError("findings must be Finding values")
             collected.append(finding)
-        return cls(tuple(collected))
+        return cls(tuple(collected), frozenset(disposes))
 
 
 @dataclass(frozen=True)
@@ -152,7 +188,7 @@ class ReviewScope:
 
 @dataclass(frozen=True)
 class Verdict:
-    """The loop's decision after one performed review."""
+    """The loop's decision after one performed review or an unperformed exit."""
 
     kind: VerdictKind
     iteration: int
@@ -166,6 +202,7 @@ class _UnitState:
     pending_iteration: int = 0
     last_artifact: Artifact | None = None
     seen_classes: set[str] = field(default_factory=set)
+    open_classes: set[str] = field(default_factory=set)
     escalated_classes: set[str] = field(default_factory=set)
     escalations: int = 0
     unperformed: int = 0
@@ -176,9 +213,9 @@ class _UnitState:
 def delta_of(previous: Artifact, current: Artifact) -> Artifact:
     """The change since ``previous``: diffs for paths that changed, nothing for the rest.
 
-    This is the whole meaning of a re-review delta for a unit. Unchanged paths are omitted.
-    Added, removed, and edited paths appear as unified diffs against the previous text
-    (the empty string when the path was absent).
+    Unchanged paths are omitted. Added, removed, and edited paths appear as unified
+    diffs against the previous text (the empty string when the path was absent),
+    with no context lines.
     """
     if not isinstance(previous, Artifact) or not isinstance(current, Artifact):
         raise ReviewLoopError("delta_of requires Artifact values")
@@ -201,20 +238,27 @@ def _unified_diff(before: str, after: str) -> str:
             after.splitlines(keepends=True),
             fromfile="previous",
             tofile="current",
+            n=0,
         )
     )
 
 
-def _require_unit_id(unit_id: str) -> str:
-    if not isinstance(unit_id, str) or not unit_id.strip():
+def _canonical_unit_id(unit_id: str) -> str:
+    if not isinstance(unit_id, str):
         raise ReviewLoopError("unit_id must be a non-empty string")
-    return unit_id
+    canonical = unit_id.strip()
+    if not canonical:
+        raise ReviewLoopError("unit_id must be a non-empty string")
+    return canonical
 
 
-def _require_declared_class(name: object) -> str:
-    if not isinstance(name, str) or not name.strip():
+def _canonical_defect_class(name: object) -> str:
+    if not isinstance(name, str):
         raise ReviewLoopError("a finding must declare a defect class")
-    return name
+    canonical = name.strip()
+    if not canonical:
+        raise ReviewLoopError("a finding must declare a defect class")
+    return canonical
 
 
 def _declared_classes(findings: Sequence[Finding]) -> frozenset[str]:
@@ -222,7 +266,7 @@ def _declared_classes(findings: Sequence[Finding]) -> frozenset[str]:
     for finding in findings:
         if not isinstance(finding, Finding):
             raise ReviewLoopError("findings must be Finding values")
-        classes.add(_require_declared_class(finding.defect_class))
+        classes.add(_canonical_defect_class(finding.defect_class))
     return frozenset(classes)
 
 
@@ -232,15 +276,30 @@ def _close_terminal(state: _UnitState) -> None:
     state.terminal = True
 
 
+def _spend_escalation(state: _UnitState, unit: str, classes: set[str]) -> None:
+    if state.escalations >= ESCALATION_BUDGET:
+        _close_terminal(state)
+        raise EscalationBudgetError(
+            f"unit {unit!r} already used its {ESCALATION_BUDGET} escalation; "
+            "a further escalation is refused"
+        )
+    state.escalations += 1
+    state.escalated_classes |= classes
+
+
 class ReviewLoop:
-    """In-memory bound on review iterations for one or more units."""
+    """In-memory bound on review iterations for one or more units.
+
+    The bound is the lifetime of this object. It is not durable across process
+    restart.
+    """
 
     def __init__(self) -> None:
         self._units: dict[str, _UnitState] = {}
 
     def begin_iteration(self, unit_id: str, artifact: Artifact) -> ReviewScope:
         """Open the next iteration, or refuse if the unit is already at the cap."""
-        unit = _require_unit_id(unit_id)
+        unit = _canonical_unit_id(unit_id)
         if not isinstance(artifact, Artifact):
             raise ReviewLoopError("artifact must be an Artifact")
         state = self._units.setdefault(unit, _UnitState())
@@ -279,10 +338,10 @@ class ReviewLoop:
         Emits no verdict. Does not consume the iteration. A later
         :meth:`conclude_iteration` on the same open iteration is still the same
         numbered iteration. :data:`MAX_UNPERFORMED` consecutive records on this
-        open iteration are refused, which is what stops a spin of unperformed
-        calls.
+        open iteration are refused. :meth:`conclude_unperformed` is the exit
+        when there is no review result.
         """
-        unit = _require_unit_id(unit_id)
+        unit = _canonical_unit_id(unit_id)
         state = self._units.get(unit)
         if state is not None and state.terminal:
             raise UnitTerminalError(f"unit {unit!r} has spent its escalation and is closed")
@@ -295,13 +354,36 @@ class ReviewLoop:
             )
         state.unperformed += 1
 
+    def conclude_unperformed(self, unit_id: str) -> Verdict:
+        """End the open iteration without a review result. Never returns ``pass``."""
+        unit = _canonical_unit_id(unit_id)
+        state = self._units.get(unit)
+        if state is not None and state.terminal:
+            raise UnitTerminalError(f"unit {unit!r} has spent its escalation and is closed")
+        if state is None or not state.open:
+            raise ReviewLoopError(f"unit {unit!r} has no open iteration")
+        if state.unperformed < 1:
+            raise ReviewLoopError(
+                f"unit {unit!r} has no unperformed review to conclude; "
+                "record_unperformed first or submit a ReviewReport"
+            )
+        iteration = state.pending_iteration
+        if iteration == MAX_ITERATIONS:
+            _spend_escalation(state, unit, set(state.open_classes))
+            kind: VerdictKind = VERDICT_HALT_AND_ESCALATE
+        else:
+            kind = VERDICT_HALT_AND_REPAIR
+        return self._close(state, kind, iteration, frozenset())
+
     def conclude_iteration(self, unit_id: str, report: ReviewReport) -> Verdict:
         """Close the open iteration and emit one of the three verdicts.
 
-        ``report`` must be a :class:`ReviewReport`. A sequence is not accepted:
-        absence of findings is not evidence that a review was performed.
+        ``report`` must be a :class:`ReviewReport`. A sequence is not accepted.
+        ``pass`` requires every previously open class to be named in
+        ``report.disposes`` and requires this iteration to carry no unperformed
+        records.
         """
-        unit = _require_unit_id(unit_id)
+        unit = _canonical_unit_id(unit_id)
         state = self._units.get(unit)
         if state is not None and state.terminal:
             raise UnitTerminalError(f"unit {unit!r} has spent its escalation and is closed")
@@ -314,29 +396,44 @@ class ReviewLoop:
             )
         iteration = state.pending_iteration
         classes = _declared_classes(report.findings)
+        disposed = report.disposes
+        unknown = disposed - state.open_classes
+        if unknown:
+            raise ReviewLoopError(
+                "cannot dispose " + ", ".join(sorted(unknown)) + ": not an open class"
+            )
+        remaining_open = (state.open_classes - disposed) | classes
         recurring = classes & state.seen_classes
-        # Last iteration with findings still open cannot be repaired. Recurrence
-        # is sufficient; it is not required. Rank is not read.
-        if iteration == MAX_ITERATIONS and classes:
-            if state.escalations >= ESCALATION_BUDGET:
-                _close_terminal(state)
-                raise EscalationBudgetError(
-                    f"unit {unit!r} already used its {ESCALATION_BUDGET} escalation; "
-                    "a further escalation is refused"
-                )
-            state.escalations += 1
-            state.escalated_classes |= classes
+        unfinished = bool(classes or remaining_open or state.unperformed)
+        if iteration == MAX_ITERATIONS and unfinished:
+            _spend_escalation(state, unit, remaining_open or set(classes))
             kind: VerdictKind = VERDICT_HALT_AND_ESCALATE
         elif classes:
             kind = VERDICT_HALT_AND_REPAIR
+        elif remaining_open:
+            raise ReviewLoopError(
+                "pass requires explicit disposal of open classes: "
+                + ", ".join(sorted(remaining_open))
+            )
+        elif state.unperformed:
+            kind = VERDICT_HALT_AND_REPAIR
         else:
             kind = VERDICT_PASS
+        state.open_classes = remaining_open
         state.seen_classes |= classes
+        return self._close(state, kind, iteration, frozenset(recurring))
+
+    def _close(
+        self,
+        state: _UnitState,
+        kind: VerdictKind,
+        iteration: int,
+        recurring: frozenset[str],
+    ) -> Verdict:
         state.completed_iterations = iteration
         state.open = False
         state.pending_iteration = 0
-        state.unperformed = 0
         state.last_verdict = kind
         if kind == VERDICT_HALT_AND_ESCALATE:
             state.terminal = True
-        return Verdict(kind=kind, iteration=iteration, recurring_classes=frozenset(recurring))
+        return Verdict(kind=kind, iteration=iteration, recurring_classes=recurring)

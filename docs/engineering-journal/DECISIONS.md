@@ -7788,3 +7788,50 @@ behavior is then never worse than pre-#520.
 than session+engine (e.g. per-unit), or when the marker family moves out of the repo tree.
 
 ---
+
+### A review is finished only when someone says the finding is fixed  {#resolution-is-authored-not-inferred}
+
+**Date.** 2026-08-15
+
+**Decision.** A bounded review loop refuses the `pass` verdict while any defect class raised in an
+earlier iteration has not been **explicitly disposed of** by the report concluding the current
+iteration. Resolution is an authored claim, never an inference drawn from a reviewer's silence.
+
+**Context.** The loop scopes each re-review to the change since the previous iteration, which is
+what keeps review cost bounded. Combined with an absent notion of resolution, that scoping produced
+a defect neither feature causes alone:
+
+```
+iter1  report = [blocking finding]        -> halt-and-repair
+iter2  nothing was fixed, so the delta is empty
+iter2  report = ()                        -> pass, defect still present
+```
+
+The crueler form needs no empty delta. Editing an unrelated path leaves the defective path out of
+the delta, so the reviewer cannot see it, and its silence is read as a fix.
+
+**Rationale.** The loop was conflating *the reviewer reported nothing about this class* with *this
+class is resolved*. Those differ exactly when the reviewer was never shown the code — which is the
+normal case under delta scoping, not an edge case. Requiring disposal converts the inference into a
+statement someone is accountable for.
+
+**Rejected alternatives.**
+
+- *Re-present every open finding's original location in each delta.* Restores review cost to the
+  whole artifact and defeats the scoping the loop exists to provide.
+- *Track resolution per finding with evidence bound to a scope token.* Correct and larger. Needs
+  finding identity beyond the class and durable state the loop does not have. Deferred deliberately.
+- *Treat an unchanged path as implicitly unresolved.* Cheaper, but silently wrong the moment a fix
+  lands in a different path than the finding named.
+
+**Consequences.** A report gains a disposal set. Disposing a class that was never open is refused,
+because a typo must not close a finding and must not look like success. Disposing and re-raising the
+same class in one report is refused as internally contradictory. A last iteration that ends with
+open, undisposed classes yields `halt-and-escalate` rather than an exception — the caller learns the
+outcome from a verdict, not by catching a refusal.
+
+**Revisit when.** Findings acquire durable identity, or the loop gains state that survives a process
+restart. Either makes per-finding disposal with bound evidence affordable, and the class-level rule
+here becomes the coarse approximation it currently is.
+
+---

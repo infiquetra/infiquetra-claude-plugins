@@ -11,10 +11,12 @@ State is one JSON file. If it is wrong, delete it -- `herdr agent list` is the r
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 from dataclasses import asdict, dataclass, field
@@ -55,6 +57,51 @@ MODEL_LIST: dict[str, list[str]] = {
     "opencode": ["models"],
 }
 
+# What each vendor needs in order to actually do work in the worktree it was handed.
+#
+# Without this, every unit runs at its vendor's default -- read-only, or ask-first in a tab nobody
+# is watching. Two competing plans were once produced at xhigh over twelve minutes and both were
+# lost, because neither session could save a file: codex answered "I can't write", claude sat in
+# plan mode. A worktree a unit cannot write to is not isolation, it is theatre.
+#
+# Two levels. ``auto`` is the default and means "get on with the task without asking" -- claude and
+# grok share that exact vocabulary. ``bypass`` is the operator's everyday mode, granted per unit
+# when the work needs it. Either way the worktree is the blast radius: a unit reaches its own tree
+# and nothing else. A vendor with an empty list already behaves that way unflagged.
+VENDOR_PERMISSION: dict[str, dict[str, list[str]]] = {
+    "claude": {
+        "auto": ["--permission-mode", "auto"],
+        "bypass": ["--permission-mode", "bypassPermissions"],
+    },
+    "grok": {
+        "auto": ["--always-approve", "auto"],
+        "bypass": ["--always-approve", "bypassPermissions"],
+    },
+    "codex": {
+        "auto": ["--sandbox", "workspace-write"],
+        "bypass": ["--dangerously-bypass-approvals-and-sandbox"],
+    },
+    "agy": {"auto": [], "bypass": ["--dangerously-skip-permissions"]},
+    "opencode": {"auto": ["--auto"], "bypass": ["--auto"]},
+    "muse": {"auto": ["--yolo"], "bypass": ["--yolo"]},
+    "qwen": {"auto": [], "bypass": []},
+}
+
+# How each vendor names a saga capability. Saga is installed for all of them, but the invocation
+# differs -- and a bare "/plan" is a command nowhere, so it arrives as prose the agent may or may
+# not act on. That is how a "/plan" unit produced claude's own built-in plan mode instead.
+#
+# claude and grok/qwen/opencode were read off their installed command files; codex's saga ships
+# skills under the `saga` namespace with no command directory at all (its PORTABILITY.md says so),
+# and codex prefixes with `$`.
+SAGA_SYNTAX: dict[str, str] = {
+    "claude": "/saga:{cap}",
+    "codex": "$saga:{cap}",
+    "grok": "/{cap}",
+    "qwen": "/{cap}",
+    "opencode": "/{cap}",
+}
+
 PENDING, RUNNING, DONE, FAILED = "pending", "running", "done", "failed"
 
 
@@ -66,6 +113,12 @@ class Unit:
     """What the session is told to do -- a saga command like "/plan #456", or free prose."""
     model: str | None = None
     effort: str | None = None
+    permission: str = "auto"
+    """How freely this unit may act: ``auto`` (get on with it) or ``bypass`` (ask nothing).
+
+    ``auto`` is the default because it is enough for a unit to do its own work in its own worktree.
+    ``bypass`` is there because it is what the operator runs all day, and a unit that keeps stopping
+    to ask in a tab nobody is watching has failed. The containment is the worktree either way."""
     setup: list[str] = field(default_factory=list)
     """Lines sent into the session before its task, for tier control the command line lacks.
 
@@ -299,6 +352,8 @@ def agent_argv(unit: Unit) -> list[str]:
         unit.worktree or ".",
         unit.vendor,
     ]
+    modes = VENDOR_PERMISSION.get(unit.vendor, {})
+    argv.extend(modes.get(unit.permission, modes.get("auto", [])))
     flags = VENDOR_FLAGS.get(unit.vendor, {})
     for key, value in (("model", unit.model), ("effort", unit.effort)):
         template = flags.get(key)
@@ -401,6 +456,22 @@ def probe(name: str) -> tuple[str, dict[str, bool]]:
         "model": bool(re.search(r"--model\b", out)),
         "effort": bool(re.search(r"--effort\b|--reasoning-effort\b", out)),
     }
+
+
+def saga_command(vendor: str, cap: str) -> str:
+    """Render a saga capability the way this vendor actually invokes it.
+
+    ``cap`` is the bare name -- ``plan``, ``doc-review``, ``code-review``. A vendor with no entry
+    gets the plain name back, which reads as prose rather than pretending to be a command.
+    """
+    return SAGA_SYNTAX.get(vendor, "{cap}").format(cap=cap.lstrip("/$").replace("saga:", ""))
+
+
+def cmd_saga(args: argparse.Namespace) -> int:
+    """Print how each vendor invokes one saga capability."""
+    for name, _ in roster():
+        print(f"{name:12s} {saga_command(name, args.cap)}")
+    return 0
 
 
 def cmd_roster(args: argparse.Namespace) -> int:
@@ -602,18 +673,95 @@ def cmd_collect(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_clean(args: argparse.Namespace) -> int:
+def cmd_wait(args: argparse.Namespace) -> int:
+    """Block until a running unit settles. Driven by herdr's events, not by polling.
+
+    ``herdr agent wait`` is level-triggered: it returns at once if the agent is already in the
+    requested state, and otherwise blocks inside the server until the state actually changes --
+    measured at 0.010s for an already-settled agent and a full quiet block otherwise. So there is no
+    race between checking and waiting, and no loop burning cycles to notice something.
+
+    One wait per running unit, then block on whichever finishes first. The rest are stopped, because
+    the caller wants to know that *something* moved; run ``wait`` again for the next one.
+    """
     r = Run.load()
+    running = [u for u in r.units if u.status == RUNNING]
+    if not running:
+        print("nothing running — `go` to launch what is eligible")
+        return 0
+
+    procs: dict[int, Unit] = {}
+    for unit in running:
+        handle = unit.agent_name or unit.name
+        proc = subprocess.Popen(
+            [
+                "herdr",
+                "agent",
+                "wait",
+                handle,
+                "--until",
+                "idle",
+                "--until",
+                "done",
+                "--timeout",
+                str(args.timeout * 1000),
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        procs[proc.pid] = unit
+    print(f"waiting on {', '.join(u.name for u in running)} (up to {args.timeout}s)")
+
+    try:
+        pid, _ = os.wait()
+    except ChildProcessError:
+        return 0
+    settled = procs.pop(pid, None)
+    for p in procs:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(p, signal.SIGTERM)
+    if settled:
+        print(f"{settled.name} settled — `settle` to record it, then `go`")
+    else:
+        print("a wait returned but its unit could not be identified; run `status`")
+    return 0
+
+
+def merged_into_head(branch: str) -> bool:
+    """Is every commit on this branch already in the current tree?"""
+    got = run(["git", "rev-list", "--count", f"{branch}..HEAD@{{0}}"], check=False)
+    if got.returncode != 0:
+        return False
+    ahead = run(["git", "rev-list", "--count", f"HEAD..{branch}"], check=False)
+    return ahead.returncode == 0 and ahead.stdout.strip() == "0"
+
+
+def cmd_clean(args: argparse.Namespace) -> int:
+    """Close tabs and remove worktrees.
+
+    ``--merged`` restricts it to units whose branch is already in the tree, which is the only case
+    where closing is unambiguously free: the work is in HEAD, so the tab and the worktree are pure
+    overhead. Everything else is left alone, because an unmerged unit's worktree is the evidence you
+    look at when it went wrong -- and that is the whole reason this plugin keeps no other record.
+    """
+    r = Run.load()
+    kept, closed = [], []
     for unit in r.units:
+        if args.merged and not (unit.branch and merged_into_head(unit.branch)):
+            kept.append(unit.name)
+            continue
         if unit.tab_id:
             run(["herdr", "tab", "close", unit.tab_id], check=False)
         if unit.worktree and Path(unit.worktree).exists():
             run(["git", "worktree", "remove", "--force", unit.worktree], check=False)
         if args.branches and unit.branch:
             run(["git", "branch", "-D", unit.branch], check=False)
+        closed.append(unit.name)
     if args.all:
         shutil.rmtree(RUN_FILE.parent, ignore_errors=True)
-    print("cleaned.")
+    print(f"closed: {', '.join(closed) or 'nothing'}")
+    if kept:
+        print(f"kept (not merged, so still your evidence): {', '.join(kept)}")
     return 0
 
 
@@ -632,6 +780,10 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--limit", type=int, default=12, help="models to show per vendor")
     s.set_defaults(func=cmd_roster)
 
+    s = sub.add_parser("saga", help="how each vendor invokes a saga capability")
+    s.add_argument("cap", help="the bare capability name, e.g. plan")
+    s.set_defaults(func=cmd_saga)
+
     s = sub.add_parser("expand", help="append units to a run in flight, once a phase names them")
     s.add_argument("--plan", required=True)
     s.set_defaults(func=cmd_expand)
@@ -646,10 +798,17 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("settle", help="mark running units done when their session goes idle")
     s.set_defaults(func=cmd_settle)
 
+    s = sub.add_parser(
+        "wait", help="block until a running unit settles (herdr events, not polling)"
+    )
+    s.add_argument("--timeout", type=int, default=1800, help="seconds to wait at most")
+    s.set_defaults(func=cmd_wait)
+
     s = sub.add_parser("collect", help="merge each finished unit's branch")
     s.set_defaults(func=cmd_collect)
 
     s = sub.add_parser("clean", help="close tabs and remove worktrees")
+    s.add_argument("--merged", action="store_true", help="only units whose branch is in HEAD")
     s.add_argument("--branches", action="store_true", help="delete the unit branches too")
     s.add_argument("--all", action="store_true", help="delete the run file too")
     s.set_defaults(func=cmd_clean)

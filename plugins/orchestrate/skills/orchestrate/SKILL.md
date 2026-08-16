@@ -100,6 +100,18 @@ An agent not listed launches with no model flags. **qwen does not report interac
 `herdr agent prompt` refuses it; the script falls back to typing into its pane, which is what an
 operator would do by hand.
 
+## Writing, and saga commands
+
+**Every unit is launched able to write its own worktree** — `--permission-mode acceptEdits` for
+claude, `--sandbox workspace-write` for codex, and so on per vendor. Without it each one runs at its
+vendor's default, which is read-only or ask-first: two competing plans were once produced at xhigh
+and both lost, because neither session could save a file. The worktree is the blast radius, so this
+grants writing there and nothing wider.
+
+**Saga is installed for every vendor, but invoked differently.** `orchestrate.py saga <cap>` prints
+the right form — `/saga:plan` for claude, `$saga:plan` for codex, `/plan` for grok, qwen and
+opencode. A bare `/plan` is a command nowhere and arrives as prose.
+
 ## What this deliberately does not do
 
 It does not verify that a session "really" finished, count tokens, enforce a spend ceiling, reserve

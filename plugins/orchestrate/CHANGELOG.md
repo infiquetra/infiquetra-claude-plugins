@@ -1,5 +1,37 @@
 # Changelog
 
+## [1.4.0] - 2026-08-16
+
+Round four, from the first run that reached dispatch. Two competing plans were produced at xhigh
+over twelve minutes and both were lost.
+
+### Fixed
+
+- **Units could not write the worktree they were given.** Orchestrate passed no permission flag, so
+  every unit ran at its vendor's default: codex answered "I can't write", claude sat in plan mode.
+  Zero commits from either planner; both plans existed only as terminal scrollback. Each vendor is
+  now launched with a permission level: `auto` by default — enough to get on with its own work
+  without stopping to ask — and `bypass` per unit for a free hand. All seven vendors are covered,
+  not just claude and codex; claude and grok turn out to share the same mode vocabulary. The
+  worktree is the blast radius either way.
+- **A bare `/plan` is a command nowhere.** Saga is installed for every vendor but invoked
+  differently: `/saga:plan` for claude, `$saga:plan` for codex, `/plan` for grok, qwen and opencode.
+  Sent bare it arrives as prose and the agent does something of its own — which is how a `/plan`
+  unit produced claude's built-in plan mode. `orchestrate.py saga <cap>` renders the right form.
+
+### Added
+
+- **Unit names are descriptive.** `plan-claude`, not `p1a` — the name becomes the herdr tab title,
+  the branch and the worktree directory, and it is what the operator reads in a screen of tabs.
+- **`wait` — block until a running unit settles, driven by herdr's events rather than polling.**
+  `herdr agent wait` is level-triggered: it returns at once if the agent has already settled
+  (measured at 0.010s) and otherwise blocks inside the server. So there is no race between checking
+  and waiting, and no loop burning cycles. Replaces the previous advice to watch with a poll loop.
+- **`clean --merged` — close only units whose branch is already in the tree.** That is the one case
+  where closing is free: the work is in HEAD, so the tab and worktree are pure overhead. Everything
+  unmerged is kept, because its worktree is the evidence you look at when a unit went wrong.
+
+
 ## [1.3.0] - 2026-08-16
 
 Round three of live operator use. Every vendor can now be given a tier, and the vendor list means

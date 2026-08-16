@@ -156,6 +156,12 @@ Rules for the table:
 - **A reviewing unit is never the agent that produced what it reviews.** Do not hand a session its
   own output to bless.
 - **`after` is the only ordering.** Units with no dependency run at the same time.
+- **Name a unit for what it does and who does it** — `plan-claude`, `plan-codex`,
+  `docreview-grok`, `build-guard`. Not `p1a`. That name becomes the herdr tab title, the branch
+  (`orch/plan-claude`) and the worktree directory, and it is what you read in `herdr agent list`
+  when you come back to a screen of tabs.
+- **Units run at `permission: auto` by default** — enough to do their own work without stopping to
+  ask in a tab nobody is watching. Set `"permission": "bypass"` on a unit that needs a free hand.
 - **Every vendor in the table must be in the allow-list** from question 3.
 - **Every row carries a model and an effort.** A `*` marks an effort delivered by a slash command
   in `setup` rather than a launch flag — same result, different door. Never leave a tier blank.
@@ -179,7 +185,8 @@ do not belong in the JSON. `task` is the literal text sent to the session.
   "engine_prefs": {"code-review": {"intent": "second-opinion", "model": "opus", "effort": "high"}},
   "units": [
     {"name": "p1a", "vendor": "claude", "model": "opus", "effort": "high",
-     "task": "/plan #48", "after": []},
+     "task": "/saga:plan #48 — write the plan to docs/plans/<date>-<slug>.md and commit it",
+     "after": []},
     {"name": "p2a", "vendor": "grok", "model": "grok-4.6", "effort": "xhigh",
      "task": "/doc-review docs/plans/....md", "after": ["p1a"]},
     {"name": "p2b", "vendor": "qwen", "model": "qwen3-max", "setup": ["/effort high"],

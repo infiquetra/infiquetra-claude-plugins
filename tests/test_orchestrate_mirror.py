@@ -173,8 +173,8 @@ class FakeHerdr:
             ],
         }
 
-    def discover_by_label(self, _label: str, *, cwd: Path) -> Any:
-        return None
+    def discover_by_label(self, label: str, *, cwd: Path) -> Any:
+        return LIFECYCLE.HerdrControl.discover_by_label(self, label, cwd=cwd)
 
     def pane_text(self, pane_id: str, *, cwd: Path) -> str:
         self.reads.append(pane_id)
@@ -1484,6 +1484,22 @@ def test_a_pane_absent_from_the_snapshot_is_not_invented_as_activity(tmp_path: P
         now=2.0,
     )
     assert activity == MIRROR.MirrorActivity(revision=None, advanced=False, advanced_at=None)
+    assert "mirror_pane_activity" not in _row(tmp_path)
+
+
+def test_a_present_pane_without_a_valid_revision_is_not_read_as_silence(tmp_path: Path) -> None:
+    herdr = FakeHerdr()
+    session = _create(tmp_path, herdr=herdr)
+    MIRROR.dispatch_request(session, _request(), herdr=herdr, now=1.0)
+
+    with pytest.raises(MIRROR.MirrorError, match="valid output revision"):
+        MIRROR.observe_pane_activity(
+            tmp_path,
+            run_id=RUN_ID,
+            row_id=ROW_ID,
+            snapshot=_snapshot(session.pane_id, None),
+            now=2.0,
+        )
     assert "mirror_pane_activity" not in _row(tmp_path)
 
 

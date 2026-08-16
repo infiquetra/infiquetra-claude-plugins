@@ -1721,7 +1721,7 @@ def check_liveness(
     )
 
 
-def _pane_revision(snapshot: Mapping[str, Any], pane_id: str) -> int | None:
+def _pane_revision(snapshot: Mapping[str, Any], pane_id: str) -> int:
     """The pane's output counter from one ``session.snapshot``, merged the way catch-up does.
 
     ``agents`` is the authoritative surface and is merged over ``panes``, matching
@@ -1737,7 +1737,7 @@ def _pane_revision(snapshot: Mapping[str, Any], pane_id: str) -> int | None:
             merged.update(item)
     revision = merged.get("revision")
     if isinstance(revision, bool) or not isinstance(revision, int):
-        return None
+        raise MirrorError(f"live pane {pane_id!r} has no valid output revision")
     return revision
 
 
@@ -1796,11 +1796,6 @@ def observe_pane_activity(
     if pane_id is None:
         return MirrorActivity(revision=None, advanced=False, advanced_at=None)
     revision = _pane_revision(snapshot, pane_id)
-    if revision is None:
-        # The pane is absent from the snapshot, or reports no counter. Absence is a different
-        # failure -- the subscriber records it as an exited pane, which *is* a disagreement the
-        # ordinary divergence machinery reaches -- and inventing an advance here would mask it.
-        return MirrorActivity(revision=None, advanced=False, advanced_at=None)
 
     previous = row.get("mirror_pane_activity")
     previous_revision = previous.get("revision") if isinstance(previous, Mapping) else None

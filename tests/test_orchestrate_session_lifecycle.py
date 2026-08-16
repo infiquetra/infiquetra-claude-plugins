@@ -143,7 +143,6 @@ class FakeWrapper:
 
 class FakeHerdr:
     def __init__(self) -> None:
-        self.discovered = None
         self.text = "ready prompt"
         self.thinking_disabled = False
         self.sent: list[str] = []
@@ -152,11 +151,14 @@ class FakeHerdr:
         self.presence_checks = 0
         self.status = "working"
         self.snapshot_error: Exception | None = None
+        self.snapshot_override: dict[str, Any] | None = None
 
     def snapshot(self, *, cwd: Path) -> dict[str, Any]:
         self.presence_checks += 1
         if self.snapshot_error is not None:
             raise self.snapshot_error
+        if self.snapshot_override is not None:
+            return self.snapshot_override
         if not self.present:
             return {"tabs": [], "panes": [], "agents": []}
         return {
@@ -180,6 +182,7 @@ class FakeHerdr:
             ],
             "agents": [
                 {
+                    "name": "actual-child",
                     "pane_id": "pane-a",
                     "tab_id": "tab-a",
                     "workspace_id": "workspace-a",
@@ -191,7 +194,7 @@ class FakeHerdr:
         }
 
     def discover_by_label(self, label: str, *, cwd: Path) -> Any:
-        return self.discovered
+        return LIFECYCLE.HerdrControl.discover_by_label(self, label, cwd=cwd)
 
     def pane_text(self, pane_id: str, *, cwd: Path) -> str:
         return self.text
@@ -353,7 +356,6 @@ def test_retry_discovers_written_label_after_crash_before_identifier_write(
         nonlocal crashed
         if not crashed and fields == {"agent": identity.agent_name}:
             crashed = True
-            herdr.discovered = identity
             raise RuntimeError("crash after side effect")
         return original(root, row_id, fields, **kwargs)
 
@@ -367,6 +369,43 @@ def test_retry_discovers_written_label_after_crash_before_identifier_write(
         LIFECYCLE.read_session_pane_id(herdr, root=tmp_path, run_id="run-a", row_id="child-a")
         == "pane-a"
     )
+
+
+def test_launch_recovery_refuses_a_partial_snapshot_before_the_native_launcher(
+    tmp_path: Path,
+) -> None:
+    wrapper = FakeWrapper(launch_error=RuntimeError("first launch failed"))
+    herdr = FakeHerdr()
+    with pytest.raises(RuntimeError, match="first launch failed"):
+        _launch(tmp_path, wrapper=wrapper, herdr=herdr)
+
+    wrapper.launch_error = None
+    herdr.snapshot_override = {"tabs": [], "panes": []}
+    with pytest.raises(LIFECYCLE.LaunchProtocolError, match="tabs, panes, and agents"):
+        _launch(tmp_path, wrapper=wrapper, herdr=herdr)
+    assert wrapper.launches == 1
+
+
+def test_launch_recovery_launches_after_a_complete_absence_answer(tmp_path: Path) -> None:
+    wrapper = FakeWrapper(launch_error=RuntimeError("first launch failed"))
+    herdr = FakeHerdr()
+    with pytest.raises(RuntimeError, match="first launch failed"):
+        _launch(tmp_path, wrapper=wrapper, herdr=herdr)
+
+    wrapper.launch_error = None
+    herdr.present = False
+    recovered, _landing, _resolution = _launch(tmp_path, wrapper=wrapper, herdr=herdr)
+    assert recovered == IDENTITY
+    assert wrapper.launches == 2
+
+
+def test_observed_state_refuses_a_malformed_live_value(tmp_path: Path) -> None:
+    herdr = FakeHerdr()
+    herdr.status = None  # type: ignore[assignment]
+    with pytest.raises(LIFECYCLE.LaunchProtocolError, match="valid agent status"):
+        LIFECYCLE.read_session_observed_state(
+            herdr, root=tmp_path, run_id="run-a", row_id="child-a"
+        )
 
 
 def test_launch_without_sentinel_is_not_ready_not_running(tmp_path: Path) -> None:

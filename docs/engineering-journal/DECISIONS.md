@@ -243,6 +243,40 @@ recurring classes and undisposed earlier classes still escalate independently of
 ---
 
 ## 2026-08-15
+### Terminal wake routing requires run-bound identity evidence {#terminal-wake-routing-identity}
+
+**Decision.** A terminal event wakes an Orchestrate run only when its pane is bound to that run by
+an installed sentinel subscription or the current complete terminal snapshot. A missing owner
+does not make an unrelated terminal event relevant. Supervisory process rows are excluded from
+session-owner matching because they do not own terminal tabs.
+
+**Rejected alternative.** Waking whenever any non-planned row is absent from the current snapshot
+turns the subscriber process row into a permanent host-wide alarm. It also treats the absence of
+one run owner as evidence that an unrelated tab-close event belongs to that run.
+
+**Revisit when** the terminal event protocol provides a durable run label directly on every
+terminal event, including events emitted after pane removal.
+
+---
+
+### Supervision owns expired admission reconciliation {#supervision-owns-admission-reconciliation}
+
+**Decision.** Every coordinator supervision tick invokes admission reconciliation before checking
+the subscriber and mirror. Planned reservations remain timeless unless they carry an explicit
+lease. Held reservations become reclaimable only after the holder lease expires and a fresh
+terminal query confirms the run-bound pane is absent. Each reservation is classified independently:
+an unanswerable owner stays held, but it does not prevent a provably dead neighbor from releasing
+capacity and advancing the queue.
+
+**Rejected alternative.** A repair helper with no production caller leaves occupied capacity as a
+one-way ratchet. Aborting the whole reconciliation pass on the first failed query lets one
+unanswerable owner create the same ratchet for unrelated reservations.
+
+**Revisit when** admission gains a dedicated host supervisor with an equivalent bounded tick and
+the coordinator no longer owns queue progress.
+
+---
+
 ### Reaping uses the authenticated dispatch landing as its working directory {#reap-cwd-from-dispatch-receipt}
 
 **Decision.** When a verified row carries a dispatch receipt, reaping uses the receipt's

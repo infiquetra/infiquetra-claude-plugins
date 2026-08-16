@@ -195,10 +195,22 @@ def test_register_row_copy_and_mutators_keep_removed_columns_loud(tmp_path: Path
         lambda: row.setdefault("pane_id", "pane-a"),
         lambda: row.update({"pane_id": "pane-a"}),
         lambda: copied.__ior__({"pane_id": "pane-a"}),
+        lambda: row | {"pane_id": "pane-a"},
+        lambda: {"pane_id": "pane-a"} | row,
     )
     for attempt in attempts:
         with pytest.raises(M.RemovedColumnError, match="live session fact"):
             attempt()
+
+
+def test_corrupt_register_is_reported_through_the_register_error_contract(tmp_path: Path) -> None:
+    path = M.register_path("run-a")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{not-json", encoding="utf-8")
+
+    with pytest.raises(M.RegisterError, match="not readable JSON") as caught:
+        M.read_rows(tmp_path, run_id="run-a")
+    assert not isinstance(caught.value, json.JSONDecodeError)
 
 
 def test_schema_one_rows_are_normalized_before_use_and_migrated_on_write(tmp_path: Path) -> None:

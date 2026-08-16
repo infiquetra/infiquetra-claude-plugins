@@ -354,6 +354,16 @@ class RegisterRow(dict[str, Any]):
         self.update(other)
         return self
 
+    def __or__(self, other: Any) -> RegisterRow:  # type: ignore[override,misc]
+        merged = self.copy()
+        merged.update(other)
+        return merged
+
+    def __ror__(self, other: Any) -> RegisterRow:  # type: ignore[override,misc]
+        merged = type(self)(other)
+        merged.update(self)
+        return merged
+
     def copy(self) -> RegisterRow:
         return type(self)(self)
 
@@ -658,7 +668,10 @@ def _read_register_unlocked(run_id: str) -> dict[str, Any]:
     if not path.exists():
         return {"schema_version": SCHEMA_VERSION, "run_id": _safe_run_id(run_id), "rows": {}}
 
-    raw = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RegisterError(f"{path}: register document is not readable JSON") from exc
     if not isinstance(raw, dict):
         raise RegisterError(f"{path}: register document must be a JSON object")
 

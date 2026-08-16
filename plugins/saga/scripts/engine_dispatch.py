@@ -74,6 +74,8 @@ def __getattr__(name: str) -> ModuleType:
 
 
 FAILURE_STATUSES = frozenset({"timeout", "no-output", "error", "malformed", "clone-failed"})
+PENDING_STATUS = "pending"
+PENDING_NOTE = "external launch has not resolved; no result yet"
 NON_GATING_ROLE_KINDS = frozenset({"advisory-reviewer", "panel"})
 
 # Untrusted panel output is fail-closed at the dispatch boundary. Limits are UTF-8 bytes, not
@@ -484,8 +486,9 @@ def _dispatch_once(
 
     ``ledger``/``subplot_id``/``at`` (#401) are **telemetry only** — when all are supplied a real
     advisory call records an ``engine`` run-fact (and a ``delegation`` fact for an ``agy.delegation.v1``
-    call). This never gates and never changes the returned evidence (KTD5); omitting them is a no-op, so
-    every existing caller is byte-identical.
+    call), including a launch that returns ``pending`` and is never collected. This never gates and
+    never changes the returned evidence (KTD5); omitting them is a no-op, so every existing caller
+    is byte-identical.
 
     Two-signal acceptance (#384 U5, R4/R6, KTD6/KTD7) is opt-in through three new kwargs:
 
@@ -618,12 +621,57 @@ def _dispatch_once(
                 tripwire_note = f"{_TRIPWIRE_UNARMED}: {exc}"
     try:
         result = runner(invocation)
+    except BaseException:
+        if armed_at is not None and delegation_state is not None:
+            with contextlib.suppress(Exception):
+                delegation_state.disarm(session_id, root=workspace_root)
+        raise
+
+    try:
+        return _finish_adapter_result(
+            result,
+            resolution=resolution,
+            invocation=invocation,
+            record_facts=record_facts,
+            armed_at=armed_at,
+            tripwire_note=tripwire_note,
+            gated=gated,
+            session_id=session_id,
+            workspace_root=workspace_root,
+            expected_identity=expected_identity,
+            chaperone=chaperone,
+            economics_decision=economics_decision,
+            execution_id=execution_id,
+            intent=intent,
+            role_kind=role_kind,
+            downgrade_note=downgrade_note,
+        )
     finally:
         if armed_at is not None and delegation_state is not None:
-            # Disarm failure must never mask the adapter's result.
+            # Disarm after the pending fact is written, not before.
             with contextlib.suppress(Exception):
                 delegation_state.disarm(session_id, root=workspace_root)
 
+
+def _finish_adapter_result(
+    result: dict[str, Any],
+    *,
+    resolution: Resolution,
+    invocation: dict[str, Any],
+    record_facts: Callable[..., None],
+    armed_at: float | None,
+    tripwire_note: str,
+    gated: bool,
+    session_id: str,
+    workspace_root: Path | str | None,
+    expected_identity: str | None,
+    chaperone: dict[str, Any] | None,
+    economics_decision: Any,
+    execution_id: str,
+    intent: str,
+    role_kind: str,
+    downgrade_note: Callable[..., str],
+) -> AdvisoryEvidence | RequeueDisposition:
     _reject_gatekeeper_keys(result)
     status = _string_result(result.get("status"), default="malformed")
     output = _string_result(result.get("output"), default="")
@@ -752,6 +800,19 @@ def _dispatch_once(
             source_findings=source_findings,
             runner_output_digest=reconcile.evidence_digest(output),
             runner_output_bytes=len(output.encode("utf-8")),
+            runner_receipt=runner_receipt,
+        )
+    elif status == PENDING_STATUS:
+        provenance["note"] = PENDING_NOTE
+        evidence = AdvisoryEvidence(
+            engine_id=resolution.engine_id,
+            variant=resolution.variant,
+            evidence="",
+            provenance=provenance,
+            execution_id=execution_id,
+            intent=intent,
+            role_kind=role_kind,
+            halt=PENDING_NOTE,
             runner_receipt=runner_receipt,
         )
     elif status not in FAILURE_STATUSES:

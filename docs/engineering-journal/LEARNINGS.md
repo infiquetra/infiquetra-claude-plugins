@@ -21,6 +21,90 @@
 
 ## 2026-08-16
 
+### A completed-process result is not a live process  {#completed-process-has-no-pid}
+
+**Context.** The documented launch command always raised after the
+reviewer process had already started, so no handle was printed and the
+reserved pending slot could never be collected.
+**Evidence.** `subprocess.run` returns `CompletedProcess`, whose public
+attributes are `args`, `returncode`, `stdout`, and `stderr`. It has no
+`pid`. The default launcher read `completed.pid` on every command-line
+launch.
+**Mechanism.** The production command is the only caller of that default
+`run`. Tests injected a scripted `run` or patched `start`, so the crash
+never appeared in a green suite.
+**Generalizable rule.** If a test only passes because the harness
+replaced the component under test, it is not testing that component.
+Substitute one layer further out than the thing you are proving.
+**Refs.** DECISIONS [`{#documented-command-owns-the-claim}`](DECISIONS.md#documented-command-owns-the-claim).
+
+### Reserve the pending slot before the session starts  {#reserve-pending-before-start}
+
+**Context.** A bound on pending claims was checked after `start` returned.
+The overflow request still launched, then the claim was marked unavailable
+and the handle was dropped.
+**Evidence.** Distinct dispatches with `MAX_PENDING_CLAIMS` set to two:
+three `start` calls, one terminal overflow note, and a result file that
+collect refused because the claim was already unavailable.
+**Mechanism.** The thing being counted was the record. The thing that
+costs a session is the launch. Those are not the same write.
+**Generalizable rule.** Capacity that is meant to bound a side effect
+must be taken before the side effect. A live session must never sit
+behind a terminal claim.
+**Refs.** DECISIONS [`{#dispatch-pending-status}`](DECISIONS.md#dispatch-pending-status).
+
+### Collected is not requested  {#collected-is-not-requested}
+
+**Context.** After a successful collect the claim moved back to
+`requested`, the state that means no session launched. Resume then ran
+interrupt recovery and spent the result.
+**Evidence.** Collect returned a real finding; `recover_pending` then
+produced the interrupted-dispatch note and collect refused the still-
+present result file.
+**Mechanism.** Reusing `requested` for "has a result, not yet completed"
+makes "no handle yet" and "handle already consumed" the same observation.
+**Generalizable rule.** Do not reuse the never-launched state for a
+finished read. A result that exists must stay collectable until the
+consumer artifact is durable.
+**Refs.** DECISIONS [`{#dispatch-pending-status}`](DECISIONS.md#dispatch-pending-status).
+
+### A missing result file after a successful launch is not a dead session  {#pending-is-not-died}
+
+**Context.** The managed-session runner started a reviewer and immediately
+read a result file the session had not written yet. Absence of the file was
+classified as died, and the at-most-once claim moved to unavailable.
+**Evidence.** A launcher that returned a handle, then a later write of a
+real finding, then a retry and `recover_pending`, never returned the
+finding: both later calls reused the terminal unavailable note.
+**Mechanism.** `Runner` is one call, and both claim exits were terminal.
+The normal state of a managed review — launched, still running — had no
+value. `recover_pending` already existed, but it converts `requested` into
+unavailable; it does not collect.
+**Generalizable rule.** "No result yet" is not "no result." A successful
+start without a result file is pending. Collection is a second entry
+point. Interrupt recovery stays a third thing.
+**Refs.** DECISIONS [`{#second-opinion-pending-until-collected}`](DECISIONS.md#second-opinion-pending-until-collected).
+
+### A session that did not start is not a review that found nothing  {#session-absence-is-not-empty-review}
+
+**Context.** External reviewers for `/code-review` and `/doc-review` now run as
+managed terminal sessions. Three failures look similar if they share one status:
+the launcher never started, the session died or wrote no result file, and the
+session finished with an empty findings list.
+**Evidence.** `engine_session_runner.runner` returns `session_outcome` values
+`not-started`, `pending`, `died`, and `ran-empty`. Through
+`dispatch_second_opinion` those become `second-opinion dispatch error`,
+`PENDING_NOTE`, `second-opinion dispatch no-output`, and
+`EMPTY_OPINION_NOTE` respectively. A missing result file after a successful
+start is `SessionPending`, not died and not `findings: []`.
+**Mechanism.** "No record of X" is not "X does not exist." A result file that
+was never written is unknown, not an empty review. Collapsing those into one
+unavailable note would make a launch failure look like a clean second opinion.
+**Generalizable rule.** Name the session outcome on the runner result before any
+claim-store projection. Absence of a result artifact is a distinct failure, never
+an empty findings list.
+**Refs.** [`{#two-inferences-meet-at-every-gate}`](#two-inferences-meet-at-every-gate);
+DECISIONS [`{#external-only-roster-or-halt}`](DECISIONS.md#external-only-roster-or-halt).
 ### A targeted terminal condition must use the evidence it computes  {#terminal-trigger-must-use-target-evidence}
 
 **Context.** A bounded review loop computed recurring defect classes, then escalated on the broader

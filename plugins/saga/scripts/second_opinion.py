@@ -11,7 +11,7 @@ import re
 import sys
 import tempfile
 from collections.abc import Callable, Iterable, Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from types import MappingProxyType
@@ -29,14 +29,22 @@ from engine_registry import Registry  # noqa: E402
 Severity = Literal["P0", "P1", "P2", "P3"]
 RequestSource = Literal["human", "claude"]
 OpinionState = Literal["recommended", "requested", "available", "unavailable", "declined"]
-ClaimState = Literal["requested", "available", "unavailable"]
+ClaimState = Literal["requested", "pending", "collected", "available", "unavailable"]
+CLAIM_STATES: tuple[ClaimState, ...] = (
+    "requested",
+    "pending",
+    "collected",
+    "available",
+    "unavailable",
+)
+TERMINAL_CLAIM_STATES: frozenset[str] = frozenset({"available", "unavailable"})
 
 MAX_EXCERPTS = 16
 MAX_EXCERPT_BYTES = 16 * 1024
 MAX_CONTEXT_BYTES = 128 * 1024
 MAX_REASON_BYTES = 4 * 1024
 MAX_STATUS_NOTE_BYTES = 1024
-CLAIM_SCHEMA = "saga.second-opinion-claims.v1"
+CLAIM_SCHEMA = "saga.second-opinion-claims.v2"
 WORK_STATE_SCHEMA = "saga.work-second-opinion.v1"
 MAX_WORK_ATTEMPTS = 64
 MAX_TARGETS_PER_ATTEMPT = 256
@@ -46,6 +54,12 @@ INTERRUPTED_DISPATCH_NOTE = (
 )
 UNUSABLE_DISPATCH_NOTE = "second-opinion dispatch produced unusable advisory evidence"
 EMPTY_OPINION_NOTE = "second-opinion dispatch returned no typed findings"
+PENDING_NOTE = engine_dispatch.PENDING_NOTE
+NEVER_COLLECTED_NOTE = "second-opinion launch was never collected; no review happened"
+PENDING_BOUND_NOTE = "pending second-opinion bound exceeded; collect or abandon first"
+COLLECTED_NOTE = "second-opinion result is collected; complete it instead of redispatching"
+START_FAILED_NOTE = "managed session could not be started; no review happened"
+MAX_PENDING_CLAIMS = 8
 _SEVERITIES: tuple[Severity, ...] = ("P0", "P1", "P2", "P3")
 _STATUS_MAP = {
     "success": "ok",
@@ -76,6 +90,14 @@ class SecondOpinionError(ValueError):
 
 class WorkSecondOpinionStateError(SecondOpinionError):
     """A versioned `/work` second-opinion sidecar is invalid or cannot advance safely."""
+
+
+class PendingBoundError(SecondOpinionError):
+    """A new pending launch would exceed MAX_PENDING_CLAIMS."""
+
+
+class AlreadyPendingError(SecondOpinionError):
+    """This request already has a live pending launch; do not start another."""
 
 
 @dataclass(frozen=True)
@@ -220,9 +242,10 @@ class RequestClaim:
     reconciliation_id: str
     state: ClaimState
     status_note: str | None = None
+    session_handle: dict[str, Any] | None = None
 
-    def to_dict(self) -> dict[str, str]:
-        result = {
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
             "request_id": self.request_id,
             "request_digest": self.request_digest,
             "execution_id": self.execution_id,
@@ -231,6 +254,8 @@ class RequestClaim:
         }
         if self.status_note is not None:
             result["status_note"] = self.status_note
+        if self.session_handle is not None:
+            result["session_handle"] = dict(self.session_handle)
         return result
 
     @classmethod
@@ -242,6 +267,7 @@ class RequestClaim:
             "reconciliation_id",
             "state",
             "status_note",
+            "session_handle",
         }
         if set(data) - expected:
             raise SecondOpinionError("second-opinion claim has unknown fields")
@@ -258,11 +284,14 @@ class RequestClaim:
         if not all(isinstance(value, str) and value for value in values.values()):
             raise SecondOpinionError("second-opinion claim is missing required string fields")
         state = cast(str, values["state"])
-        if state not in {"requested", "available", "unavailable"}:
+        if state not in CLAIM_STATES:
             raise SecondOpinionError(f"second-opinion claim has invalid state {state!r}")
         note = data.get("status_note")
         if note is not None:
             _bounded_bytes(note, MAX_STATUS_NOTE_BYTES, "status_note")
+        handle = data.get("session_handle")
+        if handle is not None and not isinstance(handle, dict):
+            raise SecondOpinionError("second-opinion claim session_handle must be an object")
         return cls(
             request_id=cast(str, values["request_id"]),
             request_digest=cast(str, values["request_digest"]),
@@ -270,6 +299,7 @@ class RequestClaim:
             reconciliation_id=cast(str, values["reconciliation_id"]),
             state=cast(ClaimState, state),
             status_note=cast(str | None, note),
+            session_handle=dict(handle) if isinstance(handle, dict) else None,
         )
 
 
@@ -526,15 +556,270 @@ class SecondOpinionClaimStore:
             return ClaimResult(acquired=True, claim=claim)
 
     def recover_unresolved(self, prepared: PreparedSecondOpinion) -> RequestClaim:
-        """Turn a pre-existing requested reservation into visible unavailable state on resume."""
+        """Turn a pre-existing requested reservation into visible unavailable state on resume.
+
+        This is interrupt recovery for a claim that never launched. A launched claim
+        is ``pending`` and is collected, not recovered into unavailable.
+        """
         return self.mark_unavailable(prepared, note=INTERRUPTED_DISPATCH_NOTE)
 
     def mark_unavailable(self, prepared: PreparedSecondOpinion, *, note: str) -> RequestClaim:
         """Record a terminal advisory failure without permitting a wrapper replay."""
-        return self._transition(prepared, expected="requested", target="unavailable", note=note)
+        existing = self.read(prepared.request_id)
+        if existing is not None and existing.state == "collected":
+            raise SecondOpinionError(
+                f"request {prepared.request_id!r} already has a collected result"
+            )
+        expected: ClaimState = (
+            "pending" if existing is not None and existing.state == "pending" else "requested"
+        )
+        return self._transition(prepared, expected=expected, target="unavailable", note=note)
 
     def mark_available(self, prepared: PreparedSecondOpinion) -> RequestClaim:
-        return self._transition(prepared, expected="requested", target="available", note=None)
+        existing = self.read(prepared.request_id)
+        expected: ClaimState = (
+            "collected" if existing is not None and existing.state == "collected" else "requested"
+        )
+        return self._transition(prepared, expected=expected, target="available", note=None)
+
+    def reserve_pending(self, prepared: PreparedSecondOpinion) -> RequestClaim:
+        """Take a pending slot before any session starts. No handle yet."""
+        return self._become_pending(prepared, handle=None)
+
+    def mark_pending(
+        self, prepared: PreparedSecondOpinion, *, handle: Mapping[str, Any]
+    ) -> RequestClaim:
+        """Record a launched session that has not yet produced a terminal result."""
+        if not isinstance(handle, Mapping) or not handle:
+            raise SecondOpinionError("pending claim requires a session handle")
+        return self._become_pending(prepared, handle=dict(handle))
+
+    def record_handle(
+        self, prepared: PreparedSecondOpinion, *, handle: Mapping[str, Any]
+    ) -> RequestClaim:
+        """Attach the launched session identity to an already-reserved pending claim."""
+        if not isinstance(handle, Mapping) or not handle:
+            raise SecondOpinionError("pending claim requires a session handle")
+        with self._locked():
+            claims = self._read_claims()
+            existing = claims.get(prepared.request_id)
+            if existing is None:
+                raise SecondOpinionError(f"request {prepared.request_id!r} has not been claimed")
+            _assert_claim_matches_prepared(existing, prepared)
+            if existing.state != "pending":
+                raise SecondOpinionError(
+                    f"request {prepared.request_id!r} is {existing.state!r}, not pending"
+                )
+            updated = RequestClaim(
+                request_id=existing.request_id,
+                request_digest=existing.request_digest,
+                execution_id=existing.execution_id,
+                reconciliation_id=existing.reconciliation_id,
+                state="pending",
+                status_note=PENDING_NOTE,
+                session_handle=dict(handle),
+            )
+            claims[updated.request_id] = updated
+            self._write_claims(claims)
+            return updated
+
+    def mark_collected(self, prepared: PreparedSecondOpinion) -> RequestClaim:
+        """A pending launch produced a usable result. This is not 'never launched'."""
+        return self._transition(prepared, expected="pending", target="collected", note=None)
+
+    def find_by_digest(self, request_digest: str) -> RequestClaim | None:
+        with self._read_locked():
+            for claim in self._read_claims().values():
+                if claim.request_digest == request_digest:
+                    return claim
+        return None
+
+    def reserve_pending_for_digest(self, request_digest: str) -> RequestClaim:
+        """CLI path: reserve the requested claim named by this digest, before launch."""
+        with self._locked():
+            claims = self._read_claims()
+            existing = next(
+                (item for item in claims.values() if item.request_digest == request_digest),
+                None,
+            )
+            if existing is None:
+                raise SecondOpinionError(
+                    f"no requested claim for digest {request_digest!r}; persist the claim first"
+                )
+            if existing.state == "pending":
+                raise AlreadyPendingError(
+                    "a pending launch already exists for this request; collect it "
+                    "rather than starting another"
+                )
+            if existing.state != "requested":
+                raise SecondOpinionError(
+                    f"request {existing.request_id!r} cannot transition "
+                    f"{existing.state!r} to 'pending'"
+                )
+            pending = sum(1 for item in claims.values() if item.state == "pending")
+            if pending >= MAX_PENDING_CLAIMS:
+                raise PendingBoundError(PENDING_BOUND_NOTE)
+            updated = RequestClaim(
+                request_id=existing.request_id,
+                request_digest=existing.request_digest,
+                execution_id=existing.execution_id,
+                reconciliation_id=existing.reconciliation_id,
+                state="pending",
+                status_note=PENDING_NOTE,
+                session_handle=None,
+            )
+            claims[updated.request_id] = updated
+            self._write_claims(claims)
+            return updated
+
+    def record_handle_for_digest(
+        self, request_digest: str, *, handle: Mapping[str, Any]
+    ) -> RequestClaim:
+        if not isinstance(handle, Mapping) or not handle:
+            raise SecondOpinionError("pending claim requires a session handle")
+        with self._locked():
+            claims = self._read_claims()
+            existing = next(
+                (item for item in claims.values() if item.request_digest == request_digest),
+                None,
+            )
+            if existing is None:
+                raise SecondOpinionError(f"no claim for digest {request_digest!r}")
+            if existing.state != "pending":
+                raise SecondOpinionError(
+                    f"request {existing.request_id!r} is {existing.state!r}, not pending"
+                )
+            updated = RequestClaim(
+                request_id=existing.request_id,
+                request_digest=existing.request_digest,
+                execution_id=existing.execution_id,
+                reconciliation_id=existing.reconciliation_id,
+                state="pending",
+                status_note=PENDING_NOTE,
+                session_handle=dict(handle),
+            )
+            claims[updated.request_id] = updated
+            self._write_claims(claims)
+            return updated
+
+    def mark_collected_for_digest(self, request_digest: str) -> RequestClaim:
+        with self._locked():
+            claims = self._read_claims()
+            existing = next(
+                (item for item in claims.values() if item.request_digest == request_digest),
+                None,
+            )
+            if existing is None:
+                raise SecondOpinionError(f"no claim for digest {request_digest!r}")
+            if existing.state == "collected":
+                return existing
+            if existing.state != "pending":
+                raise SecondOpinionError(
+                    f"request {existing.request_id!r} is {existing.state!r}, not pending"
+                )
+            updated = RequestClaim(
+                request_id=existing.request_id,
+                request_digest=existing.request_digest,
+                execution_id=existing.execution_id,
+                reconciliation_id=existing.reconciliation_id,
+                state="collected",
+                status_note=None,
+                session_handle=existing.session_handle,
+            )
+            claims[updated.request_id] = updated
+            self._write_claims(claims)
+            return updated
+
+    def mark_unavailable_for_digest(self, request_digest: str, *, note: str) -> RequestClaim:
+        with self._locked():
+            claims = self._read_claims()
+            existing = next(
+                (item for item in claims.values() if item.request_digest == request_digest),
+                None,
+            )
+            if existing is None:
+                raise SecondOpinionError(f"no claim for digest {request_digest!r}")
+            if existing.state in {"collected", "available"}:
+                return existing
+            if existing.state == "unavailable":
+                return existing
+            updated = RequestClaim(
+                request_id=existing.request_id,
+                request_digest=existing.request_digest,
+                execution_id=existing.execution_id,
+                reconciliation_id=existing.reconciliation_id,
+                state="unavailable",
+                status_note=note,
+                session_handle=existing.session_handle,
+            )
+            claims[updated.request_id] = updated
+            self._write_claims(claims)
+            return updated
+
+    def release_unstarted_for_digest(self, request_digest: str, *, note: str) -> RequestClaim:
+        """Close a reserved slot that never produced a live session."""
+        with self._locked():
+            claims = self._read_claims()
+            existing = next(
+                (item for item in claims.values() if item.request_digest == request_digest),
+                None,
+            )
+            if existing is None:
+                raise SecondOpinionError(f"no claim for digest {request_digest!r}")
+            if existing.state != "pending":
+                return existing
+            if existing.session_handle is not None:
+                return existing
+            updated = RequestClaim(
+                request_id=existing.request_id,
+                request_digest=existing.request_digest,
+                execution_id=existing.execution_id,
+                reconciliation_id=existing.reconciliation_id,
+                state="unavailable",
+                status_note=note,
+                session_handle=None,
+            )
+            claims[updated.request_id] = updated
+            self._write_claims(claims)
+            return updated
+
+    def _become_pending(
+        self, prepared: PreparedSecondOpinion, *, handle: dict[str, Any] | None
+    ) -> RequestClaim:
+        with self._locked():
+            claims = self._read_claims()
+            existing = claims.get(prepared.request_id)
+            if existing is None:
+                raise SecondOpinionError(f"request {prepared.request_id!r} has not been claimed")
+            _assert_claim_matches_prepared(existing, prepared)
+            if existing.state == "pending":
+                return existing
+            if existing.state != "requested":
+                raise SecondOpinionError(
+                    f"request {prepared.request_id!r} cannot transition "
+                    f"{existing.state!r} to 'pending'"
+                )
+            pending = sum(1 for item in claims.values() if item.state == "pending")
+            if pending >= MAX_PENDING_CLAIMS:
+                raise PendingBoundError(PENDING_BOUND_NOTE)
+            updated = RequestClaim(
+                request_id=existing.request_id,
+                request_digest=existing.request_digest,
+                execution_id=existing.execution_id,
+                reconciliation_id=existing.reconciliation_id,
+                state="pending",
+                status_note=PENDING_NOTE,
+                session_handle=handle,
+            )
+            claims[updated.request_id] = updated
+            self._write_claims(claims)
+            return updated
+
+    def abandon_pending(self, prepared: PreparedSecondOpinion) -> RequestClaim:
+        """Close a pending launch that will never be collected. This is not an empty review."""
+        return self._transition(
+            prepared, expected="pending", target="unavailable", note=NEVER_COLLECTED_NOTE
+        )
 
     def read(self, request_id: str) -> RequestClaim | None:
         with self._read_locked():
@@ -547,6 +832,7 @@ class SecondOpinionClaimStore:
         expected: ClaimState,
         target: ClaimState,
         note: str | None,
+        session_handle: dict[str, Any] | None = None,
     ) -> RequestClaim:
         if note is not None:
             _bounded_bytes(note, MAX_STATUS_NOTE_BYTES, "status_note")
@@ -562,6 +848,7 @@ class SecondOpinionClaimStore:
                 raise SecondOpinionError(
                     f"request {prepared.request_id!r} cannot transition {existing.state!r} to {target!r}"
                 )
+            handle = session_handle if session_handle is not None else existing.session_handle
             updated = RequestClaim(
                 request_id=existing.request_id,
                 request_digest=existing.request_digest,
@@ -569,6 +856,7 @@ class SecondOpinionClaimStore:
                 reconciliation_id=existing.reconciliation_id,
                 state=target,
                 status_note=note,
+                session_handle=handle,
             )
             claims[updated.request_id] = updated
             self._write_claims(claims)
@@ -828,7 +1116,7 @@ def record_work_dispatch_outcome(
         )
     if evidence.execution_id != offer.execution_id:
         raise WorkSecondOpinionStateError("work offer and dispatch evidence execution_id disagree")
-    if evidence.halt is None:
+    if is_pending_evidence(evidence) or evidence.halt is None:
         return state
     return _replace_work_offer(state, replace(offer, disposition="unavailable"))
 
@@ -978,7 +1266,12 @@ def dispatch_second_opinion(
     at: str = "",
     recover_pending: bool = False,
 ) -> engine_dispatch.AdvisoryEvidence:
-    """Claim then dispatch once; a resumed uncertain claim never replays the wrapper."""
+    """Reserve a pending slot, then dispatch once through the dispatch layer.
+
+    ``recover_pending`` on a ``requested`` claim is interrupt recovery: it does
+    not replay and does not collect. On a ``pending`` or ``collected`` claim it
+    reads the later result. A claim that never launched is not a live session.
+    """
     if prepared.unavailable_reason is not None or prepared.resolution is None:
         return _unavailable_evidence(prepared, prepared.unavailable_reason or "route unavailable")
     if prepared.session_id is None:
@@ -987,54 +1280,95 @@ def dispatch_second_opinion(
         )
     claim = claim_store.claim(prepared)
     if not claim.acquired:
-        if claim.claim.state == "requested" and recover_pending:
-            claim = ClaimResult(acquired=False, claim=claim_store.recover_unresolved(prepared))
-        if claim.claim.state == "available":
-            return _unavailable_evidence(
-                prepared,
-                "second-opinion result is already durable; load the consumer artifact instead of redispatching",
-            )
-        return _unavailable_evidence(prepared, claim.claim.status_note or INTERRUPTED_DISPATCH_NOTE)
-
-    try:
-        dispatched = engine_dispatch.dispatch(
-            prepared.resolution,
-            runner=_normalized_runner(runner),
+        return _resume_existing_claim(
+            prepared,
+            claim.claim,
+            runner=runner,
+            claim_store=claim_store,
             ledger=ledger,
             subplot_id=subplot_id,
             at=at,
-            gated=False,
-            session_id=prepared.session_id,
-            execution_id=prepared.execution_id,
-            intent="second-opinion",
-            role_kind="advisory-reviewer",
-            attempt_id=prepared.request_id,
+            recover_pending=recover_pending,
         )
-    except Exception:  # noqa: BLE001 - external runner failures must remain nonblocking advisory data.
+
+    try:
+        _preflight_prepared(prepared)
+    except engine_dispatch.DispatchError:
         return _mark_unavailable_evidence(
-            prepared,
-            claim_store=claim_store,
-            note=UNUSABLE_DISPATCH_NOTE,
+            prepared, claim_store=claim_store, note=UNUSABLE_DISPATCH_NOTE
         )
-    if isinstance(dispatched, engine_dispatch.RequeueDisposition):
+
+    try:
+        claim_store.reserve_pending(prepared)
+    except PendingBoundError:
         return _mark_unavailable_evidence(
-            prepared,
-            claim_store=claim_store,
-            note=UNUSABLE_DISPATCH_NOTE,
+            prepared, claim_store=claim_store, note=PENDING_BOUND_NOTE
         )
-    if dispatched.halt is not None:
-        return _mark_unavailable_evidence(
+    except SecondOpinionError:
+        existing = claim_store.read(prepared.request_id)
+        return _unavailable_evidence(
             prepared,
-            claim_store=claim_store,
-            note=_terminal_dispatch_note(dispatched),
+            existing.status_note if existing is not None else INTERRUPTED_DISPATCH_NOTE,
         )
-    if not dispatched.source_findings:
-        return _mark_unavailable_evidence(
-            prepared,
-            claim_store=claim_store,
-            note=EMPTY_OPINION_NOTE,
+
+    return _dispatch_through_layer(
+        prepared,
+        runner=runner,
+        claim_store=claim_store,
+        ledger=ledger,
+        subplot_id=subplot_id,
+        at=at,
+    )
+
+
+def collect_second_opinion(
+    prepared: PreparedSecondOpinion,
+    *,
+    runner: engine_dispatch.Runner,
+    claim_store: SecondOpinionClaimStore,
+    ledger: run_ledger.RunLedger | None = None,
+    subplot_id: str = "",
+    at: str = "",
+) -> engine_dispatch.AdvisoryEvidence:
+    """Resolve a pending launch. Absence of a result file is still pending, not died."""
+    if prepared.session_id is None:
+        raise SecondOpinionError(
+            "prepared second-opinion collect requires the trusted Saga session id"
         )
-    return dispatched
+    existing = claim_store.read(prepared.request_id)
+    if existing is None:
+        raise SecondOpinionError(f"request {prepared.request_id!r} has not been claimed")
+    _assert_claim_matches_prepared(existing, prepared)
+    if existing.state not in {"pending", "collected"}:
+        raise SecondOpinionError(
+            f"request {prepared.request_id!r} is {existing.state!r}, not pending"
+        )
+    handle = existing.session_handle
+    if not isinstance(handle, dict):
+        if existing.state != "collected":
+            return _pending_evidence(prepared)
+        raw = _call_runner(runner, {"operation": "collect"})
+    else:
+        raw = _call_runner(runner, {"operation": "collect", "handle": handle})
+    if raw.get("session_outcome") == "pending":
+        return _pending_evidence(prepared)
+    return _finish_runner_result(
+        prepared,
+        raw,
+        runner=runner,
+        claim_store=claim_store,
+        ledger=ledger,
+        subplot_id=subplot_id,
+        at=at,
+    )
+
+
+def abandon_pending_second_opinion(
+    prepared: PreparedSecondOpinion, *, claim_store: SecondOpinionClaimStore
+) -> engine_dispatch.AdvisoryEvidence:
+    """Close a pending launch that will never be collected. Not an empty review."""
+    claim_store.abandon_pending(prepared)
+    return _unavailable_evidence(prepared, NEVER_COLLECTED_NOTE)
 
 
 def reconcile_second_opinion(
@@ -1245,7 +1579,9 @@ def complete_second_opinion(
     if claim is None:
         raise SecondOpinionError("second-opinion completion requires a pre-dispatch claim")
     _assert_claim_matches_prepared(claim, reconciled.prepared)
-    if claim.state == "requested":
+    if claim.state == "pending":
+        raise SecondOpinionError("pending second-opinion has no result yet")
+    if claim.state in {"requested", "collected"}:
         persist_available_artifact()
         claim_store.mark_available(reconciled.prepared)
     elif claim.state != "available":
@@ -1258,6 +1594,244 @@ def complete_second_opinion(
         at=at,
     )
     return reconcile_fact, apply_fact
+
+
+def is_pending_evidence(evidence: engine_dispatch.AdvisoryEvidence) -> bool:
+    return evidence.provenance.get("status") == engine_dispatch.PENDING_STATUS
+
+
+def _preflight_prepared(prepared: PreparedSecondOpinion) -> None:
+    engine_dispatch._bounded_identity(prepared.session_id or "", "session_id")
+    engine_dispatch._bounded_identity(prepared.execution_id, "execution_id")
+    engine_dispatch._bounded_identity(prepared.request_id, "attempt_id")
+
+
+def _resume_existing_claim(
+    prepared: PreparedSecondOpinion,
+    existing: RequestClaim,
+    *,
+    runner: engine_dispatch.Runner,
+    claim_store: SecondOpinionClaimStore,
+    ledger: run_ledger.RunLedger | None,
+    subplot_id: str,
+    at: str,
+    recover_pending: bool,
+) -> engine_dispatch.AdvisoryEvidence:
+    if existing.state == "collected":
+        if recover_pending:
+            return collect_second_opinion(
+                prepared,
+                runner=runner,
+                claim_store=claim_store,
+                ledger=ledger,
+                subplot_id=subplot_id,
+                at=at,
+            )
+        return _unavailable_evidence(prepared, COLLECTED_NOTE)
+    if existing.state == "pending":
+        if recover_pending:
+            return collect_second_opinion(
+                prepared,
+                runner=runner,
+                claim_store=claim_store,
+                ledger=ledger,
+                subplot_id=subplot_id,
+                at=at,
+            )
+        return _pending_evidence(prepared)
+    if existing.state == "requested" and recover_pending:
+        existing = claim_store.recover_unresolved(prepared)
+    if existing.state == "available":
+        return _unavailable_evidence(
+            prepared,
+            "second-opinion result is already durable; load the consumer artifact instead of redispatching",
+        )
+    return _unavailable_evidence(prepared, existing.status_note or INTERRUPTED_DISPATCH_NOTE)
+
+
+def _dispatch_through_layer(
+    prepared: PreparedSecondOpinion,
+    *,
+    runner: engine_dispatch.Runner,
+    claim_store: SecondOpinionClaimStore,
+    ledger: run_ledger.RunLedger | None,
+    subplot_id: str,
+    at: str,
+) -> engine_dispatch.AdvisoryEvidence:
+    captured: dict[str, Any] = {}
+
+    def wrapped(invocation: dict[str, Any]) -> dict[str, Any]:
+        raw = _session_invoke(prepared, runner, invocation)
+        captured["raw"] = raw
+        handle = raw.get("handle") if isinstance(raw, dict) else None
+        if isinstance(handle, dict) and raw.get("session_outcome") == "pending":
+            with suppress(SecondOpinionError):
+                claim_store.record_handle(prepared, handle=handle)
+        return raw
+
+    try:
+        dispatched = engine_dispatch.dispatch(
+            prepared.resolution,
+            runner=_normalized_runner(wrapped),
+            ledger=ledger,
+            subplot_id=subplot_id,
+            at=at,
+            gated=False,
+            session_id=prepared.session_id or "",
+            execution_id=prepared.execution_id,
+            intent="second-opinion",
+            role_kind="advisory-reviewer",
+            attempt_id=prepared.request_id,
+        )
+    except Exception:  # noqa: BLE001 - runner failures stay advisory
+        current = claim_store.read(prepared.request_id)
+        if current is not None and current.state == "pending" and current.session_handle:
+            return _pending_evidence(prepared)
+        return _mark_unavailable_evidence(
+            prepared, claim_store=claim_store, note=UNUSABLE_DISPATCH_NOTE
+        )
+    if isinstance(dispatched, engine_dispatch.RequeueDisposition):
+        return _mark_unavailable_evidence(
+            prepared, claim_store=claim_store, note=UNUSABLE_DISPATCH_NOTE
+        )
+    raw = captured.get("raw")
+    handle = raw.get("handle") if isinstance(raw, dict) else None
+    if isinstance(handle, dict):
+        try:
+            claim_store.record_handle(prepared, handle=handle)
+        except SecondOpinionError:
+            current = claim_store.read(prepared.request_id)
+            return _unavailable_evidence(
+                prepared,
+                current.status_note if current is not None else INTERRUPTED_DISPATCH_NOTE,
+            )
+    if is_pending_evidence(dispatched) or (
+        isinstance(raw, dict) and raw.get("session_outcome") == "pending"
+    ):
+        return dispatched if is_pending_evidence(dispatched) else _pending_evidence(prepared)
+    return _apply_terminal_dispatch(prepared, dispatched, claim_store=claim_store)
+
+
+def _session_invoke(
+    prepared: PreparedSecondOpinion,
+    runner: engine_dispatch.Runner,
+    invocation: Mapping[str, Any],
+) -> dict[str, Any]:
+    if invocation.get("operation") == "collect":
+        return _call_runner(runner, dict(invocation))
+    if prepared.resolution is None:
+        raise SecondOpinionError("resolved second-opinion dispatch requires a resolution")
+    enriched = dict(invocation)
+    enriched["request_digest"] = prepared.request_digest
+    enriched["engine_id"] = prepared.resolution.engine_id
+    row = prepared.resolution.invocation or {}
+    if not enriched.get("model"):
+        model = row.get("model")
+        if isinstance(model, str) and model.strip():
+            enriched["model"] = model.strip()
+    if not enriched.get("effort"):
+        effort = prepared.resolution.effort or row.get("effort")
+        if isinstance(effort, str) and effort.strip():
+            enriched["effort"] = effort.strip()
+    return _call_runner(runner, enriched)
+
+
+def _call_runner(runner: engine_dispatch.Runner, invocation: dict[str, Any]) -> dict[str, Any]:
+    try:
+        raw = runner(invocation)
+    except Exception:  # noqa: BLE001 - runner failures stay advisory
+        return {"status": "error", "output": "", "session_outcome": "not-started"}
+    if not isinstance(raw, dict):
+        return {"status": "error", "output": "", "session_outcome": "not-started"}
+    return raw
+
+
+def _finish_runner_result(
+    prepared: PreparedSecondOpinion,
+    raw: dict[str, Any],
+    *,
+    runner: engine_dispatch.Runner,
+    claim_store: SecondOpinionClaimStore,
+    ledger: run_ledger.RunLedger | None,
+    subplot_id: str,
+    at: str,
+) -> engine_dispatch.AdvisoryEvidence:
+    def replay(_invocation: dict[str, Any]) -> dict[str, Any]:
+        return raw
+
+    try:
+        dispatched = engine_dispatch.dispatch(
+            prepared.resolution,
+            runner=_normalized_runner(replay),
+            ledger=ledger,
+            subplot_id=subplot_id,
+            at=at,
+            gated=False,
+            session_id=prepared.session_id or "",
+            execution_id=prepared.execution_id,
+            intent="second-opinion",
+            role_kind="advisory-reviewer",
+            attempt_id=prepared.request_id,
+        )
+    except Exception:  # noqa: BLE001 - external runner failures must remain nonblocking advisory data.
+        return _mark_unavailable_evidence(
+            prepared,
+            claim_store=claim_store,
+            note=UNUSABLE_DISPATCH_NOTE,
+        )
+    if isinstance(dispatched, engine_dispatch.RequeueDisposition):
+        return _mark_unavailable_evidence(
+            prepared,
+            claim_store=claim_store,
+            note=UNUSABLE_DISPATCH_NOTE,
+        )
+    if is_pending_evidence(dispatched):
+        return dispatched
+    return _apply_terminal_dispatch(prepared, dispatched, claim_store=claim_store)
+
+
+def _apply_terminal_dispatch(
+    prepared: PreparedSecondOpinion,
+    dispatched: engine_dispatch.AdvisoryEvidence,
+    *,
+    claim_store: SecondOpinionClaimStore,
+) -> engine_dispatch.AdvisoryEvidence:
+    if dispatched.halt is not None:
+        return _mark_unavailable_evidence(
+            prepared,
+            claim_store=claim_store,
+            note=_terminal_dispatch_note(dispatched),
+        )
+    if not dispatched.source_findings:
+        return _mark_unavailable_evidence(
+            prepared,
+            claim_store=claim_store,
+            note=EMPTY_OPINION_NOTE,
+        )
+    existing = claim_store.read(prepared.request_id)
+    if existing is not None and existing.state == "pending":
+        claim_store.mark_collected(prepared)
+    return dispatched
+
+
+def _pending_evidence(prepared: PreparedSecondOpinion) -> engine_dispatch.AdvisoryEvidence:
+    engine_id = prepared.resolution.engine_id if prepared.resolution is not None else "unavailable"
+    variant = prepared.resolution.variant if prepared.resolution is not None else "unavailable"
+    return engine_dispatch.AdvisoryEvidence(
+        engine_id=engine_id,
+        variant=variant,
+        evidence="",
+        provenance={
+            "engine": engine_id,
+            "variant": variant,
+            "status": "pending",
+            "note": PENDING_NOTE,
+        },
+        execution_id=prepared.execution_id,
+        intent="second-opinion",
+        role_kind="advisory-reviewer",
+        halt=PENDING_NOTE,
+    )
 
 
 def _normalized_runner(runner: engine_dispatch.Runner) -> engine_dispatch.Runner:
@@ -1280,6 +1854,12 @@ def _mark_unavailable_evidence(
     claim_store: SecondOpinionClaimStore,
     note: str,
 ) -> engine_dispatch.AdvisoryEvidence:
+    existing = claim_store.read(prepared.request_id)
+    if existing is not None and existing.state == "collected":
+        return _unavailable_evidence(
+            prepared,
+            "later result file is unusable; the collected result still stands",
+        )
     claim_store.mark_unavailable(prepared, note=note)
     return _unavailable_evidence(prepared, note)
 

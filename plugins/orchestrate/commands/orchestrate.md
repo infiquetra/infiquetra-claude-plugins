@@ -91,16 +91,28 @@ Write the approved table to `.orchestrate/plan.json`:
 
 `task` is the literal text sent to the session. Then:
 
+Find the script first. `/orchestrate` runs against whatever repo the operator is in, which is
+almost never this plugin's own repo, so the path has to be resolved rather than assumed:
+
 ```bash
-S=plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py
-uv run python $S start --plan .orchestrate/plan.json   # worktree + branch per unit
-uv run python $S go                                    # launch everything eligible
-uv run python $S status                                # the table, live
-uv run python $S settle                                # idle sessions become done
-uv run python $S go                                    # dependents are now eligible
-uv run python $S collect                               # merge each unit's branch
-uv run python $S clean --branches                      # close tabs, remove worktrees
+S="$CLAUDE_PLUGIN_ROOT/skills/orchestrate/scripts/orchestrate.py"
+[ -f "$S" ] || S=$(ls -d ~/.claude/plugins/cache/*/orchestrate/*/skills/orchestrate/scripts/orchestrate.py | sort -V | tail -1)
 ```
+
+Then, from the operator's repo:
+
+```bash
+python3 "$S" start --plan .orchestrate/plan.json   # worktree + branch per unit
+python3 "$S" go                                    # launch everything eligible
+python3 "$S" status                                # the table, live
+python3 "$S" settle                                # idle sessions become done
+python3 "$S" go                                    # dependents are now eligible
+python3 "$S" collect                               # merge each unit's branch
+python3 "$S" clean --branches                      # close tabs, remove worktrees
+```
+
+`python3`, not `uv run` — the script imports nothing outside the standard library, and the target
+repo may not be a uv project at all.
 
 Between `go` and `settle`, watch with a Monitor rather than polling in a loop. When `settle` marks
 units done, run `go` again — that is what releases the next wave.

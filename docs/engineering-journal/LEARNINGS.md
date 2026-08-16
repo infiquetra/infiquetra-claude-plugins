@@ -21,6 +21,45 @@
 
 ## 2026-08-16
 
+### A plugin authored in its own repo bakes in paths that work for every test but no real user  {#plugin-paths-authored-from-inside-its-own-repo}
+
+**Context.** `/orchestrate` shipped at 1.0.0 having been proven end to end — two real agent sessions,
+dependency ordering, a merged branch. The first time the operator ran it against a different
+repository (issue 48 of `campps-e2e-canary`), it was carrying a defect that would have failed at
+dispatch, and no amount of the proving done before the merge could have caught it.
+
+**Evidence.** `plugins/orchestrate/commands/orchestrate.md` and the skill both instructed the session
+to run `S=plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py`. From
+`campps-e2e-canary` that path does not exist; the installed copy is at
+`~/.claude/plugins/cache/infiquetra-plugins/orchestrate/1.0.0/skills/orchestrate/scripts/orchestrate.py`.
+Reproduced by `ls` on both paths before the run reached Phase 4. A second defect rode along: the
+documents said `uv run python`, which needs the *operator's* repository to be a uv project, though
+the script imports only the standard library.
+
+**Mechanism.** Every command in the doc was written and rehearsed from inside
+`infiquetra-claude-plugins`, where the repo-relative path resolves and `uv run` works. The whole
+point of this plugin is to operate on *other* repositories, so the one environment it was authored
+and validated in is the one environment no user is ever in. The end-to-end proof ran in a worktree of
+this same repo, so it inherited the same blind spot — the proof and the defect shared a premise.
+
+**Fix.** Both documents resolve the script through `$CLAUDE_PLUGIN_ROOT` with a plugin-cache glob
+fallback, and call `python3`. orchestrate 1.0.1.
+
+**Validation.** `python3 "$S" --help` executed from `/Users/jefcox/workspace/infiquetra/campps-e2e-canary`
+with `$S` resolved by the glob, before the fix was written.
+
+**What surprised.** "Proven end to end with real agents" felt like strong evidence and was — about
+everything except location. The proof was strong on the axis it varied (vendors, dependencies,
+merging) and silent on the axis it held fixed (which repository the operator is standing in).
+
+**Generalizable rule.** When a tool's purpose is to act on *other* repositories, hosts, or accounts,
+its own repository is the least representative test environment there is. Before shipping, run it
+once from somewhere it does not live — and treat any path in operator-facing guidance that is
+relative to the tool's own checkout as a defect on sight.
+
+**Refs.** [[#a-plan-can-recommit-its-own-recorded-mistake]] — same shape one layer up: the artifact
+carries a premise nobody re-examined.
+
 ### A plan can re-commit the mistake its own history section describes  {#a-plan-can-recommit-its-own-recorded-mistake}
 
 **Context.** A successor plan was written to reach first use of the orchestrate plugin. Its history

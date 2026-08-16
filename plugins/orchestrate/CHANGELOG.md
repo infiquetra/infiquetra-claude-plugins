@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.11.0] - 2026-08-15
+
+### Added
+
+- A bounded review loop for the orchestration lifecycle. At most three iterations per unit over its
+  lifetime, a re-review scoped to the change since the previous iteration, recurrence tracked by a
+  defect class the reviewer declares rather than one inferred from prose, and three verdicts:
+  `pass`, `halt-and-repair`, `halt-and-escalate`.
+- Findings still open on the last allowed iteration escalate mechanically, regardless of the rank
+  they carry. There is no remaining iteration in which to repair, so instructing a caller to repair
+  would be untrue whether the class is new or recurring.
+- Resolution must be authored. A report carries the classes it disposes of, and `pass` is refused
+  while a class raised in an earlier iteration is still open, so a reviewer's silence about an
+  unchanged path is no longer read as a fix. Disposing a class that was never open is refused, as is
+  disposing and re-raising one class in the same report.
+- A review that could not be performed is recorded separately from one that found nothing, emits no
+  verdict, does not consume the iteration, and has an explicit conclusion that is never `pass`.
+- Unit identifiers and defect classes are canonicalised once at a single site each, so surrounding
+  whitespace can no longer split one unit into two or hide a recurring class.
+
 ## [0.10.0] - 2026-08-15
 
 ### Fixed

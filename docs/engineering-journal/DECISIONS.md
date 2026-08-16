@@ -2,6 +2,103 @@
 
 ## 2026-08-16
 
+### Reaping uses the authenticated dispatch landing as its working directory {#reap-cwd-from-dispatch-receipt}
+
+**Decision.** When a verified row carries a dispatch receipt, reaping uses the receipt's
+authenticated `landing_cwd` as the working directory for terminal control calls. The landing was
+authored before dispatch, sealed with the run secret, and checked against the repository during
+completion. It is a stable property of that dispatch. The terminal session's current working
+directory is live state and is neither required nor copied back into the register.
+
+Lifecycle-only callers that have no dispatch receipt still require a current working-directory
+answer from the terminal substrate. An absent or malformed dispatch receipt never falls back to a
+live value: a present receipt is authenticated, and authentication failure stops the reap.
+
+**Rejected alternative.** Reading the removed row-level `cwd` for every reap conflates the
+artifact landing with mutable terminal state. Reintroducing that field, or synthesizing it from the
+repository argument, would make a convenient directory look authoritative without the dispatch
+binding the receipt already provides.
+
+**Revisit when** lifecycle-only reaping is removed or gains its own authenticated authored landing.
+
+---
+
+### Orchestrate register rows keep authored intent and outcomes, not live session facts {#orchestrate-register-intent-outcome-boundary}
+
+**Date:** 2026-08-15
+
+**Decision.** The durable Orchestrate register no longer stores the terminal multiplexer session,
+workspace, tab, pane, working directory, observed state, or observed-state source. Those facts can
+change independently of authored work and must be obtained from their live owner at the decision
+point. Public row reads and every register write reject those former columns explicitly, so an old
+caller cannot reinterpret missing data as absence.
+
+The `vendor` route remains durable. Planning writes it from the approved child, admission carries
+the approved reservation route, and session launch writes it from the authored runtime request.
+Those are independent producers of approved intent, not observations of a live process.
+
+Each former column has one named reader that asks the terminal substrate from a fresh snapshot.
+There is no cache, time-to-live policy, or process-local session-fact store. A successful query
+that finds no run-bound label returns absence. A query that fails raises a terminal-control error,
+so callers cannot read an unavailable answer as a negative one. Restart paths use those same
+readers and the deterministic run-bound label rather than a private recovery representation.
+
+**Rejected alternatives.** Keeping the former columns as optional compatibility fields would
+preserve the ambiguity: `None`, an empty value, and a stale copied observation would still be read
+as current truth. Removing them from the documented schema without runtime write and read guards
+would let dynamic dictionaries silently recreate the same contract.
+
+Schema version 1 remains readable. Its former live-session columns are removed in memory before
+any caller sees the rows, and the next ordinary write persists schema version 2. Reads remain
+side-effect free.
+
+**Revisit when** the terminal substrate changes its snapshot identity contract or the run-bound
+label is replaced by a stronger owner key.
+
+---
+second receipt. If readiness itself never completed, the launch boundary asks for the current
+run-bound label and adopts that same session before retrying readiness. It never infers that the
+session is absent from the authored `launching` phase and never opens a replacement while the label
+still resolves.
+attempt actually landed. Before a receipt exists, the deterministic label is the only owner key.
+The launcher's recovery branch adopts that owner and repeats the bounded readiness exchange; a
+trust prompt or timeout remains a refusal, while a coordinator interruption can continue without a
+second native launch. The live owner answer, not the row phase, distinguishes those cases.
+
+### Terminal wake routing requires run-bound identity evidence {#terminal-wake-routing-identity}
+
+**Decision.** A terminal event wakes an Orchestrate run only when its pane is bound to that run by
+an installed sentinel subscription or the current complete terminal snapshot. A missing owner
+does not make an unrelated terminal event relevant. Supervisory process rows are excluded from
+session-owner matching because they do not own terminal tabs.
+
+**Rejected alternative.** Waking whenever any non-planned row is absent from the current snapshot
+turns the subscriber process row into a permanent host-wide alarm. It also treats the absence of
+one run owner as evidence that an unrelated tab-close event belongs to that run.
+
+**Revisit when** the terminal event protocol provides a durable run label directly on every
+terminal event, including events emitted after pane removal.
+
+---
+
+### Supervision owns expired admission reconciliation {#supervision-owns-admission-reconciliation}
+
+**Decision.** Every coordinator supervision tick invokes admission reconciliation before checking
+the subscriber and mirror. Planned reservations remain timeless unless they carry an explicit
+lease. Held reservations become reclaimable only after the holder lease expires and a fresh
+terminal query confirms the run-bound pane is absent. Each reservation is classified independently:
+an unanswerable owner stays held, but it does not prevent a provably dead neighbor from releasing
+capacity and advancing the queue.
+
+**Rejected alternative.** A repair helper with no production caller leaves occupied capacity as a
+one-way ratchet. Aborting the whole reconciliation pass on the first failed query lets one
+unanswerable owner create the same ratchet for unrelated reservations.
+
+**Revisit when** admission gains a dedicated host supervisor with an equivalent bounded tick and
+the coordinator no longer owns queue progress.
+
+---
+
 ### Identity is canonicalised; provenance is supplied  {#vendor-identity-provenance-is-supplied}
 
 **Date.** 2026-08-16
@@ -243,94 +340,6 @@ recurring classes and undisposed earlier classes still escalate independently of
 ---
 
 ## 2026-08-15
-### Terminal wake routing requires run-bound identity evidence {#terminal-wake-routing-identity}
-
-**Decision.** A terminal event wakes an Orchestrate run only when its pane is bound to that run by
-an installed sentinel subscription or the current complete terminal snapshot. A missing owner
-does not make an unrelated terminal event relevant. Supervisory process rows are excluded from
-session-owner matching because they do not own terminal tabs.
-
-**Rejected alternative.** Waking whenever any non-planned row is absent from the current snapshot
-turns the subscriber process row into a permanent host-wide alarm. It also treats the absence of
-one run owner as evidence that an unrelated tab-close event belongs to that run.
-
-**Revisit when** the terminal event protocol provides a durable run label directly on every
-terminal event, including events emitted after pane removal.
-
----
-
-### Supervision owns expired admission reconciliation {#supervision-owns-admission-reconciliation}
-
-**Decision.** Every coordinator supervision tick invokes admission reconciliation before checking
-the subscriber and mirror. Planned reservations remain timeless unless they carry an explicit
-lease. Held reservations become reclaimable only after the holder lease expires and a fresh
-terminal query confirms the run-bound pane is absent. Each reservation is classified independently:
-an unanswerable owner stays held, but it does not prevent a provably dead neighbor from releasing
-capacity and advancing the queue.
-
-**Rejected alternative.** A repair helper with no production caller leaves occupied capacity as a
-one-way ratchet. Aborting the whole reconciliation pass on the first failed query lets one
-unanswerable owner create the same ratchet for unrelated reservations.
-
-**Revisit when** admission gains a dedicated host supervisor with an equivalent bounded tick and
-the coordinator no longer owns queue progress.
-
----
-
-### Reaping uses the authenticated dispatch landing as its working directory {#reap-cwd-from-dispatch-receipt}
-
-**Decision.** When a verified row carries a dispatch receipt, reaping uses the receipt's
-authenticated `landing_cwd` as the working directory for terminal control calls. The landing was
-authored before dispatch, sealed with the run secret, and checked against the repository during
-completion. It is a stable property of that dispatch. The terminal session's current working
-directory is live state and is neither required nor copied back into the register.
-
-Lifecycle-only callers that have no dispatch receipt still require a current working-directory
-answer from the terminal substrate. An absent or malformed dispatch receipt never falls back to a
-live value: a present receipt is authenticated, and authentication failure stops the reap.
-
-**Rejected alternative.** Reading the removed row-level `cwd` for every reap conflates the
-artifact landing with mutable terminal state. Reintroducing that field, or synthesizing it from the
-repository argument, would make a convenient directory look authoritative without the dispatch
-binding the receipt already provides.
-
-**Revisit when** lifecycle-only reaping is removed or gains its own authenticated authored landing.
-
----
-
-### Orchestrate register rows keep authored intent and outcomes, not live session facts {#orchestrate-register-intent-outcome-boundary}
-
-**Date:** 2026-08-15
-
-**Decision.** The durable Orchestrate register no longer stores the terminal multiplexer session,
-workspace, tab, pane, working directory, observed state, or observed-state source. Those facts can
-change independently of authored work and must be obtained from their live owner at the decision
-point. Public row reads and every register write reject those former columns explicitly, so an old
-caller cannot reinterpret missing data as absence.
-
-The `vendor` route remains durable. Planning writes it from the approved child, admission carries
-the approved reservation route, and session launch writes it from the authored runtime request.
-Those are independent producers of approved intent, not observations of a live process.
-
-Each former column has one named reader that asks the terminal substrate from a fresh snapshot.
-There is no cache, time-to-live policy, or process-local session-fact store. A successful query
-that finds no run-bound label returns absence. A query that fails raises a terminal-control error,
-so callers cannot read an unavailable answer as a negative one. Restart paths use those same
-readers and the deterministic run-bound label rather than a private recovery representation.
-
-**Rejected alternatives.** Keeping the former columns as optional compatibility fields would
-preserve the ambiguity: `None`, an empty value, and a stale copied observation would still be read
-as current truth. Removing them from the documented schema without runtime write and read guards
-would let dynamic dictionaries silently recreate the same contract.
-
-Schema version 1 remains readable. Its former live-session columns are removed in memory before
-any caller sees the rows, and the next ordinary write persists schema version 2. Reads remain
-side-effect free.
-
-**Revisit when** the terminal substrate changes its snapshot identity contract or the run-bound
-label is replaced by a stronger owner key.
-
----
 
 ### Removing a stored fact and building the way to ask for it are one change  {#removal-and-read-through-are-one-change}
 
@@ -426,21 +435,6 @@ rebuilt. The boundary correction lands as units on the existing branch, and
 the defects that the correction makes unreachable are closed as a
 *consequence* rather than as repairs. Only the defects that survive the
 boundary move get repair units, ranked on their own merits.
-**Decision.** A row whose native launcher already returned an identity, but whose delivery to that
-pane cannot be confirmed, is recovered in one of two ways depending on how far it got. If a dispatch
-receipt was already sealed (readiness confirmed, the child told its task), the recovery resends the
-same nonce-bound artifact instructions to the *existing* pane — never a new native launch, never a
-second receipt. If readiness itself never completed, the launch boundary asks for the current
-run-bound label and adopts that same session before retrying readiness. It never infers that the
-session is absent from the authored `launching` phase and never opens a replacement while the label
-still resolves.
-
-**Rationale.** The instructions a sealed dispatch resends are idempotent under their own nonce: a
-pane that already read them once reads the same thing again, harmlessly, whether or not the first
-attempt actually landed. Before a receipt exists, the deterministic label is the only owner key.
-The launcher's recovery branch adopts that owner and repeats the bounded readiness exchange; a
-trust prompt or timeout remains a refusal, while a coordinator interruption can continue without a
-second native launch. The live owner answer, not the row phase, distinguishes those cases.
 
 The evidence is a classification of the composition module's 3,656 lines
 (2,882 inside function bodies; its coordinator class alone is 2,244 lines
@@ -635,8 +629,6 @@ question the multiplexer could answer — remained.
 
 **Refs.** [`{#register-keeps-intent-not-substrate}`](#register-keeps-intent-not-substrate).
 
-## 2026-08-15
-
 ### `usage_unparseable` is sticky and owned; a later sample is not a recovery  {#usage-unparseable-is-sticky-and-owned}
 
 **Decision.** Once a row's usage telemetry is marked unparseable, the mark
@@ -812,7 +804,7 @@ it as owned by the mirror module; the writes above are already consistent with s
 `COLUMN_OWNERSHIP`: for every column more than one module can reach, one
 function may write it and that write asserts one fact. `write_phase` owns
 `phase`. `settle_artifact` owns `artifact_path`. `record_observed_state`
-no longer exists because observed state belongs to the live terminal substrate. `commit_plan` owns `tokens_max`.
+owns `observed_state` and its source. `commit_plan` owns `tokens_max`.
 `record_observed_tokens` owns `tokens_observed`. `reserve_slot` owns the
 reservation record. The merger refuses a foreign `artifact_path` and refuses
 `planned` over a terminal phase. Admission's private write path is an
@@ -824,8 +816,8 @@ carries run, row, vendor, and work location so a later reconciler can name
 the occupant. Owner recovery belongs to the composition unit.
 
 The merger now requires the writer identity for every owned column. Tests
-that plant `phase` name the setter they are standing in for. A mixed payload
-from two owners is two writes.
+that plant `phase` or `observed_state` name the setter they are standing in
+for. A mixed payload from two owners is two writes.
 **Rejected: a wall-clock lease on every planned reservation.** That
 recreates eager reclaim the moment an operator pauses.
 
@@ -841,11 +833,9 @@ Absence means the module defaults (`DEFAULT_PER_VENDOR`,
 `DEFAULT_AGGREGATE`). `write_host_policy` is the only writer. Per-call
 limit arguments override for that call only, for tests.
 Admission never writes `phase`. `activate_slot` sets reservation state to
-`held`. Reclaim reads reservation state, a declared lease, lifecycle terminal
-evidence (`phase` in `{verified, reaped}`), and a fresh live-owner answer. A
-planned reservation is not dead merely because no session exists. An expired
-held reservation is reclaimed only after Herdr confirms that its run-bound
-label has no pane. `_write_admission` still
+`held`. Reclaim reads reservation state, a declared lease, and terminal
+evidence (`observed_state="exited"`, `phase` in `{verified, reaped}`). A
+planned reservation with no pane is not dead. `_write_admission` still
 binds a run to its stored work location; a promotion of another run uses
 that run's stored path.
 
@@ -869,11 +859,11 @@ state, and after exit the pane id remains.
 `admission.py` under a host-wide `admission.lock` in the register directory.
 The lock is taken before the per-run generation lock and never after.
 Reservations and the FIFO queue live at the document root (`admission.queue`,
-`admission.reservations`) so they survive restart. Occupancy is the reservation
-set. Stored location is sidecar-then-stamp, resolved, no git. A reservation
-whose row is terminal is reclaimed. An expired held reservation is reclaimed
-only when a fresh Herdr query confirms owner absence; a failed query retains
-the slot and fails the recovery decision closed.
+`admission.reservations`) so they survive restart. Occupancy is reservations
+plus active phases, counted only for runs whose stored work location matches
+the claimed one. Stored location is sidecar-then-stamp, resolved, no git.
+A reservation whose row is `reaped`, or has no `pane_id` past `lease_seconds`,
+is reclaimed and the queue advances.
 
 `tokens_reserved` is produced by `reserve_slot` and consumed by
 `check_spend` when the vendor exposes no usage line. `tokens_observed` is
@@ -1360,11 +1350,11 @@ operator's "what stalled" view.
 **Rejected: add a phase.** `_validate_phase` rejects unknown values, and the closed vocabulary is an
 operator-approved decision from U2, not an oversight for a later unit to widen.
 
-**Rejected: record the failure as live observed state.** Catch-up reports the current owner state
-from a fresh snapshot and never stores it. A completion verdict is an outcome with durable evidence;
-a session status is a mutable observation. Conflating them would let the next live read replace the
-verdict conceptually even if no register write occurred. Demonstrated against the shipped consumer,
-not assumed — see LEARNINGS `{#one-owner-per-column}`.
+**Rejected: record the failure in `observed_state` / `observed_state_source`,** which is what U4 uses
+for trust prompts and readiness timeouts. Those columns are owned by the liveness detectors: the
+subscriber's snapshot catch-up rewrites `observed_state` for every row with a live pane, so a
+verdict recorded there is erased the next time catch-up runs while the child's pane is still open.
+Demonstrated against the shipped consumer, not assumed — see LEARNINGS `{#one-owner-per-column}`.
 
 **Revisit when** the register gains a general per-column ownership rule, or when an operator surface
 needs failed children ordered alongside phase transitions in one timeline, which would argue for a

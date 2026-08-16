@@ -21,6 +21,49 @@
 
 ## 2026-08-16
 
+### Invalid activity telemetry is not silence  {#invalid-activity-is-not-silence}
+
+**Context.** Mirror supervision uses the terminal pane's output revision to distinguish a thinking
+mirror from a hung one. A complete snapshot could place the pane while omitting its revision or
+carrying a non-integer value.
+
+**Evidence.** The activity reader returned `revision=None, advanced=False` for that malformed live
+pane. The caller then ran the ordinary quiet-time check, so an unavailable activity answer could
+be reported as a silent mirror after the tolerance elapsed.
+
+**Mechanism.** The revision reader answered the narrower question “did I receive an integer?” but
+its caller interpreted `None` as the broader conclusion “the live pane emitted nothing.” Missing
+telemetry and an unchanged counter are different observations.
+
+**Fix.** A present pane without a valid revision now raises `MirrorError`. The coordinator catches
+that typed error and reports mirror liveness as unknown without advancing or evaluating the silence
+clock. True pane absence remains the separate divergence path.
+
+**Generalizable rule.** A missing measurement cannot establish a zero delta. Propagate unavailable
+telemetry as unknown until the caller that owns the safety decision can classify it explicitly.
+
+### Recovery fakes must delegate to the production absence parser  {#recovery-fakes-use-production-parser}
+
+**Context.** Launch recovery had a dedicated fake answer even though production decides whether a
+session exists by parsing a complete terminal snapshot.
+
+**Evidence.** A snapshot containing `tabs` and `panes` but no `agents` made every named session-fact
+reader raise, while the recovery fake returned its side dictionary and allowed the test to pass.
+After the fake delegated to `HerdrControl.discover_by_label`, the partial-snapshot test reached the
+production parser and proved the native launcher was not called. A complete empty snapshot still
+permitted launch, and a complete present snapshot recovered the existing session.
+
+**Mechanism.** The fake replaced the decision under test rather than the terminal input one layer
+outside it. Its side dictionary could only represent present or absent, so it could not express the
+third production result: the terminal answered with an unusable snapshot.
+
+**Fix.** Session-lifecycle, composition, and mirror fakes now synthesize snapshots and delegate
+label discovery to the production parser.
+
+**Generalizable rule.** For recovery and refusal tests, fake the external observation and run the
+production classifier. A fixture that supplies the classifier's conclusion cannot validate its
+failure modes.
+
 ### A completed-process result is not a live process  {#completed-process-has-no-pid}
 
 **Context.** The documented launch command always raised after the

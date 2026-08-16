@@ -76,13 +76,9 @@ This module writes exactly the columns in :data:`OWNED_COLUMNS`, and only on the
 row. Every register write goes through :func:`_write_owned`, which refuses any other column
 at runtime -- ownership that is checkable rather than merely documented. In particular it
 does not write ``artifact_path`` (the mirror produces a distilled return, not a settled
-artifact), does not write ``observed_state`` (owned by the subscriber, and rewritten by every
-catch-up pass, so a failure recorded there would be erased while the pane is still open), and
-never promotes ``phase`` to a terminal value on the strength of its own claim. ``agent``,
-``pane_id`` and the rest of the substrate group are written by ``session_lifecycle`` when the
-mirror is launched through the same path as any other session; ``role`` is this module's own
-column and is how a mirror row is identified, because ``agent`` carries the launcher's actual
-agent name for every launched row.
+artifact), does not copy live session state into the register, and never promotes ``phase`` to a
+terminal value on the strength of its own claim. ``agent`` records authored launch intent;
+``role`` is this module's own column and is how a mirror row is identified.
 
 Hang detection needs a clock, and that is the whole difficulty
 --------------------------------------------------------------
@@ -148,7 +144,7 @@ import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import register as register_store
 import session_lifecycle
@@ -1269,6 +1265,7 @@ def resume_mirror(
     *,
     run_id: str,
     row_id: str | None = None,
+    herdr: session_lifecycle.HerdrControl | None = None,
 ) -> MirrorSession:
     """Rebuild a live mirror's session from its register row alone.
 
@@ -1278,9 +1275,9 @@ def resume_mirror(
     :class:`MirrorSession` that died with it. A session that outlives its only handle is not
     persistent in any useful sense.
 
-    Everything here is read. The substrate columns (``pane_id``, ``tab_id``, ``cwd``,
-    ``vendor``, ``base_commit``) belong to ``session_lifecycle`` and are read, never written;
-    the identity and subscription come from this module's own columns.
+    Everything here is read. Live pane, tab, and working-directory facts come through the strict
+    terminal-substrate seam. Durable route and base-commit intent come from the register; the
+    mirror identity and subscription come from this module's own columns.
 
     ``row_id`` may be omitted when the run has exactly one mirror, which is the ordinary case;
     it is located by the ``role`` column. Two mirrors in one run is refused rather than guessed.
@@ -1311,15 +1308,28 @@ def resume_mirror(
     if missing:
         raise MirrorNotRegisteredError(f"mirror row {row_id!r} identity lacks {missing}")
 
-    substrate = {key: row.get(key) for key in ("pane_id", "tab_id", "cwd", "vendor")}
-    absent = sorted(
-        key for key, value in substrate.items() if not isinstance(value, str) or not value
+    control = herdr or session_lifecycle.HerdrControl()
+    pane_id = session_lifecycle.read_session_pane_id(
+        control, root=root, run_id=run_id, row_id=row_id
     )
+    tab_id = session_lifecycle.read_session_tab_id(control, root=root, run_id=run_id, row_id=row_id)
+    cwd = session_lifecycle.read_session_cwd(control, root=root, run_id=run_id, row_id=row_id)
+    absent = [
+        name
+        for name, value in (("pane_id", pane_id), ("tab_id", tab_id), ("cwd", cwd))
+        if value is None
+    ]
     if absent:
         raise MirrorNotRegisteredError(
-            f"mirror row {row_id!r} lacks {absent}; the mirror was registered but never "
-            "finished launching, so there is no live session to resume"
+            f"mirror row {row_id!r} has no live {absent}; Herdr answered that the mirror is not "
+            "currently available"
         )
+    pane_id = cast(str, pane_id)
+    tab_id = cast(str, tab_id)
+    cwd = cast(Path, cwd)
+    vendor = row.get("vendor")
+    if not isinstance(vendor, str) or not vendor:
+        raise MirrorNotRegisteredError(f"mirror row {row_id!r} lacks its intended vendor")
 
     subscription = expected_subscription(row)
     base_commit = row.get("base_commit")
@@ -1327,12 +1337,12 @@ def resume_mirror(
         run_id=run_id,
         row_id=row_id,
         root=root,
-        cwd=Path(str(substrate["cwd"])),
+        cwd=cwd,
         # ``vendor`` is what ``launch_child`` records the runtime as; ``agent`` is overwritten
         # with the launcher's uniquified name, so it is not the runtime.
-        runtime=str(substrate["vendor"]),
-        pane_id=str(substrate["pane_id"]),
-        tab_id=str(substrate["tab_id"]),
+        runtime=vendor,
+        pane_id=str(pane_id),
+        tab_id=str(tab_id),
         nonce=str(values["nonce"]),
         max_quiet_seconds=_finite_seconds(
             row.get("max_quiet_seconds"), label=f"mirror row {row_id!r} max_quiet_seconds"
@@ -1414,9 +1424,15 @@ def repository_change_observation(
     current = git.changed_paths_baseline(session.cwd, base_commit=session.base_commit)
     after = set(current.paths)
     changed = after ^ before
-    previous = dict(
-        pair for pair in baseline.get("fingerprints", ()) if isinstance(pair, list | tuple)
-    )
+    previous: dict[str, str] = {}
+    for pair in baseline.get("fingerprints", ()):
+        if (
+            isinstance(pair, list | tuple)
+            and len(pair) == 2
+            and isinstance(pair[0], str)
+            and isinstance(pair[1], str)
+        ):
+            previous[pair[0]] = pair[1]
     for path, fingerprint in current.fingerprints:
         if path in before and previous and previous.get(path) not in (None, fingerprint):
             changed.add(path)
@@ -1705,7 +1721,7 @@ def check_liveness(
     )
 
 
-def _pane_revision(snapshot: Mapping[str, Any], pane_id: str) -> int | None:
+def _pane_revision(snapshot: Mapping[str, Any], pane_id: str) -> int:
     """The pane's output counter from one ``session.snapshot``, merged the way catch-up does.
 
     ``agents`` is the authoritative surface and is merged over ``panes``, matching
@@ -1721,7 +1737,7 @@ def _pane_revision(snapshot: Mapping[str, Any], pane_id: str) -> int | None:
             merged.update(item)
     revision = merged.get("revision")
     if isinstance(revision, bool) or not isinstance(revision, int):
-        return None
+        raise MirrorError(f"live pane {pane_id!r} has no valid output revision")
     return revision
 
 
@@ -1776,17 +1792,10 @@ def observe_pane_activity(
     """
     now = _finite_seconds(now, label="now")
     row = _mirror_row(root, run_id=run_id, row_id=row_id)
-    pane_id = row.get("pane_id")
-    if not isinstance(pane_id, str) or not pane_id:
-        raise MirrorNotRegisteredError(
-            f"mirror row {row_id!r} has no pane_id; it has not been launched yet"
-        )
-    revision = _pane_revision(snapshot, pane_id)
-    if revision is None:
-        # The pane is absent from the snapshot, or reports no counter. Absence is a different
-        # failure -- the subscriber records it as an exited pane, which *is* a disagreement the
-        # ordinary divergence machinery reaches -- and inventing an advance here would mask it.
+    pane_id = session_lifecycle.snapshot_session_pane_id(snapshot, run_id=run_id, row_id=row_id)
+    if pane_id is None:
         return MirrorActivity(revision=None, advanced=False, advanced_at=None)
+    revision = _pane_revision(snapshot, pane_id)
 
     previous = row.get("mirror_pane_activity")
     previous_revision = previous.get("revision") if isinstance(previous, Mapping) else None

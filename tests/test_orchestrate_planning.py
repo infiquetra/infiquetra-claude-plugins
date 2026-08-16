@@ -63,6 +63,63 @@ def _child(row_id: str, work_shape: str, **fields: Any) -> dict[str, Any]:
     return spec
 
 
+def _session_snapshot(
+    run_id: str,
+    row_id: str,
+    *,
+    pane_id: str = "pane-a",
+    status: str = "working",
+    cwd: Path | None = None,
+) -> dict[str, Any]:
+    tab_id = f"tab-{row_id}"
+    workspace_id = "workspace-a"
+    location = str((cwd or ROOT).resolve())
+    return {
+        "tabs": [
+            {
+                "label": f"orchestrate-{run_id}-{row_id}",
+                "tab_id": tab_id,
+                "workspace_id": workspace_id,
+                "agent_status": status,
+            }
+        ],
+        "panes": [
+            {
+                "pane_id": pane_id,
+                "tab_id": tab_id,
+                "workspace_id": workspace_id,
+                "cwd": location,
+                "foreground_cwd": location,
+                "agent_status": status,
+                "revision": 1,
+            }
+        ],
+        "agents": [
+            {
+                "pane_id": pane_id,
+                "tab_id": tab_id,
+                "workspace_id": workspace_id,
+                "cwd": location,
+                "foreground_cwd": location,
+                "agent_status": status,
+            }
+        ],
+    }
+
+
+class SnapshotHerdr:
+    def __init__(self, snapshot: dict[str, Any] | None = None, error: Exception | None = None):
+        self.current = snapshot or {"tabs": [], "panes": [], "agents": []}
+        self.error = error
+        self.asks = 0
+
+    def snapshot(self, *, cwd: Path) -> dict[str, Any]:
+        self.asks += 1
+        if self.error is not None:
+            raise self.error
+        return self.current
+
+
 def _commit(
     tmp_path: Path,
     children: list[dict[str, Any]],
@@ -196,7 +253,7 @@ def test_releasing_a_slot_advances_the_queue(tmp_path: Path) -> None:
     assert rows["waiting"]["admission"] == "reserved"
 
 
-def test_dead_holder_slot_is_reclaimed_and_the_queue_advances(tmp_path: Path) -> None:
+def test_gone_holder_slot_is_reclaimed_and_the_queue_advances(tmp_path: Path) -> None:
     _commit(
         tmp_path,
         [
@@ -206,19 +263,10 @@ def test_dead_holder_slot_is_reclaimed_and_the_queue_advances(tmp_path: Path) ->
         per_vendor_limit=1,
         now=100.0,
     )
-    REGISTER.upsert_row(
-        tmp_path,
-        "dead",
-        {
-            "observed_state": "exited",
-            "observed_state_source": "observed:pane_exited",
-            "pane_id": "w1:p9",
-        },
-        run_id="run-plan",
-        writer="record_observed_state",
-    )
+    ADMISSION.activate_slot(tmp_path, "dead", run_id="run-plan", now=100.0)
+    herdr = SnapshotHerdr()
     reclaimed = ADMISSION.reclaim_dead_slots(
-        tmp_path, run_id="run-plan", lease_seconds=10.0, now=120.0
+        tmp_path, run_id="run-plan", lease_seconds=10.0, now=120.0, herdr=herdr
     )
     assert reclaimed == ["dead"]
     assert ADMISSION.queued_row_ids(tmp_path, run_id="run-plan") == ()
@@ -227,11 +275,96 @@ def test_dead_holder_slot_is_reclaimed_and_the_queue_advances(tmp_path: Path) ->
     assert rows["waiting"]["admission"] == "reserved"
 
 
+def test_failed_owner_query_keeps_the_slot_and_queue_intact(tmp_path: Path) -> None:
+    _commit(
+        tmp_path,
+        [
+            _child("uncertain", "work-medium", vendor="claude"),
+            _child("waiting", "work-medium", vendor="claude"),
+        ],
+        per_vendor_limit=1,
+        now=100.0,
+    )
+    ADMISSION.activate_slot(tmp_path, "uncertain", run_id="run-plan", now=100.0)
+    failed = SnapshotHerdr(error=ADMISSION.session_lifecycle.LaunchProtocolError("query failed"))
+    with pytest.raises(ADMISSION.AdmissionError, match="could not ask"):
+        ADMISSION.reclaim_dead_slots(
+            tmp_path,
+            run_id="run-plan",
+            lease_seconds=10.0,
+            now=120.0,
+            herdr=failed,
+        )
+    assert ADMISSION.queued_row_ids(tmp_path, run_id="run-plan") == ("waiting",)
+    rows = REGISTER.read_rows(tmp_path, run_id="run-plan")
+    assert rows["uncertain"]["admission"] == "held"
+    assert rows["waiting"]["admission"] == "queued"
+
+
+def test_one_unanswerable_owner_does_not_hide_a_dead_neighbor(tmp_path: Path) -> None:
+    _commit(
+        tmp_path,
+        [
+            _child("uncertain", "work-medium", vendor="claude"),
+            _child("dead", "work-medium", vendor="claude"),
+            _child("waiting", "work-medium", vendor="claude"),
+        ],
+        per_vendor_limit=2,
+        now=100.0,
+    )
+    ADMISSION.activate_slot(tmp_path, "uncertain", run_id="run-plan", now=100.0)
+    ADMISSION.activate_slot(tmp_path, "dead", run_id="run-plan", now=100.0)
+
+    class MixedAnswers:
+        asks = 0
+
+        def snapshot(self, *, cwd: Path) -> dict[str, Any]:
+            self.asks += 1
+            snapshot = _session_snapshot("run-plan", "uncertain", cwd=cwd)
+            snapshot["agents"][0].pop("agent_status")
+            snapshot["panes"][0].pop("agent_status")
+            snapshot["tabs"][0].pop("agent_status")
+            return snapshot
+
+    with pytest.raises(ADMISSION.AdmissionError, match="valid agent status"):
+        ADMISSION.reclaim_dead_slots(
+            tmp_path,
+            run_id="run-plan",
+            lease_seconds=10.0,
+            now=120.0,
+            herdr=MixedAnswers(),
+        )
+
+    rows = REGISTER.read_rows(tmp_path, run_id="run-plan")
+    assert rows["uncertain"]["admission"] == "held"
+    assert rows["dead"]["admission"] == "reclaimed"
+    assert rows["waiting"]["admission"] == "reserved"
+
+
+def test_failed_terminal_source_query_is_an_admission_error(tmp_path: Path) -> None:
+    _commit(tmp_path, [_child("dead", "work-medium", vendor="claude")], now=100.0)
+    ADMISSION.activate_slot(tmp_path, "dead", run_id="run-plan", now=100.0)
+
+    class SourceFailure:
+        asks = 0
+
+        def snapshot(self, *, cwd: Path) -> dict[str, Any]:
+            del cwd
+            self.asks += 1
+            if self.asks == 1:
+                return _session_snapshot("run-plan", "dead", status="exited", cwd=tmp_path)
+            raise ADMISSION.session_lifecycle.LaunchProtocolError("source query failed")
+
+    with pytest.raises(ADMISSION.AdmissionError, match="terminal-state source"):
+        ADMISSION.reclaim_dead_slots(tmp_path, run_id="run-plan", now=120.0, herdr=SourceFailure())
+
+
 def test_live_holder_with_a_pane_is_not_reclaimed(tmp_path: Path) -> None:
     _commit(tmp_path, [_child("live", "work-medium", vendor="claude")], now=100.0)
-    REGISTER.upsert_row(tmp_path, "live", {"pane_id": "w1:p2"}, run_id="run-plan")
+    ADMISSION.activate_slot(tmp_path, "live", run_id="run-plan", now=100.0)
+    herdr = SnapshotHerdr(_session_snapshot("run-plan", "live", pane_id="w1:p2", cwd=tmp_path))
     reclaimed = ADMISSION.reclaim_dead_slots(
-        tmp_path, run_id="run-plan", lease_seconds=10.0, now=120.0
+        tmp_path, run_id="run-plan", lease_seconds=10.0, now=120.0, herdr=herdr
     )
     assert reclaimed == []
     per_vendor, _aggregate = ADMISSION.occupancy(tmp_path)
@@ -373,7 +506,10 @@ def test_missing_telemetry_fails_closed_rather_than_passing(tmp_path: Path) -> N
 
 def test_usage_line_from_output_match_is_the_observed_column(tmp_path: Path) -> None:
     _commit(tmp_path, [_child("metered", "work-medium", vendor="claude")])
-    REGISTER.upsert_row(tmp_path, "metered", {"pane_id": "pane-a"}, run_id="run-plan")
+    REGISTER.upsert_row(
+        tmp_path, "metered", {"phase": "working"}, run_id="run-plan", writer="write_phase"
+    )
+    snapshot = _session_snapshot("run-plan", "metered", cwd=tmp_path)
     subscriber = SUBSCRIBER.Subscriber(
         root=tmp_path,
         run_id="run-plan",
@@ -382,7 +518,7 @@ def test_usage_line_from_output_match_is_the_observed_column(tmp_path: Path) -> 
         orchestrator_pane="orchestrator-pane",
         subscriptions=[SUBSCRIBER.usage_match_subscription("pane-a")],
         client=EVENTS.HerdrEventClient(tmp_path / "unused.sock"),
-        snapshot_reader=lambda: {"panes": [], "agents": []},
+        snapshot_reader=lambda: snapshot,
         wake_sender=lambda _text: None,
         diagnostic_sink=lambda _payload: None,
     )
@@ -409,10 +545,11 @@ def test_an_ordinary_token_line_leaves_the_subscriber_alive_and_the_spend_gate_r
     REGISTER.upsert_row(
         tmp_path,
         "metered",
-        {"pane_id": "pane-a", "phase": "working"},
+        {"phase": "working"},
         run_id="run-plan",
         writer="write_phase",
     )
+    snapshot = _session_snapshot("run-plan", "metered", cwd=tmp_path)
     subscriber = SUBSCRIBER.Subscriber(
         root=tmp_path,
         run_id="run-plan",
@@ -421,7 +558,7 @@ def test_an_ordinary_token_line_leaves_the_subscriber_alive_and_the_spend_gate_r
         orchestrator_pane="orchestrator-pane",
         subscriptions=[SUBSCRIBER.usage_match_subscription("pane-a")],
         client=EVENTS.HerdrEventClient(tmp_path / "unused.sock"),
-        snapshot_reader=lambda: {"panes": [], "agents": []},
+        snapshot_reader=lambda: snapshot,
         wake_sender=lambda _text: None,
         diagnostic_sink=lambda _payload: None,
     )
@@ -649,7 +786,7 @@ def test_promoting_a_finished_child_does_not_rewrite_its_phase(tmp_path: Path) -
     REGISTER.upsert_row(
         tmp_path,
         "finished",
-        {"phase": "reaped", "pane_id": "pane-2"},
+        {"phase": "reaped"},
         run_id="run-plan",
         writer="write_phase",
     )
@@ -780,13 +917,13 @@ def test_an_observed_exit_is_reclaimed_even_when_the_pane_id_remains(tmp_path: P
         tokens_max=20000,
         now=100.0,
     )
+    ADMISSION.activate_slot(tmp_path, "gone", run_id="run-a", now=100.0)
     REGISTER.write_phase(tmp_path, "gone", "working", run_id="run-a")
-    REGISTER.record_observed_state(
-        tmp_path, "gone", "exited", source="observed:pane_exited", run_id="run-a"
+    herdr = SnapshotHerdr(
+        _session_snapshot("run-a", "gone", pane_id="w1:p9", status="exited", cwd=tmp_path)
     )
-    REGISTER.upsert_row(tmp_path, "gone", {"pane_id": "w1:p9"}, run_id="run-a")
     reclaimed = ADMISSION.reclaim_dead_slots(
-        tmp_path, run_id="run-a", lease_seconds=10.0, now=1000.0
+        tmp_path, run_id="run-a", lease_seconds=10.0, now=1000.0, herdr=herdr
     )
     assert reclaimed == ["gone"]
 
@@ -892,11 +1029,8 @@ def _record_root(root: Path, run_id: str) -> None:
 
 def test_commit_does_not_write_the_settled_artifact_column(tmp_path: Path) -> None:
     _commit(tmp_path, [_child("child-a", "work-medium")])
-    REGISTER.upsert_row(tmp_path, "child-a", {"pane_id": "pane-a"}, run_id="run-plan")
-    snapshot = {
-        "panes": [{"pane_id": "pane-a", "agent_status": "working", "revision": 1}],
-        "agents": [],
-    }
+    REGISTER.write_phase(tmp_path, "child-a", "launched", run_id="run-plan")
+    snapshot = _session_snapshot("run-plan", "child-a", cwd=tmp_path)
     before = {
         record.row_id: record
         for record in SUBSCRIBER.catch_up(tmp_path, snapshot, run_id="run-plan")
@@ -941,7 +1075,7 @@ def test_activate_slot_refuses_a_terminal_row(tmp_path: Path) -> None:
         ADMISSION.activate_slot(tmp_path, "c1", run_id="run-a")
 
 
-def test_inferred_snapshot_absence_does_not_free_a_live_holder(tmp_path: Path) -> None:
+def test_snapshot_absence_does_not_free_an_unexpired_live_holder(tmp_path: Path) -> None:
     ADMISSION.reserve_slot(
         tmp_path,
         "live",
@@ -955,19 +1089,23 @@ def test_inferred_snapshot_absence_does_not_free_a_live_holder(tmp_path: Path) -
     REGISTER.upsert_row(
         tmp_path,
         "live",
-        {"phase": "working", "pane_id": "w1:p9"},
+        {"phase": "working"},
         run_id="run-a",
         writer="write_phase",
     )
-    SUBSCRIBER.catch_up(tmp_path, {"panes": [], "agents": []}, run_id="run-a")
+    records = SUBSCRIBER.catch_up(tmp_path, {"tabs": [], "panes": [], "agents": []}, run_id="run-a")
+    assert records[0].observed_state == "exited"
+    assert records[0].observed_state_source == "inferred:snapshot_absence"
     row = REGISTER.read_rows(tmp_path, run_id="run-a")["live"]
-    assert row["observed_state"] == "exited"
-    assert row["observed_state_source"] == "inferred:snapshot_absence"
     reclaimed = ADMISSION.reclaim_dead_slots(
-        tmp_path, run_id="run-a", lease_seconds=3600.0, now=101.0
+        tmp_path,
+        run_id="run-a",
+        lease_seconds=3600.0,
+        now=101.0,
+        herdr=SnapshotHerdr(),
     )
     assert reclaimed == []
-    assert row["pane_id"] == "w1:p9"
+    assert REGISTER.REMOVED_ROW_COLUMNS.isdisjoint(row)
     per_vendor, _aggregate = ADMISSION.occupancy(tmp_path)
     assert per_vendor["claude"] == 1
 

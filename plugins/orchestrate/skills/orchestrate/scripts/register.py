@@ -38,11 +38,6 @@ Identity   -- id, run_id, agent, vendor, model, effort
     role. Supervising rows carry ``role``. :func:`is_supervisory_row` is the
     predicate that tells them apart from the outcome's children.
 
-Substrate  -- herdr_session, workspace_id, tab_id, pane_id, cwd
-    Where the row's process actually lives in herdr. ``pane_id`` is the durable handle U3's
-    subscriber re-attaches to on every reconnect (KTD12); it is the join key between this row and
-    the herdr socket's events, so it must be recorded before the row is trusted as "launched".
-
 Work       -- task, work_shape, scope, artifact_path, predicate, integration_mode, destination,
               base_commit
     What the child was asked to do and how its result gets back in: ``work_shape`` feeds U1's
@@ -52,19 +47,10 @@ Work       -- task, work_shape, scope, artifact_path, predicate, integration_mod
     ``base_commit`` is the immutable Git reference used to create a branch-integrating child and
     is the committed-diff reference for its final scope check.
 
-Lifecycle  -- phase, expected_state, observed_state, observed_state_source
-    ``phase`` is the closed, ordered vocabulary in ``PHASES`` below. ``expected_state`` /
-    ``observed_state`` exist because a live child's own status report is not a completion signal:
-    one measured child reported ``done`` and then returned to ``working`` three times in a single
-    dispatch. Disagreement between what the orchestrator expects and what herdr currently reports
-    is recorded as *divergence*, not silently resolved by trusting one detector over the other —
-    that resolution is U3/U4's job, not this module's. ``observed_state_source`` records how the
-    state was learned. Values beginning with ``observed:`` came directly from a process or herdr
-    event; values beginning with ``inferred:`` were concluded from container presence or absence.
-    See
-    ``docs/engineering-journal/LEARNINGS.md#agent-lifecycle-detectors-lie`` for the durable,
-    publicly readable record of the broader class this belongs to (vendor detectors disagreeing
-    in vendor-specific, non-repeating ways).
+Lifecycle  -- phase, expected_state
+    ``phase`` is the closed, ordered vocabulary in ``PHASES`` below. ``expected_state`` records
+    the state the orchestrator intends. Live session state belongs to the terminal multiplexer and
+    is asked for at the decision point instead of being copied into this durable document.
 
 Time       -- dispatched_at, deadline, max_quiet_seconds, last_event_at
     ``deadline`` and ``max_quiet_seconds`` are alternative hang-detection strategies for a row —
@@ -86,12 +72,11 @@ Completion -- dispatch_receipt, completion
     orchestrator establishes *before* a child is dispatched: the run-binding token, the artifact's
     destination and its pre-dispatch state, and the predicate's dependency closure and content
     digest. ``completion`` is the durable verdict: result, a reason from a closed failure
-    vocabulary, the artifact digest, and the predicate outcome. The verdict deliberately does not
-    live in ``observed_state`` -- that column is owned by the liveness detectors and is rewritten by
-    the subscriber's snapshot catch-up for every row with a live pane, so a failure recorded there
-    would be erased while the child's pane is still open. ``PHASES`` has no member meaning
-    "evaluated and failed", so a failed completion leaves ``phase`` untouched and this key is what
-    keeps a failed child distinguishable from a working one.
+    vocabulary, the artifact digest, and the predicate outcome. Live session state is deliberately
+    not a register column: a liveness observation can change while the verdict remains true.
+    ``PHASES`` has no member meaning "evaluated and failed", so a failed completion leaves
+    ``phase`` untouched and this key is what keeps a failed child distinguishable from a working
+    one.
 
 Accounting -- tokens_observed, tokens_reserved, tokens_max
     ``tokens_reserved`` is what admission committed before dispatch; ``tokens_observed`` is
@@ -114,12 +99,6 @@ an owned column arriving without that function's writer identity is refused.
     artifact_path          completion.settle_artifact        this path exists and
                                                              is the settled
                                                              deliverable.
-    observed_state         record_observed_state             a named detector
-                                                             reported this state.
-    observed_state_source  record_observed_state             how that state was
-                                                             learned
-                                                             (``observed:`` vs
-                                                             ``inferred:``).
     tokens_observed        accounting.record_observed_tokens usage this row has
                                                              produced under its
                                                              vendor contract.
@@ -177,8 +156,8 @@ from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-SCHEMA_VERSION = 1
-SUPPORTED_SCHEMA_VERSIONS = frozenset({1})
+SCHEMA_VERSION = 2
+SUPPORTED_SCHEMA_VERSIONS = frozenset({1, 2})
 
 # Closed, ordered lifecycle vocabulary (U2 brief). U3/U4/U7 move a row through these in order;
 # this module does not enforce the order, only that a written value is a member of the set.
@@ -192,7 +171,6 @@ PRESENTATION_SIDECARS = (".presented", ".generation")
 # Shared-column ownership. Writer is a function. The fact is what that write asserts.
 # The merger refuses these columns unless ``writer`` equals the named owner.
 PHASE_WRITER = "write_phase"
-OBSERVED_STATE_WRITER = "record_observed_state"
 TOKENS_OBSERVED_WRITER = "record_observed_tokens"
 TOKENS_MAX_WRITER = "commit_plan"
 TOKENS_RESERVED_WRITER = "admission._write_admission"
@@ -201,8 +179,6 @@ USAGE_UNPARSEABLE_WRITER = "_mark_usage_unparseable"
 COLUMN_WRITERS: dict[str, str] = {
     "phase": PHASE_WRITER,
     "artifact_path": ARTIFACT_PATH_WRITER,
-    "observed_state": OBSERVED_STATE_WRITER,
-    "observed_state_source": OBSERVED_STATE_WRITER,
     "tokens_observed": TOKENS_OBSERVED_WRITER,
     "tokens_max": TOKENS_MAX_WRITER,
     "tokens_reserved": TOKENS_RESERVED_WRITER,
@@ -219,12 +195,6 @@ COLUMN_OWNERSHIP: tuple[tuple[str, str, str], ...] = (
         "artifact_path",
         "completion.settle_artifact",
         "this path exists and is the settled deliverable",
-    ),
-    ("observed_state", OBSERVED_STATE_WRITER, "a named detector reported this state"),
-    (
-        "observed_state_source",
-        OBSERVED_STATE_WRITER,
-        "how that state was learned (observed: vs inferred:)",
     ),
     (
         "tokens_observed",
@@ -263,7 +233,6 @@ def is_supervisory_row(row: Mapping[str, Any]) -> bool:
 
 
 IDENTITY_COLUMNS = ("id", "run_id", "agent", "vendor", "model", "effort")
-SUBSTRATE_COLUMNS = ("herdr_session", "workspace_id", "tab_id", "pane_id", "cwd")
 WORK_COLUMNS = (
     "task",
     "work_shape",
@@ -274,7 +243,7 @@ WORK_COLUMNS = (
     "destination",
     "base_commit",
 )
-LIFECYCLE_COLUMNS = ("phase", "expected_state", "observed_state", "observed_state_source")
+LIFECYCLE_COLUMNS = ("phase", "expected_state")
 TIME_COLUMNS = (
     "dispatched_at",
     "deadline",
@@ -284,12 +253,21 @@ TIME_COLUMNS = (
 ACCOUNTING_COLUMNS = ("tokens_observed", "tokens_reserved", "tokens_max")
 
 ROW_COLUMNS = (
-    IDENTITY_COLUMNS
-    + SUBSTRATE_COLUMNS
-    + WORK_COLUMNS
-    + LIFECYCLE_COLUMNS
-    + TIME_COLUMNS
-    + ACCOUNTING_COLUMNS
+    IDENTITY_COLUMNS + WORK_COLUMNS + LIFECYCLE_COLUMNS + TIME_COLUMNS + ACCOUNTING_COLUMNS
+)
+
+# These facts are owned by the live terminal substrate. They are named here only so every
+# persistence and row-read path can refuse them structurally; they are not register columns.
+REMOVED_ROW_COLUMNS = frozenset(
+    {
+        "herdr_session",
+        "workspace_id",
+        "tab_id",
+        "pane_id",
+        "cwd",
+        "observed_state",
+        "observed_state_source",
+    }
 )
 
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -309,6 +287,85 @@ _GIT_IDENTITY_ENV = frozenset(
 
 class RegisterError(Exception):
     """Base error for register operations."""
+
+
+class RemovedColumnError(RegisterError):
+    """A caller tried to use a live session fact as though it were a durable row column."""
+
+
+class RegisterRow(dict[str, Any]):
+    """A public register row that refuses reads of decommissioned session-fact columns."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        incoming = dict(*args, **kwargs)
+        self._refuse_removed_set(incoming)
+        super().__init__(incoming)
+
+    @staticmethod
+    def _refuse_removed(key: object) -> None:
+        if key in REMOVED_ROW_COLUMNS:
+            raise RemovedColumnError(
+                f"{key!r} is a live session fact, not a durable register column; "
+                "ask the terminal substrate at the decision point"
+            )
+
+    @staticmethod
+    def _refuse_removed_set(incoming: Mapping[str, Any]) -> None:
+        removed = REMOVED_ROW_COLUMNS.intersection(incoming)
+        if removed:
+            raise RemovedColumnError(
+                f"live session facts are not durable register columns: {sorted(removed)}"
+            )
+
+    def __getitem__(self, key: str) -> Any:
+        self._refuse_removed(key)
+        return super().__getitem__(key)
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        self._refuse_removed(key)
+        super().__setitem__(key, value)
+
+    def __delitem__(self, key: str) -> None:
+        self._refuse_removed(key)
+        super().__delitem__(key)
+
+    def __contains__(self, key: object) -> bool:
+        self._refuse_removed(key)
+        return super().__contains__(key)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        self._refuse_removed(key)
+        return super().get(key, default)
+
+    def pop(self, key: str, *default: Any) -> Any:
+        self._refuse_removed(key)
+        return super().pop(key, *default)
+
+    def setdefault(self, key: str, default: Any = None) -> Any:
+        self._refuse_removed(key)
+        return super().setdefault(key, default)
+
+    def update(self, *args: Any, **kwargs: Any) -> None:
+        incoming = dict(*args, **kwargs)
+        self._refuse_removed_set(incoming)
+        super().update(incoming)
+
+    def __ior__(self, other: Any) -> RegisterRow:  # type: ignore[override,misc]
+        self.update(other)
+        return self
+
+    def __or__(self, other: Any) -> RegisterRow:  # type: ignore[override,misc]
+        merged = self.copy()
+        merged.update(other)
+        return merged
+
+    def __ror__(self, other: Any) -> RegisterRow:  # type: ignore[override,misc]
+        merged = type(self)(other)
+        merged.update(self)
+        return merged
+
+    def copy(self) -> RegisterRow:
+        return type(self)(self)
 
 
 class UnsupportedSchemaVersionError(RegisterError):
@@ -611,7 +668,10 @@ def _read_register_unlocked(run_id: str) -> dict[str, Any]:
     if not path.exists():
         return {"schema_version": SCHEMA_VERSION, "run_id": _safe_run_id(run_id), "rows": {}}
 
-    raw = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RegisterError(f"{path}: register document is not readable JSON") from exc
     if not isinstance(raw, dict):
         raise RegisterError(f"{path}: register document must be a JSON object")
 
@@ -627,6 +687,15 @@ def _read_register_unlocked(run_id: str) -> dict[str, Any]:
     rows = raw.get("rows", {})
     if not isinstance(rows, dict):
         raise RegisterError(f"{path}: 'rows' must be a JSON object keyed by row id")
+    # Schema 1 files may predate the intent/outcome boundary. Normalize them before *any* caller
+    # can make a decision, then let the next ordinary write persist schema 2. A read is kept
+    # side-effect free, but it never exposes the former live-session copies.
+    for row_id, row in rows.items():
+        if not isinstance(row, dict):
+            raise RegisterError(f"{path}: row {row_id!r} must be a JSON object")
+        for column in REMOVED_ROW_COLUMNS:
+            row.pop(column, None)
+    raw["schema_version"] = SCHEMA_VERSION
     raw["rows"] = rows
     return raw
 
@@ -688,33 +757,6 @@ def write_role(
             row_id
         ]
     return upsert_row(root, row_id, fields, run_id=run_id, writer=ROLE_WRITER)
-
-
-def record_observed_state(
-    root: Path,
-    row_id: str,
-    state: str,
-    *,
-    source: str,
-    run_id: str,
-) -> dict[str, Any]:
-    """Sole writer of ``observed_state`` and ``observed_state_source``."""
-    return record_observed_states(root, {row_id: (state, source)}, run_id=run_id)[row_id]
-
-
-def record_observed_states(
-    root: Path,
-    updates: Mapping[str, tuple[str, str]],
-    *,
-    run_id: str,
-) -> dict[str, dict[str, Any]]:
-    """Batch writer of ``observed_state`` and ``observed_state_source``."""
-    fields: dict[str, dict[str, Any]] = {}
-    for row_id, (state, source) in updates.items():
-        if not source:
-            raise RegisterError("observed_state_source is required")
-        fields[row_id] = {"observed_state": state, "observed_state_source": source}
-    return upsert_rows(root, fields, run_id=run_id, writer=OBSERVED_STATE_WRITER)
 
 
 def stamp_generation(run_id: str, generation: str, *, already_locked: bool = False) -> str:
@@ -815,7 +857,15 @@ _TIME_STRATEGY_COLUMNS = ("deadline", "max_quiet_seconds")
 def read_register(run_id: str) -> dict[str, Any]:
     """Read the whole register document for one run, shared-locked."""
     with _read_locked(run_id):
-        return _read_register_unlocked(run_id)
+        doc = _read_register_unlocked(run_id)
+    public = dict(doc)
+    public["rows"] = {
+        row_id: RegisterRow(
+            {key: value for key, value in row.items() if key not in REMOVED_ROW_COLUMNS}
+        )
+        for row_id, row in doc["rows"].items()
+    }
+    return public
 
 
 def run_work_location(run_id: str) -> Path | None:
@@ -946,7 +996,7 @@ def read_rows(root: Path, *, run_id: str) -> dict[str, dict[str, Any]]:
     """
     assert_root_belongs_to_run(root, run_id, require_binding=False)
     doc = read_register(_safe_run_id(run_id))
-    return {rid: dict(row) for rid, row in doc["rows"].items()}
+    return {rid: RegisterRow(row) for rid, row in doc["rows"].items()}
 
 
 def rows_stamped_against(root: Path) -> dict[tuple[str, str], dict[str, Any]]:
@@ -965,7 +1015,7 @@ def rows_stamped_against(root: Path) -> dict[tuple[str, str], dict[str, Any]]:
             continue
         if _same_dir(canonical_work_location(Path(stamped)), target):
             for rid, row in doc["rows"].items():
-                merged[(live_id, rid)] = dict(row)
+                merged[(live_id, rid)] = RegisterRow(row)
     return merged
 
 
@@ -1029,6 +1079,11 @@ def upsert_rows(
     for row_id, fields in normalized.items():
         if not row_id:
             raise RegisterError("row_id must be non-empty")
+        removed = REMOVED_ROW_COLUMNS.intersection(fields)
+        if removed:
+            raise RemovedColumnError(
+                f"live session facts are not durable register columns: {sorted(removed)}"
+            )
         _validate_phase(fields)
         named = fields.get("run_id")
         if named is not None and str(named) != run_id:
@@ -1073,6 +1128,11 @@ def _upsert_rows_unlocked(
     rows = doc["rows"]
     merged_rows: dict[str, dict[str, Any]] = {}
     for row_id, fields in normalized.items():
+        removed = REMOVED_ROW_COLUMNS.intersection(fields)
+        if removed:
+            raise RemovedColumnError(
+                f"live session facts are not durable register columns: {sorted(removed)}"
+            )
         existing = rows.get(row_id, {})
         is_new_row = not existing
         for column, owner in COLUMN_WRITERS.items():
@@ -1089,7 +1149,12 @@ def _upsert_rows_unlocked(
             for column in _TIME_STRATEGY_COLUMNS:
                 merged.setdefault(column, None)
         rows[row_id] = merged
-        merged_rows[row_id] = dict(merged)
+        merged_rows[row_id] = RegisterRow(
+            {key: value for key, value in merged.items() if key not in REMOVED_ROW_COLUMNS}
+        )
+    for row in rows.values():
+        for column in REMOVED_ROW_COLUMNS:
+            row.pop(column, None)
     doc["rows"] = rows
     _atomic_write_json(register_path(run_id), doc)
     return merged_rows

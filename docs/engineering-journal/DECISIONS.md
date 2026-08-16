@@ -2,6 +2,103 @@
 
 ## 2026-08-16
 
+### Reaping uses the authenticated dispatch landing as its working directory {#reap-cwd-from-dispatch-receipt}
+
+**Decision.** When a verified row carries a dispatch receipt, reaping uses the receipt's
+authenticated `landing_cwd` as the working directory for terminal control calls. The landing was
+authored before dispatch, sealed with the run secret, and checked against the repository during
+completion. It is a stable property of that dispatch. The terminal session's current working
+directory is live state and is neither required nor copied back into the register.
+
+Lifecycle-only callers that have no dispatch receipt still require a current working-directory
+answer from the terminal substrate. An absent or malformed dispatch receipt never falls back to a
+live value: a present receipt is authenticated, and authentication failure stops the reap.
+
+**Rejected alternative.** Reading the removed row-level `cwd` for every reap conflates the
+artifact landing with mutable terminal state. Reintroducing that field, or synthesizing it from the
+repository argument, would make a convenient directory look authoritative without the dispatch
+binding the receipt already provides.
+
+**Revisit when** lifecycle-only reaping is removed or gains its own authenticated authored landing.
+
+---
+
+### Orchestrate register rows keep authored intent and outcomes, not live session facts {#orchestrate-register-intent-outcome-boundary}
+
+**Date:** 2026-08-15
+
+**Decision.** The durable Orchestrate register no longer stores the terminal multiplexer session,
+workspace, tab, pane, working directory, observed state, or observed-state source. Those facts can
+change independently of authored work and must be obtained from their live owner at the decision
+point. Public row reads and every register write reject those former columns explicitly, so an old
+caller cannot reinterpret missing data as absence.
+
+The `vendor` route remains durable. Planning writes it from the approved child, admission carries
+the approved reservation route, and session launch writes it from the authored runtime request.
+Those are independent producers of approved intent, not observations of a live process.
+
+Each former column has one named reader that asks the terminal substrate from a fresh snapshot.
+There is no cache, time-to-live policy, or process-local session-fact store. A successful query
+that finds no run-bound label returns absence. A query that fails raises a terminal-control error,
+so callers cannot read an unavailable answer as a negative one. Restart paths use those same
+readers and the deterministic run-bound label rather than a private recovery representation.
+
+**Rejected alternatives.** Keeping the former columns as optional compatibility fields would
+preserve the ambiguity: `None`, an empty value, and a stale copied observation would still be read
+as current truth. Removing them from the documented schema without runtime write and read guards
+would let dynamic dictionaries silently recreate the same contract.
+
+Schema version 1 remains readable. Its former live-session columns are removed in memory before
+any caller sees the rows, and the next ordinary write persists schema version 2. Reads remain
+side-effect free.
+
+**Revisit when** the terminal substrate changes its snapshot identity contract or the run-bound
+label is replaced by a stronger owner key.
+
+---
+second receipt. If readiness itself never completed, the launch boundary asks for the current
+run-bound label and adopts that same session before retrying readiness. It never infers that the
+session is absent from the authored `launching` phase and never opens a replacement while the label
+still resolves.
+attempt actually landed. Before a receipt exists, the deterministic label is the only owner key.
+The launcher's recovery branch adopts that owner and repeats the bounded readiness exchange; a
+trust prompt or timeout remains a refusal, while a coordinator interruption can continue without a
+second native launch. The live owner answer, not the row phase, distinguishes those cases.
+
+### Terminal wake routing requires run-bound identity evidence {#terminal-wake-routing-identity}
+
+**Decision.** A terminal event wakes an Orchestrate run only when its pane is bound to that run by
+an installed sentinel subscription or the current complete terminal snapshot. A missing owner
+does not make an unrelated terminal event relevant. Supervisory process rows are excluded from
+session-owner matching because they do not own terminal tabs.
+
+**Rejected alternative.** Waking whenever any non-planned row is absent from the current snapshot
+turns the subscriber process row into a permanent host-wide alarm. It also treats the absence of
+one run owner as evidence that an unrelated tab-close event belongs to that run.
+
+**Revisit when** the terminal event protocol provides a durable run label directly on every
+terminal event, including events emitted after pane removal.
+
+---
+
+### Supervision owns expired admission reconciliation {#supervision-owns-admission-reconciliation}
+
+**Decision.** Every coordinator supervision tick invokes admission reconciliation before checking
+the subscriber and mirror. Planned reservations remain timeless unless they carry an explicit
+lease. Held reservations become reclaimable only after the holder lease expires and a fresh
+terminal query confirms the run-bound pane is absent. Each reservation is classified independently:
+an unanswerable owner stays held, but it does not prevent a provably dead neighbor from releasing
+capacity and advancing the queue.
+
+**Rejected alternative.** A repair helper with no production caller leaves occupied capacity as a
+one-way ratchet. Aborting the whole reconciliation pass on the first failed query lets one
+unanswerable owner create the same ratchet for unrelated reservations.
+
+**Revisit when** admission gains a dedicated host supervisor with an equivalent bounded tick and
+the coordinator no longer owns queue progress.
+
+---
+
 ### Identity is canonicalised; provenance is supplied  {#vendor-identity-provenance-is-supplied}
 
 **Date.** 2026-08-16

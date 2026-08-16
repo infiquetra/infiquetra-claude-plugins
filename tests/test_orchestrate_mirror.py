@@ -136,9 +136,45 @@ class FakeHerdr:
         self.send_error: Exception | None = None
         self.closed: list[str] = []
         self.present = True
+        self.snapshot_error: Exception | None = None
 
-    def discover_by_label(self, _label: str, *, cwd: Path) -> Any:
-        return None
+    def snapshot(self, *, cwd: Path) -> dict[str, Any]:
+        if self.snapshot_error is not None:
+            raise self.snapshot_error
+        if not self.present:
+            return {"tabs": [], "panes": [], "agents": []}
+        return {
+            "tabs": [
+                {
+                    "label": f"orchestrate-{RUN_ID}-{ROW_ID}",
+                    "tab_id": IDENTITY.tab_id,
+                    "workspace_id": IDENTITY.workspace_id,
+                }
+            ],
+            "panes": [
+                {
+                    "pane_id": IDENTITY.pane_id,
+                    "tab_id": IDENTITY.tab_id,
+                    "workspace_id": IDENTITY.workspace_id,
+                    "cwd": str(cwd),
+                    "foreground_cwd": str(cwd),
+                    "agent_status": "working",
+                }
+            ],
+            "agents": [
+                {
+                    "pane_id": IDENTITY.pane_id,
+                    "tab_id": IDENTITY.tab_id,
+                    "workspace_id": IDENTITY.workspace_id,
+                    "cwd": str(cwd),
+                    "foreground_cwd": str(cwd),
+                    "agent_status": "working",
+                }
+            ],
+        }
+
+    def discover_by_label(self, label: str, *, cwd: Path) -> Any:
+        return LIFECYCLE.HerdrControl.discover_by_label(self, label, cwd=cwd)
 
     def pane_text(self, pane_id: str, *, cwd: Path) -> str:
         self.reads.append(pane_id)
@@ -457,7 +493,7 @@ def test_the_mirror_row_exists_before_any_launch_side_effect(tmp_path: Path) -> 
         assert row["max_quiet_seconds"] == 600.0
     surviving = _row(tmp_path)
     assert surviving["role"] == MIRROR.MIRROR_ROLE
-    assert surviving.get("pane_id") is None
+    assert REGISTER.REMOVED_ROW_COLUMNS.isdisjoint(surviving)
 
 
 def test_the_mirror_row_is_identified_by_role_not_by_agent(tmp_path: Path) -> None:
@@ -521,7 +557,12 @@ def test_the_mirror_is_launched_through_the_ordinary_session_path(tmp_path: Path
     assert wrapper.previews == 1 and wrapper.launches == 1
     assert row["task"] == LIFECYCLE.task_label(RUN_ID, ROW_ID)
     assert row["phase"] == "ready"
-    assert row["pane_id"] == session.pane_id == IDENTITY.pane_id
+    assert session.pane_id == IDENTITY.pane_id
+    assert (
+        LIFECYCLE.read_session_pane_id(herdr, root=tmp_path, run_id=RUN_ID, row_id=ROW_ID)
+        == session.pane_id
+    )
+    assert REGISTER.REMOVED_ROW_COLUMNS.isdisjoint(row)
 
 
 def test_the_mirrors_return_subscription_is_a_valid_herdr_subscription(tmp_path: Path) -> None:
@@ -775,8 +816,7 @@ def test_a_full_mirror_cycle_leaves_columns_this_module_does_not_own_untouched(
     assert "artifact_path" not in row
     assert "completion" not in row
     assert row["phase"] == settled["phase"]
-    assert row["observed_state"] == settled["observed_state"]
-    assert row["observed_state_source"] == settled["observed_state_source"]
+    assert REGISTER.REMOVED_ROW_COLUMNS.isdisjoint(row)
     changed = {key for key in row if row[key] != settled.get(key)}
     assert changed <= set(MIRROR.OWNED_COLUMNS)
 
@@ -1249,8 +1289,9 @@ def test_a_restarted_orchestrator_rebuilds_the_session_from_the_row(tmp_path: Pa
     The pane and the subscriber outlive an orchestrator that dies. Before the row carried the
     nonce and the markers, the orchestrator that came back could not speak to them.
     """
-    original = _create(tmp_path)
-    resumed = MIRROR.resume_mirror(tmp_path, run_id=RUN_ID, row_id=ROW_ID)
+    herdr = FakeHerdr()
+    original = _create(tmp_path, herdr=herdr)
+    resumed = MIRROR.resume_mirror(tmp_path, run_id=RUN_ID, row_id=ROW_ID, herdr=herdr)
     assert resumed.nonce == original.nonce
     assert resumed.open_marker == original.open_marker
     assert resumed.close_marker == original.close_marker
@@ -1271,7 +1312,7 @@ def test_a_resumed_session_collects_a_return_the_original_session_dispatched(
     herdr.text = _pane_block(original, "req-1", "the distilled answer")
 
     del original
-    resumed = MIRROR.resume_mirror(tmp_path, run_id=RUN_ID)
+    resumed = MIRROR.resume_mirror(tmp_path, run_id=RUN_ID, herdr=herdr)
     assert MIRROR.collect_return(resumed, herdr=herdr, now=110.0).material == "the distilled answer"
 
 
@@ -1282,13 +1323,15 @@ def test_resume_refuses_to_guess_between_two_mirrors(tmp_path: Path) -> None:
         MIRROR.resume_mirror(tmp_path, run_id=RUN_ID)
 
 
-def test_resume_refuses_a_mirror_that_never_finished_launching(tmp_path: Path) -> None:
+def test_resume_refuses_when_the_live_pane_cannot_be_asked_for(tmp_path: Path) -> None:
     """The write-ahead row exists from creation; that is not the same as a live session."""
     wrapper = FakeWrapper(launch_error=RuntimeError("launch exploded"))
     with pytest.raises(RuntimeError):
         _create(tmp_path, wrapper=wrapper)
-    with pytest.raises(MIRROR.MirrorNotRegisteredError, match="never finished launching"):
-        MIRROR.resume_mirror(tmp_path, run_id=RUN_ID)
+    herdr = FakeHerdr()
+    herdr.snapshot_error = LIFECYCLE.LaunchProtocolError("terminal query failed")
+    with pytest.raises(LIFECYCLE.LaunchProtocolError, match="query failed"):
+        MIRROR.resume_mirror(tmp_path, run_id=RUN_ID, herdr=herdr)
 
 
 # =========================================================================================
@@ -1339,10 +1382,24 @@ def test_an_idle_unconfirmed_mirror_is_still_idle(tmp_path: Path) -> None:
 
 
 def _snapshot(pane_id: str, revision: int | None) -> dict[str, Any]:
-    pane: dict[str, Any] = {"pane_id": pane_id}
+    pane: dict[str, Any] = {
+        "pane_id": pane_id,
+        "tab_id": IDENTITY.tab_id,
+        "workspace_id": IDENTITY.workspace_id,
+    }
     if revision is not None:
         pane["revision"] = revision
-    return {"panes": [pane], "agents": []}
+    return {
+        "tabs": [
+            {
+                "label": f"orchestrate-{RUN_ID}-{ROW_ID}",
+                "tab_id": IDENTITY.tab_id,
+                "workspace_id": IDENTITY.workspace_id,
+            }
+        ],
+        "panes": [pane],
+        "agents": [],
+    }
 
 
 def test_pane_revision_advances_the_clock_and_tells_thinking_from_dead(tmp_path: Path) -> None:
@@ -1420,9 +1477,29 @@ def test_a_pane_absent_from_the_snapshot_is_not_invented_as_activity(tmp_path: P
     session = _create(tmp_path, herdr=herdr)
     MIRROR.dispatch_request(session, _request(), herdr=herdr, now=1.0)
     activity = MIRROR.observe_pane_activity(
-        tmp_path, run_id=RUN_ID, row_id=ROW_ID, snapshot={"panes": [], "agents": []}, now=2.0
+        tmp_path,
+        run_id=RUN_ID,
+        row_id=ROW_ID,
+        snapshot={"tabs": [], "panes": [], "agents": []},
+        now=2.0,
     )
     assert activity == MIRROR.MirrorActivity(revision=None, advanced=False, advanced_at=None)
+    assert "mirror_pane_activity" not in _row(tmp_path)
+
+
+def test_a_present_pane_without_a_valid_revision_is_not_read_as_silence(tmp_path: Path) -> None:
+    herdr = FakeHerdr()
+    session = _create(tmp_path, herdr=herdr)
+    MIRROR.dispatch_request(session, _request(), herdr=herdr, now=1.0)
+
+    with pytest.raises(MIRROR.MirrorError, match="valid output revision"):
+        MIRROR.observe_pane_activity(
+            tmp_path,
+            run_id=RUN_ID,
+            row_id=ROW_ID,
+            snapshot=_snapshot(session.pane_id, None),
+            now=2.0,
+        )
     assert "mirror_pane_activity" not in _row(tmp_path)
 
 

@@ -7,6 +7,7 @@ exactly what that scenario states — not something weaker that would still repo
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 import stat
@@ -36,6 +37,7 @@ M = _load()
 
 @pytest.fixture(autouse=True)
 def _register_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.syspath_prepend(str(SCRIPT.parent))
     monkeypatch.setenv(M.REGISTER_DIR_ENV, str(tmp_path / "registers"))
 
 
@@ -50,20 +52,15 @@ def _record(root: Path, run_id: str) -> Path:
 
 
 def _full_row(row_id: str = "child-1", run_id: str = "run-a") -> dict:
-    """A row with every documented column populated, for the full-round-trip scenario."""
+    """A row with every durable intent and outcome column populated."""
     return {
         "id": row_id,
         "run_id": run_id,
-        "agent": "claude",
-        "vendor": "anthropic",
-        "model": "claude-sonnet-5",
+        "agent": "worker",
+        "vendor": "runtime-a",
+        "model": "model-a",
         "effort": "high",
-        "herdr_session": "sess-1",
-        "workspace_id": "ws-1",
-        "tab_id": "tab-1",
-        "pane_id": "pane-1",
-        "cwd": "/repo",
-        "task": "implement U2",
+        "task": "implement the register change",
         "work_shape": "implementation",
         "scope": "plugins/orchestrate/",
         "artifact_path": "plugins/orchestrate/skills/orchestrate/scripts/register.py",
@@ -73,8 +70,6 @@ def _full_row(row_id: str = "child-1", run_id: str = "run-a") -> dict:
         "base_commit": "abc123",
         "phase": "working",
         "expected_state": "working",
-        "observed_state": "working",
-        "observed_state_source": "observed:session_snapshot",
         "dispatched_at": 1000.0,
         "deadline": None,
         "max_quiet_seconds": 600,
@@ -94,18 +89,11 @@ def test_fresh_register_initialises_with_a_schema_version(tmp_path: Path) -> Non
     assert on_disk["schema_version"] == M.SCHEMA_VERSION
 
 
-def test_row_round_trips_every_column(tmp_path: Path) -> None:
+def test_row_round_trips_intent_and_outcome_only(tmp_path: Path) -> None:
     row = _full_row()
     unowned = {key: value for key, value in row.items() if key not in M.COLUMN_WRITERS}
     M.upsert_row(tmp_path, "child-1", unowned, run_id="run-a")
     M.write_phase(tmp_path, "child-1", row["phase"], run_id="run-a")
-    M.record_observed_state(
-        tmp_path,
-        "child-1",
-        row["observed_state"],
-        source=row["observed_state_source"],
-        run_id="run-a",
-    )
     M.upsert_row(
         tmp_path,
         "child-1",
@@ -139,6 +127,118 @@ def test_row_round_trips_every_column(tmp_path: Path) -> None:
     for column in M.ROW_COLUMNS:
         assert column in reread, f"column {column!r} missing after round trip"
         assert reread[column] == row[column]
+    assert M.REMOVED_ROW_COLUMNS.isdisjoint(reread)
+
+
+@pytest.mark.parametrize("column", sorted(M.REMOVED_ROW_COLUMNS))
+def test_writing_a_live_session_fact_is_refused(tmp_path: Path, column: str) -> None:
+    with pytest.raises(M.RemovedColumnError, match="not durable register columns"):
+        M.upsert_row(tmp_path, "child-1", {column: "observed-value"}, run_id="run-a")
+    assert not M.register_path("run-a").exists()
+
+
+@pytest.mark.parametrize("column", sorted(M.REMOVED_ROW_COLUMNS))
+def test_reading_a_removed_column_is_loud(tmp_path: Path, column: str) -> None:
+    row = M.upsert_row(tmp_path, "child-1", {"task": "work"}, run_id="run-a")
+    with pytest.raises(M.RemovedColumnError, match="live session fact"):
+        row[column]
+    with pytest.raises(M.RemovedColumnError, match="live session fact"):
+        row.get(column)
+    with pytest.raises(M.RemovedColumnError, match="live session fact"):
+        assert column in row
+
+
+def test_production_has_no_in_process_session_fact_store_or_retired_writer() -> None:
+    """The deleted cache and its write helpers cannot return under another call site."""
+    scripts = SCRIPT.parent
+    retired_names = {
+        "_PROVISIONAL_SESSION_FACTS",
+        "remember_provisional_session_facts",
+        "provisional_session_fact",
+        "record_observed_state",
+        "record_observed_states",
+    }
+    violations: list[str] = []
+    for path in sorted(scripts.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            name = node.id if isinstance(node, ast.Name) else None
+            attribute = node.attr if isinstance(node, ast.Attribute) else None
+            retired = retired_names.intersection({name, attribute})
+            if retired:
+                violations.append(
+                    f"{path.name}:{getattr(node, 'lineno', 0)} retains {sorted(retired)}"
+                )
+    assert violations == [], "retired session-fact state remains:\n" + "\n".join(violations)
+
+
+def test_a_new_writer_is_refused_without_naming_its_helper_or_payload_shape(tmp_path: Path) -> None:
+    """The API boundary catches a future writer with a variable-built payload."""
+
+    def future_writer(field: str) -> None:
+        payload: dict[str, object] = {}
+        payload[field] = "new live observation"
+        M.upsert_row(tmp_path, "child-1", payload, run_id="run-a")
+
+    for field in M.REMOVED_ROW_COLUMNS:
+        with pytest.raises(M.RemovedColumnError, match="not durable register columns"):
+            future_writer(field)
+    assert not M.register_path("run-a").exists()
+
+
+def test_register_row_copy_and_mutators_keep_removed_columns_loud(tmp_path: Path) -> None:
+    row = M.upsert_row(tmp_path, "child-1", {"task": "work"}, run_id="run-a")
+    copied = row.copy()
+    assert isinstance(copied, M.RegisterRow)
+    attempts = (
+        lambda: row.__setitem__("pane_id", "pane-a"),
+        lambda: row.setdefault("pane_id", "pane-a"),
+        lambda: row.update({"pane_id": "pane-a"}),
+        lambda: copied.__ior__({"pane_id": "pane-a"}),
+        lambda: row | {"pane_id": "pane-a"},
+        lambda: {"pane_id": "pane-a"} | row,
+    )
+    for attempt in attempts:
+        with pytest.raises(M.RemovedColumnError, match="live session fact"):
+            attempt()
+
+
+def test_corrupt_register_is_reported_through_the_register_error_contract(tmp_path: Path) -> None:
+    path = M.register_path("run-a")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{not-json", encoding="utf-8")
+
+    with pytest.raises(M.RegisterError, match="not readable JSON") as caught:
+        M.read_rows(tmp_path, run_id="run-a")
+    assert not isinstance(caught.value, json.JSONDecodeError)
+
+
+def test_schema_one_rows_are_normalized_before_use_and_migrated_on_write(tmp_path: Path) -> None:
+    _record(tmp_path, "run-a")
+    path = M.register_path("run-a")
+    legacy_row = {
+        "id": "child-1",
+        "run_id": "run-a",
+        "phase": "working",
+        **{column: f"stale-{column}" for column in M.REMOVED_ROW_COLUMNS},
+    }
+    path.write_text(
+        json.dumps({"schema_version": 1, "run_id": "run-a", "rows": {"child-1": legacy_row}}),
+        encoding="utf-8",
+    )
+
+    normalized = M.read_register("run-a")
+    assert normalized["schema_version"] == M.SCHEMA_VERSION
+    assert M.REMOVED_ROW_COLUMNS.isdisjoint(normalized["rows"]["child-1"])
+    untouched = json.loads(path.read_text(encoding="utf-8"))
+    assert untouched["schema_version"] == 1
+    assert set(M.REMOVED_ROW_COLUMNS).issubset(untouched["rows"]["child-1"])
+
+    M.write_phase(tmp_path, "child-1", "verified", run_id="run-a")
+    migrated = json.loads(path.read_text(encoding="utf-8"))
+    assert migrated["schema_version"] == M.SCHEMA_VERSION
+    assert M.REMOVED_ROW_COLUMNS.isdisjoint(migrated["rows"]["child-1"])
+    assert migrated["rows"]["child-1"]["phase"] == "verified"
 
 
 def test_new_row_always_has_both_hang_detection_time_columns(tmp_path: Path) -> None:
@@ -740,25 +840,12 @@ def test_a_recorded_root_readable_beyond_its_owner_is_refused(tmp_path: Path) ->
 def test_owned_columns_refuse_a_foreign_upsert(tmp_path: Path) -> None:
     with pytest.raises(M.RegisterError, match="written only by write_phase"):
         M.upsert_row(tmp_path, "child-1", {"phase": "working"}, run_id="run-a")
-    with pytest.raises(M.RegisterError, match="written only by record_observed_state"):
-        M.upsert_row(
-            tmp_path,
-            "child-1",
-            {"observed_state": "exited", "observed_state_source": "observed:foreign"},
-            run_id="run-a",
-        )
     with pytest.raises(M.RegisterError, match="written only by record_observed_tokens"):
         M.upsert_row(tmp_path, "child-1", {"tokens_observed": 1}, run_id="run-a")
     with pytest.raises(M.RegisterError, match="written only by commit_plan"):
         M.upsert_row(tmp_path, "child-1", {"tokens_max": 2}, run_id="run-a")
     stored = M.write_phase(tmp_path, "child-1", "working", run_id="run-a")
     assert stored["phase"] == "working"
-    M.record_observed_state(
-        tmp_path, "child-1", "exited", source="observed:pane_exited", run_id="run-a"
-    )
-    row = M.read_rows(tmp_path, run_id="run-a")["child-1"]
-    assert row["observed_state"] == "exited"
-    assert row["observed_state_source"] == "observed:pane_exited"
 
 
 def test_planned_cannot_replace_a_terminal_phase(tmp_path: Path) -> None:

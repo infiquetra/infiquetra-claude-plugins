@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 import os
@@ -142,16 +143,58 @@ class FakeWrapper:
 
 class FakeHerdr:
     def __init__(self) -> None:
-        self.discovered = None
         self.text = "ready prompt"
         self.thinking_disabled = False
         self.sent: list[str] = []
         self.closed: list[str] = []
         self.present = True
         self.presence_checks = 0
+        self.status = "working"
+        self.snapshot_error: Exception | None = None
+        self.snapshot_override: dict[str, Any] | None = None
+
+    def snapshot(self, *, cwd: Path) -> dict[str, Any]:
+        self.presence_checks += 1
+        if self.snapshot_error is not None:
+            raise self.snapshot_error
+        if self.snapshot_override is not None:
+            return self.snapshot_override
+        if not self.present:
+            return {"tabs": [], "panes": [], "agents": []}
+        return {
+            "tabs": [
+                {
+                    "label": "orchestrate-run-a-child-a",
+                    "tab_id": "tab-a",
+                    "workspace_id": "workspace-a",
+                    "agent_status": self.status,
+                }
+            ],
+            "panes": [
+                {
+                    "pane_id": "pane-a",
+                    "tab_id": "tab-a",
+                    "workspace_id": "workspace-a",
+                    "cwd": str(cwd),
+                    "foreground_cwd": str(cwd),
+                    "agent_status": self.status,
+                }
+            ],
+            "agents": [
+                {
+                    "name": "actual-child",
+                    "pane_id": "pane-a",
+                    "tab_id": "tab-a",
+                    "workspace_id": "workspace-a",
+                    "cwd": str(cwd),
+                    "foreground_cwd": str(cwd),
+                    "agent_status": self.status,
+                }
+            ],
+        }
 
     def discover_by_label(self, label: str, *, cwd: Path) -> Any:
-        return self.discovered
+        return LIFECYCLE.HerdrControl.discover_by_label(self, label, cwd=cwd)
 
     def pane_text(self, pane_id: str, *, cwd: Path) -> str:
         return self.text
@@ -169,6 +212,7 @@ class FakeHerdr:
         row = REGISTER.read_rows(cwd, run_id="run-a")["child-a"]
         assert row["phase"] == "reaped"
         self.closed.append(tab_id)
+        self.present = False
 
     def tab_present(self, tab_id: str, *, cwd: Path) -> bool:
         self.presence_checks += 1
@@ -193,6 +237,63 @@ class FakeInteraction:
             self.accept_calls += 1
             assert accept(event, baseline)
         return (event, baseline)
+
+
+def test_each_session_fact_is_read_from_one_fresh_snapshot(tmp_path: Path) -> None:
+    herdr = FakeHerdr()
+    readers = LIFECYCLE.SESSION_FACT_READERS
+    assert set(readers) == REGISTER.REMOVED_ROW_COLUMNS
+    assert len({reader.__name__ for reader in readers.values()}) == len(readers)
+
+    assert (
+        readers["herdr_session"](herdr, root=tmp_path, run_id="run-a", row_id="child-a")
+        == "default"
+    )
+    assert (
+        readers["workspace_id"](herdr, root=tmp_path, run_id="run-a", row_id="child-a")
+        == "workspace-a"
+    )
+    assert readers["tab_id"](herdr, root=tmp_path, run_id="run-a", row_id="child-a") == "tab-a"
+    assert readers["pane_id"](herdr, root=tmp_path, run_id="run-a", row_id="child-a") == "pane-a"
+    assert readers["cwd"](herdr, root=tmp_path, run_id="run-a", row_id="child-a") == tmp_path
+    assert (
+        readers["observed_state"](herdr, root=tmp_path, run_id="run-a", row_id="child-a")
+        == "working"
+    )
+    assert (
+        readers["observed_state_source"](herdr, root=tmp_path, run_id="run-a", row_id="child-a")
+        == "observed:session_snapshot"
+    )
+    assert herdr.presence_checks == len(readers)
+
+    tree = ast.parse((SCRIPTS / "session_lifecycle.py").read_text(encoding="utf-8"))
+    functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+    for fact, reader in readers.items():
+        asks = [
+            node
+            for node in ast.walk(functions[reader.__name__])
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "snapshot"
+        ]
+        assert len(asks) == 1, f"{fact} has {len(asks)} asking sites"
+
+
+def test_session_fact_absence_is_distinct_from_a_failed_query(tmp_path: Path) -> None:
+    herdr = FakeHerdr()
+    herdr.present = False
+    for fact in REGISTER.REMOVED_ROW_COLUMNS - {"herdr_session"}:
+        assert (
+            LIFECYCLE.SESSION_FACT_READERS[fact](
+                herdr, root=tmp_path, run_id="run-a", row_id="child-a"
+            )
+            is None
+        )
+
+    herdr.snapshot_error = LIFECYCLE.LaunchProtocolError("control plane refused the query")
+    for reader in LIFECYCLE.SESSION_FACT_READERS.values():
+        with pytest.raises(LIFECYCLE.LaunchProtocolError, match="refused"):
+            reader(herdr, root=tmp_path, run_id="run-a", row_id="child-a")
 
 
 def _launch(tmp_path: Path, spec: Any | None = None, **kwargs: Any) -> Any:
@@ -247,24 +348,65 @@ def test_retry_discovers_written_label_after_crash_before_identifier_write(
 ) -> None:
     wrapper = FakeWrapper()
     herdr = FakeHerdr()
+    identity = IDENTITY
+    assert identity is not None
     original = REGISTER.upsert_row
     crashed = False
 
-    def crash_before_identifiers(root: Path, row_id: str, fields: Any, **kwargs: Any) -> Any:
+    def crash_after_launch(root: Path, row_id: str, fields: Any, **kwargs: Any) -> Any:
         nonlocal crashed
-        if not crashed and "pane_id" in fields:
+        if not crashed and fields == {"agent": identity.agent_name}:
             crashed = True
-            herdr.discovered = IDENTITY
             raise RuntimeError("crash after side effect")
         return original(root, row_id, fields, **kwargs)
 
-    monkeypatch.setattr(REGISTER, "upsert_row", crash_before_identifiers)
+    monkeypatch.setattr(REGISTER, "upsert_row", crash_after_launch)
     with pytest.raises(RuntimeError, match="crash after side effect"):
         _launch(tmp_path, wrapper=wrapper, herdr=herdr)
     recovered, _landing, _resolution = _launch(tmp_path, wrapper=wrapper, herdr=herdr)
-    assert recovered == IDENTITY
+    assert recovered == identity
     assert wrapper.launches == 1
-    assert REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]["pane_id"] == "pane-a"
+    assert (
+        LIFECYCLE.read_session_pane_id(herdr, root=tmp_path, run_id="run-a", row_id="child-a")
+        == "pane-a"
+    )
+
+
+def test_launch_recovery_refuses_a_partial_snapshot_before_the_native_launcher(
+    tmp_path: Path,
+) -> None:
+    wrapper = FakeWrapper(launch_error=RuntimeError("first launch failed"))
+    herdr = FakeHerdr()
+    with pytest.raises(RuntimeError, match="first launch failed"):
+        _launch(tmp_path, wrapper=wrapper, herdr=herdr)
+
+    wrapper.launch_error = None
+    herdr.snapshot_override = {"tabs": [], "panes": []}
+    with pytest.raises(LIFECYCLE.LaunchProtocolError, match="tabs, panes, and agents"):
+        _launch(tmp_path, wrapper=wrapper, herdr=herdr)
+    assert wrapper.launches == 1
+
+
+def test_launch_recovery_launches_after_a_complete_absence_answer(tmp_path: Path) -> None:
+    wrapper = FakeWrapper(launch_error=RuntimeError("first launch failed"))
+    herdr = FakeHerdr()
+    with pytest.raises(RuntimeError, match="first launch failed"):
+        _launch(tmp_path, wrapper=wrapper, herdr=herdr)
+
+    wrapper.launch_error = None
+    herdr.present = False
+    recovered, _landing, _resolution = _launch(tmp_path, wrapper=wrapper, herdr=herdr)
+    assert recovered == IDENTITY
+    assert wrapper.launches == 2
+
+
+def test_observed_state_refuses_a_malformed_live_value(tmp_path: Path) -> None:
+    herdr = FakeHerdr()
+    herdr.status = None  # type: ignore[assignment]
+    with pytest.raises(LIFECYCLE.LaunchProtocolError, match="valid agent status"):
+        LIFECYCLE.read_session_observed_state(
+            herdr, root=tmp_path, run_id="run-a", row_id="child-a"
+        )
 
 
 def test_launch_without_sentinel_is_not_ready_not_running(tmp_path: Path) -> None:
@@ -285,8 +427,7 @@ def test_launch_without_sentinel_is_not_ready_not_running(tmp_path: Path) -> Non
         )
     row = REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]
     assert row["phase"] == "launched"
-    assert row["observed_state"] == "not_ready"
-    assert row["observed_state_source"] == "inferred:readiness_timeout"
+    assert REGISTER.REMOVED_ROW_COLUMNS.isdisjoint(row)
 
 
 def test_trust_prompt_is_surfaced_before_any_dispatch(tmp_path: Path) -> None:
@@ -308,9 +449,7 @@ def test_trust_prompt_is_surfaced_before_any_dispatch(tmp_path: Path) -> None:
         )
     assert interaction.matches == []
     assert herdr.sent == []
-    assert (
-        REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]["observed_state"] == "trust_prompt"
-    )
+    assert REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]["phase"] == "launching"
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -647,7 +786,7 @@ def test_reap_records_transition_before_closing_tab(tmp_path: Path) -> None:
     REGISTER.upsert_row(
         tmp_path,
         "child-a",
-        {"run_id": "run-a", "phase": "verified", "tab_id": "tab-a", "cwd": str(tmp_path)},
+        {"run_id": "run-a", "phase": "verified"},
         run_id="run-a",
         writer="write_phase",
     )
@@ -657,6 +796,25 @@ def test_reap_records_transition_before_closing_tab(tmp_path: Path) -> None:
     row = REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]
     assert row["phase"] == "reaped"
     assert row["expected_state"] == "exited"
+
+
+def test_reap_refuses_a_present_but_malformed_dispatch_receipt(tmp_path: Path) -> None:
+    _record(tmp_path, "run-a")
+    REGISTER.upsert_row(
+        tmp_path,
+        "child-a",
+        {"run_id": "run-a", "phase": "verified", "dispatch_receipt": "malformed"},
+        run_id="run-a",
+        writer="write_phase",
+    )
+    herdr = FakeHerdr()
+    completion_mod = _load("completion")
+
+    with pytest.raises(completion_mod.CompletionError, match="has no dispatch receipt"):
+        LIFECYCLE.reap_verified(tmp_path, "child-a", herdr=herdr, run_id="run-a")
+
+    assert herdr.closed == []
+    assert REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]["phase"] == "verified"
 
 
 def test_reap_writes_phase_and_expected_state_together(
@@ -670,8 +828,6 @@ def test_reap_writes_phase_and_expected_state_together(
             "run_id": "run-a",
             "phase": "verified",
             "expected_state": "working",
-            "tab_id": "tab-a",
-            "cwd": str(tmp_path),
         },
         run_id="run-a",
         writer="write_phase",
@@ -714,7 +870,7 @@ def test_vanished_child_raises_unless_reap_was_recorded(tmp_path: Path) -> None:
     REGISTER.upsert_row(
         tmp_path,
         "child-a",
-        {"run_id": "run-a", "phase": "launched", "tab_id": "tab-a", "cwd": str(tmp_path)},
+        {"run_id": "run-a", "phase": "launched"},
         run_id="run-a",
         writer="write_phase",
     )
@@ -740,7 +896,7 @@ def test_reap_refuses_a_directory_that_is_not_the_runs_work_location(tmp_path: P
     REGISTER.upsert_row(
         repo,
         "child-a",
-        {"run_id": "run-a", "phase": "verified", "tab_id": "tab-a", "cwd": str(repo)},
+        {"run_id": "run-a", "phase": "verified"},
         run_id="run-a",
         writer="write_phase",
     )
@@ -767,7 +923,7 @@ def test_a_vanish_check_refuses_a_directory_that_is_not_the_runs_work_location(
     REGISTER.upsert_row(
         repo,
         "child-a",
-        {"run_id": "run-a", "phase": "launched", "tab_id": "tab-a", "cwd": str(repo)},
+        {"run_id": "run-a", "phase": "launched"},
         run_id="run-a",
         writer="write_phase",
     )
@@ -809,7 +965,7 @@ def test_reap_refuses_when_only_a_first_writer_stamp_exists(tmp_path: Path) -> N
     REGISTER.upsert_row(
         tmp_path,
         "child-a",
-        {"run_id": "run-a", "phase": "verified", "tab_id": "tab-a", "cwd": str(tmp_path)},
+        {"run_id": "run-a", "phase": "verified"},
         run_id="run-a",
         writer="write_phase",
     )
@@ -824,7 +980,7 @@ def test_a_vanish_check_refuses_when_only_a_first_writer_stamp_exists(tmp_path: 
     REGISTER.upsert_row(
         tmp_path,
         "child-a",
-        {"run_id": "run-a", "phase": "launched", "tab_id": "tab-a", "cwd": str(tmp_path)},
+        {"run_id": "run-a", "phase": "launched"},
         run_id="run-a",
         writer="write_phase",
     )
@@ -989,7 +1145,7 @@ def test_readiness_uses_output_match_and_never_agent_status_alone(tmp_path: Path
     assert ready.readiness_sentinel not in herdr.sent[-1]
     assert "part 1:" in herdr.sent[-1] and "part 2:" in herdr.sent[-1]
     assert row["phase"] == "ready"
-    assert row["observed_state_source"] == "observed:pane.output_matched"
+    assert REGISTER.REMOVED_ROW_COLUMNS.isdisjoint(row)
     assert peer.request is not None
     assert peer.request["params"]["subscriptions"][0]["type"] == "pane.output_matched"
 
@@ -1016,8 +1172,8 @@ def test_real_socket_readiness_timeout_is_bounded_and_records_not_ready(tmp_path
         elapsed = time.monotonic() - started
     assert elapsed < 0.14
     row = REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]
-    assert row["observed_state"] == "not_ready"
-    assert row["observed_state_source"] == "inferred:readiness_timeout"
+    assert row["phase"] == "launched"
+    assert REGISTER.REMOVED_ROW_COLUMNS.isdisjoint(row)
 
 
 def test_chatty_socket_readiness_still_honors_the_outer_deadline(
@@ -1044,8 +1200,8 @@ def test_chatty_socket_readiness_still_honors_the_outer_deadline(
             sentinel_nonce="chatty-bounded",
         )
     row = REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]
-    assert row["observed_state"] == "not_ready"
-    assert row["observed_state_source"] == "inferred:readiness_timeout"
+    assert row["phase"] == "launched"
+    assert REGISTER.REMOVED_ROW_COLUMNS.isdisjoint(row)
 
 
 def test_qwen_effort_command_is_sent_and_acknowledged_before_readiness(tmp_path: Path) -> None:
@@ -1087,8 +1243,8 @@ def test_qwen_disabled_thinking_has_an_actionable_effort_error(tmp_path: Path) -
             git=FakeGit(tmp_path),
         )
     row = REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]
-    assert row["observed_state"] == "not_ready"
-    assert row["observed_state_source"] == "inferred:effort_not_applied"
+    assert row["phase"] == "launching"
+    assert REGISTER.REMOVED_ROW_COLUMNS.isdisjoint(row)
 
 
 def test_qwen_effort_timeout_is_recorded_before_readiness_dispatch(tmp_path: Path) -> None:
@@ -1108,8 +1264,8 @@ def test_qwen_effort_timeout_is_recorded_before_readiness_dispatch(tmp_path: Pat
         )
     row = REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]
     assert interaction.matches == ["Reasoning effort"]
-    assert row["observed_state"] == "not_ready"
-    assert row["observed_state_source"] == "inferred:effort_timeout"
+    assert row["phase"] == "launching"
+    assert REGISTER.REMOVED_ROW_COLUMNS.isdisjoint(row)
 
 
 def test_agent_wrapper_adapter_crosses_subprocess_and_parses_returned_ids(tmp_path: Path) -> None:
@@ -1165,8 +1321,13 @@ def test_default_herdr_session_is_fixed_across_launch_and_register(tmp_path: Pat
     assert argv[session_at + 1] == "default"
     assert "herdr_session" not in LIFECYCLE.ChildSpec.__dataclass_fields__
     assert LIFECYCLE.HerdrInteraction().socket_path == EVENTS.DEFAULT_SOCKET_PATH
-    _launch(tmp_path, child)
-    assert REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"]["herdr_session"] == "default"
+    herdr = FakeHerdr()
+    _launch(tmp_path, child, herdr=herdr)
+    assert (
+        LIFECYCLE.read_herdr_session(herdr, root=tmp_path, run_id="run-a", row_id="child-a")
+        == "default"
+    )
+    assert "herdr_session" not in set(REGISTER.read_rows(tmp_path, run_id="run-a")["child-a"])
 
 
 def test_withdrawn_revision_baseline_has_no_schema_or_control_wiring() -> None:

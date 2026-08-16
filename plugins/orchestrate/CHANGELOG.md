@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.13.0] - 2026-08-16
+
+### Changed
+
+- The durable register keeps authored intent and outcomes only. Where a child is running -- its
+  pane, tab, working directory, process id, observed state and vendor -- is no longer copied into
+  columns that cannot know when the world moved on. One named function per question asks the
+  terminal control plane at the moment the answer is used, with no cache and no per-read facts
+  object behind it.
+- A complete answer that contains the thing, a complete answer that contains nothing, and a query
+  that could not be completed are three distinct outcomes, and only the third fails closed. A
+  failed, partial, ambiguous or malformed query raises; it never degrades into an empty answer.
+- Launch recovery resolves through the same complete-snapshot parser as every other reader, so a
+  partial answer can no longer be read as "no session exists" and start a second live session for
+  work already running.
+- An admission slot held by an expired owner is reclaimed on confirmed absence, retained on
+  confirmed presence, and left untouched when the query fails, so the concurrency limit no longer
+  ratchets in one direction until the process restarts.
+- The subscriber considers a row for its owner-missing signal only when a snapshot could place that
+  row, so an unrelated tab closing on the host no longer wakes the orchestrator.
+- A register file written before this change is normalised on read and rewritten in the new shape on
+  its next ordinary write.
+
+### Removed
+
+- The seven live-session columns, from the schema and from every writer. A guard walks every
+  module's syntax tree rather than naming the writers that exist today.
+
 ## [0.12.1] - 2026-08-16
 
 ### Fixed

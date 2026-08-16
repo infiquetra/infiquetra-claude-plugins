@@ -2012,10 +2012,9 @@ class CompletionResult:
 def _record(root: Path, row_id: str, result: CompletionResult, *, run_id: str) -> CompletionResult:
     """Write the durable verdict, and keep ``phase`` honest about it.
 
-    The verdict lives in its own ``completion`` key rather than in ``observed_state``.
-    ``observed_state`` is owned by the liveness detectors: the subscriber's snapshot catch-up
-    rewrites it for every row with a live pane, so a failure recorded only there is erased the
-    next time catch-up runs while the child's pane is still open.
+    The verdict lives in its own ``completion`` key rather than in live session state. The
+    subscriber reports owner state from a fresh snapshot and does not copy it into the register.
+    A mutable observation cannot carry a durable completion outcome.
 
     The invariant this function maintains is: **a row's phase is ``verified`` if and only if its
     latest completion verdict is a pass.**  Both halves matter, and the second one is not

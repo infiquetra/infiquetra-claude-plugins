@@ -280,8 +280,8 @@
     {
       "name": "orchestrate",
       "source": "./plugins/orchestrate",
-      "version": "0.13.0",
-      "description": "Cross-vendor orchestration over herdr: routing, admission, spend ceilings, bounded review loops, consensus panels, durable state, event catch-up, and a protected operator channel.",
+      "version": "1.0.0",
+      "description": "Spread one piece of work across several herdr agent sessions: plan it with the operator, run each unit in its own git worktree with any configured agent and any saga capability, then merge the results back.",
       "author": {
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"

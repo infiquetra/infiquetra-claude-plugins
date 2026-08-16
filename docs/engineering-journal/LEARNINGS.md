@@ -19,7 +19,33 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
-## 2026-08-15
+## 2026-08-16
+
+### An automatic test fixture can preserve a contract production deleted  {#automatic-fixtures-can-mask-deleted-state}
+
+**Context.** The durable register stopped carrying live terminal facts, but an automatic fixture
+still reconstructed those facts for every test from whatever row fields the test happened to
+write. Production had no equivalent. Tests could therefore pass through a compatibility layer no
+real coordinator received.
+
+**Evidence.** Removing the fixture immediately exposed 16 failures in the session-lifecycle test
+file. The failures were not product regressions: they were tests writing removed columns, calling
+deleted observation writers, or assuming a process-local answer existed. Replacing those setups
+with explicit Herdr snapshots produced 50 passing lifecycle tests and made absence-versus-query-
+failure assertions visible in the test bodies.
+
+**Mechanism.** An automatic fixture is part of every test's runtime architecture even when no test
+names it. If it supplies a deleted dependency, it converts missing integration into implicit test
+state and makes the suite validate the fixture's contract instead of production's.
+
+**Fix.** Delete the fixture. Tests that need live identity now provide a complete terminal snapshot
+or a fake terminal control object explicitly. Tests that do not need it receive no session facts.
+
+**Generalizable rule.** When removing a state seam, search fixtures before trusting green tests.
+Compatibility injected automatically is still compatibility, and it is especially dangerous when
+production is meant to fail closed without it.
+
+**Refs.** DECISIONS [#orchestrate-register-intent-outcome-boundary](DECISIONS.md#orchestrate-register-intent-outcome-boundary).
 
 ### A register records what this process did; only the substrate knows what the launcher produced  {#the-substrate-is-the-only-witness-across-a-launch}
 
@@ -31,15 +57,15 @@ was recorded as stopped anyway, so absence of a recorded tab was still standing 
 tab. Fixing "did the request take effect?" left "is there anything to request?" answered by the same
 missing field as before.
 
-**Evidence.** The row's identity column is written by this process *after* the launcher returns,
-while the column that classifies the row as a companion is written *before* the launch. An
-interruption between those two writes leaves a real, live session on a row that cannot name it.
-Executed reproduction: with the identity column cleared and the session genuinely present, the
-shutdown path returned `closed`, never issued a close request at all, recorded the row exited, and
-the archive completed beside the live session. Pinned by
-`tests/test_orchestrate_composition.py::test_a_mirror_with_no_recorded_tab_id_is_not_read_as_stopped`,
+**Evidence.** The row that classifies a companion is written before launch, while the session is
+created outside this process. An interruption between those events can leave a real live session
+beside authored launch intent, and no register column can make that observation current. Executed
+reproduction: with the session genuinely present only in Herdr, the shutdown path re-asked the
+run-bound label, issued the close, and refused to report success when the tab remained present.
+Pinned by
+`tests/test_orchestrate_composition.py::test_a_mirror_with_no_live_tab_fact_is_not_read_as_stopped`,
 with the launcher-never-ran counterpart pinned by
-`test_a_mirror_whose_launcher_never_created_a_tab_does_not_block_retirement`.
+`test_a_mirror_whose_launcher_never_created_a_tab_still_needs_a_live_answer`.
 
 **Mechanism.** A durable marker written by this process can only ever record what this process did,
 never what the launcher produced on the far side of that boundary — so no new column could have
@@ -479,6 +505,8 @@ mapping in a different order computes a different digest for the same plan.
 
 **Refs.** DECISIONS `{#composition-owns-the-seams}`.
 
+
+## 2026-08-15
 
 ### A refusal stored in a field the sensor rewrites lasts only until the next sample  {#refusal-must-outlive-the-sensor}
 

@@ -207,9 +207,39 @@ def _prepare(
 class FakeHerdr:
     """The one hand-authored boundary: Herdr's tab presence and close, as U4 uses them."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        row_id: str = "child-a",
+        tab_id: str = "tab-a",
+        pane_id: str = "pane-a",
+        working_cwd: Path | None = None,
+    ) -> None:
         self.present = True
         self.closed: list[str] = []
+        self.row_id = row_id
+        self.tab_id = tab_id
+        self.pane_id = pane_id
+        self.working_cwd = working_cwd
+
+    def snapshot(self, *, cwd: Path) -> dict[str, Any]:
+        if not self.present:
+            return {"tabs": [], "panes": [], "agents": []}
+        location = str((self.working_cwd or cwd).resolve())
+        tab = {
+            "label": LIFECYCLE.task_label("run-a", self.row_id),
+            "tab_id": self.tab_id,
+            "workspace_id": "workspace-a",
+        }
+        pane = {
+            "pane_id": self.pane_id,
+            "tab_id": self.tab_id,
+            "workspace_id": "workspace-a",
+            "cwd": location,
+            "foreground_cwd": location,
+            "agent_status": "working",
+        }
+        return {"tabs": [tab], "panes": [pane], "agents": [dict(pane)]}
 
     def tab_present(self, tab_id: str, *, cwd: Path) -> bool:
         return self.present
@@ -217,6 +247,22 @@ class FakeHerdr:
     def close_tab(self, tab_id: str, *, cwd: Path) -> None:
         self.closed.append(tab_id)
         self.present = False
+
+
+def _live_snapshot(row_id: str, pane_id: str, *, status: str = "working") -> dict[str, Any]:
+    tab_id = f"tab-{row_id}"
+    tab = {
+        "label": LIFECYCLE.task_label("run-a", row_id),
+        "tab_id": tab_id,
+        "workspace_id": "workspace-a",
+    }
+    pane = {
+        "pane_id": pane_id,
+        "tab_id": tab_id,
+        "workspace_id": "workspace-a",
+        "agent_status": status,
+    }
+    return {"tabs": [tab], "panes": [pane], "agents": [dict(pane)]}
 
 
 @pytest.mark.parametrize(
@@ -645,10 +691,9 @@ def test_reaping_is_permitted_once_the_destination_branch_advances(tmp_path: Pat
     _git(worktree, "add", "src/landed.py")
     _git(worktree, "commit", "-q", "-m", "child work")
     prepared.write_deliverable()
-    REGISTER.upsert_row(repo, "child-m", {"tab_id": "tab-m", "cwd": str(worktree)}, run_id="run-a")
     result = prepared.evaluate()
     assert result.verified is True, result.detail
-    herdr = FakeHerdr()
+    herdr = FakeHerdr(row_id="child-m", tab_id="tab-m", pane_id="pane-m", working_cwd=worktree)
     LIFECYCLE.reap_verified(repo, "child-m", herdr=herdr, run_id="run-a")
     assert herdr.closed == ["tab-m"]
     assert REGISTER.read_rows(repo, run_id="run-a")["child-m"]["phase"] == "reaped"
@@ -690,7 +735,6 @@ def test_read_only_work_integrates_nowhere_and_is_permitted_under_mode_none(tmp_
     _init_repo(repo)
     prepared = _prepare(repo)
     prepared.write_deliverable()
-    REGISTER.upsert_row(repo, "child-a", {"tab_id": "tab-a"}, run_id="run-a")
     result = prepared.evaluate()
     assert result.verified is True, result.detail
     assert result.integration is not None and "none" in result.integration
@@ -704,7 +748,6 @@ def test_a_passing_predicate_on_a_settled_bound_artifact_reaps_cleanly(tmp_path:
     _init_repo(repo)
     prepared = _prepare(repo)
     inflight = prepared.write_deliverable()
-    REGISTER.upsert_row(repo, "child-a", {"tab_id": "tab-a"}, run_id="run-a")
     result = prepared.evaluate()
     assert result.verified is True, result.detail
     assert not inflight.exists()
@@ -1250,30 +1293,20 @@ def test_no_completion_outcome_writes_a_phase_outside_the_closed_vocabulary(tmp_
 def test_a_snapshot_catch_up_pass_does_not_erase_a_recorded_completion_failure(
     tmp_path: Path,
 ) -> None:
-    """Why the verdict does not live in ``observed_state``: catch-up owns that column.
+    """Why the verdict does not live in live session state.
 
-    The catch-up pass below is the shipped U3 consumer, not a stand-in, and it demonstrably
-    rewrites ``observed_state`` for a live pane while leaving the completion verdict intact.
+    The catch-up pass below reports the current owner state without copying it into the register,
+    while leaving the completion verdict intact.
     """
     repo = tmp_path / "repo"
     _init_repo(repo)
     prepared = _prepare(repo)
     prepared.write_deliverable({"binding": prepared.receipt.binding_token})
     prepared.evaluate()
-    REGISTER.upsert_row(
-        repo,
-        "child-a",
-        {"pane_id": "pane-a", "observed_state": "predicate_failed"},
-        run_id="run-a",
-        writer="record_observed_state",
-    )
-    SUBSCRIBER.catch_up(
-        repo,
-        {"panes": [{"pane_id": "pane-a", "agent_status": "working"}], "agents": []},
-        run_id="run-a",
-    )
+    records = SUBSCRIBER.catch_up(repo, _live_snapshot("child-a", "pane-a"), run_id="run-a")
     row = REGISTER.read_rows(repo, run_id="run-a")["child-a"]
-    assert row["observed_state"] == "working"
+    assert records[0].observed_state == "working"
+    assert REGISTER.REMOVED_ROW_COLUMNS.isdisjoint(row)
     assert row["completion"]["reason"] == "predicate_failed"
 
 
@@ -1792,20 +1825,11 @@ def test_catch_up_does_not_ask_for_attention_before_the_child_has_settled(tmp_pa
     repo = tmp_path / "repo"
     _init_repo(repo)
     prepared = _prepare(repo)
-    REGISTER.upsert_row(repo, "child-a", {"pane_id": "pane-a"}, run_id="run-a")
-    records = SUBSCRIBER.catch_up(
-        repo,
-        {"panes": [{"pane_id": "pane-a", "agent_status": "working"}], "agents": []},
-        run_id="run-a",
-    )
+    records = SUBSCRIBER.catch_up(repo, _live_snapshot("child-a", "pane-a"), run_id="run-a")
     assert [record.artifact_exists for record in records] == [None]
     prepared.run_child_process()
     assert prepared.evaluate().verified is True
-    records = SUBSCRIBER.catch_up(
-        repo,
-        {"panes": [{"pane_id": "pane-a", "agent_status": "working"}], "agents": []},
-        run_id="run-a",
-    )
+    records = SUBSCRIBER.catch_up(repo, _live_snapshot("child-a", "pane-a"), run_id="run-a")
     assert [record.artifact_exists for record in records] == [True]
 
 
@@ -1821,12 +1845,7 @@ def test_catch_up_finds_a_mutating_childs_artifact_in_its_worktree(tmp_path: Pat
     _git(worktree, "commit", "-q", "-m", "child work")
     prepared.run_child_process()
     assert prepared.evaluate().verified is True
-    REGISTER.upsert_row(repo, "child-m", {"pane_id": "pane-m"}, run_id="run-a")
-    records = SUBSCRIBER.catch_up(
-        repo,
-        {"panes": [{"pane_id": "pane-m", "agent_status": "working"}], "agents": []},
-        run_id="run-a",
-    )
+    records = SUBSCRIBER.catch_up(repo, _live_snapshot("child-m", "pane-m"), run_id="run-a")
     assert [record.artifact_exists for record in records] == [True]
 
 
@@ -1879,7 +1898,6 @@ def test_a_failing_re_evaluation_removes_the_verified_phase(tmp_path: Path) -> N
     _init_repo(repo)
     prepared = _prepare(repo)
     prepared.run_child_process()
-    REGISTER.upsert_row(repo, "child-a", {"tab_id": "tab-a"}, run_id="run-a")
     assert prepared.evaluate().verified is True
     assert REGISTER.read_rows(repo, run_id="run-a")["child-a"]["phase"] == "verified"
     prepared.receipt.artifact_path.write_text("tampered after the pass\n", encoding="utf-8")
@@ -1899,7 +1917,6 @@ def test_a_verdict_and_its_phase_survive_an_interrupt_together(
     _init_repo(repo)
     prepared = _prepare(repo)
     prepared.run_child_process()
-    REGISTER.upsert_row(repo, "child-a", {"tab_id": "tab-a"}, run_id="run-a")
     assert prepared.evaluate().verified is True
     prepared.receipt.artifact_path.write_text("tampered after the pass\n", encoding="utf-8")
     completed: list[str] = []
@@ -1945,7 +1962,6 @@ def test_a_reaped_row_is_not_demoted_by_a_later_evaluation(tmp_path: Path) -> No
     _init_repo(repo)
     prepared = _prepare(repo)
     prepared.run_child_process()
-    REGISTER.upsert_row(repo, "child-a", {"tab_id": "tab-a"}, run_id="run-a")
     assert prepared.evaluate().verified is True
     LIFECYCLE.reap_verified(repo, "child-a", herdr=FakeHerdr(), run_id="run-a")
     prepared.receipt.artifact_path.write_text("tampered after the reap\n", encoding="utf-8")
@@ -2388,7 +2404,6 @@ def test_a_passing_re_evaluation_does_not_resurrect_a_reaped_row(tmp_path: Path)
     _init_repo(repo)
     prepared = _prepare(repo)
     prepared.run_child_process()
-    REGISTER.upsert_row(repo, "child-a", {"tab_id": "tab-a"}, run_id="run-a")
     assert prepared.evaluate().verified is True
     LIFECYCLE.reap_verified(repo, "child-a", herdr=FakeHerdr(), run_id="run-a")
     assert REGISTER.read_rows(repo, run_id="run-a")["child-a"]["phase"] == "reaped"
@@ -2409,7 +2424,6 @@ def test_a_reaped_row_keeps_its_phase_whichever_way_the_verdict_goes(
     _init_repo(repo)
     prepared = _prepare(repo)
     prepared.run_child_process()
-    REGISTER.upsert_row(repo, "child-a", {"tab_id": "tab-a"}, run_id="run-a")
     assert prepared.evaluate().verified is True
     LIFECYCLE.reap_verified(repo, "child-a", herdr=FakeHerdr(), run_id="run-a")
     if not passing:
@@ -2523,19 +2537,9 @@ def _second_repository(tmp_path: Path, prepared: _Prepared, **columns: Any) -> P
     other = tmp_path / "repo-b"
     _init_repo(other)
     phase = columns.pop("phase", None)
-    observed = columns.pop("observed_state", None)
-    source = columns.pop("observed_state_source", None)
     REGISTER.upsert_row(other, prepared.spec.row_id, {"run_id": "run-b", **columns}, run_id="run-b")
     if phase is not None:
         REGISTER.write_phase(other, prepared.spec.row_id, phase, run_id="run-b")
-    if observed is not None:
-        REGISTER.record_observed_state(
-            other,
-            prepared.spec.row_id,
-            observed,
-            source=source or "observed:test",
-            run_id="run-b",
-        )
     return other
 
 

@@ -241,14 +241,11 @@ def _actual_for_row(row: Mapping[str, Any], *, vendor: str) -> float:
     phase = row.get("phase")
     if phase == "planned":
         return 0.0
-    if phase == "launching" and not row.get("pane_id"):
-        # ``launching`` is written *before* the launcher runs -- it is the durable launch intent,
-        # not evidence that a session exists. With no recorded pane there is nothing that could
-        # have spent anything, so charging this row its worst case, or failing closed on its
-        # silence, is not caution: it stops every other child in the run, including the retry of
-        # this one, over a session that was never created. A row that has recorded a pane is in
-        # flight and still fails closed below.
-        return 0.0
+    if phase == "launching":
+        raise AccountingError(
+            f"row {row.get('id')!r} is launching; its live session presence must be resolved "
+            "before accounting can include or exclude it"
+        )
     if phase not in LAUNCHED_PHASES:
         raise AccountingError(f"row {row.get('id')!r} has unknown phase {phase!r}; fail closed")
     declared = row.get("tokens_max", row.get("tokens_reserved"))

@@ -736,20 +736,24 @@ class Ledger:
 # ---------------------------------------------------------------------------- subscriptions
 
 
-def _completion_subscription(row: Mapping[str, Any]) -> dict[str, Any] | None:
+def _completion_subscription(row: Mapping[str, Any], pane_id: str | None) -> dict[str, Any] | None:
     record = row.get("completion_sentinel")
     if not isinstance(record, Mapping):
         return None
-    pane_id = record.get("pane_id")
     sentinel = record.get("sentinel")
-    if not isinstance(pane_id, str) or not pane_id:
+    if pane_id is None:
         return None
     if not isinstance(sentinel, str) or not sentinel:
         return None
     return subscriber_module.output_match_subscription(pane_id, sentinel)
 
 
-def subscriptions_for(root: Path, *, run_id: str) -> tuple[dict[str, Any], ...]:
+def subscriptions_for(
+    root: Path,
+    *,
+    run_id: str,
+    herdr: session_lifecycle.HerdrControl | None = None,
+) -> tuple[dict[str, Any], ...]:
     """The complete subscription list the subscriber must be started with, from the register.
 
     ``Subscriber`` takes its subscriptions at construction and has no API to add one mid-run, so
@@ -767,24 +771,33 @@ def subscriptions_for(root: Path, *, run_id: str) -> tuple[dict[str, Any], ...]:
       from the register rather than remembered.
     """
     rows = register_store.read_rows(root, run_id=run_id)
+    control = herdr or session_lifecycle.HerdrControl()
     built: list[dict[str, Any]] = [dict(item) for item in RUN_SUBSCRIPTIONS]
-    for _row_id, row in sorted(rows.items()):
+    for row_id, row in sorted(rows.items()):
         if register_store.is_supervisory_row(row):
             continue
-        subscription = _completion_subscription(row)
+        pane_id = (
+            None
+            if row.get("phase") == "planned"
+            else session_lifecycle.read_session_pane_id(
+                control, root=root, run_id=run_id, row_id=row_id
+            )
+        )
+        subscription = _completion_subscription(row, pane_id)
         if subscription is not None:
             built.append(subscription)
-        pane_id = row.get("pane_id")
         vendor = str(row.get("vendor") or "")
-        if isinstance(pane_id, str) and pane_id and accounting.vendor_reports_usage(vendor):
+        if pane_id is not None and accounting.vendor_reports_usage(vendor):
             built.append(subscriber_module.usage_match_subscription(pane_id))
-    for _row_id, row in sorted(mirror_module.find_mirror_rows(rows).items()):
+    for row_id, row in sorted(mirror_module.find_mirror_rows(rows).items()):
         expected = mirror_module.expected_subscription(row)
-        if expected is not None:
+        pane_id = session_lifecycle.read_session_pane_id(
+            control, root=root, run_id=run_id, row_id=row_id
+        )
+        if expected is not None and pane_id is not None:
             built.append(dict(expected))
-        pane_id = row.get("pane_id")
         vendor = str(row.get("vendor") or "")
-        if isinstance(pane_id, str) and pane_id and accounting.vendor_reports_usage(vendor):
+        if expected is not None and pane_id is not None and accounting.vendor_reports_usage(vendor):
             built.append(subscriber_module.usage_match_subscription(pane_id))
     assert_subscription_set(built)
     return tuple(built)
@@ -1174,7 +1187,11 @@ def _host_queue() -> set[tuple[str, str]]:
     return waiting
 
 
-def host_reservations(*, exclude_run: str | None = None) -> tuple[Orphan, ...]:
+def host_reservations(
+    *,
+    exclude_run: str | None = None,
+    herdr: session_lifecycle.HerdrControl | None = None,
+) -> tuple[Orphan, ...]:
     """Every reservation on this host, with the identity of its occupant.
 
     Read-only, and deliberately without a clock. A planned reservation has no wall-clock
@@ -1184,6 +1201,7 @@ def host_reservations(*, exclude_run: str | None = None) -> tuple[Orphan, ...]:
     why this names the occupants instead of judging them.
     """
     found: list[Orphan] = []
+    control = herdr or session_lifecycle.HerdrControl()
     with admission.admission_locked():
         for run_id in register_store.iter_live_run_ids():
             if exclude_run is not None and run_id == exclude_run:
@@ -1195,6 +1213,18 @@ def host_reservations(*, exclude_run: str | None = None) -> tuple[Orphan, ...]:
                 if not isinstance(reservation, Mapping):
                     continue
                 row = rows.get(row_id, {})
+                phase = row.get("phase") if isinstance(row.get("phase"), str) else None
+                work_location = Path(str(reservation.get("work_location") or "."))
+                if phase == "planned":
+                    pane_id = None
+                    tab_id = None
+                else:
+                    pane_id = session_lifecycle.read_session_pane_id(
+                        control, root=work_location, run_id=run_id, row_id=str(row_id)
+                    )
+                    tab_id = session_lifecycle.read_session_tab_id(
+                        control, root=work_location, run_id=run_id, row_id=str(row_id)
+                    )
                 found.append(
                     Orphan(
                         run_id=run_id,
@@ -1204,11 +1234,9 @@ def host_reservations(*, exclude_run: str | None = None) -> tuple[Orphan, ...]:
                         tokens_reserved=int(reservation.get("tokens_reserved") or 0),
                         state=str(reservation.get("state") or "reserved"),
                         work_location=str(reservation.get("work_location") or ""),
-                        phase=(row.get("phase") if isinstance(row.get("phase"), str) else None),
-                        pane_id=(
-                            row.get("pane_id") if isinstance(row.get("pane_id"), str) else None
-                        ),
-                        tab_id=(row.get("tab_id") if isinstance(row.get("tab_id"), str) else None),
+                        phase=phase,
+                        pane_id=pane_id,
+                        tab_id=tab_id,
                     )
                 )
     return tuple(found)
@@ -1585,7 +1613,10 @@ class Coordinator:
         There is no timer here and there must not be one. A reservation is released because a
         decision was taken about its named occupant, not because it is old.
         """
-        orphans = host_reservations(exclude_run=self.run_id) + self.interrupted_dispatches()
+        orphans = (
+            host_reservations(exclude_run=self.run_id, herdr=self.herdr)
+            + self.interrupted_dispatches()
+        )
         queued_before = _host_queue()
         chooser = decide or self._ask_about_orphan
         decisions: dict[str, str] = {}
@@ -1701,6 +1732,17 @@ class Coordinator:
                 continue
             reservation = reservations.get(row_id)
             reservation = reservation if isinstance(reservation, Mapping) else {}
+            phase = row.get("phase") if isinstance(row.get("phase"), str) else None
+            if phase == "planned":
+                pane_id = None
+                tab_id = None
+            else:
+                pane_id = session_lifecycle.read_session_pane_id(
+                    self.herdr, root=self.root, run_id=self.run_id, row_id=row_id
+                )
+                tab_id = session_lifecycle.read_session_tab_id(
+                    self.herdr, root=self.root, run_id=self.run_id, row_id=row_id
+                )
             found.append(
                 Orphan(
                     run_id=self.run_id,
@@ -1710,9 +1752,9 @@ class Coordinator:
                     tokens_reserved=int(row.get("tokens_reserved") or 0),
                     state=str(reservation.get("state") or row.get("admission") or ""),
                     work_location=str(self.root),
-                    phase=(row.get("phase") if isinstance(row.get("phase"), str) else None),
-                    pane_id=(row.get("pane_id") if isinstance(row.get("pane_id"), str) else None),
-                    tab_id=(row.get("tab_id") if isinstance(row.get("tab_id"), str) else None),
+                    phase=phase,
+                    pane_id=pane_id,
+                    tab_id=tab_id,
                     claimed_by=claim.coordinator_id,
                     claimant_running=process_is_running(claim.pid),
                     attempts=claim.attempts,
@@ -1818,7 +1860,7 @@ class Coordinator:
         below rather than being silently adopted on a guess -- stopped, then replaced by a process
         this coordinator starts and records itself.
         """
-        wanted = subscriptions_for(self.root, run_id=self.run_id)
+        wanted = subscriptions_for(self.root, run_id=self.run_id, herdr=self.herdr)
         alive = self.supervisor.is_alive(self._subscriber_handle)
         if alive and wanted == self._installed_subscriptions:
             return False
@@ -1925,7 +1967,9 @@ class Coordinator:
                     "launching; there is no wire to confirm",
                 )
                 continue
-            session = mirror_module.resume_mirror(self.root, run_id=self.run_id, row_id=row_id)
+            session = mirror_module.resume_mirror(
+                self.root, run_id=self.run_id, row_id=row_id, herdr=self.herdr
+            )
             mirror_module.acknowledge_subscription(
                 session, list(self._installed_subscriptions), now=self.clock()
             )
@@ -1941,13 +1985,6 @@ class Coordinator:
         alive = self.running_subscriber() is not None
         respawned = False
         if not alive:
-            register_store.record_observed_state(
-                self.root,
-                self.subscriber_row_id,
-                "exited",
-                source="observed:subscriber_process_exit",
-                run_id=self.run_id,
-            )
             self.run_log.append(
                 "subscriber_divergence",
                 row_id=self.subscriber_row_id,
@@ -1972,11 +2009,16 @@ class Coordinator:
         if not mirrors:
             return "absent", "this run has no mirror row"
         row_id = next(iter(sorted(mirrors)))
-        if not isinstance(mirrors[row_id].get("pane_id"), str):
-            # Registered before its launch side effect, and the launch did not complete. Reporting
-            # this as a hang would be false, and raising would take the supervision tick — and
-            # therefore the subscriber's own liveness check — down with it.
-            return "unlaunched", f"mirror row {row_id!r} has no pane; it never finished launching"
+        try:
+            pane_id = session_lifecycle.read_session_pane_id(
+                self.herdr, root=self.root, run_id=self.run_id, row_id=row_id
+            )
+        except session_lifecycle.SessionLifecycleError as exc:
+            return "unknown", f"the terminal multiplexer could not answer for the mirror: {exc}"
+        if pane_id is None:
+            if mirror_module.expected_subscription(mirrors[row_id]) is None:
+                return "unlaunched", f"mirror row {row_id!r} never finished launching"
+            return "diverged", f"mirror row {row_id!r} has no live pane"
         snapshot = self.herdr.snapshot(cwd=self.root)
         mirror_module.observe_pane_activity(
             self.root,
@@ -2024,7 +2066,9 @@ class Coordinator:
 
     def mirror_session(self) -> mirror_module.MirrorSession:
         """Rebuild the live mirror from its durable row -- the restart path's only handle."""
-        return mirror_module.resume_mirror(self.root, run_id=self.run_id, row_id=self.mirror_row_id)
+        return mirror_module.resume_mirror(
+            self.root, run_id=self.run_id, row_id=self.mirror_row_id, herdr=self.herdr
+        )
 
     def ask_mirror(self, request: mirror_module.MirrorRequest) -> str:
         session = self.mirror_session()
@@ -2149,10 +2193,14 @@ class Coordinator:
         :meth:`_assert_child_never_ran`, "I could not tell" is folded into "a session may exist" --
         the same posture this module already takes toward a metered vendor's genuine silence.
         """
-        label = session_lifecycle.task_label(self.run_id, row_id)
-        cwd = Path(str(row.get("cwd") or self.root))
+        del row
         try:
-            return self.herdr.discover_by_label(label, cwd=cwd) is not None
+            return (
+                session_lifecycle.read_session_pane_id(
+                    self.herdr, root=self.root, run_id=self.run_id, row_id=row_id
+                )
+                is not None
+            )
         except session_lifecycle.SessionLifecycleError:
             return True
 
@@ -2165,16 +2213,14 @@ class Coordinator:
         by a timer. Classification reads only accounting's own public predicates, so the
         authorisation itself stays in :func:`accounting.check_spend`.
 
-        ``launching_row_id`` is the row this call is itself about to attempt to launch, if any.
-        That row's own ``launching``, pane-less ambiguity is not counted against it: launching it
-        is exactly how the ambiguity gets resolved, through the launcher's own label recovery,
-        which either adopts the discovered session or creates one. Every *other* row's identical
-        ambiguity still blocks, because nothing about to run is going to resolve theirs.
+        ``launching_row_id`` is the row this call is itself about to recover or launch. Its own
+        presence does not block that recovery; every other ambiguous launch still does.
         """
         ceiling = self.approved_ceiling()
         unresolved: list[str] = []
         pending: list[str] = []
         abandoned_row_ids: set[str] = set()
+        absent_launches: set[str] = set()
         for row_id, row in sorted(self.child_rows().items()):
             phase = row.get("phase")
             if phase not in accounting.LAUNCHED_PHASES or phase == "planned":
@@ -2192,22 +2238,31 @@ class Coordinator:
                 # rule from inside that total.
                 abandoned_row_ids.add(row_id)
                 continue
-            if not row.get("pane_id"):
-                # ``launching`` is a launched phase to the accounting contract, but it is written
-                # *before* the launcher runs. Skipping every pane-less row unconditionally used to
-                # deadlock a row's own retry -- the interrupted child was the reason no child
-                # could start, including itself -- so a row about to be launched is still
-                # skipped. Every *other* pane-less row is asked whether a session may already
-                # exist for it before this control flow treats its silence as "nothing to wait
-                # for": absence must be established, not inferred from a field this process
-                # writes after the fact.
-                if (
-                    phase == "launching"
-                    and row_id != launching_row_id
-                    and self._native_session_may_exist(row_id, row)
-                ):
+            if phase == "launching":
+                if row_id == launching_row_id:
+                    absent_launches.add(row_id)
+                    continue
+                if self._native_session_may_exist(row_id, row):
                     unresolved.append(row_id)
+                else:
+                    absent_launches.add(row_id)
                 continue
+            if phase in {"launched", "ready", "working"}:
+                try:
+                    pane_id = session_lifecycle.read_session_pane_id(
+                        self.herdr, root=self.root, run_id=self.run_id, row_id=row_id
+                    )
+                except session_lifecycle.SessionLifecycleError as exc:
+                    return (
+                        "unknown",
+                        f"the terminal multiplexer could not answer for {row_id}: {exc}",
+                    )
+                if pane_id is None:
+                    return (
+                        "unknown",
+                        f"row {row_id!r} is {phase!r}, but Herdr answered that it has no live "
+                        "pane; its spend is not yet knowable",
+                    )
             vendor = str(row.get("vendor") or row.get("agent") or "")
             if not accounting.vendor_reports_usage(vendor):
                 continue
@@ -2217,9 +2272,8 @@ class Coordinator:
         if unresolved:
             return (
                 "unknown",
-                f"rows {unresolved} carry a launch intent with no recorded pane, and the "
-                "launcher's own label discovery cannot rule out a live session for them; "
-                "absence is not yet established, so no further child starts",
+                f"rows {unresolved} carry launch intent and the live owner could not establish "
+                "that no session exists; no further child starts",
             )
         if pending:
             return (
@@ -2232,7 +2286,7 @@ class Coordinator:
                 self.root,
                 run_id=self.run_id,
                 ceiling=ceiling,
-                exclude_row_ids=abandoned_row_ids,
+                exclude_row_ids=abandoned_row_ids | absent_launches,
             )
         except accounting.AccountingError as exc:
             return "exceeded", str(exc)
@@ -2391,7 +2445,7 @@ class Coordinator:
                 self.root,
                 child.row_id,
                 {
-                    "completion_sentinel": {"pane_id": identity.pane_id, "sentinel": sentinel},
+                    "completion_sentinel": {"sentinel": sentinel},
                     "changed_paths_baseline": _baseline_to_mapping(ready.changed_paths_baseline),
                 },
                 run_id=self.run_id,
@@ -2437,13 +2491,14 @@ class Coordinator:
         sealed, which happens only after readiness was confirmed. A row with a pane and that
         marker got everything right up to the one control-plane call that can fail ambiguously.
         """
-        return (
-            bool(row.get("pane_id"))
-            and not is_terminal(row.get("phase"))
-            and not is_abandoned(row)
-            and not isinstance(row.get("artifact_protocol_sent"), Mapping)
-            and isinstance(row.get("completion_sentinel"), Mapping)
-        )
+        if (
+            is_terminal(row.get("phase"))
+            or is_abandoned(row)
+            or isinstance(row.get("artifact_protocol_sent"), Mapping)
+            or not isinstance(row.get("completion_sentinel"), Mapping)
+        ):
+            return False
+        return self._live_pane_id(row) is not None
 
     def _needs_completion_binding(self, row: Mapping[str, Any]) -> bool:
         """Whether a row has a sealed receipt but never reached the write that binds it.
@@ -2457,14 +2512,15 @@ class Coordinator:
         receipt's presence is checked directly rather than inferred from ``completion_sentinel``,
         because the receipt is the earlier of the two facts and cannot itself be false.
         """
-        return (
-            bool(row.get("pane_id"))
-            and not is_terminal(row.get("phase"))
-            and not is_abandoned(row)
-            and not isinstance(row.get("artifact_protocol_sent"), Mapping)
-            and not isinstance(row.get("completion_sentinel"), Mapping)
-            and isinstance(row.get(completion.DISPATCH_RECEIPT_KEY), Mapping)
-        )
+        if (
+            is_terminal(row.get("phase"))
+            or is_abandoned(row)
+            or isinstance(row.get("artifact_protocol_sent"), Mapping)
+            or isinstance(row.get("completion_sentinel"), Mapping)
+            or not isinstance(row.get(completion.DISPATCH_RECEIPT_KEY), Mapping)
+        ):
+            return False
+        return self._live_pane_id(row) is not None
 
     def _stalled_before_confirmation(self, row: Mapping[str, Any]) -> bool:
         """Whether a row has a live pane but never reached a sealed, resendable dispatch.
@@ -2476,13 +2532,23 @@ class Coordinator:
         without risking a second, contradictory instruction to a pane whose actual state it cannot
         see.
         """
-        return (
-            bool(row.get("pane_id"))
-            and not is_terminal(row.get("phase"))
-            and not is_abandoned(row)
-            and not isinstance(row.get("artifact_protocol_sent"), Mapping)
-            and not isinstance(row.get("completion_sentinel"), Mapping)
-            and not isinstance(row.get(completion.DISPATCH_RECEIPT_KEY), Mapping)
+        if (
+            row.get("phase") in {"planned", "launching"}
+            or is_terminal(row.get("phase"))
+            or is_abandoned(row)
+            or isinstance(row.get("artifact_protocol_sent"), Mapping)
+            or isinstance(row.get("completion_sentinel"), Mapping)
+            or isinstance(row.get(completion.DISPATCH_RECEIPT_KEY), Mapping)
+        ):
+            return False
+        return self._live_pane_id(row) is not None
+
+    def _live_pane_id(self, row: Mapping[str, Any]) -> str | None:
+        row_id = row.get("id")
+        if not isinstance(row_id, str) or not row_id:
+            raise CompositionError("a live pane query requires a row identifier")
+        return session_lifecycle.read_session_pane_id(
+            self.herdr, root=self.root, run_id=self.run_id, row_id=row_id
         )
 
     def bind_and_redeliver_completion(self, row_id: str) -> None:
@@ -2503,10 +2569,14 @@ class Coordinator:
                 f"row {row_id!r} redelivery requires this coordinator's own dispatch claim; "
                 "reconcile the run and resume it before redelivering"
             )
-        pane_id = row.get("pane_id")
-        if not isinstance(pane_id, str) or not pane_id:
-            raise CompositionError(f"row {row_id!r} has no pane; there is nothing to redeliver to")
         receipt = completion.read_receipt(self.root, row_id, run_id=self.run_id)
+        pane_id = session_lifecycle.read_session_pane_id(
+            self.herdr, root=self.root, run_id=self.run_id, row_id=row_id
+        )
+        if pane_id is None:
+            raise CompositionError(
+                f"row {row_id!r} has no live pane; there is nothing to redeliver to"
+            )
         landing_cwd = Path(receipt.landing_cwd)
         baseline = self.git.changed_paths_baseline(
             landing_cwd,
@@ -2518,12 +2588,11 @@ class Coordinator:
             self.root,
             row_id,
             {
-                "completion_sentinel": {"pane_id": pane_id, "sentinel": sentinel},
+                "completion_sentinel": {"sentinel": sentinel},
                 "changed_paths_baseline": _baseline_to_mapping(baseline),
             },
             run_id=self.run_id,
         )
-        cwd = Path(str(row.get("cwd") or landing_cwd))
         self.herdr.send_line(
             pane_id,
             completion.artifact_instructions(receipt)
@@ -2531,7 +2600,7 @@ class Coordinator:
             + subscriber_module.sentinel_assembly_instructions(
                 sentinel, when="the deliverable is completely written and you have stopped"
             ),
-            cwd=cwd,
+            cwd=landing_cwd,
         )
         _write_owned(
             self.root,
@@ -2560,9 +2629,13 @@ class Coordinator:
                 f"row {row_id!r} redelivery requires this coordinator's own dispatch claim; "
                 "reconcile the run and resume it before redelivering"
             )
-        pane_id = row.get("pane_id")
-        if not isinstance(pane_id, str) or not pane_id:
-            raise CompositionError(f"row {row_id!r} has no pane; there is nothing to redeliver to")
+        pane_id = session_lifecycle.read_session_pane_id(
+            self.herdr, root=self.root, run_id=self.run_id, row_id=row_id
+        )
+        if pane_id is None:
+            raise CompositionError(
+                f"row {row_id!r} has no live pane; there is nothing to redeliver to"
+            )
         sentinel_field = row.get("completion_sentinel")
         if not isinstance(sentinel_field, Mapping) or not sentinel_field.get("sentinel"):
             raise CompositionError(
@@ -2570,7 +2643,6 @@ class Coordinator:
                 "receipt was never sealed, so redelivery has nothing to send"
             )
         receipt = completion.read_receipt(self.root, row_id, run_id=self.run_id)
-        cwd = Path(str(row.get("cwd") or self.root))
         self.herdr.send_line(
             pane_id,
             completion.artifact_instructions(receipt)
@@ -2579,7 +2651,7 @@ class Coordinator:
                 str(sentinel_field["sentinel"]),
                 when="the deliverable is completely written and you have stopped",
             ),
-            cwd=cwd,
+            cwd=Path(receipt.landing_cwd),
         )
         _write_owned(
             self.root,
@@ -2731,17 +2803,19 @@ class Coordinator:
                 "was not called"
             )
 
-    @staticmethod
-    def _assert_not_already_dispatched(row_id: str, row: Mapping[str, Any]) -> None:
-        """A ``launching`` row that already carries a pane has been handed to the launcher once.
+    def _assert_not_already_dispatched(self, row_id: str, row: Mapping[str, Any]) -> None:
+        """Leave ``launching`` rows to the launcher's run-label recovery transaction.
 
-        The launcher recovers a crashed dispatch by its run-bound label only while the row carries
-        no pane. With one, handing it back opens a second session for the same child.
+        A ``launching`` row can mean the native launcher never ran or that it created a session
+        just before the coordinator stopped. :func:`session_lifecycle.launch_child` asks Herdr by
+        the run-bound label and adopts that session before it considers a new launch. Refusing a
+        live answer here made that recovery branch unreachable; treating the phase as proof of
+        absence could open a duplicate. The owner query and decision therefore stay together at
+        the launch boundary.
         """
-        if row.get("phase") == "launching" and row.get("pane_id"):
-            raise PhaseOrderError(
-                f"row {row_id!r} is launching and already carries pane "
-                f"{row.get('pane_id')!r}; it has been dispatched once"
+        if row.get("phase") == "launching":
+            session_lifecycle.read_session_pane_id(
+                self.herdr, root=self.root, run_id=self.run_id, row_id=row_id
             )
 
     def _assert_no_open_attempt(self, row_id: str, row: Mapping[str, Any]) -> None:
@@ -3138,43 +3212,44 @@ class Coordinator:
         the fence and the close call landing leaves the fence durable and the producer still
         running; returning early on a retry because the fence already exists would reap behind a
         tab nobody ever actually closed, the exact window this fence exists to remove. So a retry
-        skips only the *write*, never the check: it always asks whether the recorded tab is still
-        present and closes it if so, until that question durably answers no.
+        skips only the *write*, never the check: it always asks whether the current run-bound tab
+        is still present and closes it if so, until that question answers no.
 
         Only a child that has already passed is fenced. A failing verdict never reaches here, so
         the operator keeps the live session in exactly the case where recovering a defective
         artifact from it is cheap.
         """
         row = self.rows().get(row_id, {})
-        attempt = self.attempt_for(row_id)
         fence = row.get("reap_fence")
-        if isinstance(fence, Mapping):
-            tab_id = fence.get("tab_id")
-        else:
-            tab_id = row.get("tab_id")
+        tab_id = session_lifecycle.read_session_tab_id(
+            self.herdr, root=self.root, run_id=self.run_id, row_id=row_id
+        )
+        cwd = Path(completion.read_receipt(self.root, row_id, run_id=self.run_id).landing_cwd)
+        if not isinstance(fence, Mapping):
             _write_owned(
                 self.root,
                 row_id,
                 {
                     "reap_fence": {
                         "at": self.clock(),
-                        "tab_id": tab_id if isinstance(tab_id, str) else None,
                         "coordinator_id": self.coordinator_id,
                     }
                 },
                 run_id=self.run_id,
             )
             self.run_log.append("producer_fenced", row_id=row_id, tab_id=tab_id)
-        cwd = Path(str(row.get("cwd") or attempt.landing.cwd))
-        if isinstance(tab_id, str) and tab_id and self.herdr.tab_present(tab_id, cwd=cwd):
+        if tab_id is not None:
             self.herdr.close_tab(tab_id, cwd=cwd)
             # A close request returning without raising is a request accepted, not an effect
             # observed: asking again is the only thing that tells the two apart, and only a "no"
             # here is the proof :meth:`_reobserve_behind_the_fence` and ``reap_verified`` are
             # allowed to build on.
-            if self.herdr.tab_present(tab_id, cwd=cwd):
+            remaining = session_lifecycle.read_session_tab_id(
+                self.herdr, root=self.root, run_id=self.run_id, row_id=row_id
+            )
+            if remaining is not None:
                 raise ChildStillMutatingError(
-                    f"row {row_id!r}'s tab {tab_id!r} was asked to close but is still present; "
+                    f"row {row_id!r}'s tab {remaining!r} was asked to close but is still present; "
                     "its producer is not confirmed stopped, so this reap is refused rather than "
                     "recorded"
                 )
@@ -3280,8 +3355,6 @@ class Coordinator:
     def _assert_child_never_ran(self, row_id: str) -> bool:
         """Whether this child demonstrably never got a session, from evidence rather than hope."""
         row = self.rows().get(row_id, {})
-        if row.get("pane_id"):
-            return False
         if isinstance(row.get("tokens_observed"), (int, float)) and not isinstance(
             row.get("tokens_observed"), bool
         ):
@@ -3299,15 +3372,24 @@ class Coordinator:
         never a guess, because a caller that cannot tell must keep failing closed the same way an
         unmetered vendor's silence already does.
         """
-        tab_id = row.get("tab_id")
-        cwd = Path(str(row.get("cwd") or self.root))
-        if not isinstance(tab_id, str) or not tab_id:
-            # Claimed, but no tab was ever recorded for it. The launcher's own label recovery is
-            # the only other route by which a session could exist for this row.
+        try:
+            tab_id = session_lifecycle.read_session_tab_id(
+                self.herdr, root=self.root, run_id=self.run_id, row_id=row_id
+            )
+        except session_lifecycle.SessionLifecycleError:
+            return False
+        if tab_id is None:
             return not self._native_session_may_exist(row_id, row)
-        if self.herdr.tab_present(tab_id, cwd=cwd):
-            self.herdr.close_tab(tab_id, cwd=cwd)
-        return not self.herdr.tab_present(tab_id, cwd=cwd)
+        self.herdr.close_tab(tab_id, cwd=self.root)
+        try:
+            return (
+                session_lifecycle.read_session_tab_id(
+                    self.herdr, root=self.root, run_id=self.run_id, row_id=row_id
+                )
+                is None
+            )
+        except session_lifecycle.SessionLifecycleError:
+            return False
 
     # ------------------------------------------------------------------ retirement
 
@@ -3327,10 +3409,19 @@ class Coordinator:
                 f"{running.get('coordinator_id')}) is still holding the event stream"
             )
         rows = self.rows()
-        for row_id, row in sorted(mirror_module.find_mirror_rows(rows).items()):
-            if row.get("observed_state") != "exited":
+        for row_id, _row in sorted(mirror_module.find_mirror_rows(rows).items()):
+            try:
+                observed_state = session_lifecycle.read_session_observed_state(
+                    self.herdr, root=self.root, run_id=self.run_id, row_id=row_id
+                )
+            except session_lifecycle.SessionLifecycleError as exc:
                 outstanding[f"mirror:{row_id}"] = (
-                    f"the mirror is {row.get('observed_state')!r} and has not been closed"
+                    f"the terminal multiplexer could not answer whether the mirror is live: {exc}"
+                )
+                continue
+            if observed_state is not None:
+                outstanding[f"mirror:{row_id}"] = (
+                    f"the mirror is {observed_state!r} and has not been closed"
                 )
         for row_id, row in sorted(self.child_rows().items()):
             phase = row.get("phase")
@@ -3418,48 +3509,35 @@ class Coordinator:
                 forget_subscriber_record(self.run_id)
         self._installed_subscriptions = ()
         rows = self.rows()
-        for row_id, row in sorted(mirror_module.find_mirror_rows(rows).items()):
-            tab_id = row.get("tab_id")
-            cwd = Path(str(row.get("cwd") or self.root))
-            if not isinstance(tab_id, str) or not tab_id:
-                # Absence of a recorded tab_id is not absence of a tab. create_mirror writes
-                # the row's role before the launcher returns, so from that moment the row is
-                # a mirror; a crash between those two leaves a live tab on a row that cannot
-                # name it. The row cannot tell that crash from a launch that never happened
-                # -- both are role without tab_id. Only the substrate can, by the same
-                # run-bound label launch_child already recovers with. An answer the
-                # substrate could not give is not proof of absence, so the writer stays
-                # outstanding rather than being recorded exited.
-                label = session_lifecycle.task_label(self.run_id, row_id)
-                try:
-                    discovered = self.herdr.discover_by_label(label, cwd=cwd)
-                except session_lifecycle.SessionLifecycleError:
-                    stopped[row_id] = "no recorded tab_id and the control plane could not be asked"
-                    continue
-                if discovered is None:
-                    tab_id = ""
-                elif not isinstance(discovered.tab_id, str) or not discovered.tab_id:
-                    stopped[row_id] = "no recorded tab_id and the discovered session has no tab_id"
-                    continue
-                else:
-                    tab_id = discovered.tab_id
-            if isinstance(tab_id, str) and tab_id and self.herdr.tab_present(tab_id, cwd=cwd):
-                self.herdr.close_tab(tab_id, cwd=cwd)
+        for row_id, _row in sorted(mirror_module.find_mirror_rows(rows).items()):
+            try:
+                tab_id = session_lifecycle.read_session_tab_id(
+                    self.herdr, root=self.root, run_id=self.run_id, row_id=row_id
+                )
+            except session_lifecycle.SessionLifecycleError as exc:
+                stopped[row_id] = f"the terminal multiplexer could not answer: {exc}"
+                continue
+            if tab_id is not None:
+                self.herdr.close_tab(tab_id, cwd=self.root)
             # A close request returning without raising is a request accepted, not an effect
             # observed -- the same distinction the reap fence and the abandon path already draw
             # for a child's tab. Asking again is the only thing that tells them apart, and only a
             # "no" here is what :meth:`outstanding_writers` is allowed to read as this writer
             # being gone; the documented shutdown order (stop writers, then retire) depends on
             # this column meaning what it claims.
-            still_present = (
-                isinstance(tab_id, str) and tab_id and self.herdr.tab_present(tab_id, cwd=cwd)
-            )
+            try:
+                still_present = (
+                    session_lifecycle.read_session_tab_id(
+                        self.herdr, root=self.root, run_id=self.run_id, row_id=row_id
+                    )
+                    is not None
+                )
+            except session_lifecycle.SessionLifecycleError as exc:
+                stopped[row_id] = f"close requested but confirmation failed: {exc}"
+                continue
             if still_present:
                 stopped[row_id] = "close requested but the tab is still present"
                 continue
-            register_store.record_observed_state(
-                self.root, row_id, "exited", source="observed:mirror_closed", run_id=self.run_id
-            )
             stopped[row_id] = "closed"
         self.run_log.append("writers_stopped", stopped=stopped)
         return stopped
@@ -3552,29 +3630,26 @@ class Coordinator:
         detail["parked_questions"] = list(self.open_operator_questions())
 
         spend: float | None
-        unresolved = [
-            row_id
-            for row_id, row in sorted(rows.items())
-            if row.get("phase") == "launching"
-            and not row.get("pane_id")
-            and not is_abandoned(row)
-            and self._native_session_may_exist(row_id, row)
-        ]
+        unresolved: list[str] = []
+        absent_launches: set[str] = set()
+        for row_id, row in sorted(rows.items()):
+            if row.get("phase") != "launching" or is_abandoned(row):
+                continue
+            if self._native_session_may_exist(row_id, row):
+                unresolved.append(row_id)
+            else:
+                absent_launches.add(row_id)
         if unresolved:
-            # The same fact :meth:`spend_status` fails closed on: a ``launching`` row with no
-            # recorded pane is not proof no session exists, only that this process has not
-            # recorded one. Reporting a total here would trust accounting's cheap zero-charge
-            # shortcut for a row this coordinator cannot vouch for -- correct for a receipt sealed
-            # after every child is settled, wrong for one computed while a launch is still
-            # ambiguous.
             spend = None
             detail["spend_error"] = (
-                f"rows {unresolved} carry a launch intent with no recorded pane and an "
-                "undiscovered session cannot be ruled out; the run's spend is not yet knowable"
+                f"rows {unresolved} carry launch intent and the live owner could not establish "
+                "that no session exists; the run's spend is not yet knowable"
             )
         else:
             try:
-                spend = accounting.run_actual_tokens(self.root, run_id=self.run_id)
+                spend = accounting.run_actual_tokens(
+                    self.root, run_id=self.run_id, exclude_row_ids=absent_launches
+                )
             except accounting.AccountingError as exc:
                 spend = None
                 detail["spend_error"] = str(exc)

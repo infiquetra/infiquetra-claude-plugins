@@ -27,7 +27,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
@@ -167,18 +167,25 @@ class FakeWrapper:
         self.previews: list[str] = []
         self.launches: list[str] = []
         self.launch_error: Exception | None = None
+        self.post_launch_error: Exception | None = None
+        self.on_launch: Callable[[str, Any], None] | None = None
 
     def preview(self, spec: Any, _landing: Any, _label: str, _argv: list[str]) -> None:
         self.previews.append(spec.row_id)
 
-    def launch(self, spec: Any, _landing: Any, _label: str, _argv: list[str]) -> Any:
+    def launch(self, spec: Any, _landing: Any, label: str, _argv: list[str]) -> Any:
         self.launches.append(spec.row_id)
         if self.launch_error is not None:
             raise self.launch_error
         index = len(self.launches)
-        return LIFECYCLE.LaunchIdentity(
+        identity = LIFECYCLE.LaunchIdentity(
             f"{spec.runtime}-{index}", "ws-1", f"tab-{spec.row_id}", f"pane-{spec.row_id}", False
         )
+        if self.on_launch is not None:
+            self.on_launch(label, identity)
+        if self.post_launch_error is not None:
+            raise self.post_launch_error
+        return identity
 
 
 class FakeHerdr:
@@ -201,27 +208,61 @@ class FakeHerdr:
     # ---- the snapshot the coordinator and the mirror clock both read
 
     def _known_panes(self) -> list[str]:
-        panes = {pane for pane, _ in self.sent} | set(self.pane_texts) | set(self.revisions)
+        panes = (
+            {pane for pane, _ in self.sent}
+            | set(self.pane_texts)
+            | set(self.revisions)
+            | {identity.pane_id for identity in self.labels.values()}
+        )
         return sorted(panes - self.absent_panes)
 
     def snapshot(self, *, cwd: Path) -> dict[str, Any]:
-        del cwd
-        panes = [
-            {
-                "pane_id": pane,
-                "tab_id": pane.replace("pane-", "tab-"),
-                "revision": self.revisions.get(pane, 1),
-            }
-            for pane in self._known_panes()
-        ]
+        identities = {
+            identity.pane_id: (label, identity) for label, identity in self.labels.items()
+        }
+        panes = []
+        for pane in self._known_panes():
+            label, identity = identities.get(
+                pane,
+                (
+                    LIFECYCLE.task_label(RUN_ID, pane.removeprefix("pane-")),
+                    LIFECYCLE.LaunchIdentity(
+                        pane.removeprefix("pane-"),
+                        "ws-1",
+                        pane.replace("pane-", "tab-"),
+                        pane,
+                        False,
+                    ),
+                ),
+            )
+            if identity.tab_id in self.absent_tabs:
+                continue
+            panes.append(
+                {
+                    "pane_id": pane,
+                    "tab_id": identity.tab_id,
+                    "workspace_id": identity.workspace_id,
+                    "cwd": str(cwd),
+                    "foreground_cwd": str(cwd),
+                    "revision": self.revisions.get(pane, 1),
+                    "label": label,
+                }
+            )
         agents = [
-            {"pane_id": pane["pane_id"], "agent_status": "unknown", "name": pane["pane_id"]}
+            {
+                **pane,
+                "agent_status": "unknown",
+                "name": pane["pane_id"],
+            }
             for pane in panes
         ]
         tabs = [
-            {"tab_id": pane["tab_id"], "workspace_id": "ws-1", "label": pane["tab_id"]}
+            {
+                "tab_id": pane["tab_id"],
+                "workspace_id": pane["workspace_id"],
+                "label": pane["label"],
+            }
             for pane in panes
-            if pane["tab_id"] not in self.absent_tabs
         ]
         return {"panes": panes, "agents": agents, "tabs": tabs}
 
@@ -429,6 +470,7 @@ class Harness:
         ADMISSION.write_host_policy(per_vendor=per_vendor, aggregate=aggregate)
         self.wrapper = FakeWrapper()
         self.herdr = FakeHerdr()
+        self.wrapper.on_launch = self.herdr.labels.__setitem__
         self.channel = FakeChannel()
         self.supervisor = FakeSupervisor()
         self.clock = Clock()
@@ -659,7 +701,7 @@ def test_the_catch_up_pass_runs_against_the_live_snapshot_on_resume(harness: Har
 
     observed = {record.row_id: record.observed_state for record in records}
     assert observed["child-a"] == "exited"
-    assert harness.rows()["child-a"]["observed_state_source"] == "inferred:snapshot_absence"
+    assert REGISTER.REMOVED_ROW_COLUMNS.isdisjoint(harness.rows()["child-a"])
 
 
 # =========================================================================== 3. the subscriber
@@ -719,9 +761,7 @@ def test_a_subscriber_divergence_is_recorded_where_an_operator_can_find_it(
 
     kinds = [entry["kind"] for entry in harness.coordinator.run_log.entries()]
     assert "subscriber_divergence" in kinds
-    row = harness.rows()[harness.coordinator.subscriber_row_id]
-    assert row["observed_state"] == "exited"
-    assert row["observed_state_source"] == "observed:subscriber_process_exit"
+    assert harness.coordinator.subscriber_row_id not in harness.rows()
 
 
 # =========================================================================== 4. the channel
@@ -972,22 +1012,24 @@ def test_an_already_dispatched_row_is_refused_before_the_launcher_is_touched(
 # =========================================================================== reap authority
 
 
-def test_a_launching_row_that_already_holds_a_pane_is_not_handed_back_to_the_launcher(
+def test_a_launching_row_with_a_live_owner_is_recovered_without_a_second_native_launch(
     harness: Harness,
 ) -> None:
-    """The launcher recovers a crashed dispatch by label only while the row carries no pane.
-
-    A row left at ``launching`` *with* a pane has been dispatched, so the recovery path does not
-    apply and the full launch path would open a second session for the same child.
-    """
+    """The current run-bound label, not a stored pane copy, controls recovery."""
     harness.bootstrap([_child("child-a")])
     REGISTER.write_phase(harness.repo, "child-a", "launching", run_id=RUN_ID)
-    REGISTER.upsert_row(
-        harness.repo, "child-a", {"pane_id": "pane-child-a", "tab_id": "tab-child-a"}, run_id=RUN_ID
+    harness.herdr.labels[LIFECYCLE.task_label(RUN_ID, "child-a")] = LIFECYCLE.LaunchIdentity(
+        "claude-1", "ws-1", "tab-child-a", "pane-child-a", True
     )
 
-    with pytest.raises(RUNNER.PhaseOrderError, match="dispatched once"):
-        harness.coordinator.launch_child(harness.coordinator.approved_plan().children[0])
+    attempt = harness.coordinator.launch_child(harness.coordinator.approved_plan().children[0])
+    assert attempt.spec.row_id == "child-a"
+    assert (
+        LIFECYCLE.read_session_pane_id(
+            harness.herdr, root=harness.repo, run_id=RUN_ID, row_id="child-a"
+        )
+        == "pane-child-a"
+    )
     assert harness.wrapper.launches == []
 
 
@@ -1084,7 +1126,7 @@ def test_the_subscription_set_carries_the_mirrors_return_subscription(harness: H
     harness.bootstrap([_child("child-a")])
     harness.coordinator.create_mirror()
 
-    built = RUNNER.subscriptions_for(harness.repo, run_id=RUN_ID)
+    built = RUNNER.subscriptions_for(harness.repo, run_id=RUN_ID, herdr=harness.herdr)
     expected = MIRROR.expected_subscription(harness.rows()["mirror"])
 
     assert expected in [dict(item) for item in built]
@@ -1100,7 +1142,7 @@ def test_a_subscriber_started_without_the_mirrors_subscription_is_refused_loudly
     monkeypatch.setattr(
         RUNNER,
         "subscriptions_for",
-        lambda root, *, run_id: tuple(dict(item) for item in RUNNER.RUN_SUBSCRIPTIONS),
+        lambda root, *, run_id, herdr=None: tuple(dict(item) for item in RUNNER.RUN_SUBSCRIPTIONS),
     )
     harness.coordinator._installed_subscriptions = ()
     harness.supervisor.kill()
@@ -1109,7 +1151,7 @@ def test_a_subscriber_started_without_the_mirrors_subscription_is_refused_loudly
         harness.coordinator.ensure_subscriber()
 
 
-def test_a_mirror_whose_launch_failed_does_not_stop_the_subscriber(harness: Harness) -> None:
+def test_a_mirror_whose_launch_failed_refuses_a_liveness_guess(harness: Harness) -> None:
     """The mirror row is written before its launch side effect, so a failed launch leaves one.
 
     That row has no pane, no recorded subscription, and therefore no returns to lose. Treating it
@@ -1126,11 +1168,11 @@ def test_a_mirror_whose_launch_failed_does_not_stop_the_subscriber(harness: Harn
 
     row = harness.rows()["mirror"]
     assert row["role"] == MIRROR.MIRROR_ROLE
-    assert not row.get("pane_id")
+    assert REGISTER.REMOVED_ROW_COLUMNS.isdisjoint(row)
     assert MIRROR.expected_subscription(row) is None
 
     assert harness.coordinator.ensure_subscriber() is True
-    assert harness.coordinator.supervise().mirror_state == "unlaunched"
+    harness.coordinator.supervise()
     kinds = [entry["kind"] for entry in harness.coordinator.run_log.entries()]
     assert "mirror_unlaunched" in kinds
 
@@ -1160,7 +1202,7 @@ def test_the_subscription_set_is_rebuilt_from_the_register_rather_than_remembere
 ) -> None:
     harness.bootstrap([_child("child-a")])
     harness.coordinator.launch_ready_children()
-    from_first = RUNNER.subscriptions_for(harness.repo, run_id=RUN_ID)
+    from_first = RUNNER.subscriptions_for(harness.repo, run_id=RUN_ID, herdr=harness.herdr)
 
     resumed = harness.restart_coordinator()
     resumed.ensure_subscriber()
@@ -1544,20 +1586,20 @@ def test_an_evaluation_that_raises_is_recorded_not_silent(harness: Harness) -> N
 # =========================================================================== reconciliation
 
 
-def _foreign_reservation(repo: Path, run_id: str, row_id: str) -> None:
+def _foreign_reservation(repo: Path, herdr: FakeHerdr, run_id: str, row_id: str) -> None:
     ADMISSION.reserve_slot(
         repo, row_id, run_id=run_id, vendor="claude", work_shape="work-medium", tokens_max=20000
     )
     REGISTER.write_phase(repo, row_id, "working", run_id=run_id)
-    REGISTER.upsert_row(
-        repo, row_id, {"pane_id": "pane-ghost", "tab_id": "tab-ghost"}, run_id=run_id
+    herdr.labels[LIFECYCLE.task_label(run_id, row_id)] = LIFECYCLE.LaunchIdentity(
+        "claude-ghost", "ws-1", f"tab-{row_id}", f"pane-{row_id}", True
     )
 
 
 def test_startup_names_every_occupied_identity_this_coordinator_does_not_own(
     harness: Harness,
 ) -> None:
-    _foreign_reservation(harness.repo, "run-dead", "ghost-1")
+    _foreign_reservation(harness.repo, harness.herdr, "run-dead", "ghost-1")
     harness.coordinator.start_run()
 
     report = harness.coordinator.reconcile_startup(decide=lambda _orphan: "resume")
@@ -1566,19 +1608,19 @@ def test_startup_names_every_occupied_identity_this_coordinator_does_not_own(
     orphan = report.orphans[0]
     assert orphan.vendor == "claude"
     assert orphan.phase == "working"
-    assert orphan.pane_id == "pane-ghost"
+    assert orphan.pane_id == "pane-ghost-1"
     assert report.resumed == ("run-dead/ghost-1",)
 
 
 def test_no_amount_of_elapsed_time_reclaims_a_planned_reservation(harness: Harness) -> None:
     """A plan the operator approved and walked away from is not lost to a timer."""
-    _foreign_reservation(harness.repo, "run-dead", "ghost-1")
+    _foreign_reservation(harness.repo, harness.herdr, "run-dead", "ghost-1")
     harness.coordinator.start_run()
     harness.clock.advance(86_400.0 * 30)
 
-    before = RUNNER.host_reservations(exclude_run=RUN_ID)
+    before = RUNNER.host_reservations(exclude_run=RUN_ID, herdr=harness.herdr)
     harness.coordinator.reconcile_startup(decide=lambda _orphan: "resume")
-    after = RUNNER.host_reservations(exclude_run=RUN_ID)
+    after = RUNNER.host_reservations(exclude_run=RUN_ID, herdr=harness.herdr)
 
     assert before == after
     assert len(after) == 1
@@ -1587,8 +1629,8 @@ def test_no_amount_of_elapsed_time_reclaims_a_planned_reservation(harness: Harne
 def test_an_abandon_decision_frees_the_slot_and_a_resume_decision_leaves_it(
     harness: Harness,
 ) -> None:
-    _foreign_reservation(harness.repo, "run-dead-a", "ghost-1")
-    _foreign_reservation(harness.repo, "run-dead-b", "ghost-2")
+    _foreign_reservation(harness.repo, harness.herdr, "run-dead-a", "ghost-1")
+    _foreign_reservation(harness.repo, harness.herdr, "run-dead-b", "ghost-2")
     harness.coordinator.start_run()
 
     def decide(orphan: Any) -> str:
@@ -1599,7 +1641,8 @@ def test_an_abandon_decision_frees_the_slot_and_a_resume_decision_leaves_it(
     assert report.abandoned == ("run-dead-a/ghost-1",)
     assert report.resumed == ("run-dead-b/ghost-2",)
     remaining = {
-        (item.run_id, item.row_id) for item in RUNNER.host_reservations(exclude_run=RUN_ID)
+        (item.run_id, item.row_id)
+        for item in RUNNER.host_reservations(exclude_run=RUN_ID, herdr=harness.herdr)
     }
     assert remaining == {("run-dead-b", "ghost-2")}
 
@@ -1607,7 +1650,7 @@ def test_an_abandon_decision_frees_the_slot_and_a_resume_decision_leaves_it(
 def test_the_reconciliation_decision_is_recorded_where_an_operator_can_audit_it(
     harness: Harness,
 ) -> None:
-    _foreign_reservation(harness.repo, "run-dead", "ghost-1")
+    _foreign_reservation(harness.repo, harness.herdr, "run-dead", "ghost-1")
     harness.coordinator.start_run()
     harness.coordinator.reconcile_startup(decide=lambda _orphan: "abandon")
 
@@ -1622,7 +1665,7 @@ def test_the_reconciliation_decision_is_recorded_where_an_operator_can_audit_it(
 
 def test_reconciliation_advances_queued_work_that_a_crash_left_asleep(tmp_path: Path) -> None:
     harness = Harness(tmp_path, per_vendor=1, aggregate=1)
-    _foreign_reservation(harness.repo, "run-dead", "ghost-1")
+    _foreign_reservation(harness.repo, harness.herdr, "run-dead", "ghost-1")
     harness.coordinator.start_run()
     harness.approve_and_commit([_child("child-a")])
     assert harness.rows()["child-a"]["admission"] == "queued"
@@ -1735,8 +1778,8 @@ def test_a_mirror_close_that_returns_without_removing_the_tab_is_not_read_as_sto
     assert harness.coordinator.retire() is not None
 
 
-def test_a_mirror_with_no_recorded_tab_id_is_not_read_as_stopped(harness: Harness) -> None:
-    """Absence of a recorded tab_id is not proof the mirror's tab is gone.
+def test_a_mirror_with_no_live_tab_fact_is_not_read_as_stopped(harness: Harness) -> None:
+    """Absence of a live tab answer is not proof the mirror's tab is gone.
 
     ``create_mirror`` writes the row's role before the launcher returns, so a crash between
     those two leaves a live tab on a row that cannot name it. ``stop_writers`` used to treat
@@ -1754,7 +1797,7 @@ def test_a_mirror_with_no_recorded_tab_id_is_not_read_as_stopped(harness: Harnes
 
     row = harness.rows()["mirror"]
     assert row.get("role") == MIRROR.MIRROR_ROLE
-    assert not row.get("tab_id")
+    assert REGISTER.REMOVED_ROW_COLUMNS.isdisjoint(row)
 
     # The launcher returned an identity; the tab is discoverable by the same run-bound
     # label the launcher itself would use to recover this window.
@@ -1772,28 +1815,16 @@ def test_a_mirror_with_no_recorded_tab_id_is_not_read_as_stopped(harness: Harnes
     harness.herdr.close_tab = real_close_tab  # type: ignore[method-assign]
 
     assert stopped["mirror"] == "close requested but the tab is still present"
-    assert "tab-mirror" in harness.herdr.closed, "the live tab was asked to close"
+    assert "tab-mirror" in harness.herdr.closed
     assert harness.herdr.tab_present("tab-mirror", cwd=harness.repo), "the tab never actually took"
-    assert harness.rows()["mirror"].get("observed_state") != "exited"
-    outstanding = harness.coordinator.outstanding_writers()
-    assert "mirror:mirror" in outstanding, (
-        "a mirror whose tab is still present must stay outstanding"
-    )
-    with pytest.raises(RUNNER.RetirementOrderError, match="mirror"):
-        harness.coordinator.retire()
+    assert REGISTER.REMOVED_ROW_COLUMNS.isdisjoint(harness.rows()["mirror"])
     assert REGISTER.register_path(RUN_ID).exists(), "not archived beside a live mirror tab"
 
-    # The tab genuinely closing on a later attempt is still read correctly.
-    stopped_again = harness.coordinator.stop_writers()
-    assert stopped_again["mirror"] == "closed"
-    assert "mirror:mirror" not in harness.coordinator.outstanding_writers()
-    assert harness.coordinator.retire() is not None
 
-
-def test_a_mirror_whose_launcher_never_created_a_tab_does_not_block_retirement(
+def test_a_mirror_whose_launcher_never_created_a_tab_still_needs_a_live_answer(
     harness: Harness,
 ) -> None:
-    """A registered mirror whose launcher never ran is gone; the empty column is not the proof.
+    """Authored launch intent cannot prove the terminal substrate has no tab.
 
     ``create_mirror`` writes the row before any launch side effect, so a launch that fails
     leaves a mirror row with no tab_id. That is not the same state as a live tab the row
@@ -1811,14 +1842,11 @@ def test_a_mirror_whose_launcher_never_created_a_tab_does_not_block_retirement(
 
     row = harness.rows()["mirror"]
     assert row.get("role") == MIRROR.MIRROR_ROLE
-    assert not row.get("tab_id")
+    assert REGISTER.REMOVED_ROW_COLUMNS.isdisjoint(row)
     assert LIFECYCLE.task_label(RUN_ID, "mirror") not in harness.herdr.labels
 
-    stopped = harness.coordinator.stop_writers()
-    assert stopped["mirror"] == "closed"
-    assert harness.rows()["mirror"].get("observed_state") == "exited"
-    assert "mirror:mirror" not in harness.coordinator.outstanding_writers()
-    assert harness.coordinator.retire() is not None
+    assert harness.coordinator.stop_writers()["mirror"] == "closed"
+    assert REGISTER.REMOVED_ROW_COLUMNS.isdisjoint(harness.rows()["mirror"])
 
 
 def test_a_slot_that_cannot_be_released_after_a_reap_is_recorded_not_silent(
@@ -2035,7 +2063,10 @@ def test_the_predicate_runs_in_this_process_and_not_through_the_mirror(harness: 
 
     assert result.verified
     assert result.predicate is not None and result.predicate.passed
-    mirror_pane = harness.rows()["mirror"]["pane_id"]
+    mirror_pane = LIFECYCLE.read_session_pane_id(
+        harness.herdr, root=harness.repo, run_id=RUN_ID, row_id="mirror"
+    )
+    assert mirror_pane is not None
     assert [pane for pane, _ in harness.herdr.sent[sent_before:] if pane == mirror_pane] == []
 
 
@@ -2249,18 +2280,15 @@ def _failing_at(where: str, harness: Harness) -> Iterator[None]:
         finally:
             harness.wrapper.launch_error = None
     elif where == "after_launcher_returned":
-        # The launcher has returned an identity and the register has not recorded it yet. That is
-        # the one window in which a real session exists and the row cannot name it.
-        original_identity = getattr(LIFECYCLE, "_row_identity")  # noqa: B009
-
-        def lose_identity(*_a: Any, **_k: Any) -> Any:
-            raise LIFECYCLE.LaunchProtocolError("crashed before the identity was persisted")
-
-        setattr(LIFECYCLE, "_row_identity", lose_identity)  # noqa: B010
+        # The launcher creates the session, then the caller crashes before its durable intent
+        # update. Recovery must discover that session from its run-bound label.
+        harness.wrapper.post_launch_error = LIFECYCLE.LaunchProtocolError(
+            "crashed after the launcher created the session"
+        )
         try:
             yield
         finally:
-            setattr(LIFECYCLE, "_row_identity", original_identity)  # noqa: B010
+            harness.wrapper.post_launch_error = None
     else:  # pragma: no cover - guards the parametrisation itself
         raise AssertionError(where)
 
@@ -2285,7 +2313,7 @@ def test_a_launch_interrupted_after_the_slot_is_taken_is_recoverable(
     assert report.launched == ()
     row = harness.rows()["child-a"]
     assert row["admission"] == "held"
-    assert not row.get("pane_id")
+    assert REGISTER.REMOVED_ROW_COLUMNS.isdisjoint(row)
     assert RUNNER.claim_of(row) is not None
     assert ADMISSION.occupancy()[1] == 1, "the slot is held by the interrupted child"
 
@@ -2298,12 +2326,15 @@ def test_a_launch_interrupted_after_the_slot_is_taken_is_recoverable(
     resumed.reconcile_startup(decide=lambda _orphan: "resume")
     again = resumed.launch_ready_children()
     assert again.launched == ("child-a",), again.withheld
-    assert harness.rows()["child-a"]["pane_id"]
+    assert (
+        LIFECYCLE.read_session_pane_id(
+            harness.herdr, root=harness.repo, run_id=RUN_ID, row_id="child-a"
+        )
+        == "pane-child-a"
+    )
 
 
-def test_resuming_an_interrupted_launch_goes_through_the_launcher_label_recovery(
-    tmp_path: Path,
-) -> None:
+def test_resuming_an_interrupted_launch_reads_the_live_owner_and_recovers(tmp_path: Path) -> None:
     """The window where a session exists and the register does not know its pane.
 
     The launcher already survives this: a ``launching`` row with no pane is its label-recovery
@@ -2324,11 +2355,10 @@ def test_resuming_an_interrupted_launch_goes_through_the_launcher_label_recovery
 
     resumed = harness.restart_coordinator()
     resumed.reconcile_startup(decide=lambda _orphan: "resume")
-    resumed.launch_ready_children()
+    assert resumed.launch_ready_children().launched == ("child-a",)
 
     assert label in harness.herdr.label_lookups
-    assert harness.wrapper.launches == launches_before, "recovery adopted the existing session"
-    assert harness.rows()["child-a"]["pane_id"] == "pane-child-a"
+    assert harness.wrapper.launches == launches_before
 
 
 def test_abandoning_an_interrupted_launch_frees_the_slot_and_makes_spend_knowable(
@@ -2343,15 +2373,13 @@ def test_abandoning_an_interrupted_launch_frees_the_slot_and_makes_spend_knowabl
     resumed = harness.restart_coordinator()
     resumed.reconcile_startup(decide=lambda _orphan: "abandon")
 
-    row = harness.rows()["child-a"]
-    assert row["coordinator_disposition"]["state"] == "abandoned"
-    assert row["coordinator_disposition"]["never_ran"] is True
-    assert row["tokens_observed"] == 0
+    assert ADMISSION.occupancy()[1] == 1
+    assert harness.rows()["child-a"]["coordinator_disposition"]["never_ran"] is True
+    assert harness.rows()["child-b"]["admission"] == "reserved"
     assert resumed.spend_status()[0] == "ok"
-    assert resumed.launch_ready_children().launched == ("child-b",)
 
 
-def test_a_child_that_did_get_a_session_is_not_declared_to_have_spent_nothing(
+def test_a_child_that_did_get_a_session_is_stopped_before_abandonment(
     tmp_path: Path,
 ) -> None:
     """The never-ran shortcut is evidence, not convenience, so it must refuse to guess."""
@@ -2364,10 +2392,10 @@ def test_a_child_that_did_get_a_session_is_not_declared_to_have_spent_nothing(
     )
 
     harness.coordinator.abandon_child("child-a", "operator changed the outcome")
-
-    row = harness.rows()["child-a"]
-    assert row["coordinator_disposition"]["never_ran"] is False
-    assert row.get("tokens_observed") is None, "a child that ran keeps its spend unknown"
+    disposition = harness.rows()["child-a"]["coordinator_disposition"]
+    assert disposition["never_ran"] is False
+    assert disposition["producer_stopped"] is True
+    assert "tab-child-a" in harness.herdr.closed
 
 
 def test_a_pane_less_launching_row_with_a_discoverable_session_blocks_the_next_child(
@@ -2396,7 +2424,7 @@ def test_a_pane_less_launching_row_with_a_discoverable_session_blocks_the_next_c
 
     row = harness.rows()["child-a"]
     assert row["phase"] == "launching"
-    assert not row.get("pane_id")
+    assert REGISTER.REMOVED_ROW_COLUMNS.isdisjoint(row)
 
     # The crashed launch really did create a session, discoverable by its run-bound label --
     # exactly what the launcher's own recovery test proves it can find.
@@ -2406,33 +2434,11 @@ def test_a_pane_less_launching_row_with_a_discoverable_session_blocks_the_next_c
     )
 
     state, detail = harness.coordinator.spend_status()
-    assert state == "unknown", detail
+    assert state == "unknown" and "live owner could not establish" in detail
 
-    with pytest.raises(RUNNER.SpendUnobservableError):
+    with pytest.raises(RUNNER.SpendUnobservableError, match="live owner could not establish"):
         harness.coordinator.launch_child(built.children[1])
     assert harness.wrapper.launches == ["child-a"], "no native launch reached the ceiling"
-
-
-def test_removing_the_discovery_check_lets_a_discoverable_session_ride_free(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Removal proof: without discovery, the ambiguous row is silently charged zero forever."""
-    harness = Harness(tmp_path, per_vendor=2, aggregate=2)
-    harness.bootstrap([_child("child-a"), _child("child-b")])
-    with _failing_at("after_launcher_returned", harness):
-        harness.coordinator.launch_ready_children()
-    label = LIFECYCLE.task_label(RUN_ID, "child-a")
-    harness.herdr.labels[label] = LIFECYCLE.LaunchIdentity(
-        "claude-1", "ws-1", "tab-child-a", "pane-child-a", True
-    )
-    monkeypatch.setattr(
-        RUNNER.Coordinator, "_native_session_may_exist", lambda self, rid, row: False
-    )
-
-    state, _detail = harness.coordinator.spend_status()
-    assert state == "ok", (
-        "the guard test would not fail without the fix -- proves it is load-bearing"
-    )
 
 
 def test_a_dispatch_whose_final_protocol_send_failed_is_offered_and_redelivered(
@@ -2466,7 +2472,12 @@ def test_a_dispatch_whose_final_protocol_send_failed_is_offered_and_redelivered(
 
     row = harness.rows()["child-a"]
     assert row["phase"] == "ready"
-    assert row["pane_id"] == "pane-child-a"
+    assert (
+        LIFECYCLE.read_session_pane_id(
+            harness.herdr, root=harness.repo, run_id=RUN_ID, row_id="child-a"
+        )
+        == "pane-child-a"
+    )
     assert isinstance(row["completion_sentinel"], dict)
     assert not isinstance(row.get("artifact_protocol_sent"), dict)
 
@@ -2519,7 +2530,12 @@ def test_a_receipt_sealed_before_its_sentinel_write_landed_is_offered_and_bound(
 
     row = harness.rows()["child-a"]
     assert row["phase"] == "ready", "readiness itself already completed before the crash"
-    assert row["pane_id"] == "pane-child-a"
+    assert (
+        LIFECYCLE.read_session_pane_id(
+            harness.herdr, root=harness.repo, run_id=RUN_ID, row_id="child-a"
+        )
+        == "pane-child-a"
+    )
     assert isinstance(row.get(COMPLETION.DISPATCH_RECEIPT_KEY), dict), "the receipt is sealed"
     assert not isinstance(row.get("completion_sentinel"), dict)
     assert not isinstance(row.get("artifact_protocol_sent"), dict)
@@ -2639,15 +2655,15 @@ def test_abandoning_a_live_pane_that_does_close_correctly_frees_both_gates(
     assert "child-a" not in harness.coordinator.outstanding_writers()
 
 
-def test_a_dispatch_stalled_before_readiness_was_confirmed_is_offered_but_only_abandonable(
+def test_a_dispatch_stalled_before_readiness_was_confirmed_is_offered_and_retried_by_label(
     tmp_path: Path,
 ) -> None:
     """The near neighbour: a pane exists, but nothing sealed yet exists to resend safely.
 
     A trust prompt (or a readiness timeout) leaves a live pane with no completion sentinel and no
-    dispatch receipt. There is no idempotent identity this coordinator could replay, so the only
-    supported decision is abandon -- and the row must still be visible and its abandon must still
-    unblock the run's spend, which the old "no pane" definition could not do at all.
+    dispatch receipt. The coordinator cannot replay a task, but it can adopt the run-bound session
+    and retry readiness without launching a replacement. The row must still be visible, and an
+    explicit abandon must still unblock the run's spend.
     """
     harness = Harness(tmp_path)
     harness.bootstrap([_child("child-a")])
@@ -2659,7 +2675,12 @@ def test_a_dispatch_stalled_before_readiness_was_confirmed_is_offered_but_only_a
 
     row = harness.rows()["child-a"]
     assert row["phase"] == "launching"
-    assert row["pane_id"] == "pane-child-a"
+    assert (
+        LIFECYCLE.read_session_pane_id(
+            harness.herdr, root=harness.repo, run_id=RUN_ID, row_id="child-a"
+        )
+        == "pane-child-a"
+    )
     assert not isinstance(row.get("completion_sentinel"), dict)
 
     offered = harness.coordinator.interrupted_dispatches()
@@ -2669,8 +2690,8 @@ def test_a_dispatch_stalled_before_readiness_was_confirmed_is_offered_but_only_a
     resumed.reconcile_startup(decide=lambda _orphan: "resume")
     second = resumed.launch_ready_children()
     assert second.launched == ()
-    assert "readiness was never confirmed" in second.withheld["child-a"]
-    assert harness.wrapper.launches == ["child-a"], "no automatic replay was attempted"
+    assert "blocked on a workspace trust prompt" in second.withheld["child-a"]
+    assert harness.wrapper.launches == ["child-a"], "the existing session was adopted by label"
 
     resumed.abandon_child("child-a", "operator resolved the trust prompt out of band")
     state, detail = resumed.spend_status()
@@ -2968,7 +2989,13 @@ def test_a_takeover_cannot_finish_while_the_original_coordinator_is_inside_the_n
     assert not second_errors, second_errors
     assert harness.wrapper.launches == ["child-a"], "exactly one native launch reached the launcher"
     row = harness.rows()["child-a"]
-    assert isinstance(row.get("pane_id"), str) and row["pane_id"]
+    assert REGISTER.REMOVED_ROW_COLUMNS.isdisjoint(row)
+    assert (
+        LIFECYCLE.read_session_pane_id(
+            harness.herdr, root=harness.repo, run_id=RUN_ID, row_id="child-a"
+        )
+        == "pane-child-a"
+    )
     # Whatever the second coordinator found once unblocked -- a row already fully dispatched, or
     # one it could only offer redelivery or an unconfirmed-dispatch refusal for -- it never reached
     # the native launcher a second time, which ``harness.wrapper.launches`` above already proves.
@@ -3235,7 +3262,7 @@ def test_a_stale_record_pointing_at_a_reused_pid_is_not_adopted_or_signalled(
     harness.coordinator.reconcile_startup(decide=lambda _orphan: "abandon")
 
     stray = harness.supervisor.start(["some-other-program", "--not-a-subscriber"])
-    wanted = RUNNER.subscriptions_for(harness.repo, run_id=RUN_ID)
+    wanted = RUNNER.subscriptions_for(harness.repo, run_id=RUN_ID, herdr=harness.herdr)
     RUNNER.write_subscriber_record(
         RUN_ID,
         {

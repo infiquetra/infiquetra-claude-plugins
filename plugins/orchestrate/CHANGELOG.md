@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.12.0] - 2026-08-15
+
+### Changed
+
+- The durable register now stores authored intent and outcomes only. Terminal session, workspace,
+  tab, pane, working-directory, and observed-state facts remain with the live terminal substrate
+  instead of being copied into row columns that can become stale.
+- Register writes reject former live-session columns, and public row reads raise when a caller asks
+  for one. Each former column has one named reader that asks a fresh Herdr snapshot. Successful
+  absence and query failure remain distinct, with no cache or process-local session-fact store.
+- Schema version 1 registers are normalized before use and migrate to schema version 2 on their
+  next ordinary write. Recovery asks the run-bound live owner, so an expired occupied slot can be
+  reclaimed and queued work can advance without a one-way capacity ratchet.
+- Reaping a completed dispatch uses the authenticated landing directory sealed into its dispatch
+  receipt. The terminal session's current directory remains live state and is not copied back into
+  the register.
+- The approved runtime route remains durable because planning, admission, and launch all produce it
+  from authored intent.
+
 ## [0.11.0] - 2026-08-15
 
 Six defects in how the assembled control flow meets the modules it composes. Every one of them is

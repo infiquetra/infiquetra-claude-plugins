@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 import register as register_store
+import session_lifecycle
 
 ACTIVE_PHASES = frozenset({"launching", "launched", "ready", "working"})
 TERMINAL_PHASES = register_store.TERMINAL_PHASES
@@ -115,7 +116,7 @@ def _admission_doc(doc: Mapping[str, Any]) -> dict[str, Any]:
 def _exact_positive_int(value: Any, *, name: str, path: Path) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise AdmissionError(f"host policy {path} field {name!r} must be a positive integer")
-    return value
+    return int(value)
 
 
 def read_host_policy() -> HostPolicy | None:
@@ -669,6 +670,10 @@ def _is_dead(
     reservation: Mapping[str, Any],
     row: Mapping[str, Any],
     *,
+    root: Path,
+    run_id: str,
+    row_id: str,
+    herdr: session_lifecycle.HerdrControl,
     now: float,
     hold_lease: float,
 ) -> bool:
@@ -680,27 +685,45 @@ def _is_dead(
     """
     if row.get("phase") in TERMINAL_PHASES:
         return True
-    observed_terminal = row.get("observed_state") in TERMINAL_OBSERVED
-    source = row.get("observed_state_source")
-    directly_observed = (
-        observed_terminal and isinstance(source, str) and source.startswith(DIRECT_OBSERVED_PREFIX)
-    )
-    if directly_observed:
-        return True
     state = str(reservation.get("state") or "reserved")
     if state == "abandoned":
         return True
     if state == "reserved":
         lease_until = reservation.get("lease_until")
         return lease_until is not None and now >= float(lease_until)
-    if state == "held":
-        held_at = reservation.get("held_at", reservation.get("reserved_at"))
-        started = float(held_at) if isinstance(held_at, (int, float)) else now
-        expired = (now - started) >= hold_lease
-        if observed_terminal and expired:
+    if state != "held":
+        return False
+
+    try:
+        observed = session_lifecycle.read_session_observed_state(
+            herdr, root=root, run_id=run_id, row_id=row_id
+        )
+    except session_lifecycle.SessionLifecycleError as exc:
+        raise AdmissionError(
+            f"could not ask the terminal multiplexer whether reservation {row_id!r} is dead: {exc}"
+        ) from exc
+    observed_terminal = observed in TERMINAL_OBSERVED
+    if observed_terminal:
+        source = session_lifecycle.read_session_observed_state_source(
+            herdr, root=root, run_id=run_id, row_id=row_id
+        )
+        if isinstance(source, str) and source.startswith(DIRECT_OBSERVED_PREFIX):
             return True
-        return not row.get("pane_id") and expired
-    return False
+    held_at = reservation.get("held_at", reservation.get("reserved_at"))
+    started = float(held_at) if isinstance(held_at, (int, float)) else now
+    expired = (now - started) >= hold_lease
+    if not expired:
+        return False
+    try:
+        pane_id = session_lifecycle.read_session_pane_id(
+            herdr, root=root, run_id=run_id, row_id=row_id
+        )
+    except session_lifecycle.SessionLifecycleError as exc:
+        raise AdmissionError(
+            f"could not ask the terminal multiplexer whether reservation {row_id!r} still has "
+            f"a pane: {exc}"
+        ) from exc
+    return pane_id is None
 
 
 def reclaim_dead_slots(
@@ -709,11 +732,13 @@ def reclaim_dead_slots(
     run_id: str,
     lease_seconds: float = DEFAULT_LEASE_SECONDS,
     now: float | None = None,
+    herdr: session_lifecycle.HerdrControl | None = None,
 ) -> list[str]:
     """Release reservations whose holder is abandoned, expired, or observed dead."""
     claimed = register_store.canonical_work_location(root)
     run_id = register_store._safe_run_id(run_id)
     when = time.time() if now is None else now
+    control = herdr or session_lifecycle.HerdrControl()
     reclaimed: list[str] = []
     with admission_locked():
         with register_store.generation_locked(run_id):
@@ -725,7 +750,14 @@ def reclaim_dead_slots(
             for row_id, reservation in state["reservations"].items():
                 row = rows.get(row_id, {})
                 if isinstance(reservation, dict) and _is_dead(
-                    reservation, row, now=when, hold_lease=lease_seconds
+                    reservation,
+                    row,
+                    root=claimed,
+                    run_id=run_id,
+                    row_id=str(row_id),
+                    herdr=control,
+                    now=when,
+                    hold_lease=lease_seconds,
                 ):
                     reclaimed.append(str(row_id))
                     updates[str(row_id)] = {"admission": "reclaimed"}

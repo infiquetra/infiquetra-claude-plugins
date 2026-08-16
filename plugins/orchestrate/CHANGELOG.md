@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.1.1] - 2026-08-16
+
+### Fixed
+
+- **The agent-session wrapper is `agents`, not `agent`.** The operator renamed it because `agent`
+  now belongs to another tool on the machine. Orchestrate hardcoded the old name in `agent_argv`,
+  and the failure would not have been a missing command — it would have launched the other tool with
+  flags it has never heard of. The name is now resolved and checked before use, overridable with
+  `ORCHESTRATE_AGENT_LAUNCHER`, and a wrapper that is not on `PATH` produces one clear sentence
+  instead of a confusing wrong-program run. `agents --crews` corrected in the command and the skill.
+
 ## [1.1.0] - 2026-08-16
 
 ### Added

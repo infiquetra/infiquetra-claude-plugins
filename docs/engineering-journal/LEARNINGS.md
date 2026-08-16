@@ -21,6 +21,34 @@
 
 ## 2026-08-16
 
+### A hardcoded command name fails by running someone else's program  {#bare-command-names-are-a-namespace-you-do-not-own}
+
+**Context.** The operator installed Cursor, which claimed `agent` on `PATH`, and renamed the local
+agent-session wrapper to `agents`. Orchestrate hardcoded `"agent"` as `argv[0]`.
+
+**Evidence.** `head -3 $(which agent)` shows `export CURSOR_INVOKED_AS=...`; the wrapper now answers
+to `agents`. Orchestrate's `agent_argv` built `["agent", "--no-focus", "--current", "--herdr", ...]`.
+
+**Mechanism.** A bare command name is a lookup into a namespace the program does not own, and other
+software can take it. The dangerous case is not the name disappearing — that fails loudly — but the
+name resolving to something else, which runs. Orchestrate would have executed Cursor with a dozen
+unrecognised flags and reported whatever came back.
+
+**Fix.** `launcher()` reads `ORCHESTRATE_AGENT_LAUNCHER`, defaults to `agents`, and checks
+`shutil.which` before use, so an unresolvable wrapper is one sentence rather than a wrong-program
+run. orchestrate 1.1.1.
+
+**Validation.** `agent_argv` returns `agents` as `argv[0]`; an unset wrapper raises the explicit
+error; and the exact flag set orchestrate passes was dry-run against `agents` and resolved correctly.
+Checked the rest of the repo: orchestrate is the only plugin that invokes this wrapper.
+
+**Generalizable rule.** When shelling out to a tool that is not part of the operating system, resolve
+the name through one overridable constant and verify it exists before use. The check costs three
+lines and converts the worst failure mode — silently driving the wrong program — into a readable one.
+
+**Refs.** [[#plugin-paths-authored-from-inside-its-own-repo]] — the same lesson about paths rather
+than names.
+
 ### An interactive lifecycle command, dispatched to a background tab, waits forever  {#dispatched-saga-commands-block-on-their-own-offers}
 
 **Context.** `/orchestrate` launches saga commands into herdr tabs the operator is not watching.

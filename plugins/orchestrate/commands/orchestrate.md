@@ -56,9 +56,9 @@ order — not a checklist, and stop as soon as the answers determine the table:
    reviewed plan document does not.
 2. **Which phases?** `/plan`, `/doc-review`, `/work`, `/code-review`, `/qa`, `/investigate` — or a
    plain prompt with no saga command at all. This is the question that shapes everything after it.
-3. **Which vendors may be used at all?** Run `agent --crews` for what this machine actually has, and
-   offer that. One allow-list for the whole orchestration — **not one vendor per unit**. Never
-   hardcode a roster.
+3. **Which vendors may be used at all?** Run `agents --crews` for what this machine actually has,
+   and offer that. One allow-list for the whole orchestration — **not one vendor per unit**. Never
+   hardcode a roster. (The wrapper is `agents`, with an `s` — plain `agent` is a different tool.)
 4. **Does `/plan` want competing plans?** One vendor plans by default. The operator may instead have
    two or three vendors each write a plan independently, in their own worktrees, with no knowledge
    of each other. If so, **this session reads all of them and writes the merged plan itself** — no

@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.12.0] - 2026-08-16
+
+### Changed - retire the `hermes-task` / `hermes-not-actionable` dispatch markers
+
+- `_ISSUE_TYPE_LABELS` no longer applies either marker. The Hermes orchestrator that read them was frozen on 2026-07-18 (empty repository list, plan phase off, webhook relay stopped and disabled), so they marked cards for a consumer that cannot run.
+- Interactive `issue create` now applies the **canonical type labels** instead. That path previously guaranteed only the dispatch marker — not even the type label — so a card whose browser template failed to prefill landed untyped.
+- `_HERMES_ACTIONABLE_TYPES` renamed to `_CONTRACT_ISSUE_TYPES`: it names the types that carry the eight-section card contract, which is what it has actually meant since the orchestrator froze.
+- Generated template reference: `Hermes actionable: yes/no` becomes `Card contract: required/not required`.
+- Prompts, skills, the operator agent, and the triage command updated to match. The claim that "the orchestrator silently skips cards without `hermes-task`" is removed — nothing filters on the label any more.
+
+Paired with the `infiquetra-sdlc` change that removes both labels from the five issue templates. Writers stop here; the label definitions and the GitHub-side labels are retired separately.
+
 ## [2.11.0] - 2026-08-15
 
 ### Fixed - interactive `issue create` now validates the body before carding it

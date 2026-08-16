@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import sdlc_manager  # noqa: E402
 
 
-# Updated 2026-06-14 for the U8 context-package contract: a hermes-task card now
+# Updated 2026-06-14 for the U8 context-package contract: an actionable card now
 # carries the always-required Intent (R1) + Context library links (R4), and the
 # acceptance criteria name a runnable check (R2/KTD8). This is a medium-risk card
 # in its test, so the risk-conditional fields (R5-R7) are not required.
@@ -86,7 +86,7 @@ def test_prepare_olympus_writes_ready_draft_and_sidecar(tmp_path) -> None:
     assert sidecar["state"] == "ready_to_create"
     assert sidecar["repo"] == "hermes-claude-code-router"
     assert sidecar["readiness"]["passed"] is True
-    assert sidecar["labels"] == ["capability", "hermes-task", "needs-plan"]
+    assert sidecar["labels"] == ["capability", "needs-plan"]
     assert sidecar["handoff_maturity"] == "requirements-ready"
     assert "### Handoff maturity" in draft.read_text()
 
@@ -272,9 +272,7 @@ def test_olympus_requires_actionable_labels_and_risk(tmp_path) -> None:
     )
 
     draft.write_text(
-        draft.read_text().replace(
-            "labels: capability, hermes-task, needs-plan", "labels: capability"
-        )
+        draft.read_text().replace("labels: capability, needs-plan", "labels: capability")
     )
     sidecar_path = draft.with_suffix(".json")
     sidecar = json.loads(sidecar_path.read_text())

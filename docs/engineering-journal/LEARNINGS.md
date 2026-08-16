@@ -21,6 +21,36 @@
 
 ## 2026-08-16
 
+### A plan can re-commit the mistake its own history section describes  {#a-plan-can-recommit-its-own-recorded-mistake}
+
+**Context.** A successor plan was written to reach first use of the orchestrate plugin. Its history
+section recorded, correctly, that an earlier branch had been closed because "six of its seven
+blocking defects live in code the corrected boundary deletes." Two paragraphs later the same plan
+assigned three defects to its first unit, then said its second unit "retires defects 1 and 2 at the
+source" — scheduling a careful repair of code the next unit removes.
+
+**Evidence.** Doc review of `docs/plans/2026-08-16-orchestrate-path-to-first-use.md`, finding D1,
+recorded in `docs/reviews/2026-08-16-orchestrate-path-to-first-use-review.md`. Settled by reading the
+repository rather than the prose: both defects live in `find_orphan`
+(`runner.py:949`), whose only real caller is the subscriber supervisor at `runner.py:1792`. That scan
+exists solely because the subscriber is a bare process found by searching the process table; once it
+becomes a control-plane-managed pane it is found by label and the scan is deleted outright.
+
+**Mechanism.** Writing the lesson down does not install it. A history section is narrative — it is
+read once while drafting and never re-applied to the decisions further down the same document,
+because by then the author is reasoning about units rather than about the mistake. The defect
+survives the retelling because nothing mechanically connects the two halves of the document.
+
+What catches it is not memory but a specific question asked of each planned repair: **does the unit
+that comes after this one delete the code being repaired?** That question has a checkable answer —
+find the symbol's definition and its callers — and it does not depend on remembering anything.
+
+**Generalizable rule.** Before scheduling a repair, locate the repaired code's callers and check
+whether a later unit removes them; a plan's own history section is evidence of a pattern, not a
+guard against it.
+
+**Refs.** LEARNINGS [`{#session-absence-is-not-empty-review}`](LEARNINGS.md#session-absence-is-not-empty-review) for the defect class those two findings belong to — a query that could not be completed read as a completed query that found nothing.
+
 ### Invalid activity telemetry is not silence  {#invalid-activity-is-not-silence}
 
 **Context.** Mirror supervision uses the terminal pane's output revision to distinguish a thinking

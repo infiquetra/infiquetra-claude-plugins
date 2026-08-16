@@ -76,7 +76,13 @@ review machinery, applied to this plan's own execution.
 ## Requirements
 
 **R1.** The durable register persists intent and outcome only. `pane_id`, `tab_id`, `cwd`, `pid`,
-`observed_state` and `vendor` are no longer written to or read from a row.
+`observed_state` and `observed_state_source` are no longer written to or read from a row.
+
+> **Amended during execution.** This requirement originally listed `vendor` among the removals. That
+> was wrong. Every writer of `vendor` traces to planning, admission, queue promotion, or an explicit
+> operator override, and none derives it from an observation of a live session — so it is authored
+> intent and it stays in the identity columns. Two reviewers verified this independently against the
+> writers and neither found a counterexample. Removing it would have deleted approved routing intent.
 
 **R2.** Session facts are answered by the multiplexer at read time, through one function per fact, so
 there is a single place each question is decided.
@@ -110,7 +116,16 @@ iteration, independent of the rank that class was given.
 **R12.** A unit may escalate once. The budget is a constant in code, not a parameter.
 
 **R13.** The consensus panel is separable from the loop bound and is configured per layer: required
-for code review and qa, optional for doc review, absent for the orchestration-plan review.
+for code review and qa, optional for doc review, absent for the orchestration-plan review. Authority
+is asymmetric: proceeding requires a complete response from **every** constructed voting seat, while
+one blocking rank halts. A declared roster's denominator is never recomputed from the responses that
+arrived.
+
+> **Amended during execution.** The original wording said only that losing a seat *below quorum*
+> halts. That is too weak for this plan's own absence rule: a three-seat roster with a quorum of two
+> that loses one seat is still at quorum, yet the decision is now made by two seats where three were
+> declared — authority over a smaller denominator, which is the failure the requirement exists to
+> prevent. A seat that did not answer is not a seat that abstained.
 
 **R14.** A dimension declares its instrument — gate or score. Where a layer carries both, the rank
 binds the decision and the score records convergence.
@@ -168,6 +183,16 @@ kind of fuzzy match that fails silently and would make the escalation trigger un
 `second_opinion.dispatch_second_opinion` already takes `runner: engine_dispatch.Runner` as an
 injected protocol (`plugins/saga/scripts/second_opinion.py:971`). The change is an additional runner
 plus its selection, leaving the 1,496-line module's contract intact.
+
+> **Relaxed during execution, by operator ruling.** The constraint made the unit unbuildable as
+> specified. A managed terminal session is asynchronous; the runner protocol is one synchronous call
+> that must return a terminal result, and the claim store's exits were both terminal. So *launched
+> and still running* — the normal state for a review's entire duration — had no representation, was
+> classified as a death, and spent the at-most-once claim, making the reviewer's real findings
+> unreachable. The module may now gain a **non-terminal** claim state and a collect entry point. The
+> smaller fix of not marking the claim terminal on a missing result was tested and rejected: without
+> a non-terminal state, the next dispatch still sees an existing claim and refuses to re-enter the
+> runner.
 
 ---
 
@@ -250,6 +275,16 @@ a substrate column.
 than being silently accepted; a row round-trips through persistence carrying intent and outcome only;
 an abstract-syntax-tree walk asserts no module writes a removed column, so the guard is structural
 rather than conventional.
+
+> **Merged with U1 during execution, by operator ruling.** These two are now one unit. Building the
+> removal alone produced a change that had nowhere to send a decision: with the columns gone and the
+> asking not yet built, every call site could only consult a stand-in or refuse. The delivered
+> attempt did both — it replaced the durable copy with a process-local dictionary that has no expiry
+> and no invalidation, and it deleted five sites that already asked the multiplexer. That is the
+> shadow this plan removes, re-created with a shorter lifetime, which KTD2 rejected in advance. A
+> read-through landing beside a store that remembers leaves two answers to every question with no
+> rule for which wins, so the store is deleted rather than superseded, in the same change that
+> builds the asking.
 
 ### U2. Session facts are asked, not stored
 

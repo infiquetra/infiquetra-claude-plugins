@@ -2,6 +2,46 @@
 
 ## 2026-08-15
 
+### Removing a stored fact and building the way to ask for it are one change  {#removal-and-read-through-are-one-change}
+
+**Date.** 2026-08-15
+
+**Decision.** When a durable record of a live fact is removed, the mechanism that asks the fact's
+owner ships in the **same change**. They are not sequential units.
+
+**Context.** A plan split them: remove the stored session columns first, add the read-through second.
+The first half was built and reviewed. With the columns gone and the asking deferred, every decision
+site had exactly two behaviours available — consult a stand-in, or refuse — and the delivered change
+did both. The stand-in was a module-level dictionary with no expiry, no invalidation, and no way to
+record that a fact had become unavailable; the refusals landed on recovery paths and wedged them, so
+a concurrency slot could no longer be released.
+
+**Rationale.** The stored copy is not the problem by itself; the problem is a decision made from a
+fact nobody asked for. Removing the storage without providing the asking does not remove that
+property, it relocates it — from a file to memory, with a shorter lifetime and no upper bound on the
+staleness. A prior decision in this same plan had already rejected a per-read facts object for
+exactly this reason and rejected time-to-live caching because "a TTL is a shadow whose staleness is a
+tunable." The store that was built has no TTL at all: within one process it is permanent.
+
+**Rejected alternatives.**
+
+- *Patch the halfway state — restore the deleted asking sites and keep the store for the rest.* Once
+  every site that has an owner asks it, the read-through is substantially built anyway, so this is
+  the merged unit under a name that hides its scope. It also still ships a store the next unit must
+  delete.
+- *Ship the halfway state and file the defects.* The suite passed 6,162 tests over a one-way ratchet,
+  because a fixture supplied the fact production has to ask for. Green tests on an arrangement that
+  cannot reach the broken state are not evidence.
+
+**Consequences.** A unit that removes durable state now carries the replacement query. Reviews of
+such a unit should check that no module-level mutable state retains the removed fact, rather than
+only that the schema no longer carries it.
+
+**Revisit when.** A removal is genuinely additive — the stored fact has no live owner to ask, so
+there is no read-through to build and nothing to sequence.
+
+---
+
 ### A review is finished only when someone says the finding is fixed  {#resolution-is-authored-not-inferred}
 
 **Date.** 2026-08-15

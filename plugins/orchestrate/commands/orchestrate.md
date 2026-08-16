@@ -48,6 +48,11 @@ choosing between options you have already thought about, not doing the thinking.
 **Ask one question per turn** with `AskUserQuestion`. For an abstract fork, put a small worked
 picture in the `preview` field — a table, a before-and-after, an arrow chain. Labels alone lose.
 
+**A note attached to an answer is an instruction, not a comment.** The operator can press `n` and
+write "use grok for the second plan instead of codex", or "qwen not opencode", or "drop the third
+reviewer". Apply it, say in one line what you changed, and carry it into the table. A note that
+contradicts the option they picked wins — they wrote it after seeing the options.
+
 **If a question is declined, do not stall and do not re-ask.** Take the most defensible answer, say
 in one line which you took and why, and continue. The table is the real gate and every row is
 editable there.
@@ -66,10 +71,20 @@ order — not a checklist, and stop as soon as the answers determine the table:
 2. **Which phases?** `/plan`, `/doc-review`, `/work`, `/code-review`, `/qa`, `/investigate` — or a
    plain prompt with no saga command at all. This is the question that shapes everything after it.
 3. **Which vendors may be used at all?** Get the list from `python3 "$S" roster` — never from
-   `agents --crews`. A crew is the operator's own saved workspace layout and has nothing to do with
-   orchestration; offering it silently drops installed agents. One allow-list for the whole
-   orchestration, **not one vendor per unit**. Say which entries carry no model or effort control,
-   because those rows will have blank tier columns.
+   `agents --crews`, which is the operator's own saved workspace layout and has nothing to do with
+   orchestration. `roster` reports the vendors orchestrate knows how to drive **that are available
+   on this machine**; it is an intersection, and both halves matter. One allow-list for the whole
+   orchestration, **not one vendor per unit**.
+
+   **Every vendor can be given a model and an effort.** Where the command line has no flag for it,
+   the unit's `setup` carries a slash command instead. Never present a vendor as untierable.
+
+   **Never write a model name from memory.** Run `python3 "$S" roster --models`, which asks each
+   vendor that can answer. `grok` and `opencode` can; `claude` documents its aliases in
+   `claude --help` (`fable`, `opus`, `sonnet`, and full names); the rest cannot answer, and for
+   those you ask the operator rather than guessing. A recalled model name that has since been
+   renamed does not fail politely — the session starts on some default and nobody is told.
+   `opencode` needs `provider/model`, not a bare name.
 4. **Does `/plan` want competing plans?** One vendor plans by default. The operator may instead have
    two or three vendors each write a plan independently, in their own worktrees, with no knowledge
    of each other. If so, **this session reads all of them and writes the merged plan itself** — no
@@ -128,7 +143,7 @@ vendors allowed: claude, codex, grok, qwen        reviewers: 2 on the plan, 2 on
  p1b    plan #48, independently         /plan          codex     gpt-5.6-sol   xhigh   -
  (merge of p1a and p1b happens in this session — no unit)
  p2a    tear up the merged plan         /doc-review    grok      grok-4.6      xhigh   p1a p1b
- p2b    tear up the merged plan         /doc-review    qwen      -             -       p1a p1b
+ p2b    tear up the merged plan         /doc-review    qwen      qwen3-max     high*   p1a p1b
  p3     build it                        /work          <from the plan>                 p2a p2b
  p4a    review the build                /code-review   <from the plan>                 p3
  p4b    review the build                /code-review   <from the plan>                 p3
@@ -142,8 +157,15 @@ Rules for the table:
   own output to bless.
 - **`after` is the only ordering.** Units with no dependency run at the same time.
 - **Every vendor in the table must be in the allow-list** from question 3.
+- **Every row carries a model and an effort.** A `*` marks an effort delivered by a slash command
+  in `setup` rather than a launch flag — same result, different door. Never leave a tier blank.
 
 Then ask to approve, edit, or cancel. **Nothing launches before the operator says yes.**
+
+**Editing is plain language, not a form.** "Make p1b grok", "swap the two reviewers", "drop p2b",
+"opus on the builder", "add a third plan from qwen" — take it, redraw the whole table, and show it
+again. Any cell is fair game, including which vendor sits in a competing-plan row. Redraw rather
+than describing the change, so what they approve is what runs.
 
 ## Phase 4 — run it
 
@@ -158,7 +180,9 @@ do not belong in the JSON. `task` is the literal text sent to the session.
   "units": [
     {"name": "p1a", "vendor": "claude", "model": "opus", "effort": "high",
      "task": "/plan #48", "after": []},
-    {"name": "p2", "vendor": "grok", "model": "grok-4.6", "effort": "xhigh",
+    {"name": "p2a", "vendor": "grok", "model": "grok-4.6", "effort": "xhigh",
+     "task": "/doc-review docs/plans/....md", "after": ["p1a"]},
+    {"name": "p2b", "vendor": "qwen", "model": "qwen3-max", "setup": ["/effort high"],
      "task": "/doc-review docs/plans/....md", "after": ["p1a"]}
   ]
 }

@@ -97,10 +97,192 @@ earlier: one independent judgment would wear a larger denominator's authority.
 **Revisit when.** A panel needs explicit abstention with independent evidence that the lens does
 not apply. That would require a typed abstention which removes a seat before the roster is sealed,
 not omission after responses begin.
+### The documented launch command is the claim protocol's owner  {#documented-command-owns-the-claim}
+
+**Decision.** The launch and collect commands printed in the review skills
+are the claim protocol's entry point. They reserve a pending slot before
+start, refuse a second start of the same request, go through
+`engine_dispatch.dispatch` so the tripwire arms and an `engine` fact is
+written, and collect advances the claim to `collected`. A start that
+never produces a session releases the slot.
+
+**Rejected: leave the commands as a thin runner wrapper and keep the
+Python helper as the only protocol owner.** The skills tell an agent to
+run the commands. A protocol the documented path does not execute is not
+the protocol.
+
+**Revisit when** a native session API replaces the `agent` wrapper.
+
+**Refs.** [`{#dispatch-pending-status}`](#dispatch-pending-status).
+
+### Pending engine facts are excluded from terminal samples  {#pending-facts-excluded-from-terminal-samples}
+
+**Decision.** Staleness and promotion drop `status=pending` engine facts
+before they compute success or failure. A launch that later collects
+still contributes its terminal `ok` (or failure) fact; the pending
+marker is not a run that happened and did not qualify.
+
+**Rejected: reduce the facts for one execution to their latest status.**
+Existing ledgers reuse `execution_id` across independent runs. Collapsing
+on that key would hide real failures that share an identifier.
+
+**Revisit when** each launch writes a unique identity that the matching
+collect reuses and that no other launch can share.
+
+**Refs.** [`{#documented-command-owns-the-claim}`](#documented-command-owns-the-claim).
+
+### Dispatch itself can say a launch started and has not resolved  {#dispatch-pending-status}
+
+**Decision.** The dispatch layer accepts runner status `pending`. Arming
+authority stays in `engine_dispatch.dispatch`. A second-opinion launch
+goes through that function with the real runner, so the tripwire wraps
+the vendor start and a supplied ledger records an `engine` fact for the
+launch whether or not anyone later collects.
+
+A claim with a usable result is `collected` until
+`complete_second_opinion`. That interval is not `requested`. The pending
+slot is reserved before `start`.
+
+**Rejected: move arming and run-fact writes into `second_opinion`.**
+That would retire the rule that the dispatch layer arms. The same
+missing state, one layer down, is the smaller change.
+
+**Rejected: keep the tripwire armed for the whole session lifetime.**
+Arming still matches the duration of the adapter call. The durable
+signal that a launch happened is the run-fact, not a tripwire left
+armed after dispatch has returned.
+
+**Revisit when** collect needs a live liveness probe of a session that
+has already been started.
+
+**Refs.** [`{#second-opinion-pending-until-collected}`](#second-opinion-pending-until-collected).
+
+### A launched second opinion is pending until collected  {#second-opinion-pending-until-collected}
+
+**Decision.** A managed-session second opinion that has started and has not
+yet written a result is claim state `pending`. That state is not terminal.
+`dispatch_second_opinion` launches and leaves the claim pending.
+`collect_second_opinion` reads the later result and moves the claim to
+`requested` (ready to complete) or `unavailable`. `recover_pending` on a
+`requested` claim is still interrupt recovery and does not collect; on a
+`pending` claim it collects.
+
+A pending claim that is never collected stays pending until
+`abandon_pending_second_opinion`, which records `NEVER_COLLECTED_NOTE`.
+That is not an empty review. Concurrent pending claims are capped at
+`MAX_PENDING_CLAIMS`; a launch that would exceed the cap is refused and
+recorded as unavailable with `PENDING_BOUND_NOTE`.
+
+**Rejected: reuse `requested` and make `recover_pending` collect.**
+`recover_pending` already means "this reservation never launched; do not
+replay." Using it for a live session would terminate the one case it was
+written for.
+**Rejected: block inside the Runner until the file appears.** The dispatch
+call is one synchronous return; a wait would stall the reviewing session
+for the whole external review.
+
+**Revisit when** a durable result transport other than a digest-bound file
+is the session's return path.
+
+**Refs.** [`{#external-reviewers-are-managed-sessions}`](#external-reviewers-are-managed-sessions).
+
+### External-only admission is a constructed roster or a halt, never a degraded panel  {#external-only-roster-or-halt}
+
+**Decision.** Under the external-only offer mode the permitted reviewers are a
+constructed type. Construction filters the home vendor first. If what remains is
+smaller than the required quorum, the result is a halt that tells the operator no
+review happened. There is no roster that contains the excluded vendor, and there
+is no function that puts that vendor back after a failed start, a dead session,
+or a missing result.
+
+`/code-review` and `/doc-review` inject the managed-session runner. Selection of
+that runner under external-only reuses the same admission: an excluded-vendor
+engine id is a halt, not a session. `dispatch_second_opinion` still takes an
+injected runner. A later ruling added a non-terminal `pending` claim and a
+collect entry point; see
+[`{#second-opinion-pending-until-collected}`](#second-opinion-pending-until-collected).
+
+**Rejected: filter the home vendor in the skill prose and leave the candidate
+list as a plain tuple.** A later retry or error handler can append the excluded
+vendor without the type system noticing.
+**Rejected: fall back to the home panel when admission returns a halt.** That
+converts a correctness choice into a cost choice and labels it external-only.
+
+**Revisit when** a named panel role needs a quorum larger than "every remaining
+non-home member," or when a second construction site for the roster appears.
+
+**Refs.** [`{#external-reviewers-are-managed-sessions}`](#external-reviewers-are-managed-sessions).
+### Finding blocking is an explicit boolean and performed verdicts carry findings  {#finding-blocking-is-explicit}
+
+**Decision.** Each finding must declare `blocking` with a required keyword-only boolean. The review
+loop never derives blocking effect from `rank`, and every verdict concluded from a performed report
+returns the report's findings.
+
+**Context.** The rank is an unconstrained string supplied by reviewers that may use different
+rubrics. Treating selected rank text as blocking would move an unreliable interpretation into the
+stopping rule. Closing on new non-blocking findings also requires a durable handoff to the caller;
+otherwise the decision would accept a report while making its filed work unreachable.
+
+**Rationale.** A required keyword-only boolean makes blocking a deliberate, type-checked statement.
+It cannot be enabled by positional drift, a default, or words in the rank. Returning the immutable
+finding tuple on the verdict keeps the decision and the evidence together without adding another
+store.
+
+**Rejected alternatives.** Parsing rank names was rejected because rank has no shared vocabulary.
+A default of `False` was rejected because omission would silently become a policy declaration.
+Returning findings only for a passing last iteration was rejected because callers should not need
+verdict-specific access rules.
+
+**Consequences.** Finding constructors must state `blocking=True` or `blocking=False`. New
+non-blocking findings on the last allowed iteration produce `pass` and remain available to file;
+recurring classes and undisposed earlier classes still escalate independently of blocking or rank.
+
+**Refs.** LEARNINGS `{#terminal-trigger-must-use-target-evidence}`; decision
+`{#resolution-is-authored-not-inferred}`.
 
 ---
 
 ## 2026-08-15
+
+### Removing a stored fact and building the way to ask for it are one change  {#removal-and-read-through-are-one-change}
+
+**Date.** 2026-08-15
+
+**Decision.** When a durable record of a live fact is removed, the mechanism that asks the fact's
+owner ships in the **same change**. They are not sequential units.
+
+**Context.** A plan split them: remove the stored session columns first, add the read-through second.
+The first half was built and reviewed. With the columns gone and the asking deferred, every decision
+site had exactly two behaviours available — consult a stand-in, or refuse — and the delivered change
+did both. The stand-in was a module-level dictionary with no expiry, no invalidation, and no way to
+record that a fact had become unavailable; the refusals landed on recovery paths and wedged them, so
+a concurrency slot could no longer be released.
+
+**Rationale.** The stored copy is not the problem by itself; the problem is a decision made from a
+fact nobody asked for. Removing the storage without providing the asking does not remove that
+property, it relocates it — from a file to memory, with a shorter lifetime and no upper bound on the
+staleness. A prior decision in this same plan had already rejected a per-read facts object for
+exactly this reason and rejected time-to-live caching because "a TTL is a shadow whose staleness is a
+tunable." The store that was built has no TTL at all: within one process it is permanent.
+
+**Rejected alternatives.**
+
+- *Patch the halfway state — restore the deleted asking sites and keep the store for the rest.* Once
+  every site that has an owner asks it, the read-through is substantially built anyway, so this is
+  the merged unit under a name that hides its scope. It also still ships a store the next unit must
+  delete.
+- *Ship the halfway state and file the defects.* The suite passed 6,162 tests over a one-way ratchet,
+  because a fixture supplied the fact production has to ask for. Green tests on an arrangement that
+  cannot reach the broken state are not evidence.
+
+**Consequences.** A unit that removes durable state now carries the replacement query. Reviews of
+such a unit should check that no module-level mutable state retains the removed fact, rather than
+only that the schema no longer carries it.
+
+**Revisit when.** A removal is genuinely additive — the stored fact has no live owner to ask, so
+there is no read-through to build and nothing to sequence.
+
+---
 
 ### A review is finished only when someone says the finding is fixed  {#resolution-is-authored-not-inferred}
 
@@ -253,9 +435,10 @@ offer is unchanged — the same durable gate-record contract, prompt-and-remembe
 path, provider selection, egress policy, tier selection, and atomic
 persistence of request state. Only the transport changes.
 
-A new offer mode, **external only**, excludes the home vendor's panel
-entirely rather than adding an advisory seat beside it. When a review runs
-inside a session over code that session's vendor wrote, external-only is the
+A new offer mode, **external only**, excludes the home vendor from the
+external-reviewer seat rather than adding an advisory seat beside it. The
+in-session lens fan-out is a separate roster. When a review runs inside a
+session over code that session's vendor wrote, external-only is the
 correctness option, not a cost option: it is "never review your own vendor"
 applied at the skill level, so the rule is implemented once rather than twice.
 

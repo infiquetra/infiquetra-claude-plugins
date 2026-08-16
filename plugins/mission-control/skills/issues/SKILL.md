@@ -91,7 +91,7 @@ See `references/templates-reference.md` for the generated template field and lab
 ## Hermes Actionable Contract
 
 Actionable issue types are `capability`, `enhancement`, and `defect`. Their canonical templates
-apply `hermes-task`, `needs-plan`, and the type label.
+apply `needs-plan` and the type label.
 
 Each actionable card must render the following exact H3 section headers in the GitHub issue body:
 
@@ -125,7 +125,7 @@ Optional actionable sections include `Notes / conventions`. Capability cards als
 
 ## Non-actionable Templates
 
-Exploration and Context Update templates carry `hermes-not-actionable`. Do not present these as
+Exploration and Context Update templates carry only their context labels. Do not present these as
 Hermes task cards or dispatch them directly to agents. Use them for research or documentation
 context.
 
@@ -237,20 +237,20 @@ After template creation, apply labels and add to the project board where applica
 
 **Actionable templates**:
 
-- `capability` -> `capability`, `hermes-task`, `needs-plan`
-- `enhancement` -> `enhancement`, `hermes-task`, `needs-plan`
-- `defect` -> `defect`, `hermes-task`, `needs-plan`
+- `capability` -> `capability`, `needs-plan`
+- `enhancement` -> `enhancement`, `needs-plan`
+- `defect` -> `defect`, `needs-plan`
 
 **Non-actionable templates**:
 
-- `exploration` -> `exploration`, `research`, `hermes-not-actionable`
-- `context-update` -> `context-update`, `documentation`, `hermes-not-actionable`
+- `exploration` -> `exploration`, `research`
+- `context-update` -> `context-update`, `documentation`
 
 **Apply labels manually** via gh CLI when a template did not apply them:
 
 ```bash
-gh issue edit <N> --repo Infiquetra/<repo> --add-label "hermes-task,needs-plan,capability"
-gh issue edit <N> --repo Infiquetra/<repo> --add-label "hermes-not-actionable"
+gh issue edit <N> --repo Infiquetra/<repo> --add-label "needs-plan,capability"
+gh issue edit <N> --repo Infiquetra/<repo> --add-label "needs-plan"
 ```
 
 ### Add to Project Board
@@ -323,7 +323,7 @@ Ask for optional Notes / conventions and Context library links when they would i
 Ask for Capability size only for capability cards and treat it as a human planning hint.
 
 For non-actionable cards, use the fields in `references/templates-reference.md` and preserve the
-`hermes-not-actionable` distinction.
+actionable / non-actionable distinction.
 
 ### Step 4: Create the Issue
 
@@ -337,8 +337,8 @@ gh issue create --repo Infiquetra/<repo> --template <type>.yml
 
 ### Step 5: Verify Labels
 
-1. Confirm actionable templates applied `hermes-task`, `needs-plan`, and the type label.
-2. Confirm non-actionable templates applied `hermes-not-actionable` and their context labels.
+1. Confirm actionable templates applied `needs-plan` and the type label.
+2. Confirm non-actionable templates applied their context labels.
 3. Use `flow verify-label` for any required label that is missing.
 
 ### Step 6: Add to Project Board
@@ -415,16 +415,16 @@ link an Objective parent issue.
 
 | Type | Labels |
 |------|--------|
-| `capability` | `capability`, `hermes-task`, `needs-plan` |
-| `enhancement` | `enhancement`, `hermes-task`, `needs-plan` |
-| `defect` | `defect`, `hermes-task`, `needs-plan` |
+| `capability` | `capability`, `needs-plan` |
+| `enhancement` | `enhancement`, `needs-plan` |
+| `defect` | `defect`, `needs-plan` |
 
 ### Non-actionable Labels
 
 | Type | Labels |
 |------|--------|
-| `exploration` | `exploration`, `research`, `hermes-not-actionable` |
-| `context-update` | `context-update`, `documentation`, `hermes-not-actionable` |
+| `exploration` | `exploration`, `research` |
+| `context-update` | `context-update`, `documentation` |
 
 ### Content Labels
 

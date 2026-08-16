@@ -79,6 +79,7 @@ def assess_promotion(
         if fact.get("kind") == "engine"
         and fact.get("engine") == engine_id
         and fact.get("variant") == variant
+        and fact.get("status") != "pending"
     ]
     window = matches[-REQUIRED_RUNS:]
     reasons: list[str] = []

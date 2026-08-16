@@ -83,7 +83,7 @@
     {
       "name": "saga",
       "source": "./plugins/saga",
-      "version": "0.131.1",
+      "version": "0.135.0",
       "description": "Infiquetra lifecycle plugin: /outcome DAG orchestration with cross-runtime discovery/handoff, liveness facts, /pulse telemetry, trust-gated engine onboarding, and /fleet-doctor cross-source auditing.",
       "author": {
         "name": "Infiquetra",
@@ -133,7 +133,7 @@
     {
       "name": "mission-control",
       "source": "./plugins/mission-control",
-      "version": "2.10.2",
+      "version": "2.12.0",
       "description": "SDLC management for Operations, Asgard, and CAMPPS: prepared issue drafts, live schema sync, board schemas, labels, project fields, metrics, and card validation.",
       "author": {
         "name": "Infiquetra",

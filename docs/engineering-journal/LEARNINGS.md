@@ -19,7 +19,164 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-08-16
+
+### A completed-process result is not a live process  {#completed-process-has-no-pid}
+
+**Context.** The documented launch command always raised after the
+reviewer process had already started, so no handle was printed and the
+reserved pending slot could never be collected.
+**Evidence.** `subprocess.run` returns `CompletedProcess`, whose public
+attributes are `args`, `returncode`, `stdout`, and `stderr`. It has no
+`pid`. The default launcher read `completed.pid` on every command-line
+launch.
+**Mechanism.** The production command is the only caller of that default
+`run`. Tests injected a scripted `run` or patched `start`, so the crash
+never appeared in a green suite.
+**Generalizable rule.** If a test only passes because the harness
+replaced the component under test, it is not testing that component.
+Substitute one layer further out than the thing you are proving.
+**Refs.** DECISIONS [`{#documented-command-owns-the-claim}`](DECISIONS.md#documented-command-owns-the-claim).
+
+### Reserve the pending slot before the session starts  {#reserve-pending-before-start}
+
+**Context.** A bound on pending claims was checked after `start` returned.
+The overflow request still launched, then the claim was marked unavailable
+and the handle was dropped.
+**Evidence.** Distinct dispatches with `MAX_PENDING_CLAIMS` set to two:
+three `start` calls, one terminal overflow note, and a result file that
+collect refused because the claim was already unavailable.
+**Mechanism.** The thing being counted was the record. The thing that
+costs a session is the launch. Those are not the same write.
+**Generalizable rule.** Capacity that is meant to bound a side effect
+must be taken before the side effect. A live session must never sit
+behind a terminal claim.
+**Refs.** DECISIONS [`{#dispatch-pending-status}`](DECISIONS.md#dispatch-pending-status).
+
+### Collected is not requested  {#collected-is-not-requested}
+
+**Context.** After a successful collect the claim moved back to
+`requested`, the state that means no session launched. Resume then ran
+interrupt recovery and spent the result.
+**Evidence.** Collect returned a real finding; `recover_pending` then
+produced the interrupted-dispatch note and collect refused the still-
+present result file.
+**Mechanism.** Reusing `requested` for "has a result, not yet completed"
+makes "no handle yet" and "handle already consumed" the same observation.
+**Generalizable rule.** Do not reuse the never-launched state for a
+finished read. A result that exists must stay collectable until the
+consumer artifact is durable.
+**Refs.** DECISIONS [`{#dispatch-pending-status}`](DECISIONS.md#dispatch-pending-status).
+
+### A missing result file after a successful launch is not a dead session  {#pending-is-not-died}
+
+**Context.** The managed-session runner started a reviewer and immediately
+read a result file the session had not written yet. Absence of the file was
+classified as died, and the at-most-once claim moved to unavailable.
+**Evidence.** A launcher that returned a handle, then a later write of a
+real finding, then a retry and `recover_pending`, never returned the
+finding: both later calls reused the terminal unavailable note.
+**Mechanism.** `Runner` is one call, and both claim exits were terminal.
+The normal state of a managed review — launched, still running — had no
+value. `recover_pending` already existed, but it converts `requested` into
+unavailable; it does not collect.
+**Generalizable rule.** "No result yet" is not "no result." A successful
+start without a result file is pending. Collection is a second entry
+point. Interrupt recovery stays a third thing.
+**Refs.** DECISIONS [`{#second-opinion-pending-until-collected}`](DECISIONS.md#second-opinion-pending-until-collected).
+
+### A session that did not start is not a review that found nothing  {#session-absence-is-not-empty-review}
+
+**Context.** External reviewers for `/code-review` and `/doc-review` now run as
+managed terminal sessions. Three failures look similar if they share one status:
+the launcher never started, the session died or wrote no result file, and the
+session finished with an empty findings list.
+**Evidence.** `engine_session_runner.runner` returns `session_outcome` values
+`not-started`, `pending`, `died`, and `ran-empty`. Through
+`dispatch_second_opinion` those become `second-opinion dispatch error`,
+`PENDING_NOTE`, `second-opinion dispatch no-output`, and
+`EMPTY_OPINION_NOTE` respectively. A missing result file after a successful
+start is `SessionPending`, not died and not `findings: []`.
+**Mechanism.** "No record of X" is not "X does not exist." A result file that
+was never written is unknown, not an empty review. Collapsing those into one
+unavailable note would make a launch failure look like a clean second opinion.
+**Generalizable rule.** Name the session outcome on the runner result before any
+claim-store projection. Absence of a result artifact is a distinct failure, never
+an empty findings list.
+**Refs.** [`{#two-inferences-meet-at-every-gate}`](#two-inferences-meet-at-every-gate);
+DECISIONS [`{#external-only-roster-or-halt}`](DECISIONS.md#external-only-roster-or-halt).
+### A targeted terminal condition must use the evidence it computes  {#terminal-trigger-must-use-target-evidence}
+
+**Context.** A bounded review loop computed recurring defect classes, then escalated on the broader
+set of every class reported in the last allowed iteration. Because performed reviews commonly file
+non-blocking notes, reaching the bound made escalation routine rather than exceptional.
+
+**Evidence.** In
+`plugins/orchestrate/skills/orchestrate/scripts/review_loop.py`, `recurring` was computed immediately
+before a final-iteration condition built from all declared classes. Focused tests in
+`tests/test_orchestrate_review_loop.py` now distinguish a new non-blocking class from a recurring
+non-blocking class and from a new explicitly blocking class.
+
+**Mechanism.** The trigger substituted an available superset for the evidence named by the policy.
+The superset included the intended recurrence cases, so the safety scenario stayed green while the
+rule accumulated false positives.
+
+**Fix.** Escalation now reads recurrence, unresolved earlier classes, a required boolean blocking
+declaration, and unperformed-review state directly. A new non-blocking class closes without
+escalation and remains reachable on the verdict.
+
+**Generalizable rule.** When policy names evidence already computed by the implementation, assert
+that the decision reads that exact evidence. A convenient superset preserves positive tests while
+destroying the negative boundary that keeps an alert useful.
+
+**Refs.** DECISIONS `{#finding-blocking-is-explicit}`.
+
+---
+
 ## 2026-08-15
+
+### A retired consumer's marker outlives it wherever a writer still names it
+
+**Context.** The Hermes orchestrator's card validator gated dispatch on a `hermes-task`
+label. That orchestrator was frozen on 2026-07-18 — empty repository list, plan phase off,
+webhook relay stopped and disabled — so nothing has read the label since. It kept appearing
+on every new issue anyway, which is what the operator noticed.
+
+**Evidence.** 1,176 issues organization-wide carry `hermes-task`; the replacement mechanism
+(`intake:mimir`) is on 5. The label was written from a dozen directions: `labels:` line 4 of
+five GitHub issue forms, `_ISSUE_TYPE_LABELS` in five copies of `sdlc_manager.py`, the
+post-create metadata step, four prompt/skill documents, a generated reference doc, and the
+`Hermes actionable: yes/no` marker emitted by `sync_template_docs.py`. Six test files
+asserted its presence.
+
+**Mechanism.** Retiring a *consumer* is one change; retiring the *marker it consumed* is as
+many changes as there are writers. Nobody removed the writers because the label was still
+harmless-looking, and each writer independently looked correct — the templates matched the
+code, the code matched the prompts, the prompts matched the tests. The system was
+self-consistent around a dead centre. Worse, the operator agent still asserted "the
+orchestrator silently skips cards without `hermes-task`", which made removal look dangerous
+long after it was inert, so the fear that preserved it was itself documentation of a
+consumer that no longer ran.
+
+**Fix.** Remove all writers in one change, and repoint the concept rather than deleting it:
+`_HERMES_ACTIONABLE_TYPES` became `_CONTRACT_ISSUE_TYPES` (it always meant "types carrying
+the eight-section card contract"), and `Hermes actionable: yes/no` became
+`Card contract: required/not required`. The interactive create path now applies the canonical
+type labels where it previously applied only the dispatch marker — closing a gap where a card
+whose browser template failed to prefill landed with no type label at all.
+
+**What surprised.** The tests were the largest blocker, not the code. Six suites pinned the
+marker, so the taxonomy could not move until they did — and one of them, `test_template_sync`,
+reads the *other repository's* issue templates live through `INFIQUETRA_SDLC_PATH`. Two repos
+had to change together for the local suite to pass, while in CI the same tests skip because
+that checkout does not exist. A cross-repo coupling that is invisible to CI is the kind that
+only bites the person doing the migration.
+
+**Generalizable rule.** When you freeze a consumer, inventory its writers in the same change
+and either remove them or write down that they are now inert — a marker with no reader is not
+harmless, it is a claim the system keeps making about itself. And when a document asserts that
+removing something is dangerous, check whether the danger retired with the consumer; a stale
+warning is load-bearing in exactly the wrong direction.
 
 ### Piping a gate to `tail` reports the pager's exit status, not the gate's  {#gate-exit-code-masked-by-pipe}
 
@@ -506,6 +663,45 @@ directory.
 the answer when the question is declined. Bound every subprocess that runs
 inside a lock.
 **Refs.** DECISIONS `{#host-wide-admission-lock}`.
+
+### The interactive issue-create path never validated the body it carded
+
+**Context.** `mission-control` has two ways to create an issue. `issue create-prepared`
+composes the body itself and has always refused to create a draft with blocking readiness
+gaps. Interactive `issue create` opens the GitHub browser template, asks the operator to
+paste back the new issue number, and applies labels and board membership.
+
+**Evidence.** `plugins/mission-control/scripts/sdlc_manager.py` — between
+`_prompt_issue_number` and `_apply_post_create_metadata` there was no body check of any
+kind, while `validate_card_body` had existed since the card contract shipped and
+`issue_create_prepared` already raised on it. Board evidence: a 34-issue sample scored
+against the eight-section contract is bimodal — 17 cards carry all eight sections, 15 carry
+none, 2 carry four.
+
+**Mechanism.** Two producers, one contract, one enforcement point. The prepared path
+composes the body, so validating there was the obvious move. The interactive path receives a
+body it did not compose — from a form that `gh issue create --template ... --web` does not
+reliably prefill — so there was no natural moment to validate and none was added. A blank
+template then landed on the board wearing exactly the same labels as a conformant card.
+Nothing downstream could distinguish them, which is why the conformance split is bimodal
+rather than a gradient: two populations, not decay.
+
+**Fix.** `_gate_created_issue_body` between paste-back and metadata, reusing
+`validate_card_body_for_context`. Scoped to the Hermes-actionable types (`exploration` and
+`context-update` ship different field sets by design); a fetch failure proceeds with a
+warning rather than counting as a validation failure; `--format json` refuses structurally
+without prompting; a failing body requires an explicit operator opt-in.
+
+**What surprised.** The check was already written, already tested, and already blocking —
+on one path. The defect was not a missing validator but a missing call site, which is
+invisible in a code review scoped to the validator.
+
+**Generalizable rule.** When a contract has more than one producer, the enforcement point
+belongs at the last common choke point before the artifact becomes visible — not inside
+whichever producer was most convenient to write it in. Ask "which paths reach this state?"
+before "where does the check go?": an unvalidated sibling path does not look broken, it
+looks like the other path's output.
+
 
 ## 2026-08-13
 

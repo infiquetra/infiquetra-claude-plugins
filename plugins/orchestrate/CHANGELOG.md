@@ -35,6 +35,18 @@
   endings, records each replacement, refuses symlinks and stale digests, and hands ambiguous or
   judgment-dependent findings to the operator. Its slotted report type has no decision field.
 
+## [0.11.1] - 2026-08-16
+
+### Fixed
+
+- The last allowed iteration escalates for a recurring class, an earlier class that remains
+  undisposed, an explicitly blocking finding, or an unperformed review. New non-blocking findings
+  close the review without escalation.
+- Blocking is a required keyword-only boolean on each finding. The loop does not infer it from the
+  finding's free-form rank.
+- Every verdict produced from a performed report returns that report's findings, including findings
+  filed when the last allowed iteration closes.
+
 ## [0.11.0] - 2026-08-15
 
 ### Added

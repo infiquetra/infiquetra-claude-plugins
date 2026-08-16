@@ -168,6 +168,21 @@ def test_facts_older_than_last_validated_do_not_corroborate(tmp_path: Path) -> N
     assert cell["evidence"]["ok_count"] == 0
 
 
+def test_pending_engine_facts_are_not_failures(tmp_path: Path) -> None:
+    registry = _registry(tmp_path, [_row("good")])
+    ledger = _ledger(tmp_path)
+    RL.append_fact(ledger, _engine_fact("good", at="2026-07-01T00:00:00Z", status="pending"))
+    RL.append_fact(ledger, _engine_fact("good", at="2026-07-01T00:01:00Z", status="ok"))
+    RL.append_fact(ledger, _engine_fact("good", at="2026-07-01T00:02:00Z", status="pending"))
+    RL.append_fact(ledger, _engine_fact("good", at="2026-07-01T00:03:00Z", status="ok"))
+
+    report = SR.stale_report(registry, ledger, now=date(2026, 7, 13))
+    cell = _cells_by_key(report)[("good/default", "adversarial-review")]
+    assert cell["verdict"] == "corroborated"
+    assert cell["evidence"]["ok_count"] == 2
+    assert cell["evidence"]["fail_count"] == 0
+
+
 def test_failed_proof_dispatches_do_not_corroborate(tmp_path: Path) -> None:
     registry = _registry(tmp_path, [_row("good")])
     ledger = _ledger(tmp_path)

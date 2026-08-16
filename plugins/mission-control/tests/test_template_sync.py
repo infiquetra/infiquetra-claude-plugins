@@ -103,11 +103,12 @@ def test_actionable_template_labels_match_canonical_yaml() -> None:
         section = _section(markdown, sync_template_docs.display_name(template_name))
         labels = template["labels"]
 
-        assert "Hermes actionable: yes" in section
+        assert "Card contract: required" in section
         assert f"Labels: {sync_template_docs.format_inline_code(labels)}" in section
-        assert "`hermes-task`" in section
         assert "`needs-plan`" in section
-        assert "`hermes-not-actionable`" not in section
+        # the retired Hermes dispatch markers must not come back
+        assert "hermes-task" not in section
+        assert "hermes-not-actionable" not in section
 
 
 def test_non_actionable_template_labels_match_canonical_yaml() -> None:
@@ -118,10 +119,10 @@ def test_non_actionable_template_labels_match_canonical_yaml() -> None:
         template = _load_template(template_name)
         section = _section(markdown, sync_template_docs.display_name(template_name))
 
-        assert "Hermes actionable: no" in section
+        assert "Card contract: not required" in section
         assert f"Labels: {sync_template_docs.format_inline_code(template['labels'])}" in section
-        assert "`hermes-not-actionable`" in section
-        assert "`hermes-task`" not in section
+        assert "hermes-not-actionable" not in section
+        assert "hermes-task" not in section
 
 
 def test_actionable_fields_match_canonical_contract() -> None:

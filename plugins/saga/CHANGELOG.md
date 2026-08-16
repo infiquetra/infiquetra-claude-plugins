@@ -1,5 +1,80 @@
 # Changelog
 
+## [0.135.0] - 2026-08-16
+
+### Fixed - the documented launch and collect commands own the claim
+
+- `subprocess_run` no longer reads a `pid` attribute `CompletedProcess` does not
+  have, so the documented launch command can return a handle after start.
+- Reserving a pending slot and observing one that already exists are different
+  outcomes. A second launch of the same request is refused and does not start
+  another session.
+- The collect command reads `--claim-store` and marks a usable result
+  `collected`.
+- A start that never produces a session releases the reserved slot.
+- The documented commands go through the dispatch layer, so a launch arms the
+  liveness tripwire and writes an `engine` fact by default.
+- Pending engine facts are excluded from staleness and promotion samples.
+
+## [0.134.0] - 2026-08-16
+
+### Added - dispatch can express a launched session that has not resolved
+
+- `engine_dispatch.dispatch` accepts runner status `pending`. The liveness
+  tripwire still arms around the real adapter call. When a ledger is supplied,
+  that launch writes an `engine` run-fact even if the session is never collected.
+- A second-opinion claim that has a usable result is `collected`, not
+  `requested`. Resume cannot treat that interval as "never launched."
+- The pending bound is reserved before any session starts. The launch and
+  collect CLI share the claim store and accept launch stdout as a handle.
+
+### Fixed
+
+- Vendor comparison strips the vendor token after the slash, so
+  `codex /variant` is still vendor `codex`.
+- A result file's `output` is always rendered from the typed findings; a
+  prose summary is not an unusable review.
+- A control-character session id is rejected before launch.
+- `/work` does not mark a still-running launch as a terminal unavailable offer.
+
+## [0.133.0] - 2026-08-15
+
+### Added - pending second-opinion claims and a collect entry point
+
+- A launched managed session that has not yet written a result is `pending`, not
+  died. `collect_second_opinion` (and `recover_pending` on a pending claim) reads
+  the later result. `abandon_pending_second_opinion` closes a launch that will
+  never be collected; that note is not an empty review. Concurrent pending claims
+  are capped at `MAX_PENDING_CLAIMS`.
+- `engine_session_runner.py` now has `launch` and `collect` commands. The
+  production launcher names the reviewer tool, model, effort, and review prompt.
+
+### Fixed
+
+- The managed-session argv no longer drops the resolved tool, task, model, or
+  effort, and no longer opens a bare Herdr view.
+- A result file must name `findings` and bind `request_digest`; a missing key or
+  a pre-existing file is not this session's empty review.
+- External-only admission stays bound to the admitted vendor on the returned
+  runner. Vendor comparison is strip + casefold on both sides.
+- A stored or default `external-only` offer reason names the external-reviewer
+  seat and the in-session lens bound; it does not say the home panel is excluded.
+
+## [0.132.0] - 2026-08-15
+
+### Added - managed-session external reviewers and an external-only offer mode
+
+- `/code-review` and `/doc-review` dispatch an external reviewer through a managed
+  terminal session (`engine_session_runner`) rather than a subagent. The operator-facing
+  offer wording, gate-record contract, provider/egress/tier selection, and atomic
+  request persistence are unchanged.
+- The engine-offer helper gains an `external-only` choice on those two stages.
+  Under external-only the home vendor cannot be reached through the
+  external-reviewer seat. The in-session lens fan-out is governed by the
+  consensus-panel roster, which is separate work. If the remaining reviewers
+  cannot meet quorum, the path halts and tells the operator; it never falls back
+  to the excluded vendor.
+
 ## [0.131.1] - 2026-08-08
 
 ### Added - house-style presentation contract, on two agents and the emitter (#704)

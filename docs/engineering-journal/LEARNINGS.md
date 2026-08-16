@@ -21,6 +21,55 @@
 
 ## 2026-08-15
 
+### Piping a gate to `tail` reports the pager's exit status, not the gate's  {#gate-exit-code-masked-by-pipe}
+
+**Date.** 2026-08-15
+
+**Context.** Running the repository's full pre-merge gate in a freshly created `git worktree`, to
+check a new module before committing it.
+
+**Evidence.** The command was `scripts/gate.sh 2>&1 | tail -40`. It reported exit code 0. The gate
+had not run a single step. Its actual output, visible in the captured text but not in the status:
+
+```
+gate.sh: the dev toolchain is not installed in this environment: ruff mypy pytest
+  run: uv sync --locked --extra dev
+  (a fresh git worktree does not inherit the parent checkout's .venv)
+```
+
+`scripts/gate.sh` exits **3** in that situation. The shell reports the *last* command in a pipeline,
+so `tail`'s 0 was what surfaced. Re-running as `scripts/gate.sh > gate.log 2>&1; echo $?` after
+`uv sync --locked --extra dev` produced the real result: `GATE EXIT=0`, 24 steps ran, 0 blocking
+failures.
+
+**Mechanism.** Two independent facts were conflated into one observation. *Did the gate pass?* and
+*did the pipeline finish?* have the same numeric answer and different meanings. A gate that refuses
+to start is indistinguishable, through a pipe, from a gate that ran everything and found nothing
+wrong — and the failure mode is asymmetric: it reads as a green light, so it is acted on rather
+than investigated.
+
+Worth recording what `scripts/gate.sh` does right, because it is why this was recoverable: it
+distinguishes **3** (environment unprovisioned) from **1** (a step failed) and **2** (coverage short
+of `.github/workflows/ci.yml`). Had it exited 1, the honest reading would have been "this codebase
+is broken", which is a *wrong* fact rather than an absent one. Three states, three codes.
+
+**Fix.** Redirect to a file and read `$?` directly:
+
+```bash
+scripts/gate.sh > /tmp/gate.log 2>&1; echo "GATE EXIT=$?"; tail -12 /tmp/gate.log
+```
+
+`set -o pipefail` also works but depends on remembering it at each call site; the redirect removes
+the pipeline whose status could stand in for the gate's. A fresh worktree additionally needs
+`uv sync --locked --extra dev` — it does not inherit the parent checkout's `.venv`.
+
+**Generalizable rule.** Never read a gate, test run, or build through a pipe. The shell reports the
+last stage, so any pager or filter silently substitutes its own success for the command's verdict.
+More broadly: when a check reports success, confirm it *ran* — "nothing failed" and "nothing was
+attempted" produce identical output everywhere they are not deliberately told apart.
+
+---
+
 ### Two inferences meet at most gates, and fixing one does not fix its sibling  {#two-inferences-meet-at-every-gate}
 
 **Context.** An orchestration unit went through five repair rounds. Each round closed the defects a

@@ -2,6 +2,95 @@
 
 ## 2026-08-15
 
+### A review is finished only when someone says the finding is fixed  {#resolution-is-authored-not-inferred}
+
+**Date.** 2026-08-15
+
+**Decision.** A bounded review loop refuses the `pass` verdict while any defect class raised in an
+earlier iteration has not been **explicitly disposed of** by the report concluding the current
+iteration. Resolution is an authored claim, never an inference drawn from a reviewer's silence.
+
+**Context.** The loop scopes each re-review to the change since the previous iteration, which is
+what keeps review cost bounded. Combined with an absent notion of resolution, that scoping produced
+a defect neither feature causes alone:
+
+```
+iter1  report = [blocking finding]        -> halt-and-repair
+iter2  nothing was fixed, so the delta is empty
+iter2  report = ()                        -> pass, defect still present
+```
+
+The crueler form needs no empty delta. Editing an unrelated path leaves the defective path out of
+the delta, so the reviewer cannot see it, and its silence is read as a fix.
+
+**Rationale.** The loop was conflating *the reviewer reported nothing about this class* with *this
+class is resolved*. Those differ exactly when the reviewer was never shown the code — which is the
+normal case under delta scoping, not an edge case. Requiring disposal converts the inference into a
+statement someone is accountable for.
+
+**Rejected alternatives.**
+
+- *Re-present every open finding's original location in each delta.* Restores review cost to the
+  whole artifact and defeats the scoping the loop exists to provide.
+- *Track resolution per finding with evidence bound to a scope token.* Correct and larger. Needs
+  finding identity beyond the class and durable state the loop does not have. Deferred deliberately.
+- *Treat an unchanged path as implicitly unresolved.* Cheaper, but silently wrong the moment a fix
+  lands in a different path than the finding named.
+
+**Consequences.** A report gains a disposal set. Disposing a class that was never open is refused,
+because a typo must not close a finding and must not look like success. Disposing and re-raising the
+same class in one report is refused as internally contradictory. A last iteration that ends with
+open, undisposed classes yields `halt-and-escalate` rather than an exception — the caller learns the
+outcome from a verdict, not by catching a refusal.
+
+**Revisit when.** Findings acquire durable identity, or the loop gains state that survives a process
+restart. Either makes per-finding disposal with bound evidence affordable, and the class-level rule
+here becomes the coarse approximation it currently is.
+
+---
+
+### Move the boundary first, then repair what survives it  {#move-the-boundary-then-repair}
+
+**Decision.** The halted composition unit is neither repaired in place nor
+rebuilt. The boundary correction lands as units on the existing branch, and
+the defects that the correction makes unreachable are closed as a
+*consequence* rather than as repairs. Only the defects that survive the
+boundary move get repair units, ranked on their own merits.
+
+The evidence is a classification of the composition module's 3,656 lines
+(2,882 inside function bodies; its coordinator class alone is 2,244 lines
+across 72 methods). Roughly 42% of the code in function bodies exists to
+reconcile the durable table's copy of session facts against the world;
+roughly 58% is composition that the boundary move does not touch. **Six of
+the seven merge-blocking defects fall in the first bucket. Two fall in the
+second** — one of them appears in both counts because it spans the two.
+
+Rebuilding would discard ~1,664 lines of composition the correction does not
+touch. A further repair round would spend effort on ~1,218 lines about to
+shrink or disappear, and five rounds of evidence say that round would be
+followed by another.
+
+**The claim is falsifiable and gated.** After the boundary units land, the
+panel's own reproductions for the six substrate defects must show them
+unreachable. If any survives, the boundary move did not do what this decision
+claims, and the unit escalates rather than continuing — the escalation rule
+from [`{#review-loops-bounded-by-construction}`](#review-loops-bounded-by-construction)
+applied to the plan's own execution.
+
+**Rejected: a sixth repair round.** Three rounds already closed the entrances
+that were named and were each followed by a review finding new ones.
+**Rejected: rebuild the unit.** It discards the composition majority, which
+no review has faulted.
+**Rejected: rebuild onto a fresh branch to escape the halted one.** The
+branch's gate is green and its safety ref is preserved; the defects are in
+the code, not in the branch.
+
+**Revisit when** the U4 gate fails, which would mean the classification above
+is wrong.
+
+**Refs.** [`docs/plans/2026-08-15-orchestrate-boundary-and-review-machinery-plan.md`](../plans/2026-08-15-orchestrate-boundary-and-review-machinery-plan.md);
+[`{#register-keeps-intent-not-substrate}`](#register-keeps-intent-not-substrate).
+
 ### Review loops terminate by construction; escalation is bounded at one  {#review-loops-bounded-by-construction}
 
 **Decision.** Every review layer runs under a loop bound: **three iterations

@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.12.1] - 2026-08-16
+
+### Fixed
+
+- Vendor identity comparisons now normalise compatibility forms, remove Unicode format characters,
+  collapse whitespace, and fold case. Cross-script confusables remain distinct because vendor names
+  are trusted caller input, not text from which identity is inferred.
+- Every unusable answer is recorded in the panel outcome, including excluded, unknown, duplicate,
+  wrong-type, and unidentifiable answers. Invalid answers halt a panel without discarding blocking
+  evidence already returned by a voting seat.
+- A plan rigor report no longer calls composed edits applied when their net result is byte-identical
+  to the reviewed plan. Those edits return as recommended remainders instead.
+
+## [0.12.0] - 2026-08-16
+
+### Added
+
+- A consensus panel whose roster excludes the unit builder's vendor. An external-only roster also
+  excludes the home vendor. The decision boundary rebuilds the layer policy and immutable
+  denominator, then checks roster self-consistency against the identities the roster declares.
+- One independent vendor per voting seat, explicit configuration-to-roster layer linkage, and panel
+  outcomes that retain structural exclusions and name malformed responses.
+- Asymmetric panel authority: one blocking gate rank halts, while proceeding requires a complete,
+  non-blocking response from every constructed voting seat. Missing seats never shrink the
+  denominator, an under-strength roster cannot satisfy its original quorum, and malformed responses
+  cannot discard blocking evidence returned by another seat.
+- Per-dimension instruments. Gate dimensions use a blocking rank and refuse numeric thresholds;
+  score dimensions use a numeric convergence threshold and refuse ranks. Scores report convergence
+  without deciding whether work proceeds. Every enabled panel includes a gate, every score is paired
+  with its seat, and an empty score series never reports convergence.
+- A single-voter rigor pass for orchestration plans. It atomically applies evidence-backed edits
+  whose anchors are unique in the reviewed bytes and do not overlap. It preserves unrelated line
+  endings, records each replacement, refuses symlinks and stale digests, and hands ambiguous or
+  judgment-dependent findings to the operator. Its slotted report type has no decision field.
+
 ## [0.11.1] - 2026-08-16
 
 ### Fixed

@@ -8,8 +8,11 @@ Dispatch is a later unit.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
+import os
+import stat
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -115,6 +118,78 @@ class PresentationReceipt:
     digest: str
     text: str
     generation: str
+
+
+@dataclass(frozen=True, slots=True)
+class SafePlanEdit:
+    """An exact, review-authored replacement that is safe only when uniquely anchored."""
+
+    before: str
+    after: str
+
+    def __post_init__(self) -> None:
+        if not self.before:
+            raise PlanningError("a safe plan edit needs non-empty text to replace")
+        if self.before == self.after:
+            raise PlanningError("a safe plan edit must change the plan")
+
+
+@dataclass(frozen=True, slots=True)
+class PlanRigorFinding:
+    """One evidence-backed finding from the rigor pass.
+
+    ``safe_edit`` is absent when the operator must decide the remainder. The recommendation is
+    required in both cases so an edit that becomes unsafe still has a useful handoff.
+    """
+
+    finding_id: str
+    summary: str
+    evidence: str
+    recommendation: str
+    safe_edit: SafePlanEdit | None = None
+
+    def __post_init__(self) -> None:
+        for field_name in ("finding_id", "summary", "evidence", "recommendation"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise PlanningError(f"plan rigor {field_name} must be a non-empty string")
+            object.__setattr__(self, field_name, value.strip())
+        if self.safe_edit is not None and not isinstance(self.safe_edit, SafePlanEdit):
+            raise PlanningError("safe_edit must be a SafePlanEdit")
+
+
+@dataclass(frozen=True, slots=True)
+class AppliedPlanFix:
+    """A safe edit applied to the plan from a uniquely anchored finding."""
+
+    finding_id: str
+    evidence: str
+    before: str
+    after: str
+
+
+@dataclass(frozen=True, slots=True)
+class PlanRigorRemainder:
+    """A finding handed to the operator with a recommendation."""
+
+    finding_id: str
+    summary: str
+    evidence: str
+    recommendation: str
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class PlanRigorReport:
+    """Safe fixes and remaining choices handed to the orchestration plan's only voter.
+
+    The slotted type has no decision field. It cannot acquire one dynamically, so this pass can
+    report and edit but cannot manufacture the operator's decision.
+    """
+
+    plan_path: Path
+    applied: tuple[AppliedPlanFix, ...]
+    remaining: tuple[PlanRigorRemainder, ...]
 
 
 def execution_class_for(work_shape: str) -> str:
@@ -402,6 +477,177 @@ def _mint_generation(run_id: str) -> str:
 def present_plan(built: Plan) -> tuple[Plan, str]:
     """Render the full child contract. Does not write a receipt. Launches nothing."""
     return built, render_plan(built)
+
+
+def run_plan_rigor_pass(
+    plan_path: Path,
+    findings: Sequence[PlanRigorFinding],
+    *,
+    expected_digest: str,
+) -> PlanRigorReport:
+    """Apply uniquely anchored safe edits and hand every other finding to the operator.
+
+    Evidence and recommendations are mandatory on :class:`PlanRigorFinding`. A proposed edit is
+    applied only when its exact ``before`` text occurs once in the bytes the reviewer examined.
+    An absent, ambiguous, or overlapping anchor becomes a remainder instead of a guessed edit. All
+    accepted edits land in one atomic write after the complete pass, provided the file still has
+    the caller's expected digest.
+    """
+    if not isinstance(plan_path, Path):
+        raise PlanningError("plan_path must be a pathlib.Path")
+    if plan_path.is_symlink():
+        raise PlanningError(f"orchestration plan must not be a symlink: {plan_path}")
+    if not plan_path.is_file():
+        raise PlanningError(f"orchestration plan is not a file: {plan_path}")
+    if isinstance(findings, str | bytes) or not isinstance(findings, Sequence):
+        raise PlanningError("plan rigor findings must be a sequence")
+    _require_file_digest(expected_digest)
+
+    original_bytes = plan_path.read_bytes()
+    actual_digest = _bytes_digest(original_bytes)
+    if actual_digest != expected_digest:
+        raise PlanningError("orchestration plan changed after the findings were authored")
+    try:
+        text = original_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise PlanningError(f"orchestration plan is not valid UTF-8: {plan_path}") from exc
+    applied: list[AppliedPlanFix] = []
+    remaining: list[PlanRigorRemainder] = []
+    accepted: list[tuple[int, int, SafePlanEdit]] = []
+    seen: set[str] = set()
+    finding_by_id: dict[str, PlanRigorFinding] = {}
+    for finding in findings:
+        if not isinstance(finding, PlanRigorFinding):
+            raise PlanningError("plan rigor findings must be PlanRigorFinding values")
+        if finding.finding_id in seen:
+            raise PlanningError(f"duplicate plan rigor finding_id {finding.finding_id!r}")
+        seen.add(finding.finding_id)
+        finding_by_id[finding.finding_id] = finding
+        edit = finding.safe_edit
+        if edit is None:
+            remaining.append(_rigor_remainder(finding, reason="operator decision required"))
+            continue
+        offsets = _anchor_offsets(text, edit.before)
+        occurrences = len(offsets)
+        if occurrences != 1:
+            remaining.append(
+                _rigor_remainder(
+                    finding,
+                    reason=f"safe edit expected one anchor and found {occurrences}",
+                )
+            )
+            continue
+        start = offsets[0]
+        end = start + len(edit.before)
+        if any(
+            start < accepted_end and accepted_start < end
+            for accepted_start, accepted_end, _ in accepted
+        ):
+            remaining.append(
+                _rigor_remainder(
+                    finding,
+                    reason="safe edit overlaps a previously accepted anchor",
+                )
+            )
+            continue
+        accepted.append((start, end, edit))
+        applied.append(
+            AppliedPlanFix(
+                finding_id=finding.finding_id,
+                evidence=finding.evidence,
+                before=edit.before,
+                after=edit.after,
+            )
+        )
+
+    revised = text
+    for start, end, edit in sorted(accepted, key=lambda item: item[0], reverse=True):
+        revised = f"{revised[:start]}{edit.after}{revised[end:]}"
+    if revised == text and applied:
+        remaining.extend(
+            _rigor_remainder(
+                finding_by_id[item.finding_id],
+                reason="composed safe edits leave the plan byte-identical",
+            )
+            for item in applied
+        )
+        applied.clear()
+    elif revised != text:
+        _atomic_write_plan_text(plan_path, revised, expected_digest=actual_digest)
+    return PlanRigorReport(
+        plan_path=plan_path,
+        applied=tuple(applied),
+        remaining=tuple(remaining),
+    )
+
+
+def _rigor_remainder(finding: PlanRigorFinding, *, reason: str) -> PlanRigorRemainder:
+    return PlanRigorRemainder(
+        finding_id=finding.finding_id,
+        summary=finding.summary,
+        evidence=finding.evidence,
+        recommendation=finding.recommendation,
+        reason=reason,
+    )
+
+
+def plan_file_digest(plan_path: Path) -> str:
+    """Return the SHA-256 digest a caller must bind to rigor findings."""
+    if not isinstance(plan_path, Path):
+        raise PlanningError("plan_path must be a pathlib.Path")
+    if plan_path.is_symlink():
+        raise PlanningError(f"orchestration plan must not be a symlink: {plan_path}")
+    if not plan_path.is_file():
+        raise PlanningError(f"orchestration plan is not a file: {plan_path}")
+    return _bytes_digest(plan_path.read_bytes())
+
+
+def _anchor_offsets(text: str, anchor: str) -> tuple[int, ...]:
+    offsets: list[int] = []
+    start = 0
+    while True:
+        found = text.find(anchor, start)
+        if found < 0:
+            return tuple(offsets)
+        offsets.append(found)
+        start = found + 1
+
+
+def _bytes_digest(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()
+
+
+def _require_file_digest(value: object) -> str:
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise PlanningError("expected_digest must be a lowercase SHA-256 digest")
+    return value
+
+
+def _atomic_write_plan_text(path: Path, text: str, *, expected_digest: str) -> None:
+    """Replace a repository plan atomically without changing its permission bits."""
+    if path.is_symlink():
+        raise PlanningError(f"orchestration plan must not be a symlink: {path}")
+    current_bytes = path.read_bytes()
+    if _bytes_digest(current_bytes) != expected_digest:
+        raise PlanningError("orchestration plan changed while the rigor pass was running")
+    mode = stat.S_IMODE(path.stat().st_mode)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with temporary.open("xb") as stream:
+            stream.write(text.encode("utf-8"))
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.chmod(mode)
+        if path.is_symlink() or _bytes_digest(path.read_bytes()) != expected_digest:
+            raise PlanningError("orchestration plan changed while the rigor pass was running")
+        os.replace(temporary, path)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            temporary.unlink()
 
 
 def issue_presentation_receipt(built: Plan) -> PresentationReceipt:

@@ -280,8 +280,8 @@
     {
       "name": "orchestrate",
       "source": "./plugins/orchestrate",
-      "version": "0.11.1",
-      "description": "Cross-vendor orchestration over herdr: routing, admission, a spend ceiling, durable state, write-ahead launches, event catch-up, bounded predicates, and a mirror protecting the operator's channel.",
+      "version": "0.12.1",
+      "description": "Cross-vendor orchestration over herdr: routing, admission, spend ceilings, bounded review loops, consensus panels, durable state, event catch-up, and a protected operator channel.",
       "author": {
         "name": "Infiquetra",
         "email": "hello@infiquetra.com"
@@ -296,9 +296,9 @@
         "dispatch",
         "state-model",
         "events",
-        "mirror",
-        "predicate",
-        "verification"
+        "verification",
+        "consensus",
+        "review"
       ],
       "category": "development"
     }

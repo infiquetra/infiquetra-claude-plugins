@@ -2,6 +2,101 @@
 
 ## 2026-08-16
 
+### Identity is canonicalised; provenance is supplied  {#vendor-identity-provenance-is-supplied}
+
+**Date.** 2026-08-16
+
+**Decision.** Vendor names are canonicalised before eligibility and independence comparisons:
+Unicode compatibility normalisation first, then removal of format characters, whitespace collapse,
+and case folding. This removes presentation variance without attempting to infer that visually
+similar characters from different scripts represent one identity.
+
+Vendor names and their provenance are trusted caller input. The panel rebuilds a sealed roster and
+checks its internal consistency relative to the builder and home identities the roster declares; it
+does not have an independent source from which to discover those identities. A future composition
+layer must supply all vendor names from one trusted authority rather than accepting reviewer-authored
+free text.
+
+Every item in the response sequence is data to classify. An unusable payload, excluded or unknown
+seat, duplicate answer, wrong type, or answer without a usable seat identifier becomes an invalid
+response in the outcome. Any invalid response halts permission, while a valid blocking rank keeps
+precedence and remains in the same outcome. The plan rigor pass similarly distinguishes a performed
+write from accepted edits whose composed result is byte-identical; the latter return as remainders.
+
+**Rationale.** Identity comparisons must collapse harmless presentation differences or one source
+can acquire several seats. Confusable detection is not identity proof and risks both false matches
+and incomplete deny lists. At the response boundary, returning a complete failure record is what
+allows the bounded review loop to retain evidence across attempts.
+
+**Rejected alternatives.**
+
+- *Maintain a confusable-character table in the panel.* A local deny list cannot establish identity,
+  will be incomplete, and would create a second vendor authority before the composition layer owns
+  one.
+- *Raise on an unroutable answer.* The decision fails closed, but the exception erases valid findings
+  from other seats.
+- *Report byte-identical composed edits as applied.* No write occurred, so the operator cannot audit
+  that claim against the plan.
+
+**Revisit when.** The composition layer has a canonical vendor registry. At that point the roster
+should accept registry identifiers rather than trusted display strings.
+
+---
+
+### Consensus requires every seat to clear; one blocking gate can halt  {#consensus-authority-is-asymmetric}
+
+**Date.** 2026-08-16
+
+**Decision.** A consensus panel grants permission to proceed only after every constructed voting
+seat returns a complete response and every gate dimension is below its blocking rank. One blocking
+gate rank is enough to halt immediately. A response count below the roster's original quorum also
+halts, and a missing seat still prevents proceeding when the remaining responses happen to exceed
+that minimum. The denominator never shrinks to match the responses that arrived.
+
+The normal roster builder excludes the unit builder's vendor. An external-only roster additionally
+excludes the home vendor. Vendor identity is the independence unit already used by both exclusions,
+so a roster permits at most one voting seat per vendor. Repeated seats from one vendor cannot
+multiply that vendor's judgment into quorum authority.
+
+Python constructors are not an authority boundary: object allocation, deserialization, and direct
+state mutation can bypass them. The function that can grant permission therefore rebuilds the layer
+policy and roster's immutable denominator, then verifies every seat against the builder and home
+identities declared by that roster. The caller owns the provenance of those identities. The roster
+names its review layer, and evaluation refuses a configuration from a different layer. Outcomes
+retain candidates excluded before voting, unusable answers, and scores paired with the seats that
+supplied them.
+
+Each dimension chooses one instrument. A gate declares a blocking rank and owns the decision. A
+score declares a numeric convergence threshold and is reported without changing that decision.
+The orchestration-plan rigor pass remains outside the panel. It binds findings to an expected file
+digest, matches anchors against the exact reviewed text, refuses overlapping edits and symlinked
+plans, and records each accepted before-and-after replacement. Its slotted report contains only
+applied fixes and recommended remainders. The operator remains the plan's only voter.
+
+**Rationale.** Permission and refusal need different evidence. One sound blocking observation is
+enough to make proceeding unsafe, while permission needs affirmative evidence from every seat that
+was granted voting authority. Treating a missing response as a smaller complete panel turns an
+absence into approval. Counting several seats from one vendor would make the same error one level
+earlier: one independent judgment would wear a larger denominator's authority.
+
+**Rejected alternatives.**
+
+- *Require agreement to halt.* This suppresses a valid blocker whenever another seat disagrees or
+  never responds.
+- *Proceed once the minimum quorum responds.* The minimum protects against an under-strength
+  roster; it does not authorize silently replacing the declared denominator.
+- *Let scores bind the decision.* A convergence measure and a blocking fact answer different
+  questions. Combining them makes a low score act like an unstated gate.
+- *Rely on constructors for roster eligibility.* Constructors improve the ordinary API but cannot
+  protect a consequence in a language that permits allocation without initialization. The grant
+  function must validate what it was handed.
+- *Make seat independence the caller's responsibility.* The module already compares vendor identity
+  to decide which judgments are independent. Allowing duplicate vendors would contradict that model
+  and leave quorum strength dependent on an undocumented caller convention.
+
+**Revisit when.** A panel needs explicit abstention with independent evidence that the lens does
+not apply. That would require a typed abstention which removes a seat before the roster is sealed,
+not omission after responses begin.
 ### The documented launch command is the claim protocol's owner  {#documented-command-owns-the-claim}
 
 **Decision.** The launch and collect commands printed in the review skills

@@ -472,6 +472,38 @@ def test_rigor_pass_refuses_overlapping_anchors(tmp_path: Path) -> None:
     assert report.remaining[0].reason == "safe edit overlaps a previously accepted anchor"
 
 
+def test_rigor_pass_reports_composed_byte_identical_edits_as_remaining(tmp_path: Path) -> None:
+    plan_path = tmp_path / "plan.md"
+    plan_path.write_bytes(b"aXb\n")
+    report = PLANNING.run_plan_rigor_pass(
+        plan_path,
+        (
+            PLANNING.PlanRigorFinding(
+                finding_id="one",
+                summary="Remove the marker.",
+                evidence="The first marker is present.",
+                recommendation="Remove the first marker.",
+                safe_edit=PLANNING.SafePlanEdit("aX", "a"),
+            ),
+            PLANNING.PlanRigorFinding(
+                finding_id="two",
+                summary="Add the marker elsewhere.",
+                evidence="The second anchor is present.",
+                recommendation="Add the marker to the second anchor.",
+                safe_edit=PLANNING.SafePlanEdit("b\n", "Xb\n"),
+            ),
+        ),
+        expected_digest=_plan_digest(plan_path),
+    )
+
+    assert plan_path.read_bytes() == b"aXb\n"
+    assert report.applied == ()
+    assert [(item.finding_id, item.reason) for item in report.remaining] == [
+        ("one", "composed safe edits leave the plan byte-identical"),
+        ("two", "composed safe edits leave the plan byte-identical"),
+    ]
+
+
 def test_under_external_only_the_home_vendor_cannot_be_constructed_as_a_voting_seat() -> None:
     roster = PANEL.build_roster(
         (
@@ -499,6 +531,68 @@ def test_under_external_only_the_home_vendor_cannot_be_constructed_as_a_voting_s
             "lens",
             _constructor=object(),
         )
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ("vendor", "VENDOR"),
+        ("vendor", "ven\u200bdor"),
+        ("vendör", "vendo\u0308r"),
+        ("example group", "example\u00a0group"),
+        ("vendor", "ｖｅｎｄｏｒ"),
+    ],
+)
+def test_vendor_identity_collapses_unicode_presentation_variants(
+    first: str,
+    second: str,
+) -> None:
+    with pytest.raises(PANEL.ConsensusPanelError, match="vendors must be unique"):
+        _roster(
+            _candidate("one", first),
+            _candidate("two", second),
+            quorum=2,
+        )
+
+
+def test_pasted_builder_and_format_hidden_home_are_excluded() -> None:
+    roster = PANEL.build_roster(
+        (
+            _candidate("builder", "example\u00a0group"),
+            _candidate("home", "ho\u200bme"),
+            _candidate("external", "external"),
+        ),
+        layer="code-review",
+        built_vendor="example group",
+        home_vendor="home",
+        mode=PANEL.EXTERNAL_ONLY_ROSTER,
+        quorum=1,
+    )
+
+    assert [seat.seat_id for seat in roster.seats] == ["external"]
+    assert [(item.candidate.seat_id, item.reason) for item in roster.excluded] == [
+        ("builder", "builder-vendor"),
+        ("home", "home-vendor-external-only"),
+    ]
+
+
+def test_cross_script_confusables_remain_distinct_trusted_vendor_identifiers() -> None:
+    cyrillic_e = chr(0x0435)
+    roster = _roster(
+        _candidate("one", "vendor"),
+        _candidate("two", f"v{cyrillic_e}ndor"),
+        quorum=2,
+    )
+    outcome = PANEL.evaluate_panel(
+        _configuration(),
+        roster,
+        (_response("one"), _response("two")),
+    )
+
+    assert outcome.decision == PANEL.PANEL_PROCEED
+    assert [seat.vendor for seat in roster.seats] == ["vendor", f"v{cyrillic_e}ndor"]
+    assert "trusted caller input" in (PANEL.__doc__ or "")
+    assert "self-consistent" in (PANEL._validated_roster_snapshot.__doc__ or "")
 
 
 @pytest.mark.parametrize("ineligible_vendor", ["home", "builder"])
@@ -599,6 +693,92 @@ def test_schema_invalid_response_halts_without_losing_another_seats_blocker() ->
         assert outcome.responded_seats == ("blocker",)
         assert outcome.missing_seats == ("malformed",)
         assert [item.seat_id for item in outcome.invalid_responses] == ["malformed"]
+        assert [item.kind for item in outcome.invalid_responses] == ["invalid-payload"]
+
+
+def test_excluded_candidate_answer_cannot_discard_a_blocking_rank() -> None:
+    roster = _roster(
+        _candidate("blocker", "vendor-one"),
+        _candidate("excluded", "builder"),
+        quorum=1,
+    )
+    outcome = PANEL.evaluate_panel(
+        _configuration(),
+        roster,
+        (_response("blocker", rank="P0"), _response("excluded")),
+    )
+
+    assert outcome.decision == PANEL.PANEL_HALT
+    assert outcome.reason == "blocking-gate"
+    assert [(item.seat_id, item.rank) for item in outcome.blocking] == [("blocker", "P0")]
+    assert [(item.kind, item.seat_id) for item in outcome.invalid_responses] == [
+        ("excluded-seat", "excluded")
+    ]
+
+
+def test_every_unroutable_answer_is_recorded_without_discarding_a_blocker() -> None:
+    roster = _roster(
+        _candidate("blocker", "vendor-one"),
+        _candidate("other", "vendor-two"),
+        quorum=2,
+    )
+    uninitialised = object.__new__(PANEL.ReviewerResponse)
+    non_string_id = object.__new__(PANEL.ReviewerResponse)
+    object.__setattr__(non_string_id, "seat_id", 7)
+    object.__setattr__(non_string_id, "assessments", ())
+    cases = (
+        (
+            "unknown-seat",
+            (_response("blocker", rank="P0"), _response("unknown")),
+            "unknown",
+        ),
+        (
+            "duplicate-seat",
+            (
+                _response("blocker", rank="P0"),
+                _response("other"),
+                _response("other"),
+            ),
+            "other",
+        ),
+        ("wrong-type", (_response("blocker", rank="P0"), object()), None),
+        (
+            "unidentifiable-seat",
+            (_response("blocker", rank="P0"), uninitialised),
+            None,
+        ),
+        (
+            "unidentifiable-seat",
+            (_response("blocker", rank="P0"), non_string_id),
+            None,
+        ),
+    )
+
+    for expected_kind, responses, expected_seat_id in cases:
+        outcome = PANEL.evaluate_panel(_configuration(), roster, responses)
+        assert outcome.decision == PANEL.PANEL_HALT
+        assert outcome.reason == "blocking-gate"
+        assert [(item.seat_id, item.rank) for item in outcome.blocking] == [("blocker", "P0")]
+        assert [(item.kind, item.seat_id) for item in outcome.invalid_responses] == [
+            (expected_kind, expected_seat_id)
+        ]
+
+
+def test_invalid_extra_answer_halts_an_otherwise_clear_complete_panel() -> None:
+    roster = _roster(_candidate("one", "vendor-one"), quorum=1)
+    outcome = PANEL.evaluate_panel(
+        _configuration(),
+        roster,
+        (_response("one"), _response("unknown")),
+    )
+
+    assert outcome.decision == PANEL.PANEL_HALT
+    assert outcome.reason == "invalid-response"
+    assert outcome.responded_seats == ("one",)
+    assert outcome.missing_seats == ()
+    assert [(item.kind, item.seat_id) for item in outcome.invalid_responses] == [
+        ("unknown-seat", "unknown")
+    ]
 
 
 def test_an_empty_score_series_is_not_convergence() -> None:

@@ -515,12 +515,14 @@ def run_plan_rigor_pass(
     remaining: list[PlanRigorRemainder] = []
     accepted: list[tuple[int, int, SafePlanEdit]] = []
     seen: set[str] = set()
+    finding_by_id: dict[str, PlanRigorFinding] = {}
     for finding in findings:
         if not isinstance(finding, PlanRigorFinding):
             raise PlanningError("plan rigor findings must be PlanRigorFinding values")
         if finding.finding_id in seen:
             raise PlanningError(f"duplicate plan rigor finding_id {finding.finding_id!r}")
         seen.add(finding.finding_id)
+        finding_by_id[finding.finding_id] = finding
         edit = finding.safe_edit
         if edit is None:
             remaining.append(_rigor_remainder(finding, reason="operator decision required"))
@@ -561,7 +563,16 @@ def run_plan_rigor_pass(
     revised = text
     for start, end, edit in sorted(accepted, key=lambda item: item[0], reverse=True):
         revised = f"{revised[:start]}{edit.after}{revised[end:]}"
-    if revised != text:
+    if revised == text and applied:
+        remaining.extend(
+            _rigor_remainder(
+                finding_by_id[item.finding_id],
+                reason="composed safe edits leave the plan byte-identical",
+            )
+            for item in applied
+        )
+        applied.clear()
+    elif revised != text:
         _atomic_write_plan_text(plan_path, revised, expected_digest=actual_digest)
     return PlanRigorReport(
         plan_path=plan_path,

@@ -2,6 +2,47 @@
 
 ## 2026-08-16
 
+### Identity is canonicalised; provenance is supplied  {#vendor-identity-provenance-is-supplied}
+
+**Date.** 2026-08-16
+
+**Decision.** Vendor names are canonicalised before eligibility and independence comparisons:
+Unicode compatibility normalisation first, then removal of format characters, whitespace collapse,
+and case folding. This removes presentation variance without attempting to infer that visually
+similar characters from different scripts represent one identity.
+
+Vendor names and their provenance are trusted caller input. The panel rebuilds a sealed roster and
+checks its internal consistency relative to the builder and home identities the roster declares; it
+does not have an independent source from which to discover those identities. A future composition
+layer must supply all vendor names from one trusted authority rather than accepting reviewer-authored
+free text.
+
+Every item in the response sequence is data to classify. An unusable payload, excluded or unknown
+seat, duplicate answer, wrong type, or answer without a usable seat identifier becomes an invalid
+response in the outcome. Any invalid response halts permission, while a valid blocking rank keeps
+precedence and remains in the same outcome. The plan rigor pass similarly distinguishes a performed
+write from accepted edits whose composed result is byte-identical; the latter return as remainders.
+
+**Rationale.** Identity comparisons must collapse harmless presentation differences or one source
+can acquire several seats. Confusable detection is not identity proof and risks both false matches
+and incomplete deny lists. At the response boundary, returning a complete failure record is what
+allows the bounded review loop to retain evidence across attempts.
+
+**Rejected alternatives.**
+
+- *Maintain a confusable-character table in the panel.* A local deny list cannot establish identity,
+  will be incomplete, and would create a second vendor authority before the composition layer owns
+  one.
+- *Raise on an unroutable answer.* The decision fails closed, but the exception erases valid findings
+  from other seats.
+- *Report byte-identical composed edits as applied.* No write occurred, so the operator cannot audit
+  that claim against the plan.
+
+**Revisit when.** The composition layer has a canonical vendor registry. At that point the roster
+should accept registry identifiers rather than trusted display strings.
+
+---
+
 ### Consensus requires every seat to clear; one blocking gate can halt  {#consensus-authority-is-asymmetric}
 
 **Date.** 2026-08-16
@@ -18,11 +59,12 @@ so a roster permits at most one voting seat per vendor. Repeated seats from one 
 multiply that vendor's judgment into quorum authority.
 
 Python constructors are not an authority boundary: object allocation, deserialization, and direct
-state mutation can bypass them. The function that can grant permission therefore rebuilds and
-revalidates the layer policy, the roster's immutable denominator, every seat's eligibility, and
-every response before evaluating the outcome. The roster names its review layer, and evaluation
-refuses a configuration from a different layer. Outcomes retain candidates excluded before voting,
-malformed responses, and scores paired with the seats that supplied them.
+state mutation can bypass them. The function that can grant permission therefore rebuilds the layer
+policy and roster's immutable denominator, then verifies every seat against the builder and home
+identities declared by that roster. The caller owns the provenance of those identities. The roster
+names its review layer, and evaluation refuses a configuration from a different layer. Outcomes
+retain candidates excluded before voting, unusable answers, and scores paired with the seats that
+supplied them.
 
 Each dimension chooses one instrument. A gate declares a blocking rank and owns the decision. A
 score declares a numeric convergence threshold and is reported without changing that decision.

@@ -1,12 +1,25 @@
 # Changelog
 
+## [0.12.1] - 2026-08-16
+
+### Fixed
+
+- Vendor identity comparisons now normalise compatibility forms, remove Unicode format characters,
+  collapse whitespace, and fold case. Cross-script confusables remain distinct because vendor names
+  are trusted caller input, not text from which identity is inferred.
+- Every unusable answer is recorded in the panel outcome, including excluded, unknown, duplicate,
+  wrong-type, and unidentifiable answers. Invalid answers halt a panel without discarding blocking
+  evidence already returned by a voting seat.
+- A plan rigor report no longer calls composed edits applied when their net result is byte-identical
+  to the reviewed plan. Those edits return as recommended remainders instead.
+
 ## [0.12.0] - 2026-08-16
 
 ### Added
 
 - A consensus panel whose roster excludes the unit builder's vendor. An external-only roster also
-  excludes the home vendor. The decision boundary rebuilds and revalidates roster eligibility,
-  layer policy, and the immutable denominator before it can grant permission.
+  excludes the home vendor. The decision boundary rebuilds the layer policy and immutable
+  denominator, then checks roster self-consistency against the identities the roster declares.
 - One independent vendor per voting seat, explicit configuration-to-roster layer linkage, and panel
   outcomes that retain structural exclusions and name malformed responses.
 - Asymmetric panel authority: one blocking gate rank halts, while proceeding requires a complete,

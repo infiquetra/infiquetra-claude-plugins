@@ -1,6 +1,6 @@
 {
   "name": "orchestrate",
-  "version": "0.12.0",
+  "version": "0.12.1",
   "description": "Cross-vendor orchestration over herdr: routing, admission, spend ceilings, bounded review loops, consensus panels, durable state, event catch-up, and a protected operator channel.",
   "author": {
     "name": "Infiquetra",

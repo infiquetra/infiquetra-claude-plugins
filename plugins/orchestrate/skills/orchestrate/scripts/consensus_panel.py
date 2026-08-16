@@ -12,13 +12,20 @@ clean review, and an under-strength roster never acquires the authority of the r
 
 The normal roster builder excludes the vendor that built the unit from every roster and also
 excludes the home vendor from an external-only roster. It permits at most one seat per vendor,
-because vendor identity is this module's unit of independent judgment. Constructors are not a
-security boundary in Python, so :func:`evaluate_panel` rebuilds and revalidates the configuration,
-roster, seats, and responses before it can return ``proceed``.
+because vendor identity is this module's unit of independent judgment. Presentation variants are
+normalised before comparison, but cross-script confusables cannot be inferred safely; vendor names
+and their provenance are trusted caller input.
+
+Constructors are not a security boundary in Python. Before it can return ``proceed``,
+:func:`evaluate_panel` rebuilds the configuration and checks that the sealed roster is internally
+self-consistent, including each seat's eligibility relative to the builder and home identities the
+roster declares. The caller owns the provenance of those declarations. Every answer is classified
+into the returned outcome so an unusable answer cannot discard another seat's blocking evidence.
 """
 
 from __future__ import annotations
 
+import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -442,9 +449,18 @@ class BlockingAssessment:
 
 @dataclass(frozen=True, slots=True)
 class InvalidResponse:
-    """A voting seat whose returned value could not be treated as a performed review."""
+    """One answer that could not be treated as a performed review."""
 
-    seat_id: str
+    response_index: int
+    kind: Literal[
+        "invalid-payload",
+        "excluded-seat",
+        "unknown-seat",
+        "duplicate-seat",
+        "wrong-type",
+        "unidentifiable-seat",
+    ]
+    seat_id: str | None
     reason: str
 
 
@@ -501,27 +517,74 @@ def evaluate_panel(
         raise ConsensusPanelError("responses must be a sequence of ReviewerResponse values")
     response_values = tuple(responses)
     by_seat: dict[str, ReviewerResponse] = {}
-    invalid_by_seat: dict[str, InvalidResponse] = {}
+    invalid_responses: list[InvalidResponse] = []
     received: set[str] = set()
     allowed = {seat.seat_id for seat in roster.seats}
+    excluded = {item.candidate.seat_id for item in roster.excluded}
     dimensions = {dimension.name: dimension for dimension in configuration.dimensions}
-    for response in response_values:
+    for response_index, response in enumerate(response_values):
         if type(response) is not ReviewerResponse:
-            raise ConsensusPanelError("responses must be ReviewerResponse values")
+            invalid_responses.append(
+                InvalidResponse(
+                    response_index=response_index,
+                    kind="wrong-type",
+                    seat_id=None,
+                    reason="answer is not a ReviewerResponse value",
+                )
+            )
+            continue
         try:
             seat_id = _require_non_empty(response.seat_id, what="response seat_id")
-        except (AttributeError, ConsensusPanelError) as exc:
-            raise ConsensusPanelError("a response could not identify its voting seat") from exc
-        if seat_id not in allowed:
-            raise ConsensusPanelError(f"response from unknown voting seat {seat_id!r}")
+        except (AttributeError, ConsensusPanelError):
+            invalid_responses.append(
+                InvalidResponse(
+                    response_index=response_index,
+                    kind="unidentifiable-seat",
+                    seat_id=None,
+                    reason="answer could not identify its voting seat",
+                )
+            )
+            continue
         if seat_id in received:
-            raise ConsensusPanelError(f"duplicate response from seat {seat_id!r}")
+            invalid_responses.append(
+                InvalidResponse(
+                    response_index=response_index,
+                    kind="duplicate-seat",
+                    seat_id=seat_id,
+                    reason="more than one answer used this voting seat",
+                )
+            )
+            continue
         received.add(seat_id)
+        if seat_id not in allowed:
+            kind: Literal["excluded-seat", "unknown-seat"]
+            if seat_id in excluded:
+                kind = "excluded-seat"
+                reason = "answer came from a candidate excluded from the voting roster"
+            else:
+                kind = "unknown-seat"
+                reason = "answer did not identify a voting seat on this roster"
+            invalid_responses.append(
+                InvalidResponse(
+                    response_index=response_index,
+                    kind=kind,
+                    seat_id=seat_id,
+                    reason=reason,
+                )
+            )
+            continue
         try:
             snapshot = _validated_response_snapshot(response)
             _validate_response_schema(snapshot, dimensions)
         except ConsensusPanelError as exc:
-            invalid_by_seat[seat_id] = InvalidResponse(seat_id=seat_id, reason=str(exc))
+            invalid_responses.append(
+                InvalidResponse(
+                    response_index=response_index,
+                    kind="invalid-payload",
+                    seat_id=seat_id,
+                    reason=str(exc),
+                )
+            )
             continue
         by_seat[seat_id] = snapshot
 
@@ -558,9 +621,7 @@ def evaluate_panel(
 
     responded = tuple(seat_id for seat_id in seat_order if seat_id in by_seat)
     missing = tuple(seat_id for seat_id in seat_order if seat_id not in by_seat)
-    invalid = tuple(
-        invalid_by_seat[seat_id] for seat_id in seat_order if seat_id in invalid_by_seat
-    )
+    invalid = tuple(invalid_responses)
     frozen_scores = {
         name: tuple(
             SeatScore(seat_id=seat_id, value=values[seat_id])
@@ -580,6 +641,18 @@ def evaluate_panel(
         return _outcome(
             PANEL_HALT,
             "blocking-gate",
+            responded,
+            missing,
+            invalid,
+            roster.excluded,
+            blocking,
+            frozen_scores,
+            convergence,
+        )
+    if invalid:
+        return _outcome(
+            PANEL_HALT,
+            "invalid-response",
             responded,
             missing,
             invalid,
@@ -683,7 +756,7 @@ def _validated_configuration_snapshot(configuration: object) -> PanelConfigurati
 
 
 def _validated_roster_snapshot(roster: object) -> PanelRoster:
-    """Rebuild roster eligibility and its immutable denominator before granting permission."""
+    """Rebuild a self-consistent immutable roster from its own declared identities."""
     if type(roster) is not PanelRoster:
         raise ConsensusPanelError("evaluate_panel requires a PanelRoster")
     try:
@@ -785,7 +858,15 @@ def _score_threshold(dimension: Dimension) -> float:
 
 
 def _canonical_vendor(vendor: str) -> str:
-    return _require_non_empty(vendor, what="vendor").casefold()
+    value = _require_non_empty(vendor, what="vendor")
+    normalized = unicodedata.normalize("NFKC", value)
+    without_format_characters = "".join(
+        character for character in normalized if unicodedata.category(character) != "Cf"
+    )
+    canonical = " ".join(without_format_characters.split()).casefold()
+    if not canonical:
+        raise ConsensusPanelError("vendor must contain a visible identifier")
+    return canonical
 
 
 def _require_non_empty(value: object, *, what: str) -> str:

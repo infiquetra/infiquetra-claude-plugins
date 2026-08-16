@@ -25,15 +25,22 @@ interview the operator, hand over a table for approval, then dispatch.
 
 `skills/orchestrate/scripts/orchestrate.py` does the moving parts:
 
+Resolve it first — the operator is rarely in this plugin's own repo:
+
 ```bash
-S=plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py
-uv run python $S start --plan .orchestrate/plan.json   # record the run
-uv run python $S go                                    # launch every eligible unit
-uv run python $S status                                # the table, with live herdr state
-uv run python $S settle                                # idle sessions become done
-uv run python $S collect                               # merge each finished unit's branch
-uv run python $S clean --branches                      # close tabs, remove worktrees
+S="$CLAUDE_PLUGIN_ROOT/skills/orchestrate/scripts/orchestrate.py"
+[ -f "$S" ] || S=$(ls -d ~/.claude/plugins/cache/*/orchestrate/*/skills/orchestrate/scripts/orchestrate.py | sort -V | tail -1)
+
+python3 "$S" start --plan .orchestrate/plan.json   # record the run
+python3 "$S" go                                    # launch every eligible unit
+python3 "$S" status                                # the table, with live herdr state
+python3 "$S" settle                                # idle sessions become done
+python3 "$S" collect                               # merge each finished unit's branch
+python3 "$S" clean --branches                      # close tabs, remove worktrees
 ```
+
+Standard library only, so `python3` — not `uv run`, which would need the target repo to be a uv
+project.
 
 `go` launches only units whose `after` dependencies are already done, so calling `settle` then `go`
 again is what releases the next wave.

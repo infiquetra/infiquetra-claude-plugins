@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.0.1] - 2026-08-16
+
+### Fixed
+
+- **The command told the session to run a script path that only exists in this repo.** Both
+  `commands/orchestrate.md` and the skill printed
+  `S=plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py`, which resolves only when the
+  operator happens to be inside `infiquetra-claude-plugins`. `/orchestrate` is for running work in
+  *other* repositories, so every real use would have failed at dispatch with a missing file. Both
+  documents now resolve the installed script through `$CLAUDE_PLUGIN_ROOT`, falling back to the
+  plugin cache.
+- **`uv run python` required the operator's repository to be a uv project.** The script imports
+  nothing outside the standard library, so both documents now call `python3` directly.
+
+Found by the first real operator run, against issue 48 of `campps-e2e-canary`, before it reached
+dispatch.
+
 ## [1.0.0] - 2026-08-16
 
 ### Changed

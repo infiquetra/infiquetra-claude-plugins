@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import io
 import json
 import re
 import sys
+import threading
 from collections.abc import Mapping
+from contextlib import redirect_stdout
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -471,7 +474,8 @@ def test_provider_egress_tier_and_claim_persistence_unchanged_with_session_runne
 
     second = SO.dispatch_second_opinion(prepared, runner=session_runner, claim_store=store)
     assert launcher.starts == 1
-    assert second.halt == SO.INTERRUPTED_DISPATCH_NOTE
+    assert second.halt == SO.COLLECTED_NOTE
+    assert store.read(prepared.request_id).state == "collected"
 
 
 def test_external_only_is_rejected_for_non_review_stages(tmp_path: Path) -> None:
@@ -618,7 +622,7 @@ def test_pending_launch_is_not_died_and_collect_recovers_findings(
     )
     assert recovered.halt is None
     assert recovered.source_findings
-    assert store.read(prepared.request_id).state == "requested"
+    assert store.read(prepared.request_id).state == "collected"
     assert launcher.starts == 1
 
 
@@ -658,7 +662,8 @@ def test_pending_claim_bound_refuses_a_ninth_launch(
 ) -> None:
     monkeypatch.setattr(SO, "MAX_PENDING_CLAIMS", 2)
     store = SO.SecondOpinionClaimStore(tmp_path / "claims.json")
-    run = SR.runner(launcher=ScriptedLauncher(pending=True))
+    launcher = ScriptedLauncher(pending=True)
+    run = SR.runner(launcher=launcher)
     first = _prepared(monkeypatch)
     SO.dispatch_second_opinion(first, runner=run, claim_store=store)
     second = SO.prepare_second_opinion(
@@ -679,6 +684,7 @@ def test_pending_claim_bound_refuses_a_ninth_launch(
     blocked = SO.dispatch_second_opinion(third, runner=run, claim_store=store)
     assert blocked.halt == SO.PENDING_BOUND_NOTE
     assert store.read(third.request_id).state == "unavailable"
+    assert launcher.starts == 2
 
 
 def test_real_codex_invocation_keeps_tool_task_model_and_effort(tmp_path: Path) -> None:
@@ -918,7 +924,7 @@ def test_pending_then_later_file_is_collected_not_spent(
     recovered = SO.collect_second_opinion(prepared, runner=run, claim_store=store)
     assert recovered.halt is None
     assert recovered.source_findings
-    assert store.read(prepared.request_id).state == "requested"
+    assert store.read(prepared.request_id).state == "collected"
     assert starts["n"] == 1
 
 
@@ -941,6 +947,14 @@ def test_vendor_spellings_of_the_home_vendor_are_excluded() -> None:
     assert mixed_home.members == ("codex/gpt-5.6-sol-high",)
     assert mixed_home.home_vendor == "claude"
 
+    spaced = XO.admit_external_only(
+        home_vendor="codex",
+        candidates=("codex /gpt-5.5", "CODEX /gpt-5.5", "agy/gemini-3.1-pro-high"),
+        quorum=1,
+    )
+    assert isinstance(spaced, XO.ExternalOnlyRoster)
+    assert spaced.members == ("agy/gemini-3.1-pro-high",)
+
     engine_id_only = XO.admit_external_only(
         home_vendor="codex",
         candidates=("codex", "agy/gemini-3.1-pro-high"),
@@ -953,6 +967,12 @@ def test_vendor_spellings_of_the_home_vendor_are_excluded() -> None:
         XO.ExternalOnlyRoster(
             home_vendor="Claude",
             members=("claude/opus-high",),
+            quorum=1,
+        )
+    with pytest.raises(XO.ExternalOnlyError, match="excluded vendor cannot sit"):
+        XO.ExternalOnlyRoster(
+            home_vendor="codex",
+            members=("codex /gpt-5.5",),
             quorum=1,
         )
 
@@ -985,8 +1005,10 @@ def test_cli_parser_exposes_launch_and_collect() -> None:
         ]
     )
     assert launch.command == "launch"
+    assert launch.claim_store.endswith("second-opinion-claims.json")
     collect = parser.parse_args(["collect", "--handle-file", "handle.json"])
     assert collect.command == "collect"
+    assert collect.claim_store.endswith("second-opinion-claims.json")
 
 
 def test_cli_launch_and_collect_exist() -> None:
@@ -999,3 +1021,263 @@ def test_cli_launch_and_collect_exist() -> None:
     code_review = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
     assert "engine_session_runner.py launch" in code_review
     assert "engine_session_runner.py collect" in code_review
+    assert "--claim-store" in code_review
+    assert "request_digest" in code_review
+    assert SO.CLAIM_SCHEMA == "saga.second-opinion-claims.v2"
+
+
+def test_collected_result_survives_resume(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    result_path = tmp_path / "slow.json"
+    launcher = ScriptedLauncher(pending=True, result_path=result_path)
+    run = SR.runner(launcher=launcher)
+    store = SO.SecondOpinionClaimStore(tmp_path / "claims.json")
+    prepared = _prepared(monkeypatch)
+    SO.dispatch_second_opinion(prepared, runner=run, claim_store=store)
+    rows = [{"content": "P0: collected review found a blocker"}]
+    result_path.write_text(
+        json.dumps(
+            {
+                "request_digest": prepared.request_digest,
+                "findings": rows,
+                "output": RC.render_source_findings(RC.parse_source_findings(rows)),
+            }
+        ),
+        encoding="utf-8",
+    )
+    launcher.pending = False
+    launcher.findings = tuple(rows)
+    launcher.output = RC.render_source_findings(RC.parse_source_findings(rows))
+    collected = SO.collect_second_opinion(prepared, runner=run, claim_store=store)
+    assert collected.source_findings
+    assert store.read(prepared.request_id).state == "collected"
+    resumed = SO.dispatch_second_opinion(
+        prepared, runner=run, claim_store=store, recover_pending=True
+    )
+    assert resumed.halt is None
+    assert resumed.source_findings
+    assert store.read(prepared.request_id).state == "collected"
+    assert launcher.starts == 1
+
+
+def test_recover_during_launch_does_not_terminalize_or_raise(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    started = threading.Event()
+    release = threading.Event()
+    starts = {"n": 0}
+
+    class BlockingLauncher:
+        def start(self, invocation: Mapping[str, Any]) -> Any:
+            starts["n"] += 1
+            started.set()
+            assert release.wait(2)
+            digest = str(invocation.get("request_digest") or "blocked")
+            return SR.SessionHandle(
+                label="review",
+                request_digest=digest,
+                result_path=tmp_path / "blocked.json",
+                tool="codex",
+            )
+
+        def collect(self, handle: Any) -> Any:
+            raise SR.SessionPending("still launching")
+
+    prepared = _prepared(monkeypatch)
+    store = SO.SecondOpinionClaimStore(tmp_path / "claims.json")
+    run = SR.runner(launcher=BlockingLauncher())
+    errors: list[BaseException] = []
+    launch_result: dict[str, Any] = {}
+
+    def launch() -> None:
+        try:
+            launch_result["evidence"] = SO.dispatch_second_opinion(
+                prepared, runner=run, claim_store=store
+            )
+        except BaseException as exc:  # noqa: BLE001 - test records the raise
+            errors.append(exc)
+
+    worker = threading.Thread(target=launch)
+    worker.start()
+    assert started.wait(2)
+    resume = SO.dispatch_second_opinion(
+        prepared, runner=run, claim_store=store, recover_pending=True
+    )
+    assert resume.halt == SO.PENDING_NOTE
+    assert store.read(prepared.request_id).state == "pending"
+    release.set()
+    worker.join(2)
+    assert not errors
+    assert launch_result["evidence"].halt == SO.PENDING_NOTE
+    assert store.read(prepared.request_id).state == "pending"
+    assert starts["n"] == 1
+
+
+def test_prose_output_is_not_unusable(tmp_path: Path) -> None:
+    path = tmp_path / "prose.json"
+    rows = [{"content": "P0: the gate can be bypassed"}]
+    path.write_text(
+        json.dumps(
+            {
+                "request_digest": "d1",
+                "findings": rows,
+                "output": "Here is a prose summary of the finding.",
+            }
+        ),
+        encoding="utf-8",
+    )
+    handle = SR.SessionHandle(label="x", request_digest="d1", result_path=path, tool="codex")
+    collected = SR.read_result_file(handle)
+    assert collected.output == RC.render_source_findings(RC.parse_source_findings(rows))
+    assert collected.findings
+
+
+def test_control_character_session_id_does_not_launch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    prepared = _prepared(monkeypatch)
+    object.__setattr__(prepared, "session_id", "review\nsession")
+    launcher = ScriptedLauncher(findings=({"content": "x"},), output="x")
+    store = SO.SecondOpinionClaimStore(tmp_path / "claims.json")
+    evidence = SO.dispatch_second_opinion(
+        prepared, runner=SR.runner(launcher=launcher), claim_store=store
+    )
+    assert launcher.starts == 0
+    assert evidence.halt == SO.UNUSABLE_DISPATCH_NOTE
+    assert store.read(prepared.request_id).state == "unavailable"
+
+
+def test_launch_writes_engine_fact_before_collect(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    events: list[str] = []
+
+    class FakeState:
+        @staticmethod
+        def arm(engine_id: str, session_id: str, producer: str, root: Any = None) -> Any:
+            events.append(f"ARM({engine_id})")
+            return type("Entry", (), {"armed_at": 1.0})()
+
+        @staticmethod
+        def disarm(session_id: str, root: Any = None) -> None:
+            events.append("DISARM")
+
+    def load(name: str) -> Any:
+        if name == "delegation_state":
+            return FakeState, ""
+        return None, "unused"
+
+    monkeypatch.setattr(SO.engine_dispatch, "_load_fleet_module", load)
+    launcher = ScriptedLauncher(pending=True)
+    prepared = _prepared(monkeypatch)
+    store = SO.SecondOpinionClaimStore(tmp_path / "claims.json")
+    ledger = SO.run_ledger.RunLedger(tmp_path / "facts.jsonl")
+    first = SO.dispatch_second_opinion(
+        prepared,
+        runner=SR.runner(launcher=launcher),
+        claim_store=store,
+        ledger=ledger,
+        subplot_id="review-1",
+        at="2026-08-16T00:00:00Z",
+    )
+    assert first.halt == SO.PENDING_NOTE
+    assert events[:2] == ["ARM(codex)", "DISARM"] or events[0] == "ARM(codex)"
+    assert "ARM(codex)" in events
+    assert launcher.starts == 1
+    facts = list(SO.run_ledger.read_facts(ledger))
+    engine_facts = [item for item in facts if item.get("kind") == "engine"]
+    assert engine_facts
+    assert engine_facts[0]["status"] == "pending"
+
+
+def test_pending_evidence_does_not_close_work_offer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    prepared = _prepared(monkeypatch)
+    store = SO.SecondOpinionClaimStore(tmp_path / "claims.json")
+    evidence = SO.dispatch_second_opinion(
+        prepared,
+        runner=SR.runner(launcher=ScriptedLauncher(pending=True)),
+        claim_store=store,
+    )
+    assert SO.is_pending_evidence(evidence)
+    attempt = SO.WorkAttempt(
+        attempt_id="a1",
+        change_ref="ref",
+        result="fail",
+        failing_test_files=("tests/test_x.py",),
+    )
+    offer = SO.WorkOffer(
+        offer_id="o1",
+        target="tests/test_x.py",
+        streak_epoch_attempt_id="a1",
+        disposition="accepted",
+        tier={"model": "opus", "effort": "high"},
+        request_id=prepared.request_id,
+        request_digest=prepared.request_digest,
+        execution_id=prepared.execution_id,
+    )
+    state = SO.WorkSecondOpinionState(round=1, attempts=(attempt,), offers=(offer,))
+    updated = SO.record_work_dispatch_outcome(state, offer_id="o1", evidence=evidence)
+    assert updated.offers[0].disposition == "accepted"
+
+
+def test_documented_cli_launch_marks_pending_and_collect_accepts_stdout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    prepared = _prepared(monkeypatch)
+    store_path = tmp_path / "claims.json"
+    store = SO.SecondOpinionClaimStore(store_path)
+    assert store.claim(prepared).acquired
+
+    def start(self: Any, invocation: Mapping[str, Any]) -> Any:
+        digest = str(invocation.get("request_digest") or "")
+        return SR.SessionHandle(
+            label="cli",
+            request_digest=digest,
+            result_path=tmp_path / "cli-result.json",
+            tool="codex",
+        )
+
+    monkeypatch.setattr(SR.CommandSessionLauncher, "start", start)
+    invocation_path = tmp_path / "inv.json"
+    invocation_path.write_text(
+        json.dumps(
+            {
+                "via": "codex:delegate",
+                "task": "REVIEW THIS EXACT FINDING",
+                "model": "gpt-5.5",
+                "effort": "high",
+                "request_digest": prepared.request_digest,
+                "engine_id": "codex",
+            }
+        ),
+        encoding="utf-8",
+    )
+    buffer = io.StringIO()
+    with redirect_stdout(buffer):
+        code = SR.main(
+            [
+                "launch",
+                "--invocation-file",
+                str(invocation_path),
+                "--repo-root",
+                str(tmp_path),
+                "--claim-store",
+                str(store_path),
+            ]
+        )
+    assert code == 0
+    payload = json.loads(buffer.getvalue())
+    assert payload["session_outcome"] == "pending"
+    assert payload["result_path"]
+    assert store.read(prepared.request_id).state == "pending"
+    handle_path = tmp_path / "launch-stdout.json"
+    handle_path.write_text(json.dumps(payload), encoding="utf-8")
+    handle = SR.handle_from_payload(payload)
+    assert handle.request_digest == prepared.request_digest
+    collected = SO.collect_second_opinion(
+        prepared,
+        runner=SR.runner(launcher=ScriptedLauncher(pending=True)),
+        claim_store=store,
+    )
+    assert collected.halt == SO.PENDING_NOTE

@@ -75,7 +75,9 @@ def vendor_of(member: str) -> str:
         raise ExternalOnlyError("member key must be a non-empty string")
     normalized = member.strip().casefold()
     vendor, sep, rest = normalized.partition("/")
-    if sep and (not vendor or not rest.strip()):
+    vendor = vendor.strip()
+    rest = rest.strip()
+    if sep and (not vendor or not rest):
         raise ExternalOnlyError("member key must be an engine id or engine/variant")
     if not vendor:
         raise ExternalOnlyError("member key must be a non-empty string")

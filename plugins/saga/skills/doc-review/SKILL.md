@@ -138,12 +138,17 @@ Launch and collect through the module's CLI, the same way the offer helper is in
 ```bash
 python3 plugins/saga/scripts/engine_session_runner.py launch \
   --invocation-file <invocation.json> --repo-root . --stage doc-review \
-  --mode <second-opinion|external-only> --home-vendor <vendor> --engine-id <engine>
-python3 plugins/saga/scripts/engine_session_runner.py collect --handle-file <handle.json>
+  --mode <second-opinion|external-only> --home-vendor <vendor> --engine-id <engine> \
+  --claim-store .saga/second-opinion-claims.json
+python3 plugins/saga/scripts/engine_session_runner.py collect \
+  --handle-file <launch-stdout.json> --claim-store .saga/second-opinion-claims.json
 ```
 
-A launch that returns `session_outcome=pending` has not finished. Collect later. Do not
-treat pending as died, and do not re-launch.
+The invocation file must include the same `request_digest` as the durable requested
+claim. Persist that claim before launch. Launch reserves the pending slot, starts
+the session, and prints a JSON object that collect can read as-is. A launch that
+returns `session_outcome=pending` has not finished. Collect later. Do not treat
+pending as died, and do not re-launch.
 
 ## Second-opinion point-out
 

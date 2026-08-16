@@ -1,6 +1,32 @@
 # Decisions — Infiquetra Claude Plugins
 
-## 2026-08-15
+## 2026-08-16
+
+### Dispatch itself can say a launch started and has not resolved  {#dispatch-pending-status}
+
+**Decision.** The dispatch layer accepts runner status `pending`. Arming
+authority stays in `engine_dispatch.dispatch`. A second-opinion launch
+goes through that function with the real runner, so the tripwire wraps
+the vendor start and a supplied ledger records an `engine` fact for the
+launch whether or not anyone later collects.
+
+A claim with a usable result is `collected` until
+`complete_second_opinion`. That interval is not `requested`. The pending
+slot is reserved before `start`.
+
+**Rejected: move arming and run-fact writes into `second_opinion`.**
+That would retire the rule that the dispatch layer arms. The same
+missing state, one layer down, is the smaller change.
+
+**Rejected: keep the tripwire armed for the whole session lifetime.**
+Arming still matches the duration of the adapter call. The durable
+signal that a launch happened is the run-fact, not a tripwire left
+armed after dispatch has returned.
+
+**Revisit when** collect needs a live liveness probe of a session that
+has already been started.
+
+**Refs.** [`{#second-opinion-pending-until-collected}`](#second-opinion-pending-until-collected).
 
 ### A launched second opinion is pending until collected  {#second-opinion-pending-until-collected}
 
@@ -30,6 +56,35 @@ for the whole external review.
 is the session's return path.
 
 **Refs.** [`{#external-reviewers-are-managed-sessions}`](#external-reviewers-are-managed-sessions).
+
+### External-only admission is a constructed roster or a halt, never a degraded panel  {#external-only-roster-or-halt}
+
+**Decision.** Under the external-only offer mode the permitted reviewers are a
+constructed type. Construction filters the home vendor first. If what remains is
+smaller than the required quorum, the result is a halt that tells the operator no
+review happened. There is no roster that contains the excluded vendor, and there
+is no function that puts that vendor back after a failed start, a dead session,
+or a missing result.
+
+`/code-review` and `/doc-review` inject the managed-session runner. Selection of
+that runner under external-only reuses the same admission: an excluded-vendor
+engine id is a halt, not a session. `dispatch_second_opinion` still takes an
+injected runner. A later ruling added a non-terminal `pending` claim and a
+collect entry point; see
+[`{#second-opinion-pending-until-collected}`](#second-opinion-pending-until-collected).
+
+**Rejected: filter the home vendor in the skill prose and leave the candidate
+list as a plain tuple.** A later retry or error handler can append the excluded
+vendor without the type system noticing.
+**Rejected: fall back to the home panel when admission returns a halt.** That
+converts a correctness choice into a cost choice and labels it external-only.
+
+**Revisit when** a named panel role needs a quorum larger than "every remaining
+non-home member," or when a second construction site for the roster appears.
+
+**Refs.** [`{#external-reviewers-are-managed-sessions}`](#external-reviewers-are-managed-sessions).
+
+## 2026-08-15
 
 ### Review loops terminate by construction; escalation is bounded at one  {#review-loops-bounded-by-construction}
 
@@ -118,33 +173,6 @@ subagent for a review-shaped task.
 
 **Refs.** [`{#review-loops-bounded-by-construction}`](#review-loops-bounded-by-construction);
 [`{#subscriber-is-a-managed-pane}`](#subscriber-is-a-managed-pane).
-
-### External-only admission is a constructed roster or a halt, never a degraded panel  {#external-only-roster-or-halt}
-
-**Decision.** Under the external-only offer mode the permitted reviewers are a
-constructed type. Construction filters the home vendor first. If what remains is
-smaller than the required quorum, the result is a halt that tells the operator no
-review happened. There is no roster that contains the excluded vendor, and there
-is no function that puts that vendor back after a failed start, a dead session,
-or a missing result.
-
-`/code-review` and `/doc-review` inject the managed-session runner. Selection of
-that runner under external-only reuses the same admission: an excluded-vendor
-engine id is a halt, not a session. `dispatch_second_opinion` still takes an
-injected runner. A later ruling added a non-terminal `pending` claim and a
-collect entry point; see
-[`{#second-opinion-pending-until-collected}`](#second-opinion-pending-until-collected).
-
-**Rejected: filter the home vendor in the skill prose and leave the candidate
-list as a plain tuple.** A later retry or error handler can append the excluded
-vendor without the type system noticing.
-**Rejected: fall back to the home panel when admission returns a halt.** That
-converts a correctness choice into a cost choice and labels it external-only.
-
-**Revisit when** a named panel role needs a quorum larger than "every remaining
-non-home member," or when a second construction site for the roster appears.
-
-**Refs.** [`{#external-reviewers-are-managed-sessions}`](#external-reviewers-are-managed-sessions).
 
 ### The durable run table keeps intent and outcome; it stops storing substrate  {#register-keeps-intent-not-substrate}
 

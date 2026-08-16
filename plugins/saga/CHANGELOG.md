@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.134.0] - 2026-08-16
+
+### Added - dispatch can express a launched session that has not resolved
+
+- `engine_dispatch.dispatch` accepts runner status `pending`. The liveness
+  tripwire still arms around the real adapter call. When a ledger is supplied,
+  that launch writes an `engine` run-fact even if the session is never collected.
+- A second-opinion claim that has a usable result is `collected`, not
+  `requested`. Resume cannot treat that interval as "never launched."
+- The pending bound is reserved before any session starts. The launch and
+  collect CLI share the claim store and accept launch stdout as a handle.
+
+### Fixed
+
+- Vendor comparison strips the vendor token after the slash, so
+  `codex /variant` is still vendor `codex`.
+- A result file's `output` is always rendered from the typed findings; a
+  prose summary is not an unusable review.
+- A control-character session id is rejected before launch.
+- `/work` does not mark a still-running launch as a terminal unavailable offer.
+
 ## [0.133.0] - 2026-08-15
 
 ### Added - pending second-opinion claims and a collect entry point

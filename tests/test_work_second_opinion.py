@@ -283,11 +283,12 @@ def test_offer_outcomes_persist_request_identity_before_single_dispatch(
     SO.save_work_second_opinion_state(sidecar, accepted)
     assert SO.load_work_second_opinion_state(sidecar, round=1) == accepted
 
-    calls = 0
+    launches = 0
 
-    def runner(_invocation: dict[str, Any]) -> dict[str, Any]:
-        nonlocal calls
-        calls += 1
+    def runner(invocation: dict[str, Any]) -> dict[str, Any]:
+        nonlocal launches
+        if invocation.get("operation") != "collect":
+            launches += 1
         rows = [{"content": "The original finding remains correct."}]
         return {
             "status": "success",
@@ -298,7 +299,7 @@ def test_offer_outcomes_persist_request_identity_before_single_dispatch(
     store = SO.SecondOpinionClaimStore(tmp_path / "claims.json")
     SO.dispatch_second_opinion(prepared, runner=runner, claim_store=store)
     retry = SO.dispatch_second_opinion(prepared, runner=runner, claim_store=store)
-    assert calls == 1
+    assert launches == 1
     assert retry.halt is not None
 
     declined = SO.set_work_offer_disposition(

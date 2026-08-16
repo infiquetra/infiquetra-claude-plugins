@@ -19,6 +19,7 @@ from typing import Any, Literal, Protocol
 
 import engine_dispatch
 import external_only
+import reconcile
 
 REVIEW_STAGES = frozenset({"code-review", "doc-review"})
 SessionOutcome = Literal["not-started", "pending", "died", "ran-empty", "ran"]
@@ -218,16 +219,14 @@ def read_result_file(handle: SessionHandle) -> CollectedSession:
     digest = payload.get("request_digest")
     if digest != handle.request_digest:
         raise SessionCollectError("result file is not bound to this request")
-    output = payload.get("output")
-    if output is None:
-        output = json.dumps(
-            [item.get("content", "") for item in raw_findings if isinstance(item, dict)],
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-    if not isinstance(output, str):
-        raise SessionCollectError("managed session result output must be a string")
-    return CollectedSession(findings=tuple(raw_findings), output=output)
+    try:
+        typed = reconcile.parse_source_findings(raw_findings)
+    except reconcile.ReconciliationError as exc:
+        raise SessionCollectError(f"result findings are not a typed envelope: {exc}") from exc
+    return CollectedSession(
+        findings=tuple({"content": item.content} for item in typed),
+        output=reconcile.render_source_findings(typed),
+    )
 
 
 def runner(*, launcher: SessionLauncher) -> engine_dispatch.Runner:
@@ -470,8 +469,9 @@ def _prompt_for(task: str, *, result_path: Path, request_digest: str) -> str:
     return (
         f"{task.rstrip()}\n\n"
         "Write one JSON object to the result path when finished. The object must "
-        f"include request_digest {request_digest!r} and a findings array. "
-        f"Result path: {result_path}\n"
+        f"include request_digest {request_digest!r} and a findings array of objects "
+        "that each contain only a content string. Other keys, including output, "
+        f"are ignored. Result path: {result_path}\n"
     )
 
 
@@ -497,6 +497,39 @@ def _optional_tab_id(stdout: str) -> str | None:
     return None
 
 
+DEFAULT_CLAIM_STORE = Path(".saga") / "second-opinion-claims.json"
+
+
+def handle_from_payload(data: Mapping[str, Any]) -> SessionHandle:
+    """Accept a bare handle or the launch command's full JSON object."""
+    if not isinstance(data, Mapping):
+        raise SessionCollectError("session handle file must contain an object")
+    nested = data.get("handle")
+    if isinstance(nested, dict) and "result_path" not in data:
+        return SessionHandle.from_dict(nested)
+    return SessionHandle.from_dict(data)
+
+
+def flatten_launch_result(result: Mapping[str, Any]) -> dict[str, Any]:
+    """Put handle fields at the top level so collect can read launch stdout as-is."""
+    payload = dict(result)
+    handle = result.get("handle")
+    if isinstance(handle, dict):
+        for key, value in handle.items():
+            payload.setdefault(key, value)
+    return payload
+
+
+def _claim_store_from_args(args: argparse.Namespace) -> Any:
+    import second_opinion as so
+
+    root = Path(getattr(args, "repo_root", "."))
+    store_path = Path(args.claim_store)
+    if not store_path.is_absolute():
+        store_path = root / store_path
+    return so.SecondOpinionClaimStore(store_path)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -507,8 +540,11 @@ def _build_parser() -> argparse.ArgumentParser:
     launch.add_argument("--mode", default=external_only.ADDITIVE_MODE)
     launch.add_argument("--home-vendor", default="")
     launch.add_argument("--engine-id", default="")
+    launch.add_argument("--claim-store", default=str(DEFAULT_CLAIM_STORE))
     collect = sub.add_parser("collect", help="read a launched session's result file")
     collect.add_argument("--handle-file", required=True)
+    collect.add_argument("--repo-root", default=".")
+    collect.add_argument("--claim-store", default=str(DEFAULT_CLAIM_STORE))
     return parser
 
 
@@ -519,6 +555,19 @@ def main(argv: list[str] | None = None) -> int:
         invocation = json.loads(Path(args.invocation_file).read_text(encoding="utf-8"))
         if not isinstance(invocation, dict):
             parser.error("invocation file must contain an object")
+        digest = invocation.get("request_digest")
+        if not isinstance(digest, str) or not digest.strip():
+            parser.error("invocation must include request_digest so the claim can be reserved")
+        import second_opinion as so
+
+        store = _claim_store_from_args(args)
+        try:
+            store.reserve_pending_for_digest(digest)
+        except so.PendingBoundError as exc:
+            print(json.dumps({"halt": str(exc), "session_outcome": "not-started"}))
+            return 2
+        except so.SecondOpinionError as exc:
+            parser.error(str(exc))
         engine_id = args.engine_id or invocation.get("engine_id") or reviewer_tool(invocation)
         launcher = CommandSessionLauncher(cwd=Path(args.repo_root))
         selected = select_review_runner(
@@ -532,12 +581,18 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"halt": selected.reason, "excluded": selected.excluded_vendor}))
             return 2
         result = selected(invocation)
-        print(json.dumps(result, sort_keys=True, default=str))
+        handle = result.get("handle")
+        if isinstance(handle, dict) and result.get("session_outcome") == "pending":
+            store.record_handle_for_digest(digest, handle=handle)
+        print(json.dumps(flatten_launch_result(result), sort_keys=True, default=str))
         return 0 if result.get("session_outcome") in {"pending", "ran", "ran-empty"} else 1
-    handle = SessionHandle.from_dict(json.loads(Path(args.handle_file).read_text(encoding="utf-8")))
+    raw_handle = json.loads(Path(args.handle_file).read_text(encoding="utf-8"))
+    if not isinstance(raw_handle, dict):
+        parser.error("handle file must contain an object")
+    handle = handle_from_payload(raw_handle)
     launcher = CommandSessionLauncher(cwd=handle.result_path.parent)
     result = _collect_result(launcher, handle)
-    print(json.dumps(result, sort_keys=True, default=str))
+    print(json.dumps(flatten_launch_result(result), sort_keys=True, default=str))
     return 0 if result.get("session_outcome") in {"pending", "ran", "ran-empty"} else 1
 
 

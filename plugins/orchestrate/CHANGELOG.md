@@ -1,5 +1,39 @@
 # Changelog
 
+## [1.9.0] - 2026-08-16
+
+### Fixed
+
+- **A builder no longer reviews its own work when the run has a review phase.** Saga's `/work`
+  Phase 5 calls `/code-review` programmatically as its own pre-PR gate. In a single session that is
+  right; under orchestration it is a self-review by the builder's own vendor, which is exactly what
+  the roster rule forbids — and the wasted pass is the smaller problem. Phase 5.3 blocks on any P0
+  or P1 finding and its only documented exit is an operator override with a recorded rationale:
+  a question, in a background tab, waiting forever, after an hour of build work. The observed run
+  came back clean and so survived it.
+
+  A `work` unit is now told to skip that gate, but **only when the run actually has a code-review
+  phase of its own** — read off the unit table, in any vendor's spelling. Without one, the in-loop
+  gate is the only review there is, and suppressing it would remove the review rather than move it.
+
+### Added
+
+- Tests covering what a dispatched saga unit is actually told: vendor spelling, the two
+  backend notes, and the new review-elsewhere note including the case where it must not fire.
+
+
+## [1.8.0] - 2026-08-16
+
+### Fixed
+
+- **The planner is told the backend too, not just the builder.** 1.7.0 told `/work`, but `/plan`
+  §5.2 offers the backend as well — so under orchestration the planner would hang before the builder
+  was ever reached. Both stages now get a note, and they differ because the jobs differ: `/plan` is
+  told to record `backend:` in the plan's frontmatter, `/work` is told the plan already says so.
+  Together with saga's matching change, the decision now travels on the committed document rather
+  than in an untracked saga tick that never crosses a worktree boundary.
+
+
 ## [1.7.0] - 2026-08-16
 
 ### Fixed

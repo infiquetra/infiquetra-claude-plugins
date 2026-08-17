@@ -240,7 +240,15 @@ chat memory alone as durable evidence after a resume.
 
 ### 1.4 Offer the backend, then mint/advance the saga
 
-Offer the execution backend per `references/operator-choice.md` and the **runnable
+**If the plan carries a `backend:` frontmatter field, honour it and do not offer.** Say in one line
+which backend the plan chose, record it exactly as though the operator had picked it, and continue.
+The decision was already made — at plan time, by this operator — and asking again is not a second
+confirmation, it is the same question in a place where the answer may no longer be reachable: under
+`/orchestrate` this runs in a background tab where an unanswered offer waits forever.
+
+Offer only when the field is absent, which is every plan written before this contract existed.
+
+Otherwise, offer the execution backend per `references/operator-choice.md` and the **runnable
 `recommend_execution_backend()` CLI call** in `references/execution-strategy.md`: compute the
 recommendation from the work shape, pre-select it, and render the offer from the full `backends`
 enumeration — all three backends, each `{backend, status, note}` (overlap offers both as `alternative`,

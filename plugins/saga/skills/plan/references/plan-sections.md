@@ -177,11 +177,17 @@ type: <feat|fix|refactor|chore|docs|perf|test>
 status: active            # active on creation; /work flips to completed on ship
 date: YYYY-MM-DD          # ISO 8601, ASCII digits
 origin: <repo-relative path to the upstream brainstorm/requirements doc; set when planning from one>
+backend: <inline|team-execution|cc-workflows-ultracode>   # the execution backend, decided here
 deepened: YYYY-MM-DD      # optional; added when the confidence pass substantively strengthened the plan
 ---
 ```
 
 - **`title` / `type` / `status` / `date`** are required.
+- **`backend:`** carries the execution decision to whoever executes. `/work` honours it and does
+  not re-offer; it only offers when the field is absent. This lives in the plan document rather than
+  in the saga tick because the tick is untracked local state and does not survive a worktree
+  boundary, a different machine, or a different vendor — while the plan document is committed and
+  travels with the work. Omit it and `/work` behaves exactly as it did before.
 - **`origin:`** MUST be emitted whenever an upstream artifact exists — `/doc-review` and the review
   phase use it to trace the plan back to its source. When there is no upstream doc (cold-start
   ad-hoc), `origin:` may be omitted or left empty.

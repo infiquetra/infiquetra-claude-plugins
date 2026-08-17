@@ -261,6 +261,12 @@ the safe failure direction (R5). Omit `--deploy-autonomy` entirely for any non-d
 
 ### 5.2 Offer the execution backend
 
+**Write the answer into the plan document's `backend:` frontmatter field**, not only into the saga
+tick. The tick is untracked local state: it does not survive a worktree boundary, another machine,
+or another vendor, so an executor that did not run in this directory cannot see it. The plan document
+is committed and travels with the work, which makes it the only place a decision made here can
+reliably be read later. `/work` honours that field and does not ask again.
+
 Offer the execution backend per `references/operator-choice.md` (the decision contract). There are
 exactly three backends — `inline` ("inline") | `team-execution` ("team execution") |
 `cc-workflows-ultracode` ("dynamic workflows"). Read the work shape, **recommend the cheapest-correct**

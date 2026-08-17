@@ -30,6 +30,15 @@
   They cannot be recovered, and the session has already been given its task, so nothing here is ever
   sent to it again.
 
+### Fixed
+
+- **A command that is not installed is now a result, not a traceback.** `run(..., check=False)`
+  promised that every failure comes back as a return code, but `subprocess.run` raises rather than
+  returning when the program does not exist — so `check` and `adopt`, which had already decided
+  herdr was optional, crashed on any machine without it. Missing now surfaces as return code 127,
+  the shell's own "command not found", and `check=True` callers get one sentence instead of a
+  traceback. `poll` carried the same latent fault and is fixed by the same change.
+
 ### Changed
 
 - `poll` accepts an already-fetched agent list, so a caller looking at every unit pays one herdr

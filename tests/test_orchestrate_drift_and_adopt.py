@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -202,6 +203,55 @@ class TestCheck:
         out = capsys.readouterr().out
         assert "NOT LANDED" not in out
         assert "the record agrees with the repository" in out
+
+
+def _hide_herdr(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A PATH with git on it and no herdr -- what a build runner actually looks like.
+
+    Emptying PATH outright would also hide git, which these commands genuinely need; that tests a
+    different machine than the one that broke.
+    """
+    only_git = tmp_path / "path-without-herdr"
+    only_git.mkdir(exist_ok=True)
+    (only_git / "git").symlink_to(shutil.which("git") or "/usr/bin/git")
+    monkeypatch.setenv("PATH", str(only_git))
+    assert shutil.which("herdr") is None
+
+
+class TestHerdrIsOptional:
+    """Both commands decided herdr is optional; the code only half meant it.
+
+    ``check=False`` covers a command that fails, not a command that is not installed --
+    ``subprocess.run`` raises there rather than returning. CI has no herdr, and every one of these
+    tests died on a traceback out of a read-only command. This machine has herdr, which is exactly
+    why the local run was green.
+    """
+
+    def test_check_survives_a_machine_without_herdr(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _write_run(repo, [_unit("alpha")])
+        _hide_herdr(tmp_path, monkeypatch)
+        monkeypatch.chdir(repo)
+        orchestrate.cmd_check(argparse.Namespace())
+
+    def test_adopt_survives_a_machine_without_herdr(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _write_run(repo, [])
+        _hide_herdr(tmp_path, monkeypatch)
+        monkeypatch.chdir(repo)
+        orchestrate.cmd_adopt(argparse.Namespace(yes=False))
 
 
 class TestAdopt:

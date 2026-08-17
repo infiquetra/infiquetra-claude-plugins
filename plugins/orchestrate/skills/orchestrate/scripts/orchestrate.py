@@ -322,6 +322,11 @@ def run(
     interview frozen on a question the operator cannot see, which is the failure this plugin keeps
     having to fix. A timeout is reported as a non-zero result, so callers handle it as "no answer"
     rather than as a crash.
+
+    ``check=False`` means every failure comes back as a result, and a command that is not installed
+    is a failure like any other. It was not, once: ``subprocess.run`` raises rather than returning
+    when the program does not exist, so a machine without herdr got a traceback out of a read-only
+    command that had already decided herdr was optional.
     """
     try:
         proc = subprocess.run(cmd, capture_output=capture, text=True, timeout=timeout)
@@ -329,6 +334,12 @@ def run(
         if check:
             raise SystemExit(f"timed out after {timeout}s: {' '.join(cmd)}") from None
         return subprocess.CompletedProcess(cmd, returncode=124, stdout="", stderr="timed out")
+    except OSError as exc:
+        if check:
+            raise SystemExit(f"cannot run {cmd[0]!r}: {exc}") from None
+        # 127 is the shell's own "command not found", so a caller reading returncode sees the
+        # ordinary shape of a failure rather than a special case.
+        return subprocess.CompletedProcess(cmd, returncode=127, stdout="", stderr=str(exc))
     if check and proc.returncode != 0:
         err = (proc.stderr or proc.stdout or "").strip()
         raise SystemExit(f"command failed ({proc.returncode}): {' '.join(cmd)}\n{err}")

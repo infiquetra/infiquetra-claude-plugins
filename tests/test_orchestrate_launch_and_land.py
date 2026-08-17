@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -44,6 +45,21 @@ def orchestrate() -> ModuleType:
     return module
 
 
+@pytest.fixture
+def launcher_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Put a launcher where ``agent_argv`` will find one.
+
+    ``agent_argv`` resolves the wrapper for real rather than trusting a name, so on a machine
+    without it every one of these fails on the lookup instead of on the thing under test. Giving it
+    a real file keeps that resolution in the test rather than stubbing it out -- the check is the
+    reason a renamed wrapper stopped launching Cursor by mistake.
+    """
+    (tmp_path / "agents").write_text("#!/bin/sh\n")
+    (tmp_path / "agents").chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path), prepend=os.pathsep)
+
+
+@pytest.mark.usefixtures("launcher_on_path")
 class TestLauncherArgumentsArePassedThrough:
     """The plugin carries what the operator asked for; the launcher decides whether it is valid."""
 

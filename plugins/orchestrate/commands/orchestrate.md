@@ -124,6 +124,12 @@ session starts:
 }
 ```
 
+**A unit is also told, whatever its capability, never to stop on a question.** Saga asks for more
+than the engine offer — a destination, a scope class, resume-versus-mint — and every one of those in
+a background tab is a unit lost. The dispatched task carries the rule: take the most defensible
+option from a known set and say which; for a real question about the work, write it into the output
+and stop, so this session can bring it to the operator instead of a tab swallowing it.
+
 **Use `none` for review stages.** The panel is orchestrate's job: the operator asked for N
 reviewers and gets N units. Letting each of those *also* take a saga second opinion doubles the
 sessions without being asked for. The value of the stored answer here is that it stops the tab

@@ -162,6 +162,31 @@ REVIEW_ELSEWHERE_NOTE = (
     "Commit your work, say what you did, and stop."
 )
 
+# Sent with every dispatched saga task, whatever the capability.
+#
+# `BACKEND_NOTES` pre-answers one question. Saga's `/plan` names the whole family in its own
+# SKILL.md: "Use AskUserQuestion for choices from a known set (destination, execution backend,
+# scope class, resume-vs-mint)". Shipping a note for the backend fixed one member of four, and the
+# next live run stopped on the destination within minutes of starting -- a planner sitting blocked
+# in a tab nobody was watching, with the rest of the run queued behind it.
+#
+# One rule rather than four more pre-decided answers. Pre-deciding each would make this plugin model
+# saga's entire question vocabulary, which goes stale the moment saga adds a fifth -- the same closed
+# vocabulary that sent a whole review phase around the plugin (see `launch_args`).
+#
+# The second half is the load-bearing half. A unit must not silently invent an answer to a real
+# question about the work: "should this refactor also cover X" is the operator's, and guessing it
+# produces confident work on the wrong thing. Stopping is safe, because an idle unit is exactly what
+# `settle` and the orchestrator are watching for.
+UNATTENDED_NOTE = (
+    " You are running unattended in a tab nobody is watching, so a question waits forever and takes "
+    "the run down with it. For a choice from a known set -- destination, execution backend, scope "
+    "class, resume-vs-mint -- do not ask: take the most defensible option, say in one line which "
+    "you took and why, and continue. For a real question about the work itself, do not guess and "
+    "do not prompt either: write the question into your output and stop, and the orchestrator will "
+    "bring it to the operator."
+)
+
 SAGA_SYNTAX: dict[str, str] = {
     "claude": "/saga:{cap}",
     "codex": "$saga:{cap}",
@@ -770,6 +795,9 @@ def normalize_task(
         rewritten += note.format(backend=backend)
     if cap == "work" and review_elsewhere:
         rewritten += REVIEW_ELSEWHERE_NOTE
+    # Last, and for every capability: the specific notes above answer the questions this plugin
+    # knows about, and this one covers the rest -- including whatever saga asks next.
+    rewritten += UNATTENDED_NOTE
     return rewritten
 
 

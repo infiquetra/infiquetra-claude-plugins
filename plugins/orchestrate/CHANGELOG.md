@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.12.0] - 2026-08-17
+
+### Fixed
+
+- **A dispatched unit no longer stops on a question nobody will see.** Saga's `/plan` names the
+  family in its own `SKILL.md`: "Use `AskUserQuestion` for choices from a known set (destination,
+  execution backend, scope class, resume-vs-mint)". Orchestrate pre-answered exactly one of those
+  four, and the next live run stopped on the destination within minutes of starting — a planner
+  sitting blocked in a background tab with the whole run queued behind it, which is the same failure
+  the backend note had already fixed once.
+
+  Every dispatched saga task now carries one rule instead: for a choice from a known set, take the
+  most defensible option, say which, and continue. Pre-deciding each of the four instead would make
+  this plugin model saga's entire question vocabulary and go stale the moment saga adds a fifth —
+  the same closed vocabulary that sent a whole review phase around the plugin.
+
+  The other half matters as much: a unit is told **not** to guess a real question about the work.
+  "Should this also cover X" is the operator's call, and a confident answer to it produces confident
+  work on the wrong thing. The unit writes the question into its output and stops, which is exactly
+  what `settle` and the orchestrator are already watching for.
+
 ## [1.11.0] - 2026-08-17
 
 ### Added

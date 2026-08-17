@@ -82,6 +82,38 @@ class TestBackendIsNotAsked:
         assert "already decided" not in sent
 
 
+class TestAUnitNeverBlocksOnAQuestion:
+    """Saga names four known-set choices; pre-answering one left the other three to hang a run.
+
+    A `/plan` unit stopped on the destination question minutes into a live run, in a background tab,
+    with the rest of the run queued behind it — the same shape the backend note had already fixed
+    once.
+    """
+
+    def test_every_saga_capability_is_told(self, orchestrate: ModuleType) -> None:
+        for cap in ("plan", "work", "doc-review", "code-review", "qa"):
+            sent = orchestrate.normalize_task("claude", f"/saga:{cap} x")
+            assert "unattended" in sent, cap
+
+    def test_it_names_the_choices_saga_asks_from_a_known_set(self, orchestrate: ModuleType) -> None:
+        sent = orchestrate.normalize_task("claude", "/saga:plan docs/plans/x.md")
+        for choice in ("destination", "execution backend", "scope class", "resume-vs-mint"):
+            assert choice in sent, choice
+
+    def test_a_real_question_is_written_down_rather_than_guessed(
+        self, orchestrate: ModuleType
+    ) -> None:
+        """Silently answering a question about the work is worse than stopping on it."""
+        sent = orchestrate.normalize_task("claude", "/saga:work docs/plans/x.md")
+        assert "do not guess" in sent
+        assert "write the question into your output and stop" in sent
+
+    def test_prose_gets_no_note(self, orchestrate: ModuleType) -> None:
+        """Only a recognised saga command is rewritten; a plain prompt is left exactly alone."""
+        task = "read the plan and summarise it"
+        assert orchestrate.normalize_task("claude", task) == task
+
+
 class TestTheBuilderDoesNotReviewItself:
     """saga's /work calls /code-review as its own pre-PR gate, which under orchestration is a
     self-review -- and its §5.3 block on P0/P1 exits only through an operator override, i.e. a

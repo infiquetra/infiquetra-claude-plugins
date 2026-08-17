@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.13.0] - 2026-08-17
+
+### Fixed
+
+- **A real task is too long to type into a pane, and arrived as an attachment nobody acted on.**
+  For any vendor that will not take `herdr agent prompt` — qwen today — orchestrate types the task
+  into the pane instead. Measured against qwen 0.21.13: 859 characters arrive as typed text, 1660
+  arrive as `[Pasted Content N chars]`. The paste is submitted and the agent knows its size; it
+  simply does not treat it as the instruction. Verbatim, to a 6402-character task: *"I can see
+  you've pasted some content (6402 characters), but I'm not sure what you'd like me to do with it."*
+
+  So the unit launched, the keystrokes were delivered, orchestrate recorded success, and the session
+  sat waiting for an instruction it believed it had never been given. It went idle, `settle` marked
+  it **done**, and only `land` reported — a phase later — that it had committed nothing. Since a real
+  task runs to thousands of characters, that door was unusable for real work.
+
+  Past 800 characters the task is written to `.orchestrate/tasks/<unit>.md` and the typed line points
+  at it by absolute path. The leading saga command stays typed, because that is what makes the vendor
+  load the skill — inside a file it is just prose. The handover is recorded in the unit's note.
+
+  Verified end to end against a live qwen session: the same task that produced "I'm not sure what
+  you'd like me to do with it" as a 6402-character paste is read from the file and answered
+  correctly from a 212-character line.
+
 ## [1.12.0] - 2026-08-17
 
 ### Fixed

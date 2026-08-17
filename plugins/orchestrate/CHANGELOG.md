@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.14.0] - 2026-08-17
+
+### Fixed
+
+- **`clean --merged` could not reap anything until the very end of a run.** It asked whether a unit's
+  branch was already in the operator's tree. Units land on the *run branch* as each phase finishes,
+  and the operator's tree sees none of it until `collect`, once, at the end — so the answer was "no"
+  for every unit for the whole run, and the only mode safe to run unattended closed nothing at
+  exactly the time sessions pile up. The only way to reap mid-run was bare `clean`, which closes
+  everything regardless of whether the work survived, including the worktree that is the evidence a
+  unit failed.
+
+  Reapability is now measured against the run branch, which is where `land` puts things. A unit is
+  reapable as soon as its phase lands, so `clean --merged` belongs after every `land` rather than
+  once at the end — and the command document now says so. A unit that landed nothing still keeps its
+  tab and its worktree, and a unit marked `merge: false` is never reaped at all, because its branch
+  holds the only copy of its work.
+
 ## [1.13.0] - 2026-08-17
 
 ### Fixed

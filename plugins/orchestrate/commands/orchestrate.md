@@ -268,6 +268,12 @@ adopted, the work is visible to `land` and `clean` like any other unit.
 `python3`, not `uv run` — the script imports nothing outside the standard library, and the target
 repo may not be a uv project at all.
 
+**`clean --merged` belongs after every `land`, not once at the end.** A phase's sessions are
+finished the moment their work is on the run branch; leaving them open for the rest of the run is how
+a workspace ends up with a dozen idle tabs nobody can tell apart. `--merged` only ever closes a unit
+whose work survived, so it is safe to run unattended — a unit that landed nothing keeps its tab and
+its worktree, because those are the evidence.
+
 **`land` is not optional and it is not cleanup.** It is how a phase becomes real to the next one.
 Units branch from the run branch, so a reviewer can only find a plan there if the planner's work was
 landed first — the way a team pushes back to the feature branch rather than reading each other's

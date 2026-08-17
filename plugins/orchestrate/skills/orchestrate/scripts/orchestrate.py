@@ -1212,9 +1212,22 @@ def cmd_land(args: argparse.Namespace) -> int:
     return 0
 
 
-def merged_into_head(branch: str) -> bool:
-    """Is every commit on this branch already in the current tree?"""
-    ahead = run(["git", "rev-list", "--count", f"HEAD..{branch}"], check=False)
+def landed(branch: str, r: Run) -> bool:
+    """Is every commit on this branch already on the branch this run lands onto?
+
+    Measured against the run branch, not the operator's tree. Units land on the run branch as each
+    phase finishes, and the operator's tree sees none of it until `collect`, once, at the very end.
+    Measured against HEAD this was therefore false for every unit for the whole run -- so
+    `clean --merged`, the only mode that is safe to run unattended, closed nothing at exactly the
+    time sessions pile up. The only way to reap mid-run was bare `clean`, which closes everything
+    regardless of whether its work survived, including the worktree that is the evidence a unit
+    failed.
+
+    A run with no run branch predates `land`. There is nothing else to measure against, so the
+    operator's tree it is.
+    """
+    base = r.branch or "HEAD"
+    ahead = run(["git", "rev-list", "--count", f"{base}..{branch}"], check=False)
     return ahead.returncode == 0 and ahead.stdout.strip() == "0"
 
 
@@ -1248,15 +1261,20 @@ def cmd_collect(args: argparse.Namespace) -> int:
 def cmd_clean(args: argparse.Namespace) -> int:
     """Close tabs and remove worktrees.
 
-    ``--merged`` restricts it to units whose branch is already in the tree, which is the only case
-    where closing is unambiguously free: the work is in HEAD, so the tab and the worktree are pure
-    overhead. Everything else is left alone, because an unmerged unit's worktree is the evidence you
-    look at when it went wrong -- and that is the whole reason this plugin keeps no other record.
+    ``--merged`` restricts it to units whose work is already on the run branch, which is the only
+    case where closing is unambiguously free: the work survived the unit, so the tab and the worktree
+    are pure overhead. Everything else is left alone, because an unlanded unit's worktree is the
+    evidence you look at when it went wrong -- and that is the whole reason this plugin keeps no
+    other record.
+
+    Run it after every ``land``, not once at the end. A phase's sessions are finished the moment
+    their work is on the run branch, and leaving them open for the rest of the run is how a
+    workspace ends up with a dozen idle tabs nobody can tell apart.
     """
     r = Run.load()
     kept, closed = [], []
     for unit in r.units:
-        if args.merged and not (unit.branch and merged_into_head(unit.branch)):
+        if args.merged and not (unit.branch and landed(unit.branch, r)):
             kept.append(unit.name)
             continue
         if unit.tab_id:

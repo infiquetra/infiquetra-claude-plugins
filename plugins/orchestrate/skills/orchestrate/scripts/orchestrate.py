@@ -90,9 +90,23 @@ VENDOR_PERMISSION: dict[str, dict[str, list[str]]] = {
         "bypass": ["--dangerously-bypass-approvals-and-sandbox"],
     },
     "agy": {"auto": [], "bypass": ["--dangerously-skip-permissions"]},
+    # opencode has one switch and no ladder, so both modes are the same flag. Recorded as it is
+    # rather than papered over: asking for `auto` here genuinely gets you `bypass`.
     "opencode": {"auto": ["--auto"], "bypass": ["--auto"]},
-    "muse": {"auto": ["--yolo"], "bypass": ["--yolo"]},
-    "qwen": {"auto": [], "bypass": []},
+    # muse's own help: approval and the sandbox are ON by default, `--approval-mode` takes
+    # untrusted|on-request|never, and `--yolo` means "disable approval and sandboxing and trust
+    # this workspace". Both modes were once `--yolo`, so asking for the constrained mode handed the
+    # unit full bypass -- a safety claim backwards. `never` is the honest `auto`: it stops asking
+    # without dropping the sandbox.
+    "muse": {"auto": ["--approval-mode", "never"], "bypass": ["--yolo"]},
+    # `--yolo` is absent from `qwen --help` and works anyway -- verified by running it, against a
+    # control showing qwen rejects an unknown flag with "Unknown arguments". Its own warning names
+    # the equivalent: "running headless with --yolo / approval-mode=yolo and no sandbox".
+    #
+    # Do NOT reach for `--safe-mode` here. It reads like the opposite of `--yolo` and is not a
+    # permission flag at all: it disables all customizations -- context files, hooks, extensions --
+    # which is exactly what saga needs loaded.
+    "qwen": {"auto": [], "bypass": ["--yolo"]},
 }
 
 # Where each vendor keeps its saga install, so "does this vendor have saga" is resolved rather than
@@ -105,6 +119,11 @@ SAGA_INSTALL: dict[str, list[str]] = {
     "grok": ["~/.grok/marketplace-cache/*/plugins/saga/commands"],
     "qwen": ["~/.qwen/extensions/saga/commands"],
     "opencode": ["~/.config/opencode/commands"],
+    # agy is Antigravity, and its home is the Gemini config directory. The plugin there is a
+    # *symlink* into the operator's own antigravity-plugins checkout rather than a fetched cache,
+    # which is why a search for directories named `saga` finds only `~/.gemini/saga` -- the saga
+    # state, not the commands. `glob` resolves the link, so one concrete path is enough.
+    "agy": ["~/.gemini/config/plugins/saga/commands"],
 }
 
 # How each vendor names a saga capability. Saga is installed for most of them, but the invocation
@@ -191,6 +210,7 @@ SAGA_SYNTAX: dict[str, str] = {
     "claude": "/saga:{cap}",
     "codex": "$saga:{cap}",
     "grok": "/{cap}",
+    "agy": "/saga:{cap}",
     "qwen": "/{cap}",
     "opencode": "/{cap}",
 }

@@ -237,3 +237,58 @@ class TestLandHonoursMergeIntent:
             text=True,
         ).stdout.strip()
         assert on == "main"
+
+
+class TestCleanCanReapDuringARun:
+    """`clean --merged` measured against the operator's tree, which sees nothing until `collect`.
+
+    So the only mode safe to run unattended closed nothing for the whole run — exactly when sessions
+    pile up — and the only way to reap mid-run was bare `clean`, which also discards the worktree of
+    a unit that failed.
+    """
+
+    def test_a_landed_unit_is_reapable_before_collect(
+        self, orchestrate: ModuleType, repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _git(repo, "checkout", "orch/r1")
+        _git(repo, "merge", "--no-ff", "--no-edit", "orch/r1-alpha")
+        _git(repo, "checkout", "main")
+        _write_run(repo, [_unit("alpha")])
+        monkeypatch.chdir(repo)
+        r = orchestrate.Run.load()
+
+        assert orchestrate.landed("orch/r1-alpha", r) is True
+
+    def test_an_unlanded_unit_is_kept(
+        self, orchestrate: ModuleType, repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Its worktree is the evidence you look at when it went wrong."""
+        _write_run(repo, [_unit("beta")])
+        monkeypatch.chdir(repo)
+        r = orchestrate.Run.load()
+
+        assert orchestrate.landed("orch/r1-beta", r) is False
+
+    def test_a_unit_that_never_merges_is_never_reaped(
+        self, orchestrate: ModuleType, repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A competing-plan branch holds the only copy of its plan, so it keeps its worktree."""
+        _write_run(repo, [_unit("alpha", merge=False)])
+        monkeypatch.chdir(repo)
+        r = orchestrate.Run.load()
+
+        assert orchestrate.landed("orch/r1-alpha", r) is False
+
+    def test_a_run_with_no_run_branch_falls_back_to_the_operator_tree(
+        self, orchestrate: ModuleType, repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Old run files predate `land`; there is nothing else to measure against."""
+        _write_run(repo, [_unit("alpha")])
+        path = repo / ".orchestrate" / "run.json"
+        payload = json.loads(path.read_text())
+        payload["branch"] = ""
+        path.write_text(json.dumps(payload))
+        monkeypatch.chdir(repo)
+        r = orchestrate.Run.load()
+
+        assert orchestrate.landed("orch/r1-alpha", r) is False

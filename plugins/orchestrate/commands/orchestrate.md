@@ -105,7 +105,10 @@ order — not a checklist, and stop as soon as the answers determine the table:
 6. **Anything out of scope?**
 
 Do **not** ask about `/work` vendors or `/code-review` lenses. Those come from the plan.
-Do **not** ask about inline versus a workflow backend — orchestrate is always inline.
+Do **not** ask about inline versus a workflow backend — orchestrate is always inline, and the plan
+carries `"backend": "inline"` so every `/work` unit is told rather than asked. A dispatched unit is
+already one of several parallel sessions; nesting a workflow inside one is the
+orchestration-of-orchestration this plugin exists to avoid.
 
 ### Answering saga's offer up front
 

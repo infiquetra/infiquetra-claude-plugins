@@ -115,6 +115,20 @@ SAGA_INSTALL: dict[str, list[str]] = {
 # claude and grok/qwen/opencode were read off their installed command files; codex's saga ships
 # skills under the `saga` namespace with no command directory at all (its PORTABILITY.md says so),
 # and codex prefixes with `$`.
+# Saga stages that stop and ask the operator which execution backend to use. `/work` offers it
+# unconditionally -- there is no skip-if-already-decided path in its contract -- and an
+# `AskUserQuestion` in a background tab waits forever. Unlike saga's engine offer there is no stored
+# preference to pre-seed, so the decision is carried in the task text, which is the only lever saga
+# exposes. Orchestrate is always inline by design: a dispatched unit is already one of several
+# parallel sessions, and nesting a workflow inside one is the orchestration-of-orchestration this
+# plugin exists to avoid.
+BACKEND_DECIDING_STAGES = frozenset({"work"})
+
+BACKEND_NOTE = (
+    " The execution backend for this run is already decided: {backend}. "
+    "Do not offer or ask about the backend -- record {backend} and continue."
+)
+
 SAGA_SYNTAX: dict[str, str] = {
     "claude": "/saga:{cap}",
     "codex": "$saga:{cap}",
@@ -166,6 +180,13 @@ class Run:
     source: str
     base: str
     units: list[Unit]
+    backend: str = "inline"
+    """The execution backend every saga unit in this run uses.
+
+    Decided once, up front, because it is a property of the run rather than of a unit -- and because
+    `/work` otherwise stops to ask in a background tab nobody is watching. Always ``inline`` today:
+    a dispatched unit is already one of several parallel sessions, so nesting a workflow inside one
+    is the orchestration-of-orchestration this plugin exists to avoid."""
     branch: str = ""
     """The run's shared branch -- what a team would call the feature branch.
 
@@ -189,6 +210,7 @@ class Run:
             source=raw["source"],
             base=raw["base"],
             units=[Unit(**u) for u in raw["units"]],
+            backend=raw.get("backend", "inline"),
             branch=raw.get("branch", ""),
             engine_prefs=raw.get("engine_prefs", {}),
         )
@@ -199,6 +221,7 @@ class Run:
             "run_id": self.run_id,
             "source": self.source,
             "base": self.base,
+            "backend": self.backend,
             "branch": self.branch,
             "engine_prefs": self.engine_prefs,
             "units": [asdict(u) for u in self.units],
@@ -434,7 +457,7 @@ def agent_argv(unit: Unit) -> list[str]:
     return argv
 
 
-def launch(unit: Unit) -> None:
+def launch(unit: Unit, backend: str = "inline") -> None:
     proc = run(agent_argv(unit))
     pane_id = None
     try:
@@ -445,7 +468,7 @@ def launch(unit: Unit) -> None:
         unit.pane_id = pane_id
     except (ValueError, IndexError):
         unit.note = "launched, but the wrapper's JSON could not be read"
-    send(unit, pane_id)
+    send(unit, pane_id, backend)
     unit.status = RUNNING
 
 
@@ -466,7 +489,7 @@ def say(unit: Unit, pane_id: str | None, text: str) -> None:
     unit.note = "prompted through its pane; this agent does not report interactive readiness"
 
 
-def send(unit: Unit, pane_id: str | None) -> None:
+def send(unit: Unit, pane_id: str | None, backend: str = "inline") -> None:
     """Set the session up, then give it its task.
 
     Setup goes first and separately: a tier has to be in force before the work starts, and a slash
@@ -474,7 +497,7 @@ def send(unit: Unit, pane_id: str | None) -> None:
     """
     for line in unit.setup:
         say(unit, pane_id, line)
-    say(unit, pane_id, normalize_task(unit.vendor, unit.task))
+    say(unit, pane_id, normalize_task(unit.vendor, unit.task, backend))
 
 
 def poll(unit: Unit) -> str:
@@ -502,6 +525,7 @@ def cmd_start(args: argparse.Namespace) -> int:
         source=plan.get("source", ""),
         base=base,
         units=[Unit(**u) for u in plan["units"]],
+        backend=plan.get("backend", "inline"),
         engine_prefs=plan.get("engine_prefs", {}),
     )
     assert_vendors_available(r.units)
@@ -537,7 +561,7 @@ def probe(name: str) -> tuple[str, dict[str, bool]]:
     }
 
 
-def normalize_task(vendor: str, task: str) -> str:
+def normalize_task(vendor: str, task: str, backend: str = "inline") -> str:
     """Rewrite a leading namespaced saga command into the form this vendor understands.
 
     The interview writes the task, and it writes ``/saga:plan`` -- claude's form -- for every
@@ -553,7 +577,11 @@ def normalize_task(vendor: str, task: str) -> str:
     match = re.match(r"^\s*[/$]saga:([a-z][a-z0-9-]*)", task)
     if not match:
         return task
-    return saga_command(vendor, match.group(1)) + task[match.end() :]
+    cap = match.group(1)
+    rewritten = saga_command(vendor, cap) + task[match.end() :]
+    if cap in BACKEND_DECIDING_STAGES and backend not in ("", None):
+        rewritten += BACKEND_NOTE.format(backend=backend)
+    return rewritten
 
 
 def saga_command(vendor: str, cap: str) -> str:
@@ -750,7 +778,7 @@ def cmd_go(args: argparse.Namespace) -> int:
         r.save()  # persist the worktree before the launch, so a failure is not relaunched blind
         print(f"launching {unit.name} ({unit.vendor}) -> {unit.task}")
         try:
-            launch(unit)
+            launch(unit, r.backend)
         except SystemExit as exc:
             unit.status = FAILED
             unit.note = str(exc)

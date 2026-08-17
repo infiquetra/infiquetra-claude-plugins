@@ -95,13 +95,6 @@ VENDOR_PERMISSION: dict[str, dict[str, list[str]]] = {
     "qwen": {"auto": [], "bypass": []},
 }
 
-# How each vendor names a saga capability. Saga is installed for all of them, but the invocation
-# differs -- and a bare "/plan" is a command nowhere, so it arrives as prose the agent may or may
-# not act on. That is how a "/plan" unit produced claude's own built-in plan mode instead.
-#
-# claude and grok/qwen/opencode were read off their installed command files; codex's saga ships
-# skills under the `saga` namespace with no command directory at all (its PORTABILITY.md says so),
-# and codex prefixes with `$`.
 # Where each vendor keeps its saga install, so "does this vendor have saga" is resolved rather than
 # believed. Checked by `saga --check`. A vendor absent here, or whose globs match nothing, cannot
 # run a saga capability at all -- agy and muse are in that position today, and a saga task sent to
@@ -114,6 +107,14 @@ SAGA_INSTALL: dict[str, list[str]] = {
     "opencode": ["~/.config/opencode/commands"],
 }
 
+# How each vendor names a saga capability. Saga is installed for most of them, but the invocation
+# differs -- and a bare "/plan" is a command nowhere, so it arrives as prose the agent may or may
+# not act on. That is how a "/plan" unit once produced claude's own built-in plan mode instead.
+# `normalize_task` applies this at send time, so the interview writes one form for everybody.
+#
+# claude and grok/qwen/opencode were read off their installed command files; codex's saga ships
+# skills under the `saga` namespace with no command directory at all (its PORTABILITY.md says so),
+# and codex prefixes with `$`.
 SAGA_SYNTAX: dict[str, str] = {
     "claude": "/saga:{cap}",
     "codex": "$saga:{cap}",
@@ -367,6 +368,28 @@ def roster() -> list[tuple[str, str]]:
     return [(n, ",".join(f) or "none") for n, f in VENDOR_FLAGS.items() if n in here]
 
 
+FAVOURITES_PATH = Path("~/.config/orchestrate/models.json").expanduser()
+
+
+def favourites(vendor: str) -> list[str]:
+    """The models the operator actually uses for this vendor, in their order of preference.
+
+    Asking a vendor what it has is a fact; deciding which of them matters is a preference, and a
+    preference belongs in a file the operator owns rather than in anyone's guess. opencode fronts
+    164 models across eight providers, so offering four of them is noise -- three rounds running,
+    the suggestions were wrong.
+
+    Absent or unreadable, this returns nothing and the interview falls back to asking. It is a
+    convenience, never a constraint: a model not listed here is still perfectly usable.
+    """
+    try:
+        raw = json.loads(FAVOURITES_PATH.read_text())
+    except (OSError, ValueError):
+        return []
+    got = raw.get(vendor, [])
+    return [str(m) for m in got] if isinstance(got, list) else []
+
+
 def models(name: str) -> list[str]:
     """Ask one vendor which models it actually has.
 
@@ -380,7 +403,9 @@ def models(name: str) -> list[str]:
     sub = MODEL_LIST.get(name)
     if not sub:
         return []
-    got = run([name, *sub], check=False, timeout=20)
+    # generous: a cold vendor can take most of a minute to answer, and an inconsistent
+    # answer run-to-run is worse than a slow one for a command the operator invoked
+    got = run([name, *sub], check=False, timeout=60)
     if got.returncode != 0:
         return []
     return [ln.strip() for ln in got.stdout.splitlines() if ln.strip()]
@@ -589,15 +614,19 @@ def cmd_roster(args: argparse.Namespace) -> int:
     if args.models:
         print("\nmodels, asked of each vendor that can answer:")
         for name, _ in rows:
+            liked = favourites(name)
             found = models(name)
+            if liked:
+                print(f"  {name}: {', '.join(liked)}   <- your favourites, offer these first")
+            elif not found:
+                print(f"  {name}: no favourites and it cannot list its own — ask for the name")
             if found:
-                print(f"  {name}:")
+                head = "     also available:" if liked else f"  {name}:"
+                print(head)
                 for m in found[: args.limit]:
                     print(f"    {m}")
                 if len(found) > args.limit:
                     print(f"    ... and {len(found) - args.limit} more (`{name} models`)")
-            else:
-                print(f"  {name}: cannot list its models — ask the operator for the name")
 
     if not args.probe:
         if not args.models:

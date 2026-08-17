@@ -91,6 +91,11 @@ with `ORCHESTRATE_AGENT_LAUNCHER`. Model and effort flags are per vendor:
 | qwen | `-m` | via `setup` |
 | opencode | `-m` (as `provider/model`) | via `setup` |
 
+**Favourites.** `~/.config/orchestrate/models.json` maps a vendor to the models the operator
+actually uses, most-preferred first — `{"opencode": ["deepseek/deepseek-v4-pro"], "codex": [...]}`.
+`roster --models` shows them above the vendor's full list. Absent or unreadable, nothing changes; it
+is a convenience, never a constraint, and a model not listed is still perfectly usable.
+
 **Every vendor can be given a tier.** Where the command line has no flag, the unit's `setup` list
 carries slash commands sent into the session before its task — `["/effort high"]` — so the session
 is at the requested tier before it is given work. `roster --probe` compares this table against each

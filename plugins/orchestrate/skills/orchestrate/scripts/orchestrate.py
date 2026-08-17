@@ -20,6 +20,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -585,6 +586,59 @@ def agent_argv(unit: Unit) -> list[str]:
     return argv
 
 
+# How long to give a new session to become able to read a prompt, and how long to give it after
+# being sent to show that it took one.
+#
+# The wrapper returns when the tab exists, which is earlier than the agent being able to read
+# anything, and sending into that gap does not fail: `herdr agent prompt` reports success, the agent
+# finishes booting, and the prompt is gone. Observed three times across two vendors on one live run,
+# always the same tell -- a unit idle immediately after launch, having consumed nothing. `settle`
+# reads that idle as done and only `land` notices, a phase later, that it committed nothing.
+LAUNCH_SETTLE_SECONDS = 30.0
+DELIVERY_CHECK_SECONDS = 15.0
+
+
+def agent_row(unit: Unit, agents: list[dict] | None = None) -> dict | None:
+    """This unit's row in herdr's agent list, matched on the pane it was given."""
+    for a in live_agents() if agents is None else agents:
+        if unit.pane_id and a.get("pane_id") == unit.pane_id:
+            return a
+    return None
+
+
+def await_ready(unit: Unit, seconds: float = LAUNCH_SETTLE_SECONDS) -> bool:
+    """Wait until this session will actually take a prompt. True if it said so.
+
+    Some agents never report readiness at all -- qwen is one, and it is why `say` has a pane
+    fallback. There is nothing to wait for there, so the window is spent and the send goes ahead,
+    which is still later than sending the instant the tab appears.
+    """
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        row = agent_row(unit)
+        if row is not None and row.get("interactive_ready"):
+            return True
+        time.sleep(1.0)
+    return False
+
+
+def took_the_task(unit: Unit, seconds: float = DELIVERY_CHECK_SECONDS) -> bool:
+    """Did the session actually take the task? One that did stops being idle.
+
+    Not a guarantee -- an agent that answers instantly is idle again quickly. It is a check on the
+    failure that has actually happened, which is a session that never started at all. Reported
+    rather than repaired: a resend risks giving a unit its task twice, and a unit that quietly did
+    nothing is worth a line in `status` more than it is worth a guess.
+    """
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        row = agent_row(unit)
+        if row is not None and row.get("agent_status") not in (None, "idle", "done", "unknown"):
+            return True
+        time.sleep(1.0)
+    return False
+
+
 def launch(unit: Unit, backend: str = "inline", *, review_elsewhere: bool = False) -> None:
     proc = run(agent_argv(unit))
     pane_id = None
@@ -596,8 +650,14 @@ def launch(unit: Unit, backend: str = "inline", *, review_elsewhere: bool = Fals
         unit.pane_id = pane_id
     except (ValueError, IndexError):
         unit.note = "launched, but the wrapper's JSON could not be read"
+    await_ready(unit)
     send(unit, pane_id, backend, review_elsewhere=review_elsewhere)
     unit.status = RUNNING
+    if not took_the_task(unit):
+        unit.note = (
+            "SENT BUT NEVER STARTED: idle after being given its task. Check the tab before "
+            "trusting this unit -- it may have been prompted while still booting."
+        )
 
 
 # How long a line may be before typing it into a pane stops delivering it as an instruction.

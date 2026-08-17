@@ -1,5 +1,42 @@
 # Changelog
 
+## [1.16.0] - 2026-08-17
+
+### Fixed
+
+- **A session was given its task before it could read one.** `launch` sent the moment the wrapper
+  returned, but the wrapper returns when the *tab* exists, which is earlier than the agent being able
+  to read anything. Sending into that gap does not fail: `herdr agent prompt` reports success, the
+  agent finishes booting, and the prompt is gone. Observed three times across two vendors on a single
+  live run — twice on qwen, once on agy — always with the same tell: a unit idle immediately after
+  launch, having consumed nothing. `settle` reads that idle as **done**, and only `land` notices a
+  phase later that it committed nothing.
+
+  `launch` now waits for the agent to report it can take a prompt before sending, and checks
+  afterwards that the session actually started. An agent that never reports readiness at all — qwen —
+  has nothing to wait for, so the window is simply spent, which is still later than sending
+  instantly.
+
+  The check **reports rather than repairs**: a resend risks handing a unit its task twice, and a unit
+  that quietly did nothing is worth a line in `status` more than it is worth a guess.
+
+### Added
+
+- **When to give a run more than one workspace.** A workspace is the unit of attention, not of
+  isolation — that is the worktree. Below about six concurrent units, one workspace is right and a
+  second is overhead; above it, one workspace becomes a wall of tabs and the operator can no longer
+  see what is waiting on them. One issue is one lifecycle and a lifecycle is the natural workspace,
+  so a parent with nine children is nine workspaces plus the umbrella the orchestrator sits in.
+
+  Including the sharp edge: the agent wrapper's `--workspace` takes a **name**, so handing it an
+  existing workspace ID creates a new workspace called that rather than joining the one you meant.
+
+- **The remedy for append-only files conflicting on a wide phase.** Nine planners each appending to
+  the same engineering journal is a conflict on every land after the first, though every entry is
+  distinct and all should survive. Git's built-in union merge driver, set locally in
+  `.git/info/attributes`, keeps both sides with no markers — noted for journals and changelogs, and
+  explicitly not for source.
+
 ## [1.15.0] - 2026-08-17
 
 ### Fixed

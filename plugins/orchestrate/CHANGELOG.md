@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.6.0] - 2026-08-16
+
+### Added
+
+- **`~/.config/orchestrate/models.json` — the models the operator actually uses.** A vendor's model
+  list is a fact worth asking for; deciding which of them matters is a preference, and a preference
+  belongs in a file the operator owns. opencode alone fronts 164 models across eight providers, so
+  offering four of them is noise — and it was wrong three rounds running. `roster --models` now
+  leads with the favourites and shows the vendor's full list beneath. Absent or unreadable, nothing
+  changes: it is a convenience, never a constraint, and a model not listed is still usable.
+
+### Fixed
+
+- **Model listing no longer times out inconsistently.** `agy models` can take most of a minute on a
+  cold start, and the 20-second bound made it report "cannot list its models" on one run and
+  enumerate them on the next. An answer that changes run to run is worse than a slow one for a
+  command the operator invoked deliberately.
+
+
 ## [1.5.1] - 2026-08-16
 
 ### Fixed

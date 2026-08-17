@@ -79,6 +79,12 @@ order — not a checklist, and stop as soon as the answers determine the table:
    **Every vendor can be given a model and an effort.** Where the command line has no flag for it,
    the unit's `setup` carries a slash command instead. Never present a vendor as untierable.
 
+   **Offer the operator's own favourites first.** `python3 "$S" roster --models` prints them from
+   `~/.config/orchestrate/models.json` when that file exists — the handful they actually use, in
+   their order of preference. Offer those as the options and keep one for typing something else.
+   opencode alone fronts 164 models across eight providers; picking four out of that is noise, and
+   was wrong three rounds running.
+
    **Never write a model name from memory.** Run `python3 "$S" roster --models`, which asks each
    vendor that can answer. `grok` and `opencode` can; `claude` documents its aliases in
    `claude --help` (`fable`, `opus`, `sonnet`, and full names); the rest cannot answer, and for

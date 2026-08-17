@@ -1,5 +1,36 @@
 # Changelog
 
+## [1.15.0] - 2026-08-17
+
+### Fixed
+
+- **muse's constrained mode was full bypass.** Both `auto` and `bypass` were `--yolo`, which muse's
+  own help defines as "disable approval and sandboxing and trust this workspace for this run". So a
+  unit asking for the constrained mode ran unsandboxed — a safety claim backwards. `auto` is now
+  `--approval-mode never`, which stops muse asking without dropping the sandbox; `bypass` stays
+  `--yolo`.
+
+- **qwen had no way to escalate at all.** Both modes were empty. `--yolo` is absent from
+  `qwen --help` and works anyway — verified by running it, against a control showing qwen rejects an
+  unknown flag with "Unknown arguments". Its own warning names the equivalent: "running headless
+  with `--yolo` / approval-mode=yolo and no sandbox".
+
+- **agy could not be given saga work.** Orchestrate reported zero capabilities for it, so any
+  `/saga:` unit aimed at agy was refused outright. agy is Antigravity and its home is the Gemini
+  config directory, where the plugin is a **symlink** into the operator's own checkout rather than a
+  fetched cache — so a search for directories named `saga` finds only the saga *state*. With the
+  path added, agy reports 24 capabilities including `plan`, `doc-review` and `code-review`.
+
+### Changed
+
+- **opencode's effort is recorded as unreachable rather than implied.** It is a variant — Default,
+  high, max — chosen through `/variants`, which opens a picker rather than taking an argument, and a
+  picker cannot be answered from a `setup` line in an unwatched tab. The command document now says
+  to offer opencode on its model and leave the variant to the operator.
+
+- A note against ever mapping qwen's `--safe-mode` to a permission mode: it reads like the opposite
+  of `--yolo` and actually disables every customization, including the extensions saga loads.
+
 ## [1.14.0] - 2026-08-17
 
 ### Fixed

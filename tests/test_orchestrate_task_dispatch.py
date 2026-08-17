@@ -82,6 +82,50 @@ class TestBackendIsNotAsked:
         assert "already decided" not in sent
 
 
+class TestTheVendorMappingSaysWhatTheVendorDoes:
+    """Every entry here was wrong on a live machine until it was checked against the tool itself.
+
+    Deliberately asserted against the tables rather than the filesystem: the two escapes this plugin
+    has had were both a green local run on a machine that happened to have the thing installed.
+    """
+
+    def test_asking_muse_for_the_constrained_mode_does_not_get_bypass(
+        self, orchestrate: ModuleType
+    ) -> None:
+        """`--yolo` disables approval *and* the sandbox, so it was never the constrained mode."""
+        muse = orchestrate.VENDOR_PERMISSION["muse"]
+        assert muse["auto"] != muse["bypass"]
+        assert "--yolo" not in muse["auto"]
+        assert "--yolo" in muse["bypass"]
+
+    def test_qwen_can_actually_escalate(self, orchestrate: ModuleType) -> None:
+        """`--yolo` is absent from `qwen --help` and works; qwen rejects unknown flags loudly."""
+        assert orchestrate.VENDOR_PERMISSION["qwen"]["bypass"] == ["--yolo"]
+
+    def test_qwen_is_never_given_safe_mode(self, orchestrate: ModuleType) -> None:
+        """It reads like a permission flag and disables the customizations saga needs loaded."""
+        for mode in orchestrate.VENDOR_PERMISSION["qwen"].values():
+            assert "--safe-mode" not in mode
+
+    def test_every_vendor_with_a_permission_entry_has_both_modes(
+        self, orchestrate: ModuleType
+    ) -> None:
+        for vendor, modes in orchestrate.VENDOR_PERMISSION.items():
+            assert set(modes) == {"auto", "bypass"}, vendor
+
+    def test_agy_can_be_given_saga_work(self, orchestrate: ModuleType) -> None:
+        """Its plugin is a symlink into the operator's own checkout, so a directory search misses it."""
+        assert "agy" in orchestrate.SAGA_INSTALL
+        assert orchestrate.saga_command("agy", "plan") == "/saga:plan"
+
+    def test_every_vendor_that_can_run_saga_knows_how_to_name_it(
+        self, orchestrate: ModuleType
+    ) -> None:
+        """An install with no syntax entry sends a command the vendor reads as prose."""
+        for vendor in orchestrate.SAGA_INSTALL:
+            assert vendor in orchestrate.SAGA_SYNTAX, vendor
+
+
 class TestALongTaskSurvivesBeingTypedIntoAPane:
     """A task past a pane's typing limit arrives as an attachment, not an instruction.
 

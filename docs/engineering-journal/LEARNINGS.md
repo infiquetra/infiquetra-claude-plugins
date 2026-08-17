@@ -21,6 +21,43 @@
 
 ## 2026-08-16
 
+### A single-session gate becomes a self-review and a forever-wait when it is dispatched  {#an-in-loop-gate-does-not-survive-being-parallelised}
+
+**Context.** Under `/orchestrate`, a builder session running saga's `/work` reported "Review gate:
+programmatic /code-review — CLEAN, 0 P0/P1" and landed an evidence-ledger record saying so. The run
+also had a code-review phase of its own, dispatched afterwards to two other vendors.
+
+**Evidence.** `plugins/saga/skills/work/SKILL.md:699-741` (Phase 5.1 calls `/code-review`
+programmatically; §5.3 blocks on P0/P1 and allows only "an explicit operator override with a
+recorded rationale"). Live run `orch-2026-08-16-b` in `campps-e2e-canary`: builder vendor
+`opencode`, landed at `381e4e4`, with `docs/evidence/issue-48/ledger.jsonl` carrying
+`{"kind": "evidence", "verdict": "clean"}` written by the builder about its own work.
+
+**Mechanism.** Two properties that are correct in one session invert when the same instruction is
+dispatched to a parallel one. First, "call the reviewer" means *a different vendor* under a roster
+rule and *itself* inside one session — so an in-loop gate silently becomes a self-review. Second,
+and worse: a gate's escape hatch is an operator question, and an operator question in a background
+tab waits forever. This run came back clean and so never reached that branch; a run that did would
+have hung after an hour of build work, exactly like the backend offer did
+([[#dispatched-saga-commands-block-on-their-own-offers]]).
+
+**Fix.** orchestrate 1.9.0 appends a note telling a `work` unit to skip the Phase 5 gate — but only
+when `Run.reviews_separately()` is true, read off the unit table in any vendor's spelling. Without a
+review phase the in-loop gate is the only review there is, so suppressing it unconditionally would
+remove the review rather than move it.
+
+**Validation.** `tests/test_orchestrate_task_dispatch.py` covers both directions, including that a
+code-review unit is never itself told to skip reviewing. Gate green, 24 steps.
+
+**What surprised.** The wasted review pass was the visible symptom and the cheap half of the cost.
+The expensive half was invisible in this run precisely because the review passed.
+
+**Generalizable rule.** Before dispatching a contract written for one session, look for every place
+it names a *role* ("the reviewer") or asks the *operator* a question. A role resolves to self, and a
+question resolves to a hang.
+
+**Refs.** [[#dispatched-saga-commands-block-on-their-own-offers]], orchestrate CHANGELOG 1.7.0-1.9.0.
+
 ### A hardcoded command name fails by running someone else's program  {#bare-command-names-are-a-namespace-you-do-not-own}
 
 **Context.** The operator installed Cursor, which claimed `agent` on `PATH`, and renamed the local

@@ -144,6 +144,24 @@ BACKEND_NOTES: dict[str, str] = {
     ),
 }
 
+# What a builder is told when this run reviews the build in its own phase.
+#
+# `/work` Phase 5 calls `/code-review` programmatically as its own pre-PR gate. In one session that
+# is right. Under orchestration it is a self-review -- the reviewer is the builder's own vendor,
+# which is the one thing the operator's roster rule forbids -- and it has a worse failure than the
+# wasted pass: §5.3 blocks on any P0 or P1 and the only documented exit is an operator override with
+# a recorded rationale. That is a question, in a background tab, waiting forever. The observed run
+# came back clean and so survived; a run that does not would hang after an hour of work.
+#
+# Sent only when the run actually has a code-review phase of its own. Without one the in-loop gate
+# is the only review there is, and suppressing it would remove the review rather than move it.
+REVIEW_ELSEWHERE_NOTE = (
+    " This run reviews the build in its own separate phase, with a different vendor than yours, "
+    "after your work is landed. Skip the Phase 5 code-review gate entirely -- do not call "
+    "/code-review, do not write a code-review evidence record, and do not ask for an override. "
+    "Commit your work, say what you did, and stop."
+)
+
 SAGA_SYNTAX: dict[str, str] = {
     "claude": "/saga:{cap}",
     "codex": "$saga:{cap}",
@@ -248,6 +266,15 @@ class Run:
             if u.name == name:
                 return u
         raise SystemExit(f"no unit named {name!r}")
+
+    def reviews_separately(self) -> bool:
+        """Does this run have a code-review phase of its own?
+
+        Read off the unit table rather than asked, because the interview already wrote the answer
+        there: a review phase is units, one per reviewer. Matching is on the saga capability in the
+        task text, in any vendor's spelling, since ``normalize_task`` has not run yet at this point.
+        """
+        return any(re.search(r"[/$](saga:)?code-review\b", u.task) for u in self.units)
 
     def eligible(self) -> list[Unit]:
         done = {u.name for u in self.units if u.status == DONE}
@@ -472,7 +499,7 @@ def agent_argv(unit: Unit) -> list[str]:
     return argv
 
 
-def launch(unit: Unit, backend: str = "inline") -> None:
+def launch(unit: Unit, backend: str = "inline", *, review_elsewhere: bool = False) -> None:
     proc = run(agent_argv(unit))
     pane_id = None
     try:
@@ -483,7 +510,7 @@ def launch(unit: Unit, backend: str = "inline") -> None:
         unit.pane_id = pane_id
     except (ValueError, IndexError):
         unit.note = "launched, but the wrapper's JSON could not be read"
-    send(unit, pane_id, backend)
+    send(unit, pane_id, backend, review_elsewhere=review_elsewhere)
     unit.status = RUNNING
 
 
@@ -504,7 +531,9 @@ def say(unit: Unit, pane_id: str | None, text: str) -> None:
     unit.note = "prompted through its pane; this agent does not report interactive readiness"
 
 
-def send(unit: Unit, pane_id: str | None, backend: str = "inline") -> None:
+def send(
+    unit: Unit, pane_id: str | None, backend: str = "inline", *, review_elsewhere: bool = False
+) -> None:
     """Set the session up, then give it its task.
 
     Setup goes first and separately: a tier has to be in force before the work starts, and a slash
@@ -512,7 +541,11 @@ def send(unit: Unit, pane_id: str | None, backend: str = "inline") -> None:
     """
     for line in unit.setup:
         say(unit, pane_id, line)
-    say(unit, pane_id, normalize_task(unit.vendor, unit.task, backend))
+    say(
+        unit,
+        pane_id,
+        normalize_task(unit.vendor, unit.task, backend, review_elsewhere=review_elsewhere),
+    )
 
 
 def poll(unit: Unit) -> str:
@@ -576,7 +609,9 @@ def probe(name: str) -> tuple[str, dict[str, bool]]:
     }
 
 
-def normalize_task(vendor: str, task: str, backend: str = "inline") -> str:
+def normalize_task(
+    vendor: str, task: str, backend: str = "inline", *, review_elsewhere: bool = False
+) -> str:
     """Rewrite a leading namespaced saga command into the form this vendor understands.
 
     The interview writes the task, and it writes ``/saga:plan`` -- claude's form -- for every
@@ -597,6 +632,8 @@ def normalize_task(vendor: str, task: str, backend: str = "inline") -> str:
     note = BACKEND_NOTES.get(cap)
     if note and backend not in ("", None):
         rewritten += note.format(backend=backend)
+    if cap == "work" and review_elsewhere:
+        rewritten += REVIEW_ELSEWHERE_NOTE
     return rewritten
 
 
@@ -794,7 +831,7 @@ def cmd_go(args: argparse.Namespace) -> int:
         r.save()  # persist the worktree before the launch, so a failure is not relaunched blind
         print(f"launching {unit.name} ({unit.vendor}) -> {unit.task}")
         try:
-            launch(unit, r.backend)
+            launch(unit, r.backend, review_elsewhere=r.reviews_separately())
         except SystemExit as exc:
             unit.status = FAILED
             unit.note = str(exc)

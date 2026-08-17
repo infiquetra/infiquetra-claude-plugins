@@ -247,3 +247,70 @@ class TestRunSeesItsOwnReviewPhase:
     def test_false_when_only_the_document_is_reviewed(self, orchestrate: ModuleType) -> None:
         run = _run(orchestrate, "/saga:work docs/plans/x.md", "/saga:doc-review docs/plans/x.md")
         assert run.reviews_separately() is False
+
+
+class TestASessionIsReadyBeforeItIsSent:
+    """The wrapper returns when the tab exists, which is earlier than the agent can read anything.
+
+    Sending into that gap does not fail — `herdr agent prompt` reports success, the agent finishes
+    booting, and the prompt is gone. Three times across two vendors on one live run.
+    """
+
+    def test_it_waits_for_the_agent_to_say_it_is_ready(
+        self, orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        unit = orchestrate.Unit(name="u", vendor="agy", task="x", pane_id="w1:p1")
+        answers = [
+            [{"pane_id": "w1:p1", "interactive_ready": None}],
+            [{"pane_id": "w1:p1", "interactive_ready": None}],
+            [{"pane_id": "w1:p1", "interactive_ready": True}],
+        ]
+        monkeypatch.setattr(orchestrate, "live_agents", lambda: answers.pop(0) if answers else [])
+        monkeypatch.setattr(orchestrate.time, "sleep", lambda _s: None)
+
+        assert orchestrate.await_ready(unit, seconds=30) is True
+        assert answers == [], "should have polled until the agent said it was ready"
+
+    def test_it_gives_up_for_an_agent_that_never_reports_readiness(
+        self, orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """qwen never reports it, which is why `say` has a pane fallback — do not hang on it."""
+        unit = orchestrate.Unit(name="u", vendor="qwen", task="x", pane_id="w1:p1")
+        monkeypatch.setattr(
+            orchestrate, "live_agents", lambda: [{"pane_id": "w1:p1", "interactive_ready": None}]
+        )
+        monkeypatch.setattr(orchestrate.time, "sleep", lambda _s: None)
+
+        assert orchestrate.await_ready(unit, seconds=2) is False
+
+    def test_a_session_that_started_working_counts_as_delivered(
+        self, orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        unit = orchestrate.Unit(name="u", vendor="agy", task="x", pane_id="w1:p1")
+        monkeypatch.setattr(
+            orchestrate, "live_agents", lambda: [{"pane_id": "w1:p1", "agent_status": "working"}]
+        )
+        monkeypatch.setattr(orchestrate.time, "sleep", lambda _s: None)
+
+        assert orchestrate.took_the_task(unit, seconds=2) is True
+
+    def test_a_session_still_idle_after_being_sent_is_not_delivered(
+        self, orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The observed failure: idle right after launch, having consumed nothing."""
+        unit = orchestrate.Unit(name="u", vendor="agy", task="x", pane_id="w1:p1")
+        monkeypatch.setattr(
+            orchestrate, "live_agents", lambda: [{"pane_id": "w1:p1", "agent_status": "idle"}]
+        )
+        monkeypatch.setattr(orchestrate.time, "sleep", lambda _s: None)
+
+        assert orchestrate.took_the_task(unit, seconds=2) is False
+
+    def test_an_unknown_pane_is_not_delivered(
+        self, orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        unit = orchestrate.Unit(name="u", vendor="agy", task="x", pane_id="w1:p1")
+        monkeypatch.setattr(orchestrate, "live_agents", lambda: [])
+        monkeypatch.setattr(orchestrate.time, "sleep", lambda _s: None)
+
+        assert orchestrate.took_the_task(unit, seconds=2) is False

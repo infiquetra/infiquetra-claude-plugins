@@ -194,6 +194,25 @@ Then ask to approve, edit, or cancel. **Nothing launches before the operator say
 again. Any cell is fair game, including which vendor sits in a competing-plan row. Redraw rather
 than describing the change, so what they approve is what runs.
 
+### Workspaces: one per lifecycle, once a run outgrows a screen
+
+A herdr workspace is the unit of *attention*, not of isolation — isolation is the worktree. Below
+about six concurrent units one workspace is fine and a second is overhead. Above that, a single
+workspace becomes a wall of tabs whose names are the only thing telling them apart, and the operator
+loses the ability to answer "what is waiting on me" at a glance.
+
+**One issue is one lifecycle, and a lifecycle is the natural workspace.** A parent issue with nine
+children is nine lifecycles: give each its own workspace, named for the child, and keep the
+orchestrator in the umbrella workspace beside them. Then a phase's sessions are the tabs of one
+workspace, and closing that workspace when the child lands is one action rather than nine.
+
+Create one with `herdr tab create --workspace <workspace_id>`, and note that the agent wrapper's
+`--workspace` flag takes a **name** rather than an ID: handed an existing workspace ID it creates a
+new workspace called that, instead of joining the one you meant.
+
+Below the threshold, do not do this. A three-unit run in four workspaces is worse than a three-unit
+run in one.
+
 ## Phase 4 — run it
 
 Write only the units that can actually launch now — the `<from the plan>` rows are not units yet and
@@ -273,6 +292,19 @@ adopted, the work is visible to `land` and `clean` like any other unit.
 
 `python3`, not `uv run` — the script imports nothing outside the standard library, and the target
 repo may not be a uv project at all.
+
+**Append-only files conflict when a phase is wide.** Nine planners each adding an entry to the same
+engineering journal is nine appends at the end of one file, and git calls that a conflict on every
+land after the first — even though every entry is distinct and all of them should survive. Git has a
+built-in answer, and it is local and uncommitted:
+
+```bash
+printf 'docs/engineering-journal/*.md merge=union\n' >> .git/info/attributes
+```
+
+Union merge keeps both sides of an append-only file with no markers. Use it for journals and
+changelogs; do **not** use it for source, where keeping both sides of a conflict is how you get code
+that compiles and means something nobody wrote.
 
 **`clean --merged` belongs after every `land`, not once at the end.** A phase's sessions are
 finished the moment their work is on the run branch; leaving them open for the rest of the run is how

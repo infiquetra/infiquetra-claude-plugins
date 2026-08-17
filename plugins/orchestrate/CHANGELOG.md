@@ -1,5 +1,50 @@
 # Changelog
 
+## [1.11.0] - 2026-08-17
+
+### Added
+
+- **`check` — report where the run record and the repository disagree.** Read-only; exits non-zero
+  when it finds anything. The record is one JSON file and the truth is git plus herdr, and nothing
+  watches the gap between them: on the live run for issue 48 a whole review phase was created
+  outside the record and neither `land` nor `clean` could see it. Five shapes, each a comparison
+  rather than a rule:
+
+  | Finding | Compares |
+  |---|---|
+  | `UNRECORDED` | a run-owned branch against the unit table |
+  | `NO COMMITS` | a unit marked done against its branch |
+  | `NOT LANDED` | a unit marked done and set to merge against the run branch |
+  | `SESSION GONE` | a unit marked running against herdr |
+  | `STILL WORKING` | a unit marked done against herdr |
+
+  `NOT LANDED` is gated on the unit's `merge` intent. Without that gate it fires on every correctly
+  handled competing-plan branch, which was measured on the real run: six of seven properly recorded
+  units also had unlanded commits.
+
+- **`adopt [--yes]` — put stranded unit branches back into the record.** Rebuilds a unit from what
+  is still true: name and branch from the ref, worktree from git, and vendor, pane and tab from the
+  live session matched on its working directory. Without `--yes` it writes nothing.
+
+  `task`, `after`, `model`, `effort` and `permission` are left at their defaults rather than guessed.
+  They cannot be recovered, and the session has already been given its task, so nothing here is ever
+  sent to it again.
+
+### Fixed
+
+- **A command that is not installed is now a result, not a traceback.** `run(..., check=False)`
+  promised that every failure comes back as a return code, but `subprocess.run` raises rather than
+  returning when the program does not exist — so `check` and `adopt`, which had already decided
+  herdr was optional, crashed on any machine without it. Missing now surfaces as return code 127,
+  the shell's own "command not found", and `check=True` callers get one sentence instead of a
+  traceback. `poll` carried the same latent fault and is fixed by the same change.
+
+### Changed
+
+- `poll` accepts an already-fetched agent list, so a caller looking at every unit pays one herdr
+  round trip for the run instead of one per row — an unresponsive herdr costs the timeout once.
+
+
 ## [1.10.0] - 2026-08-16
 
 ### Added

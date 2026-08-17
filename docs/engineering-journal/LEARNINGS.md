@@ -21,6 +21,42 @@
 
 ## 2026-08-17
 
+### Delivering the keystrokes is not delivering the instruction  {#a-pane-carries-a-long-task-as-an-attachment}
+
+**Context.** Orchestrate hands a unit its task through `herdr agent prompt`, and falls back to typing
+into the pane for any vendor that will not report interactive readiness — qwen. On a live run two
+qwen builders launched, were sent their tasks, and did nothing.
+
+**Evidence.** Measured directly against qwen 0.21.13 through `herdr pane run`: a 859-character line
+arrives as typed text; a 1660-character line arrives as `[Pasted Content N chars]`. The paste *is*
+submitted and the agent knows its length — it does not treat it as the instruction. Its reply to a
+6402-character task, verbatim: "I can see you've pasted some content (6402 characters), but I'm not
+sure what you'd like me to do with it."
+
+**Mechanism.** `herdr pane run` reports success when the keystrokes are delivered, which is a
+different claim from the session having received an instruction. Above the terminal's bracketed-paste
+threshold the two come apart, and orchestrate had no way to tell them apart. The unit then goes idle,
+`settle` reads idle as done, and the failure only surfaces at `land` as "COMMITTED NOTHING" — a phase
+later, after the wall-clock is spent. Every real task is thousands of characters, so this door was
+unusable for real work while appearing to work.
+
+**Fix.** orchestrate 1.13.0: past 800 characters the task is written to `.orchestrate/tasks/<unit>.md`
+and the typed line points at it by absolute path, keeping the leading saga command typed so the vendor
+still loads the skill. Verified end to end on a live session — the same task answered correctly from a
+212-character line.
+
+**What surprised.** The dispatching session had diagnosed this as "qwen discards the paste." It does
+not: it stores it, sizes it, and waits to be told what to do with it. The distinction matters, because
+"discards" suggests a transport bug and the truth is an interface mismatch — a paste is an attachment,
+and an attachment is not a prompt.
+
+**Generalizable rule.** When a transport reports success, ask what it is asserting. "The bytes were
+written" and "the peer accepted this as a request" are different claims, and any place they can come
+apart needs the receiver's own acknowledgement, not the sender's return code.
+
+**Refs.** [[#pre-answering-one-question-leaves-the-rest-hanging]], orchestrate CHANGELOG 1.13.0.
+
+
 ### Fixing one member of a family reads as fixing the family  {#pre-answering-one-question-leaves-the-rest-hanging}
 
 **Context.** Orchestrate shipped a note telling a dispatched `/plan` unit not to offer an execution

@@ -580,12 +580,50 @@ def launch(unit: Unit, backend: str = "inline", *, review_elsewhere: bool = Fals
     unit.status = RUNNING
 
 
+# How long a line may be before typing it into a pane stops delivering it as an instruction.
+#
+# Measured against qwen 0.21.13 through `herdr pane run`: 859 characters arrive as typed text, 1660
+# arrive as `[Pasted Content N chars]`. The paste is submitted and the agent knows its size -- it
+# simply does not treat it as the instruction. Its own words, verbatim, to a 6402-character task:
+# "I can see you've pasted some content (6402 characters), but I'm not sure what you'd like me to do
+# with it."
+#
+# That is the whole failure: the unit launches, the keystrokes are delivered, orchestrate records
+# success, and the session sits waiting for an instruction it thinks it has not been given. It goes
+# idle, `settle` marks it done, and only `land` -- a phase later -- reports that it committed
+# nothing. A real task is routinely well past this, so the door this plugin uses for any vendor that
+# will not take `herdr agent prompt` was quietly unusable for real work.
+PANE_TYPING_LIMIT = 800
+
+TASK_DIR = RUN_FILE.parent / "tasks"
+
+
+def pane_text(unit: Unit, text: str) -> str:
+    """The line to type, which is the task itself only when the task is short enough to survive.
+
+    Past the limit the task goes to a file and the typed line points at it. The leading saga command
+    stays typed: it is what makes the vendor load the skill, and inside a file it is just prose.
+    """
+    if len(text) <= PANE_TYPING_LIMIT:
+        return text
+    path = (TASK_DIR / f"{unit.name}.md").resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text + "\n")
+    lead = text.split(" ", 1)[0] if re.match(r"^\s*[/$]", text) else ""
+    unit.note = f"task handed over as a file, too long to type: {path}"
+    return (
+        f"{lead} Your full task is in {path} -- read that file in full and carry it out exactly. "
+        "It is the complete instruction; nothing else is coming."
+    ).strip()
+
+
 def say(unit: Unit, pane_id: str | None, text: str) -> None:
     """Put one line into the session.
 
     ``herdr agent prompt`` is the right door, but it refuses any agent that never reports
     ``interactive_ready`` -- qwen is one today. For those, type into the pane instead, which is what
-    the operator would do by hand.
+    the operator would do by hand -- but only up to the length a pane will still carry as an
+    instruction rather than as an attachment. See ``pane_text``.
     """
     handle = unit.agent_name or unit.name
     attempt = run(["herdr", "agent", "prompt", handle, text], check=False)
@@ -593,8 +631,10 @@ def say(unit: Unit, pane_id: str | None, text: str) -> None:
         return
     if not pane_id:
         raise SystemExit(f"{unit.name}: agent prompt refused and no pane to fall back to")
-    run(["herdr", "pane", "run", pane_id, text])
-    unit.note = "prompted through its pane; this agent does not report interactive readiness"
+    typed = pane_text(unit, text)
+    run(["herdr", "pane", "run", pane_id, typed])
+    if not unit.note:
+        unit.note = "prompted through its pane; this agent does not report interactive readiness"
 
 
 def send(

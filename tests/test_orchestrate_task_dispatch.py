@@ -82,6 +82,60 @@ class TestBackendIsNotAsked:
         assert "already decided" not in sent
 
 
+class TestALongTaskSurvivesBeingTypedIntoAPane:
+    """A task past a pane's typing limit arrives as an attachment, not an instruction.
+
+    Measured against qwen through `herdr pane run`: 859 characters arrive as text, 1660 arrive as
+    `[Pasted Content N chars]` and the agent answers "I'm not sure what you'd like me to do with
+    it." The unit then sits idle, `settle` marks it done, and only `land` notices it committed
+    nothing — a phase later.
+    """
+
+    def test_a_short_task_is_typed_verbatim(
+        self, orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        unit = orchestrate.Unit(name="u", vendor="qwen", task="x")
+        assert orchestrate.pane_text(unit, "/plan do the thing") == "/plan do the thing"
+
+    def test_a_long_task_is_replaced_by_something_a_pane_will_carry(
+        self, orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        unit = orchestrate.Unit(name="u", vendor="qwen", task="x")
+        long_task = "/plan " + ("word " * 400)
+        typed = orchestrate.pane_text(unit, long_task)
+        assert len(typed) <= orchestrate.PANE_TYPING_LIMIT
+
+    def test_the_whole_task_is_in_the_file_the_line_points_at(
+        self, orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        unit = orchestrate.Unit(name="u", vendor="qwen", task="x")
+        long_task = "/plan " + ("word " * 400)
+        typed = orchestrate.pane_text(unit, long_task)
+        written = [w for w in typed.split() if w.endswith(".md")]
+        assert written, typed
+        assert Path(written[0]).read_text().strip() == long_task.strip()
+
+    def test_the_saga_command_stays_in_the_typed_part(
+        self, orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Inside a file it is prose; typed, it is what makes the vendor load the skill."""
+        monkeypatch.chdir(tmp_path)
+        unit = orchestrate.Unit(name="u", vendor="qwen", task="x")
+        typed = orchestrate.pane_text(unit, "/work " + ("word " * 400))
+        assert typed.startswith("/work ")
+
+    def test_the_handover_is_recorded_on_the_unit(
+        self, orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        unit = orchestrate.Unit(name="u", vendor="qwen", task="x")
+        orchestrate.pane_text(unit, "/plan " + ("word " * 400))
+        assert "too long to type" in unit.note
+
+
 class TestAUnitNeverBlocksOnAQuestion:
     """Saga names four known-set choices; pre-answering one left the other three to hang a run.
 

@@ -193,6 +193,32 @@ class Unit:
     ``["/effort high"]`` for an agent whose CLI has no effort flag. Sent in order, each as its own
     prompt, so the session has settled into the requested tier before it is given work. Anything a
     slash command can do to a fresh session belongs here."""
+    launch_args: list[str] = field(default_factory=list)
+    """Extra arguments for the launcher, passed through verbatim and never inspected.
+
+    ``model`` and ``effort`` cover what every vendor has in common; this covers everything else the
+    wrapper knows and this plugin does not. ``["--company-account"]`` is the case that forced it:
+    the wrapper intercepts that flag and swaps the configuration directory before the tool starts,
+    so it is a launcher concern, invisible to the tool's own ``--help``, and there was no way to
+    ask for it through a unit. The operator asked, the plugin could not carry it, and a whole review
+    phase was launched by hand and lost to the run record.
+
+    Deliberately not validated here. The wrapper is a separate program on its own release schedule,
+    so any list of acceptable flags kept in this file would go stale silently -- which is the same
+    closed vocabulary one level up. It already rejects what it does not accept, by name. Carry it,
+    do not police it."""
+    merge: bool = True
+    """Should this unit's branch be merged onto the run branch by ``land``?
+
+    True for almost everything: a phase becomes real to the next one by landing. False is for a unit
+    whose branch is meant to be *read* rather than merged -- several planners each writing their own
+    version of the same document, where merging them by git produces a conflict at best and a
+    silently interleaved plan at worst.
+
+    Whether a unit is that kind is a judgement about what the phase was for, so it is authored here
+    rather than guessed. This plugin does not compare branches for overlapping paths to work it out:
+    that is real work, wrong in both directions, and it decides something the person who wrote the
+    phase already knows."""
     after: list[str] = field(default_factory=list)
     worktree: str | None = None
     branch: str | None = None
@@ -496,6 +522,10 @@ def agent_argv(unit: Unit) -> list[str]:
         template = flags.get(key)
         if value and template:
             argv.extend(template.format(value=value).split(" "))
+    # Last, and verbatim. The wrapper reads its own flags out of the arguments that follow the
+    # vendor token, so this is the position they have to occupy -- and anything it does not
+    # recognise it hands to the vendor, which is the right failure either way.
+    argv.extend(unit.launch_args)
     return argv
 
 
@@ -969,10 +999,13 @@ def cmd_land(args: argparse.Namespace) -> int:
 
     on = run(["git", "rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()
     run(["git", "checkout", r.branch])
-    landed, empty, already = [], [], []
+    landed, empty, already, held = [], [], [], []
     try:
         for unit in r.units:
             if unit.status != DONE or not unit.branch:
+                continue
+            if not unit.merge:
+                held.append(unit.name)
                 continue
             ahead = run(
                 ["git", "rev-list", "--count", f"{r.branch}..{unit.branch}"], check=False
@@ -992,6 +1025,14 @@ def cmd_land(args: argparse.Namespace) -> int:
     print(f"landed on {r.branch}: {', '.join(landed) or 'nothing new'}")
     if already:
         print(f"already there: {', '.join(already)}")
+    if held:
+        # Named, not passed over. A unit that finishes and never lands is the same shape of quiet
+        # loss as one that finishes without committing, and it stays quiet for longer -- the branch
+        # is right there, so nothing looks wrong until the phase that needed it opens on nothing.
+        print(
+            f"NOT MERGED BY REQUEST: {', '.join(held)} -- "
+            f"their branches hold work that is not on {r.branch}; read them yourself"
+        )
     if empty:
         print(f"COMMITTED NOTHING: {', '.join(empty)} -- those sessions finished without saving")
     return 0

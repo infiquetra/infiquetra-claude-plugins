@@ -21,6 +21,39 @@
 
 ## 2026-08-17
 
+### Fixing one member of a family reads as fixing the family  {#pre-answering-one-question-leaves-the-rest-hanging}
+
+**Context.** Orchestrate shipped a note telling a dispatched `/plan` unit not to offer an execution
+backend, because that question in a background tab waits forever. The next live run stopped within
+minutes — on a different question, in the same tab, with the same consequence.
+
+**Evidence.** `plugins/saga/skills/plan/SKILL.md:49` names the whole family in one sentence: "Use
+`AskUserQuestion` for choices from a known set (destination, execution backend, scope class,
+resume-vs-mint)." That skill has six `AskUserQuestion` sites. Orchestrate pre-answered one. On the
+issue-61 run the `plan-claude` unit sat `blocked` on §5.1's destination question — plan-only / pr /
+merge / nonprod-deploy — with two doc-review units queued behind it.
+
+**Mechanism.** The backend note was written from the symptom rather than the cause. The cause is not
+"saga asks about backends"; it is "saga asks the operator, and under orchestration there is no
+operator in that tab". Any fix scoped to the specific question inherits a shelf life exactly as long
+as the callee's question list.
+
+**Fix.** orchestrate 1.12.0 appends one rule to every dispatched saga task: for a choice from a
+known set take the most defensible option and say which; for a real question about the work, write
+it into the output and stop rather than guess or prompt. That second half is not softening — a unit
+that silently answers "should this also cover X" produces confident work on the wrong thing, and an
+idle unit is what `settle` already watches for.
+
+**What surprised.** Naming the four choices explicitly, in saga's own words, was worth more than any
+amount of general instruction, and it was free: the callee had already enumerated them.
+
+**Generalizable rule.** When a callee stops to ask, find out whether the question you fixed is one of
+a set the callee has already written down. Fix the class in the caller; enumerating the members from
+the callee's own text is cheap and makes the rule concrete.
+
+**Refs.** [[#drift-is-evidence-of-a-missing-field]], orchestrate CHANGELOG 1.7.0 and 1.12.0.
+
+
 ### A blocked worker is silent, and a narrow verification command reads as a broken one  {#driving-a-weaker-worker-costs-you-in-silence}
 
 **Context.** A qwen session was given a written specification and asked to implement two orchestrate

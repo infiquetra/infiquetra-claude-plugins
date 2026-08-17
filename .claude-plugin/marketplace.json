@@ -280,7 +280,7 @@
     {
       "name": "orchestrate",
       "source": "./plugins/orchestrate",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "description": "Run one piece of work across several herdr agent sessions, one git worktree per unit.",
       "author": {
         "name": "Infiquetra",

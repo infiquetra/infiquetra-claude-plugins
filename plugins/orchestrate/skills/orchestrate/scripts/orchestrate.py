@@ -122,12 +122,27 @@ SAGA_INSTALL: dict[str, list[str]] = {
 # exposes. Orchestrate is always inline by design: a dispatched unit is already one of several
 # parallel sessions, and nesting a workflow inside one is the orchestration-of-orchestration this
 # plugin exists to avoid.
-BACKEND_DECIDING_STAGES = frozenset({"work"})
-
-BACKEND_NOTE = (
-    " The execution backend for this run is already decided: {backend}. "
-    "Do not offer or ask about the backend -- record {backend} and continue."
-)
+# Saga stages that stop and ask the operator which execution backend to use, and what each one
+# needs to be told instead. Both `/plan` and `/work` offer it, so under orchestration the planner
+# hangs before the builder is ever reached -- an `AskUserQuestion` in a background tab waits
+# forever.
+#
+# The two messages differ because the stages have different jobs. `/plan` is where the decision is
+# recorded, and it records it into the plan document's `backend:` frontmatter, which is the only
+# carrier that survives a worktree boundary: the saga tick is untracked local state. `/work` then
+# reads that field rather than asking, so the note there is a belt to the document's braces.
+BACKEND_NOTES: dict[str, str] = {
+    "plan": (
+        " The execution backend for this run is already decided: {backend}. "
+        "Do not offer or ask about it -- set `backend: {backend}` in the plan's frontmatter "
+        "and continue."
+    ),
+    "work": (
+        " The execution backend for this run is already decided: {backend}, and the plan's "
+        "`backend:` frontmatter says so. Do not offer or ask about it -- record {backend} "
+        "and continue."
+    ),
+}
 
 SAGA_SYNTAX: dict[str, str] = {
     "claude": "/saga:{cap}",
@@ -579,8 +594,9 @@ def normalize_task(vendor: str, task: str, backend: str = "inline") -> str:
         return task
     cap = match.group(1)
     rewritten = saga_command(vendor, cap) + task[match.end() :]
-    if cap in BACKEND_DECIDING_STAGES and backend not in ("", None):
-        rewritten += BACKEND_NOTE.format(backend=backend)
+    note = BACKEND_NOTES.get(cap)
+    if note and backend not in ("", None):
+        rewritten += note.format(backend=backend)
     return rewritten
 
 

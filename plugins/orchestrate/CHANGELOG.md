@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.8.0] - 2026-08-16
+
+### Fixed
+
+- **The planner is told the backend too, not just the builder.** 1.7.0 told `/work`, but `/plan`
+  §5.2 offers the backend as well — so under orchestration the planner would hang before the builder
+  was ever reached. Both stages now get a note, and they differ because the jobs differ: `/plan` is
+  told to record `backend:` in the plan's frontmatter, `/work` is told the plan already says so.
+  Together with saga's matching change, the decision now travels on the committed document rather
+  than in an untracked saga tick that never crosses a worktree boundary.
+
+
 ## [1.7.0] - 2026-08-16
 
 ### Fixed

@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.136.0] - 2026-08-16
+
+### Changed
+
+- **The plan document carries the execution backend, and `/work` honours it.** The backend was
+  offered twice — once at `/plan` §5.2 and again at `/work` §1.4 — and recorded only in the saga
+  tick. The tick is untracked local state: it does not survive a worktree boundary, another machine,
+  or another vendor, so an executor that did not run in the planning directory could never see the
+  decision and had to ask again. Under `/orchestrate` that second ask lands in a background tab
+  where an unanswered offer waits forever.
+
+  `/plan` now writes the answer into the plan document's `backend:` frontmatter field — committed,
+  and therefore the only carrier that travels with the work. `/work` reads that field, records it as
+  the operator's pick, and does not offer. It offers exactly as before when the field is absent,
+  which is every plan written before this contract, so nothing existing changes behaviour.
+
+
 ## [0.135.0] - 2026-08-16
 
 ### Fixed - the documented launch and collect commands own the claim

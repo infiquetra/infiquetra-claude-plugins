@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.7.0] - 2026-08-16
+
+### Fixed
+
+- **A `/work` unit no longer stops to ask which execution backend to use.** Saga's `/work` offers the
+  backend unconditionally — its contract has no skip-if-already-decided path — and an
+  `AskUserQuestion` in a background tab waits forever. It was caught only because the operator
+  happened to be watching that tab; unattended, the unit would hang.
+
+  The backend is a property of the run, not of a unit, so it is decided up front: the plan carries
+  `"backend": "inline"` and orchestrate appends the decision to every saga `work` task when it
+  sends. Always inline — a dispatched unit is already one of several parallel sessions, and nesting
+  a workflow inside one is the orchestration-of-orchestration this plugin exists to avoid.
+
+  Unlike saga's engine offer there is no stored preference to pre-seed, and the archived
+  implementation never handled this either, so the task text is the only lever saga exposes today.
+  The durable fix belongs in saga: `/work` should honour an already-recorded
+  `orchestration_operator_choice` instead of re-offering.
+
+
 ## [1.6.0] - 2026-08-16
 
 ### Added

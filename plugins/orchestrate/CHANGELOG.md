@@ -1,5 +1,38 @@
 # Changelog
 
+## [1.10.0] - 2026-08-16
+
+### Added
+
+- **`launch_args` on a unit — extra arguments for the launcher, carried through untouched.**
+  `model` and `effort` are what every vendor has in common; this is everything else the wrapper
+  knows and this plugin does not. `--company-account` is the case that forced it: the wrapper
+  intercepts that flag and swaps the configuration directory before the tool starts, so it never
+  appears in the tool's own `--help` and could not be expressed through a unit at all. On the live
+  run for issue 48 the operator asked for it, the plugin could not carry it, and an entire review
+  phase was launched by hand — outside the run record, where `land` and `clean` cannot reach it.
+
+  Nothing is validated here on purpose. An allow-list of acceptable flags kept in this file would be
+  the same closed vocabulary one level up, going stale silently as the wrapper releases on its own
+  schedule. The wrapper already rejects what it does not accept, by name.
+
+- **`merge` on a unit — defaults to `true`; `false` means the branch is to be read, not merged.**
+  `land` previously merged every finished unit, which is the one thing the command's own
+  documentation forbids for competing plans: several planners writing their own version of one
+  document cannot be merged by git without a conflict at best and a silently interleaved plan at
+  worst. On the issue-48 run that made `land` unusable, and every merge was done by hand.
+
+  The plugin does not work out which units conflict by comparing branches for overlapping paths.
+  That is real work, wrong in both directions, and it decides something the person who wrote the
+  phase already knows.
+
+### Changed
+
+- **`land` names the finished units it held back**, alongside the units that committed nothing. A
+  branch holding the only copy of something is never quietly left behind — silence would read as
+  "everything landed."
+
+
 ## [1.9.0] - 2026-08-16
 
 ### Fixed

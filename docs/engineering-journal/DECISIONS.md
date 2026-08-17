@@ -2,6 +2,55 @@
 
 ## 2026-08-16
 
+### Orchestrate carries launcher arguments verbatim and never validates them {#orchestrate-carries-launcher-args-does-not-police-them}
+
+**Decision.** A unit's `launch_args` are appended to the launch command unchanged and unexamined.
+Orchestrate keeps no list of acceptable flags, checks nothing against the vendor, and reports no
+opinion about whether an argument makes sense.
+
+The launcher is a separate program on its own release schedule. Any vocabulary of "flags we accept"
+kept inside this plugin describes that program at the moment the list was written, and goes stale
+silently. When it is stale the coordinator cannot express what the operator asked for, so it leaves
+the plugin entirely — which is exactly how the issue-48 review phase ended up outside the run record
+([[#an-in-loop-gate-does-not-survive-being-parallelised]] is the same shape in the saga contract).
+The launcher already rejects by name what it does not accept.
+
+**Rejected alternative.** An allow-list, or a per-vendor table like the existing `VENDOR_FLAGS`.
+`VENDOR_FLAGS` earns its place because model and effort are universal and must be *translated* per
+vendor; launcher arguments are neither universal nor translated, so a table buys only a second place
+to be wrong and a new reason to go around the plugin.
+
+**Revisit when** the launcher grows a way to report its own accepted flags, which would make
+validation cheap and self-updating rather than a hand-maintained copy.
+
+---
+
+### Whether a unit's branch merges is authored in the plan, not inferred from the branches {#orchestrate-merge-intent-is-authored}
+
+**Decision.** A unit carries `merge`, defaulting to true. `land` honours it and names every finished
+unit it held back. Orchestrate does not decide which units conflict by comparing their branches for
+overlapping paths.
+
+Whether a phase produced work to be merged or work to be *read* is a fact about what the phase was
+for. Three planners each writing their own version of one document is not a merge problem to be
+detected; it is a decision made when the phase was designed, and the person designing it already
+knows. Inferring it from path overlap is real work, wrong in both directions, and arrives after the
+information was already available for free.
+
+The report is the other half. `land` already names units that finished without committing, on the
+principle that a quiet omission is the dangerous kind; a unit that finishes and never lands is the
+same shape and stays quiet longer, because its branch exists and nothing looks wrong until the next
+phase opens on nothing.
+
+**Rejected alternative.** A `--only` / `--except` flag on `land`. Smaller, but it puts the judgement
+at the call site, where it has to be remembered on every later `land` — and the case it exists for
+is precisely the one a coordinator forgets three phases in.
+
+**Revisit when** a run legitimately needs the same unit landed on one pass and held on another, which
+the per-unit field cannot express.
+
+---
+
 ### Reaping uses the authenticated dispatch landing as its working directory {#reap-cwd-from-dispatch-receipt}
 
 **Decision.** When a verified row carries a dispatch receipt, reaping uses the receipt's

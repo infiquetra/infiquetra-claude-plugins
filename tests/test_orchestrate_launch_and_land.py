@@ -1,15 +1,25 @@
 """Two decisions a unit carries that nothing else can recover: how it launches, and whether it lands.
 
 Both exist because the live run for issue 48 lost them. The launcher needed an argument the unit had
-no field for, so a whole review phase was started by hand and never entered the run record.
+no field for, so a whole review phase was started by hand and never entered the run record; and
+``land`` merges every finished unit, which is the one thing the command's own documentation forbids
+for competing plans, so every merge in that run was done by hand instead.
+
+The landing tests drive ``cmd_land`` against a real git repository rather than a stand-in for one.
+Merging is the behaviour under test, so a fake that reports a merge proves nothing about whether one
+happened.
 """
 
 from __future__ import annotations
 
+import argparse
 import importlib.util
+import json
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
 
@@ -68,3 +78,146 @@ class TestLauncherArgumentsArePassedThrough:
             name="reviewer", vendor="qwen", task="x", launch_args=["--not-a-real-flag"]
         )
         assert "--not-a-real-flag" in orchestrate.agent_argv(unit)
+
+
+def _git(cwd: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
+
+def _commit(cwd: Path, name: str) -> None:
+    (cwd / name).write_text(name + "\n")
+    _git(cwd, "add", name)
+    _git(cwd, "commit", "-m", f"add {name}")
+
+
+@pytest.fixture
+def repo(tmp_path: Path) -> Path:
+    """A run branch plus two unit branches, each with one commit of its own."""
+    r = tmp_path / "repo"
+    r.mkdir()
+    _git(r, "init", "-b", "main")
+    _git(r, "config", "user.email", "test@example.com")
+    _git(r, "config", "user.name", "Test")
+    _commit(r, "base.txt")
+    _git(r, "branch", "orch/r1")
+    for unit in ("alpha", "beta"):
+        _git(r, "checkout", "-b", f"orch/r1-{unit}", "orch/r1")
+        _commit(r, f"{unit}.txt")
+        _git(r, "checkout", "main")
+    return r
+
+
+def _write_run(repo: Path, units: list[dict[str, Any]]) -> None:
+    base = subprocess.run(
+        ["git", "rev-parse", "main"], cwd=repo, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    payload = {
+        "run_id": "r1",
+        "source": "a test",
+        "base": base,
+        "branch": "orch/r1",
+        "units": units,
+    }
+    path = repo / ".orchestrate" / "run.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload))
+
+
+def _unit(name: str, **over: Any) -> dict[str, Any]:
+    return {
+        "name": name,
+        "vendor": "claude",
+        "task": "x",
+        "branch": f"orch/r1-{name}",
+        "status": "done",
+        **over,
+    }
+
+
+def _on(repo: Path, branch: str, path: str) -> bool:
+    got = subprocess.run(
+        ["git", "cat-file", "-e", f"{branch}:{path}"], cwd=repo, capture_output=True
+    )
+    return got.returncode == 0
+
+
+class TestLandHonoursMergeIntent:
+    def test_a_unit_that_says_no_is_not_merged(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _write_run(repo, [_unit("alpha"), _unit("beta", merge=False)])
+        monkeypatch.chdir(repo)
+        assert orchestrate.cmd_land(argparse.Namespace()) == 0
+
+        assert _on(repo, "orch/r1", "alpha.txt"), "a plain unit should have landed"
+        assert not _on(repo, "orch/r1", "beta.txt"), "merge=false should have been honoured"
+
+    def test_the_skipped_unit_is_named(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Silence would read as 'everything landed', which is how a branch gets left behind."""
+        _write_run(repo, [_unit("alpha"), _unit("beta", merge=False)])
+        monkeypatch.chdir(repo)
+        orchestrate.cmd_land(argparse.Namespace())
+
+        out = capsys.readouterr().out
+        assert "NOT MERGED BY REQUEST" in out
+        assert "beta" in out
+
+    def test_merging_is_the_default(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A plan written before this field existed must behave exactly as it did."""
+        _write_run(repo, [_unit("alpha"), _unit("beta")])
+        monkeypatch.chdir(repo)
+        orchestrate.cmd_land(argparse.Namespace())
+
+        assert _on(repo, "orch/r1", "alpha.txt")
+        assert _on(repo, "orch/r1", "beta.txt")
+        assert "NOT MERGED BY REQUEST" not in capsys.readouterr().out
+
+    def test_an_unfinished_unit_is_not_reported_as_skipped(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """The report is about finished work held back, not about work still running."""
+        _write_run(repo, [_unit("alpha"), _unit("beta", merge=False, status="running")])
+        monkeypatch.chdir(repo)
+        orchestrate.cmd_land(argparse.Namespace())
+
+        assert "NOT MERGED BY REQUEST" not in capsys.readouterr().out
+
+    def test_the_working_branch_is_restored(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _write_run(repo, [_unit("alpha", merge=False)])
+        monkeypatch.chdir(repo)
+        orchestrate.cmd_land(argparse.Namespace())
+
+        on = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        assert on == "main"

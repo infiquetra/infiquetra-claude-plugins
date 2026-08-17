@@ -213,6 +213,12 @@ cannot be expressed any other way. Orchestrate does not check these against a li
 wrapper releases on its own schedule, and it already rejects by name what it does not accept. Write
 what the operator asked for; let the launcher answer.
 
+**`merge`** defaults to `true`, and `false` means "this branch is to be read, not merged." Set it on
+competing-plan rows: several planners writing their own version of the same document cannot be
+merged by git without a conflict at best, and a silently interleaved plan at worst. `land` then
+skips them and says so by name, so a branch holding the only copy of something is never quietly left
+behind.
+
 Find the script first — the operator is rarely in this plugin's own repo, and `roster` in Phase 2
 needs it too:
 
@@ -271,7 +277,9 @@ before anything launches.
 
 **Competing plans are read, not merged by git.** When `/plan` ran in several vendors' worktrees, open
 each one's plan document directly and write the merged plan yourself. Do not `collect` those
-branches into each other.
+branches into each other. Say so in the plan — `"merge": false` on each of those rows — rather than
+remembering it at `land` time. `land` has no other way to know, and it merges everything finished
+that does not say otherwise.
 
 ## Phase 6 — report
 

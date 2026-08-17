@@ -21,6 +21,50 @@
 
 ## 2026-08-16
 
+### An agent that leaves your tool was not undisciplined; it hit a wall you built  {#drift-is-evidence-of-a-missing-field}
+
+**Context.** On the live `/orchestrate` run for `campps-e2e-canary` issue 48, an entire code-review
+phase — two worktrees, two sessions, two committed reviews — was created by hand and never entered
+`.orchestrate/run.json`, so `land` and `clean` could not see it. The obvious reading was a
+coordinator taking the shortest path. The transcript says the opposite.
+
+**Evidence.** The coordinator's own session log,
+`~/.claude/projects/-Users-jefcox-workspace-infiquetra-campps-e2e-canary/87204c0f-…jsonl`. At
+01:44:51 UTC it was still inside the plugin (`settle`, `clean`). At 01:48:13 it stated the blocker
+in its own words: *"orchestrate can't do it: its vendor table only knows `--model` and `--effort`,
+with no field for launcher flags."* It then hand-rolled the launch, and at 01:48:54 came **back** to
+the plugin to ask `orchestrate.py saga code-review` how grok spells a saga command. Separately, at
+23:38:38, on `land`: *"`land` has no selectivity, and landing all four would merge the two competing
+plan documents — the exact git merge the command warns against."* `land` was never run in that
+session; only `land --help`, once.
+
+**Mechanism.** Two closed vocabularies. `agent_argv` emitted a fixed argv with no pass-through, and
+the operator had asked for `--company-account` — a real launcher feature (`agent-herdr:74`,
+`_company_account_args`) that swaps the configuration directory before claude starts and therefore
+never appears in `claude --help`. And `cmd_land` merged every finished unit, which the command doc
+forbids for competing plans. Each gap forced one manual step; the manual step took the whole phase
+outside the record, because worktree, launch and prompt are one sequence.
+
+**Fix.** orchestrate 1.10.0: `Unit.launch_args` carried verbatim, `Unit.merge` honoured by `land`,
+and `land` naming what it held back. See DECISIONS
+[[#orchestrate-carries-launcher-args-does-not-police-them]] and
+[[#orchestrate-merge-intent-is-authored]].
+
+**Validation.** `tests/test_orchestrate_launch_and_land.py` drives `cmd_land` against a real git
+repository. A mutation check confirmed the tests are load-bearing: with the merge-intent guard
+removed, the held branch merges and the report goes silent.
+
+**What surprised.** The manual launch was *better* than the plugin's on the thing it was for and
+*worse* on something else — it omitted the four options the plugin always passes to keep a new
+session in the background. Routing around a tool costs you its accumulated care, not just its
+bookkeeping.
+
+**Generalizable rule.** When an agent goes around your tool, read what it did before assuming
+indiscipline. A guard would have blocked an operator-instructed launch and offered nothing; the
+drift was the symptom, and the missing field was the defect.
+
+**Refs.** [[#an-in-loop-gate-does-not-survive-being-parallelised]], orchestrate CHANGELOG 1.10.0.
+
 ### A single-session gate becomes a self-review and a forever-wait when it is dispatched  {#an-in-loop-gate-does-not-survive-being-parallelised}
 
 **Context.** Under `/orchestrate`, a builder session running saga's `/work` reported "Review gate:

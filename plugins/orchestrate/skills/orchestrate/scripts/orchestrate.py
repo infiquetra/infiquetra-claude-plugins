@@ -193,6 +193,20 @@ class Unit:
     ``["/effort high"]`` for an agent whose CLI has no effort flag. Sent in order, each as its own
     prompt, so the session has settled into the requested tier before it is given work. Anything a
     slash command can do to a fresh session belongs here."""
+    launch_args: list[str] = field(default_factory=list)
+    """Extra arguments for the launcher, passed through verbatim and never inspected.
+
+    ``model`` and ``effort`` cover what every vendor has in common; this covers everything else the
+    wrapper knows and this plugin does not. ``["--company-account"]`` is the case that forced it:
+    the wrapper intercepts that flag and swaps the configuration directory before the tool starts,
+    so it is a launcher concern, invisible to the tool's own ``--help``, and there was no way to
+    ask for it through a unit. The operator asked, the plugin could not carry it, and a whole review
+    phase was launched by hand and lost to the run record.
+
+    Deliberately not validated here. The wrapper is a separate program on its own release schedule,
+    so any list of acceptable flags kept in this file would go stale silently -- which is the same
+    closed vocabulary one level up. It already rejects what it does not accept, by name. Carry it,
+    do not police it."""
     after: list[str] = field(default_factory=list)
     worktree: str | None = None
     branch: str | None = None
@@ -496,6 +510,10 @@ def agent_argv(unit: Unit) -> list[str]:
         template = flags.get(key)
         if value and template:
             argv.extend(template.format(value=value).split(" "))
+    # Last, and verbatim. The wrapper reads its own flags out of the arguments that follow the
+    # vendor token, so this is the position they have to occupy -- and anything it does not
+    # recognise it hands to the vendor, which is the right failure either way.
+    argv.extend(unit.launch_args)
     return argv
 
 

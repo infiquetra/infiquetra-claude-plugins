@@ -194,6 +194,7 @@ do not belong in the JSON. `task` is the literal text sent to the session.
   "engine_prefs": {"code-review": {"intent": "second-opinion", "model": "opus", "effort": "high"}},
   "units": [
     {"name": "p1a", "vendor": "claude", "model": "opus", "effort": "high",
+     "launch_args": ["--company-account"],
      "task": "/saga:plan #48 — write the plan to docs/plans/<date>-<slug>.md and commit it",
      "after": []},
     {"name": "p2a", "vendor": "grok", "model": "grok-4.6", "effort": "xhigh",
@@ -203,6 +204,14 @@ do not belong in the JSON. `task` is the literal text sent to the session.
   ]
 }
 ```
+
+**`launch_args`** carries extra arguments for the launcher, passed through untouched. `model` and
+`effort` are what every vendor has in common; this is everything else the wrapper knows.
+`--company-account` is the case that needs it: the wrapper intercepts that flag and swaps the
+configuration directory before the tool starts, so it never appears in the tool's own `--help` and
+cannot be expressed any other way. Orchestrate does not check these against a list of its own — the
+wrapper releases on its own schedule, and it already rejects by name what it does not accept. Write
+what the operator asked for; let the launcher answer.
 
 Find the script first — the operator is rarely in this plugin's own repo, and `roster` in Phase 2
 needs it too:

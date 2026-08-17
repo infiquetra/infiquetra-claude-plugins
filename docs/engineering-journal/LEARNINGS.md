@@ -19,6 +19,39 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-08-17
+
+### A blocked worker is silent, and a narrow verification command reads as a broken one  {#driving-a-weaker-worker-costs-you-in-silence}
+
+**Context.** A qwen session was given a written specification and asked to implement two orchestrate
+subcommands. The code it produced was good — 11 specified tests, all passing, all three mutation
+probes caught. Everything that went wrong went wrong around the work.
+
+**Evidence.** Three stalls, none of which announced itself. (1) Launching with `-m qwen3-max`, taken
+from `~/.config/orchestrate/models.json`, returned `401 Incorrect API key`: that favourite is stale
+against the operator's qwen config, which is set to `qwen3.8-max-preview` on a different endpoint.
+Relaunching with no model flag worked. (2) The worker then sat `blocked` for **twelve minutes** on a
+tool-approval prompt, producing no output; it was discovered only by polling its state. (3) It was
+blocked because it had gone hunting for a `rm -rf` experiment to debug mypy's directory discovery —
+because the verification command in the brief, `mypy plugins/orchestrate`, finds no package there and
+therefore looked broken.
+
+**Mechanism.** A weaker worker treats an odd tool result as a mystery to solve rather than a detail
+to note, so an imprecise instruction becomes an investigation. And a session waiting for approval
+looks identical, from outside, to a session thinking — the only difference is a status field nobody
+reads unless they are already polling.
+
+**Fix.** Copy the repository's own commands into a brief verbatim rather than paraphrasing them; the
+correct scope was written in `CLAUDE.md` the whole time. Poll a dispatched worker's state rather than
+waiting for it to speak.
+
+**Generalizable rule.** A brief's verification commands are part of the specification, not a
+convenience. A command that reports nothing is indistinguishable from a command that is wrong, and a
+worker will spend real time telling the difference.
+
+**Refs.** [[#drift-is-evidence-of-a-missing-field]], orchestrate CHANGELOG 1.11.0.
+
+
 ## 2026-08-16
 
 ### An agent that leaves your tool was not undisciplined; it hit a wall you built  {#drift-is-evidence-of-a-missing-field}

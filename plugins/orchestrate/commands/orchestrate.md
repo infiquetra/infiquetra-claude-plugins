@@ -241,6 +241,24 @@ python3 "$S" collect                               # the run branch -> your tree
 python3 "$S" clean --merged --branches             # close what has landed
 ```
 
+**`check` before you `collect`.** The run file is written only by this script, and only for actions
+this script performed — so a session started by hand leaves a branch nothing will ever land or reap,
+and nothing notices. `check` compares the record against git and herdr and names every disagreement:
+a branch with no unit, a unit marked done that committed nothing, a unit marked done whose work is
+not on the run branch, a session that vanished, a session still working. It writes nothing, and
+exits non-zero when it finds something.
+
+```bash
+python3 "$S" check                                 # does the record still describe reality?
+python3 "$S" adopt                                 # what would it take back?
+python3 "$S" adopt --yes                           # take it back
+```
+
+`adopt` is the repair for a branch with no unit. It rebuilds the row from the branch, its worktree
+and the session sitting in it, and leaves `task`, `after`, `model` and `effort` empty rather than
+inventing them — the session already has its task, and nothing is ever sent to it again. Once
+adopted, the work is visible to `land` and `clean` like any other unit.
+
 `python3`, not `uv run` — the script imports nothing outside the standard library, and the target
 repo may not be a uv project at all.
 

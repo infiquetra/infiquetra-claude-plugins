@@ -578,18 +578,113 @@ def send(
     )
 
 
-def poll(unit: Unit) -> str:
-    """Ask herdr what this session is doing. Absence means the session is gone."""
-    proc = run(["herdr", "agent", "list"], check=False)
-    try:
-        agents = json.loads(proc.stdout)["result"]["agents"]
-    except (ValueError, KeyError):
-        return "unknown"
+def poll(unit: Unit, agents: list[dict] | None = None) -> str:
+    """Ask herdr what this session is doing. Absence means the session is gone.
+
+    A caller looking at several units at once passes one already-fetched list rather than paying a
+    herdr round trip per unit: an unresponsive herdr costs the timeout once instead of once a row.
+    """
     handle = unit.agent_name or unit.name
-    for a in agents:
+    for a in live_agents() if agents is None else agents:
         if a.get("name") == handle:
             return str(a.get("agent_status", "unknown"))
     return "gone"
+
+
+def live_agents() -> list[dict]:
+    """The sessions herdr is tracking right now.
+
+    herdr is the truth a run file only mirrors, so it is asked, never remembered. A missing or
+    failing herdr is not an error here: it means there is nothing to match a worktree or a session
+    against, and the caller degrades -- to "no live agent" when adopting, to "gone" when polling.
+    """
+    proc = run(["herdr", "agent", "list"], check=False, timeout=20)
+    try:
+        agents = json.loads(proc.stdout)["result"]["agents"]
+    except (ValueError, KeyError):
+        return []
+    return [a for a in agents if isinstance(a, dict)]
+
+
+def run_branches(run_id: str) -> list[str]:
+    """Every local unit branch of this run, exactly as git records them.
+
+    The list is the discovery source for ``check`` and ``adopt``: a unit branch that exists without
+    a row in the table is work the record lost track of. The run branch itself is excluded by the
+    pattern -- it carries no unit-name suffix, so it can never be mistaken for one.
+    """
+    proc = run(["git", "branch", "--list", f"orch/{run_id}-*", "--format=%(refname:short)"])
+    return [b.strip() for b in proc.stdout.splitlines() if b.strip()]
+
+
+def worktree_on_branch(branch: str) -> str | None:
+    """The path of the worktree checked out on this branch, if any."""
+    proc = run(["git", "worktree", "list", "--porcelain"])
+    path: str | None = None
+    for line in proc.stdout.splitlines():
+        if line.startswith("worktree "):
+            path = line[len("worktree ") :]
+        elif line.startswith("branch ") and line[len("branch ") :] == branch:
+            return path
+    return None
+
+
+def agent_for_worktree(path: str | None, agents: list[dict]) -> dict | None:
+    """The live session sitting in this worktree, matched by its cwd.
+
+    A session's cwd is the one thing about it that cannot drift: it was handed to the launcher and
+    never changes, while names can be uniquified and statuses come and go. No worktree, no match --
+    a branch without its tree cannot be tied to a session.
+    """
+    if not path:
+        return None
+    for a in agents:
+        if a.get("cwd") == path:
+            return a
+    return None
+
+
+def rebuild_unit(name: str, branch: str, r: Run, agents: list[dict]) -> Unit:
+    """Reconstruct a unit from what is still true about it: its branch, tree, and session.
+
+    ``task``, ``after``, ``model``, ``effort`` and ``permission`` are left at their defaults: they
+    cannot be recovered, and an invented value is worse than an empty one -- the session has already
+    been given its task, so nothing here is ever sent to it again.
+    """
+    worktree = worktree_on_branch(branch)
+    agent = agent_for_worktree(worktree, agents)
+    vendor = str(agent.get("agent", "unknown")) if agent else "unknown"
+    if agent is not None and agent.get("agent_status") == "working":
+        status = RUNNING
+    elif agent is not None or produced_anything(
+        Unit(name=name, vendor=vendor, task="", branch=branch), r
+    ):
+        status = DONE
+    else:
+        status = FAILED
+    return Unit(
+        name=name,
+        vendor=vendor,
+        task="",
+        worktree=worktree,
+        branch=branch,
+        tab_id=agent.get("tab_id") if agent else None,
+        pane_id=agent.get("pane_id") if agent else None,
+        agent_name=(agent.get("name") or name) if agent else name,
+        status=status,
+        note="adopted: created outside the run record",
+    )
+
+
+def discover_unrecorded(r: Run) -> list[tuple[str, str]]:
+    """``(unit name, branch)`` for every unit branch the table has no row for, in git's order."""
+    prefix = f"orch/{r.run_id}-"
+    known = {u.name for u in r.units}
+    return [
+        (branch[len(prefix) :], branch)
+        for branch in run_branches(r.run_id)
+        if branch.startswith(prefix) and branch[len(prefix) :] not in known
+    ]
 
 
 # ----------------------------------------------------------------- commands
@@ -1100,6 +1195,89 @@ def cmd_clean(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_check(args: argparse.Namespace) -> int:
+    """Report where the run record and the repository disagree.
+
+    Read-only: no writes, no merges, no launches. The record is one JSON file and the truth is git
+    plus herdr, and the two can drift -- a session started by hand leaves a branch with no row; a
+    unit marked done saved nothing. Five shapes of drift are reported, and finding any of them is
+    the non-zero exit; ``adopt`` is the repair for the first one.
+    """
+    r = Run.load()
+    findings: list[str] = []
+
+    for name, branch in discover_unrecorded(r):
+        findings.append(f"UNRECORDED {name} -- branch {branch} is not a unit in this run")
+
+    # One herdr round for the whole run, not one per row. A pending or failed unit has no session,
+    # so it is never matched against the list at all.
+    agents = live_agents()
+    for unit in r.units:
+        if unit.status not in (RUNNING, DONE):
+            continue
+        state = poll(unit, agents)
+        if unit.status == DONE:
+            if not produced_anything(unit, r):
+                findings.append(
+                    f"NO COMMITS {unit.name} -- marked done, but its branch committed nothing"
+                )
+            if unit.merge and r.branch and unit.branch:
+                ahead = run(
+                    ["git", "rev-list", "--count", f"{r.branch}..{unit.branch}"], check=False
+                )
+                count = ahead.stdout.strip() if ahead.returncode == 0 else ""
+                if count not in ("", "0"):
+                    plural = "commit" if count == "1" else "commits"
+                    findings.append(f"NOT LANDED {unit.name} -- {count} {plural} not on {r.branch}")
+            if state == "working":
+                findings.append(
+                    f"STILL WORKING {unit.name} -- marked done, but its session is still working"
+                )
+        elif state == "gone":
+            findings.append(f"SESSION GONE {unit.name} -- marked running, but its session is gone")
+
+    if not findings:
+        print("the record agrees with the repository")
+        return 0
+    for line in findings:
+        print(f"  {line}")
+    return 1
+
+
+def cmd_adopt(args: argparse.Namespace) -> int:
+    """Put stranded unit branches back into the run record.
+
+    A unit created outside the run -- a session launched by hand, a run file deleted around live
+    work -- leaves a branch the table knows nothing about. This finds those branches and rebuilds a
+    row from what is still true: the branch, its worktree, and the session herdr reports there.
+    Without ``--yes`` nothing is written; the discovery is printed so the operator can see what
+    would be added.
+    """
+    r = Run.load()
+    found = discover_unrecorded(r)
+    if not found:
+        print("nothing to adopt -- every run branch is already a unit")
+        return 0
+
+    agents = live_agents()
+    rebuilt = [rebuild_unit(name, branch, r, agents) for name, branch in found]
+    verb = "adopted" if args.yes else "would adopt"
+    for unit in rebuilt:
+        line = (
+            f"  {verb}: {unit.name}  vendor={unit.vendor}  "
+            f"status={unit.status}  branch={unit.branch}"
+        )
+        print(line)
+
+    if not args.yes:
+        print("nothing written -- rerun with --yes")
+        return 0
+    r.units.extend(rebuilt)
+    r.save()
+    print(f"{len(rebuilt)} unit(s) written to the run file")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="orchestrate", description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -1150,6 +1328,15 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--branches", action="store_true", help="delete the unit branches too")
     s.add_argument("--all", action="store_true", help="delete the run file too")
     s.set_defaults(func=cmd_clean)
+
+    s = sub.add_parser("check", help="report where the run record and the repository disagree")
+    s.set_defaults(func=cmd_check)
+
+    s = sub.add_parser("adopt", help="write units for run branches the table does not know")
+    s.add_argument(
+        "--yes", action="store_true", help="write the discovered units into the run file"
+    )
+    s.set_defaults(func=cmd_adopt)
 
     args = p.parse_args(argv)
     return int(args.func(args))

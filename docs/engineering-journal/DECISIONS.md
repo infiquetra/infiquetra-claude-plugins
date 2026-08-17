@@ -1,4 +1,30 @@
 # Decisions — Infiquetra Claude Plugins
+## 2026-08-17
+
+### Orchestrate detects drift and repairs it; it does not prevent it {#orchestrate-detects-and-repairs-never-guards}
+
+**Decision.** `check` reports where the run record and the repository disagree, and `adopt` writes
+stranded branches back into the record. Neither prevents anything. Nothing refuses to run, nothing
+blocks a later command, and no lock is taken.
+
+A guard here cannot guard. The coordinator is a language model with a shell: `git worktree add` and
+the agent launcher are both available to it, and no Python script can stop either. What a guard could
+actually do is gate this plugin's own subcommands — refusing to `land` while drift exists — which
+punishes the coordinator at the moment it finally does the right thing, and turns a recoverable state
+into a hard stop that also blocks the units that *were* recorded.
+
+The evidence for detect-and-repair over prevent is the run that produced this work: the drift there
+had a legitimate cause and an operator instruction behind it
+([[#drift-is-evidence-of-a-missing-field]]). A guard would have blocked it and offered nothing.
+
+**Rejected alternative.** Deriving the unit table from git wholesale, so drift is impossible by
+construction. `land` would then merge competing plan branches into each other, which the command's
+own documentation forbids. Derivation is right for *discovery* and wrong for *landing*.
+
+**Revisit when** a coordinator repeatedly ignores `check`, which would make the report the thing that
+failed rather than the thing that was missing.
+
+---
 
 ## 2026-08-16
 

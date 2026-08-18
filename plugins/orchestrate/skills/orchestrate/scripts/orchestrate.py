@@ -22,8 +22,10 @@ import subprocess
 import sys
 import textwrap
 import time
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any
 
 # Ships beside this file. Kept optional so a partial install degrades to per-unit waits rather
 # than refusing to run at all.
@@ -350,6 +352,20 @@ class Run:
     saga command finds the answer already stored and never stops to ask a question in a tab nobody
     is watching. See ``write_engine_prefs``.
     """
+    issues: dict[str, str] = field(default_factory=dict)
+    """Unit name -> issue reference (``owner/repo#N``) whose board card this run reports to.
+
+    Absent means this run writes nothing back: every board writeback in this file is a no-op, and a
+    run file written before this field existed loads and behaves exactly as it did. The field is the
+    whole connection between a phase boundary and the card it happened for -- the observed 75-unit
+    run for issue 52 crossed nine phases while its card never left `Idea`, not because the write was
+    missing but because nothing ever called it. See ``announce_units``."""
+    status_map: dict[str, str] = field(default_factory=dict)
+    """Unit-name prefix -> board Status overrides, replacing the default one key at a time.
+
+    A key present here wins over ``DEFAULT_STATUS_MAP`` for that prefix; every other prefix keeps
+    the default. Values are still checked against the board's Status ladder -- an override is a way
+    to re-route a phase, not a way to invent a status. See ``mapped_status``."""
 
     @classmethod
     def load(cls, path: Path = RUN_FILE) -> Run:
@@ -362,6 +378,8 @@ class Run:
             backend=raw.get("backend", "inline"),
             branch=raw.get("branch", ""),
             engine_prefs=raw.get("engine_prefs", {}),
+            issues=raw.get("issues", {}),
+            status_map=raw.get("status_map", {}),
         )
 
     def save(self, path: Path = RUN_FILE) -> None:
@@ -373,6 +391,8 @@ class Run:
             "backend": self.backend,
             "branch": self.branch,
             "engine_prefs": self.engine_prefs,
+            "issues": self.issues,
+            "status_map": self.status_map,
             "units": [asdict(u) for u in self.units],
         }
         path.write_text(json.dumps(payload, indent=2) + "\n")
@@ -910,6 +930,256 @@ def discover_unrecorded(r: Run) -> list[tuple[str, str]]:
     ]
 
 
+# ------------------------------------------------- board writeback (via saga's reconcile_controller)
+
+# The board's closed Status vocabulary. These are the values the card can hold and nothing else --
+# a mapped status outside this ladder is a typo or an invention, and both are refused here rather
+# than sent to GitHub to fail in front of the board writer.
+STATUS_LADDER = ("Idea", "Shaping", "Ready", "Active", "Verify", "Done")
+
+# Where a unit's phase boundary lands its issue's card, read off the unit name's prefix. This is
+# the default only: ``Run.status_map`` replaces it one key at a time. The prefixes are the saga
+# capabilities a unit runs, so ``fix-52-claude`` is a fix phase exactly like ``work-52-build`` is a
+# work phase -- matching is at the first dash, never a bare string prefix, so ``planner-notes``
+# does not count as a plan.
+DEFAULT_STATUS_MAP: dict[str, str] = {
+    "plan": "Shaping",
+    "docreview": "Shaping",
+    "work": "Active",
+    "fix": "Active",
+    "codereview": "Verify",
+    "landed": "Done",
+}
+
+# Name of the environment variable that points straight at saga's reconcile_controller, for a
+# layout the globs below do not know.
+RECONCILE_CONTROLLER_ENV = "ORCHESTRATE_RECONCILE_CONTROLLER"
+
+
+def _controller_candidates() -> list[Path]:
+    """Where saga's reconcile_controller can live, in order of trust.
+
+    First the repo layout -- this file shipped beside the saga plugin in the same checkout. Then
+    the installed-plugin layouts, mirroring ``SAGA_INSTALL``: each vendor keeps its own cache, so
+    each gets its own glob. ``glob`` resolves symlinks, which is what agy's install is."""
+    here = Path(__file__).resolve()
+    paths = [here.parents[4] / "saga" / "scripts" / "reconcile_controller.py"]
+    for pattern in (
+        "~/.claude/plugins/cache/*/saga/*/scripts/reconcile_controller.py",
+        "~/.codex/plugins/cache/*/saga/*/scripts/reconcile_controller.py",
+        "~/.grok/marketplace-cache/*/plugins/saga/scripts/reconcile_controller.py",
+        "~/.qwen/extensions/saga/scripts/reconcile_controller.py",
+        "~/.gemini/config/plugins/saga/scripts/reconcile_controller.py",
+    ):
+        paths.extend(Path(hit) for hit in sorted(glob.glob(str(Path(pattern).expanduser()))))
+    return paths
+
+
+def reconcile_controller_path() -> Path | None:
+    """Resolve saga's reconcile_controller script, or None when it is not importable here.
+
+    Never an error: a missing saga is an ordinary state of this machine, and writeback is a guest
+    of the run, not a gate on it. ``land`` and ``announce`` say so on stderr and carry on."""
+    override = os.environ.get(RECONCILE_CONTROLLER_ENV, "")
+    if override:
+        path = Path(override).expanduser()
+        return path if path.is_file() else None
+    for candidate in _controller_candidates():
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def parse_issue_ref(ref: str) -> tuple[str, int] | None:
+    """Split ``owner/repo#N`` into ``("owner/repo", N)``; None when the ref is malformed.
+
+    A bad mapping must never take down a land -- it is reported and skipped instead."""
+    match = re.fullmatch(r"\s*(\S+)#(\d+)\s*", ref)
+    if not match:
+        return None
+    return match.group(1), int(match.group(2))
+
+
+def mapped_status(unit_name: str, overrides: dict[str, str] | None = None) -> str | None:
+    """The board Status a unit's phase boundary lands its card on, or None when nothing applies.
+
+    The run's ``status_map`` overrides ``DEFAULT_STATUS_MAP`` key by key. Longest key wins so a
+    specific override cannot be shadowed by a shorter default. Matching is at a dash boundary: the
+    unit name is the key itself or starts with the key and a dash."""
+    merged = {**DEFAULT_STATUS_MAP, **(overrides or {})}
+    for key in sorted(merged, key=len, reverse=True):
+        if unit_name == key or unit_name.startswith(key + "-"):
+            return merged[key]
+    return None
+
+
+def announce_comment_body(r: Run, unit: Unit, status: str) -> str:
+    """The one progress comment a boundary posts, naming what actually happened."""
+    return (
+        "\n".join(
+            [
+                "### Orchestrate: phase boundary passed",
+                "",
+                f"- run: {r.run_id}",
+                f"- unit: {unit.name} ({unit.vendor})",
+                f"- landed on: {r.branch}",
+                f"- board status: {status}",
+            ]
+        )
+        + "\n"
+    )
+
+
+def _reconcile_call(
+    controller: Path,
+    op: str,
+    repo: str,
+    number: int,
+    target_state: str,
+    *,
+    payload: dict[str, str] | None,
+    root: Path,
+) -> dict[str, Any]:
+    """Drive ONE write through saga's reconcile_controller and hand back its record.
+
+    This is the only door to GitHub in this file: the controller owns the certificate gate, the
+    idempotency key, and the retry. ``--repo-root`` pins the shared ledger into the repository the
+    run is working in, so a re-run -- here or from ``/work`` -- dedups against the same keys.
+
+    A failure comes back as a record, never as an exception: a board write is a guest of the run,
+    and its absence must not cost the run anything."""
+    argv = [
+        sys.executable,
+        str(controller),
+        "reconcile",
+        "--op",
+        op,
+        "--repo",
+        repo,
+        "--number",
+        str(number),
+        "--target-state",
+        target_state,
+        "--repo-root",
+        str(root),
+    ]
+    if payload is not None:
+        argv += ["--payload", json.dumps(payload)]
+    proc = run(argv, check=False, timeout=180)
+    if proc.returncode != 0:
+        tail = (proc.stderr or proc.stdout or "").strip()
+        return {"status": "failed", "op_kind": op, "error": tail}
+    try:
+        parsed = json.loads(proc.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        return {"status": "failed", "op_kind": op, "error": "controller printed no JSON record"}
+    if not isinstance(parsed, dict):
+        return {"status": "failed", "op_kind": op, "error": "controller record is not an object"}
+    return {str(key): value for key, value in parsed.items()}
+
+
+def announce_units(r: Run, names: Sequence[str]) -> list[dict[str, Any]]:
+    """Write each named unit's just-passed boundary back to its issue's board card.
+
+    Two writes per unit, both through ``reconcile_controller``: set the card's Status field to the
+    unit's mapped status, then post one progress comment naming what happened. The comment's
+    idempotency discriminator is stable across calls -- ``orchestrate:{run}:{unit}:{status}`` -- so
+    a second ``land`` re-driving the same boundary meets the key the first one wrote and skips,
+    rather than posting a duplicate comment.
+
+    Returns one record per name. ``skipped`` records carry a reason and cost no writes: the run
+    maps no issue for that unit, the ref is malformed, or no status applies. A run with no
+    ``issues`` mapping at all returns nothing and writes nothing -- for it, this whole feature is a
+    no-op. A missing reconcile_controller is reported on stderr and skipped: writeback must never
+    fail a land."""
+    if not r.issues:
+        return []
+
+    todo: list[tuple[Unit, str, int, str]] = []
+    records: list[dict[str, Any]] = []
+    for name in names:
+        unit = r.unit(name)
+        ref = r.issues.get(name)
+        if not ref:
+            records.append({"unit": name, "skipped": "no issue mapped for this unit"})
+            continue
+        parsed = parse_issue_ref(ref)
+        if parsed is None:
+            records.append({"unit": name, "skipped": f"malformed issue reference {ref!r}"})
+            continue
+        repo, number = parsed
+        status = mapped_status(name, r.status_map)
+        if status is None:
+            records.append({"unit": name, "skipped": "no status mapped for this unit's prefix"})
+            continue
+        if status not in STATUS_LADDER:
+            records.append(
+                {
+                    "unit": name,
+                    "skipped": f"status {status!r} is not on the ladder: "
+                    f"{', '.join(STATUS_LADDER)}",
+                }
+            )
+            continue
+        todo.append((unit, repo, number, status))
+
+    if not todo:
+        return records
+
+    controller = reconcile_controller_path()
+    if controller is None:
+        print(
+            "orchestrate: reconcile_controller is not importable -- saga is not installed "
+            f"here; skipping board writeback for {', '.join(unit.name for unit, *_ in todo)}",
+            file=sys.stderr,
+        )
+        records.extend(
+            {"unit": unit.name, "skipped": "reconcile_controller not importable"}
+            for unit, *_ in todo
+        )
+        return records
+
+    root = repo_root()
+    for unit, repo, number, status in todo:
+        writes = [
+            _reconcile_call(
+                controller, "set-field-status", repo, number, status, payload=None, root=root
+            )
+        ]
+        discriminator = f"orchestrate:{r.run_id}:{unit.name}:{status}"
+        writes.append(
+            _reconcile_call(
+                controller,
+                "issue-progress-comment",
+                repo,
+                number,
+                discriminator,
+                payload={"body": announce_comment_body(r, unit, status)},
+                root=root,
+            )
+        )
+        records.append(
+            {"unit": unit.name, "issue": f"{repo}#{number}", "status": status, "writes": writes}
+        )
+    return records
+
+
+def report_announcements(records: list[dict[str, Any]], *, verbose: bool = False) -> None:
+    """Print what a round of writeback did, one line per unit that is not a silent no-op."""
+    for record in records:
+        name = record.get("unit", "?")
+        if "skipped" in record:
+            if verbose:
+                print(f"  {name}: not announced -- {record['skipped']}")
+            continue
+        parts = []
+        for write in record.get("writes", []):
+            status = str(write.get("status", "unknown"))
+            kind = "status" if write.get("op_kind") == "set-field-status" else "comment"
+            parts.append(f"{kind} {status}")
+        print(f"  board writeback {name} -> {record.get('status', '?')}: {', '.join(parts)}")
+
+
 # ----------------------------------------------------------------- commands
 
 
@@ -923,6 +1193,8 @@ def cmd_start(args: argparse.Namespace) -> int:
         units=[Unit(**u) for u in plan["units"]],
         backend=plan.get("backend", "inline"),
         engine_prefs=plan.get("engine_prefs", {}),
+        issues=plan.get("issues", {}),
+        status_map=plan.get("status_map", {}),
     )
     assert_vendors_available(r.units)
     assert_saga_reachable(r.units)
@@ -1181,6 +1453,8 @@ def cmd_expand(args: argparse.Namespace) -> int:
     assert_saga_reachable(incoming)
     r.units.extend(incoming)
     r.engine_prefs.update(added.get("engine_prefs", {}))
+    r.issues.update(added.get("issues", {}))
+    r.status_map.update(added.get("status_map", {}))
     r.save()
     print(f"added {len(incoming)}: {', '.join(u.name for u in incoming)}")
     print("`orchestrate.py go` to launch whatever is now eligible.")
@@ -1377,6 +1651,7 @@ def cmd_land(args: argparse.Namespace) -> int:
     on = run(["git", "rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()
     run(["git", "checkout", r.branch])
     landed, empty, already, held = [], [], [], []
+    landed_names: list[str] = []
     try:
         for unit in r.units:
             if unit.status != DONE or not unit.branch:
@@ -1396,6 +1671,7 @@ def cmd_land(args: argparse.Namespace) -> int:
                 print(f"  CONFLICT landing {unit.name}; resolve it on {r.branch} yourself")
                 return 1
             landed.append(f"{unit.name} (+{ahead})")
+            landed_names.append(unit.name)
     finally:
         run(["git", "checkout", on], check=False)
 
@@ -1412,6 +1688,28 @@ def cmd_land(args: argparse.Namespace) -> int:
         )
     if empty:
         print(f"COMMITTED NOTHING: {', '.join(empty)} -- those sessions finished without saving")
+    # The boundary just passed: write it back to the board here, where it happened, rather than as a
+    # separate operator step. A no-op for a run with no `issues` mapping; a missing saga says so on
+    # stderr and never fails the land. Re-runs dedup on the controller's idempotency keys.
+    if landed_names:
+        report_announcements(announce_units(r, landed_names))
+    return 0
+
+
+def cmd_announce(args: argparse.Namespace) -> int:
+    """Write a unit's passed phase boundary back to its issue's board card.
+
+    ``land`` already does this for the units it merges; this is the operator's door for the
+    boundaries land does not cover -- a unit announced at the wrong moment, or one whose writeback
+    failed at the time because saga was missing. Safe to re-run: the controller's idempotency keys
+    coalesce a repeat into a skip, so announcing twice posts one comment, not two.
+    """
+    r = Run.load()
+    if not r.issues:
+        print("this run has no `issues` mapping, so there is nothing to announce")
+        return 0
+    records = announce_units(r, args.units)
+    report_announcements(records, verbose=True)
     return 0
 
 
@@ -1640,6 +1938,10 @@ def main(argv: list[str] | None = None) -> int:
 
     s = sub.add_parser("land", help="merge finished units onto the run branch")
     s.set_defaults(func=cmd_land)
+
+    s = sub.add_parser("announce", help="write a unit's phase boundary back to its board card")
+    s.add_argument("units", nargs="+", help="unit names whose boundary has passed")
+    s.set_defaults(func=cmd_announce)
 
     s = sub.add_parser("collect", help="merge the run branch into your tree")
     s.set_defaults(func=cmd_collect)

@@ -44,11 +44,19 @@ python3 "$S" clean --branches                      # close tabs, remove worktree
 Standard library only, so `python3` — not `uv run`, which would need the target repo to be a uv
 project.
 
-`go` launches only units whose `after` dependencies are already done, so calling `settle` then `go`
-again is what releases the next wave.
+`go` launches only units whose ordering edges are all satisfied — every name in `after` and
+`serialize` done — so calling `settle` then `go` again is what releases the next wave.
 
 **A unit with dependencies branches from the last one it names**, at launch time rather than up
 front — so a `/work` unit opens on top of its `/plan` unit's actual output.
+
+**Two ordering edges, one gate.** `after` and `serialize` both hold a unit until every name they
+list is done; what differs is what they claim. `after` — I build on what you produce: a reviewer
+after the thing it reviews, a builder after the plan it implements. `serialize` — I must not run
+beside you, but I need nothing from you: two units that would edit the same file, or one that must
+wait for the other to land before it can rebase. Reaching for `after` in that second case asserts
+a dependency that does not exist, and a reader can no longer tell a real one from a scheduling
+one. The command file's Phase 4 carries a worked `serialize` pair.
 
 **The later phases have no units until an earlier one names them.** What `/work` splits into is
 decided by the plan, which does not exist when the operator approves the first table. So the run
@@ -123,9 +131,11 @@ opencode. A bare `/plan` is a command nowhere and arrives as prose.
 changes state — nothing is polled. Subscriptions are keyed by pane, which is why a unit records its
 `pane_id` at launch; if the socket is unreachable it falls back to one `herdr agent wait` per unit.
 
-`go` refuses to launch a unit whose dependency committed nothing. A dependent unit opens on its
-dependency's branch, so an empty branch means the thing it is supposed to work on does not exist —
-and a session given nothing writes something plausible about nothing rather than failing.
+`go` refuses to launch a unit whose `after` dependency committed nothing. A dependent unit opens
+on its dependency's branch, so an empty branch means the thing it is supposed to work on does not
+exist — and a session given nothing writes something plausible about nothing rather than failing.
+The refusal is `after` only: a `serialize` dependency may commit nothing at all, because the unit
+waiting on it never needed its output — only for it to be out of the way.
 
 ## What this deliberately does not do
 

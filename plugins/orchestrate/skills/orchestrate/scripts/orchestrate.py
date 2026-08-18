@@ -1189,16 +1189,19 @@ def announce_units(r: Run, names: Sequence[str]) -> list[dict[str, Any]]:
     """Write each named unit's just-passed boundary back to its issue's board card.
 
     Two writes per unit, both through ``reconcile_controller``: set the card's Status field to the
-    unit's mapped status, then post one progress comment naming what happened. The comment's
-    idempotency discriminator is stable across calls -- ``orchestrate:{run}:{unit}:{status}`` -- so
-    a second ``land`` re-driving the same boundary meets the key the first one wrote and skips,
-    rather than posting a duplicate comment.
+    unit's mapped status, then post one progress comment naming what happened. The comment is
+    attempted only when the status write converged: it says ``board status: {status}``, and a
+    comment describing a write that did not happen is worse than one not attempted -- the retry
+    door is ``announce``, whose idempotency keys make a repeat safe. The comment's idempotency
+    discriminator is stable across calls -- ``orchestrate:{run}:{unit}:{status}`` -- so a second
+    ``land`` re-driving the same boundary meets the key the first one wrote and skips, rather than
+    posting a duplicate comment.
 
     Returns one record per name. ``skipped`` records carry a reason and cost no writes: the run
     maps no issue for that unit, the ref is malformed, or no status applies. A run with no
     ``issues`` mapping at all returns nothing and writes nothing -- for it, this whole feature is a
-    no-op. A missing reconcile_controller is reported on stderr and skipped: writeback must never
-    fail a land."""
+    no-op. A missing reconcile_controller is reported on stderr and skipped: a missing saga is an
+    ordinary state of this machine, not a failure of the land."""
     if not r.issues:
         return []
 
@@ -1248,23 +1251,26 @@ def announce_units(r: Run, names: Sequence[str]) -> list[dict[str, Any]]:
 
     root = repo_root()
     for unit, repo, number, status in todo:
-        writes = [
-            _reconcile_call(
-                controller, "set-field-status", repo, number, status, payload=None, root=root
-            )
-        ]
-        discriminator = f"orchestrate:{r.run_id}:{unit.name}:{status}"
-        writes.append(
-            _reconcile_call(
-                controller,
-                "issue-progress-comment",
-                repo,
-                number,
-                discriminator,
-                payload={"body": announce_comment_body(r, unit, status)},
-                root=root,
-            )
+        status_write = _reconcile_call(
+            controller, "set-field-status", repo, number, status, payload=None, root=root
         )
+        writes = [status_write]
+        # One failure is a failure; two writes half-done is worse than one not attempted. A
+        # failed write leaves no ledger key, so the retry door -- `announce` -- re-drives both
+        # writes cleanly.
+        if _write_converged(status_write):
+            discriminator = f"orchestrate:{r.run_id}:{unit.name}:{status}"
+            writes.append(
+                _reconcile_call(
+                    controller,
+                    "issue-progress-comment",
+                    repo,
+                    number,
+                    discriminator,
+                    payload={"body": announce_comment_body(r, unit, status)},
+                    root=root,
+                )
+            )
         records.append(
             {"unit": unit.name, "issue": f"{repo}#{number}", "status": status, "writes": writes}
         )
@@ -1285,6 +1291,46 @@ def report_announcements(records: list[dict[str, Any]], *, verbose: bool = False
             kind = "status" if write.get("op_kind") == "set-field-status" else "comment"
             parts.append(f"{kind} {status}")
         print(f"  board writeback {name} -> {record.get('status', '?')}: {', '.join(parts)}")
+
+
+# Controller record statuses that mean the board converged: the write happened (``written``), had
+# already happened (``skipped`` on the idempotency key or the live re-read), or was re-driven
+# after outside drift (``corrected``). Anything else -- ``failed``, ``gated``, ``halt`` -- is a
+# write that did not happen, and the card still does not say what the run did.
+CONVERGED_STATUSES = ("written", "skipped", "corrected")
+
+
+def _write_converged(write: dict[str, Any]) -> bool:
+    """True when one controller record means its board write actually converged."""
+    return str(write.get("status")) in CONVERGED_STATUSES
+
+
+def _failed_writebacks(records: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The writeback records whose writes did not converge.
+
+    A ``skipped`` record is not a failure -- no issue mapped, a malformed ref, no saga on this
+    machine: those are designed no-ops. A record with even one unconverged write is."""
+    return [
+        record
+        for record in records
+        if "skipped" not in record
+        and any(not _write_converged(write) for write in record.get("writes", []))
+    ]
+
+
+def _report_failed_writebacks(failures: Sequence[dict[str, Any]]) -> None:
+    """Name every unit whose merge landed but whose board writeback did not converge.
+
+    A failed writeback never undoes or blocks a merge -- the code on the run branch is right;
+    only the claim that the board was updated is wrong. The retry door is named with the unit:
+    ``announce`` is idempotency-keyed, so a repeat is safe."""
+    for record in failures:
+        name = str(record.get("unit", "?"))
+        issue = str(record.get("issue", "?"))
+        print(
+            f"BOARD WRITEBACK FAILED: {name} ({issue}) -- the merge landed, but its card was "
+            f"not updated; retry with `orchestrate.py announce {name}`"
+        )
 
 
 # ----------------------------------------------------------------- commands
@@ -1750,6 +1796,18 @@ def cmd_land(args: argparse.Namespace) -> int:
     With ``--clean``, a successful land then reaps on the spot -- exactly the units
     ``clean --merged`` would reap: DONE, with every commit on the run branch. Nothing else is
     touched, and no branch is ever deleted here: that stays an explicit ``clean --branches``.
+
+    Each unit is announced the moment its own merge lands, before the next merge is attempted: a
+    conflict on a later unit returns out of the loop, and anything still waiting for the whole
+    batch would never be announced at all -- the next land sees those units already merged and
+    announces nothing either.
+
+    The exit status is deliberate, and three-way. 0: every merge and every board write converged.
+    1: the land itself could not finish -- a dirty tree, or a merge conflict, named above. 2:
+    every merge landed, but at least one board writeback did not converge; the units are named
+    above with their retry. A failed writeback never undoes or blocks a merge: the code on the
+    run branch is right, and only the claim that the board was updated is wrong -- a caller
+    scripting this has to be able to tell the two failures apart.
     """
     r = Run.load()
     if not r.branch:
@@ -1762,7 +1820,7 @@ def cmd_land(args: argparse.Namespace) -> int:
     on = run(["git", "rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()
     run(["git", "checkout", r.branch])
     landed, empty, already, held = [], [], [], []
-    landed_names: list[str] = []
+    writeback_failures: list[dict[str, Any]] = []
     try:
         for unit in r.units:
             if unit.status != DONE or not unit.branch:
@@ -1780,9 +1838,18 @@ def cmd_land(args: argparse.Namespace) -> int:
             if merge.returncode != 0:
                 run(["git", "merge", "--abort"], check=False)
                 print(f"  CONFLICT landing {unit.name}; resolve it on {r.branch} yourself")
+                # Name any writeback that already failed before the conflict buries the return.
+                _report_failed_writebacks(writeback_failures)
                 return 1
             landed.append(f"{unit.name} (+{ahead})")
-            landed_names.append(unit.name)
+            # The boundary just passed: write it back to the board here, where it happened, rather
+            # than as a separate operator step -- and now, before the next merge is attempted, so
+            # a later conflict cannot discard this unit's announcement. A no-op for a run with no
+            # `issues` mapping; a missing saga says so on stderr. Re-runs dedup on the
+            # controller's idempotency keys.
+            records = announce_units(r, [unit.name])
+            report_announcements(records)
+            writeback_failures.extend(_failed_writebacks(records))
     finally:
         run(["git", "checkout", on], check=False)
 
@@ -1799,21 +1866,19 @@ def cmd_land(args: argparse.Namespace) -> int:
         )
     if empty:
         print(f"COMMITTED NOTHING: {', '.join(empty)} -- those sessions finished without saving")
-    # The boundary just passed: write it back to the board here, where it happened, rather than as a
-    # separate operator step. A no-op for a run with no `issues` mapping; a missing saga says so on
-    # stderr and never fails the land. Re-runs dedup on the controller's idempotency keys.
-    if landed_names:
-        report_announcements(announce_units(r, landed_names))
+    _report_failed_writebacks(writeback_failures)
     # ``getattr``: a caller that built its own Namespace before this flag existed has no
     # ``clean`` attribute, and a land that worked yesterday must keep working today. Reaping comes
-    # after the announcement, not before: it removes the worktrees the announcement reads from.
+    # after the announcement, not before: it removes the worktrees the announcement reads from. A
+    # failed writeback does not hold the reap back: reaping turns on the merge, and the merge
+    # landed.
     if getattr(args, "clean", False):
         closed, _ = reap(r, merged_only=True)
         if closed:
             print(f"reaped: {', '.join(closed)}")
         else:
             print("nothing to reap: no unit is done with its work on the run branch")
-    return 0
+    return 2 if writeback_failures else 0
 
 
 def cmd_announce(args: argparse.Namespace) -> int:

@@ -1192,20 +1192,44 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def settle_reading(units: list[Unit]) -> dict[str, str]:
+    """One poll of every unit, against one herdr round trip in total.
+
+    ``live_agents`` is fetched once and passed to ``poll`` -- polling each unit separately costs one
+    round trip a row, and an unresponsive herdr costs its timeout once a row instead of once.
+    """
+    agents = live_agents()
+    return {unit.name: poll(unit, agents) for unit in units}
+
+
 def cmd_settle(args: argparse.Namespace) -> int:
-    """Mark running units done when their session goes idle. No inference beyond that."""
+    """Mark running units done when their session goes idle. No inference beyond that.
+
+    Idle is read twice, ``interval`` seconds apart, and only counts when both readings agree: an
+    agent is also idle *between* turns -- it finishes a tool call, returns to the prompt, thinks,
+    and continues. One instantaneous sample once marked a unit done in that gap; it had two commits
+    at the time and finished with ten. ``--once`` restores the single sample for a caller that
+    wants it.
+    """
     r = Run.load()
-    for unit in r.units:
-        if unit.status != RUNNING:
-            continue
-        state = poll(unit)
-        if state in {"idle", "done"}:
+    running = [u for u in r.units if u.status == RUNNING]
+    first = settle_reading(running) if running else {}
+    second = first
+    if running and not args.once:
+        time.sleep(args.interval)
+        second = settle_reading(running)
+    for unit in running:
+        a, b = first[unit.name], second[unit.name]
+        if a in {"idle", "done"} and b in {"idle", "done"}:
             unit.status = DONE
-            print(f"  {unit.name}: {state} -> done")
-        elif state == "gone":
+            shown = a if args.once else f"{a} then {b}"
+            print(f"  {unit.name}: {shown} -> done")
+        elif a == "gone" and b == "gone":
             unit.status = FAILED
             unit.note = "session disappeared"
             print(f"  {unit.name}: session gone -> failed")
+        elif a in {"idle", "done"}:
+            print(f"  {unit.name}: {a} then {b} -> still moving")
     r.save()
     return 0
 
@@ -1539,6 +1563,17 @@ def main(argv: list[str] | None = None) -> int:
     s.set_defaults(func=cmd_status)
 
     s = sub.add_parser("settle", help="mark running units done when their session goes idle")
+    s.add_argument(
+        "--interval",
+        type=int,
+        default=20,
+        help="seconds between the two idle readings (default 20)",
+    )
+    s.add_argument(
+        "--once",
+        action="store_true",
+        help="a single reading, no confirmation -- the old behaviour, for a caller that wants it",
+    )
     s.set_defaults(func=cmd_settle)
 
     s = sub.add_parser(

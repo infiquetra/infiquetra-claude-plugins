@@ -606,20 +606,27 @@ def branch_produced_anything(branch: str, r: Run) -> bool:
 
 
 def landed_by_merge(branch: str, r: Run) -> bool:
-    """Is this branch's tip the second parent of a merge on the run branch?
+    """Is this branch's tip the second parent of a merge on the branch this run lands onto?
 
     That shape, and only that shape, is a unit whose work ``land`` brought home: it merges with
     --no-ff, so the unit's tip comes in as the merge's second parent. A branch that never
     committed sits at an old tip of the run branch instead -- on its first-parent line, never a
     second parent -- and this reading is what keeps the two apart once the merge base of a
     landed branch collapses onto its own tip and can no longer say what the unit did.
+
+    The ref measured is ``r.branch or "HEAD"`` -- the same fallback ``branch_produced_anything``
+    uses -- because a run with no stored run branch predates the run-branch design and landed its
+    units straight onto the operator's tree, where this shape is just as readable. Refusing that
+    case left a legacy unit whose work WAS merged reading as produced nothing: ``check`` shouted
+    NO COMMITS at landed work, and ``clean --merged`` would not reap it. When ``r.base`` is
+    absent too there is no earlier bound to name, so the range is the ref's whole history.
     """
-    if not r.branch:
-        return False
+    ref = r.branch or "HEAD"
     tip = run(["git", "rev-parse", "--verify", "--quiet", branch], check=False)
     if tip.returncode != 0 or not tip.stdout.strip():
         return False
-    merges = run(["git", "log", "--merges", "--format=%P", f"{r.base}..{r.branch}"], check=False)
+    revs = f"{r.base}..{ref}" if r.base else ref
+    merges = run(["git", "log", "--merges", "--format=%P", revs], check=False)
     if merges.returncode != 0:
         return False
     sha = tip.stdout.strip()
@@ -1747,9 +1754,12 @@ def cmd_land(args: argparse.Namespace) -> int:
     the failure worth catching -- not a missing merge, but a session that produced nothing and
     reported itself done.
 
-    With ``--clean``, a successful land then reaps on the spot -- exactly the units
-    ``clean --merged`` would reap: DONE, with every commit on the run branch. Nothing else is
-    touched, and no branch is ever deleted here: that stays an explicit ``clean --branches``.
+    With ``--clean``, a successful land then reaps on the spot -- but only the units this
+    invocation merged, and they must still pass the ``clean --merged`` rule: DONE, with every
+    commit on the run branch. A land that merged nothing reaps nothing: work an earlier
+    invocation deliberately kept stays kept until the operator's own ``clean`` sweep. Nothing
+    else is touched, and no branch is ever deleted here: that stays an explicit
+    ``clean --branches``.
     """
     r = Run.load()
     if not r.branch:
@@ -1807,12 +1817,14 @@ def cmd_land(args: argparse.Namespace) -> int:
     # ``getattr``: a caller that built its own Namespace before this flag existed has no
     # ``clean`` attribute, and a land that worked yesterday must keep working today. Reaping comes
     # after the announcement, not before: it removes the worktrees the announcement reads from.
+    # The sweep names only the units THIS land merged: reaping the whole run here also closed the
+    # worktrees an earlier invocation deliberately kept.
     if getattr(args, "clean", False):
-        closed, _ = reap(r, merged_only=True)
+        closed, _ = reap(r, merged_only=True, only=landed_names)
         if closed:
             print(f"reaped: {', '.join(closed)}")
         else:
-            print("nothing to reap: no unit is done with its work on the run branch")
+            print("nothing to reap: this land merged nothing")
     return 0
 
 
@@ -1904,7 +1916,13 @@ def reapable(unit: Unit, r: Run) -> bool:
     return unit.status == DONE and bool(unit.branch) and landed(unit.branch, r) is True
 
 
-def reap(r: Run, *, merged_only: bool, branches: bool = False) -> tuple[list[str], list[str]]:
+def reap(
+    r: Run,
+    *,
+    merged_only: bool,
+    branches: bool = False,
+    only: Sequence[str] | None = None,
+) -> tuple[list[str], list[str]]:
     """Close tabs and remove worktrees; return ``(closed, kept)`` by unit name.
 
     ``merged_only`` applies the ``--merged`` rule -- see ``reapable`` -- and keeps everything
@@ -1912,12 +1930,22 @@ def reap(r: Run, *, merged_only: bool, branches: bool = False) -> tuple[list[str
     table in front of you, because it also discards the worktree that is the evidence a unit
     failed.
 
+    ``only`` narrows the sweep to those unit names; every other unit is kept, whatever its
+    state. ``land --clean`` passes the units that land just merged, so reaping there is a
+    consequence of what that invocation did -- not a licence to close work an earlier one
+    deliberately kept. ``clean`` never passes it: the operator's own sweep still sees the whole
+    run, and its behaviour is unchanged.
+
     ``branches`` deletes the branches of the units it closes. Reaping itself never does: a branch
     is cheap, and it is the last copy of a failed unit's work. Deleting one stays an explicit
     ``clean --branches``; ``land --clean`` never passes this.
     """
     kept, closed = [], []
+    scope = set(only) if only is not None else None
     for unit in r.units:
+        if scope is not None and unit.name not in scope:
+            kept.append(unit.name)
+            continue
         if merged_only and not reapable(unit, r):
             kept.append(unit.name)
             continue

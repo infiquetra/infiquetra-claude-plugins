@@ -464,6 +464,22 @@ class Run:
         return "; ".join(parts)
 
 
+def resolve_task_file(pointer: str) -> Path:
+    """The spill file a ``task_file`` pointer names, refusing anything outside ``TASK_DIR``.
+
+    Symlinks are resolved before the comparison, so a link planted inside the directory does not
+    pass. The check runs on the resolved target rather than trusting the join: in Python an
+    absolute right-hand operand discards the left, so ``TASK_DIR / "/etc/passwd"`` is simply
+    ``/etc/passwd``. Every pointer passes through here, on save AND on load -- a run record
+    edited by hand never passed through name validation, and that is the case this check exists
+    for."""
+    base = TASK_DIR.resolve()
+    resolved = (TASK_DIR / pointer).resolve()
+    if base not in resolved.parents:
+        raise SystemExit(f"task file {pointer!r} resolves outside {TASK_DIR}: {resolved}")
+    return resolved
+
+
 def spill_unit(unit: Unit) -> dict[str, Any]:
     """One unit's row in the run record, with a long task spilled to its own file.
 
@@ -476,9 +492,10 @@ def spill_unit(unit: Unit) -> dict[str, Any]:
         data["task_file"] = None
         return data
     TASK_DIR.mkdir(parents=True, exist_ok=True)
-    (TASK_DIR / f"{unit.name}.task.md").write_text(unit.task)
+    pointer = f"{unit.name}.task.md"
+    resolve_task_file(pointer).write_text(unit.task)
     data["task"] = ""
-    data["task_file"] = f"{unit.name}.task.md"
+    data["task_file"] = pointer
     return data
 
 
@@ -487,15 +504,18 @@ def read_unit(raw: dict[str, Any]) -> Unit:
 
     A row without a pointer is an old-format record or a short task, and its inline task is
     taken as-is -- nothing is migrated at read time, so a run.json written by an older version
-    loads exactly as it lies. A pointer whose file is gone loads as an empty task with a note
-    naming the missing file: a run record must stay loadable even when its spill does not."""
+    loads exactly as it lies. A pointer whose file is genuinely missing loads as an empty task
+    with a note naming it: a run record must stay loadable even when its spill does not. Every
+    other read failure -- a directory standing where the file should be, a permission error, an
+    I/O error -- raises rather than being absorbed: absorbing it also drops the pointer, so the
+    next save would make the loss permanent and the unit could be launched with no instructions."""
     unit = Unit(**raw)
     if not unit.task_file:
         return unit
-    spill = TASK_DIR / unit.task_file
+    spill = resolve_task_file(unit.task_file)
     try:
         unit.task = spill.read_text()
-    except OSError:
+    except FileNotFoundError:
         unit.task = ""
         unit.task_file = None
         note = f"spilled task file is gone: {spill}"
@@ -1292,12 +1312,14 @@ def report_announcements(records: list[dict[str, Any]], *, verbose: bool = False
 
 def cmd_start(args: argparse.Namespace) -> int:
     plan = json.loads(Path(args.plan).read_text())
+    units = [Unit(**u) for u in plan["units"]]
+    assert_safe_unit_names(units)
     base = args.base or run(["git", "rev-parse", "HEAD"]).stdout.strip()
     r = Run(
         run_id=plan["run_id"],
         source=plan.get("source", ""),
         base=base,
-        units=[Unit(**u) for u in plan["units"]],
+        units=units,
         backend=plan.get("backend", "inline"),
         engine_prefs=plan.get("engine_prefs", {}),
         issues=plan.get("issues", {}),
@@ -1488,6 +1510,28 @@ def cmd_roster(args: argparse.Namespace) -> int:
     return 0
 
 
+def assert_safe_unit_names(units: list[Unit]) -> None:
+    """Refuse any unit name that is not one safe path component.
+
+    A spilled task is written to ``TASK_DIR / f"{name}.task.md"``, and in Python an absolute
+    right-hand operand discards the left when joined, while ``..`` traverses -- unchecked, a name
+    is a write anywhere on disk, and the pointer stored from it a read back from anywhere. Names
+    are therefore refused here, where they enter a run, so a bad plan fails before anything is
+    written and before any worktree exists. ``resolve_task_file`` re-checks every pointer
+    independently: a run record edited by hand never passed through this function.
+    """
+    for unit in units:
+        name = unit.name
+        if not name:
+            raise SystemExit("a unit name must not be empty")
+        if Path(name).is_absolute():
+            raise SystemExit(f"unit name {name!r} must not be an absolute path")
+        if "/" in name or "\\" in name:
+            raise SystemExit(f"unit name {name!r} must not contain a path separator")
+        if name in (".", ".."):
+            raise SystemExit(f"unit name {name!r} is a path traversal, not a unit name")
+
+
 def assert_saga_reachable(units: list[Unit]) -> None:
     """Refuse a saga task aimed at a vendor with no saga installed.
 
@@ -1538,6 +1582,7 @@ def cmd_expand(args: argparse.Namespace) -> int:
     r = Run.load()
     added = json.loads(Path(args.plan).read_text())
     incoming = [Unit(**u) for u in added["units"]]
+    assert_safe_unit_names(incoming)
 
     existing = {u.name for u in r.units}
     seen: set[str] = set()

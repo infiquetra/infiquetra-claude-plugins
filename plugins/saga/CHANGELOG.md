@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.138.0] - 2026-08-17
+
+### Added
+
+- **The board card moves as the lifecycle moves, not only at merge.** Status was driven exactly once,
+  post-merge, to `Done`. Everything before that left the card reading precisely as it had before
+  anyone picked it up — so on a nine-unit run the operator watched nine cards sit still all day while
+  the work ran.
+
+  Four boundaries now move it along the operations board's real ladder
+  (`Idea -> Shaping -> Ready -> Active -> Verify -> Done`, read from the live project):
+
+  | boundary | state |
+  |---|---|
+  | `/plan` enters and a plan is warranted | `Shaping` |
+  | the plan is written and committed | `Ready` |
+  | `/work` sets up and begins | `Active` |
+  | the gate is clean and the work is PR-ready | `Verify` |
+  | merged (Phase 4.4, unchanged) | `Done` |
+
+  No new machinery was needed, which is the same story as the phase comment: `set-field-status` was
+  already `reversible` with `always_operator=False`, and its `target_state` already formed part of
+  the idempotency key so a repeated tick collapses to `skipped`. Only the instruction was missing.
+
+  Skipped silently when there is no issue — a plan with no card has no Status to move.
+
 ## [0.137.0] - 2026-08-17
 
 ### Fixed

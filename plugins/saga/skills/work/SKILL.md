@@ -238,6 +238,26 @@ findings, **block execution** unless the operator explicitly overrides and gives
 override rationale (it flows into the Phase-4 issue comment via `--doc-review-override`). Do not treat
 chat memory alone as durable evidence after a resume.
 
+### 1.3b Move the card to Active
+
+Work is starting. Until this fires the card reads exactly as it did before anyone picked it up,
+which on a wide run means a card sitting untouched while several units build against it.
+
+**Board Status is part of a phase boundary, not only of the merge.** The card should say what is
+happening to it while it happens. The operations board's ladder is
+`Idea -> Shaping -> Ready -> Active -> Verify -> Done`, and each move is the same reconcile tick
+Phase 4.4 uses -- `set-field-status` is `reversible` with `always_operator=False`, and its
+`target_state` is part of the idempotency key, so a repeated tick collapses to `skipped` rather than
+re-writing. Read `written`/`skipped` as success; `halt`/`gated` falls back to the operator-prompted
+path.
+
+```bash
+python3 plugins/saga/scripts/reconcile_controller.py reconcile \
+  --op set-field-status --repo <owner/repo> --number <N> --target-state Active
+```
+
+Skip it silently when there is no issue -- a plan with no card has no Status to move.
+
 ### 1.4 Offer the backend, then mint/advance the saga
 
 **If the plan carries a `backend:` frontmatter field, honour it and do not offer.** Say in one line
@@ -758,6 +778,25 @@ Block PR-ready when **either** holds (see `references/test-and-gates.md` for the
 
 Allow an explicit operator override only with a **recorded** rationale (it flows into the issue comment
 via `--doc-review-override` / the work-session). Never a silent skip.
+
+### 5.3b Move the card to Verify
+
+The gate is clean and the work is PR-ready, so what is left is review rather than building.
+
+**Board Status is part of a phase boundary, not only of the merge.** The card should say what is
+happening to it while it happens. The operations board's ladder is
+`Idea -> Shaping -> Ready -> Active -> Verify -> Done`, and each move is the same reconcile tick
+Phase 4.4 uses -- `set-field-status` is `reversible` with `always_operator=False`, and its
+`target_state` is part of the idempotency key, so a repeated tick collapses to `skipped` rather than
+re-writing. Read `written`/`skipped` as success; `halt`/`gated` falls back to the operator-prompted
+path.
+
+```bash
+python3 plugins/saga/scripts/reconcile_controller.py reconcile \
+  --op set-field-status --repo <owner/repo> --number <N> --target-state Verify
+```
+
+Skip it silently when there is no issue -- a plan with no card has no Status to move.
 
 ### 5.4 Reach PR-ready and present continuation routing
 

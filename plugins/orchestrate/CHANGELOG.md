@@ -1,5 +1,37 @@
 # Changelog
 
+## [1.17.0] - 2026-08-17
+
+### Added
+
+- **`roster` now briefs every vendor it lists.** Under each one it prints both permission modes as
+  they will actually be passed, whether saga is installed and how that vendor invokes it, and any
+  behaviour that has caught a run out before. All of it resolved at the moment of asking rather than
+  recalled.
+
+  This is the answer to a recurring failure rather than a nicety: a vendor's behaviour was split
+  across five separate tables, so where a table had a gap the orchestrator improvised — plausibly,
+  and only found out a phase later. In one week that produced a builder reviewing its own work, a
+  planner blocked on a question nobody could see, a task delivered as an attachment, and a unit
+  prompted while still booting.
+
+  Notes are carried for the quirks no table had room for: qwen never reports interactive readiness
+  and its `--safe-mode` is not a permission flag; muse's `--yolo` disables the sandbox as well as
+  approval, so it is bypass rather than auto; opencode's effort is a picker that cannot be answered
+  from an unwatched tab; agy's saga plugin is a symlink into the operator's own checkout; codex ships
+  saga as skills and prefixes with `$`.
+
+### Note on what was deliberately not built
+
+An earlier plan was to have `roster --probe` verify every claimed flag by trying it. Testing the
+method first killed it: every vendor short-circuits `--help` before validating arguments, so the
+cheap trial cannot tell an accepted flag from a rejected one, and the only trial that works is a real
+prompt-mode run — whose invocation differs per vendor, which is the same stale vocabulary the probe
+was meant to escape. A non-existent flag is already caught at launch by the delivery check added in
+1.16.0, and a flag that exists but means the wrong thing — muse's `--yolo` — is caught by no probe at
+all. Reading the vendor's own semantics is the only thing that catches that class, which is what
+these notes are.
+
 ## [1.16.0] - 2026-08-17
 
 ### Fixed

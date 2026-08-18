@@ -9,6 +9,7 @@ rather than a stand-in for it.
 
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import sys
 from pathlib import Path
@@ -314,3 +315,76 @@ class TestASessionIsReadyBeforeItIsSent:
         monkeypatch.setattr(orchestrate.time, "sleep", lambda _s: None)
 
         assert orchestrate.took_the_task(unit, seconds=2) is False
+
+
+class TestTheRosterBriefsEveryVendor:
+    """The interview should read how a vendor behaves rather than recall it.
+
+    Every note here was learned by a run going wrong and re-learned at least once, because it lived
+    nowhere. Rendering is exercised with the machine's answers stubbed out — the roster shells out to
+    the wrapper, and a test that depends on which agents happen to be installed is the escape this
+    session has already had twice.
+    """
+
+    def test_every_note_belongs_to_a_vendor_this_plugin_drives(
+        self, orchestrate: ModuleType
+    ) -> None:
+        for vendor in orchestrate.VENDOR_NOTES:
+            assert vendor in orchestrate.VENDOR_FLAGS, vendor
+
+    def test_the_brief_states_both_permission_modes(
+        self,
+        orchestrate: ModuleType,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setattr(orchestrate, "roster", lambda: [("muse", "model,effort")])
+        monkeypatch.setattr(orchestrate, "launchable", lambda: ["muse"])
+        monkeypatch.setattr(orchestrate, "saga_capabilities", lambda _v: [])
+        orchestrate.cmd_roster(argparse.Namespace(models=False, probe=False, limit=12))
+
+        out = capsys.readouterr().out
+        assert "--approval-mode never" in out
+        assert "--yolo" in out
+
+    def test_a_vendor_with_no_escalation_says_so(
+        self,
+        orchestrate: ModuleType,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """An empty list rendered as blank reads as 'nothing needed' rather than 'not possible'."""
+        monkeypatch.setattr(orchestrate, "roster", lambda: [("agy", "model,effort")])
+        monkeypatch.setattr(orchestrate, "launchable", lambda: ["agy"])
+        monkeypatch.setattr(orchestrate, "saga_capabilities", lambda _v: [])
+        orchestrate.cmd_roster(argparse.Namespace(models=False, probe=False, limit=12))
+
+        assert "(vendor default)" in capsys.readouterr().out
+
+    def test_a_vendor_without_saga_is_named_as_such(
+        self,
+        orchestrate: ModuleType,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A saga task sent to a vendor without saga is prose, and the session reports itself done."""
+        monkeypatch.setattr(orchestrate, "roster", lambda: [("muse", "model,effort")])
+        monkeypatch.setattr(orchestrate, "launchable", lambda: ["muse"])
+        monkeypatch.setattr(orchestrate, "saga_capabilities", lambda _v: [])
+        orchestrate.cmd_roster(argparse.Namespace(models=False, probe=False, limit=12))
+
+        assert "arrives as prose" in capsys.readouterr().out
+
+    def test_the_landmine_note_reaches_the_reader(
+        self,
+        orchestrate: ModuleType,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """qwen's `--safe-mode` is the flag most likely to be added by reasoning from its name."""
+        monkeypatch.setattr(orchestrate, "roster", lambda: [("qwen", "model")])
+        monkeypatch.setattr(orchestrate, "launchable", lambda: ["qwen"])
+        monkeypatch.setattr(orchestrate, "saga_capabilities", lambda _v: ["plan"])
+        orchestrate.cmd_roster(argparse.Namespace(models=False, probe=False, limit=12))
+
+        assert "--safe-mode" in capsys.readouterr().out

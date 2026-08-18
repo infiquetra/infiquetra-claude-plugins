@@ -205,6 +205,124 @@ class TestCheck:
         assert "the record agrees with the repository" in out
 
 
+def _fake_agents(
+    orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch, states: dict[str, str]
+) -> None:
+    """Stand in for herdr's session list: one agent per name, at the given ``agent_status``.
+
+    The real herdr may or may not exist on the machine running these tests, and its sessions are
+    never these units', so ``check`` is answered from a list built here instead. ``poll`` matches
+    on the name, so the real matching still runs.
+    """
+    agents = [{"name": name, "agent_status": status} for name, status in states.items()]
+    monkeypatch.setattr(orchestrate, "live_agents", lambda: agents)
+
+
+class TestLooksDone:
+    """A unit the record calls running whose session went idle with work already committed.
+
+    Neither half is wrong on its own -- the branch has commits, the session is idle -- and that is
+    why nothing else in ``check`` notices it. The drift is that the unit finished and the record
+    was never told, which stalls the run until an operator asks why.
+    """
+
+    def test_running_idle_with_commits_fires_looks_done(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # cut from main, not orch/r1: its commit is its own, not the landed work of other units
+        _git(repo, "checkout", "-b", "orch/r1-fix-52", "main")
+        _commit(repo, "fix.txt")
+        _git(repo, "checkout", "main")
+        _write_run(repo, [_unit("alpha"), _unit("beta"), _unit("fix-52", status="running")])
+        _fake_agents(orchestrate, monkeypatch, {"fix-52": "idle"})
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_check(argparse.Namespace()) == 1
+        out = capsys.readouterr().out
+        assert (
+            "  LOOKS DONE fix-52 -- marked running, but its session is idle "
+            "and its branch has commits"
+        ) in out
+
+    def test_running_reported_done_with_commits_fires_looks_done(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """``done`` is the other settled state herdr reports, and counts the same as idle."""
+        _git(repo, "checkout", "-b", "orch/r1-fix-52", "main")
+        _commit(repo, "fix.txt")
+        _git(repo, "checkout", "main")
+        _write_run(repo, [_unit("alpha"), _unit("beta"), _unit("fix-52", status="running")])
+        _fake_agents(orchestrate, monkeypatch, {"fix-52": "done"})
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_check(argparse.Namespace()) == 1
+        assert (
+            "  LOOKS DONE fix-52 -- marked running, but its session is done "
+            "and its branch has commits"
+        ) in capsys.readouterr().out
+
+    def test_running_idle_with_no_commits_is_not_reported(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Idle is also what a session is between turns; with nothing saved it may be thinking."""
+        # at base with nothing of its own -- a branch cut from orch/r1 would carry the landed
+        # commits of the other units and read as produced
+        _git(repo, "branch", "orch/r1-slow", "main")
+        _write_run(repo, [_unit("alpha"), _unit("beta"), _unit("slow", status="running")])
+        _fake_agents(orchestrate, monkeypatch, {"slow": "idle"})
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_check(argparse.Namespace()) == 0
+        out = capsys.readouterr().out
+        assert "LOOKS DONE" not in out
+        assert "the record agrees with the repository" in out
+
+    def test_running_working_is_not_reported(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A session still working is exactly what ``running`` says, commits or no commits."""
+        _git(repo, "checkout", "-b", "orch/r1-fix-52", "main")
+        _commit(repo, "fix.txt")
+        _git(repo, "checkout", "main")
+        _write_run(repo, [_unit("alpha"), _unit("beta"), _unit("fix-52", status="running")])
+        _fake_agents(orchestrate, monkeypatch, {"fix-52": "working"})
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_check(argparse.Namespace()) == 0
+        assert "LOOKS DONE" not in capsys.readouterr().out
+
+    def test_a_done_unit_is_not_looks_done(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """The finding is for units marked running; a done unit is already settled."""
+        _write_run(repo, [_unit("alpha"), _unit("beta")])
+        _fake_agents(orchestrate, monkeypatch, {"alpha": "idle", "beta": "idle"})
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_check(argparse.Namespace()) == 0
+        assert "LOOKS DONE" not in capsys.readouterr().out
+
+
 def _hide_herdr(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A PATH with git on it and no herdr -- what a build runner actually looks like.
 

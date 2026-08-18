@@ -70,3 +70,48 @@ def test_it_is_routed_through_the_ledger_rather_than_the_bare_verb(skill_text: s
     section = skill_text.split("### 4.3")[1].split("### 4.4")[0]
     assert "reconcile_controller.py" in section
     assert "idempotency" in section
+
+
+PLAN_SKILL = ROOT / "plugins" / "saga" / "skills" / "plan" / "SKILL.md"
+
+# The operations board's ladder, read from the live project rather than assumed.
+LADDER = ["Idea", "Shaping", "Ready", "Active", "Verify", "Done"]
+
+
+@pytest.fixture(scope="module")
+def plan_text() -> str:
+    return PLAN_SKILL.read_text()
+
+
+class TestTheCardMovesAtPhaseBoundaries:
+    """A card that only moves at merge says nothing while nine units build against it.
+
+    `set-field-status` was always reversible, prompt-free, and keyed by target state — so moving the
+    card mid-lifecycle needed no new machinery, only the instruction. Same shape as the phase comment
+    that was rendered and never posted.
+    """
+
+    def test_planning_moves_the_card_to_shaping_and_then_ready(self, plan_text: str) -> None:
+        assert "--target-state Shaping" in plan_text
+        assert "--target-state Ready" in plan_text
+
+    def test_building_moves_the_card_to_active_and_then_verify(self, skill_text: str) -> None:
+        assert "--target-state Active" in skill_text
+        assert "--target-state Verify" in skill_text
+
+    def test_done_is_still_owned_by_the_post_merge_path(self, skill_text: str) -> None:
+        """Phase 4.4 has always driven Done; the new moves must not duplicate it."""
+        assert "--target-state Done" in skill_text
+        assert skill_text.count("--target-state Done") == 1
+
+    def test_every_state_named_is_on_the_real_board_ladder(
+        self, skill_text: str, plan_text: str
+    ) -> None:
+        """A typo'd state is a silent no-op, not an error."""
+        import re
+
+        named = set(re.findall(r"--target-state (\w+)", skill_text + plan_text))
+        assert named <= set(LADDER), named - set(LADDER)
+
+    def test_a_plan_with_no_issue_does_not_try_to_move_a_card(self, plan_text: str) -> None:
+        assert "no issue" in plan_text

@@ -120,6 +120,23 @@ If depth is unclear, ask one targeted question, then continue.
 
 ---
 
+### 0.6 Move the card to Shaping
+
+**Board Status is part of a phase boundary, not only of the merge.** The card should say what is
+happening to it while it happens. The operations board's ladder is
+`Idea -> Shaping -> Ready -> Active -> Verify -> Done`, and each move is the same reconcile tick
+Phase 4.4 uses -- `set-field-status` is `reversible` with `always_operator=False`, and its
+`target_state` is part of the idempotency key, so a repeated tick collapses to `skipped` rather than
+re-writing. Read `written`/`skipped` as success; `halt`/`gated` falls back to the operator-prompted
+path.
+
+```bash
+python3 plugins/saga/scripts/reconcile_controller.py reconcile \
+  --op set-field-status --repo <owner/repo> --number <N> --target-state Shaping
+```
+
+Skip it silently when there is no issue -- a plan with no card has no Status to move.
+
 ## Phase 1 — Ground (HOW)
 
 Read code before asking. This is the moment the operator sees you grounded in their actual repo, not a
@@ -237,6 +254,25 @@ vector). Add `deepened: YYYY-MM-DD` to frontmatter when the plan was substantive
 ---
 
 ## Phase 5 — Saga, route, and operator-choice
+
+### 5.0 Move the card to Ready
+
+The plan exists and is committed, so the card is no longer being shaped -- it is ready to build.
+
+**Board Status is part of a phase boundary, not only of the merge.** The card should say what is
+happening to it while it happens. The operations board's ladder is
+`Idea -> Shaping -> Ready -> Active -> Verify -> Done`, and each move is the same reconcile tick
+Phase 4.4 uses -- `set-field-status` is `reversible` with `always_operator=False`, and its
+`target_state` is part of the idempotency key, so a repeated tick collapses to `skipped` rather than
+re-writing. Read `written`/`skipped` as success; `halt`/`gated` falls back to the operator-prompted
+path.
+
+```bash
+python3 plugins/saga/scripts/reconcile_controller.py reconcile \
+  --op set-field-status --repo <owner/repo> --number <N> --target-state Ready
+```
+
+Skip it silently when there is no issue -- a plan with no card has no Status to move.
 
 ### 5.1 Ask the destination
 

@@ -653,9 +653,12 @@ def landed_by_merge(branch: str, r: Run) -> bool:
 def make_worktree(unit: Unit, r: Run, root: Path) -> None:
     """One worktree and one branch per unit. This is the whole isolation story.
 
-    A unit with dependencies branches from the last one it named, so a ``/work`` unit opens on top
-    of the ``/plan`` unit's output rather than on bare ``base``. Made at launch time, not at
-    ``start``, because the dependency's branch does not have its commits until it has run.
+    Every unit branches from the run branch, whatever it names in ``after``. A dependency's
+    output is visible to it because ``land`` merged that work onto the run branch, not because
+    of where this unit branches from -- that is why a phase is landed before the next one is
+    launched; the land is what puts the earlier phase's work where a dependent unit can see it.
+    Made at launch time, not at ``start``, so the branch opens on the run branch as it stands,
+    with everything landed so far already on it.
     """
     path = root.parent / f"orch-{unit.name}"
     # dash, not a second slash: git cannot hold `orch/<run>` as a branch and `orch/<run>/<unit>`
@@ -1371,6 +1374,9 @@ def cmd_start(args: argparse.Namespace) -> int:
         issues=plan.get("issues", {}),
         status_map=plan.get("status_map", {}),
     )
+    # Before anything is written or any worktree is created: a typo in an ordering edge is a
+    # unit that is never eligible, forever, and `start` is the only moment it fails cheaply.
+    assert_dependencies_reachable(r.units)
     assert_vendors_available(r.units)
     assert_saga_reachable(r.units)
     r.branch = f"orch/{r.run_id}"
@@ -1616,6 +1622,26 @@ def assert_vendors_available(units: list[Unit]) -> None:
         )
 
 
+def assert_dependencies_reachable(incoming: list[Unit], existing: set[str] | None = None) -> None:
+    """Reject an ``after`` or ``serialize`` name that is in no run.
+
+    A typo in an ordering edge otherwise produces a unit that is never eligible, forever --
+    ``eligible`` waits on a name that does not exist, and ``status`` reports the wait -- and the
+    failure is silent at the only moment it could have been caught cheaply. A name may point at a
+    sibling in ``incoming`` itself: units routinely depend on the units they were planned with.
+    """
+    reachable = {u.name for u in incoming} | (existing or set())
+    for unit in incoming:
+        for dep in unit.after:
+            if dep not in reachable:
+                raise SystemExit(f"unit {unit.name!r} waits on {dep!r}, which is in no run")
+        for dep in unit.serialize:
+            if dep not in reachable:
+                raise SystemExit(
+                    f"unit {unit.name!r} serializes behind {dep!r}, which is in no run"
+                )
+
+
 def cmd_expand(args: argparse.Namespace) -> int:
     """Add units to a run already in flight.
 
@@ -1636,16 +1662,7 @@ def cmd_expand(args: argparse.Namespace) -> int:
         if unit.name in existing or unit.name in seen:
             raise SystemExit(f"unit {unit.name!r} is already in this run; give the new one a name")
         seen.add(unit.name)
-    reachable = existing | seen
-    for unit in incoming:
-        for dep in unit.after:
-            if dep not in reachable:
-                raise SystemExit(f"unit {unit.name!r} waits on {dep!r}, which is in no run")
-        for dep in unit.serialize:
-            if dep not in reachable:
-                raise SystemExit(
-                    f"unit {unit.name!r} serializes behind {dep!r}, which is in no run"
-                )
+    assert_dependencies_reachable(incoming, existing)
 
     assert_vendors_available(incoming)
     assert_saga_reachable(incoming)
@@ -2130,6 +2147,148 @@ def cmd_check(args: argparse.Namespace) -> int:
     return 1
 
 
+def resolve_ref(ref: str) -> str | None:
+    """The commit a ref names, or None when nothing resolves -- gone, or never existed."""
+    if not ref:
+        return None
+    got = run(["git", "rev-parse", "--verify", "--quiet", ref], check=False)
+    if got.returncode != 0:
+        return None
+    return got.stdout.strip() or None
+
+
+def merge_base(ref_a: str, ref_b: str) -> str | None:
+    """The newest commit common to both refs, or None when git finds none."""
+    got = run(["git", "merge-base", ref_a, ref_b], check=False)
+    if got.returncode != 0:
+        return None
+    return got.stdout.strip() or None
+
+
+def landing_merge(branch: str, cmp_ref: str) -> str | None:
+    """The merge commit that landed ``branch`` onto ``cmp_ref``, or None when it never landed.
+
+    ``land`` merges ``--no-ff`` with the run branch checked out, so a landed unit branch is the
+    second parent of the merge that brought it in. Finding that merge is what lets a landed unit
+    still show its change -- the merge base of the merge's parents is where the unit branched --
+    instead of an empty diff that reads as "this unit changed nothing"."""
+    tip = resolve_ref(branch)
+    if tip is None:
+        return None
+    log = run(["git", "log", "--first-parent", "--merges", "--format=%H %P", cmp_ref], check=False)
+    if log.returncode != 0:
+        return None
+    for line in log.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 3 and parts[2] == tip:
+            return parts[0]
+    return None
+
+
+def diff_against(r: Run) -> str | None:
+    """The ref a unit's change is measured against.
+
+    The run branch when there is one; the run base for a run predating it -- those units all
+    branched from the base, so it is still the honest comparison. None when neither resolves,
+    which leaves nothing to diff against."""
+    for ref in (r.branch, r.base):
+        if resolve_ref(ref) is not None:
+            return ref
+    return None
+
+
+def print_git_diff(base: str, branch: str, *, stat: bool) -> None:
+    """The git diff itself: a full patch, or the stat summary with ``stat``."""
+    argv = ["git", "diff"]
+    if stat:
+        argv.append("--stat")
+    argv.append(f"{base}..{branch}")
+    body = run(argv).stdout.strip("\n")
+    if body:
+        print(body)
+
+
+def show_unit_diff(unit: Unit, cmp_ref: str, *, stat: bool) -> None:
+    """One unit's change -- merge base to branch -- or words for why there is nothing to show.
+
+    An empty diff is never printed: it reads as "this unit changed nothing", and a branch
+    measures empty in two ways that are both not nothing -- its work already landed on the run
+    branch, or the session never committed at all. Each gets words of its own."""
+    if not unit.branch:
+        print(f"{unit.name}: has no branch -- it was never launched")
+        return
+    branch = unit.branch
+    if resolve_ref(branch) is None:
+        print(f"{unit.name}: branch {branch} no longer resolves -- nothing to diff")
+        return
+    base = merge_base(cmp_ref, branch)
+    if base is None:
+        print(f"{unit.name}: no commit common to {cmp_ref} and {branch} -- cannot compare")
+        return
+    own = run(["git", "rev-list", "--count", f"{base}..{branch}"], check=False)
+    if own.returncode == 0 and own.stdout.strip() not in ("", "0"):
+        print(f"{unit.name}: diff {base[:8]}..{branch}")
+        print(
+            f"merge base {base[:8]} of {cmp_ref} and {branch} -- work landed on {cmp_ref} "
+            "by siblings does not appear in this diff"
+        )
+        print_git_diff(base, branch, stat=stat)
+        return
+    # Nothing of its own against the comparison ref. That is either "already landed" or "never
+    # committed", and the run branch says which: a landed branch is the second parent of the
+    # merge that brought it in.
+    merged = landing_merge(branch, cmp_ref)
+    if merged is None:
+        print(f"{unit.name}: branch {branch} has no commits of its own")
+        return
+    branched = merge_base(f"{merged}^1", branch)
+    if branched is None:
+        print(f"{unit.name}: landed in {merged[:8]}, but its branch point no longer resolves")
+        return
+    print(
+        f"{unit.name}: landed on {cmp_ref} in merge {merged[:8]} -- diff {branched[:8]}..{branch}"
+    )
+    print(f"merge base {branched[:8]} -- where {branch} branched before it was merged")
+    print_git_diff(branched, branch, stat=stat)
+
+
+def diff_summary(r: Run, cmp_ref: str) -> int:
+    """The shape of the whole run: one stat summary per unit that has a branch."""
+    branched = [u for u in r.units if u.branch]
+    if not branched:
+        print("no unit has a branch yet -- nothing to diff")
+        return 0
+    print(f"run {r.run_id} against {cmp_ref} -- each unit's change, merge base to branch")
+    for unit in branched:
+        print()
+        show_unit_diff(unit, cmp_ref, stat=True)
+    return 0
+
+
+def cmd_diff(args: argparse.Namespace) -> int:
+    """Show what a unit actually changed: the diff from the merge base to its branch.
+
+    ``run-branch..unit-branch`` is the obvious comparison and the wrong one for this question:
+    every unit in a phase branches from the same base, so the moment a sibling lands, that diff
+    reports the sibling's additions as this unit's deletions -- in one run it showed a 391-line
+    test file as deleted by a unit that had never touched it. The merge base of the run branch
+    and the unit branch is where the unit branched; from there to the branch is its change, and
+    nobody else's, whoever else has landed since.
+
+    With no unit name, prints the stat summary of every unit that has a branch -- the shape of
+    the whole run in one read.
+    """
+    r = Run.load()
+    cmp_ref = diff_against(r)
+    if cmp_ref is None:
+        print("neither the run branch nor the run base resolves -- nothing to compare against")
+        return 1
+    if not args.unit:
+        return diff_summary(r, cmp_ref)
+    show_unit_diff(r.unit(args.unit), cmp_ref, stat=args.stat)
+    return 0
+
+
 def cmd_adopt(args: argparse.Namespace) -> int:
     """Put stranded unit branches back into the run record.
 
@@ -2241,6 +2400,19 @@ def main(argv: list[str] | None = None) -> int:
 
     s = sub.add_parser("check", help="report where the run record and the repository disagree")
     s.set_defaults(func=cmd_check)
+
+    s = sub.add_parser(
+        "diff", help="what a unit actually changed: merge base to its branch, nothing else"
+    )
+    s.add_argument(
+        "unit",
+        nargs="?",
+        help="unit to show; omit for a --stat summary of every unit with a branch",
+    )
+    s.add_argument(
+        "--stat", action="store_true", help="print the stat summary instead of the full patch"
+    )
+    s.set_defaults(func=cmd_diff)
 
     s = sub.add_parser("adopt", help="write units for run branches the table does not know")
     s.add_argument(

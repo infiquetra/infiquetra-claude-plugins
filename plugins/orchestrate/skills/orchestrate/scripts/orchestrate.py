@@ -5,7 +5,8 @@ The plan is authored by the operator and Claude together; this script is the mec
 It creates a worktree and branch per unit, launches the requested agent there, sends the unit's
 saga command, waits, merges the branches back, and cleans up.
 
-State is one JSON file. If it is wrong, delete it -- `herdr agent list` is the real truth.
+State is one JSON file, plus one file each for tasks too long to live in it. If it is wrong,
+delete it -- `herdr agent list` is the real truth.
 """
 
 from __future__ import annotations
@@ -35,6 +36,18 @@ except ImportError:  # pragma: no cover - only when the sibling module is missin
     herdr_events = None  # type: ignore[assignment]
 
 RUN_FILE = Path(".orchestrate/run.json")
+
+# Where task text lives when it does not belong inside run.json. Two mechanisms write here,
+# named apart: the spill (see ``TASK_SPILL_THRESHOLD``) moves a long unit task out of the run
+# record at save time, and ``pane_text`` hands a too-long-to-type task to a session as a file.
+TASK_DIR = RUN_FILE.parent / "tasks"
+
+# A task longer than this is spilled to ``TASK_DIR / f"{unit.name}.task.md"`` at save time, and
+# the record keeps a pointer instead. Measured on a real 75-unit run: run.json was 267,897 bytes
+# and 223,040 of them -- 83% -- were unit task text, rewritten whole on every save and parsed by
+# every subcommand. This threshold is about the record, not the session: what a pane will carry
+# as typed input is a different limit with its own mechanism (``PANE_TYPING_LIMIT``).
+TASK_SPILL_THRESHOLD = 400
 
 # How each agent takes a model and a reasoning effort on its own command line, read from each
 # tool's own `--help`. Anything not listed launches with no tier flags -- see SETUP_HINT for how a
@@ -260,7 +273,16 @@ class Unit:
     name: str
     vendor: str
     task: str
-    """What the session is told to do -- a saga command like "/plan #456", or free prose."""
+    """What the session is told to do -- a saga command like "/plan #456", or free prose.
+
+    Always the full text in memory, even when the record on disk keeps only a pointer: ``save``
+    spills a task longer than ``TASK_SPILL_THRESHOLD`` into its own file, and ``load`` reads it
+    back, so no caller of ``task`` knows the difference."""
+    task_file: str | None = None
+    """The file this unit's task is spilled in, relative to ``TASK_DIR`` -- None when inline.
+
+    Written only by ``save``. A record from before the spill existed carries its task inline and
+    has no such key, which ``load`` still accepts; nothing is migrated at read time."""
     model: str | None = None
     effort: str | None = None
     permission: str = "auto"
@@ -374,7 +396,7 @@ class Run:
             run_id=raw["run_id"],
             source=raw["source"],
             base=raw["base"],
-            units=[Unit(**u) for u in raw["units"]],
+            units=[read_unit(u) for u in raw["units"]],
             backend=raw.get("backend", "inline"),
             branch=raw.get("branch", ""),
             engine_prefs=raw.get("engine_prefs", {}),
@@ -393,7 +415,7 @@ class Run:
             "engine_prefs": self.engine_prefs,
             "issues": self.issues,
             "status_map": self.status_map,
-            "units": [asdict(u) for u in self.units],
+            "units": [spill_unit(u) for u in self.units],
         }
         path.write_text(json.dumps(payload, indent=2) + "\n")
 
@@ -440,6 +462,45 @@ class Run:
         if behind:
             parts.append(f"serialized behind {', '.join(behind)}")
         return "; ".join(parts)
+
+
+def spill_unit(unit: Unit) -> dict[str, Any]:
+    """One unit's row in the run record, with a long task spilled to its own file.
+
+    The record keeps the pointer and ``TASK_DIR`` keeps the text, so run.json stops being 83%
+    task prose on a big run. A short task stays inline, and any pointer on one is dropped: a row
+    carrying both would have its inline text overwritten by the file at load. The in-memory unit
+    is untouched -- the spill is something that happens to the record, not to the run."""
+    data = asdict(unit)
+    if len(unit.task) <= TASK_SPILL_THRESHOLD:
+        data["task_file"] = None
+        return data
+    TASK_DIR.mkdir(parents=True, exist_ok=True)
+    (TASK_DIR / f"{unit.name}.task.md").write_text(unit.task)
+    data["task"] = ""
+    data["task_file"] = f"{unit.name}.task.md"
+    return data
+
+
+def read_unit(raw: dict[str, Any]) -> Unit:
+    """One unit from its record row, reading a spilled task back transparently.
+
+    A row without a pointer is an old-format record or a short task, and its inline task is
+    taken as-is -- nothing is migrated at read time, so a run.json written by an older version
+    loads exactly as it lies. A pointer whose file is gone loads as an empty task with a note
+    naming the missing file: a run record must stay loadable even when its spill does not."""
+    unit = Unit(**raw)
+    if not unit.task_file:
+        return unit
+    spill = TASK_DIR / unit.task_file
+    try:
+        unit.task = spill.read_text()
+    except OSError:
+        unit.task = ""
+        unit.task_file = None
+        note = f"spilled task file is gone: {spill}"
+        unit.note = f"{unit.note}; {note}" if unit.note else note
+    return unit
 
 
 def run(
@@ -761,8 +822,6 @@ def launch(unit: Unit, backend: str = "inline", *, review_elsewhere: bool = Fals
 # nothing. A real task is routinely well past this, so the door this plugin uses for any vendor that
 # will not take `herdr agent prompt` was quietly unusable for real work.
 PANE_TYPING_LIMIT = 800
-
-TASK_DIR = RUN_FILE.parent / "tasks"
 
 
 def pane_text(unit: Unit, text: str) -> str:

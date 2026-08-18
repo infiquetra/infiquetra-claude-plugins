@@ -300,6 +300,16 @@ class Unit:
     that is real work, wrong in both directions, and it decides something the person who wrote the
     phase already knows."""
     after: list[str] = field(default_factory=list)
+    serialize: list[str] = field(default_factory=list)
+    """Wait for these units to finish, without claiming anything about needing their output.
+
+    ``after`` means "I build on what you produce", and it was also being used to mean "do not run
+    at the same time as you -- we would both touch the same files" or "wait until that has landed
+    so I can rebase on it". A run using it the second way looked blocked for a reason that does
+    not exist, and a reader could not tell the two apart. This edge gates launch exactly like
+    ``after`` -- a unit is not eligible until every name in both lists is done -- and the
+    difference is carried downstream, not in the gate: ``go`` does not ask whether a serialize
+    dependency committed anything, and ``status`` names which kind of edge holds a unit."""
     worktree: str | None = None
     branch: str | None = None
     tab_id: str | None = None
@@ -383,10 +393,33 @@ class Run:
         return any(re.search(r"[/$](saga:)?code-review\b", u.task) for u in self.units)
 
     def eligible(self) -> list[Unit]:
+        """Pending units whose every ordering edge is satisfied.
+
+        ``after`` and ``serialize`` gate identically -- a unit is not eligible until every name in
+        both lists is done. What the edge *means* is carried elsewhere: see ``wait_reason``."""
         done = {u.name for u in self.units if u.status == DONE}
         return [
-            u for u in self.units if u.status == PENDING and all(dep in done for dep in u.after)
+            u
+            for u in self.units
+            if u.status == PENDING and all(dep in done for dep in u.after + u.serialize)
         ]
+
+    def wait_reason(self, unit: Unit) -> str:
+        """Why a pending unit is still pending, naming the kind of each edge that holds it.
+
+        ``after`` and ``serialize`` gate launch identically but mean different things -- one
+        needs the dependency's output, the other only asks not to run beside it -- and while both
+        lived in ``after``, a reader could not tell them apart. Empty means nothing holds the
+        unit: it is eligible and simply has not been launched yet."""
+        done = {u.name for u in self.units if u.status == DONE}
+        parts: list[str] = []
+        needs = [dep for dep in unit.after if dep not in done]
+        if needs:
+            parts.append(f"needs output from {', '.join(needs)}")
+        behind = [dep for dep in unit.serialize if dep not in done]
+        if behind:
+            parts.append(f"serialized behind {', '.join(behind)}")
+        return "; ".join(parts)
 
 
 def run(
@@ -837,9 +870,9 @@ def agent_for_worktree(path: str | None, agents: list[dict]) -> dict | None:
 def rebuild_unit(name: str, branch: str, r: Run, agents: list[dict]) -> Unit:
     """Reconstruct a unit from what is still true about it: its branch, tree, and session.
 
-    ``task``, ``after``, ``model``, ``effort`` and ``permission`` are left at their defaults: they
-    cannot be recovered, and an invented value is worse than an empty one -- the session has already
-    been given its task, so nothing here is ever sent to it again.
+    ``task``, ``after``, ``serialize``, ``model``, ``effort`` and ``permission`` are left at their
+    defaults: they cannot be recovered, and an invented value is worse than an empty one -- the
+    session has already been given its task, so nothing here is ever sent to it again.
     """
     worktree = worktree_on_branch(branch)
     agent = agent_for_worktree(worktree, agents)
@@ -1138,6 +1171,11 @@ def cmd_expand(args: argparse.Namespace) -> int:
         for dep in unit.after:
             if dep not in reachable:
                 raise SystemExit(f"unit {unit.name!r} waits on {dep!r}, which is in no run")
+        for dep in unit.serialize:
+            if dep not in reachable:
+                raise SystemExit(
+                    f"unit {unit.name!r} serializes behind {dep!r}, which is in no run"
+                )
 
     assert_vendors_available(incoming)
     assert_saga_reachable(incoming)
@@ -1185,9 +1223,17 @@ def cmd_status(args: argparse.Namespace) -> int:
     print(head)
     print("-" * len(head))
     for u in r.units:
+        tail = u.task[:44]
+        if u.status == PENDING:
+            why = r.wait_reason(u)
+            if why:
+                # The wait is the interesting thing about a blocked unit -- its task is in the
+                # plan. Naming the kind of edge is the fix for a run that looked blocked for a
+                # reason that does not exist.
+                tail = f"[{why}]"
         print(
             f"{u.name:10s} {u.vendor:9s} {(u.model or '-'):14s} {(u.effort or '-'):7s} "
-            f"{u.status:9s} {live.get(u.name, '-'):9s} {u.task[:44]}"
+            f"{u.status:9s} {live.get(u.name, '-'):9s} {tail}"
         )
     return 0
 

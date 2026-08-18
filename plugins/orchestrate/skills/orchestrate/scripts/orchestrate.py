@@ -1454,8 +1454,10 @@ def cmd_check(args: argparse.Namespace) -> int:
 
     Read-only: no writes, no merges, no launches. The record is one JSON file and the truth is git
     plus herdr, and the two can drift -- a session started by hand leaves a branch with no row; a
-    unit marked done saved nothing. Five shapes of drift are reported, and finding any of them is
-    the non-zero exit; ``adopt`` is the repair for the first one.
+    unit marked done saved nothing; a unit marked running finished while nobody was looking. Six
+    shapes of drift are reported, and finding any of them is the non-zero exit; ``adopt`` is the
+    repair for the first one, and ``settle`` is the repair for the last -- it reads idle twice,
+    ``interval`` seconds apart, and only marks the unit done when both readings agree.
     """
     r = Run.load()
     findings: list[str] = []
@@ -1489,6 +1491,14 @@ def cmd_check(args: argparse.Namespace) -> int:
                 )
         elif state == "gone":
             findings.append(f"SESSION GONE {unit.name} -- marked running, but its session is gone")
+        elif state in {"idle", "done"} and produced_anything(unit, r):
+            # Idle with nothing committed is not drift -- a session is also idle between turns,
+            # thinking. Idle with commits is a unit that finished while the record still calls it
+            # running, and nothing else will notice until an operator asks why the run stopped.
+            findings.append(
+                f"LOOKS DONE {unit.name} -- marked running, but its session is {state} "
+                f"and its branch has commits"
+            )
 
     if not findings:
         print("the record agrees with the repository")

@@ -20,6 +20,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import textwrap
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -56,6 +57,39 @@ VENDOR_FLAGS: dict[str, dict[str, str]] = {
 # Where a tool has no launch flag for something, the session is told after it starts. Every agent
 # here takes slash commands, so tier is always settable -- through the command line where one
 # exists, and through the session where one does not.
+# What is worth knowing about a vendor that no other table has room for.
+#
+# Every one of these was learned by a run going wrong, and each was re-learned at least once because
+# it lived nowhere. `roster` prints them, so the interview reads how a vendor behaves rather than
+# recalling it -- which is the failure this is for: an orchestrator that guesses, plausibly, and is
+# only found out a phase later.
+VENDOR_NOTES: dict[str, str] = {
+    "qwen": (
+        "never reports interactive readiness, so its task is typed into the pane rather than "
+        "prompted, and a task over the typing limit is handed over as a file. `--yolo` is real and "
+        "absent from `--help`. NEVER pass `--safe-mode`: it reads like the opposite of `--yolo` and "
+        "disables every customization, including the extensions saga loads."
+    ),
+    "muse": (
+        "approval and the sandbox are ON by default. `--yolo` disables BOTH and is bypass, not "
+        "auto; the ladder is `--approval-mode untrusted|on-request|never`."
+    ),
+    "opencode": (
+        "effort is a variant -- Default, high, max -- chosen through `/variants`, which opens a "
+        "picker rather than taking an argument. A picker cannot be answered from a `setup` line in "
+        "an unwatched tab, so a dispatched unit runs at whatever variant was last selected. Offer "
+        "it on its model and leave the variant to the operator. Its model wants `provider/model`; a "
+        "bare name is rejected at startup."
+    ),
+    "agy": (
+        "its saga plugin is a symlink into the operator's own checkout under the Gemini config "
+        "directory, not a fetched cache -- so a search for directories named `saga` finds only the "
+        "saga state and concludes it has none."
+    ),
+    "codex": "saga ships as skills under the `saga` namespace with no command directory, and "
+    "prefixes with `$` rather than `/`.",
+}
+
 SETUP_HINT = "no {what} flag on the command line; set it with a slash command in `setup`"
 
 # Vendors that can be asked which models they have. The rest cannot answer, so their model name
@@ -968,6 +1002,25 @@ def cmd_roster(args: argparse.Namespace) -> int:
         print(f"{name:12s} {flags}")
     print(f"\n{len(rows)} usable here. A vendor showing 'none' still takes a tier — set it with a")
     print("slash command in the unit's `setup`, which is sent before the task.")
+
+    print("\nhow each of these behaves -- read this rather than recalling it:")
+    for name, _ in rows:
+        caps = saga_capabilities(name)
+        modes = VENDOR_PERMISSION.get(name, {})
+        print(f"\n  {name}")
+        print(f"    permission   auto={' '.join(modes.get('auto', [])) or '(vendor default)'}")
+        print(f"                 bypass={' '.join(modes.get('bypass', [])) or '(no escalation)'}")
+        if caps:
+            print(
+                f"    saga         {len(caps)} capabilities, invoked as {saga_command(name, 'plan')}"
+            )
+        else:
+            print("    saga         not installed -- a saga task here arrives as prose")
+        note = VENDOR_NOTES.get(name)
+        if note:
+            for i, line in enumerate(textwrap.wrap(note, 92)):
+                label = "note" if i == 0 else ""
+                print(f"    {label:12s} {line}")
 
     missing = [n for n in VENDOR_FLAGS if n not in {x for x, _ in rows}]
     if missing:

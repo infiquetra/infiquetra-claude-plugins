@@ -76,6 +76,12 @@ order — not a checklist, and stop as soon as the answers determine the table:
    on this machine**; it is an intersection, and both halves matter. One allow-list for the whole
    orchestration, **not one vendor per unit**.
 
+   **`roster` briefs you on every vendor it lists — read it rather than recalling how one works.**
+   Under each vendor it prints both permission modes as they will actually be passed, whether saga is
+   installed and how that vendor invokes it, and any behaviour that has caught a run out before. Each
+   of those notes exists because a run went wrong and the knowledge lived nowhere, so it was learned
+   twice.
+
    **Most vendors can be given a model and an effort.** Where the command line has no flag for it,
    the unit's `setup` carries a slash command instead.
 

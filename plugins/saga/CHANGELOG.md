@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.137.0] - 2026-08-17
+
+### Fixed
+
+- **The lifecycle now actually posts its issue-progress comment.** Phase 4.3 said only to render the
+  comment and "hand it to `mission-control`" — prose with no command in it — so nothing ran. Two
+  complete lifecycles merged and closed with **zero comments** on their issues, and GitHub's own
+  auto-close from the pull request stood in for the update the whole time, which is why the gap
+  survived: closure looked like the lifecycle working.
+
+  Everything else had already been built. The op is in the certificate allowlist as
+  `issue-progress-comment` (tier `additive`, `always_operator=False`, so it needs no prompt),
+  `board_progression` stamps an idempotency marker into the comment body, and `mission-control`'s
+  `issue comment` verb performs the write. The only missing piece was the instruction to run any of
+  it.
+
+  Routed through the same reconcile controller Phase 4.4 already uses rather than calling the verb
+  directly: `issue comment` is a plain POST whose own docstring puts idempotency on the caller, and a
+  retried or resumed unit would otherwise post the same phase comment twice. The controller's ledger
+  collapses a repeat tick to `skipped`.
+
 ## [0.136.0] - 2026-08-16
 
 ### Changed

@@ -654,8 +654,29 @@ python3 plugins/saga/scripts/issue_progress.py \
   --doc-review-override "<rationale if overridden>"
 ```
 
-Record durable learnings/decisions in the engineering journal as they surface. `/work` **renders and
-hands** the comment to `mission-control`; it does not file or mutate the issue itself.
+Then **post it**, through the same reconcile controller Phase 4.4 uses. Rendering is not posting, and
+"hand it to `mission-control`" was for a long time the only instruction here — so nothing ran, and no
+lifecycle ever updated its issue. The whole path already existed: the op is in the certificate
+allowlist as `issue-progress-comment` (tier `additive`, `always_operator=False`, so no prompt),
+`board_progression` stamps an idempotency marker into the body, and `mission-control`'s
+`issue comment` verb performs the write.
+
+```bash
+python3 plugins/saga/scripts/reconcile_controller.py reconcile \
+  --op issue-progress-comment --repo <owner/repo> --number <N> \
+  --payload "$(python3 -c 'import json,sys; print(json.dumps({"body": sys.stdin.read()}))' < <rendered-comment>)"
+```
+
+Route it through the controller rather than calling `mission-control issue comment` directly. The
+verb is a plain POST — its own docstring says the *caller* owns idempotency — and a unit that is
+retried or resumed would otherwise post the same phase comment twice. The controller's ledger
+collapses a repeat tick to `{"status":"skipped"}`, and orchestrate retries units by design.
+
+Read the record JSON the same way Phase 4.4 does: `written`/`skipped` is success, and `halt`/`gated`
+means fall back to the operator-prompted path rather than forcing the write.
+
+Record durable learnings/decisions in the engineering journal as they surface. `/work` renders the
+comment and drives it through the controller; it does not mutate the issue by any other route.
 
 ### 4.4 Autonomous board progression — the shared reconcile controller (post-merge, #344/#450)
 

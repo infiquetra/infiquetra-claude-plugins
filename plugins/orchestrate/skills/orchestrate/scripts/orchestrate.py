@@ -464,6 +464,22 @@ class Run:
         return "; ".join(parts)
 
 
+def resolve_task_file(pointer: str) -> Path:
+    """The spill file a ``task_file`` pointer names, refusing anything outside ``TASK_DIR``.
+
+    Symlinks are resolved before the comparison, so a link planted inside the directory does not
+    pass. The check runs on the resolved target rather than trusting the join: in Python an
+    absolute right-hand operand discards the left, so ``TASK_DIR / "/etc/passwd"`` is simply
+    ``/etc/passwd``. Every pointer passes through here, on save AND on load -- a run record
+    edited by hand never passed through name validation, and that is the case this check exists
+    for."""
+    base = TASK_DIR.resolve()
+    resolved = (TASK_DIR / pointer).resolve()
+    if base not in resolved.parents:
+        raise SystemExit(f"task file {pointer!r} resolves outside {TASK_DIR}: {resolved}")
+    return resolved
+
+
 def spill_unit(unit: Unit) -> dict[str, Any]:
     """One unit's row in the run record, with a long task spilled to its own file.
 
@@ -476,9 +492,10 @@ def spill_unit(unit: Unit) -> dict[str, Any]:
         data["task_file"] = None
         return data
     TASK_DIR.mkdir(parents=True, exist_ok=True)
-    (TASK_DIR / f"{unit.name}.task.md").write_text(unit.task)
+    pointer = f"{unit.name}.task.md"
+    resolve_task_file(pointer).write_text(unit.task)
     data["task"] = ""
-    data["task_file"] = f"{unit.name}.task.md"
+    data["task_file"] = pointer
     return data
 
 
@@ -487,15 +504,18 @@ def read_unit(raw: dict[str, Any]) -> Unit:
 
     A row without a pointer is an old-format record or a short task, and its inline task is
     taken as-is -- nothing is migrated at read time, so a run.json written by an older version
-    loads exactly as it lies. A pointer whose file is gone loads as an empty task with a note
-    naming the missing file: a run record must stay loadable even when its spill does not."""
+    loads exactly as it lies. A pointer whose file is genuinely missing loads as an empty task
+    with a note naming it: a run record must stay loadable even when its spill does not. Every
+    other read failure -- a directory standing where the file should be, a permission error, an
+    I/O error -- raises rather than being absorbed: absorbing it also drops the pointer, so the
+    next save would make the loss permanent and the unit could be launched with no instructions."""
     unit = Unit(**raw)
     if not unit.task_file:
         return unit
-    spill = TASK_DIR / unit.task_file
+    spill = resolve_task_file(unit.task_file)
     try:
         unit.task = spill.read_text()
-    except OSError:
+    except FileNotFoundError:
         unit.task = ""
         unit.task_file = None
         note = f"spilled task file is gone: {spill}"
@@ -640,9 +660,12 @@ def landed_by_merge(branch: str, r: Run) -> bool:
 def make_worktree(unit: Unit, r: Run, root: Path) -> None:
     """One worktree and one branch per unit. This is the whole isolation story.
 
-    A unit with dependencies branches from the last one it named, so a ``/work`` unit opens on top
-    of the ``/plan`` unit's output rather than on bare ``base``. Made at launch time, not at
-    ``start``, because the dependency's branch does not have its commits until it has run.
+    Every unit branches from the run branch, whatever it names in ``after``. A dependency's
+    output is visible to it because ``land`` merged that work onto the run branch, not because
+    of where this unit branches from -- that is why a phase is landed before the next one is
+    launched; the land is what puts the earlier phase's work where a dependent unit can see it.
+    Made at launch time, not at ``start``, so the branch opens on the run branch as it stands,
+    with everything landed so far already on it.
     """
     path = root.parent / f"orch-{unit.name}"
     # dash, not a second slash: git cannot hold `orch/<run>` as a branch and `orch/<run>/<unit>`
@@ -1196,16 +1219,19 @@ def announce_units(r: Run, names: Sequence[str]) -> list[dict[str, Any]]:
     """Write each named unit's just-passed boundary back to its issue's board card.
 
     Two writes per unit, both through ``reconcile_controller``: set the card's Status field to the
-    unit's mapped status, then post one progress comment naming what happened. The comment's
-    idempotency discriminator is stable across calls -- ``orchestrate:{run}:{unit}:{status}`` -- so
-    a second ``land`` re-driving the same boundary meets the key the first one wrote and skips,
-    rather than posting a duplicate comment.
+    unit's mapped status, then post one progress comment naming what happened. The comment is
+    attempted only when the status write converged: it says ``board status: {status}``, and a
+    comment describing a write that did not happen is worse than one not attempted -- the retry
+    door is ``announce``, whose idempotency keys make a repeat safe. The comment's idempotency
+    discriminator is stable across calls -- ``orchestrate:{run}:{unit}:{status}`` -- so a second
+    ``land`` re-driving the same boundary meets the key the first one wrote and skips, rather than
+    posting a duplicate comment.
 
     Returns one record per name. ``skipped`` records carry a reason and cost no writes: the run
     maps no issue for that unit, the ref is malformed, or no status applies. A run with no
     ``issues`` mapping at all returns nothing and writes nothing -- for it, this whole feature is a
-    no-op. A missing reconcile_controller is reported on stderr and skipped: writeback must never
-    fail a land."""
+    no-op. A missing reconcile_controller is reported on stderr and skipped: a missing saga is an
+    ordinary state of this machine, not a failure of the land."""
     if not r.issues:
         return []
 
@@ -1255,23 +1281,26 @@ def announce_units(r: Run, names: Sequence[str]) -> list[dict[str, Any]]:
 
     root = repo_root()
     for unit, repo, number, status in todo:
-        writes = [
-            _reconcile_call(
-                controller, "set-field-status", repo, number, status, payload=None, root=root
-            )
-        ]
-        discriminator = f"orchestrate:{r.run_id}:{unit.name}:{status}"
-        writes.append(
-            _reconcile_call(
-                controller,
-                "issue-progress-comment",
-                repo,
-                number,
-                discriminator,
-                payload={"body": announce_comment_body(r, unit, status)},
-                root=root,
-            )
+        status_write = _reconcile_call(
+            controller, "set-field-status", repo, number, status, payload=None, root=root
         )
+        writes = [status_write]
+        # One failure is a failure; two writes half-done is worse than one not attempted. A
+        # failed write leaves no ledger key, so the retry door -- `announce` -- re-drives both
+        # writes cleanly.
+        if _write_converged(status_write):
+            discriminator = f"orchestrate:{r.run_id}:{unit.name}:{status}"
+            writes.append(
+                _reconcile_call(
+                    controller,
+                    "issue-progress-comment",
+                    repo,
+                    number,
+                    discriminator,
+                    payload={"body": announce_comment_body(r, unit, status)},
+                    root=root,
+                )
+            )
         records.append(
             {"unit": unit.name, "issue": f"{repo}#{number}", "status": status, "writes": writes}
         )
@@ -1294,22 +1323,67 @@ def report_announcements(records: list[dict[str, Any]], *, verbose: bool = False
         print(f"  board writeback {name} -> {record.get('status', '?')}: {', '.join(parts)}")
 
 
+# Controller record statuses that mean the board converged: the write happened (``written``), had
+# already happened (``skipped`` on the idempotency key or the live re-read), or was re-driven
+# after outside drift (``corrected``). Anything else -- ``failed``, ``gated``, ``halt`` -- is a
+# write that did not happen, and the card still does not say what the run did.
+CONVERGED_STATUSES = ("written", "skipped", "corrected")
+
+
+def _write_converged(write: dict[str, Any]) -> bool:
+    """True when one controller record means its board write actually converged."""
+    return str(write.get("status")) in CONVERGED_STATUSES
+
+
+def _failed_writebacks(records: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The writeback records whose writes did not converge.
+
+    A ``skipped`` record is not a failure -- no issue mapped, a malformed ref, no saga on this
+    machine: those are designed no-ops. A record with even one unconverged write is."""
+    return [
+        record
+        for record in records
+        if "skipped" not in record
+        and any(not _write_converged(write) for write in record.get("writes", []))
+    ]
+
+
+def _report_failed_writebacks(failures: Sequence[dict[str, Any]]) -> None:
+    """Name every unit whose merge landed but whose board writeback did not converge.
+
+    A failed writeback never undoes or blocks a merge -- the code on the run branch is right;
+    only the claim that the board was updated is wrong. The retry door is named with the unit:
+    ``announce`` is idempotency-keyed, so a repeat is safe."""
+    for record in failures:
+        name = str(record.get("unit", "?"))
+        issue = str(record.get("issue", "?"))
+        print(
+            f"BOARD WRITEBACK FAILED: {name} ({issue}) -- the merge landed, but its card was "
+            f"not updated; retry with `orchestrate.py announce {name}`"
+        )
+
+
 # ----------------------------------------------------------------- commands
 
 
 def cmd_start(args: argparse.Namespace) -> int:
     plan = json.loads(Path(args.plan).read_text())
+    units = [Unit(**u) for u in plan["units"]]
+    assert_safe_unit_names(units)
     base = args.base or run(["git", "rev-parse", "HEAD"]).stdout.strip()
     r = Run(
         run_id=plan["run_id"],
         source=plan.get("source", ""),
         base=base,
-        units=[Unit(**u) for u in plan["units"]],
+        units=units,
         backend=plan.get("backend", "inline"),
         engine_prefs=plan.get("engine_prefs", {}),
         issues=plan.get("issues", {}),
         status_map=plan.get("status_map", {}),
     )
+    # Before anything is written or any worktree is created: a typo in an ordering edge is a
+    # unit that is never eligible, forever, and `start` is the only moment it fails cheaply.
+    assert_dependencies_reachable(r.units)
     assert_vendors_available(r.units)
     assert_saga_reachable(r.units)
     r.branch = f"orch/{r.run_id}"
@@ -1495,6 +1569,28 @@ def cmd_roster(args: argparse.Namespace) -> int:
     return 0
 
 
+def assert_safe_unit_names(units: list[Unit]) -> None:
+    """Refuse any unit name that is not one safe path component.
+
+    A spilled task is written to ``TASK_DIR / f"{name}.task.md"``, and in Python an absolute
+    right-hand operand discards the left when joined, while ``..`` traverses -- unchecked, a name
+    is a write anywhere on disk, and the pointer stored from it a read back from anywhere. Names
+    are therefore refused here, where they enter a run, so a bad plan fails before anything is
+    written and before any worktree exists. ``resolve_task_file`` re-checks every pointer
+    independently: a run record edited by hand never passed through this function.
+    """
+    for unit in units:
+        name = unit.name
+        if not name:
+            raise SystemExit("a unit name must not be empty")
+        if Path(name).is_absolute():
+            raise SystemExit(f"unit name {name!r} must not be an absolute path")
+        if "/" in name or "\\" in name:
+            raise SystemExit(f"unit name {name!r} must not contain a path separator")
+        if name in (".", ".."):
+            raise SystemExit(f"unit name {name!r} is a path traversal, not a unit name")
+
+
 def assert_saga_reachable(units: list[Unit]) -> None:
     """Refuse a saga task aimed at a vendor with no saga installed.
 
@@ -1533,6 +1629,26 @@ def assert_vendors_available(units: list[Unit]) -> None:
         )
 
 
+def assert_dependencies_reachable(incoming: list[Unit], existing: set[str] | None = None) -> None:
+    """Reject an ``after`` or ``serialize`` name that is in no run.
+
+    A typo in an ordering edge otherwise produces a unit that is never eligible, forever --
+    ``eligible`` waits on a name that does not exist, and ``status`` reports the wait -- and the
+    failure is silent at the only moment it could have been caught cheaply. A name may point at a
+    sibling in ``incoming`` itself: units routinely depend on the units they were planned with.
+    """
+    reachable = {u.name for u in incoming} | (existing or set())
+    for unit in incoming:
+        for dep in unit.after:
+            if dep not in reachable:
+                raise SystemExit(f"unit {unit.name!r} waits on {dep!r}, which is in no run")
+        for dep in unit.serialize:
+            if dep not in reachable:
+                raise SystemExit(
+                    f"unit {unit.name!r} serializes behind {dep!r}, which is in no run"
+                )
+
+
 def cmd_expand(args: argparse.Namespace) -> int:
     """Add units to a run already in flight.
 
@@ -1545,6 +1661,7 @@ def cmd_expand(args: argparse.Namespace) -> int:
     r = Run.load()
     added = json.loads(Path(args.plan).read_text())
     incoming = [Unit(**u) for u in added["units"]]
+    assert_safe_unit_names(incoming)
 
     existing = {u.name for u in r.units}
     seen: set[str] = set()
@@ -1552,16 +1669,7 @@ def cmd_expand(args: argparse.Namespace) -> int:
         if unit.name in existing or unit.name in seen:
             raise SystemExit(f"unit {unit.name!r} is already in this run; give the new one a name")
         seen.add(unit.name)
-    reachable = existing | seen
-    for unit in incoming:
-        for dep in unit.after:
-            if dep not in reachable:
-                raise SystemExit(f"unit {unit.name!r} waits on {dep!r}, which is in no run")
-        for dep in unit.serialize:
-            if dep not in reachable:
-                raise SystemExit(
-                    f"unit {unit.name!r} serializes behind {dep!r}, which is in no run"
-                )
+    assert_dependencies_reachable(incoming, existing)
 
     assert_vendors_available(incoming)
     assert_saga_reachable(incoming)
@@ -1760,6 +1868,18 @@ def cmd_land(args: argparse.Namespace) -> int:
     invocation deliberately kept stays kept until the operator's own ``clean`` sweep. Nothing
     else is touched, and no branch is ever deleted here: that stays an explicit
     ``clean --branches``.
+
+    Each unit is announced the moment its own merge lands, before the next merge is attempted: a
+    conflict on a later unit returns out of the loop, and anything still waiting for the whole
+    batch would never be announced at all -- the next land sees those units already merged and
+    announces nothing either.
+
+    The exit status is deliberate, and three-way. 0: every merge and every board write converged.
+    1: the land itself could not finish -- a dirty tree, or a merge conflict, named above. 2:
+    every merge landed, but at least one board writeback did not converge; the units are named
+    above with their retry. A failed writeback never undoes or blocks a merge: the code on the
+    run branch is right, and only the claim that the board was updated is wrong -- a caller
+    scripting this has to be able to tell the two failures apart.
     """
     r = Run.load()
     if not r.branch:
@@ -1772,7 +1892,11 @@ def cmd_land(args: argparse.Namespace) -> int:
     on = run(["git", "rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()
     run(["git", "checkout", r.branch])
     landed, empty, already, held = [], [], [], []
+    # The bare names, kept apart from ``landed``'s display strings: ``--clean`` reaps exactly the
+    # units this invocation merged, and a name recovered by stripping " (+3)" off a display string
+    # would break on the first unit name containing a bracket.
     landed_names: list[str] = []
+    writeback_failures: list[dict[str, Any]] = []
     try:
         for unit in r.units:
             if unit.status != DONE or not unit.branch:
@@ -1790,9 +1914,19 @@ def cmd_land(args: argparse.Namespace) -> int:
             if merge.returncode != 0:
                 run(["git", "merge", "--abort"], check=False)
                 print(f"  CONFLICT landing {unit.name}; resolve it on {r.branch} yourself")
+                # Name any writeback that already failed before the conflict buries the return.
+                _report_failed_writebacks(writeback_failures)
                 return 1
             landed.append(f"{unit.name} (+{ahead})")
             landed_names.append(unit.name)
+            # The boundary just passed: write it back to the board here, where it happened, rather
+            # than as a separate operator step -- and now, before the next merge is attempted, so
+            # a later conflict cannot discard this unit's announcement. A no-op for a run with no
+            # `issues` mapping; a missing saga says so on stderr. Re-runs dedup on the
+            # controller's idempotency keys.
+            records = announce_units(r, [unit.name])
+            report_announcements(records)
+            writeback_failures.extend(_failed_writebacks(records))
     finally:
         run(["git", "checkout", on], check=False)
 
@@ -1809,23 +1943,20 @@ def cmd_land(args: argparse.Namespace) -> int:
         )
     if empty:
         print(f"COMMITTED NOTHING: {', '.join(empty)} -- those sessions finished without saving")
-    # The boundary just passed: write it back to the board here, where it happened, rather than as a
-    # separate operator step. A no-op for a run with no `issues` mapping; a missing saga says so on
-    # stderr and never fails the land. Re-runs dedup on the controller's idempotency keys.
-    if landed_names:
-        report_announcements(announce_units(r, landed_names))
+    _report_failed_writebacks(writeback_failures)
     # ``getattr``: a caller that built its own Namespace before this flag existed has no
     # ``clean`` attribute, and a land that worked yesterday must keep working today. Reaping comes
-    # after the announcement, not before: it removes the worktrees the announcement reads from.
-    # The sweep names only the units THIS land merged: reaping the whole run here also closed the
-    # worktrees an earlier invocation deliberately kept.
+    # after the announcement, not before: it removes the worktrees the announcement reads from. A
+    # failed writeback does not hold the reap back: reaping turns on the merge, and the merge
+    # landed. The sweep names only the units THIS land merged: reaping the whole run here also
+    # closed the worktrees an earlier invocation deliberately kept.
     if getattr(args, "clean", False):
         closed, _ = reap(r, merged_only=True, only=landed_names)
         if closed:
             print(f"reaped: {', '.join(closed)}")
         else:
             print("nothing to reap: this land merged nothing")
-    return 0
+    return 2 if writeback_failures else 0
 
 
 def cmd_announce(args: argparse.Namespace) -> int:
@@ -2048,6 +2179,148 @@ def cmd_check(args: argparse.Namespace) -> int:
     return 1
 
 
+def resolve_ref(ref: str) -> str | None:
+    """The commit a ref names, or None when nothing resolves -- gone, or never existed."""
+    if not ref:
+        return None
+    got = run(["git", "rev-parse", "--verify", "--quiet", ref], check=False)
+    if got.returncode != 0:
+        return None
+    return got.stdout.strip() or None
+
+
+def merge_base(ref_a: str, ref_b: str) -> str | None:
+    """The newest commit common to both refs, or None when git finds none."""
+    got = run(["git", "merge-base", ref_a, ref_b], check=False)
+    if got.returncode != 0:
+        return None
+    return got.stdout.strip() or None
+
+
+def landing_merge(branch: str, cmp_ref: str) -> str | None:
+    """The merge commit that landed ``branch`` onto ``cmp_ref``, or None when it never landed.
+
+    ``land`` merges ``--no-ff`` with the run branch checked out, so a landed unit branch is the
+    second parent of the merge that brought it in. Finding that merge is what lets a landed unit
+    still show its change -- the merge base of the merge's parents is where the unit branched --
+    instead of an empty diff that reads as "this unit changed nothing"."""
+    tip = resolve_ref(branch)
+    if tip is None:
+        return None
+    log = run(["git", "log", "--first-parent", "--merges", "--format=%H %P", cmp_ref], check=False)
+    if log.returncode != 0:
+        return None
+    for line in log.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 3 and parts[2] == tip:
+            return parts[0]
+    return None
+
+
+def diff_against(r: Run) -> str | None:
+    """The ref a unit's change is measured against.
+
+    The run branch when there is one; the run base for a run predating it -- those units all
+    branched from the base, so it is still the honest comparison. None when neither resolves,
+    which leaves nothing to diff against."""
+    for ref in (r.branch, r.base):
+        if resolve_ref(ref) is not None:
+            return ref
+    return None
+
+
+def print_git_diff(base: str, branch: str, *, stat: bool) -> None:
+    """The git diff itself: a full patch, or the stat summary with ``stat``."""
+    argv = ["git", "diff"]
+    if stat:
+        argv.append("--stat")
+    argv.append(f"{base}..{branch}")
+    body = run(argv).stdout.strip("\n")
+    if body:
+        print(body)
+
+
+def show_unit_diff(unit: Unit, cmp_ref: str, *, stat: bool) -> None:
+    """One unit's change -- merge base to branch -- or words for why there is nothing to show.
+
+    An empty diff is never printed: it reads as "this unit changed nothing", and a branch
+    measures empty in two ways that are both not nothing -- its work already landed on the run
+    branch, or the session never committed at all. Each gets words of its own."""
+    if not unit.branch:
+        print(f"{unit.name}: has no branch -- it was never launched")
+        return
+    branch = unit.branch
+    if resolve_ref(branch) is None:
+        print(f"{unit.name}: branch {branch} no longer resolves -- nothing to diff")
+        return
+    base = merge_base(cmp_ref, branch)
+    if base is None:
+        print(f"{unit.name}: no commit common to {cmp_ref} and {branch} -- cannot compare")
+        return
+    own = run(["git", "rev-list", "--count", f"{base}..{branch}"], check=False)
+    if own.returncode == 0 and own.stdout.strip() not in ("", "0"):
+        print(f"{unit.name}: diff {base[:8]}..{branch}")
+        print(
+            f"merge base {base[:8]} of {cmp_ref} and {branch} -- work landed on {cmp_ref} "
+            "by siblings does not appear in this diff"
+        )
+        print_git_diff(base, branch, stat=stat)
+        return
+    # Nothing of its own against the comparison ref. That is either "already landed" or "never
+    # committed", and the run branch says which: a landed branch is the second parent of the
+    # merge that brought it in.
+    merged = landing_merge(branch, cmp_ref)
+    if merged is None:
+        print(f"{unit.name}: branch {branch} has no commits of its own")
+        return
+    branched = merge_base(f"{merged}^1", branch)
+    if branched is None:
+        print(f"{unit.name}: landed in {merged[:8]}, but its branch point no longer resolves")
+        return
+    print(
+        f"{unit.name}: landed on {cmp_ref} in merge {merged[:8]} -- diff {branched[:8]}..{branch}"
+    )
+    print(f"merge base {branched[:8]} -- where {branch} branched before it was merged")
+    print_git_diff(branched, branch, stat=stat)
+
+
+def diff_summary(r: Run, cmp_ref: str) -> int:
+    """The shape of the whole run: one stat summary per unit that has a branch."""
+    branched = [u for u in r.units if u.branch]
+    if not branched:
+        print("no unit has a branch yet -- nothing to diff")
+        return 0
+    print(f"run {r.run_id} against {cmp_ref} -- each unit's change, merge base to branch")
+    for unit in branched:
+        print()
+        show_unit_diff(unit, cmp_ref, stat=True)
+    return 0
+
+
+def cmd_diff(args: argparse.Namespace) -> int:
+    """Show what a unit actually changed: the diff from the merge base to its branch.
+
+    ``run-branch..unit-branch`` is the obvious comparison and the wrong one for this question:
+    every unit in a phase branches from the same base, so the moment a sibling lands, that diff
+    reports the sibling's additions as this unit's deletions -- in one run it showed a 391-line
+    test file as deleted by a unit that had never touched it. The merge base of the run branch
+    and the unit branch is where the unit branched; from there to the branch is its change, and
+    nobody else's, whoever else has landed since.
+
+    With no unit name, prints the stat summary of every unit that has a branch -- the shape of
+    the whole run in one read.
+    """
+    r = Run.load()
+    cmp_ref = diff_against(r)
+    if cmp_ref is None:
+        print("neither the run branch nor the run base resolves -- nothing to compare against")
+        return 1
+    if not args.unit:
+        return diff_summary(r, cmp_ref)
+    show_unit_diff(r.unit(args.unit), cmp_ref, stat=args.stat)
+    return 0
+
+
 def cmd_adopt(args: argparse.Namespace) -> int:
     """Put stranded unit branches back into the run record.
 
@@ -2159,6 +2432,19 @@ def main(argv: list[str] | None = None) -> int:
 
     s = sub.add_parser("check", help="report where the run record and the repository disagree")
     s.set_defaults(func=cmd_check)
+
+    s = sub.add_parser(
+        "diff", help="what a unit actually changed: merge base to its branch, nothing else"
+    )
+    s.add_argument(
+        "unit",
+        nargs="?",
+        help="unit to show; omit for a --stat summary of every unit with a branch",
+    )
+    s.add_argument(
+        "--stat", action="store_true", help="print the stat summary instead of the full patch"
+    )
+    s.set_defaults(func=cmd_diff)
 
     s = sub.add_parser("adopt", help="write units for run branches the table does not know")
     s.add_argument(

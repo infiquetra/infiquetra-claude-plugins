@@ -494,11 +494,59 @@ def produced_anything(dep: Unit, r: Run) -> bool:
     base commit there is nothing there to work on. Launching anyway does not fail loudly -- the
     session finds no plan, no diff, no artifact, and writes something plausible about nothing. That
     happened: a doc-review unit reviewed a plan document that was never written.
+
+    "Commit something" means what THIS unit did, and it is read two ways. First, its own commits
+    still on its branch: counted from the merge base of the run branch and the unit's branch --
+    the point the unit was cut from -- so inherited work does not count. Counting from the run's
+    original base did exactly that: a unit created after the first land is cut from a run branch
+    that already carries the landed commits, so it counted as productive the moment it existed.
+    Measured live on one run: four units with zero commits of their own each reported six. The
+    consequences were all live: `check` could never say NO COMMITS after the first land, its
+    LOOKS DONE fired on any post-land unit merely idle between turns, and `go`'s dependency gate
+    -- which exists because a doc-review once reviewed a plan that was never written -- could
+    never catch an empty dependency again. Second, a unit whose commits already landed still
+    produced: see ``landed_by_merge``.
     """
     if not dep.branch:
         return False
-    got = run(["git", "rev-list", "--count", f"{r.base}..{dep.branch}"], check=False)
-    return got.returncode == 0 and got.stdout.strip() not in ("", "0")
+    return branch_produced_anything(dep.branch, r)
+
+
+def branch_produced_anything(branch: str, r: Run) -> bool:
+    """The branch-level reading behind ``produced_anything`` -- see its docstring for the why."""
+    base = r.branch or "HEAD"
+    mb = run(["git", "merge-base", base, branch], check=False)
+    if mb.returncode != 0:
+        return False
+    got = run(["git", "rev-list", "--count", f"{mb.stdout.strip()}..{branch}"], check=False)
+    if got.returncode == 0 and got.stdout.strip() not in ("", "0"):
+        return True
+    return landed_by_merge(branch, r)
+
+
+def landed_by_merge(branch: str, r: Run) -> bool:
+    """Is this branch's tip the second parent of a merge on the run branch?
+
+    That shape, and only that shape, is a unit whose work ``land`` brought home: it merges with
+    --no-ff, so the unit's tip comes in as the merge's second parent. A branch that never
+    committed sits at an old tip of the run branch instead -- on its first-parent line, never a
+    second parent -- and this reading is what keeps the two apart once the merge base of a
+    landed branch collapses onto its own tip and can no longer say what the unit did.
+    """
+    if not r.branch:
+        return False
+    tip = run(["git", "rev-parse", "--verify", "--quiet", branch], check=False)
+    if tip.returncode != 0 or not tip.stdout.strip():
+        return False
+    merges = run(["git", "log", "--merges", "--format=%P", f"{r.base}..{r.branch}"], check=False)
+    if merges.returncode != 0:
+        return False
+    sha = tip.stdout.strip()
+    for parents in merges.stdout.splitlines():
+        pair = parents.split()
+        if len(pair) >= 2 and pair[1] == sha:
+            return True
+    return False
 
 
 def make_worktree(unit: Unit, r: Run, root: Path) -> None:
@@ -1365,6 +1413,10 @@ def cmd_land(args: argparse.Namespace) -> int:
     A unit that finished without committing anything is named here rather than passed over. That is
     the failure worth catching -- not a missing merge, but a session that produced nothing and
     reported itself done.
+
+    With ``--clean``, a successful land then reaps on the spot -- exactly the units
+    ``clean --merged`` would reap: DONE, with every commit on the run branch. Nothing else is
+    touched, and no branch is ever deleted here: that stays an explicit ``clean --branches``.
     """
     r = Run.load()
     if not r.branch:
@@ -1412,26 +1464,47 @@ def cmd_land(args: argparse.Namespace) -> int:
         )
     if empty:
         print(f"COMMITTED NOTHING: {', '.join(empty)} -- those sessions finished without saving")
+    # ``getattr``: a caller that built its own Namespace before this flag existed has no
+    # ``clean`` attribute, and a land that worked yesterday must keep working today.
+    if getattr(args, "clean", False):
+        closed, _ = reap(r, merged_only=True)
+        if closed:
+            print(f"reaped: {', '.join(closed)}")
+        else:
+            print("nothing to reap: no unit is done with its work on the run branch")
     return 0
 
 
-def landed(branch: str, r: Run) -> bool:
-    """Is every commit on this branch already on the branch this run lands onto?
+def landed(branch: str, r: Run) -> bool | None:
+    """Where this branch's work stands relative to the branch this run lands onto.
+
+    Three answers, and the third is the one that used to be missing:
+
+    ``True`` -- the branch has commits, and every one of them is on the run branch: landed.
+    ``False`` -- the branch has commits the run branch does not have, or git cannot answer.
+    ``None`` -- the branch has no commits of its own at all: nothing to land.
+
+    ``None`` is NOT ``True``. A session that has not committed yet sits at exactly the commit it
+    was cut from, and "zero commits ahead of the run branch" describes it perfectly -- which is
+    also exactly what a merged branch looks like. Answering both with one yes is how
+    `clean --merged` once closed the tabs and removed the worktrees of units that were still
+    working, and destroyed their work. "Commits of its own" is the same question
+    ``produced_anything`` answers, and gets the same reading: the unit's own commits from the
+    merge base, or the merge that landed them.
 
     Measured against the run branch, not the operator's tree. Units land on the run branch as each
     phase finishes, and the operator's tree sees none of it until `collect`, once, at the very end.
-    Measured against HEAD this was therefore false for every unit for the whole run -- so
-    `clean --merged`, the only mode that is safe to run unattended, closed nothing at exactly the
-    time sessions pile up. The only way to reap mid-run was bare `clean`, which closes everything
-    regardless of whether its work survived, including the worktree that is the evidence a unit
-    failed.
 
     A run with no run branch predates `land`. There is nothing else to measure against, so the
     operator's tree it is.
     """
     base = r.branch or "HEAD"
     ahead = run(["git", "rev-list", "--count", f"{base}..{branch}"], check=False)
-    return ahead.returncode == 0 and ahead.stdout.strip() == "0"
+    if ahead.returncode != 0 or ahead.stdout.strip() not in ("", "0"):
+        return False
+    if branch_produced_anything(branch, r):
+        return True
+    return None
 
 
 def cmd_collect(args: argparse.Namespace) -> int:
@@ -1461,37 +1534,72 @@ def cmd_collect(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_clean(args: argparse.Namespace) -> int:
-    """Close tabs and remove worktrees.
+def reapable(unit: Unit, r: Run) -> bool:
+    """May ``--merged`` reap this unit: it is DONE, and everything it committed is landed.
 
-    ``--merged`` restricts it to units whose work is already on the run branch, which is the only
-    case where closing is unambiguously free: the work survived the unit, so the tab and the worktree
-    are pure overhead. Everything else is left alone, because an unlanded unit's worktree is the
-    evidence you look at when it went wrong -- and that is the whole reason this plugin keeps no
-    other record.
-
-    Run it after every ``land``, not once at the end. A phase's sessions are finished the moment
-    their work is on the run branch, and leaving them open for the rest of the run is how a
-    workspace ends up with a dozen idle tabs nobody can tell apart.
+    Both halves are load-bearing. The status gate keeps reaping away from anything still working:
+    zero commits ahead of the run branch is also exactly what a unit that has not committed yet
+    looks like, and that reading once cost four live units their worktrees. The commit gate keeps
+    reaping away from a DONE unit that saved nothing: its worktree is the evidence the session
+    failed, and this plugin keeps no other record.
     """
-    r = Run.load()
+    return unit.status == DONE and bool(unit.branch) and landed(unit.branch, r) is True
+
+
+def reap(r: Run, *, merged_only: bool, branches: bool = False) -> tuple[list[str], list[str]]:
+    """Close tabs and remove worktrees; return ``(closed, kept)`` by unit name.
+
+    ``merged_only`` applies the ``--merged`` rule -- see ``reapable`` -- and keeps everything
+    else. Without it, every unit is closed regardless of its state: a last resort, run with the
+    table in front of you, because it also discards the worktree that is the evidence a unit
+    failed.
+
+    ``branches`` deletes the branches of the units it closes. Reaping itself never does: a branch
+    is cheap, and it is the last copy of a failed unit's work. Deleting one stays an explicit
+    ``clean --branches``; ``land --clean`` never passes this.
+    """
     kept, closed = [], []
     for unit in r.units:
-        if args.merged and not (unit.branch and landed(unit.branch, r)):
+        if merged_only and not reapable(unit, r):
             kept.append(unit.name)
             continue
         if unit.tab_id:
             run(["herdr", "tab", "close", unit.tab_id], check=False)
         if unit.worktree and Path(unit.worktree).exists():
             run(["git", "worktree", "remove", "--force", unit.worktree], check=False)
-        if args.branches and unit.branch:
+        if branches and unit.branch:
             run(["git", "branch", "-D", unit.branch], check=False)
         closed.append(unit.name)
+    return closed, kept
+
+
+def cmd_clean(args: argparse.Namespace) -> int:
+    """Close tabs and remove worktrees.
+
+    ``--merged`` reaps a unit only when its status is DONE and every commit it made is on the run
+    branch. A RUNNING or PENDING unit is never touched, whatever its commit count -- zero commits
+    ahead is also exactly what a unit looks like that has not committed yet, and reaping it
+    destroys work still in flight. A DONE unit that committed nothing keeps its worktree too:
+    that worktree is the evidence the session saved nothing, and this plugin keeps no other
+    record.
+
+    Without ``--merged``, every unit is closed regardless of its state. That is a last resort,
+    not a routine: run it with the table in front of you.
+
+    Branches are deleted only with ``--branches``: a branch is cheap, and it is the last copy of
+    a failed unit's work.
+
+    Run it after every ``land``, not once at the end. A phase's sessions are finished the moment
+    their work is on the run branch, and leaving them open for the rest of the run is how a
+    workspace ends up with a dozen idle tabs nobody can tell apart.
+    """
+    r = Run.load()
+    closed, kept = reap(r, merged_only=args.merged, branches=args.branches)
     if args.all:
         shutil.rmtree(RUN_FILE.parent, ignore_errors=True)
     print(f"closed: {', '.join(closed) or 'nothing'}")
     if kept:
-        print(f"kept (not merged, so still your evidence): {', '.join(kept)}")
+        print(f"kept (not done, or its work not on the run branch): {', '.join(kept)}")
     return 0
 
 
@@ -1639,13 +1747,22 @@ def main(argv: list[str] | None = None) -> int:
     s.set_defaults(func=cmd_wait)
 
     s = sub.add_parser("land", help="merge finished units onto the run branch")
+    s.add_argument(
+        "--clean",
+        action="store_true",
+        help="after a successful land, reap the units the merged rule allows; never their branches",
+    )
     s.set_defaults(func=cmd_land)
 
     s = sub.add_parser("collect", help="merge the run branch into your tree")
     s.set_defaults(func=cmd_collect)
 
     s = sub.add_parser("clean", help="close tabs and remove worktrees")
-    s.add_argument("--merged", action="store_true", help="only units whose branch is in HEAD")
+    s.add_argument(
+        "--merged",
+        action="store_true",
+        help="only DONE units whose commits are all on the run branch",
+    )
     s.add_argument("--branches", action="store_true", help="delete the unit branches too")
     s.add_argument("--all", action="store_true", help="delete the run file too")
     s.set_defaults(func=cmd_clean)

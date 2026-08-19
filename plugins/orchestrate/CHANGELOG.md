@@ -1,5 +1,98 @@
 # Changelog
 
+## [1.18.0] - 2026-08-19
+
+Sixteen fixes found by watching real runs rather than by anything erroring. The unifying shape:
+work reported as done that was never attempted, and predicates that measured the wrong thing.
+
+### Fixed
+
+- **`clean --merged` reaped units that were still working.** `landed()` counted commits ahead of the
+  run branch and answered yes at zero -- which is also exactly what a unit that has not committed
+  *yet* looks like -- and `cmd_clean` never consulted `unit.status`. It closed the tabs and removed
+  the worktrees of two builds and two reviews that were mid-flight. `landed()` now distinguishes
+  three states, and nothing-to-land is no longer the same answer as landed; `--merged` requires
+  `DONE` as well. `land --clean` reaps only the units that invocation merged, so work an earlier
+  invocation deliberately kept stays kept.
+
+- **`settle` treated a single idle sample as finished, and `wait` did the same.** An agent is also
+  idle *between* turns. One sample marked a unit done while it was still working: it had two commits
+  at the time and finished with ten. Both now require agreeing observations, `--interval` apart.
+  `wait` has no single-sample escape hatch: `--once` is gone and a confirmation count below two is
+  rejected, because a deliberate single-sample wait is the defect with a flag on it.
+
+- **`wait`'s fallback path leaked processes and ignored its own timeout.** It discarded the child's
+  exit status and restarted with a fresh full budget -- `wait --timeout 1` ran for 1.505 seconds and
+  launched 31 child processes. It now enforces one monotonic deadline across restarts. The fallback
+  also waits on `blocked`, which it never did: an agent stuck on a question was invisible until the
+  helper timed out, thirty minutes at the default.
+
+- **Launcher flags were emitted where the vendor sees them.** `launch_args` was appended after the
+  vendor token, so `--workspace` reached the agent as a native argument and a live session landed in
+  the caller's workspace. The two positions turn out to be mutually exclusive -- `--workspace` works
+  only before the vendor token, `--company-account` only after it -- so workspace placement is now a
+  first-class `workspace` field that the plugin positions itself. `launch_args` keeps its position
+  and meaning unchanged.
+
+- **`produced_anything` counted other units' commits.** It measured from the run's original base, so
+  any unit created after the first land inherited the landed commits and read as productive before
+  its session wrote a line. That silently disabled the `NO COMMITS` warning and defeated the
+  dependency gate that exists because a doc-review unit once reviewed a plan document that was never
+  written.
+
+- **A land that hit a conflict discarded the announcements for merges that had already succeeded.**
+  Units are announced the moment their own merge lands, so a later conflict cannot un-announce an
+  earlier success.
+
+- **A failed board writeback reported a successful land.** The comment was attempted even when the
+  status write had failed, and `land` returned success either way -- and since the unit was by then
+  merged, no later land retried. `land`'s exit status is now three-way, so a caller can tell a land
+  that failed to merge from a land whose merges worked but whose writeback did not.
+
+- **A unit name could write outside the task directory.** The spill path was built straight from the
+  name, so an absolute name discarded the directory and `..` traversed out of it. Names are
+  validated as a single path component, and every task file must resolve beneath the task directory
+  on save and on load. One over-broad `except OSError` is narrowed to `FileNotFoundError`: a
+  directory standing where the spill file should be was absorbed as "the file is gone", and that
+  path also cleared the pointer, making the loss permanent.
+
+- **A legacy run with no stored run branch stopped recognising its own merged work**, so `check`
+  reported `NO COMMITS` against work that had landed and `clean` would not reap it.
+
+- **A land finished by hand is no longer guessed at.** A conflicted land tells the operator to
+  finish with `git merge --no-ff`, which produces the shape every helper reads correctly. Inferring
+  a fast-forward land from a recorded branch point was tried and reverted: it let an empty unit that
+  merged the advanced run branch read as landed, which reached `clean --merged` and would have
+  released its dependents. The conservative false negative -- a hand-finished fast-forward reads as
+  empty -- is the deliberate tradeoff.
+
+### Added
+
+- **The lifecycle writes back to GitHub.** A run may carry an `issues` mapping, and `land` moves the
+  card and posts one progress comment at each phase boundary, through saga's reconcile controller so
+  the existing allowlist and idempotency keys apply. A run without the mapping writes nothing, and a
+  missing saga never fails a land. `announce` is the operator's door for a boundary land did not
+  cover. This closes a gap where nine phases across six vendors left a card on `Idea`, still
+  labelled `needs-plan`, with zero comments.
+
+- **`serialize`, an ordering edge that claims no output.** `after` means "I build on what you
+  produce"; `serialize` means "do not run beside me" without asserting a dependency that does not
+  exist. Both gate launch identically and `status` names which kind of wait holds a unit. The
+  command and skill document when to use each, and a contract test fails if either forgets.
+
+- **`diff`**, which shows what a unit itself changed, measured from its merge base and naming that
+  base in the output. Diffing a unit against the run branch reports its siblings' work as its own
+  deletions -- in one run it showed a 391-line test file as deleted by a unit that never touched it.
+
+- **`check` reports `LOOKS DONE`** -- a unit the record calls running whose session is idle and whose
+  branch has commits. That is the drift that quietly stalls a run.
+
+- **`start` validates dependency names**, which only `expand` did. A typo in the first plan produced
+  a unit that was never eligible, forever.
+
+- **Long unit tasks spill out of the run record.** On a real 75-unit run, 83% of a 268 KB `run.json`
+  was task prose, rewritten on every save and unreadable by anyone. Callers see no difference.
+
 ## [1.17.0] - 2026-08-17
 
 ### Added

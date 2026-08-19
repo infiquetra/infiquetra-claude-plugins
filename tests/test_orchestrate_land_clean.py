@@ -16,6 +16,18 @@ its LOOKS DONE fired on any post-land unit merely idle between turns, and ``go``
 could never catch an empty dependency. It now measures the unit's OWN commits: from the merge
 base of the run branch and the unit's branch, plus the --no-ff merge that landed them.
 
+Same class, third verse: a run predating the run branch landed its units straight onto the
+operator's tree, and ``landed_by_merge`` refused to read that shape without a run branch -- so
+a legacy unit whose work WAS merged read as produced nothing: ``check`` shouted NO COMMITS at
+landed work, and ``clean --merged`` would not reap it. The second-parent shape is just as
+readable on HEAD; but the fix is the shape, not a blanket yes -- a legacy branch that never
+committed is still nothing to land.
+
+Same class, fourth verse: ``land --clean`` reaped every unit the rule allowed, not only the
+units its own invocation merged -- so a land that merged nothing still swept away work an
+earlier invocation deliberately kept. Reaping is now a consequence of what THIS land did; the
+operator's own ``clean --merged`` remains the deliberate whole-run sweep.
+
 Everything here runs against a real temporary git repository. Merging and reaping are the
 behaviour under test, so a fake that reports them proves nothing.
 """
@@ -136,6 +148,34 @@ def _land_sibling(repo: Path) -> None:
     _git(repo, "checkout", "orch/r1")
     _git(repo, "merge", "--no-ff", "--no-edit", "orch/r1-alpha")
     _git(repo, "checkout", "main")
+
+
+def _legacy_worktree(repo: Path, name: str) -> Path:
+    """Cut a unit branch from the operator's tree, as a run predating the run branch did."""
+    path = repo.parent / f"orch-{name}"
+    _git(repo, "worktree", "add", str(path), "-b", f"orch/r1-{name}", "main")
+    return path
+
+
+def _write_legacy_run(repo: Path, units: list[dict[str, Any]], *, base: str | None = None) -> None:
+    """A run record from before the run branch existed: no ``branch`` key at all.
+
+    ``base`` defaults to main's tip at call time -- record it before the merge, as a real run
+    records it at start. Pass ``""`` for a record that has no base either.
+    """
+    if base is None:
+        base = subprocess.run(
+            ["git", "rev-parse", "main"], cwd=repo, check=True, capture_output=True, text=True
+        ).stdout.strip()
+    payload = {
+        "run_id": "r1",
+        "source": "a legacy test",
+        "base": base,
+        "units": units,
+    }
+    path = repo / ".orchestrate" / "run.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload))
 
 
 def _fake_agents(
@@ -447,3 +487,169 @@ class TestCheckAfterALand:
         out = capsys.readouterr().out
         assert "NO COMMITS late" in out
         assert "LOOKS DONE" not in out
+
+
+class TestALegacyRunStillRecognisesItsMergedWork:
+    """A run predating the run branch landed its units straight onto the operator's tree.
+
+    HEAD is the measure then, and the second-parent shape is just as readable there -- refusing
+    it read a legacy unit whose work WAS merged as having produced nothing: ``check`` shouted
+    NO COMMITS at landed work, and ``clean --merged`` would not reap it. The fix is the shape,
+    not a blanket yes: a legacy branch that never committed is still nothing to land."""
+
+    def test_a_merged_legacy_unit_is_landed(
+        self, orchestrate: ModuleType, repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        wt = _legacy_worktree(repo, "alpha")
+        _commit(wt, "alpha.txt")
+        _write_legacy_run(repo, [_unit_row("alpha", wt, "done")])
+        _git(repo, "merge", "--no-ff", "--no-edit", "orch/r1-alpha")
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.landed("orch/r1-alpha", orchestrate.Run.load()) is True
+
+    def test_check_is_quiet_for_a_merged_legacy_unit(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """It committed and landed: NO COMMITS would be a finding about nothing."""
+        wt = _legacy_worktree(repo, "alpha")
+        _commit(wt, "alpha.txt")
+        _write_legacy_run(repo, [_unit_row("alpha", wt, "done")])
+        _git(repo, "merge", "--no-ff", "--no-edit", "orch/r1-alpha")
+        _fake_agents(orchestrate, monkeypatch, {})
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_check(argparse.Namespace()) == 0
+        out = capsys.readouterr().out
+        assert "NO COMMITS" not in out
+        assert "the record agrees with the repository" in out
+
+    def test_clean_merged_reaps_a_merged_legacy_unit(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        wt = _legacy_worktree(repo, "alpha")
+        _commit(wt, "alpha.txt")
+        _write_legacy_run(repo, [_unit_row("alpha", wt, "done")])
+        _git(repo, "merge", "--no-ff", "--no-edit", "orch/r1-alpha")
+        monkeypatch.chdir(repo)
+
+        rc = orchestrate.cmd_clean(_clean_args(merged=True))
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert not wt.exists(), "its work is on the operator's tree; the worktree is overhead"
+        assert "closed: alpha" in out
+        assert _branch_exists(repo, "orch/r1-alpha"), "reaping never deletes branches"
+
+    def test_a_legacy_run_without_a_base_still_recognises_its_merged_unit(
+        self, orchestrate: ModuleType, repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No run branch AND no base: there is no earlier bound to name, so the merge reading
+        walks the ref's whole history rather than refusing."""
+        wt = _legacy_worktree(repo, "alpha")
+        _commit(wt, "alpha.txt")
+        _git(repo, "merge", "--no-ff", "--no-edit", "orch/r1-alpha")
+        _write_legacy_run(repo, [_unit_row("alpha", wt, "done")], base="")
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.landed("orch/r1-alpha", orchestrate.Run.load()) is True
+
+    def test_a_legacy_unit_that_never_committed_is_not_landed(
+        self, orchestrate: ModuleType, repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The legacy fix is the second-parent shape, not a blanket yes."""
+        wt = _legacy_worktree(repo, "silent")
+        _write_legacy_run(repo, [_unit_row("silent", wt, "done")])
+        monkeypatch.chdir(repo)
+        got = orchestrate.landed("orch/r1-silent", orchestrate.Run.load())
+
+        assert got is None
+        assert got is not True
+
+    def test_clean_merged_keeps_a_legacy_unit_that_never_committed(
+        self, orchestrate: ModuleType, repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """That worktree is still the evidence the session saved nothing."""
+        wt = _legacy_worktree(repo, "silent")
+        _write_legacy_run(repo, [_unit_row("silent", wt, "done")])
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_clean(_clean_args(merged=True)) == 0
+
+        assert wt.exists()
+
+
+class TestLandCleanReapsOnlyWhatThisLandMerged:
+    """Reaping must be a consequence of what THIS land merged, not a sweep of the whole run.
+
+    ``land --clean`` once reaped every unit the rule allowed, so an invocation that merged
+    nothing still closed the tabs and removed the worktrees of units an earlier invocation
+    deliberately kept. The operator's own ``clean --merged`` remains the deliberate sweep."""
+
+    def test_merging_nothing_reaps_nothing_and_keeps_a_retained_worktree(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        wt_alpha = _worktree(repo, "alpha")
+        _commit(wt_alpha, "alpha.txt")
+        _write_run(repo, [_unit_row("alpha", wt_alpha, "done")])
+        monkeypatch.chdir(repo)
+
+        # The first land merges alpha and deliberately keeps its worktree.
+        assert orchestrate.cmd_land(argparse.Namespace(clean=False)) == 0
+        capsys.readouterr()
+        assert wt_alpha.exists()
+
+        # The second merges nothing -- and must not sweep what the first one kept.
+        assert orchestrate.cmd_land(argparse.Namespace(clean=True)) == 0
+        out = capsys.readouterr().out
+
+        assert wt_alpha.exists(), "a land that merged nothing is not a licence to reap"
+        assert "nothing new" in out
+        assert "nothing to reap" in out
+
+    def test_merging_one_unit_reaps_it_and_leaves_a_retained_unit_alone(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        wt_alpha = _worktree(repo, "alpha")
+        _commit(wt_alpha, "alpha.txt")
+        wt_beta = _worktree(repo, "beta")
+        _commit(wt_beta, "beta.txt")
+        _write_run(
+            repo,
+            [_unit_row("alpha", wt_alpha, "done"), _unit_row("beta", wt_beta, "running")],
+        )
+        monkeypatch.chdir(repo)
+
+        # The first land merges alpha and deliberately keeps its worktree.
+        assert orchestrate.cmd_land(argparse.Namespace(clean=False)) == 0
+        capsys.readouterr()
+        assert wt_alpha.exists()
+
+        # Beta finishes; the second land merges it -- and reaps only it.
+        _write_run(
+            repo,
+            [_unit_row("alpha", wt_alpha, "done"), _unit_row("beta", wt_beta, "done")],
+        )
+        assert orchestrate.cmd_land(argparse.Namespace(clean=True)) == 0
+        out = capsys.readouterr().out
+
+        assert not wt_beta.exists()
+        assert wt_alpha.exists(), "an earlier invocation kept alpha; this land did not merge it"
+        reaped = [line for line in out.splitlines() if line.startswith("reaped:")]
+        assert reaped == ["reaped: beta"]

@@ -70,6 +70,11 @@ def _git(cwd: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
 
 
+def _git_out(cwd: Path, *args: str) -> str:
+    got = subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
+    return got.stdout.strip()
+
+
 def _commit(cwd: Path, name: str) -> None:
     (cwd / name).write_text(name + "\n")
     _git(cwd, "add", name)
@@ -226,6 +231,143 @@ class TestLandedHasThreeAnswers:
 
         assert got is None
         assert got is not True
+
+
+class TestHandFinishedLandingShapes:
+    def test_a_fast_forward_land_is_readable_and_reapable(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """The conflict-recovery path may finish with a plain fast-forward merge."""
+        base = _git_out(repo, "rev-parse", "orch/r1")
+        unit = orchestrate.Unit(name="fast", vendor="claude", task="x", status="done")
+        run_record = orchestrate.Run(
+            run_id="r1",
+            source="a test",
+            base=base,
+            branch="orch/r1",
+            units=[unit],
+        )
+        monkeypatch.chdir(repo)
+        orchestrate.make_worktree(unit, run_record, repo)
+        assert unit.branched_from == base
+        assert unit.worktree is not None
+        worktree = Path(unit.worktree)
+        _commit(worktree, "fast.txt")
+        run_record.save()
+
+        _git(repo, "checkout", "orch/r1")
+        _git(repo, "merge", "--no-edit", "orch/r1-fast")
+        _git(repo, "checkout", "main")
+        assert _git_out(repo, "rev-parse", "orch/r1") == _git_out(repo, "rev-parse", "orch/r1-fast")
+        assert len(_git_out(repo, "rev-list", "--parents", "-n", "1", "orch/r1").split()) == 2
+
+        loaded = orchestrate.Run.load()
+        assert orchestrate.landed("orch/r1-fast", loaded) is True
+
+        capsys.readouterr()
+        assert orchestrate.cmd_diff(argparse.Namespace(unit="fast", stat=False)) == 0
+        diff_out = capsys.readouterr().out
+        assert "fast.txt" in diff_out
+        assert "+fast" in diff_out
+        assert "no commits of its own" not in diff_out
+
+        _fake_agents(orchestrate, monkeypatch, {})
+        assert orchestrate.cmd_check(argparse.Namespace()) == 0
+        check_out = capsys.readouterr().out
+        assert "NO COMMITS" not in check_out
+        assert "the record agrees with the repository" in check_out
+
+        assert orchestrate.cmd_clean(_clean_args(merged=True)) == 0
+        clean_out = capsys.readouterr().out
+        assert not worktree.exists()
+        assert "closed: fast" in clean_out
+
+    def test_an_empty_unit_at_an_old_run_tip_stays_empty_and_is_not_reaped(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        base = _git_out(repo, "rev-parse", "orch/r1")
+        worktree = _worktree(repo, "silent")
+
+        _git(repo, "checkout", "-b", "advance", "orch/r1")
+        _commit(repo, "advance.txt")
+        _git(repo, "checkout", "orch/r1")
+        _git(repo, "merge", "--no-edit", "advance")
+        _git(repo, "branch", "-d", "advance")
+        _git(repo, "checkout", "main")
+        assert _git_out(repo, "merge-base", "orch/r1", "orch/r1-silent") == base
+        assert _git_out(repo, "rev-parse", "orch/r1-silent") == base
+
+        _write_run(
+            repo,
+            [_unit_row("silent", worktree, "done", branched_from=base)],
+        )
+        _fake_agents(orchestrate, monkeypatch, {})
+        monkeypatch.chdir(repo)
+        loaded = orchestrate.Run.load()
+
+        got = orchestrate.landed("orch/r1-silent", loaded)
+        assert got is None
+        assert got is not True
+
+        assert orchestrate.cmd_diff(argparse.Namespace(unit="silent", stat=False)) == 0
+        diff_out = capsys.readouterr().out
+        assert "no commits of its own" in diff_out
+
+        assert orchestrate.cmd_check(argparse.Namespace()) == 1
+        assert "NO COMMITS silent" in capsys.readouterr().out
+
+        assert orchestrate.cmd_clean(_clean_args(merged=True)) == 0
+        clean_out = capsys.readouterr().out
+        assert worktree.exists()
+        assert "closed: nothing" in clean_out
+        assert "silent" in clean_out.split("kept", 1)[1]
+
+    def test_a_recorded_normal_merge_keeps_the_existing_landing_shape(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        base = _git_out(repo, "rev-parse", "orch/r1")
+        worktree = _worktree(repo, "normal")
+        _commit(worktree, "normal.txt")
+        _write_run(
+            repo,
+            [_unit_row("normal", worktree, "done", branched_from=base)],
+        )
+        _git(repo, "checkout", "orch/r1")
+        _git(repo, "merge", "--no-ff", "--no-edit", "orch/r1-normal")
+        _git(repo, "checkout", "main")
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.landed("orch/r1-normal", orchestrate.Run.load()) is True
+        assert orchestrate.cmd_diff(argparse.Namespace(unit="normal", stat=False)) == 0
+        out = capsys.readouterr().out
+        assert "landed on orch/r1 in merge" in out
+        assert "normal.txt" in out
+
+    def test_recorded_commits_not_on_the_run_branch_are_not_landed(
+        self, orchestrate: ModuleType, repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        base = _git_out(repo, "rev-parse", "orch/r1")
+        worktree = _worktree(repo, "waiting")
+        _commit(worktree, "waiting.txt")
+        _write_run(
+            repo,
+            [_unit_row("waiting", worktree, "done", branched_from=base)],
+        )
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.landed("orch/r1-waiting", orchestrate.Run.load()) is False
 
 
 class TestCleanMergedOnlyReapsWhatSurvived:

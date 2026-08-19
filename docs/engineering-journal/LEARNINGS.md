@@ -19,6 +19,75 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-08-19
+
+### A launcher flag after the vendor token is not a launcher flag  {#launcher-flag-position-is-not-passthrough}
+
+**Context.** Orchestrate appended `launch_args` after the vendor token and claimed the wrapper read
+its own flags from that position. A live Home Lab run put `--workspace probe-ws` there and lost the
+session into the caller's workspace.
+
+**Evidence.** Measured against the real wrapper with `--dry-run`:
+`--task probe --cwd DIR claude --workspace probe-ws` yields
+`herdr_workspace=<current-terminal:w2C>` and passes `--workspace` to the vendor; the same flag
+before `claude` yields `herdr_workspace=probe-ws`. `--company-account` is the opposite: before the
+vendor token it is parsed as an unknown agent kind. `plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py`
+`agent_argv`; tests in `tests/test_orchestrate_launch_and_land.py`.
+
+**Mechanism.** The two argv positions are mutually exclusive. The wrapper splits on the vendor
+token: launcher flags belong before it, vendor flags after it, and a small set is intercepted from
+the after-token side. A passthrough list can occupy only one of those positions. Putting
+`--workspace` in `launch_args` made a safety claim the argv could not keep.
+
+**Fix.** `workspace` is a first-class field on the run (default) and the unit (override).
+`agent_argv` emits `--workspace <name>` before the vendor token. `launch_args` stays after the
+vendor token, unvalidated. No table of wrapper flags.
+
+**Validation.** Focused argv tests assert position; `uv run pytest tests/ -k orchestrate` — 230
+passed.
+
+**What surprised.** The comment above `launch_args` stated a general rule that was true of
+`--company-account` and false of `--workspace`. The two positions do not share a vocabulary.
+
+**Generalizable rule.** When a wrapper splits argv on a token, "passthrough" is a position, not a
+promise. A flag that must live on the other side of the split is a field, not an extra argument.
+
+**Refs.** [[#orchestrate-workspace-is-a-field-not-a-passthrough]],
+[[#orchestrate-carries-launcher-args-does-not-police-them]]
+
+
+### Wait's first idle is the gap between turns  {#wait-idle-is-a-think-pause}
+
+**Context.** `settle` already required two idle readings `--interval` apart after a unit was marked
+done in the gap between turns. `wait` still returned on the first `idle`/`done`/`blocked` event. On
+a live run it fired mid-task; the session was still working with twelve uncommitted paths.
+
+**Evidence.** `cmd_wait` subscribed to `pane.agent_status_changed` and returned on the first
+matching status. The fallback `herdr agent wait --until idle --until done` did the same on process
+exit. `settle` in the same file already documented the think-pause. Tests in
+`tests/test_orchestrate_wait_debounce.py`.
+
+**Mechanism.** Herdr's agent-status feed is edge-triggered: one `idle` means the session returned
+to the prompt, not that it finished. An agent is idle between tool calls while it thinks. A
+level-triggered confirmation — poll again after `--interval`, require agreement — is what made
+`settle` honest. `wait` never did, on either path.
+
+**Fix.** Both the event-socket path and the `herdr agent wait` fallback require consecutive
+agreeing observations (`--interval`, `--confirmations`, `--once` — settle's vocabulary). `blocked`
+still returns on the first sighting and is named. Sibling waits stay running until one unit
+actually settles.
+
+**Validation.** Fake event source and fake wait-process: one idle does not return; idle then
+working does not return; consecutive agreeing idles do; fallback obeys the same rule. 230
+orchestrate tests passed.
+
+**Generalizable rule.** An edge-triggered "it went idle" is a wake, not a settlement. If a sibling
+command already learned to confirm across readings, every path that consumes the same signal has to
+learn it too — including the degraded fallback, or the defect just moves to the machines that hit
+it.
+
+**Refs.** `cmd_settle` in `orchestrate.py`; settle debounce tests.
+
 ## 2026-08-17
 
 ### Delivering the keystrokes is not delivering the instruction  {#a-pane-carries-a-long-task-as-an-attachment}

@@ -1,4 +1,24 @@
 # Decisions — Infiquetra Claude Plugins
+## 2026-08-19
+
+### Workspace placement is a field, not a launch_args entry  {#orchestrate-workspace-is-a-field-not-a-passthrough}
+
+**Decision.** A unit (and optionally a run) carries a `workspace` NAME. `agent_argv` emits
+`--workspace <name>` in the launcher position, before the vendor token. `launch_args` stay after
+the vendor token and stay unvalidated. A run default is inherited; a unit value wins; there is no
+other precedence. Orchestrate does not keep a table of the wrapper's flags.
+
+**Rejected alternative.** Classifying `launch_args` by position, or validating them against the
+wrapper's help. The wrapper releases on its own schedule and already rejects by name what it does
+not accept. A list in this plugin would go stale the same way `VENDOR_FLAGS` once did — and the
+positions are mutually exclusive, so no single passthrough list can express both `--workspace` and
+`--company-account`.
+
+**Revisit when** the wrapper grows another launcher-position flag that operators need to set per
+unit. That is another field, not a reason to start policing `launch_args`.
+
+---
+
 ## 2026-08-17
 
 ### Orchestrate detects drift and repairs it; it does not prevent it {#orchestrate-detects-and-repairs-never-guards}

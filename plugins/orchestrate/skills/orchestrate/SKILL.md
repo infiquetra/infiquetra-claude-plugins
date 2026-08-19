@@ -80,6 +80,24 @@ wrong, delete it — `herdr agent list` is the real truth.
 The unit's `name` is the dependency key and never changes. The wrapper uniquifies agent names, so
 what herdr calls the session is recorded separately as `agent_name`.
 
+## Workspaces
+
+A herdr workspace is the unit of attention, not of isolation — isolation is the worktree. Below
+about six concurrent units, one workspace is right and a second is overhead; above that, one
+workspace becomes a wall of tabs and the operator can no longer see what is waiting on them. One
+issue is one lifecycle and a lifecycle is the natural workspace, so a parent with nine children is
+nine workspaces plus the umbrella the orchestrator sits in.
+
+The run's `workspace` field is the name every unit inherits; a unit may set its own `workspace` and
+that wins. There is no other precedence. `agent_argv` emits `--workspace <name>` with `--task` and
+`--cwd`, before the vendor token. Absent both fields, the session lands in the caller's workspace —
+today's behaviour.
+
+The agent wrapper's `--workspace` takes a **name**, not an ID: handed an ID it creates a new
+workspace called that rather than joining the one you meant. Do not pass it through `launch_args` —
+that position is after the vendor token, and a live run that did so lost the session into the
+caller's workspace.
+
 ## Agents
 
 `orchestrate.py roster` intersects the vendors orchestrate knows how to drive with what the wrapper
@@ -128,8 +146,11 @@ opencode. A bare `/plan` is a command nowhere and arrives as prose.
 ## Waiting, and empty dependencies
 
 `orchestrate.py wait` subscribes to herdr's event socket and blocks until one of the running units
-changes state — nothing is polled. Subscriptions are keyed by pane, which is why a unit records its
-`pane_id` at launch; if the socket is unreachable it falls back to one `herdr agent wait` per unit.
+settles — nothing is polled for the wake, but a single `idle` is not a settlement. An agent is also
+idle between turns, so `wait` confirms across consecutive observations the same way `settle` does
+(`--interval`, `--confirmations`, `--once`). `blocked` returns on the first sighting and is named.
+Subscriptions are keyed by pane, which is why a unit records its `pane_id` at launch; if the socket
+is unreachable it falls back to one `herdr agent wait` per unit, under the same confirmation rule.
 
 `go` refuses to launch a unit whose `after` dependency committed nothing. A dependent unit opens
 on its dependency's branch, so an empty branch means the thing it is supposed to work on does not

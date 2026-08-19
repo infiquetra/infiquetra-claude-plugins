@@ -278,6 +278,7 @@ class TestAConflictCannotUnannounceAnEarlierMerge:
         assert _read(conflicting_repo, "orch/r1", "shared.txt") == "alpha\n"
         out = capsys.readouterr().out
         assert "CONFLICT landing work-beta" in out
+        assert "git merge --no-ff orch/r1-work-beta" in out
         assert _current_branch(conflicting_repo) == "main"
 
     def test_rerunning_land_does_not_double_announce_the_first_unit(

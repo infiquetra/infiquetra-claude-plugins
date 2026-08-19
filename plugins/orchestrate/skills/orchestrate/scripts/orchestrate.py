@@ -339,10 +339,10 @@ class Unit:
     branched_from: str | None = None
     """The commit the unit branch started from, recorded when its worktree is created.
 
-    Once the unit tip lands on the run branch, git's merge base collapses to that tip. Keeping the
-    original branch point makes the unit's own change recoverable even when an operator finishes a
-    conflicted land with a fast-forward. Older run records omit this field and retain the merge
-    shape fallback used before it existed."""
+    Kept as creation provenance and for compatibility with existing run records. It cannot prove
+    that the unit authored later commits: an empty unit can move its pointer by merging an advanced
+    run branch. Landing therefore still requires the second-parent merge shape described by
+    ``landed_by_merge``."""
     tab_id: str | None = None
     pane_id: str | None = None
     """The pane this session occupies. Recorded because herdr's event subscriptions are keyed by
@@ -633,17 +633,12 @@ def branch_produced_anything(branch: str, r: Run) -> bool:
 
 
 def landed_by_merge(branch: str, r: Run) -> bool:
-    """Did this branch land on the branch this run lands onto?
+    """Is this branch's tip the second parent of a merge on the branch this run lands onto?
 
-    ``land`` merges with --no-ff, so its existing shape remains the first reading: the unit tip is
-    the second parent of a merge on the run branch. A hand-finished conflict can instead
-    fast-forward. For a unit created by a version that recorded ``branched_from``, that shape is
-    readable without guessing: the unit made at least one commit after the recorded branch point,
-    and its tip is now an ancestor of the run branch.
-
-    The recorded branch point is the discriminator that keeps an empty unit false. Such a unit can
-    also sit on the run branch's first-parent line, but its tip is exactly ``branched_from``. A run
-    record from before the field existed falls back to the second-parent reading only.
+    That shape, and only that shape, records work that ``land`` brought home. Git cannot distinguish
+    a genuinely fast-forwarded unit from an empty unit whose branch pointer moved by merging the
+    advanced run branch: both tips are on the run branch's first-parent history. Inferring either
+    from ancestry would let the empty unit launch dependents and be reaped as if it saved work.
 
     The ref measured is ``r.branch or "HEAD"`` -- the same fallback ``branch_produced_anything``
     uses -- because a run with no stored run branch predates the run-branch design and landed its
@@ -657,17 +652,15 @@ def landed_by_merge(branch: str, r: Run) -> bool:
     if tip.returncode != 0 or not tip.stdout.strip():
         return False
     revs = f"{r.base}..{ref}" if r.base else ref
-    merges = run(["git", "log", "--merges", "--format=%P", revs], check=False)
-    sha = tip.stdout.strip()
-    if merges.returncode == 0:
-        for parents in merges.stdout.splitlines():
-            pair = parents.split()
-            if len(pair) >= 2 and pair[1] == sha:
-                return True
-    unit = next((unit for unit in r.units if unit.branch == branch), None)
-    if unit is None or unit.branched_from is None:
+    merges = run(["git", "log", "--first-parent", "--merges", "--format=%P", revs], check=False)
+    if merges.returncode != 0:
         return False
-    return _recorded_landing_base(branch, unit.branched_from, ref) is not None
+    sha = tip.stdout.strip()
+    for parents in merges.stdout.splitlines():
+        pair = parents.split()
+        if len(pair) >= 2 and pair[1] == sha:
+            return True
+    return False
 
 
 def make_worktree(unit: Unit, r: Run, root: Path) -> None:
@@ -1927,7 +1920,10 @@ def cmd_land(args: argparse.Namespace) -> int:
             merge = run(["git", "merge", "--no-ff", "--no-edit", unit.branch], check=False)
             if merge.returncode != 0:
                 run(["git", "merge", "--abort"], check=False)
-                print(f"  CONFLICT landing {unit.name}; resolve it on {r.branch} yourself")
+                print(
+                    f"  CONFLICT landing {unit.name}; on {r.branch}, finish with "
+                    f"`git merge --no-ff {unit.branch}` and resolve it there"
+                )
                 # Name any writeback that already failed before the conflict buries the return.
                 _report_failed_writebacks(writeback_failures)
                 return 1
@@ -2211,44 +2207,13 @@ def merge_base(ref_a: str, ref_b: str) -> str | None:
     return got.stdout.strip() or None
 
 
-def _recorded_landing_base(branch: str, branched_from: str, cmp_ref: str) -> str | None:
-    """A verified recorded branch point, or None when the recorded unit has not landed.
-
-    Both ancestry checks are required. The first rejects corrupt or stale provenance. The second
-    rejects a real unit commit that is still only on its own branch. The unequal-tip check rejects
-    the dangerous case: an empty unit left at an older commit on the run branch's first-parent
-    line.
-    """
-    tip = resolve_ref(branch)
-    base = resolve_ref(branched_from)
-    if tip is None or base is None or tip == base:
-        return None
-    from_base = run(["git", "merge-base", "--is-ancestor", base, tip], check=False)
-    if from_base.returncode != 0:
-        return None
-    on_target = run(["git", "merge-base", "--is-ancestor", tip, cmp_ref], check=False)
-    if on_target.returncode != 0:
-        return None
-    return base
-
-
-def landing_merge(unit: Unit, cmp_ref: str) -> tuple[str | None, str | None] | None:
-    """How ``unit`` landed onto ``cmp_ref``, or None when it never landed.
+def landing_merge(branch: str, cmp_ref: str) -> str | None:
+    """The merge commit that landed ``branch`` onto ``cmp_ref``, or None when it never landed.
 
     ``land`` merges ``--no-ff`` with the run branch checked out, so a landed unit branch is the
     second parent of the merge that brought it in. Finding that merge is what lets a landed unit
     still show its change -- the merge base of the merge's parents is where the unit branched --
-    instead of an empty diff that reads as "this unit changed nothing". That existing path is read
-    first and returned unchanged.
-
-    A hand-finished conflict may fast-forward instead. There is no merge commit to find in that
-    case, so a newer unit record supplies its branch point. The return value is ``(merge,
-    branched_from)``: ``merge`` is None only for that recorded fast-forward shape, while
-    ``branched_from`` can be None only when an old merge's branch point no longer resolves.
-    """
-    if not unit.branch:
-        return None
-    branch = unit.branch
+    instead of an empty diff that reads as "this unit changed nothing"."""
     tip = resolve_ref(branch)
     if tip is None:
         return None
@@ -2258,14 +2223,8 @@ def landing_merge(unit: Unit, cmp_ref: str) -> tuple[str | None, str | None] | N
     for line in log.stdout.splitlines():
         parts = line.split()
         if len(parts) >= 3 and parts[2] == tip:
-            merged = parts[0]
-            return merged, merge_base(f"{merged}^1", branch)
-    if unit.branched_from is None:
-        return None
-    branched = _recorded_landing_base(branch, unit.branched_from, cmp_ref)
-    if branched is None:
-        return None
-    return None, branched
+            return parts[0]
+    return None
 
 
 def diff_against(r: Run) -> str | None:
@@ -2318,29 +2277,20 @@ def show_unit_diff(unit: Unit, cmp_ref: str, *, stat: bool) -> None:
         print_git_diff(base, branch, stat=stat)
         return
     # Nothing of its own against the comparison ref. That is either "already landed" or "never
-    # committed", and the run branch says which: either the branch is the second parent of the
-    # merge that brought it in, or its recorded non-empty change is now on the first-parent line.
-    landing = landing_merge(unit, cmp_ref)
-    if landing is None:
+    # committed", and the run branch says which: a landed branch is the second parent of the
+    # merge that brought it in.
+    merged = landing_merge(branch, cmp_ref)
+    if merged is None:
         print(f"{unit.name}: branch {branch} has no commits of its own")
         return
-    merged, branched = landing
+    branched = merge_base(f"{merged}^1", branch)
     if branched is None:
-        assert merged is not None
         print(f"{unit.name}: landed in {merged[:8]}, but its branch point no longer resolves")
         return
-    if merged is not None:
-        print(
-            f"{unit.name}: landed on {cmp_ref} in merge {merged[:8]} -- "
-            f"diff {branched[:8]}..{branch}"
-        )
-        print(f"merge base {branched[:8]} -- where {branch} branched before it was merged")
-    else:
-        print(
-            f"{unit.name}: landed on {cmp_ref} by first-parent history -- "
-            f"diff {branched[:8]}..{branch}"
-        )
-        print(f"recorded branch point {branched[:8]} -- where {branch} began")
+    print(
+        f"{unit.name}: landed on {cmp_ref} in merge {merged[:8]} -- diff {branched[:8]}..{branch}"
+    )
+    print(f"merge base {branched[:8]} -- where {branch} branched before it was merged")
     print_git_diff(branched, branch, stat=stat)
 
 

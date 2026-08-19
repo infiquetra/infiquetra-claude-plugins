@@ -5,25 +5,28 @@ The plan is authored by the operator and Claude together; this script is the mec
 It creates a worktree and branch per unit, launches the requested agent there, sends the unit's
 saga command, waits, merges the branches back, and cleans up.
 
-State is one JSON file. If it is wrong, delete it -- `herdr agent list` is the real truth.
+State is one JSON file, plus one file each for tasks too long to live in it. If it is wrong,
+delete it -- `herdr agent list` is the real truth.
 """
 
 from __future__ import annotations
 
 import argparse
 import contextlib
+import functools
 import glob
 import json
 import os
 import re
 import shutil
-import signal
 import subprocess
 import sys
 import textwrap
 import time
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any
 
 # Ships beside this file. Kept optional so a partial install degrades to per-unit waits rather
 # than refusing to run at all.
@@ -33,6 +36,18 @@ except ImportError:  # pragma: no cover - only when the sibling module is missin
     herdr_events = None  # type: ignore[assignment]
 
 RUN_FILE = Path(".orchestrate/run.json")
+
+# Where task text lives when it does not belong inside run.json. Two mechanisms write here,
+# named apart: the spill (see ``TASK_SPILL_THRESHOLD``) moves a long unit task out of the run
+# record at save time, and ``pane_text`` hands a too-long-to-type task to a session as a file.
+TASK_DIR = RUN_FILE.parent / "tasks"
+
+# A task longer than this is spilled to ``TASK_DIR / f"{unit.name}.task.md"`` at save time, and
+# the record keeps a pointer instead. Measured on a real 75-unit run: run.json was 267,897 bytes
+# and 223,040 of them -- 83% -- were unit task text, rewritten whole on every save and parsed by
+# every subcommand. This threshold is about the record, not the session: what a pane will carry
+# as typed input is a different limit with its own mechanism (``PANE_TYPING_LIMIT``).
+TASK_SPILL_THRESHOLD = 400
 
 # How each agent takes a model and a reasoning effort on its own command line, read from each
 # tool's own `--help`. Anything not listed launches with no tier flags -- see SETUP_HINT for how a
@@ -258,7 +273,16 @@ class Unit:
     name: str
     vendor: str
     task: str
-    """What the session is told to do -- a saga command like "/plan #456", or free prose."""
+    """What the session is told to do -- a saga command like "/plan #456", or free prose.
+
+    Always the full text in memory, even when the record on disk keeps only a pointer: ``save``
+    spills a task longer than ``TASK_SPILL_THRESHOLD`` into its own file, and ``load`` reads it
+    back, so no caller of ``task`` knows the difference."""
+    task_file: str | None = None
+    """The file this unit's task is spilled in, relative to ``TASK_DIR`` -- None when inline.
+
+    Written only by ``save``. A record from before the spill existed carries its task inline and
+    has no such key, which ``load`` still accepts; nothing is migrated at read time."""
     model: str | None = None
     effort: str | None = None
     permission: str = "auto"
@@ -274,19 +298,30 @@ class Unit:
     prompt, so the session has settled into the requested tier before it is given work. Anything a
     slash command can do to a fresh session belongs here."""
     launch_args: list[str] = field(default_factory=list)
-    """Extra arguments for the launcher, passed through verbatim and never inspected.
+    """Extra arguments appended after the vendor token, passed through verbatim and never inspected.
+
+    Arguments after the vendor token reach the vendor, except for the few the wrapper intercepts
+    from that position (``--company-account`` is one: it swaps the configuration directory before
+    the tool starts). A launcher flag that must precede the vendor token cannot be expressed here
+    -- ``--workspace`` is the case that forced the ``workspace`` field: after the vendor token the
+    wrapper treats it as the vendor's argument and the session lands in the caller's workspace.
 
     ``model`` and ``effort`` cover what every vendor has in common; this covers everything else the
-    wrapper knows and this plugin does not. ``["--company-account"]`` is the case that forced it:
-    the wrapper intercepts that flag and swaps the configuration directory before the tool starts,
-    so it is a launcher concern, invisible to the tool's own ``--help``, and there was no way to
-    ask for it through a unit. The operator asked, the plugin could not carry it, and a whole review
-    phase was launched by hand and lost to the run record.
+    wrapper knows and this plugin does not. Deliberately not validated here. The wrapper is a
+    separate program on its own release schedule, so any list of acceptable flags kept in this file
+    would go stale silently -- which is the same closed vocabulary one level up. It already rejects
+    what it does not accept, by name. Carry it, do not police it."""
+    workspace: str | None = None
+    """Herdr workspace NAME this unit launches into.
 
-    Deliberately not validated here. The wrapper is a separate program on its own release schedule,
-    so any list of acceptable flags kept in this file would go stale silently -- which is the same
-    closed vocabulary one level up. It already rejects what it does not accept, by name. Carry it,
-    do not police it."""
+    Emitted as ``--workspace <name>`` in the launcher position, before the vendor token, alongside
+    ``--task`` and ``--cwd``. Absent, the run's default is used if it has one; absent both, the
+    session lands in the caller's workspace -- today's behaviour. The wrapper's ``--workspace``
+    takes a name, not an ID: handed an ID it creates a new workspace called that rather than
+    joining the one you meant.
+
+    A field rather than a ``launch_args`` entry because the two argv positions are mutually
+    exclusive, and this plugin should not have to know which of the wrapper's flags belong where."""
     merge: bool = True
     """Should this unit's branch be merged onto the run branch by ``land``?
 
@@ -300,8 +335,25 @@ class Unit:
     that is real work, wrong in both directions, and it decides something the person who wrote the
     phase already knows."""
     after: list[str] = field(default_factory=list)
+    serialize: list[str] = field(default_factory=list)
+    """Wait for these units to finish, without claiming anything about needing their output.
+
+    ``after`` means "I build on what you produce", and it was also being used to mean "do not run
+    at the same time as you -- we would both touch the same files" or "wait until that has landed
+    so I can rebase on it". A run using it the second way looked blocked for a reason that does
+    not exist, and a reader could not tell the two apart. This edge gates launch exactly like
+    ``after`` -- a unit is not eligible until every name in both lists is done -- and the
+    difference is carried downstream, not in the gate: ``go`` does not ask whether a serialize
+    dependency committed anything, and ``status`` names which kind of edge holds a unit."""
     worktree: str | None = None
     branch: str | None = None
+    branched_from: str | None = None
+    """The commit the unit branch started from, recorded when its worktree is created.
+
+    Kept as creation provenance and for compatibility with existing run records. It cannot prove
+    that the unit authored later commits: an empty unit can move its pointer by merging an advanced
+    run branch. Landing therefore still requires the second-parent merge shape described by
+    ``landed_by_merge``."""
     tab_id: str | None = None
     pane_id: str | None = None
     """The pane this session occupies. Recorded because herdr's event subscriptions are keyed by
@@ -332,6 +384,11 @@ class Run:
     Every unit branches from here and lands back here when it finishes, so the next phase opens on
     everything the earlier phases actually produced rather than on one predecessor's branch. At the
     end this is the single branch that merges into the operator's tree."""
+    workspace: str | None = None
+    """Default herdr workspace NAME every unit inherits unless it sets its own.
+
+    Absent means today's behaviour: sessions land in the caller's workspace. A unit with its own
+    ``workspace`` wins; there is no other precedence."""
     engine_prefs: dict[str, dict[str, str]] = field(default_factory=dict)
     """Saga's per-stage external-engine answers, decided once in the interview.
 
@@ -340,6 +397,20 @@ class Run:
     saga command finds the answer already stored and never stops to ask a question in a tab nobody
     is watching. See ``write_engine_prefs``.
     """
+    issues: dict[str, str] = field(default_factory=dict)
+    """Unit name -> issue reference (``owner/repo#N``) whose board card this run reports to.
+
+    Absent means this run writes nothing back: every board writeback in this file is a no-op, and a
+    run file written before this field existed loads and behaves exactly as it did. The field is the
+    whole connection between a phase boundary and the card it happened for -- the observed 75-unit
+    run for issue 52 crossed nine phases while its card never left `Idea`, not because the write was
+    missing but because nothing ever called it. See ``announce_units``."""
+    status_map: dict[str, str] = field(default_factory=dict)
+    """Unit-name prefix -> board Status overrides, replacing the default one key at a time.
+
+    A key present here wins over ``DEFAULT_STATUS_MAP`` for that prefix; every other prefix keeps
+    the default. Values are still checked against the board's Status ladder -- an override is a way
+    to re-route a phase, not a way to invent a status. See ``mapped_status``."""
 
     @classmethod
     def load(cls, path: Path = RUN_FILE) -> Run:
@@ -348,10 +419,13 @@ class Run:
             run_id=raw["run_id"],
             source=raw["source"],
             base=raw["base"],
-            units=[Unit(**u) for u in raw["units"]],
+            units=[read_unit(u) for u in raw["units"]],
             backend=raw.get("backend", "inline"),
             branch=raw.get("branch", ""),
             engine_prefs=raw.get("engine_prefs", {}),
+            issues=raw.get("issues", {}),
+            status_map=raw.get("status_map", {}),
+            workspace=raw.get("workspace") or None,
         )
 
     def save(self, path: Path = RUN_FILE) -> None:
@@ -363,7 +437,10 @@ class Run:
             "backend": self.backend,
             "branch": self.branch,
             "engine_prefs": self.engine_prefs,
-            "units": [asdict(u) for u in self.units],
+            "issues": self.issues,
+            "status_map": self.status_map,
+            "workspace": self.workspace,
+            "units": [spill_unit(u) for u in self.units],
         }
         path.write_text(json.dumps(payload, indent=2) + "\n")
 
@@ -383,10 +460,92 @@ class Run:
         return any(re.search(r"[/$](saga:)?code-review\b", u.task) for u in self.units)
 
     def eligible(self) -> list[Unit]:
+        """Pending units whose every ordering edge is satisfied.
+
+        ``after`` and ``serialize`` gate identically -- a unit is not eligible until every name in
+        both lists is done. What the edge *means* is carried elsewhere: see ``wait_reason``."""
         done = {u.name for u in self.units if u.status == DONE}
         return [
-            u for u in self.units if u.status == PENDING and all(dep in done for dep in u.after)
+            u
+            for u in self.units
+            if u.status == PENDING and all(dep in done for dep in u.after + u.serialize)
         ]
+
+    def wait_reason(self, unit: Unit) -> str:
+        """Why a pending unit is still pending, naming the kind of each edge that holds it.
+
+        ``after`` and ``serialize`` gate launch identically but mean different things -- one
+        needs the dependency's output, the other only asks not to run beside it -- and while both
+        lived in ``after``, a reader could not tell them apart. Empty means nothing holds the
+        unit: it is eligible and simply has not been launched yet."""
+        done = {u.name for u in self.units if u.status == DONE}
+        parts: list[str] = []
+        needs = [dep for dep in unit.after if dep not in done]
+        if needs:
+            parts.append(f"needs output from {', '.join(needs)}")
+        behind = [dep for dep in unit.serialize if dep not in done]
+        if behind:
+            parts.append(f"serialized behind {', '.join(behind)}")
+        return "; ".join(parts)
+
+
+def resolve_task_file(pointer: str) -> Path:
+    """The spill file a ``task_file`` pointer names, refusing anything outside ``TASK_DIR``.
+
+    Symlinks are resolved before the comparison, so a link planted inside the directory does not
+    pass. The check runs on the resolved target rather than trusting the join: in Python an
+    absolute right-hand operand discards the left, so ``TASK_DIR / "/etc/passwd"`` is simply
+    ``/etc/passwd``. Every pointer passes through here, on save AND on load -- a run record
+    edited by hand never passed through name validation, and that is the case this check exists
+    for."""
+    base = TASK_DIR.resolve()
+    resolved = (TASK_DIR / pointer).resolve()
+    if base not in resolved.parents:
+        raise SystemExit(f"task file {pointer!r} resolves outside {TASK_DIR}: {resolved}")
+    return resolved
+
+
+def spill_unit(unit: Unit) -> dict[str, Any]:
+    """One unit's row in the run record, with a long task spilled to its own file.
+
+    The record keeps the pointer and ``TASK_DIR`` keeps the text, so run.json stops being 83%
+    task prose on a big run. A short task stays inline, and any pointer on one is dropped: a row
+    carrying both would have its inline text overwritten by the file at load. The in-memory unit
+    is untouched -- the spill is something that happens to the record, not to the run."""
+    data = asdict(unit)
+    if len(unit.task) <= TASK_SPILL_THRESHOLD:
+        data["task_file"] = None
+        return data
+    TASK_DIR.mkdir(parents=True, exist_ok=True)
+    pointer = f"{unit.name}.task.md"
+    resolve_task_file(pointer).write_text(unit.task)
+    data["task"] = ""
+    data["task_file"] = pointer
+    return data
+
+
+def read_unit(raw: dict[str, Any]) -> Unit:
+    """One unit from its record row, reading a spilled task back transparently.
+
+    A row without a pointer is an old-format record or a short task, and its inline task is
+    taken as-is -- nothing is migrated at read time, so a run.json written by an older version
+    loads exactly as it lies. A pointer whose file is genuinely missing loads as an empty task
+    with a note naming it: a run record must stay loadable even when its spill does not. Every
+    other read failure -- a directory standing where the file should be, a permission error, an
+    I/O error -- raises rather than being absorbed: absorbing it also drops the pointer, so the
+    next save would make the loss permanent and the unit could be launched with no instructions."""
+    unit = Unit(**raw)
+    if not unit.task_file:
+        return unit
+    spill = resolve_task_file(unit.task_file)
+    try:
+        unit.task = spill.read_text()
+    except FileNotFoundError:
+        unit.task = ""
+        unit.task_file = None
+        note = f"spilled task file is gone: {spill}"
+        unit.note = f"{unit.note}; {note}" if unit.note else note
+    return unit
 
 
 def run(
@@ -395,7 +554,7 @@ def run(
     check: bool = True,
     capture: bool = True,
     timeout: float | None = None,
-) -> subprocess.CompletedProcess:
+) -> subprocess.CompletedProcess[str]:
     """Run a command. Pass ``timeout`` for anything that asks a vendor a question.
 
     A vendor's own subcommand can reach the network and hang; without a bound that becomes an
@@ -461,19 +620,76 @@ def produced_anything(dep: Unit, r: Run) -> bool:
     base commit there is nothing there to work on. Launching anyway does not fail loudly -- the
     session finds no plan, no diff, no artifact, and writes something plausible about nothing. That
     happened: a doc-review unit reviewed a plan document that was never written.
+
+    "Commit something" means what THIS unit did, and it is read two ways. First, its own commits
+    still on its branch: counted from the merge base of the run branch and the unit's branch --
+    the point the unit was cut from -- so inherited work does not count. Counting from the run's
+    original base did exactly that: a unit created after the first land is cut from a run branch
+    that already carries the landed commits, so it counted as productive the moment it existed.
+    Measured live on one run: four units with zero commits of their own each reported six. The
+    consequences were all live: `check` could never say NO COMMITS after the first land, its
+    LOOKS DONE fired on any post-land unit merely idle between turns, and `go`'s dependency gate
+    -- which exists because a doc-review once reviewed a plan that was never written -- could
+    never catch an empty dependency again. Second, a unit whose commits already landed still
+    produced: see ``landed_by_merge``.
     """
     if not dep.branch:
         return False
-    got = run(["git", "rev-list", "--count", f"{r.base}..{dep.branch}"], check=False)
-    return got.returncode == 0 and got.stdout.strip() not in ("", "0")
+    return branch_produced_anything(dep.branch, r)
+
+
+def branch_produced_anything(branch: str, r: Run) -> bool:
+    """The branch-level reading behind ``produced_anything`` -- see its docstring for the why."""
+    base = r.branch or "HEAD"
+    mb = run(["git", "merge-base", base, branch], check=False)
+    if mb.returncode != 0:
+        return False
+    got = run(["git", "rev-list", "--count", f"{mb.stdout.strip()}..{branch}"], check=False)
+    if got.returncode == 0 and got.stdout.strip() not in ("", "0"):
+        return True
+    return landed_by_merge(branch, r)
+
+
+def landed_by_merge(branch: str, r: Run) -> bool:
+    """Is this branch's tip the second parent of a merge on the branch this run lands onto?
+
+    That shape, and only that shape, records work that ``land`` brought home. Git cannot distinguish
+    a genuinely fast-forwarded unit from an empty unit whose branch pointer moved by merging the
+    advanced run branch: both tips are on the run branch's first-parent history. Inferring either
+    from ancestry would let the empty unit launch dependents and be reaped as if it saved work.
+
+    The ref measured is ``r.branch or "HEAD"`` -- the same fallback ``branch_produced_anything``
+    uses -- because a run with no stored run branch predates the run-branch design and landed its
+    units straight onto the operator's tree, where this shape is just as readable. Refusing that
+    case left a legacy unit whose work WAS merged reading as produced nothing: ``check`` shouted
+    NO COMMITS at landed work, and ``clean --merged`` would not reap it. When ``r.base`` is
+    absent too there is no earlier bound to name, so the range is the ref's whole history.
+    """
+    ref = r.branch or "HEAD"
+    tip = run(["git", "rev-parse", "--verify", "--quiet", branch], check=False)
+    if tip.returncode != 0 or not tip.stdout.strip():
+        return False
+    revs = f"{r.base}..{ref}" if r.base else ref
+    merges = run(["git", "log", "--first-parent", "--merges", "--format=%P", revs], check=False)
+    if merges.returncode != 0:
+        return False
+    sha = tip.stdout.strip()
+    for parents in merges.stdout.splitlines():
+        pair = parents.split()
+        if len(pair) >= 2 and pair[1] == sha:
+            return True
+    return False
 
 
 def make_worktree(unit: Unit, r: Run, root: Path) -> None:
     """One worktree and one branch per unit. This is the whole isolation story.
 
-    A unit with dependencies branches from the last one it named, so a ``/work`` unit opens on top
-    of the ``/plan`` unit's output rather than on bare ``base``. Made at launch time, not at
-    ``start``, because the dependency's branch does not have its commits until it has run.
+    Every unit branches from the run branch, whatever it names in ``after``. A dependency's
+    output is visible to it because ``land`` merged that work onto the run branch, not because
+    of where this unit branches from -- that is why a phase is landed before the next one is
+    launched; the land is what puts the earlier phase's work where a dependent unit can see it.
+    Made at launch time, not at ``start``, so the branch opens on the run branch as it stands,
+    with everything landed so far already on it.
     """
     path = root.parent / f"orch-{unit.name}"
     # dash, not a second slash: git cannot hold `orch/<run>` as a branch and `orch/<run>/<unit>`
@@ -484,6 +700,7 @@ def make_worktree(unit: Unit, r: Run, root: Path) -> None:
         print(f"  worktree already there: {path}")
     else:
         run(["git", "worktree", "add", str(path), "-b", branch, base or r.base])
+        unit.branched_from = resolve_ref(branch)
     unit.worktree = str(path)
     unit.branch = branch
     write_engine_prefs(path, r.engine_prefs)
@@ -593,7 +810,16 @@ def models(name: str) -> list[str]:
     return [ln.strip() for ln in got.stdout.splitlines() if ln.strip()]
 
 
-def agent_argv(unit: Unit) -> list[str]:
+def workspace_for(unit: Unit, default: str | None = None) -> str | None:
+    """The workspace name this unit launches into.
+
+    The unit's own field wins; otherwise the run default. Absent both, the wrapper inherits
+    the caller's workspace -- today's behaviour. No other precedence.
+    """
+    return unit.workspace or default
+
+
+def agent_argv(unit: Unit, default_workspace: str | None = None) -> list[str]:
     argv = [
         launcher(),
         "--no-focus",
@@ -604,8 +830,11 @@ def agent_argv(unit: Unit) -> list[str]:
         unit.name,
         "--cwd",
         unit.worktree or ".",
-        unit.vendor,
     ]
+    workspace = workspace_for(unit, default_workspace)
+    if workspace:
+        argv.extend(["--workspace", workspace])
+    argv.append(unit.vendor)
     modes = VENDOR_PERMISSION.get(unit.vendor, {})
     argv.extend(modes.get(unit.permission, modes.get("auto", [])))
     flags = VENDOR_FLAGS.get(unit.vendor, {})
@@ -613,9 +842,9 @@ def agent_argv(unit: Unit) -> list[str]:
         template = flags.get(key)
         if value and template:
             argv.extend(template.format(value=value).split(" "))
-    # Last, and verbatim. The wrapper reads its own flags out of the arguments that follow the
-    # vendor token, so this is the position they have to occupy -- and anything it does not
-    # recognise it hands to the vendor, which is the right failure either way.
+    # Last, and verbatim. Arguments after the vendor token reach the vendor, except for the
+    # few the wrapper intercepts from that position. A launcher flag that must precede the
+    # vendor token cannot be expressed here -- see ``workspace``.
     argv.extend(unit.launch_args)
     return argv
 
@@ -709,8 +938,6 @@ def launch(unit: Unit, backend: str = "inline", *, review_elsewhere: bool = Fals
 # will not take `herdr agent prompt` was quietly unusable for real work.
 PANE_TYPING_LIMIT = 800
 
-TASK_DIR = RUN_FILE.parent / "tasks"
-
 
 def pane_text(unit: Unit, text: str) -> str:
     """The line to type, which is the task itself only when the task is short enough to survive.
@@ -768,27 +995,32 @@ def send(
     )
 
 
-def poll(unit: Unit, agents: list[dict] | None = None) -> str:
+def poll(
+    unit: Unit,
+    agents: list[dict[str, Any]] | None = None,
+    *,
+    timeout: float = 20,
+) -> str:
     """Ask herdr what this session is doing. Absence means the session is gone.
 
     A caller looking at several units at once passes one already-fetched list rather than paying a
     herdr round trip per unit: an unresponsive herdr costs the timeout once instead of once a row.
     """
     handle = unit.agent_name or unit.name
-    for a in live_agents() if agents is None else agents:
+    for a in live_agents(timeout=timeout) if agents is None else agents:
         if a.get("name") == handle:
             return str(a.get("agent_status", "unknown"))
     return "gone"
 
 
-def live_agents() -> list[dict]:
+def live_agents(*, timeout: float = 20) -> list[dict[str, Any]]:
     """The sessions herdr is tracking right now.
 
     herdr is the truth a run file only mirrors, so it is asked, never remembered. A missing or
     failing herdr is not an error here: it means there is nothing to match a worktree or a session
     against, and the caller degrades -- to "no live agent" when adopting, to "gone" when polling.
     """
-    proc = run(["herdr", "agent", "list"], check=False, timeout=20)
+    proc = run(["herdr", "agent", "list"], check=False, timeout=timeout)
     try:
         agents = json.loads(proc.stdout)["result"]["agents"]
     except (ValueError, KeyError):
@@ -837,9 +1069,9 @@ def agent_for_worktree(path: str | None, agents: list[dict]) -> dict | None:
 def rebuild_unit(name: str, branch: str, r: Run, agents: list[dict]) -> Unit:
     """Reconstruct a unit from what is still true about it: its branch, tree, and session.
 
-    ``task``, ``after``, ``model``, ``effort`` and ``permission`` are left at their defaults: they
-    cannot be recovered, and an invented value is worse than an empty one -- the session has already
-    been given its task, so nothing here is ever sent to it again.
+    ``task``, ``after``, ``serialize``, ``model``, ``effort`` and ``permission`` are left at their
+    defaults: they cannot be recovered, and an invented value is worse than an empty one -- the
+    session has already been given its task, so nothing here is ever sent to it again.
     """
     worktree = worktree_on_branch(branch)
     agent = agent_for_worktree(worktree, agents)
@@ -877,20 +1109,324 @@ def discover_unrecorded(r: Run) -> list[tuple[str, str]]:
     ]
 
 
+# ------------------------------------------------- board writeback (via saga's reconcile_controller)
+
+# The board's closed Status vocabulary. These are the values the card can hold and nothing else --
+# a mapped status outside this ladder is a typo or an invention, and both are refused here rather
+# than sent to GitHub to fail in front of the board writer.
+STATUS_LADDER = ("Idea", "Shaping", "Ready", "Active", "Verify", "Done")
+
+# Where a unit's phase boundary lands its issue's card, read off the unit name's prefix. This is
+# the default only: ``Run.status_map`` replaces it one key at a time. The prefixes are the saga
+# capabilities a unit runs, so ``fix-52-claude`` is a fix phase exactly like ``work-52-build`` is a
+# work phase -- matching is at the first dash, never a bare string prefix, so ``planner-notes``
+# does not count as a plan.
+DEFAULT_STATUS_MAP: dict[str, str] = {
+    "plan": "Shaping",
+    "docreview": "Shaping",
+    "work": "Active",
+    "fix": "Active",
+    "codereview": "Verify",
+    "landed": "Done",
+}
+
+# Name of the environment variable that points straight at saga's reconcile_controller, for a
+# layout the globs below do not know.
+RECONCILE_CONTROLLER_ENV = "ORCHESTRATE_RECONCILE_CONTROLLER"
+
+
+def _controller_candidates() -> list[Path]:
+    """Where saga's reconcile_controller can live, in order of trust.
+
+    First the repo layout -- this file shipped beside the saga plugin in the same checkout. Then
+    the installed-plugin layouts, mirroring ``SAGA_INSTALL``: each vendor keeps its own cache, so
+    each gets its own glob. ``glob`` resolves symlinks, which is what agy's install is."""
+    here = Path(__file__).resolve()
+    paths = [here.parents[4] / "saga" / "scripts" / "reconcile_controller.py"]
+    for pattern in (
+        "~/.claude/plugins/cache/*/saga/*/scripts/reconcile_controller.py",
+        "~/.codex/plugins/cache/*/saga/*/scripts/reconcile_controller.py",
+        "~/.grok/marketplace-cache/*/plugins/saga/scripts/reconcile_controller.py",
+        "~/.qwen/extensions/saga/scripts/reconcile_controller.py",
+        "~/.gemini/config/plugins/saga/scripts/reconcile_controller.py",
+    ):
+        paths.extend(Path(hit) for hit in sorted(glob.glob(str(Path(pattern).expanduser()))))
+    return paths
+
+
+def reconcile_controller_path() -> Path | None:
+    """Resolve saga's reconcile_controller script, or None when it is not importable here.
+
+    Never an error: a missing saga is an ordinary state of this machine, and writeback is a guest
+    of the run, not a gate on it. ``land`` and ``announce`` say so on stderr and carry on."""
+    override = os.environ.get(RECONCILE_CONTROLLER_ENV, "")
+    if override:
+        path = Path(override).expanduser()
+        return path if path.is_file() else None
+    for candidate in _controller_candidates():
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def parse_issue_ref(ref: str) -> tuple[str, int] | None:
+    """Split ``owner/repo#N`` into ``("owner/repo", N)``; None when the ref is malformed.
+
+    A bad mapping must never take down a land -- it is reported and skipped instead."""
+    match = re.fullmatch(r"\s*(\S+)#(\d+)\s*", ref)
+    if not match:
+        return None
+    return match.group(1), int(match.group(2))
+
+
+def mapped_status(unit_name: str, overrides: dict[str, str] | None = None) -> str | None:
+    """The board Status a unit's phase boundary lands its card on, or None when nothing applies.
+
+    The run's ``status_map`` overrides ``DEFAULT_STATUS_MAP`` key by key. Longest key wins so a
+    specific override cannot be shadowed by a shorter default. Matching is at a dash boundary: the
+    unit name is the key itself or starts with the key and a dash."""
+    merged = {**DEFAULT_STATUS_MAP, **(overrides or {})}
+    for key in sorted(merged, key=len, reverse=True):
+        if unit_name == key or unit_name.startswith(key + "-"):
+            return merged[key]
+    return None
+
+
+def announce_comment_body(r: Run, unit: Unit, status: str) -> str:
+    """The one progress comment a boundary posts, naming what actually happened."""
+    return (
+        "\n".join(
+            [
+                "### Orchestrate: phase boundary passed",
+                "",
+                f"- run: {r.run_id}",
+                f"- unit: {unit.name} ({unit.vendor})",
+                f"- landed on: {r.branch}",
+                f"- board status: {status}",
+            ]
+        )
+        + "\n"
+    )
+
+
+def _reconcile_call(
+    controller: Path,
+    op: str,
+    repo: str,
+    number: int,
+    target_state: str,
+    *,
+    payload: dict[str, str] | None,
+    root: Path,
+) -> dict[str, Any]:
+    """Drive ONE write through saga's reconcile_controller and hand back its record.
+
+    This is the only door to GitHub in this file: the controller owns the certificate gate, the
+    idempotency key, and the retry. ``--repo-root`` pins the shared ledger into the repository the
+    run is working in, so a re-run -- here or from ``/work`` -- dedups against the same keys.
+
+    A failure comes back as a record, never as an exception: a board write is a guest of the run,
+    and its absence must not cost the run anything."""
+    argv = [
+        sys.executable,
+        str(controller),
+        "reconcile",
+        "--op",
+        op,
+        "--repo",
+        repo,
+        "--number",
+        str(number),
+        "--target-state",
+        target_state,
+        "--repo-root",
+        str(root),
+    ]
+    if payload is not None:
+        argv += ["--payload", json.dumps(payload)]
+    proc = run(argv, check=False, timeout=180)
+    if proc.returncode != 0:
+        tail = (proc.stderr or proc.stdout or "").strip()
+        return {"status": "failed", "op_kind": op, "error": tail}
+    try:
+        parsed = json.loads(proc.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        return {"status": "failed", "op_kind": op, "error": "controller printed no JSON record"}
+    if not isinstance(parsed, dict):
+        return {"status": "failed", "op_kind": op, "error": "controller record is not an object"}
+    return {str(key): value for key, value in parsed.items()}
+
+
+def announce_units(r: Run, names: Sequence[str]) -> list[dict[str, Any]]:
+    """Write each named unit's just-passed boundary back to its issue's board card.
+
+    Two writes per unit, both through ``reconcile_controller``: set the card's Status field to the
+    unit's mapped status, then post one progress comment naming what happened. The comment is
+    attempted only when the status write converged: it says ``board status: {status}``, and a
+    comment describing a write that did not happen is worse than one not attempted -- the retry
+    door is ``announce``, whose idempotency keys make a repeat safe. The comment's idempotency
+    discriminator is stable across calls -- ``orchestrate:{run}:{unit}:{status}`` -- so a second
+    ``land`` re-driving the same boundary meets the key the first one wrote and skips, rather than
+    posting a duplicate comment.
+
+    Returns one record per name. ``skipped`` records carry a reason and cost no writes: the run
+    maps no issue for that unit, the ref is malformed, or no status applies. A run with no
+    ``issues`` mapping at all returns nothing and writes nothing -- for it, this whole feature is a
+    no-op. A missing reconcile_controller is reported on stderr and skipped: a missing saga is an
+    ordinary state of this machine, not a failure of the land."""
+    if not r.issues:
+        return []
+
+    todo: list[tuple[Unit, str, int, str]] = []
+    records: list[dict[str, Any]] = []
+    for name in names:
+        unit = r.unit(name)
+        ref = r.issues.get(name)
+        if not ref:
+            records.append({"unit": name, "skipped": "no issue mapped for this unit"})
+            continue
+        parsed = parse_issue_ref(ref)
+        if parsed is None:
+            records.append({"unit": name, "skipped": f"malformed issue reference {ref!r}"})
+            continue
+        repo, number = parsed
+        status = mapped_status(name, r.status_map)
+        if status is None:
+            records.append({"unit": name, "skipped": "no status mapped for this unit's prefix"})
+            continue
+        if status not in STATUS_LADDER:
+            records.append(
+                {
+                    "unit": name,
+                    "skipped": f"status {status!r} is not on the ladder: "
+                    f"{', '.join(STATUS_LADDER)}",
+                }
+            )
+            continue
+        todo.append((unit, repo, number, status))
+
+    if not todo:
+        return records
+
+    controller = reconcile_controller_path()
+    if controller is None:
+        print(
+            "orchestrate: reconcile_controller is not importable -- saga is not installed "
+            f"here; skipping board writeback for {', '.join(unit.name for unit, *_ in todo)}",
+            file=sys.stderr,
+        )
+        records.extend(
+            {"unit": unit.name, "skipped": "reconcile_controller not importable"}
+            for unit, *_ in todo
+        )
+        return records
+
+    root = repo_root()
+    for unit, repo, number, status in todo:
+        status_write = _reconcile_call(
+            controller, "set-field-status", repo, number, status, payload=None, root=root
+        )
+        writes = [status_write]
+        # One failure is a failure; two writes half-done is worse than one not attempted. A
+        # failed write leaves no ledger key, so the retry door -- `announce` -- re-drives both
+        # writes cleanly.
+        if _write_converged(status_write):
+            discriminator = f"orchestrate:{r.run_id}:{unit.name}:{status}"
+            writes.append(
+                _reconcile_call(
+                    controller,
+                    "issue-progress-comment",
+                    repo,
+                    number,
+                    discriminator,
+                    payload={"body": announce_comment_body(r, unit, status)},
+                    root=root,
+                )
+            )
+        records.append(
+            {"unit": unit.name, "issue": f"{repo}#{number}", "status": status, "writes": writes}
+        )
+    return records
+
+
+def report_announcements(records: list[dict[str, Any]], *, verbose: bool = False) -> None:
+    """Print what a round of writeback did, one line per unit that is not a silent no-op."""
+    for record in records:
+        name = record.get("unit", "?")
+        if "skipped" in record:
+            if verbose:
+                print(f"  {name}: not announced -- {record['skipped']}")
+            continue
+        parts = []
+        for write in record.get("writes", []):
+            status = str(write.get("status", "unknown"))
+            kind = "status" if write.get("op_kind") == "set-field-status" else "comment"
+            parts.append(f"{kind} {status}")
+        print(f"  board writeback {name} -> {record.get('status', '?')}: {', '.join(parts)}")
+
+
+# Controller record statuses that mean the board converged: the write happened (``written``), had
+# already happened (``skipped`` on the idempotency key or the live re-read), or was re-driven
+# after outside drift (``corrected``). Anything else -- ``failed``, ``gated``, ``halt`` -- is a
+# write that did not happen, and the card still does not say what the run did.
+CONVERGED_STATUSES = ("written", "skipped", "corrected")
+
+
+def _write_converged(write: dict[str, Any]) -> bool:
+    """True when one controller record means its board write actually converged."""
+    return str(write.get("status")) in CONVERGED_STATUSES
+
+
+def _failed_writebacks(records: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The writeback records whose writes did not converge.
+
+    A ``skipped`` record is not a failure -- no issue mapped, a malformed ref, no saga on this
+    machine: those are designed no-ops. A record with even one unconverged write is."""
+    return [
+        record
+        for record in records
+        if "skipped" not in record
+        and any(not _write_converged(write) for write in record.get("writes", []))
+    ]
+
+
+def _report_failed_writebacks(failures: Sequence[dict[str, Any]]) -> None:
+    """Name every unit whose merge landed but whose board writeback did not converge.
+
+    A failed writeback never undoes or blocks a merge -- the code on the run branch is right;
+    only the claim that the board was updated is wrong. The retry door is named with the unit:
+    ``announce`` is idempotency-keyed, so a repeat is safe."""
+    for record in failures:
+        name = str(record.get("unit", "?"))
+        issue = str(record.get("issue", "?"))
+        print(
+            f"BOARD WRITEBACK FAILED: {name} ({issue}) -- the merge landed, but its card was "
+            f"not updated; retry with `orchestrate.py announce {name}`"
+        )
+
+
 # ----------------------------------------------------------------- commands
 
 
 def cmd_start(args: argparse.Namespace) -> int:
     plan = json.loads(Path(args.plan).read_text())
+    units = [Unit(**u) for u in plan["units"]]
+    assert_safe_unit_names(units)
     base = args.base or run(["git", "rev-parse", "HEAD"]).stdout.strip()
     r = Run(
         run_id=plan["run_id"],
         source=plan.get("source", ""),
         base=base,
-        units=[Unit(**u) for u in plan["units"]],
+        units=units,
         backend=plan.get("backend", "inline"),
         engine_prefs=plan.get("engine_prefs", {}),
+        issues=plan.get("issues", {}),
+        status_map=plan.get("status_map", {}),
+        workspace=plan.get("workspace") or None,
     )
+    # Before anything is written or any worktree is created: a typo in an ordering edge is a
+    # unit that is never eligible, forever, and `start` is the only moment it fails cheaply.
+    assert_dependencies_reachable(r.units)
     assert_vendors_available(r.units)
     assert_saga_reachable(r.units)
     r.branch = f"orch/{r.run_id}"
@@ -1076,6 +1612,28 @@ def cmd_roster(args: argparse.Namespace) -> int:
     return 0
 
 
+def assert_safe_unit_names(units: list[Unit]) -> None:
+    """Refuse any unit name that is not one safe path component.
+
+    A spilled task is written to ``TASK_DIR / f"{name}.task.md"``, and in Python an absolute
+    right-hand operand discards the left when joined, while ``..`` traverses -- unchecked, a name
+    is a write anywhere on disk, and the pointer stored from it a read back from anywhere. Names
+    are therefore refused here, where they enter a run, so a bad plan fails before anything is
+    written and before any worktree exists. ``resolve_task_file`` re-checks every pointer
+    independently: a run record edited by hand never passed through this function.
+    """
+    for unit in units:
+        name = unit.name
+        if not name:
+            raise SystemExit("a unit name must not be empty")
+        if Path(name).is_absolute():
+            raise SystemExit(f"unit name {name!r} must not be an absolute path")
+        if "/" in name or "\\" in name:
+            raise SystemExit(f"unit name {name!r} must not contain a path separator")
+        if name in (".", ".."):
+            raise SystemExit(f"unit name {name!r} is a path traversal, not a unit name")
+
+
 def assert_saga_reachable(units: list[Unit]) -> None:
     """Refuse a saga task aimed at a vendor with no saga installed.
 
@@ -1114,6 +1672,26 @@ def assert_vendors_available(units: list[Unit]) -> None:
         )
 
 
+def assert_dependencies_reachable(incoming: list[Unit], existing: set[str] | None = None) -> None:
+    """Reject an ``after`` or ``serialize`` name that is in no run.
+
+    A typo in an ordering edge otherwise produces a unit that is never eligible, forever --
+    ``eligible`` waits on a name that does not exist, and ``status`` reports the wait -- and the
+    failure is silent at the only moment it could have been caught cheaply. A name may point at a
+    sibling in ``incoming`` itself: units routinely depend on the units they were planned with.
+    """
+    reachable = {u.name for u in incoming} | (existing or set())
+    for unit in incoming:
+        for dep in unit.after:
+            if dep not in reachable:
+                raise SystemExit(f"unit {unit.name!r} waits on {dep!r}, which is in no run")
+        for dep in unit.serialize:
+            if dep not in reachable:
+                raise SystemExit(
+                    f"unit {unit.name!r} serializes behind {dep!r}, which is in no run"
+                )
+
+
 def cmd_expand(args: argparse.Namespace) -> int:
     """Add units to a run already in flight.
 
@@ -1126,6 +1704,7 @@ def cmd_expand(args: argparse.Namespace) -> int:
     r = Run.load()
     added = json.loads(Path(args.plan).read_text())
     incoming = [Unit(**u) for u in added["units"]]
+    assert_safe_unit_names(incoming)
 
     existing = {u.name for u in r.units}
     seen: set[str] = set()
@@ -1133,16 +1712,16 @@ def cmd_expand(args: argparse.Namespace) -> int:
         if unit.name in existing or unit.name in seen:
             raise SystemExit(f"unit {unit.name!r} is already in this run; give the new one a name")
         seen.add(unit.name)
-    reachable = existing | seen
-    for unit in incoming:
-        for dep in unit.after:
-            if dep not in reachable:
-                raise SystemExit(f"unit {unit.name!r} waits on {dep!r}, which is in no run")
+    assert_dependencies_reachable(incoming, existing)
 
     assert_vendors_available(incoming)
     assert_saga_reachable(incoming)
     r.units.extend(incoming)
     r.engine_prefs.update(added.get("engine_prefs", {}))
+    r.issues.update(added.get("issues", {}))
+    r.status_map.update(added.get("status_map", {}))
+    if "workspace" in added:
+        r.workspace = added["workspace"] or None
     r.save()
     print(f"added {len(incoming)}: {', '.join(u.name for u in incoming)}")
     print("`orchestrate.py go` to launch whatever is now eligible.")
@@ -1165,6 +1744,8 @@ def cmd_go(args: argparse.Namespace) -> int:
             print(f"  {unit.name}: skipped — {', '.join(empty)} committed nothing to build on")
             continue
         make_worktree(unit, r, root)
+        if not unit.workspace and r.workspace:
+            unit.workspace = r.workspace
         r.save()  # persist the worktree before the launch, so a failure is not relaunched blind
         print(f"launching {unit.name} ({unit.vendor}) -> {unit.task}")
         try:
@@ -1185,29 +1766,260 @@ def cmd_status(args: argparse.Namespace) -> int:
     print(head)
     print("-" * len(head))
     for u in r.units:
+        tail = u.task[:44]
+        if u.status == PENDING:
+            why = r.wait_reason(u)
+            if why:
+                # The wait is the interesting thing about a blocked unit -- its task is in the
+                # plan. Naming the kind of edge is the fix for a run that looked blocked for a
+                # reason that does not exist.
+                tail = f"[{why}]"
         print(
             f"{u.name:10s} {u.vendor:9s} {(u.model or '-'):14s} {(u.effort or '-'):7s} "
-            f"{u.status:9s} {live.get(u.name, '-'):9s} {u.task[:44]}"
+            f"{u.status:9s} {live.get(u.name, '-'):9s} {tail}"
         )
     return 0
 
 
+def settle_reading(units: list[Unit]) -> dict[str, str]:
+    """One poll of every unit, against one herdr round trip in total.
+
+    ``live_agents`` is fetched once and passed to ``poll`` -- polling each unit separately costs one
+    round trip a row, and an unresponsive herdr costs its timeout once a row instead of once.
+    """
+    agents = live_agents()
+    return {unit.name: poll(unit, agents) for unit in units}
+
+
 def cmd_settle(args: argparse.Namespace) -> int:
-    """Mark running units done when their session goes idle. No inference beyond that."""
+    """Mark running units done when their session goes idle. No inference beyond that.
+
+    Idle is read twice, ``interval`` seconds apart, and only counts when both readings agree: an
+    agent is also idle *between* turns -- it finishes a tool call, returns to the prompt, thinks,
+    and continues. One instantaneous sample once marked a unit done in that gap; it had two commits
+    at the time and finished with ten. ``--once`` restores the single sample for a caller that
+    wants it.
+    """
     r = Run.load()
-    for unit in r.units:
-        if unit.status != RUNNING:
-            continue
-        state = poll(unit)
-        if state in {"idle", "done"}:
+    running = [u for u in r.units if u.status == RUNNING]
+    first = settle_reading(running) if running else {}
+    second = first
+    if running and not args.once:
+        time.sleep(args.interval)
+        second = settle_reading(running)
+    for unit in running:
+        a, b = first[unit.name], second[unit.name]
+        if a in {"idle", "done"} and b in {"idle", "done"}:
             unit.status = DONE
-            print(f"  {unit.name}: {state} -> done")
-        elif state == "gone":
+            shown = a if args.once else f"{a} then {b}"
+            print(f"  {unit.name}: {shown} -> done")
+        elif a == "gone" and b == "gone":
             unit.status = FAILED
             unit.note = "session disappeared"
             print(f"  {unit.name}: session gone -> failed")
+        elif a in {"idle", "done"}:
+            print(f"  {unit.name}: {a} then {b} -> still moving")
     r.save()
     return 0
+
+
+SETTLED_STATES = frozenset({"idle", "done"})
+
+
+def confirmation_count(value: str) -> int:
+    """Parse a wait confirmation count, rejecting the single-observation defect."""
+    try:
+        count = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("confirmations must be an integer") from exc
+    if count < 2:
+        raise argparse.ArgumentTypeError("confirmations must be at least 2")
+    return count
+
+
+def confirmed_stop(
+    first: str,
+    further: Callable[[], str],
+    *,
+    interval: int,
+    needed: int,
+    sleep: Callable[[float], None] = time.sleep,
+    deadline: float | None = None,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> str | None:
+    """Return the status if consecutive observations agree the unit has stopped, else None.
+
+    ``blocked`` is a real stop and returns on the first sighting. ``idle`` and ``done`` need
+    ``needed`` agreeing samples ``interval`` seconds apart -- an agent is also idle between
+    turns, and one sample once returned ``wait`` in that gap. Any other status is not a stop.
+    """
+    if needed < 2:
+        raise ValueError("wait requires at least two confirming observations")
+    if first == "blocked":
+        return "blocked"
+    if first not in SETTLED_STATES:
+        return None
+    last = first
+    for _ in range(needed - 1):
+        if deadline is not None:
+            remaining = deadline - monotonic()
+            if remaining <= interval:
+                if remaining > 0:
+                    sleep(remaining)
+                return None
+        sleep(interval)
+        last = further()
+        if last == "blocked":
+            return "blocked"
+        if last not in SETTLED_STATES:
+            return None
+    return last
+
+
+def report_wait(unit: Unit, status: str) -> None:
+    if status == "blocked":
+        print(f"{unit.name} is blocked -- it is asking a question in its own tab")
+        return
+    print(f"{unit.name} is {status} -- `settle`, `land`, then `go`")
+
+
+def wait_on_events(
+    by_pane: dict[str, Unit],
+    events: Iterator[Any],
+    *,
+    interval: int,
+    needed: int,
+    poll_unit: Callable[[Unit], str],
+    sleep: Callable[[float], None] = time.sleep,
+) -> tuple[Unit, str] | None:
+    """Drive the event-socket path: a wake is one observation, not a settlement.
+
+    The stream is edge-triggered, so a single ``idle`` is the think-pause this function exists
+    to ignore. Confirmation is level-triggered, through ``poll_unit``, matching ``settle``.
+    """
+    for event in events:
+        unit = by_pane.get(event.pane_id)
+        if unit is None:
+            continue
+
+        status = confirmed_stop(
+            event.agent_status,
+            functools.partial(poll_unit, unit),
+            interval=interval,
+            needed=needed,
+            sleep=sleep,
+        )
+        if status is not None:
+            return unit, status
+    return None
+
+
+def wait_on_agent_waits(
+    running: list[Unit],
+    *,
+    timeout: int,
+    interval: int,
+    needed: int,
+) -> tuple[Unit, str] | None:
+    """Drive the ``herdr agent wait`` fallback with the same confirmation rule as the socket.
+
+    A successful wait-process exit is a wake, not a settlement: the first observation is a poll,
+    then further polls ``interval`` apart until they agree -- or the unit is still moving and its
+    wait is restarted. A failed child is not a wake and is not restarted. Every child and poll gets
+    only the time left before one shared monotonic deadline.
+    """
+    deadline = time.monotonic() + max(timeout, 0)
+    procs: dict[int, tuple[Unit, subprocess.Popen[bytes]]] = {}
+
+    def remaining() -> float:
+        return max(deadline - time.monotonic(), 0.0)
+
+    def start_unit(unit: Unit) -> bool:
+        budget = remaining()
+        if budget <= 0:
+            return False
+        proc = _popen_herdr_wait(unit, budget)
+        procs[proc.pid] = (unit, proc)
+        return True
+
+    def stop_children() -> None:
+        children = [proc for _, proc in procs.values()]
+        for proc in children:
+            if proc.poll() is None:
+                with contextlib.suppress(ProcessLookupError):
+                    proc.kill()
+        for proc in children:
+            with contextlib.suppress(ChildProcessError):
+                proc.wait()
+
+    try:
+        for unit in running:
+            start_unit(unit)
+        while procs:
+            budget = remaining()
+            if budget <= 0:
+                return None
+            finished = next(
+                (
+                    (pid, unit, proc, returncode)
+                    for pid, (unit, proc) in procs.items()
+                    if (returncode := proc.poll()) is not None
+                ),
+                None,
+            )
+            if finished is None:
+                time.sleep(min(0.01, budget))
+                continue
+            pid, unit, _proc, returncode = finished
+            procs.pop(pid)
+            if returncode != 0:
+                continue
+
+            budget = remaining()
+            if budget <= 0:
+                return None
+
+            def poll_before_deadline(current_unit: Unit = unit) -> str:
+                budget = remaining()
+                if budget <= 0:
+                    return "timeout"
+                return poll(current_unit, timeout=budget)
+
+            status = confirmed_stop(
+                poll_before_deadline(),
+                poll_before_deadline,
+                interval=interval,
+                needed=needed,
+                deadline=deadline,
+            )
+            if status is not None:
+                return unit, status
+            start_unit(unit)
+    finally:
+        stop_children()
+    return None
+
+
+def _popen_herdr_wait(unit: Unit, timeout: float) -> subprocess.Popen[bytes]:
+    handle = unit.agent_name or unit.name
+    return subprocess.Popen(
+        [
+            "herdr",
+            "agent",
+            "wait",
+            handle,
+            "--until",
+            "idle",
+            "--until",
+            "done",
+            "--until",
+            "blocked",
+            "--timeout",
+            str(max(1, int(timeout * 1000))),
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
 def cmd_wait(args: argparse.Namespace) -> int:
@@ -1217,9 +2029,16 @@ def cmd_wait(args: argparse.Namespace) -> int:
     socket and blocks in the kernel until a line arrives. Subscriptions are keyed by pane, which is
     why a unit records its ``pane_id`` at launch -- a request without one is rejected outright.
 
+    An agent goes idle between turns -- it finishes a tool call, returns to the prompt, thinks,
+    and continues -- so a single ``idle`` is not a settlement. Idle is read ``confirmations``
+    times, ``interval`` seconds apart, and only counts when consecutive readings agree, the same
+    shape as ``settle``. At least two observations are mandatory. ``blocked`` is a real stop and
+    returns on the first sighting, naming that state.
+
     Falls back to ``herdr agent wait`` when the socket is unreachable: an older herdr, a stopped
-    server, or a unit launched before pane ids were recorded. That path is level-triggered and
-    correct too, just one process per unit instead of one socket.
+    server, or a unit launched before pane ids were recorded. That path obeys the same
+    confirmation rule; a degraded path that still fired on one sample would leave the defect in
+    place on exactly the machines that hit the fallback.
     """
     r = Run.load()
     running = [u for u in r.units if u.status == RUNNING]
@@ -1227,61 +2046,37 @@ def cmd_wait(args: argparse.Namespace) -> int:
         print("nothing running -- `go` to launch what is eligible")
         return 0
 
+    needed = args.confirmations
     by_pane = {u.pane_id: u for u in running if u.pane_id}
     print(f"waiting on {', '.join(u.name for u in running)} (up to {args.timeout}s)")
 
     if by_pane and herdr_events is not None:
         try:
-            for event in herdr_events.agent_status_events(
-                list(by_pane), timeout=float(args.timeout)
-            ):
-                unit = by_pane.get(event.pane_id)
-                if unit is None:
-                    continue
-                if event.agent_status in {"idle", "done"}:
-                    print(f"{unit.name} is {event.agent_status} -- `settle`, `land`, then `go`")
-                    return 0
-                if event.agent_status == "blocked":
-                    print(f"{unit.name} is blocked -- it is asking a question in its own tab")
-                    return 0
-            print("no unit changed state before the timeout")
+            settled = wait_on_events(
+                by_pane,
+                herdr_events.agent_status_events(list(by_pane), timeout=float(args.timeout)),
+                interval=args.interval,
+                needed=needed,
+                poll_unit=poll,
+            )
+            if settled is None:
+                print("no unit changed state before the timeout")
+                return 0
+            report_wait(*settled)
             return 0
         except herdr_events.HerdrEventError as exc:
             print(f"event socket unavailable ({exc}); falling back to per-unit waits")
 
-    procs: dict[int, Unit] = {}
-    for unit in running:
-        handle = unit.agent_name or unit.name
-        proc = subprocess.Popen(
-            [
-                "herdr",
-                "agent",
-                "wait",
-                handle,
-                "--until",
-                "idle",
-                "--until",
-                "done",
-                "--timeout",
-                str(args.timeout * 1000),
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        procs[proc.pid] = unit
-    try:
-        pid, _ = os.wait()
-    except ChildProcessError:
-        return 0
-    settled = procs.pop(pid, None)
-    for other in procs:
-        with contextlib.suppress(ProcessLookupError):
-            os.kill(other, signal.SIGTERM)
-    print(
-        f"{settled.name} settled -- `settle`, `land`, then `go`"
-        if settled
-        else "a wait returned but its unit could not be identified; run `status`"
+    settled = wait_on_agent_waits(
+        running,
+        timeout=args.timeout,
+        interval=args.interval,
+        needed=needed,
     )
+    if settled is None:
+        print("no unit settled before the timeout")
+        return 0
+    report_wait(*settled)
     return 0
 
 
@@ -1295,6 +2090,25 @@ def cmd_land(args: argparse.Namespace) -> int:
     A unit that finished without committing anything is named here rather than passed over. That is
     the failure worth catching -- not a missing merge, but a session that produced nothing and
     reported itself done.
+
+    With ``--clean``, a successful land then reaps on the spot -- but only the units this
+    invocation merged, and they must still pass the ``clean --merged`` rule: DONE, with every
+    commit on the run branch. A land that merged nothing reaps nothing: work an earlier
+    invocation deliberately kept stays kept until the operator's own ``clean`` sweep. Nothing
+    else is touched, and no branch is ever deleted here: that stays an explicit
+    ``clean --branches``.
+
+    Each unit is announced the moment its own merge lands, before the next merge is attempted: a
+    conflict on a later unit returns out of the loop, and anything still waiting for the whole
+    batch would never be announced at all -- the next land sees those units already merged and
+    announces nothing either.
+
+    The exit status is deliberate, and three-way. 0: every merge and every board write converged.
+    1: the land itself could not finish -- a dirty tree, or a merge conflict, named above. 2:
+    every merge landed, but at least one board writeback did not converge; the units are named
+    above with their retry. A failed writeback never undoes or blocks a merge: the code on the
+    run branch is right, and only the claim that the board was updated is wrong -- a caller
+    scripting this has to be able to tell the two failures apart.
     """
     r = Run.load()
     if not r.branch:
@@ -1307,6 +2121,11 @@ def cmd_land(args: argparse.Namespace) -> int:
     on = run(["git", "rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()
     run(["git", "checkout", r.branch])
     landed, empty, already, held = [], [], [], []
+    # The bare names, kept apart from ``landed``'s display strings: ``--clean`` reaps exactly the
+    # units this invocation merged, and a name recovered by stripping " (+3)" off a display string
+    # would break on the first unit name containing a bracket.
+    landed_names: list[str] = []
+    writeback_failures: list[dict[str, Any]] = []
     try:
         for unit in r.units:
             if unit.status != DONE or not unit.branch:
@@ -1323,9 +2142,23 @@ def cmd_land(args: argparse.Namespace) -> int:
             merge = run(["git", "merge", "--no-ff", "--no-edit", unit.branch], check=False)
             if merge.returncode != 0:
                 run(["git", "merge", "--abort"], check=False)
-                print(f"  CONFLICT landing {unit.name}; resolve it on {r.branch} yourself")
+                print(
+                    f"  CONFLICT landing {unit.name}; on {r.branch}, finish with "
+                    f"`git merge --no-ff {unit.branch}` and resolve it there"
+                )
+                # Name any writeback that already failed before the conflict buries the return.
+                _report_failed_writebacks(writeback_failures)
                 return 1
             landed.append(f"{unit.name} (+{ahead})")
+            landed_names.append(unit.name)
+            # The boundary just passed: write it back to the board here, where it happened, rather
+            # than as a separate operator step -- and now, before the next merge is attempted, so
+            # a later conflict cannot discard this unit's announcement. A no-op for a run with no
+            # `issues` mapping; a missing saga says so on stderr. Re-runs dedup on the
+            # controller's idempotency keys.
+            records = announce_units(r, [unit.name])
+            report_announcements(records)
+            writeback_failures.extend(_failed_writebacks(records))
     finally:
         run(["git", "checkout", on], check=False)
 
@@ -1342,26 +2175,69 @@ def cmd_land(args: argparse.Namespace) -> int:
         )
     if empty:
         print(f"COMMITTED NOTHING: {', '.join(empty)} -- those sessions finished without saving")
+    _report_failed_writebacks(writeback_failures)
+    # ``getattr``: a caller that built its own Namespace before this flag existed has no
+    # ``clean`` attribute, and a land that worked yesterday must keep working today. Reaping comes
+    # after the announcement, not before: it removes the worktrees the announcement reads from. A
+    # failed writeback does not hold the reap back: reaping turns on the merge, and the merge
+    # landed. The sweep names only the units THIS land merged: reaping the whole run here also
+    # closed the worktrees an earlier invocation deliberately kept.
+    if getattr(args, "clean", False):
+        closed, _ = reap(r, merged_only=True, only=landed_names)
+        if closed:
+            print(f"reaped: {', '.join(closed)}")
+        else:
+            print("nothing to reap: this land merged nothing")
+    return 2 if writeback_failures else 0
+
+
+def cmd_announce(args: argparse.Namespace) -> int:
+    """Write a unit's passed phase boundary back to its issue's board card.
+
+    ``land`` already does this for the units it merges; this is the operator's door for the
+    boundaries land does not cover -- a unit announced at the wrong moment, or one whose writeback
+    failed at the time because saga was missing. Safe to re-run: the controller's idempotency keys
+    coalesce a repeat into a skip, so announcing twice posts one comment, not two.
+    """
+    r = Run.load()
+    if not r.issues:
+        print("this run has no `issues` mapping, so there is nothing to announce")
+        return 0
+    records = announce_units(r, args.units)
+    report_announcements(records, verbose=True)
     return 0
 
 
-def landed(branch: str, r: Run) -> bool:
-    """Is every commit on this branch already on the branch this run lands onto?
+def landed(branch: str, r: Run) -> bool | None:
+    """Where this branch's work stands relative to the branch this run lands onto.
+
+    Three answers, and the third is the one that used to be missing:
+
+    ``True`` -- the branch has commits, and every one of them is on the run branch: landed.
+    ``False`` -- the branch has commits the run branch does not have, or git cannot answer.
+    ``None`` -- the branch has no commits of its own at all: nothing to land.
+
+    ``None`` is NOT ``True``. A session that has not committed yet sits at exactly the commit it
+    was cut from, and "zero commits ahead of the run branch" describes it perfectly -- which is
+    also exactly what a merged branch looks like. Answering both with one yes is how
+    `clean --merged` once closed the tabs and removed the worktrees of units that were still
+    working, and destroyed their work. "Commits of its own" is the same question
+    ``produced_anything`` answers, and gets the same reading: the unit's own commits from the
+    merge base, or the merge that landed them.
 
     Measured against the run branch, not the operator's tree. Units land on the run branch as each
     phase finishes, and the operator's tree sees none of it until `collect`, once, at the very end.
-    Measured against HEAD this was therefore false for every unit for the whole run -- so
-    `clean --merged`, the only mode that is safe to run unattended, closed nothing at exactly the
-    time sessions pile up. The only way to reap mid-run was bare `clean`, which closes everything
-    regardless of whether its work survived, including the worktree that is the evidence a unit
-    failed.
 
     A run with no run branch predates `land`. There is nothing else to measure against, so the
     operator's tree it is.
     """
     base = r.branch or "HEAD"
     ahead = run(["git", "rev-list", "--count", f"{base}..{branch}"], check=False)
-    return ahead.returncode == 0 and ahead.stdout.strip() == "0"
+    if ahead.returncode != 0 or ahead.stdout.strip() not in ("", "0"):
+        return False
+    if branch_produced_anything(branch, r):
+        return True
+    return None
 
 
 def cmd_collect(args: argparse.Namespace) -> int:
@@ -1391,37 +2267,88 @@ def cmd_collect(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_clean(args: argparse.Namespace) -> int:
-    """Close tabs and remove worktrees.
+def reapable(unit: Unit, r: Run) -> bool:
+    """May ``--merged`` reap this unit: it is DONE, and everything it committed is landed.
 
-    ``--merged`` restricts it to units whose work is already on the run branch, which is the only
-    case where closing is unambiguously free: the work survived the unit, so the tab and the worktree
-    are pure overhead. Everything else is left alone, because an unlanded unit's worktree is the
-    evidence you look at when it went wrong -- and that is the whole reason this plugin keeps no
-    other record.
-
-    Run it after every ``land``, not once at the end. A phase's sessions are finished the moment
-    their work is on the run branch, and leaving them open for the rest of the run is how a
-    workspace ends up with a dozen idle tabs nobody can tell apart.
+    Both halves are load-bearing. The status gate keeps reaping away from anything still working:
+    zero commits ahead of the run branch is also exactly what a unit that has not committed yet
+    looks like, and that reading once cost four live units their worktrees. The commit gate keeps
+    reaping away from a DONE unit that saved nothing: its worktree is the evidence the session
+    failed, and this plugin keeps no other record.
     """
-    r = Run.load()
+    return unit.status == DONE and bool(unit.branch) and landed(unit.branch, r) is True
+
+
+def reap(
+    r: Run,
+    *,
+    merged_only: bool,
+    branches: bool = False,
+    only: Sequence[str] | None = None,
+) -> tuple[list[str], list[str]]:
+    """Close tabs and remove worktrees; return ``(closed, kept)`` by unit name.
+
+    ``merged_only`` applies the ``--merged`` rule -- see ``reapable`` -- and keeps everything
+    else. Without it, every unit is closed regardless of its state: a last resort, run with the
+    table in front of you, because it also discards the worktree that is the evidence a unit
+    failed.
+
+    ``only`` narrows the sweep to those unit names; every other unit is kept, whatever its
+    state. ``land --clean`` passes the units that land just merged, so reaping there is a
+    consequence of what that invocation did -- not a licence to close work an earlier one
+    deliberately kept. ``clean`` never passes it: the operator's own sweep still sees the whole
+    run, and its behaviour is unchanged.
+
+    ``branches`` deletes the branches of the units it closes. Reaping itself never does: a branch
+    is cheap, and it is the last copy of a failed unit's work. Deleting one stays an explicit
+    ``clean --branches``; ``land --clean`` never passes this.
+    """
     kept, closed = [], []
+    scope = set(only) if only is not None else None
     for unit in r.units:
-        if args.merged and not (unit.branch and landed(unit.branch, r)):
+        if scope is not None and unit.name not in scope:
+            kept.append(unit.name)
+            continue
+        if merged_only and not reapable(unit, r):
             kept.append(unit.name)
             continue
         if unit.tab_id:
             run(["herdr", "tab", "close", unit.tab_id], check=False)
         if unit.worktree and Path(unit.worktree).exists():
             run(["git", "worktree", "remove", "--force", unit.worktree], check=False)
-        if args.branches and unit.branch:
+        if branches and unit.branch:
             run(["git", "branch", "-D", unit.branch], check=False)
         closed.append(unit.name)
+    return closed, kept
+
+
+def cmd_clean(args: argparse.Namespace) -> int:
+    """Close tabs and remove worktrees.
+
+    ``--merged`` reaps a unit only when its status is DONE and every commit it made is on the run
+    branch. A RUNNING or PENDING unit is never touched, whatever its commit count -- zero commits
+    ahead is also exactly what a unit looks like that has not committed yet, and reaping it
+    destroys work still in flight. A DONE unit that committed nothing keeps its worktree too:
+    that worktree is the evidence the session saved nothing, and this plugin keeps no other
+    record.
+
+    Without ``--merged``, every unit is closed regardless of its state. That is a last resort,
+    not a routine: run it with the table in front of you.
+
+    Branches are deleted only with ``--branches``: a branch is cheap, and it is the last copy of
+    a failed unit's work.
+
+    Run it after every ``land``, not once at the end. A phase's sessions are finished the moment
+    their work is on the run branch, and leaving them open for the rest of the run is how a
+    workspace ends up with a dozen idle tabs nobody can tell apart.
+    """
+    r = Run.load()
+    closed, kept = reap(r, merged_only=args.merged, branches=args.branches)
     if args.all:
         shutil.rmtree(RUN_FILE.parent, ignore_errors=True)
     print(f"closed: {', '.join(closed) or 'nothing'}")
     if kept:
-        print(f"kept (not merged, so still your evidence): {', '.join(kept)}")
+        print(f"kept (not done, or its work not on the run branch): {', '.join(kept)}")
     return 0
 
 
@@ -1430,8 +2357,10 @@ def cmd_check(args: argparse.Namespace) -> int:
 
     Read-only: no writes, no merges, no launches. The record is one JSON file and the truth is git
     plus herdr, and the two can drift -- a session started by hand leaves a branch with no row; a
-    unit marked done saved nothing. Five shapes of drift are reported, and finding any of them is
-    the non-zero exit; ``adopt`` is the repair for the first one.
+    unit marked done saved nothing; a unit marked running finished while nobody was looking. Six
+    shapes of drift are reported, and finding any of them is the non-zero exit; ``adopt`` is the
+    repair for the first one, and ``settle`` is the repair for the last -- it reads idle twice,
+    ``interval`` seconds apart, and only marks the unit done when both readings agree.
     """
     r = Run.load()
     findings: list[str] = []
@@ -1465,6 +2394,14 @@ def cmd_check(args: argparse.Namespace) -> int:
                 )
         elif state == "gone":
             findings.append(f"SESSION GONE {unit.name} -- marked running, but its session is gone")
+        elif state in {"idle", "done"} and produced_anything(unit, r):
+            # Idle with nothing committed is not drift -- a session is also idle between turns,
+            # thinking. Idle with commits is a unit that finished while the record still calls it
+            # running, and nothing else will notice until an operator asks why the run stopped.
+            findings.append(
+                f"LOOKS DONE {unit.name} -- marked running, but its session is {state} "
+                f"and its branch has commits"
+            )
 
     if not findings:
         print("the record agrees with the repository")
@@ -1472,6 +2409,148 @@ def cmd_check(args: argparse.Namespace) -> int:
     for line in findings:
         print(f"  {line}")
     return 1
+
+
+def resolve_ref(ref: str) -> str | None:
+    """The commit a ref names, or None when nothing resolves -- gone, or never existed."""
+    if not ref:
+        return None
+    got = run(["git", "rev-parse", "--verify", "--quiet", ref], check=False)
+    if got.returncode != 0:
+        return None
+    return got.stdout.strip() or None
+
+
+def merge_base(ref_a: str, ref_b: str) -> str | None:
+    """The newest commit common to both refs, or None when git finds none."""
+    got = run(["git", "merge-base", ref_a, ref_b], check=False)
+    if got.returncode != 0:
+        return None
+    return got.stdout.strip() or None
+
+
+def landing_merge(branch: str, cmp_ref: str) -> str | None:
+    """The merge commit that landed ``branch`` onto ``cmp_ref``, or None when it never landed.
+
+    ``land`` merges ``--no-ff`` with the run branch checked out, so a landed unit branch is the
+    second parent of the merge that brought it in. Finding that merge is what lets a landed unit
+    still show its change -- the merge base of the merge's parents is where the unit branched --
+    instead of an empty diff that reads as "this unit changed nothing"."""
+    tip = resolve_ref(branch)
+    if tip is None:
+        return None
+    log = run(["git", "log", "--first-parent", "--merges", "--format=%H %P", cmp_ref], check=False)
+    if log.returncode != 0:
+        return None
+    for line in log.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 3 and parts[2] == tip:
+            return parts[0]
+    return None
+
+
+def diff_against(r: Run) -> str | None:
+    """The ref a unit's change is measured against.
+
+    The run branch when there is one; the run base for a run predating it -- those units all
+    branched from the base, so it is still the honest comparison. None when neither resolves,
+    which leaves nothing to diff against."""
+    for ref in (r.branch, r.base):
+        if resolve_ref(ref) is not None:
+            return ref
+    return None
+
+
+def print_git_diff(base: str, branch: str, *, stat: bool) -> None:
+    """The git diff itself: a full patch, or the stat summary with ``stat``."""
+    argv = ["git", "diff"]
+    if stat:
+        argv.append("--stat")
+    argv.append(f"{base}..{branch}")
+    body = run(argv).stdout.strip("\n")
+    if body:
+        print(body)
+
+
+def show_unit_diff(unit: Unit, cmp_ref: str, *, stat: bool) -> None:
+    """One unit's change -- merge base to branch -- or words for why there is nothing to show.
+
+    An empty diff is never printed: it reads as "this unit changed nothing", and a branch
+    measures empty in two ways that are both not nothing -- its work already landed on the run
+    branch, or the session never committed at all. Each gets words of its own."""
+    if not unit.branch:
+        print(f"{unit.name}: has no branch -- it was never launched")
+        return
+    branch = unit.branch
+    if resolve_ref(branch) is None:
+        print(f"{unit.name}: branch {branch} no longer resolves -- nothing to diff")
+        return
+    base = merge_base(cmp_ref, branch)
+    if base is None:
+        print(f"{unit.name}: no commit common to {cmp_ref} and {branch} -- cannot compare")
+        return
+    own = run(["git", "rev-list", "--count", f"{base}..{branch}"], check=False)
+    if own.returncode == 0 and own.stdout.strip() not in ("", "0"):
+        print(f"{unit.name}: diff {base[:8]}..{branch}")
+        print(
+            f"merge base {base[:8]} of {cmp_ref} and {branch} -- work landed on {cmp_ref} "
+            "by siblings does not appear in this diff"
+        )
+        print_git_diff(base, branch, stat=stat)
+        return
+    # Nothing of its own against the comparison ref. That is either "already landed" or "never
+    # committed", and the run branch says which: a landed branch is the second parent of the
+    # merge that brought it in.
+    merged = landing_merge(branch, cmp_ref)
+    if merged is None:
+        print(f"{unit.name}: branch {branch} has no commits of its own")
+        return
+    branched = merge_base(f"{merged}^1", branch)
+    if branched is None:
+        print(f"{unit.name}: landed in {merged[:8]}, but its branch point no longer resolves")
+        return
+    print(
+        f"{unit.name}: landed on {cmp_ref} in merge {merged[:8]} -- diff {branched[:8]}..{branch}"
+    )
+    print(f"merge base {branched[:8]} -- where {branch} branched before it was merged")
+    print_git_diff(branched, branch, stat=stat)
+
+
+def diff_summary(r: Run, cmp_ref: str) -> int:
+    """The shape of the whole run: one stat summary per unit that has a branch."""
+    branched = [u for u in r.units if u.branch]
+    if not branched:
+        print("no unit has a branch yet -- nothing to diff")
+        return 0
+    print(f"run {r.run_id} against {cmp_ref} -- each unit's change, merge base to branch")
+    for unit in branched:
+        print()
+        show_unit_diff(unit, cmp_ref, stat=True)
+    return 0
+
+
+def cmd_diff(args: argparse.Namespace) -> int:
+    """Show what a unit actually changed: the diff from the merge base to its branch.
+
+    ``run-branch..unit-branch`` is the obvious comparison and the wrong one for this question:
+    every unit in a phase branches from the same base, so the moment a sibling lands, that diff
+    reports the sibling's additions as this unit's deletions -- in one run it showed a 391-line
+    test file as deleted by a unit that had never touched it. The merge base of the run branch
+    and the unit branch is where the unit branched; from there to the branch is its change, and
+    nobody else's, whoever else has landed since.
+
+    With no unit name, prints the stat summary of every unit that has a branch -- the shape of
+    the whole run in one read.
+    """
+    r = Run.load()
+    cmp_ref = diff_against(r)
+    if cmp_ref is None:
+        print("neither the run branch nor the run base resolves -- nothing to compare against")
+        return 1
+    if not args.unit:
+        return diff_summary(r, cmp_ref)
+    show_unit_diff(r.unit(args.unit), cmp_ref, stat=args.stat)
+    return 0
 
 
 def cmd_adopt(args: argparse.Namespace) -> int:
@@ -1539,28 +2618,77 @@ def main(argv: list[str] | None = None) -> int:
     s.set_defaults(func=cmd_status)
 
     s = sub.add_parser("settle", help="mark running units done when their session goes idle")
+    s.add_argument(
+        "--interval",
+        type=int,
+        default=20,
+        help="seconds between the two idle readings (default 20)",
+    )
+    s.add_argument(
+        "--once",
+        action="store_true",
+        help="a single reading, no confirmation -- the old behaviour, for a caller that wants it",
+    )
     s.set_defaults(func=cmd_settle)
 
     s = sub.add_parser(
         "wait", help="block until a running unit settles (herdr events, not polling)"
     )
     s.add_argument("--timeout", type=int, default=1800, help="seconds to wait at most")
+    s.add_argument(
+        "--interval",
+        type=int,
+        default=20,
+        help="seconds between confirming idle readings (default 20)",
+    )
+    s.add_argument(
+        "--confirmations",
+        type=confirmation_count,
+        default=2,
+        help="agreeing idle/done observations required before returning (default 2)",
+    )
     s.set_defaults(func=cmd_wait)
 
     s = sub.add_parser("land", help="merge finished units onto the run branch")
+    s.add_argument(
+        "--clean",
+        action="store_true",
+        help="after a successful land, reap the units the merged rule allows; never their branches",
+    )
     s.set_defaults(func=cmd_land)
+
+    s = sub.add_parser("announce", help="write a unit's phase boundary back to its board card")
+    s.add_argument("units", nargs="+", help="unit names whose boundary has passed")
+    s.set_defaults(func=cmd_announce)
 
     s = sub.add_parser("collect", help="merge the run branch into your tree")
     s.set_defaults(func=cmd_collect)
 
     s = sub.add_parser("clean", help="close tabs and remove worktrees")
-    s.add_argument("--merged", action="store_true", help="only units whose branch is in HEAD")
+    s.add_argument(
+        "--merged",
+        action="store_true",
+        help="only DONE units whose commits are all on the run branch",
+    )
     s.add_argument("--branches", action="store_true", help="delete the unit branches too")
     s.add_argument("--all", action="store_true", help="delete the run file too")
     s.set_defaults(func=cmd_clean)
 
     s = sub.add_parser("check", help="report where the run record and the repository disagree")
     s.set_defaults(func=cmd_check)
+
+    s = sub.add_parser(
+        "diff", help="what a unit actually changed: merge base to its branch, nothing else"
+    )
+    s.add_argument(
+        "unit",
+        nargs="?",
+        help="unit to show; omit for a --stat summary of every unit with a branch",
+    )
+    s.add_argument(
+        "--stat", action="store_true", help="print the stat summary instead of the full patch"
+    )
+    s.set_defaults(func=cmd_diff)
 
     s = sub.add_parser("adopt", help="write units for run branches the table does not know")
     s.add_argument(

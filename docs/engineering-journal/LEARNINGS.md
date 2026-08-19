@@ -19,6 +19,76 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-08-19
+
+### A launcher flag after the vendor token is not a launcher flag  {#launcher-flag-position-is-not-passthrough}
+
+**Context.** Orchestrate appended `launch_args` after the vendor token and claimed the wrapper read
+its own flags from that position. A live Home Lab run put `--workspace probe-ws` there and lost the
+session into the caller's workspace.
+
+**Evidence.** Measured against the real wrapper with `--dry-run`:
+`--task probe --cwd DIR claude --workspace probe-ws` yields
+`herdr_workspace=<current-terminal:w2C>` and passes `--workspace` to the vendor; the same flag
+before `claude` yields `herdr_workspace=probe-ws`. `--company-account` is the opposite: before the
+vendor token it is parsed as an unknown agent kind. `plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py`
+`agent_argv`; tests in `tests/test_orchestrate_launch_and_land.py`.
+
+**Mechanism.** The two argv positions are mutually exclusive. The wrapper splits on the vendor
+token: launcher flags belong before it, vendor flags after it, and a small set is intercepted from
+the after-token side. A passthrough list can occupy only one of those positions. Putting
+`--workspace` in `launch_args` made a safety claim the argv could not keep.
+
+**Fix.** `workspace` is a first-class field on the run (default) and the unit (override).
+`agent_argv` emits `--workspace <name>` before the vendor token. `launch_args` stays after the
+vendor token, unvalidated. No table of wrapper flags.
+
+**Validation.** Focused argv tests assert position; `uv run pytest tests/ -k orchestrate` — 230
+passed.
+
+**What surprised.** The comment above `launch_args` stated a general rule that was true of
+`--company-account` and false of `--workspace`. The two positions do not share a vocabulary.
+
+**Generalizable rule.** When a wrapper splits argv on a token, "passthrough" is a position, not a
+promise. A flag that must live on the other side of the split is a field, not an extra argument.
+
+**Refs.** [[#orchestrate-workspace-is-a-field-not-a-passthrough]],
+[[#orchestrate-carries-launcher-args-does-not-police-them]]
+
+
+### A wait helper's exit is evidence only when it succeeded  {#wait-idle-is-a-think-pause}
+
+**Context.** An agent is idle between turns, so `wait` needs consecutive observations before it can
+report a unit settled. The first repair made that confirmation optional and treated every fallback
+helper exit as a wake, including failures.
+
+**Evidence.** A command-level fake `herdr` reproduced three false-settlement paths. `wait --once`
+returned after one `agent list` observation. A helper that exited 2 immediately caused 31 child
+spawns and 30 polls in 1.505 seconds despite `--timeout 1`. A blocked agent was invisible until the
+helper timeout because the real argv named only `idle` and `done`.
+
+**Mechanism.** The event stream is edge-triggered: one `idle` means the session returned to the
+prompt, not that it finished. The fallback added two more independent mistakes. It discarded the
+child's exit status, so a failed helper was treated as evidence. It also gave every restart the full
+timeout, so the command had no total deadline.
+
+**Fix.** `wait` has no single-observation flag and rejects confirmation counts below two. The
+fallback polls only after a successful child exit, gives every restart and poll the remaining time
+from one monotonic deadline, kills and reaps outstanding helpers on every return, and includes
+`blocked` in the real child argv. The separate `settle --once` contract is unchanged.
+
+**Validation.** `tests/test_orchestrate_wait_debounce.py` runs the production command against a fake
+`herdr` executable on `PATH`. It records the real argv, exit status behavior, spawn count, polls, and
+elapsed time. The harness proves one idle is insufficient, a failed child is not respawned, restarts
+share one deadline, and `blocked` returns promptly through the fallback.
+
+**Generalizable rule.** A subprocess exit is a wake only when its exit status says it observed the
+requested condition. Retries consume one caller-owned monotonic budget; each attempt must receive
+only the remainder. Tests of process contracts must cross the process boundary and inspect the argv
+the child actually received.
+
+**Refs.** `cmd_wait` and `wait_on_agent_waits` in `orchestrate.py`; wait debounce tests.
+
 ## 2026-08-17
 
 ### Delivering the keystrokes is not delivering the instruction  {#a-pane-carries-a-long-task-as-an-attachment}

@@ -164,16 +164,16 @@ the plan, which does not exist when the operator is reading this. Say so rather 
 run <run_id>   <-  <what the input was>
 vendors allowed: claude, codex, grok, qwen        reviewers: 2 on the plan, 2 on the code
 
- phase  what it does                    saga cap       agent     model         effort  after
- -----  -----------------------------   ------------   -------   -----------   ------  -----
- p1a    plan #48                        /plan          claude    opus          high    -
- p1b    plan #48, independently         /plan          codex     gpt-5.6-sol   xhigh   -
+ phase  what it does                    saga cap       agent     model         effort  after     serialize
+ -----  -----------------------------   ------------   -------   -----------   ------  -----     ---------
+ p1a    plan #48                        /plan          claude    opus          high    -         -
+ p1b    plan #48, independently         /plan          codex     gpt-5.6-sol   xhigh   -         -
  (merge of p1a and p1b happens in this session — no unit)
- p2a    tear up the merged plan         /doc-review    grok      grok-4.6      xhigh   p1a p1b
- p2b    tear up the merged plan         /doc-review    qwen      qwen3-max     high*   p1a p1b
- p3     build it                        /work          <from the plan>                 p2a p2b
- p4a    review the build                /code-review   <from the plan>                 p3
- p4b    review the build                /code-review   <from the plan>                 p3
+ p2a    tear up the merged plan         /doc-review    grok      grok-4.6      xhigh   p1a p1b   -
+ p2b    tear up the merged plan         /doc-review    qwen      qwen3-max     high*   p1a p1b   -
+ p3     build it                        /work          <from the plan>                 p2a p2b   -
+ p4a    review the build                /code-review   <from the plan>                 p3        -
+ p4b    review the build                /code-review   <from the plan>                 p3        -
 ```
 
 Rules for the table:
@@ -182,7 +182,18 @@ Rules for the table:
   stronger model; mechanical and survey work does not. One line of why if it is not obvious.
 - **A reviewing unit is never the agent that produced what it reviews.** Do not hand a session its
   own output to bless.
-- **`after` is the only ordering.** Units with no dependency run at the same time.
+- **Two ordering edges, one gate.** `after` and `serialize` both hold a unit until every name they
+  list is done; units with no dependency run at the same time. What differs is what they *claim*,
+  and the claim is all a reader has — so pick the honest one:
+  - **`after` — I build on what you produce.** Use it when this unit reads what the other one
+    writes: a reviewer after the thing it reviews, a builder after the plan it implements.
+  - **`serialize` — I must not run beside you, but I need nothing from you.** Use it when two
+    units would edit the same file, or when one must wait for the other to land before it can
+    rebase.
+
+  Reaching for `after` in that second case is wrong: it asserts a dependency that does not exist,
+  and a reader can no longer tell a real one from a scheduling one — the run looks blocked for a
+  reason that is not real.
 - **Name a unit for what it does and who does it** — `plan-claude`, `plan-codex`,
   `docreview-grok`, `build-guard`. Not `p1a`. That name becomes the herdr tab title, the branch
   (`orch/plan-claude`) and the worktree directory, and it is what you read in `herdr agent list`
@@ -216,6 +227,13 @@ Create one with `herdr tab create --workspace <workspace_id>`, and note that the
 `--workspace` flag takes a **name** rather than an ID: handed an existing workspace ID it creates a
 new workspace called that, instead of joining the one you meant.
 
+The run JSON carries that name as `workspace`. A run-level value is the default every unit inherits;
+a unit may set its own `workspace` and that wins — no other precedence. Orchestrate emits it as
+`--workspace <name>` before the vendor token, alongside `--task` and `--cwd`. Absent both, the
+session lands in the caller's workspace. Do not put `--workspace` in `launch_args`: that position is
+after the vendor token, and the wrapper then treats the flag as the vendor's, so the session lands
+in the wrong workspace.
+
 Below the threshold, do not do this. A three-unit run in four workspaces is worse than a three-unit
 run in one.
 
@@ -228,6 +246,7 @@ do not belong in the JSON. `task` is the literal text sent to the session.
 {
   "run_id": "orch-2026-08-16-a",
   "source": "#48 deploy-guard remediation",
+  "workspace": "issue-48",
   "engine_prefs": {"code-review": {"intent": "second-opinion", "model": "opus", "effort": "high"}},
   "units": [
     {"name": "p1a", "vendor": "claude", "model": "opus", "effort": "high",
@@ -237,10 +256,32 @@ do not belong in the JSON. `task` is the literal text sent to the session.
     {"name": "p2a", "vendor": "grok", "model": "grok-4.6", "effort": "xhigh",
      "task": "/doc-review docs/plans/....md", "after": ["p1a"]},
     {"name": "p2b", "vendor": "qwen", "model": "qwen3-max", "setup": ["/effort high"],
-     "task": "/doc-review docs/plans/....md", "after": ["p1a"]}
+     "task": "/doc-review docs/plans/....md", "after": ["p1a"]},
+    {"name": "runbook-claude", "vendor": "claude", "model": "opus", "effort": "high",
+     "task": "write the detection-rules section of docs/deploy-guard-runbook.md and commit it",
+     "after": [], "serialize": []},
+    {"name": "runbook-codex", "vendor": "codex", "model": "gpt-5.6-sol", "effort": "xhigh",
+     "task": "write the rollback-drill section of docs/deploy-guard-runbook.md and commit it",
+     "after": [], "serialize": ["runbook-claude"]}
   ]
 }
 ```
+
+**`after` and `serialize` are the two ordering edges, and they gate identically** — a unit does
+not launch until every name in both lists is done. What differs is what they claim:
+
+- **`after` — I build on what you produce.** This unit reads what the other one writes: a reviewer
+  after the thing it reviews, a builder after the plan it implements. `go` refuses to launch it
+  when the dependency committed nothing, because there would be nothing to build on.
+- **`serialize` — I must not run beside you, but I need nothing from you.** Two units that would
+  edit the same file, or one that must wait for the other to land before it can rebase.
+  `runbook-codex` above is that case: it never reads a word of what `runbook-claude` wrote — it
+  only refuses to edit the same document at the same time. `go` never asks whether a `serialize`
+  dependency committed anything.
+
+Using `after` for the second case is wrong: it asserts a dependency that does not exist, and a
+reader can no longer tell a real one from a scheduling one. `status` prints which kind of edge
+holds each pending unit.
 
 **`launch_args`** carries extra arguments for the launcher, passed through untouched. `model` and
 `effort` are what every vendor has in common; this is everything else the wrapper knows.
@@ -292,9 +333,9 @@ python3 "$S" adopt --yes                           # take it back
 ```
 
 `adopt` is the repair for a branch with no unit. It rebuilds the row from the branch, its worktree
-and the session sitting in it, and leaves `task`, `after`, `model` and `effort` empty rather than
-inventing them — the session already has its task, and nothing is ever sent to it again. Once
-adopted, the work is visible to `land` and `clean` like any other unit.
+and the session sitting in it, and leaves `task`, `after`, `serialize`, `model` and `effort` empty
+rather than inventing them — the session already has its task, and nothing is ever sent to it
+again. Once adopted, the work is visible to `land` and `clean` like any other unit.
 
 `python3`, not `uv run` — the script imports nothing outside the standard library, and the target
 repo may not be a uv project at all.
@@ -326,7 +367,9 @@ branches. Skip it and the next phase opens on nothing and writes something plaus
 `land` also names any unit that finished without committing. That is the failure worth seeing: not a
 missing merge, but a session that produced nothing and reported itself done.
 
-Between `go` and `settle`, use `wait` — it blocks on herdr's event socket rather than polling.
+Between `go` and `settle`, use `wait` — it blocks on herdr's event socket rather than polling, then
+confirms idle the same way `settle` does (`--interval`, `--confirmations`, `--once`). A single
+`idle` is the gap between turns, not a settlement. `blocked` returns promptly and is named.
 
 ## Phase 5 — expand at each phase boundary
 

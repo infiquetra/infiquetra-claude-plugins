@@ -96,6 +96,57 @@ class TestLauncherArgumentsArePassedThrough:
         assert "--not-a-real-flag" in orchestrate.agent_argv(unit)
 
 
+@pytest.mark.usefixtures("launcher_on_path")
+class TestWorkspaceIsALauncherField:
+    """``--workspace`` only works before the vendor token, so it is a field, not a passthrough."""
+
+    def test_a_unit_workspace_is_emitted_before_the_vendor_token(
+        self, orchestrate: ModuleType
+    ) -> None:
+        unit = orchestrate.Unit(name="reviewer", vendor="claude", task="x", workspace="issue-48")
+        argv = orchestrate.agent_argv(unit)
+        assert argv[argv.index("--workspace") + 1] == "issue-48"
+        assert argv.index("--workspace") < argv.index("claude")
+
+    def test_launch_args_still_follow_the_vendor_token(self, orchestrate: ModuleType) -> None:
+        unit = orchestrate.Unit(
+            name="reviewer",
+            vendor="claude",
+            task="x",
+            workspace="issue-48",
+            launch_args=["--company-account"],
+        )
+        argv = orchestrate.agent_argv(unit)
+        assert argv.index("--workspace") < argv.index("claude")
+        assert argv.index("--company-account") > argv.index("claude")
+
+    def test_a_unit_with_no_workspace_produces_today_s_argv(self, orchestrate: ModuleType) -> None:
+        unit = orchestrate.Unit(name="reviewer", vendor="claude", task="x")
+        argv = orchestrate.agent_argv(unit)
+        assert "--workspace" not in argv
+        with_args = orchestrate.Unit(
+            name="reviewer", vendor="claude", task="x", launch_args=["--company-account"]
+        )
+        assert orchestrate.agent_argv(with_args) == argv + ["--company-account"]
+
+    def test_a_run_default_is_inherited_when_the_unit_has_none(
+        self, orchestrate: ModuleType
+    ) -> None:
+        unit = orchestrate.Unit(name="reviewer", vendor="claude", task="x")
+        argv = orchestrate.agent_argv(unit, default_workspace="issue-48")
+        assert argv[argv.index("--workspace") + 1] == "issue-48"
+        assert argv.index("--workspace") < argv.index("claude")
+
+    def test_a_unit_workspace_wins_over_the_run_default(self, orchestrate: ModuleType) -> None:
+        unit = orchestrate.Unit(name="reviewer", vendor="claude", task="x", workspace="child-9")
+        argv = orchestrate.agent_argv(unit, default_workspace="issue-48")
+        assert argv[argv.index("--workspace") + 1] == "child-9"
+
+    def test_absent_both_does_not_emit_the_flag(self, orchestrate: ModuleType) -> None:
+        unit = orchestrate.Unit(name="reviewer", vendor="claude", task="x")
+        assert "--workspace" not in orchestrate.agent_argv(unit, default_workspace=None)
+
+
 def _git(cwd: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
 
@@ -292,3 +343,82 @@ class TestCleanCanReapDuringARun:
         r = orchestrate.Run.load()
 
         assert orchestrate.landed("orch/r1-alpha", r) is False
+
+
+@pytest.mark.usefixtures("launcher_on_path")
+class TestRunWorkspaceIsInheritedAtLaunch:
+    """A run default is stored on the run, copied onto a unit only when that unit has none."""
+
+    def test_start_records_the_run_workspace(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.chdir(repo)
+        plan = repo / "plan.json"
+        plan.write_text(
+            json.dumps(
+                {
+                    "run_id": "r2",
+                    "source": "a test",
+                    "workspace": "issue-48",
+                    "units": [{"name": "alpha", "vendor": "claude", "task": "x"}],
+                }
+            )
+        )
+        assert orchestrate.cmd_start(argparse.Namespace(plan=str(plan), base=None)) == 0
+        raw = json.loads((repo / ".orchestrate" / "run.json").read_text())
+        assert raw["workspace"] == "issue-48"
+        assert raw["units"][0].get("workspace") in (None, "")
+
+    def test_go_copies_the_run_default_onto_a_unit_that_has_none(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_run(repo, [_unit("alpha", status="pending", branch=None)])
+        path = repo / ".orchestrate" / "run.json"
+        raw = json.loads(path.read_text())
+        raw["workspace"] = "issue-48"
+        raw["units"][0]["workspace"] = None
+        path.write_text(json.dumps(raw))
+        monkeypatch.chdir(repo)
+        seen: list[str | None] = []
+
+        def fake_launch(
+            unit: Any, backend: str = "inline", *, review_elsewhere: bool = False
+        ) -> None:
+            seen.append(unit.workspace)
+            unit.status = "running"
+
+        monkeypatch.setattr(orchestrate, "make_worktree", lambda *_a, **_k: None)
+        monkeypatch.setattr(orchestrate, "launch", fake_launch)
+        assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
+        assert seen == ["issue-48"]
+
+    def test_go_does_not_overwrite_a_unit_workspace(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write_run(repo, [_unit("alpha", status="pending", branch=None, workspace="child-9")])
+        path = repo / ".orchestrate" / "run.json"
+        raw = json.loads(path.read_text())
+        raw["workspace"] = "issue-48"
+        path.write_text(json.dumps(raw))
+        monkeypatch.chdir(repo)
+        seen: list[str | None] = []
+
+        def fake_launch(
+            unit: Any, backend: str = "inline", *, review_elsewhere: bool = False
+        ) -> None:
+            seen.append(unit.workspace)
+            unit.status = "running"
+
+        monkeypatch.setattr(orchestrate, "make_worktree", lambda *_a, **_k: None)
+        monkeypatch.setattr(orchestrate, "launch", fake_launch)
+        assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
+        assert seen == ["child-9"]

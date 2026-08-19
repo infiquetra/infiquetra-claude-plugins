@@ -1,0 +1,391 @@
+"""Settle's debounce: idle must persist across two readings before a unit is done.
+
+An agent is also idle *between* turns -- it finishes a tool call, returns to the prompt, thinks,
+and continues. One instantaneous sample marked a unit done in that gap, which gated `land` and
+every dependent unit's launch; the unit had two commits at the time and finished with ten.
+
+Driven against a real git repository and a real run file, the way the command runs in earnest.
+Only herdr itself is canned -- one answer per reading -- because the thing under test is how the
+readings are taken and combined, not what a live session reports.
+"""
+
+from __future__ import annotations
+
+import argparse
+import importlib.util
+import json
+import subprocess
+import sys
+from pathlib import Path
+from types import ModuleType
+from typing import Any
+
+import pytest
+
+SCRIPT = (
+    Path(__file__).resolve().parents[1]
+    / "plugins"
+    / "orchestrate"
+    / "skills"
+    / "orchestrate"
+    / "scripts"
+    / "orchestrate.py"
+)
+
+
+@pytest.fixture(scope="module")
+def orchestrate() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("_orchestrate_settle_debounce", SCRIPT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _git(cwd: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
+
+def _commit(cwd: Path, name: str) -> None:
+    (cwd / name).write_text(name + "\n")
+    _git(cwd, "add", name)
+    _git(cwd, "commit", "-m", f"add {name}")
+
+
+@pytest.fixture
+def repo(tmp_path: Path) -> Path:
+    """A run branch and three unit branches. Settle reads the run file, not the branches."""
+    r = tmp_path / "repo"
+    r.mkdir()
+    _git(r, "init", "-b", "main")
+    _git(r, "config", "user.email", "test@example.com")
+    _git(r, "config", "user.name", "Test")
+    _commit(r, "base.txt")
+    _git(r, "branch", "orch/r1")
+    for unit in ("alpha", "beta", "gamma"):
+        _git(r, "checkout", "-b", f"orch/r1-{unit}", "orch/r1")
+        _commit(r, f"{unit}.txt")
+        _git(r, "checkout", "main")
+    return r
+
+
+def _write_run(repo: Path, units: list[dict[str, Any]]) -> None:
+    base = subprocess.run(
+        ["git", "rev-parse", "main"], cwd=repo, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    payload = {
+        "run_id": "r1",
+        "source": "a test",
+        "base": base,
+        "branch": "orch/r1",
+        "units": units,
+    }
+    path = repo / ".orchestrate" / "run.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload))
+
+
+def _read_units(repo: Path) -> dict[str, dict[str, Any]]:
+    raw = json.loads((repo / ".orchestrate" / "run.json").read_text())
+    units: list[dict[str, Any]] = raw["units"]
+    return {u["name"]: u for u in units}
+
+
+def _unit(name: str, **over: Any) -> dict[str, Any]:
+    return {
+        "name": name,
+        "vendor": "claude",
+        "task": "x",
+        "branch": f"orch/r1-{name}",
+        "status": "running",
+        **over,
+    }
+
+
+def _agent(name: str, status: str) -> dict[str, str]:
+    return {"name": name, "agent_status": status}
+
+
+class FakeHerdr:
+    """Stands in for ``herdr agent list``: one canned answer per call, and it counts the calls.
+
+    Asking for more readings than were given fails the test loudly -- a settle that polled herdr
+    once per unit would burn through one canned reading per row.
+    """
+
+    def __init__(self, readings: list[list[dict[str, str]]]) -> None:
+        self.readings = list(readings)
+        self.calls = 0
+
+    def __call__(self) -> list[dict[str, str]]:
+        self.calls += 1
+        assert self.readings, (
+            f"herdr asked {self.calls} times -- expected one call per reading, not per unit"
+        )
+        return self.readings.pop(0)
+
+
+def _patch_settle(
+    orchestrate: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    readings: list[list[dict[str, str]]],
+) -> tuple[FakeHerdr, list[float]]:
+    fake = FakeHerdr(readings)
+    monkeypatch.setattr(orchestrate, "live_agents", fake)
+    slept: list[float] = []
+    monkeypatch.setattr(orchestrate.time, "sleep", slept.append)
+    return fake, slept
+
+
+class TestIdleMustPersistAcrossTwoReadings:
+    """An agent is idle between turns too, so one sample is not evidence it finished."""
+
+    def test_idle_in_both_readings_is_done(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _write_run(repo, [_unit("alpha")])
+        fake, slept = _patch_settle(
+            orchestrate,
+            monkeypatch,
+            [[_agent("alpha", "idle")], [_agent("alpha", "idle")]],
+        )
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False)) == 0
+        assert _read_units(repo)["alpha"]["status"] == "done"
+        assert slept == [20], "the two readings must be spaced by the interval"
+        assert fake.calls == 2
+        assert "alpha" in capsys.readouterr().out
+
+    def test_done_in_the_second_reading_counts_the_same_way(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """The settle states are idle *or* done; a reading of either confirms a reading of either."""
+        _write_run(repo, [_unit("alpha")])
+        _patch_settle(
+            orchestrate,
+            monkeypatch,
+            [[_agent("alpha", "idle")], [_agent("alpha", "done")]],
+        )
+        monkeypatch.chdir(repo)
+
+        orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False))
+        assert _read_units(repo)["alpha"]["status"] == "done"
+
+    def test_idle_then_working_stays_running(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """The observed failure shape: settled-looking in the gap between turns, then back at it."""
+        _write_run(repo, [_unit("alpha")])
+        _patch_settle(
+            orchestrate,
+            monkeypatch,
+            [[_agent("alpha", "idle")], [_agent("alpha", "working")]],
+        )
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False)) == 0
+        assert _read_units(repo)["alpha"]["status"] == "running"
+        out = capsys.readouterr().out
+        assert "alpha" in out
+        assert "still moving" in out
+
+    def test_gone_in_both_readings_is_failed(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Absence in one reading may be a herdr hiccup; absence in both is a dead session."""
+        _write_run(repo, [_unit("alpha")])
+        _patch_settle(orchestrate, monkeypatch, [[], []])
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False)) == 0
+        unit = _read_units(repo)["alpha"]
+        assert unit["status"] == "failed"
+        assert unit["note"] == "session disappeared"
+        out = capsys.readouterr().out
+        assert "session gone -> failed" in out
+
+    def test_gone_in_only_one_reading_is_not_failed(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """The flip to failed needs both readings to agree, exactly like the flip to done."""
+        _write_run(repo, [_unit("alpha")])
+        _patch_settle(orchestrate, monkeypatch, [[_agent("alpha", "idle")], []])
+        monkeypatch.chdir(repo)
+
+        orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False))
+        assert _read_units(repo)["alpha"]["status"] == "running"
+
+    def test_a_mixed_run_gets_one_fate_per_unit(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Three units, one settle pass, all three outcomes decided per unit rather than per run."""
+        _write_run(repo, [_unit("alpha"), _unit("beta"), _unit("gamma")])
+        _patch_settle(
+            orchestrate,
+            monkeypatch,
+            [
+                [_agent("alpha", "idle"), _agent("beta", "idle")],  # gamma absent -> gone
+                [_agent("alpha", "idle"), _agent("beta", "working")],
+            ],
+        )
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False)) == 0
+        units = _read_units(repo)
+        assert units["alpha"]["status"] == "done"
+        assert units["beta"]["status"] == "running"
+        assert units["gamma"]["status"] == "failed"
+
+
+class TestOnceKeepsTheSingleSample:
+    """``--once`` is today's behaviour, kept for a caller that wants it."""
+
+    def test_idle_is_done_on_a_single_reading(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _write_run(repo, [_unit("alpha")])
+        fake, slept = _patch_settle(orchestrate, monkeypatch, [[_agent("alpha", "idle")]])
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=True)) == 0
+        assert _read_units(repo)["alpha"]["status"] == "done"
+        assert fake.calls == 1
+        assert slept == [], "--once must not wait between readings"
+
+    def test_gone_is_failed_on_a_single_reading(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _write_run(repo, [_unit("alpha")])
+        fake, slept = _patch_settle(orchestrate, monkeypatch, [[]])
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=True)) == 0
+        assert _read_units(repo)["alpha"]["status"] == "failed"
+        assert fake.calls == 1
+        assert slept == []
+
+
+class TestOneHerdrCallPerReading:
+    """Polling each unit separately costs one round trip a row -- one shared list per reading."""
+
+    def test_every_unit_is_read_off_one_shared_list(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _write_run(repo, [_unit("alpha"), _unit("beta"), _unit("gamma")])
+        agents = [_agent("alpha", "idle"), _agent("beta", "idle"), _agent("gamma", "idle")]
+        fake, _ = _patch_settle(orchestrate, monkeypatch, [agents, agents])
+        monkeypatch.chdir(repo)
+
+        orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False))
+        assert fake.calls == 2, "two readings, two herdr calls -- never one per unit"
+        units = _read_units(repo)
+        assert all(units[name]["status"] == "done" for name in ("alpha", "beta", "gamma"))
+
+    def test_nothing_running_asks_herdr_nothing(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _write_run(repo, [_unit("alpha", status="done"), _unit("beta", status="pending")])
+        fake, slept = _patch_settle(orchestrate, monkeypatch, [])
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False)) == 0
+        assert fake.calls == 0
+        assert slept == []
+
+
+class TestTheCommandLine:
+    """The flags go through the real parser, so their defaults are the ones the CLI installs."""
+
+    def test_the_default_interval_is_twenty_seconds(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _write_run(repo, [_unit("alpha")])
+        _, slept = _patch_settle(
+            orchestrate,
+            monkeypatch,
+            [[_agent("alpha", "idle")], [_agent("alpha", "idle")]],
+        )
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.main(["settle"]) == 0
+        assert slept == [20]
+
+    def test_the_interval_flag_sets_the_gap(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _write_run(repo, [_unit("alpha")])
+        _, slept = _patch_settle(
+            orchestrate,
+            monkeypatch,
+            [[_agent("alpha", "idle")], [_agent("alpha", "idle")]],
+        )
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.main(["settle", "--interval", "5"]) == 0
+        assert slept == [5]
+
+    def test_the_once_flag_reaches_the_command(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _write_run(repo, [_unit("alpha")])
+        fake, slept = _patch_settle(orchestrate, monkeypatch, [[_agent("alpha", "idle")]])
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.main(["settle", "--once"]) == 0
+        assert _read_units(repo)["alpha"]["status"] == "done"
+        assert fake.calls == 1
+        assert slept == []

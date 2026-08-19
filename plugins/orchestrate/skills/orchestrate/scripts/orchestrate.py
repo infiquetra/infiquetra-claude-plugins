@@ -23,7 +23,7 @@ import subprocess
 import sys
 import textwrap
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -298,19 +298,30 @@ class Unit:
     prompt, so the session has settled into the requested tier before it is given work. Anything a
     slash command can do to a fresh session belongs here."""
     launch_args: list[str] = field(default_factory=list)
-    """Extra arguments for the launcher, passed through verbatim and never inspected.
+    """Extra arguments appended after the vendor token, passed through verbatim and never inspected.
+
+    Arguments after the vendor token reach the vendor, except for the few the wrapper intercepts
+    from that position (``--company-account`` is one: it swaps the configuration directory before
+    the tool starts). A launcher flag that must precede the vendor token cannot be expressed here
+    -- ``--workspace`` is the case that forced the ``workspace`` field: after the vendor token the
+    wrapper treats it as the vendor's argument and the session lands in the caller's workspace.
 
     ``model`` and ``effort`` cover what every vendor has in common; this covers everything else the
-    wrapper knows and this plugin does not. ``["--company-account"]`` is the case that forced it:
-    the wrapper intercepts that flag and swaps the configuration directory before the tool starts,
-    so it is a launcher concern, invisible to the tool's own ``--help``, and there was no way to
-    ask for it through a unit. The operator asked, the plugin could not carry it, and a whole review
-    phase was launched by hand and lost to the run record.
+    wrapper knows and this plugin does not. Deliberately not validated here. The wrapper is a
+    separate program on its own release schedule, so any list of acceptable flags kept in this file
+    would go stale silently -- which is the same closed vocabulary one level up. It already rejects
+    what it does not accept, by name. Carry it, do not police it."""
+    workspace: str | None = None
+    """Herdr workspace NAME this unit launches into.
 
-    Deliberately not validated here. The wrapper is a separate program on its own release schedule,
-    so any list of acceptable flags kept in this file would go stale silently -- which is the same
-    closed vocabulary one level up. It already rejects what it does not accept, by name. Carry it,
-    do not police it."""
+    Emitted as ``--workspace <name>`` in the launcher position, before the vendor token, alongside
+    ``--task`` and ``--cwd``. Absent, the run's default is used if it has one; absent both, the
+    session lands in the caller's workspace -- today's behaviour. The wrapper's ``--workspace``
+    takes a name, not an ID: handed an ID it creates a new workspace called that rather than
+    joining the one you meant.
+
+    A field rather than a ``launch_args`` entry because the two argv positions are mutually
+    exclusive, and this plugin should not have to know which of the wrapper's flags belong where."""
     merge: bool = True
     """Should this unit's branch be merged onto the run branch by ``land``?
 
@@ -373,6 +384,11 @@ class Run:
     Every unit branches from here and lands back here when it finishes, so the next phase opens on
     everything the earlier phases actually produced rather than on one predecessor's branch. At the
     end this is the single branch that merges into the operator's tree."""
+    workspace: str | None = None
+    """Default herdr workspace NAME every unit inherits unless it sets its own.
+
+    Absent means today's behaviour: sessions land in the caller's workspace. A unit with its own
+    ``workspace`` wins; there is no other precedence."""
     engine_prefs: dict[str, dict[str, str]] = field(default_factory=dict)
     """Saga's per-stage external-engine answers, decided once in the interview.
 
@@ -409,6 +425,7 @@ class Run:
             engine_prefs=raw.get("engine_prefs", {}),
             issues=raw.get("issues", {}),
             status_map=raw.get("status_map", {}),
+            workspace=raw.get("workspace") or None,
         )
 
     def save(self, path: Path = RUN_FILE) -> None:
@@ -422,6 +439,7 @@ class Run:
             "engine_prefs": self.engine_prefs,
             "issues": self.issues,
             "status_map": self.status_map,
+            "workspace": self.workspace,
             "units": [spill_unit(u) for u in self.units],
         }
         path.write_text(json.dumps(payload, indent=2) + "\n")
@@ -792,7 +810,16 @@ def models(name: str) -> list[str]:
     return [ln.strip() for ln in got.stdout.splitlines() if ln.strip()]
 
 
-def agent_argv(unit: Unit) -> list[str]:
+def workspace_for(unit: Unit, default: str | None = None) -> str | None:
+    """The workspace name this unit launches into.
+
+    The unit's own field wins; otherwise the run default. Absent both, the wrapper inherits
+    the caller's workspace -- today's behaviour. No other precedence.
+    """
+    return unit.workspace or default
+
+
+def agent_argv(unit: Unit, default_workspace: str | None = None) -> list[str]:
     argv = [
         launcher(),
         "--no-focus",
@@ -803,8 +830,11 @@ def agent_argv(unit: Unit) -> list[str]:
         unit.name,
         "--cwd",
         unit.worktree or ".",
-        unit.vendor,
     ]
+    workspace = workspace_for(unit, default_workspace)
+    if workspace:
+        argv.extend(["--workspace", workspace])
+    argv.append(unit.vendor)
     modes = VENDOR_PERMISSION.get(unit.vendor, {})
     argv.extend(modes.get(unit.permission, modes.get("auto", [])))
     flags = VENDOR_FLAGS.get(unit.vendor, {})
@@ -812,9 +842,9 @@ def agent_argv(unit: Unit) -> list[str]:
         template = flags.get(key)
         if value and template:
             argv.extend(template.format(value=value).split(" "))
-    # Last, and verbatim. The wrapper reads its own flags out of the arguments that follow the
-    # vendor token, so this is the position they have to occupy -- and anything it does not
-    # recognise it hands to the vendor, which is the right failure either way.
+    # Last, and verbatim. Arguments after the vendor token reach the vendor, except for the
+    # few the wrapper intercepts from that position. A launcher flag that must precede the
+    # vendor token cannot be expressed here -- see ``workspace``.
     argv.extend(unit.launch_args)
     return argv
 
@@ -1387,6 +1417,7 @@ def cmd_start(args: argparse.Namespace) -> int:
         engine_prefs=plan.get("engine_prefs", {}),
         issues=plan.get("issues", {}),
         status_map=plan.get("status_map", {}),
+        workspace=plan.get("workspace") or None,
     )
     # Before anything is written or any worktree is created: a typo in an ordering edge is a
     # unit that is never eligible, forever, and `start` is the only moment it fails cheaply.
@@ -1684,6 +1715,8 @@ def cmd_expand(args: argparse.Namespace) -> int:
     r.engine_prefs.update(added.get("engine_prefs", {}))
     r.issues.update(added.get("issues", {}))
     r.status_map.update(added.get("status_map", {}))
+    if "workspace" in added:
+        r.workspace = added["workspace"] or None
     r.save()
     print(f"added {len(incoming)}: {', '.join(u.name for u in incoming)}")
     print("`orchestrate.py go` to launch whatever is now eligible.")
@@ -1706,6 +1739,8 @@ def cmd_go(args: argparse.Namespace) -> int:
             print(f"  {unit.name}: skipped — {', '.join(empty)} committed nothing to build on")
             continue
         make_worktree(unit, r, root)
+        if not unit.workspace and r.workspace:
+            unit.workspace = r.workspace
         r.save()  # persist the worktree before the launch, so a failure is not relaunched blind
         print(f"launching {unit.name} ({unit.vendor}) -> {unit.task}")
         try:
@@ -1783,6 +1818,158 @@ def cmd_settle(args: argparse.Namespace) -> int:
     return 0
 
 
+SETTLED_STATES = frozenset({"idle", "done"})
+
+
+def observations_needed(once: bool, confirmations: int) -> int:
+    """How many agreeing idle/done readings ``wait`` requires.
+
+    ``--once`` is settle's vocabulary for a single sample. Otherwise ``confirmations``, at least 1.
+    """
+    if once:
+        return 1
+    return max(int(confirmations), 1)
+
+
+def confirmed_stop(
+    first: str,
+    further: Callable[[], str],
+    *,
+    interval: int,
+    needed: int,
+    sleep: Callable[[float], None] = time.sleep,
+) -> str | None:
+    """Return the status if consecutive observations agree the unit has stopped, else None.
+
+    ``blocked`` is a real stop and returns on the first sighting. ``idle`` and ``done`` need
+    ``needed`` agreeing samples ``interval`` seconds apart -- an agent is also idle between
+    turns, and one sample once returned ``wait`` in that gap. Any other status is not a stop.
+    """
+    if first == "blocked":
+        return "blocked"
+    if first not in SETTLED_STATES:
+        return None
+    last = first
+    for _ in range(needed - 1):
+        sleep(interval)
+        last = further()
+        if last == "blocked":
+            return "blocked"
+        if last not in SETTLED_STATES:
+            return None
+    return last
+
+
+def report_wait(unit: Unit, status: str) -> None:
+    if status == "blocked":
+        print(f"{unit.name} is blocked -- it is asking a question in its own tab")
+        return
+    print(f"{unit.name} is {status} -- `settle`, `land`, then `go`")
+
+
+def wait_on_events(
+    by_pane: dict[str, Unit],
+    events: Iterator[Any],
+    *,
+    interval: int,
+    needed: int,
+    poll_unit: Callable[[Unit], str],
+    sleep: Callable[[float], None] = time.sleep,
+) -> tuple[Unit, str] | None:
+    """Drive the event-socket path: a wake is one observation, not a settlement.
+
+    The stream is edge-triggered, so a single ``idle`` is the think-pause this function exists
+    to ignore. Confirmation is level-triggered, through ``poll_unit``, matching ``settle``.
+    """
+    for event in events:
+        unit = by_pane.get(event.pane_id)
+        if unit is None:
+            continue
+        status = confirmed_stop(
+            event.agent_status,
+            lambda u=unit: poll_unit(u),
+            interval=interval,
+            needed=needed,
+            sleep=sleep,
+        )
+        if status is not None:
+            return unit, status
+    return None
+
+
+def wait_on_agent_waits(
+    running: list[Unit],
+    *,
+    timeout: int,
+    interval: int,
+    needed: int,
+    poll_unit: Callable[[Unit], str],
+    sleep: Callable[[float], None] = time.sleep,
+    popen: Callable[..., Any] | None = None,
+    wait_pid: Callable[[], tuple[int, int]] = os.wait,
+    kill_pid: Callable[[int, int], None] = os.kill,
+) -> tuple[Unit, str] | None:
+    """Drive the ``herdr agent wait`` fallback with the same confirmation rule as the socket.
+
+    A wait process exiting is a wake, not a settlement: the first observation is a poll, then
+    further polls ``interval`` apart until they agree -- or the unit is still moving and its
+    wait is restarted. Sibling waits stay running until one unit actually settles; killing them
+    on the first wake would drop the confirmation and reintroduce the one-sample defect.
+    """
+    start = popen if popen is not None else _popen_herdr_wait
+
+    procs: dict[int, Unit] = {}
+
+    def start_unit(unit: Unit) -> None:
+        proc = start(unit, timeout)
+        procs[proc.pid] = unit
+
+    for unit in running:
+        start_unit(unit)
+    try:
+        while procs:
+            pid, _ = wait_pid()
+            unit = procs.pop(pid, None)
+            if unit is None:
+                continue
+            status = confirmed_stop(
+                poll_unit(unit),
+                lambda u=unit: poll_unit(u),
+                interval=interval,
+                needed=needed,
+                sleep=sleep,
+            )
+            if status is not None:
+                for other in list(procs):
+                    with contextlib.suppress(ProcessLookupError):
+                        kill_pid(other, signal.SIGTERM)
+                return unit, status
+            start_unit(unit)
+    except ChildProcessError:
+        return None
+    return None
+
+
+def _popen_herdr_wait(unit: Unit, timeout: int) -> subprocess.Popen[bytes]:
+    handle = unit.agent_name or unit.name
+    return subprocess.Popen(
+        [
+            "herdr",
+            "agent",
+            "wait",
+            handle,
+            "--until",
+            "idle",
+            "--until",
+            "done",
+            "--timeout",
+            str(timeout * 1000),
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
 def cmd_wait(args: argparse.Namespace) -> int:
     """Block until a running unit settles, told by herdr rather than asking it.
 
@@ -1790,9 +1977,16 @@ def cmd_wait(args: argparse.Namespace) -> int:
     socket and blocks in the kernel until a line arrives. Subscriptions are keyed by pane, which is
     why a unit records its ``pane_id`` at launch -- a request without one is rejected outright.
 
+    An agent goes idle between turns -- it finishes a tool call, returns to the prompt, thinks,
+    and continues -- so a single ``idle`` is not a settlement. Idle is read ``confirmations``
+    times, ``interval`` seconds apart, and only counts when consecutive readings agree, the same
+    shape as ``settle``. ``--once`` restores the single sample. ``blocked`` is a real stop and
+    returns on the first sighting, naming that state.
+
     Falls back to ``herdr agent wait`` when the socket is unreachable: an older herdr, a stopped
-    server, or a unit launched before pane ids were recorded. That path is level-triggered and
-    correct too, just one process per unit instead of one socket.
+    server, or a unit launched before pane ids were recorded. That path obeys the same
+    confirmation rule; a degraded path that still fired on one sample would leave the defect in
+    place on exactly the machines that hit the fallback.
     """
     r = Run.load()
     running = [u for u in r.units if u.status == RUNNING]
@@ -1800,61 +1994,38 @@ def cmd_wait(args: argparse.Namespace) -> int:
         print("nothing running -- `go` to launch what is eligible")
         return 0
 
+    needed = observations_needed(args.once, args.confirmations)
     by_pane = {u.pane_id: u for u in running if u.pane_id}
     print(f"waiting on {', '.join(u.name for u in running)} (up to {args.timeout}s)")
 
     if by_pane and herdr_events is not None:
         try:
-            for event in herdr_events.agent_status_events(
-                list(by_pane), timeout=float(args.timeout)
-            ):
-                unit = by_pane.get(event.pane_id)
-                if unit is None:
-                    continue
-                if event.agent_status in {"idle", "done"}:
-                    print(f"{unit.name} is {event.agent_status} -- `settle`, `land`, then `go`")
-                    return 0
-                if event.agent_status == "blocked":
-                    print(f"{unit.name} is blocked -- it is asking a question in its own tab")
-                    return 0
-            print("no unit changed state before the timeout")
+            settled = wait_on_events(
+                by_pane,
+                herdr_events.agent_status_events(list(by_pane), timeout=float(args.timeout)),
+                interval=args.interval,
+                needed=needed,
+                poll_unit=poll,
+            )
+            if settled is None:
+                print("no unit changed state before the timeout")
+                return 0
+            report_wait(*settled)
             return 0
         except herdr_events.HerdrEventError as exc:
             print(f"event socket unavailable ({exc}); falling back to per-unit waits")
 
-    procs: dict[int, Unit] = {}
-    for unit in running:
-        handle = unit.agent_name or unit.name
-        proc = subprocess.Popen(
-            [
-                "herdr",
-                "agent",
-                "wait",
-                handle,
-                "--until",
-                "idle",
-                "--until",
-                "done",
-                "--timeout",
-                str(args.timeout * 1000),
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        procs[proc.pid] = unit
-    try:
-        pid, _ = os.wait()
-    except ChildProcessError:
-        return 0
-    settled = procs.pop(pid, None)
-    for other in procs:
-        with contextlib.suppress(ProcessLookupError):
-            os.kill(other, signal.SIGTERM)
-    print(
-        f"{settled.name} settled -- `settle`, `land`, then `go`"
-        if settled
-        else "a wait returned but its unit could not be identified; run `status`"
+    settled = wait_on_agent_waits(
+        running,
+        timeout=args.timeout,
+        interval=args.interval,
+        needed=needed,
+        poll_unit=poll,
     )
+    if settled is None:
+        print("no unit settled before the timeout")
+        return 0
+    report_wait(*settled)
     return 0
 
 
@@ -2413,6 +2584,23 @@ def main(argv: list[str] | None = None) -> int:
         "wait", help="block until a running unit settles (herdr events, not polling)"
     )
     s.add_argument("--timeout", type=int, default=1800, help="seconds to wait at most")
+    s.add_argument(
+        "--interval",
+        type=int,
+        default=20,
+        help="seconds between confirming idle readings (default 20)",
+    )
+    s.add_argument(
+        "--confirmations",
+        type=int,
+        default=2,
+        help="agreeing idle/done observations required before returning (default 2)",
+    )
+    s.add_argument(
+        "--once",
+        action="store_true",
+        help="a single reading, no confirmation -- the old behaviour, for a caller that wants it",
+    )
     s.set_defaults(func=cmd_wait)
 
     s = sub.add_parser("land", help="merge finished units onto the run branch")

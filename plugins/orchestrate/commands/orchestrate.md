@@ -227,6 +227,13 @@ Create one with `herdr tab create --workspace <workspace_id>`, and note that the
 `--workspace` flag takes a **name** rather than an ID: handed an existing workspace ID it creates a
 new workspace called that, instead of joining the one you meant.
 
+The run JSON carries that name as `workspace`. A run-level value is the default every unit inherits;
+a unit may set its own `workspace` and that wins — no other precedence. Orchestrate emits it as
+`--workspace <name>` before the vendor token, alongside `--task` and `--cwd`. Absent both, the
+session lands in the caller's workspace. Do not put `--workspace` in `launch_args`: that position is
+after the vendor token, and the wrapper then treats the flag as the vendor's, so the session lands
+in the wrong workspace.
+
 Below the threshold, do not do this. A three-unit run in four workspaces is worse than a three-unit
 run in one.
 
@@ -239,6 +246,7 @@ do not belong in the JSON. `task` is the literal text sent to the session.
 {
   "run_id": "orch-2026-08-16-a",
   "source": "#48 deploy-guard remediation",
+  "workspace": "issue-48",
   "engine_prefs": {"code-review": {"intent": "second-opinion", "model": "opus", "effort": "high"}},
   "units": [
     {"name": "p1a", "vendor": "claude", "model": "opus", "effort": "high",
@@ -359,7 +367,9 @@ branches. Skip it and the next phase opens on nothing and writes something plaus
 `land` also names any unit that finished without committing. That is the failure worth seeing: not a
 missing merge, but a session that produced nothing and reported itself done.
 
-Between `go` and `settle`, use `wait` — it blocks on herdr's event socket rather than polling.
+Between `go` and `settle`, use `wait` — it blocks on herdr's event socket rather than polling, then
+confirms idle the same way `settle` does (`--interval`, `--confirmations`, `--once`). A single
+`idle` is the gap between turns, not a settlement. `blocked` returns promptly and is named.
 
 ## Phase 5 — expand at each phase boundary
 

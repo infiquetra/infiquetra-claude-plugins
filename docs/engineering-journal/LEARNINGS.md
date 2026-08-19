@@ -56,37 +56,38 @@ promise. A flag that must live on the other side of the split is a field, not an
 [[#orchestrate-carries-launcher-args-does-not-police-them]]
 
 
-### Wait's first idle is the gap between turns  {#wait-idle-is-a-think-pause}
+### A wait helper's exit is evidence only when it succeeded  {#wait-idle-is-a-think-pause}
 
-**Context.** `settle` already required two idle readings `--interval` apart after a unit was marked
-done in the gap between turns. `wait` still returned on the first `idle`/`done`/`blocked` event. On
-a live run it fired mid-task; the session was still working with twelve uncommitted paths.
+**Context.** An agent is idle between turns, so `wait` needs consecutive observations before it can
+report a unit settled. The first repair made that confirmation optional and treated every fallback
+helper exit as a wake, including failures.
 
-**Evidence.** `cmd_wait` subscribed to `pane.agent_status_changed` and returned on the first
-matching status. The fallback `herdr agent wait --until idle --until done` did the same on process
-exit. `settle` in the same file already documented the think-pause. Tests in
-`tests/test_orchestrate_wait_debounce.py`.
+**Evidence.** A command-level fake `herdr` reproduced three false-settlement paths. `wait --once`
+returned after one `agent list` observation. A helper that exited 2 immediately caused 31 child
+spawns and 30 polls in 1.505 seconds despite `--timeout 1`. A blocked agent was invisible until the
+helper timeout because the real argv named only `idle` and `done`.
 
-**Mechanism.** Herdr's agent-status feed is edge-triggered: one `idle` means the session returned
-to the prompt, not that it finished. An agent is idle between tool calls while it thinks. A
-level-triggered confirmation — poll again after `--interval`, require agreement — is what made
-`settle` honest. `wait` never did, on either path.
+**Mechanism.** The event stream is edge-triggered: one `idle` means the session returned to the
+prompt, not that it finished. The fallback added two more independent mistakes. It discarded the
+child's exit status, so a failed helper was treated as evidence. It also gave every restart the full
+timeout, so the command had no total deadline.
 
-**Fix.** Both the event-socket path and the `herdr agent wait` fallback require consecutive
-agreeing observations (`--interval`, `--confirmations`, `--once` — settle's vocabulary). `blocked`
-still returns on the first sighting and is named. Sibling waits stay running until one unit
-actually settles.
+**Fix.** `wait` has no single-observation flag and rejects confirmation counts below two. The
+fallback polls only after a successful child exit, gives every restart and poll the remaining time
+from one monotonic deadline, kills and reaps outstanding helpers on every return, and includes
+`blocked` in the real child argv. The separate `settle --once` contract is unchanged.
 
-**Validation.** Fake event source and fake wait-process: one idle does not return; idle then
-working does not return; consecutive agreeing idles do; fallback obeys the same rule. 230
-orchestrate tests passed.
+**Validation.** `tests/test_orchestrate_wait_debounce.py` runs the production command against a fake
+`herdr` executable on `PATH`. It records the real argv, exit status behavior, spawn count, polls, and
+elapsed time. The harness proves one idle is insufficient, a failed child is not respawned, restarts
+share one deadline, and `blocked` returns promptly through the fallback.
 
-**Generalizable rule.** An edge-triggered "it went idle" is a wake, not a settlement. If a sibling
-command already learned to confirm across readings, every path that consumes the same signal has to
-learn it too — including the degraded fallback, or the defect just moves to the machines that hit
-it.
+**Generalizable rule.** A subprocess exit is a wake only when its exit status says it observed the
+requested condition. Retries consume one caller-owned monotonic budget; each attempt must receive
+only the remainder. Tests of process contracts must cross the process boundary and inspect the argv
+the child actually received.
 
-**Refs.** `cmd_settle` in `orchestrate.py`; settle debounce tests.
+**Refs.** `cmd_wait` and `wait_on_agent_waits` in `orchestrate.py`; wait debounce tests.
 
 ## 2026-08-17
 

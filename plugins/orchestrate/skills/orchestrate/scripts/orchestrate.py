@@ -13,12 +13,12 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import functools
 import glob
 import json
 import os
 import re
 import shutil
-import signal
 import subprocess
 import sys
 import textwrap
@@ -554,7 +554,7 @@ def run(
     check: bool = True,
     capture: bool = True,
     timeout: float | None = None,
-) -> subprocess.CompletedProcess:
+) -> subprocess.CompletedProcess[str]:
     """Run a command. Pass ``timeout`` for anything that asks a vendor a question.
 
     A vendor's own subcommand can reach the network and hang; without a bound that becomes an
@@ -995,27 +995,32 @@ def send(
     )
 
 
-def poll(unit: Unit, agents: list[dict] | None = None) -> str:
+def poll(
+    unit: Unit,
+    agents: list[dict[str, Any]] | None = None,
+    *,
+    timeout: float = 20,
+) -> str:
     """Ask herdr what this session is doing. Absence means the session is gone.
 
     A caller looking at several units at once passes one already-fetched list rather than paying a
     herdr round trip per unit: an unresponsive herdr costs the timeout once instead of once a row.
     """
     handle = unit.agent_name or unit.name
-    for a in live_agents() if agents is None else agents:
+    for a in live_agents(timeout=timeout) if agents is None else agents:
         if a.get("name") == handle:
             return str(a.get("agent_status", "unknown"))
     return "gone"
 
 
-def live_agents() -> list[dict]:
+def live_agents(*, timeout: float = 20) -> list[dict[str, Any]]:
     """The sessions herdr is tracking right now.
 
     herdr is the truth a run file only mirrors, so it is asked, never remembered. A missing or
     failing herdr is not an error here: it means there is nothing to match a worktree or a session
     against, and the caller degrades -- to "no live agent" when adopting, to "gone" when polling.
     """
-    proc = run(["herdr", "agent", "list"], check=False, timeout=20)
+    proc = run(["herdr", "agent", "list"], check=False, timeout=timeout)
     try:
         agents = json.loads(proc.stdout)["result"]["agents"]
     except (ValueError, KeyError):
@@ -1821,14 +1826,15 @@ def cmd_settle(args: argparse.Namespace) -> int:
 SETTLED_STATES = frozenset({"idle", "done"})
 
 
-def observations_needed(once: bool, confirmations: int) -> int:
-    """How many agreeing idle/done readings ``wait`` requires.
-
-    ``--once`` is settle's vocabulary for a single sample. Otherwise ``confirmations``, at least 1.
-    """
-    if once:
-        return 1
-    return max(int(confirmations), 1)
+def confirmation_count(value: str) -> int:
+    """Parse a wait confirmation count, rejecting the single-observation defect."""
+    try:
+        count = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("confirmations must be an integer") from exc
+    if count < 2:
+        raise argparse.ArgumentTypeError("confirmations must be at least 2")
+    return count
 
 
 def confirmed_stop(
@@ -1838,6 +1844,8 @@ def confirmed_stop(
     interval: int,
     needed: int,
     sleep: Callable[[float], None] = time.sleep,
+    deadline: float | None = None,
+    monotonic: Callable[[], float] = time.monotonic,
 ) -> str | None:
     """Return the status if consecutive observations agree the unit has stopped, else None.
 
@@ -1845,12 +1853,20 @@ def confirmed_stop(
     ``needed`` agreeing samples ``interval`` seconds apart -- an agent is also idle between
     turns, and one sample once returned ``wait`` in that gap. Any other status is not a stop.
     """
+    if needed < 2:
+        raise ValueError("wait requires at least two confirming observations")
     if first == "blocked":
         return "blocked"
     if first not in SETTLED_STATES:
         return None
     last = first
     for _ in range(needed - 1):
+        if deadline is not None:
+            remaining = deadline - monotonic()
+            if remaining <= interval:
+                if remaining > 0:
+                    sleep(remaining)
+                return None
         sleep(interval)
         last = further()
         if last == "blocked":
@@ -1885,9 +1901,10 @@ def wait_on_events(
         unit = by_pane.get(event.pane_id)
         if unit is None:
             continue
+
         status = confirmed_stop(
             event.agent_status,
-            lambda u=unit: poll_unit(u),
+            functools.partial(poll_unit, unit),
             interval=interval,
             needed=needed,
             sleep=sleep,
@@ -1903,54 +1920,87 @@ def wait_on_agent_waits(
     timeout: int,
     interval: int,
     needed: int,
-    poll_unit: Callable[[Unit], str],
-    sleep: Callable[[float], None] = time.sleep,
-    popen: Callable[..., Any] | None = None,
-    wait_pid: Callable[[], tuple[int, int]] = os.wait,
-    kill_pid: Callable[[int, int], None] = os.kill,
 ) -> tuple[Unit, str] | None:
     """Drive the ``herdr agent wait`` fallback with the same confirmation rule as the socket.
 
-    A wait process exiting is a wake, not a settlement: the first observation is a poll, then
-    further polls ``interval`` apart until they agree -- or the unit is still moving and its
-    wait is restarted. Sibling waits stay running until one unit actually settles; killing them
-    on the first wake would drop the confirmation and reintroduce the one-sample defect.
+    A successful wait-process exit is a wake, not a settlement: the first observation is a poll,
+    then further polls ``interval`` apart until they agree -- or the unit is still moving and its
+    wait is restarted. A failed child is not a wake and is not restarted. Every child and poll gets
+    only the time left before one shared monotonic deadline.
     """
-    start = popen if popen is not None else _popen_herdr_wait
+    deadline = time.monotonic() + max(timeout, 0)
+    procs: dict[int, tuple[Unit, subprocess.Popen[bytes]]] = {}
 
-    procs: dict[int, Unit] = {}
+    def remaining() -> float:
+        return max(deadline - time.monotonic(), 0.0)
 
-    def start_unit(unit: Unit) -> None:
-        proc = start(unit, timeout)
-        procs[proc.pid] = unit
+    def start_unit(unit: Unit) -> bool:
+        budget = remaining()
+        if budget <= 0:
+            return False
+        proc = _popen_herdr_wait(unit, budget)
+        procs[proc.pid] = (unit, proc)
+        return True
 
-    for unit in running:
-        start_unit(unit)
+    def stop_children() -> None:
+        children = [proc for _, proc in procs.values()]
+        for proc in children:
+            if proc.poll() is None:
+                with contextlib.suppress(ProcessLookupError):
+                    proc.kill()
+        for proc in children:
+            with contextlib.suppress(ChildProcessError):
+                proc.wait()
+
     try:
+        for unit in running:
+            start_unit(unit)
         while procs:
-            pid, _ = wait_pid()
-            unit = procs.pop(pid, None)
-            if unit is None:
+            budget = remaining()
+            if budget <= 0:
+                return None
+            finished = next(
+                (
+                    (pid, unit, proc, returncode)
+                    for pid, (unit, proc) in procs.items()
+                    if (returncode := proc.poll()) is not None
+                ),
+                None,
+            )
+            if finished is None:
+                time.sleep(min(0.01, budget))
                 continue
+            pid, unit, _proc, returncode = finished
+            procs.pop(pid)
+            if returncode != 0:
+                continue
+
+            budget = remaining()
+            if budget <= 0:
+                return None
+
+            def poll_before_deadline(current_unit: Unit = unit) -> str:
+                budget = remaining()
+                if budget <= 0:
+                    return "timeout"
+                return poll(current_unit, timeout=budget)
+
             status = confirmed_stop(
-                poll_unit(unit),
-                lambda u=unit: poll_unit(u),
+                poll_before_deadline(),
+                poll_before_deadline,
                 interval=interval,
                 needed=needed,
-                sleep=sleep,
+                deadline=deadline,
             )
             if status is not None:
-                for other in list(procs):
-                    with contextlib.suppress(ProcessLookupError):
-                        kill_pid(other, signal.SIGTERM)
                 return unit, status
             start_unit(unit)
-    except ChildProcessError:
-        return None
+    finally:
+        stop_children()
     return None
 
 
-def _popen_herdr_wait(unit: Unit, timeout: int) -> subprocess.Popen[bytes]:
+def _popen_herdr_wait(unit: Unit, timeout: float) -> subprocess.Popen[bytes]:
     handle = unit.agent_name or unit.name
     return subprocess.Popen(
         [
@@ -1962,8 +2012,10 @@ def _popen_herdr_wait(unit: Unit, timeout: int) -> subprocess.Popen[bytes]:
             "idle",
             "--until",
             "done",
+            "--until",
+            "blocked",
             "--timeout",
-            str(timeout * 1000),
+            str(max(1, int(timeout * 1000))),
         ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -1980,7 +2032,7 @@ def cmd_wait(args: argparse.Namespace) -> int:
     An agent goes idle between turns -- it finishes a tool call, returns to the prompt, thinks,
     and continues -- so a single ``idle`` is not a settlement. Idle is read ``confirmations``
     times, ``interval`` seconds apart, and only counts when consecutive readings agree, the same
-    shape as ``settle``. ``--once`` restores the single sample. ``blocked`` is a real stop and
+    shape as ``settle``. At least two observations are mandatory. ``blocked`` is a real stop and
     returns on the first sighting, naming that state.
 
     Falls back to ``herdr agent wait`` when the socket is unreachable: an older herdr, a stopped
@@ -1994,7 +2046,7 @@ def cmd_wait(args: argparse.Namespace) -> int:
         print("nothing running -- `go` to launch what is eligible")
         return 0
 
-    needed = observations_needed(args.once, args.confirmations)
+    needed = args.confirmations
     by_pane = {u.pane_id: u for u in running if u.pane_id}
     print(f"waiting on {', '.join(u.name for u in running)} (up to {args.timeout}s)")
 
@@ -2020,7 +2072,6 @@ def cmd_wait(args: argparse.Namespace) -> int:
         timeout=args.timeout,
         interval=args.interval,
         needed=needed,
-        poll_unit=poll,
     )
     if settled is None:
         print("no unit settled before the timeout")
@@ -2592,14 +2643,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     s.add_argument(
         "--confirmations",
-        type=int,
+        type=confirmation_count,
         default=2,
         help="agreeing idle/done observations required before returning (default 2)",
-    )
-    s.add_argument(
-        "--once",
-        action="store_true",
-        help="a single reading, no confirmation -- the old behaviour, for a caller that wants it",
     )
     s.set_defaults(func=cmd_wait)
 

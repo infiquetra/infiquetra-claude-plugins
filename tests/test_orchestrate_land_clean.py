@@ -28,6 +28,10 @@ units its own invocation merged -- so a land that merged nothing still swept awa
 earlier invocation deliberately kept. Reaping is now a consequence of what THIS land did; the
 operator's own ``clean --merged`` remains the deliberate whole-run sweep.
 
+Same class, fifth verse: recording where a unit branch began did not prove it authored a later
+tip. An empty unit could merge an advanced run branch and inherit the same ancestry as real work.
+Only a no-fast-forward merge onto the run branch records enough shape to call the unit landed.
+
 Everything here runs against a real temporary git repository. Merging and reaping are the
 behaviour under test, so a fake that reports them proves nothing.
 """
@@ -234,14 +238,14 @@ class TestLandedHasThreeAnswers:
 
 
 class TestHandFinishedLandingShapes:
-    def test_a_fast_forward_land_is_readable_and_reapable(
+    def test_a_fast_forward_land_is_not_inferred_without_merge_evidence(
         self,
         orchestrate: ModuleType,
         repo: Path,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """The conflict-recovery path may finish with a plain fast-forward merge."""
+        """A fast-forward loses authorship evidence, so the safe reading is committed nothing."""
         base = _git_out(repo, "rev-parse", "orch/r1")
         unit = orchestrate.Unit(name="fast", vendor="claude", task="x", status="done")
         run_record = orchestrate.Run(
@@ -266,25 +270,25 @@ class TestHandFinishedLandingShapes:
         assert len(_git_out(repo, "rev-list", "--parents", "-n", "1", "orch/r1").split()) == 2
 
         loaded = orchestrate.Run.load()
-        assert orchestrate.landed("orch/r1-fast", loaded) is True
+        got = orchestrate.landed("orch/r1-fast", loaded)
+        assert got is None
+        assert got is not True
 
         capsys.readouterr()
         assert orchestrate.cmd_diff(argparse.Namespace(unit="fast", stat=False)) == 0
         diff_out = capsys.readouterr().out
-        assert "fast.txt" in diff_out
-        assert "+fast" in diff_out
-        assert "no commits of its own" not in diff_out
+        assert "no commits of its own" in diff_out
 
         _fake_agents(orchestrate, monkeypatch, {})
-        assert orchestrate.cmd_check(argparse.Namespace()) == 0
+        assert orchestrate.cmd_check(argparse.Namespace()) == 1
         check_out = capsys.readouterr().out
-        assert "NO COMMITS" not in check_out
-        assert "the record agrees with the repository" in check_out
+        assert "NO COMMITS fast" in check_out
 
         assert orchestrate.cmd_clean(_clean_args(merged=True)) == 0
         clean_out = capsys.readouterr().out
-        assert not worktree.exists()
-        assert "closed: fast" in clean_out
+        assert worktree.exists()
+        assert "closed: nothing" in clean_out
+        assert "fast" in clean_out.split("kept", 1)[1]
 
     def test_an_empty_unit_at_an_old_run_tip_stays_empty_and_is_not_reaped(
         self,
@@ -329,6 +333,73 @@ class TestHandFinishedLandingShapes:
         assert worktree.exists()
         assert "closed: nothing" in clean_out
         assert "silent" in clean_out.split("kept", 1)[1]
+
+    def test_an_empty_unit_that_merges_the_advanced_run_stays_empty(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Moving an empty unit to the run tip must not attribute a sibling's commit to it."""
+        base = _git_out(repo, "rev-parse", "orch/r1")
+        worktree = _worktree(repo, "updater")
+
+        _git(repo, "checkout", "-b", "sibling", "orch/r1")
+        _commit(repo, "sibling.txt")
+        _git(repo, "checkout", "orch/r1")
+        _git(repo, "merge", "--no-ff", "--no-edit", "sibling")
+        _git(repo, "checkout", "main")
+
+        # The unit authored nothing. This plain merge fast-forwards its branch from the recorded
+        # creation tip to the advanced run tip, creating the ambiguous shape from the review.
+        _git(worktree, "merge", "--no-edit", "orch/r1")
+        assert _git_out(worktree, "rev-parse", "HEAD") != base
+        assert _git_out(worktree, "rev-parse", "HEAD") == _git_out(repo, "rev-parse", "orch/r1")
+
+        _write_run(
+            repo,
+            [
+                _unit_row("updater", worktree, "done", branched_from=base),
+                _unit_row("follower", None, "pending", branch=None, after=["updater"]),
+            ],
+        )
+        _fake_agents(orchestrate, monkeypatch, {})
+        monkeypatch.chdir(repo)
+        loaded = orchestrate.Run.load()
+        updater = loaded.unit("updater")
+
+        got = orchestrate.landed("orch/r1-updater", loaded)
+        assert got is None
+        assert got is not True
+        assert orchestrate.reapable(updater, loaded) is False
+        assert orchestrate.produced_anything(updater, loaded) is False
+
+        assert orchestrate.cmd_check(argparse.Namespace()) == 1
+        assert "NO COMMITS updater" in capsys.readouterr().out
+
+        assert orchestrate.cmd_diff(argparse.Namespace(unit="updater", stat=False)) == 0
+        diff_out = capsys.readouterr().out
+        assert "no commits of its own" in diff_out
+        assert "sibling.txt" not in diff_out
+
+        launched: list[str] = []
+        monkeypatch.setattr(
+            orchestrate,
+            "launch",
+            lambda unit, *_args, **_kwargs: launched.append(unit.name),
+        )
+        assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
+        go_out = capsys.readouterr().out
+        assert launched == []
+        assert "follower: skipped" in go_out
+        assert "updater committed nothing" in go_out
+
+        assert orchestrate.cmd_clean(_clean_args(merged=True)) == 0
+        clean_out = capsys.readouterr().out
+        assert worktree.exists()
+        assert "closed: nothing" in clean_out
+        assert "updater" in clean_out.split("kept", 1)[1]
 
     def test_a_recorded_normal_merge_keeps_the_existing_landing_shape(
         self,

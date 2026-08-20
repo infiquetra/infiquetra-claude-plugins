@@ -65,10 +65,10 @@ def _exclude_path(repo: Path) -> Path:
     return path if path.is_absolute() else repo / path
 
 
-def _write_plan(repo: Path) -> Path:
+def _write_plan(repo: Path, *, run_id: str = "hygiene") -> Path:
     path = repo / ".orchestrate" / "tasks" / "start-plan.json"
     path.parent.mkdir(parents=True)
-    path.write_text(json.dumps({"run_id": "hygiene", "source": "test", "units": []}))
+    path.write_text(json.dumps({"run_id": run_id, "source": "test", "units": []}))
     return path
 
 
@@ -111,6 +111,59 @@ class TestLocalRunStateExclude:
 
         rules = _exclude_path(driven_repo).read_text().splitlines()
         assert rules.count(".orchestrate/") == 1
+
+    def test_start_from_a_subdirectory_updates_only_the_driven_repository_exclude(
+        self,
+        orchestrate: ModuleType,
+        driven_repo: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        plan = _write_plan(driven_repo)
+        subdirectory = driven_repo / "docs" / "deep"
+        subdirectory.mkdir(parents=True)
+        stray_exclude = tmp_path / ".git" / "info" / "exclude"
+        monkeypatch.chdir(subdirectory)
+
+        assert orchestrate.cmd_start(argparse.Namespace(plan=str(plan), base=None)) == 0
+
+        assert ".orchestrate/" in _exclude_path(driven_repo).read_text().splitlines()
+        assert not stray_exclude.exists()
+        assert (
+            _git(driven_repo, "check-ignore", "-q", ".orchestrate/run.json", check=False).returncode
+            == 0
+        )
+
+    def test_start_terminates_an_existing_final_rule_before_appending_the_exclude(
+        self,
+        orchestrate: ModuleType,
+        driven_repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        exclude_path = _exclude_path(driven_repo)
+        exclude_path.write_text("local-cache/")
+        plan = _write_plan(driven_repo)
+        monkeypatch.chdir(driven_repo)
+
+        assert orchestrate.cmd_start(argparse.Namespace(plan=str(plan), base=None)) == 0
+
+        assert exclude_path.read_text() == "local-cache/\n.orchestrate/\n"
+
+    @pytest.mark.parametrize("run_id", ["", "/tmp/escape", "nested/run", "nested\\run", ".", ".."])
+    def test_start_refuses_a_run_id_that_is_not_one_path_component(
+        self,
+        orchestrate: ModuleType,
+        driven_repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        run_id: str,
+    ) -> None:
+        plan = _write_plan(driven_repo, run_id=run_id)
+        monkeypatch.chdir(driven_repo)
+
+        with pytest.raises(SystemExit, match="run id"):
+            orchestrate.cmd_start(argparse.Namespace(plan=str(plan), base=None))
+
+        assert not (driven_repo / ".orchestrate" / "run.json").exists()
 
 
 def test_readme_references_only_python_modules_the_plugin_ships() -> None:

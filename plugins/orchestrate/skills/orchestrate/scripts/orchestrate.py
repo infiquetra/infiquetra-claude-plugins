@@ -23,7 +23,7 @@ import subprocess
 import sys
 import textwrap
 import time
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -49,6 +49,10 @@ TASK_DIR = RUN_FILE.parent / "tasks"
 # every subcommand. This threshold is about the record, not the session: what a pane will carry
 # as typed input is a different limit with its own mechanism (``PANE_TYPING_LIMIT``).
 TASK_SPILL_THRESHOLD = 400
+
+# The note matches the task column's existing human-facing bound. It used to be the only unbounded
+# status field: one delivery warning stretched a two-unit table to 268 characters per row.
+STATUS_TEXT_WIDTH = 44
 
 # How each agent takes a model and a reasoning effort on its own command line, read from each
 # tool's own `--help`. Anything not listed launches with no tier flags -- see SETUP_HINT for how a
@@ -654,10 +658,11 @@ def ensure_local_run_state_excluded() -> None:
     addition is one newline when the previous final line needs terminating, followed by the one
     Orchestrate rule. Repeated ``start`` calls therefore do not grow the file.
     """
-    result = run(["git", "rev-parse", "--git-path", "info/exclude"])
+    root = repo_root()
+    result = run(["git", "-C", str(root), "rev-parse", "--git-path", "info/exclude"])
     exclude_path = Path(result.stdout.strip())
     if not exclude_path.is_absolute():
-        exclude_path = repo_root() / exclude_path
+        exclude_path = root / exclude_path
     exclude_path.parent.mkdir(parents=True, exist_ok=True)
     existing = exclude_path.read_text() if exclude_path.exists() else ""
     if LOCAL_RUN_STATE_EXCLUDE in (line.strip() for line in existing.splitlines()):
@@ -1045,7 +1050,7 @@ def pane_text(unit: Unit, text: str) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text + "\n")
     lead = text.split(" ", 1)[0] if re.match(r"^\s*[/$]", text) else ""
-    unit.note = f"task handed over as a file, too long to type: {path}"
+    append_unit_note(unit, f"task handed over as a file, too long to type: {path}")
     return (
         f"{lead} Your full task is in {path} -- read that file in full and carry it out exactly. "
         "It is the complete instruction; nothing else is coming."
@@ -1505,6 +1510,7 @@ def _report_failed_writebacks(failures: Sequence[dict[str, Any]]) -> None:
 
 def cmd_start(args: argparse.Namespace) -> int:
     plan = json.loads(Path(args.plan).read_text())
+    assert_safe_path_component(plan["run_id"], "run id")
     units = [Unit(**u) for u in plan["units"]]
     assert_safe_unit_names(units)
     base = args.base or run(["git", "rev-parse", "HEAD"]).stdout.strip()
@@ -1708,6 +1714,18 @@ def cmd_roster(args: argparse.Namespace) -> int:
     return 0
 
 
+def assert_safe_path_component(value: str, label: str) -> None:
+    """Refuse a value that is not one safe path component."""
+    if not value:
+        raise SystemExit(f"{label} must not be empty")
+    if Path(value).is_absolute():
+        raise SystemExit(f"{label} {value!r} must not be an absolute path")
+    if "/" in value or "\\" in value:
+        raise SystemExit(f"{label} {value!r} must not contain a path separator")
+    if value in (".", ".."):
+        raise SystemExit(f"{label} {value!r} is a path traversal")
+
+
 def assert_safe_unit_names(units: list[Unit]) -> None:
     """Refuse any unit name that is not one safe path component.
 
@@ -1719,15 +1737,7 @@ def assert_safe_unit_names(units: list[Unit]) -> None:
     independently: a run record edited by hand never passed through this function.
     """
     for unit in units:
-        name = unit.name
-        if not name:
-            raise SystemExit("a unit name must not be empty")
-        if Path(name).is_absolute():
-            raise SystemExit(f"unit name {name!r} must not be an absolute path")
-        if "/" in name or "\\" in name:
-            raise SystemExit(f"unit name {name!r} must not contain a path separator")
-        if name in (".", ".."):
-            raise SystemExit(f"unit name {name!r} is a path traversal, not a unit name")
+        assert_safe_path_component(unit.name, "unit name")
 
 
 def assert_saga_reachable(units: list[Unit]) -> None:
@@ -1826,12 +1836,12 @@ def cmd_expand(args: argparse.Namespace) -> int:
 
 def cmd_go(args: argparse.Namespace) -> int:
     r = Run.load()
+    if r.unresolvable_branch:
+        raise SystemExit(f"run branch {r.unresolvable_branch!r} does not resolve; cannot go")
     ready = r.eligible()
     if not ready:
         print("nothing eligible -- either everything is running or dependencies are unmet.")
         return 0
-    if r.unresolvable_branch:
-        raise SystemExit(f"run branch {r.unresolvable_branch!r} does not resolve; cannot go")
     root = repo_root()
     for unit in ready[: args.limit] if args.limit else ready:
         if unit.tab_id:
@@ -1856,34 +1866,64 @@ def cmd_go(args: argparse.Namespace) -> int:
     return 0
 
 
-def unit_commit_status(unit: Unit, r: Run) -> tuple[str, str]:
-    """Return this unit's own commit count and whether those commits have landed.
+def unit_commit_statuses(units: Sequence[Unit], r: Run) -> list[tuple[str, str]]:
+    """Return every unit's commit count and landed state from one landing-history walk.
 
     Once a unit is merged, its branch tip is also in the run branch and their ordinary merge base
-    is the unit tip.  Counting from that point would report zero for work that plainly exists, so
-    the landing merge's first parent recovers the branch point used for the honest count.
+    is the unit tip. Counting from that point would report zero for work that plainly exists, so
+    the landing merge's first parent recovers the branch point used for the honest count. Resolving
+    the branch tips first lets one first-parent walk classify every unit instead of repeating the
+    same run-branch history query once per row.
     """
-    if not unit.branch:
-        return "-", "-"
     if r.unresolvable_branch:
-        return "?", "unknown"
-    branch = unit.branch
-    if resolve_ref(branch) is None:
-        return "?", "missing"
+        return [("?", "unknown") if unit.branch else ("-", "-") for unit in units]
+
     comparison = r.resolved_run_ref()
-    merged = landing_merge(branch, comparison)
-    base = merge_base(f"{merged}^1", branch) if merged else merge_base(comparison, branch)
-    if base is None:
-        return "?", "yes" if merged else "unknown"
-    count = run(["git", "rev-list", "--count", f"{base}..{branch}"], check=False)
-    if count.returncode != 0 or not count.stdout.strip():
-        return "?", "yes" if merged else "unknown"
-    return count.stdout.strip(), "yes" if merged else "no"
+    branch_tips: dict[str, str | None] = {}
+    for unit in units:
+        if unit.branch and unit.branch not in branch_tips:
+            branch_tips[unit.branch] = resolve_ref(unit.branch)
+    resolved_tips = {branch: tip for branch, tip in branch_tips.items() if tip is not None}
+    merged_by_branch = landing_merges(resolved_tips, comparison)
+
+    statuses: list[tuple[str, str]] = []
+    for unit in units:
+        if not unit.branch:
+            statuses.append(("-", "-"))
+            continue
+        tip = branch_tips[unit.branch]
+        if tip is None:
+            statuses.append(("?", "missing"))
+            continue
+        merged = merged_by_branch.get(unit.branch)
+        base = merge_base(f"{merged}^1", tip) if merged else merge_base(comparison, tip)
+        if base is None:
+            statuses.append(("?", "yes" if merged else "unknown"))
+            continue
+        count = run(["git", "rev-list", "--count", f"{base}..{tip}"], check=False)
+        if count.returncode != 0 or not count.stdout.strip():
+            statuses.append(("?", "yes" if merged else "unknown"))
+            continue
+        statuses.append((count.stdout.strip(), "yes" if merged else "no"))
+    return statuses
+
+
+def unit_commit_status(unit: Unit, r: Run) -> tuple[str, str]:
+    """Compatibility wrapper for callers asking about one unit."""
+    return unit_commit_statuses([unit], r)[0]
 
 
 def one_line(text: str) -> str:
     """Collapse arbitrary task and note whitespace so one unit always occupies one table row."""
     return " ".join(text.split())
+
+
+def status_cell(text: str) -> str:
+    """Collapse and visibly bound a prose status cell."""
+    collapsed = one_line(text)
+    if len(collapsed) <= STATUS_TEXT_WIDTH:
+        return collapsed
+    return f"{collapsed[: STATUS_TEXT_WIDTH - 1]}…"
 
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -1905,8 +1945,9 @@ def cmd_status(args: argparse.Namespace) -> int:
         "note",
     )
     rows: list[tuple[str, ...]] = []
-    for unit in r.units:
-        tail = one_line(unit.task)[:44]
+    commit_statuses = unit_commit_statuses(r.units, r)
+    for unit, (commits, is_landed) in zip(r.units, commit_statuses, strict=True):
+        tail = one_line(unit.task)[:STATUS_TEXT_WIDTH]
         if unit.status == PENDING:
             why = r.wait_reason(unit)
             if why:
@@ -1914,7 +1955,6 @@ def cmd_status(args: argparse.Namespace) -> int:
                 # plan. Naming the kind of edge is the fix for a run that looked blocked for a
                 # reason that does not exist.
                 tail = f"[{why}]"
-        commits, is_landed = unit_commit_status(unit, r)
         rows.append(
             (
                 unit.name,
@@ -1926,21 +1966,20 @@ def cmd_status(args: argparse.Namespace) -> int:
                 commits,
                 is_landed,
                 tail,
-                one_line(unit.note),
+                status_cell(unit.note),
             )
         )
     widths = [
         max([len(headers[index]), *(len(row[index]) for row in rows)])
-        for index in range(len(headers) - 1)
+        for index in range(len(headers))
     ]
 
     def format_row(values: Sequence[str]) -> str:
-        fixed = " ".join(value.ljust(widths[index]) for index, value in enumerate(values[:-1]))
-        return f"{fixed} {values[-1]}".rstrip()
+        return " ".join(value.ljust(widths[index]) for index, value in enumerate(values)).rstrip()
 
     head = format_row(headers)
     print(head)
-    print("-" * len(head))
+    print("-" * (sum(widths) + len(widths) - 1))
     for row in rows:
         print(format_row(row))
     return 0
@@ -2251,6 +2290,39 @@ def cmd_wait(args: argparse.Namespace) -> int:
     return 0
 
 
+def resolved_retained_land(
+    r: Run, retained: Path, expected_run_tip: str
+) -> tuple[Unit, str] | None:
+    """Return the one unit and merge commit a retained worktree can safely publish.
+
+    A hand-written commit message, ancestry, or a branch merely contained in ``HEAD`` is not enough:
+    the retained ``HEAD`` must be a clean two-parent merge of the current run tip and exactly one
+    current unit tip. That is the same explicit second-parent evidence every landing reader trusts.
+    """
+    commit = run(
+        ["git", "-C", str(retained), "rev-list", "--parents", "-n", "1", "HEAD"],
+        check=False,
+    )
+    parts = commit.stdout.split() if commit.returncode == 0 else []
+    if len(parts) != 3 or parts[1] != expected_run_tip:
+        return None
+    status = run(["git", "-C", str(retained), "status", "--porcelain"], check=False)
+    if status.returncode != 0 or status.stdout.strip():
+        return None
+    unit_tip = parts[2]
+    matches = [
+        unit
+        for unit in r.units
+        if unit.status == DONE
+        and unit.merge
+        and unit.branch
+        and resolve_ref(unit.branch) == unit_tip
+    ]
+    if len(matches) != 1:
+        return None
+    return matches[0], parts[0]
+
+
 def cmd_land(args: argparse.Namespace) -> int:
     """Merge finished units back onto the run branch.
 
@@ -2274,13 +2346,13 @@ def cmd_land(args: argparse.Namespace) -> int:
     batch would never be announced at all -- the next land sees those units already merged and
     announces nothing either.
 
-    The exit status is deliberate, and three-way. 0: every merge and every board write converged.
+    The exit status is deliberate, and four-way. 0: every merge and every board write converged.
     1: the land itself could not finish -- a missing run branch, retained conflict, merge conflict,
-    ref-advance failure, or cleanup failure, named above. 2:
-    every merge landed, but at least one board writeback did not converge; the units are named
-    above with their retry. A failed writeback never undoes or blocks a merge: the code on the
-    run branch is right, and only the claim that the board was updated is wrong -- a caller
-    scripting this has to be able to tell the two failures apart.
+    or ref-advance failure, named above. 2: every merge landed, but at least one board writeback did
+    not converge; the units are named above with their retry. 3: every merge landed, but the
+    detached landing worktree could not be removed. A failed writeback or cleanup never undoes a
+    merge: the code on the run branch is right, and only the bookkeeping is incomplete -- a caller
+    scripting this has to be able to tell those failures apart.
     """
     r = Run.load()
     if not r.branch:
@@ -2291,38 +2363,7 @@ def cmd_land(args: argparse.Namespace) -> int:
 
     root = repo_root()
     land_path = (root / RUN_FILE.parent / f"land-{r.run_id}").resolve()
-    if r.conflict_worktree:
-        retained = Path(r.conflict_worktree)
-        if retained.exists():
-            print(
-                f"  CONFLICT worktree is still retained at {retained}; "
-                "resolve it there before rerunning land"
-            )
-            return 1
-        # The recovery directory was removed outside Orchestrate. Do not let a stale pointer make
-        # every later land look blocked, but persist the observation before creating new state.
-        r.conflict_worktree = None
-        r.save()
-    if land_path.exists():
-        raise SystemExit(
-            f"landing worktree path already exists at {land_path}; inspect or remove it first"
-        )
-
-    held_at = worktree_on_branch(r.branch)
-    if held_at:
-        print(
-            f"WARNING: {r.branch} is checked out at {held_at}; land will advance that branch ref "
-            "without touching its uncommitted files, so the checkout will read against a new base"
-        )
-
-    added = run(["git", "worktree", "add", "--detach", str(land_path), branch_tip], check=False)
-    if added.returncode != 0:
-        detail = (added.stderr or added.stdout or "unknown git error").strip()
-        raise SystemExit(f"cannot create detached landing worktree at {land_path}: {detail}")
-
     branch_ref = r.branch if r.branch.startswith("refs/") else f"refs/heads/{r.branch}"
-    keep_land_worktree = False
-    cleanup_error = ""
     landed: list[str] = []
     empty: list[str] = []
     already: list[str] = []
@@ -2332,6 +2373,84 @@ def cmd_land(args: argparse.Namespace) -> int:
     # would break on the first unit name containing a bracket.
     landed_names: list[str] = []
     writeback_failures: list[dict[str, Any]] = []
+
+    held_at = worktree_on_branch(r.branch)
+    if held_at:
+        print(
+            f"WARNING: {r.branch} is checked out at {held_at}; advancing the ref leaves files "
+            "brought in by land staged for deletion in that checkout. Do not commit that index; "
+            f"run `git -C {held_at} reset` first, then reconcile it with the new branch tip."
+        )
+
+    stale_conflict_pointer = False
+    if r.conflict_worktree:
+        retained = Path(r.conflict_worktree)
+        if retained.exists():
+            recovered = resolved_retained_land(r, retained, branch_tip)
+            if recovered is None:
+                print(
+                    f"  CONFLICT worktree is still retained at {retained}, but HEAD is not a "
+                    "clean publishable merge of the current run tip and one current unit tip. "
+                    "Resolve the conflicts there, stage and commit the merge, then rerun "
+                    "`orchestrate.py land`; anything else is left untouched."
+                )
+                return 1
+            unit, recovered_tip = recovered
+            expected_tip = branch_tip
+            recovered_ahead = run(
+                ["git", "rev-list", "--count", f"{expected_tip}..{unit.branch}"], check=False
+            ).stdout.strip()
+            advanced = run(
+                ["git", "update-ref", branch_ref, recovered_tip, expected_tip], check=False
+            )
+            if advanced.returncode != 0:
+                detail = (advanced.stderr or advanced.stdout or "unknown git error").strip()
+                print(
+                    f"  LANDING REF UPDATE FAILED for {r.branch}: {detail}; resolved merge "
+                    f"retained at {retained} for another `orchestrate.py land` attempt"
+                )
+                return 1
+            branch_tip = recovered_tip
+            r.record_branch_advance(recovered_tip)
+            landed.append(f"{unit.name} (+{recovered_ahead or '?'})")
+            landed_names.append(unit.name)
+            records = announce_units(r, [unit.name])
+            report_announcements(records)
+            writeback_failures.extend(_failed_writebacks(records))
+            removed = run(["git", "worktree", "remove", "--force", str(retained)], check=False)
+            if removed.returncode != 0:
+                detail = (removed.stderr or removed.stdout or "unknown git error").strip()
+                print(f"landed on {r.branch}: {', '.join(landed)}")
+                _report_failed_writebacks(writeback_failures)
+                print(f"  LANDING CLEANUP FAILED at {retained}: {detail}")
+                return 3
+            r.conflict_worktree = None
+            r.save()
+        else:
+            # The recovery directory was removed outside Orchestrate. Prune its surviving Git
+            # registration before reusing the path; clearing only the record pointer leaves every
+            # later worktree add failing on the missing-but-registered path.
+            stale_conflict_pointer = True
+    if land_path.exists():
+        raise SystemExit(
+            f"landing worktree path already exists at {land_path}; inspect or remove it first"
+        )
+
+    if stale_conflict_pointer:
+        pruned = run(["git", "worktree", "prune", "--expire", "now"], check=False)
+        if pruned.returncode != 0:
+            detail = (pruned.stderr or pruned.stdout or "unknown git error").strip()
+            raise SystemExit(f"cannot prune stale landing worktree registrations: {detail}")
+        r.conflict_worktree = None
+        r.save()
+
+    added = run(["git", "worktree", "add", "--detach", str(land_path), branch_tip], check=False)
+    if added.returncode != 0:
+        detail = (added.stderr or added.stdout or "unknown git error").strip()
+        raise SystemExit(f"cannot create detached landing worktree at {land_path}: {detail}")
+
+    keep_land_worktree = False
+    cleanup_error = ""
     try:
         for unit in r.units:
             if unit.status != DONE or not unit.branch:
@@ -2343,7 +2462,8 @@ def cmd_land(args: argparse.Namespace) -> int:
                 ["git", "rev-list", "--count", f"{branch_tip}..{unit.branch}"], check=False
             ).stdout.strip()
             if ahead in ("", "0"):
-                (already if produced_anything(unit, r) else empty).append(unit.name)
+                if unit.name not in landed_names:
+                    (already if produced_anything(unit, r) else empty).append(unit.name)
                 continue
             expected_tip = branch_tip
             merge = run(
@@ -2356,8 +2476,9 @@ def cmd_land(args: argparse.Namespace) -> int:
                 r.save()
                 print(
                     f"  CONFLICT landing {unit.name}; retained worktree at {land_path}. "
-                    f"Resolve and commit there; the failed command was "
-                    f"`git merge --no-ff {unit.branch}`"
+                    "Resolve the conflicts there, stage and commit the merge, then rerun "
+                    "`orchestrate.py land`; it will publish that exact merge with a guarded ref "
+                    f"advance. The failed command was `git merge --no-ff {unit.branch}`"
                 )
                 # Name any writeback that already failed before the conflict buries the return.
                 _report_failed_writebacks(writeback_failures)
@@ -2393,10 +2514,6 @@ def cmd_land(args: argparse.Namespace) -> int:
             if removed.returncode != 0:
                 cleanup_error = (removed.stderr or removed.stdout or "unknown git error").strip()
 
-    if cleanup_error:
-        print(f"  LANDING CLEANUP FAILED at {land_path}: {cleanup_error}")
-        return 1
-
     print(f"landed on {r.branch}: {', '.join(landed) or 'nothing new'}")
     if already:
         print(f"already there: {', '.join(already)}")
@@ -2411,6 +2528,9 @@ def cmd_land(args: argparse.Namespace) -> int:
     if empty:
         print(f"COMMITTED NOTHING: {', '.join(empty)} -- those sessions finished without saving")
     _report_failed_writebacks(writeback_failures)
+    if cleanup_error:
+        print(f"  LANDING CLEANUP FAILED at {land_path}: {cleanup_error}")
+        return 3
     # ``getattr``: a caller that built its own Namespace before this flag existed has no
     # ``clean`` attribute, and a land that worked yesterday must keep working today. Reaping comes
     # after the announcement, not before: it removes the worktrees the announcement reads from. A
@@ -2609,8 +2729,10 @@ def cmd_clean(args: argparse.Namespace) -> int:
             "branch-dependent cleanup checks are unavailable"
         )
     closed, kept = reap(r, merged_only=args.merged, branches=args.branches)
-    if args.all:
+    if args.all and not kept:
         shutil.rmtree(RUN_FILE.parent, ignore_errors=True)
+    elif args.all:
+        print("run state retained because cleanup kept work")
     print(f"closed: {', '.join(closed) or 'nothing'}")
     if kept:
         print(f"kept (not done, or its work not on the run branch): {', '.join(kept)}")
@@ -2705,24 +2827,38 @@ def merge_base(ref_a: str, ref_b: str) -> str | None:
     return got.stdout.strip() or None
 
 
+def landing_merges(branch_tips: Mapping[str, str], cmp_ref: str) -> dict[str, str]:
+    """Map branches to the first-parent merge that landed each current tip on ``cmp_ref``."""
+    branches_by_tip: dict[str, list[str]] = {}
+    for branch, tip in branch_tips.items():
+        branches_by_tip.setdefault(tip, []).append(branch)
+    if not branches_by_tip:
+        return {}
+    log = run(["git", "log", "--first-parent", "--merges", "--format=%H %P", cmp_ref], check=False)
+    if log.returncode != 0:
+        return {}
+    found: dict[str, str] = {}
+    for line in log.stdout.splitlines():
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        for branch in branches_by_tip.get(parts[2], []):
+            found.setdefault(branch, parts[0])
+    return found
+
+
 def landing_merge(branch: str, cmp_ref: str) -> str | None:
     """The merge commit that landed ``branch`` onto ``cmp_ref``, or None when it never landed.
 
-    ``land`` merges ``--no-ff`` with the run branch checked out, so a landed unit branch is the
-    second parent of the merge that brought it in. Finding that merge is what lets a landed unit
-    still show its change -- the merge base of the merge's parents is where the unit branched --
-    instead of an empty diff that reads as "this unit changed nothing"."""
+    ``land`` creates a ``--no-ff`` merge in a detached worktree and advances the run branch ref, so
+    a landed unit branch is the second parent of the merge that brought it in. Finding that merge
+    is what lets a landed unit still show its change -- the merge base of the merge's parents is
+    where the unit branched -- instead of an empty diff that reads as "this unit changed nothing".
+    """
     tip = resolve_ref(branch)
     if tip is None:
         return None
-    log = run(["git", "log", "--first-parent", "--merges", "--format=%H %P", cmp_ref], check=False)
-    if log.returncode != 0:
-        return None
-    for line in log.stdout.splitlines():
-        parts = line.split()
-        if len(parts) >= 3 and parts[2] == tip:
-            return parts[0]
-    return None
+    return landing_merges({branch: tip}, cmp_ref).get(branch)
 
 
 def diff_against(r: Run) -> str | None:

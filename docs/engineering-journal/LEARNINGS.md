@@ -19,6 +19,35 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-08-20
+
+### A detached conflict worktree needs an explicit publish step  {#detached-land-needs-publish}
+
+**Context.** Orchestrate moved `land` into a detached worktree so the run branch could remain
+checked out in an operator's dirty tree. On conflict it retained that worktree and told the operator
+to resolve and commit there.
+
+**Evidence.** A real two-unit repository showed that the resolving commit moved only detached
+`HEAD`; the run branch stayed unchanged, and every later `land` refused while the directory existed.
+Deleting the directory by hand left its Git registration behind, so the next `git worktree add`
+failed on a missing-but-registered path. Regression coverage is in
+`tests/test_orchestrate_land_worktree.py`.
+
+**Mechanism.** A detached worktree has no branch reference for `git commit` to advance. Its merge
+commit is useful evidence only when it has exactly the current run tip as first parent and a current
+unit tip as second parent. The filesystem directory and Git's worktree registration are also
+separate state; deleting one does not clear the other.
+
+**Fix.** A rerun recognises only that exact clean merge shape, advances the run branch with
+`git update-ref <ref> <new> <expected>`, removes the worktree, and clears the record pointer. A
+missing retained directory triggers `git worktree prune --expire now` before the path is reused.
+
+**Generalizable rule.** When work happens on detached `HEAD`, recovery is incomplete until a guarded
+operation publishes the verified commit to its owner reference. Treat a worktree's directory and
+registration as two lifecycle resources.
+
+**Refs.** [[#resolved-detached-land-is-an-exact-merge]].
+
 ## 2026-08-19
 
 ### A launcher flag after the vendor token is not a launcher flag  {#launcher-flag-position-is-not-passthrough}

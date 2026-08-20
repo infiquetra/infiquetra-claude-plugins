@@ -418,6 +418,51 @@ class TestAdopt:
         assert units["stray"]["branch"] == "orch/r1-stray"
         assert units["stray"]["note"] == "adopted: created outside the run record"
 
+    def test_refs_heads_worktree_listing_recovers_the_adopted_units_live_session(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        worktree = tmp_path / "stray-worktree"
+        _git(
+            repo,
+            "worktree",
+            "add",
+            "-b",
+            "orch/r1-stray",
+            str(worktree),
+            "orch/r1",
+        )
+        _commit(worktree, "stray.txt")
+        _write_run(repo, [_unit("alpha"), _unit("beta")])
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(
+            orchestrate,
+            "live_agents",
+            lambda: [
+                {
+                    "name": "stray-agent",
+                    "agent": "codex",
+                    "agent_status": "working",
+                    "cwd": str(worktree),
+                    "tab_id": "tab-1",
+                    "pane_id": "pane-1",
+                }
+            ],
+        )
+
+        assert orchestrate.cmd_adopt(argparse.Namespace(yes=True)) == 0
+
+        units = {u["name"]: u for u in _read_run(repo)["units"]}
+        assert units["stray"]["worktree"] == str(worktree)
+        assert units["stray"]["vendor"] == "codex"
+        assert units["stray"]["status"] == "running"
+        assert units["stray"]["agent_name"] == "stray-agent"
+        assert units["stray"]["tab_id"] == "tab-1"
+        assert units["stray"]["pane_id"] == "pane-1"
+
     def test_a_branch_with_commits_and_no_session_is_done(
         self,
         orchestrate: ModuleType,

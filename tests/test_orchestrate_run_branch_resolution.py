@@ -181,6 +181,23 @@ def test_go_reports_the_missing_branch_before_evaluating_a_dependency(
     assert "committed nothing" not in capsys.readouterr().out
 
 
+def test_go_refuses_a_missing_run_branch_even_when_no_unit_is_eligible(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = _repo(tmp_path, ("alpha",))
+    _write_run(repo, [_unit("alpha")])
+    _rename_run_branch(repo)
+    monkeypatch.chdir(repo)
+
+    with pytest.raises(SystemExit, match=r"orch/r1.*does not resolve.*cannot go"):
+        orchestrate.cmd_go(argparse.Namespace(limit=0))
+
+    assert "nothing eligible" not in capsys.readouterr().out
+
+
 @pytest.mark.parametrize(
     ("command", "args", "expected"),
     [

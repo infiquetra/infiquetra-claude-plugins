@@ -1,4 +1,27 @@
 # Decisions — Infiquetra Claude Plugins
+## 2026-08-20
+
+### A resolved detached land is published only as an exact guarded merge {#resolved-detached-land-is-an-exact-merge}
+
+**Decision.** A retained landing worktree may advance the run branch only when its worktree is
+clean and its `HEAD` is exactly one two-parent merge: the current run-branch tip first and exactly
+one current, merge-enabled, done unit branch tip second. Publication uses Git's compare-and-swap
+`update-ref` with that current run tip as the expected value. Any other state remains retained and
+refused. Successful publication removes the worktree before clearing `conflict_worktree`; a cleanup
+failure has a distinct exit status because the merge itself is already on the run branch.
+
+**Rejected alternatives.** *Treating ancestry as proof* repeats the empty-unit false positive: a
+branch can contain work it did not author. *Telling the operator to run `update-ref`* moves a
+load-bearing comparison and recovery procedure outside the command that owns both. *Force-adding at
+a missing retained path* hides the stale registration instead of reconciling it. *Clearing the
+pointer on every retry* discards the only durable name for unresolved work.
+
+**Revisit when** the run record carries an authenticated landing-unit identity that can replace the
+second-parent lookup without weakening it, or Git provides a targeted stale-registration removal
+that avoids repository-wide pruning.
+
+**Refs.** LEARNINGS [[#detached-land-needs-publish]].
+
 ## 2026-08-19
 
 ### The external reviewer is a Code Review concept behind a replaceable transport {#external-reviewer-transport-seam}

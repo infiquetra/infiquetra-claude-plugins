@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
-"""Consensus helper for non-scoring external advisory seats."""
+"""Quarantined legacy consensus helper retained only for characterization tests.
+
+This module has no production caller. Team Execution loads Saga's canonical lens roster and calls
+``plugins/saga/scripts/review_consensus.py`` for live scoring. The legacy arithmetic below is frozen
+until the module is removed; do not import it as a fallback or extend it with policy fixes.
+"""
 
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+
+QUARANTINED = True
 
 GATED_SEAT = "gated"
 ADVISORY_SEAT = "advisory"

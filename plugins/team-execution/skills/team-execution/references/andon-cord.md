@@ -49,18 +49,16 @@ When the coordinator polls the envelope at a wave/tick boundary and finds a rais
 3. **In-flight work drains**; the coordinator dispatches nothing new until the operator resolves the
    andon (clears it, or converts it to a quiesce/pause).
 
-## Orthogonal to the iteration caps — both survive
+## Orthogonal to review termination and validator remediation
 
 The andon-cord is an **additional, orthogonal** halt path. It does **not** replace, weaken, or
-bypass the existing per-loop iteration caps:
+bypass either independently owned terminal policy:
 
-- the 3-cycle **best-available-proceed** cap in `consensus-protocol.md`
-  ("Maximum iterations: **3**. After 3 cycles, proceed with the best available version…"), and
+- Code Review's review-transition termination in
+  `plugins/saga/scripts/review_consensus.py`, or
 - the **maximum of 3 remediation loops** in `validator-execution-order.md`.
 
-An andon halt (a worker says "stop, something is wrong") and an iteration-cap "proceed with best
-available" (the review loop exhausted its budget) are **distinct, coexisting outcomes**. Hitting the
-3-cycle cap is not an andon; raising an andon does not consume or reset an iteration counter. A team
-can hit its cap and proceed while no andon is raised, and can be andon-halted at iteration 1 well
-before any cap is near. The caps stay exactly as written; this lane only adds the stop-the-line
-signal they never had.
+An andon halt (a worker says "stop, something is wrong") and a transition-engine terminal result
+are **distinct, coexisting outcomes**. Review termination is not an andon; raising an andon does not
+consume or reset review state or a validator remediation counter. This lane adds only the
+stop-the-line signal and does not reinterpret either policy.

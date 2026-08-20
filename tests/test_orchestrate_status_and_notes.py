@@ -16,7 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -147,6 +147,36 @@ def test_delivery_warning_appends_to_the_file_handover_note(
     assert unit.note == f"{handover_note}; {orchestrate.DELIVERY_WARNING}"
 
 
+def test_long_task_handover_appends_after_the_setup_prompt_fallback_note(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exercise the production ordering: setup fallback first, then the long task handover."""
+    monkeypatch.chdir(tmp_path)
+    unit = orchestrate.Unit(
+        name="review",
+        vendor="qwen",
+        task="x" * 900,
+        setup=["/effort high"],
+    )
+
+    def pane_fallback(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            cmd,
+            returncode=1 if cmd[:3] == ["herdr", "agent", "prompt"] else 0,
+            stdout="",
+            stderr="prompt unavailable",
+        )
+
+    monkeypatch.setattr(orchestrate, "run", pane_fallback)
+
+    orchestrate.send(unit, "pane-1")
+
+    assert unit.note.startswith("prompted through its pane")
+    assert "; task handed over as a file, too long to type:" in unit.note
+
+
 def test_settle_clears_only_the_delivery_warning_after_the_first_commit(
     orchestrate: ModuleType,
     repo: Path,
@@ -209,28 +239,43 @@ def test_status_sizes_columns_collapses_tasks_and_shows_git_and_notes(
         ],
     )
     monkeypatch.chdir(repo)
+    original_run = orchestrate.run
+    history_walks: list[list[str]] = []
+
+    def count_history_walks(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if cmd[:4] == ["git", "log", "--first-parent", "--merges"]:
+            history_walks.append(cmd)
+        return cast(subprocess.CompletedProcess[str], original_run(cmd, **kwargs))
+
+    monkeypatch.setattr(orchestrate, "run", count_history_walks)
 
     assert orchestrate.cmd_status(argparse.Namespace()) == 0
     lines = capsys.readouterr().out.splitlines()
     header = next(line for line in lines if line.startswith("unit "))
+    rule = lines[lines.index(header) + 1]
     alpha = next(line for line in lines if line.startswith("alpha "))
     beta = next(line for line in lines if line.startswith("beta "))
 
     assert len([line for line in lines if line.startswith(("alpha ", "beta "))]) == 2
     assert "first line second line third line" in alpha
     assert not any(line.startswith(("second line", "third line")) for line in lines)
-    assert orchestrate.DELIVERY_WARNING in alpha
+    assert "SENT BUT NEVER STARTED" in alpha
+    assert orchestrate.DELIVERY_WARNING not in alpha
+    assert len(alpha) <= len(rule)
+    assert len(history_walks) == 1
 
     model_start = header.index("model")
     effort_start = header.index("effort")
     commits_start = header.index("commits")
     landed_start = header.index("landed")
     task_start = header.index("task")
+    note_start = header.index("note")
     assert alpha[model_start:effort_start].strip() == model
     assert alpha[commits_start:landed_start].strip() == "1"
     assert beta[commits_start:landed_start].strip() == "1"
     assert alpha[landed_start:task_start].strip() == "no"
     assert beta[landed_start:task_start].strip() == "yes"
+    assert alpha[note_start:] == orchestrate.status_cell(orchestrate.DELIVERY_WARNING)
 
 
 def test_settle_still_finishes_a_warned_zero_commit_unit_after_two_idle_readings(

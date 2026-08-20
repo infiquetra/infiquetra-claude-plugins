@@ -193,17 +193,16 @@ class TestGoHonoursSerializeEdges:
     def test_a_serialize_only_unit_is_not_launched_while_its_dependency_is_pending(
         self,
         orchestrate: ModuleType,
-        tmp_path: Path,
+        repo: Path,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         # alpha running and beta serialized behind it: nothing in the run is eligible
         _write_run(
-            tmp_path,
+            repo,
             [_unit("alpha", status="running"), _unit("beta", serialize=["alpha"])],
-            base="0" * 40,
         )
-        monkeypatch.chdir(tmp_path)
+        monkeypatch.chdir(repo)
         launched: list[str] = []
 
         def fake_launch(

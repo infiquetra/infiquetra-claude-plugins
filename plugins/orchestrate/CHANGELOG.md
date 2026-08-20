@@ -8,16 +8,30 @@ Group A combines the first three run-integrity repairs with the documentation-an
 
 - **U1 — `land` no longer touches or refuses the operator's working tree.** Unit branches merge in
   a detached throwaway worktree, the run branch advances explicitly, successful worktrees are
-  removed, and conflicting worktrees are retained and named for recovery.
+  removed, and conflicting worktrees are retained and named for recovery. After the operator
+  resolves and commits a conflict there, a rerun publishes only an exact two-parent merge of the
+  current run tip and current unit tip, using the same guarded reference advance as the ordinary
+  path. Missing recovery directories have their stale Git registrations pruned before reuse;
+  `clean --all` preserves any recovery work it reports as kept. The checked-out-run-branch warning
+  now names the staged-deletion hazard and recovery command, and cleanup failure reports completed
+  merges under its own exit status instead of calling the land a merge failure.
 - **U2 — a missing run branch fails loudly instead of producing false unit results.** The branch is
   resolved once when a run loads; `status`, `check`, and `clean` remain available for diagnosis,
-  while `go` and `land` refuse with the missing branch named.
+  while `go` and `land` refuse with the missing branch named, even when no unit is eligible.
 - **U3 — delivery warnings and unit status are honest and readable.** Warnings append to existing
   notes, clear after a commit, and appear in `status` and `check`; the status table now handles long
-  model names and multiline tasks while showing commit counts and landed state.
+  model names and multiline tasks while showing commit counts and landed state. Pane handover notes
+  also append, task and note columns are both bounded, and one run-branch history walk classifies
+  every unit's landed state instead of repeating that walk for each row.
 - **U11 — local state and documentation match the plugin that ships.** `start` idempotently excludes
   `.orchestrate/` through the driven repository's local Git exclude file, hand-authored briefs use
-  `.orchestrate/tasks/`, and the README documents only `orchestrate.py` and `herdr_events.py`.
+  `.orchestrate/tasks/`, and the README documents only `orchestrate.py` and `herdr_events.py`. The
+  exclude path is resolved from the repository root even when `start` runs in a subdirectory, and
+  an existing final rule without a newline is preserved correctly.
+- **Run and adoption paths use Git's real path and ref shapes.** A run identifier must be one safe
+  path component before the run branch or landing directory is created. `adopt` now matches Git's
+  `refs/heads/` worktree output to a stored short branch name, so it recovers the live worktree and
+  Herdr session instead of rebuilding an incomplete unit row.
 
 ## [1.18.0] - 2026-08-19
 

@@ -50,9 +50,9 @@ local `.git/info/exclude`, preserving existing rules, so run state does not appe
 and is never committed merely to keep the working tree clean.
 
 Each unit records its stable name, requested vendor and tier, task, ordering edges, worktree, branch,
-Herdr identifiers, status, notes, commit count, and landed state. Git and Herdr remain the source of
-truth: `check` compares the record with both and reports branches, sessions, or commits the record no
-longer describes.
+Herdr identifiers, status, and notes. Git and Herdr remain the source of truth: `status` computes the
+current commit count and landed state, while `check` compares the record with both systems and
+reports branches, sessions, or commits the record no longer describes.
 
 ## Execution model
 

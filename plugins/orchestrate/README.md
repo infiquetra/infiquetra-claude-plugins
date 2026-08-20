@@ -1,98 +1,81 @@
 # orchestrate
 
-Cross-vendor multi-session orchestration over [herdr](https://github.com/infiquetra): dispatch
-work to Claude, Codex, Grok, Muse, Qwen, and agy children as tracked herdr sessions, aggregate
-their results, and hold the operator's conversation steady while they run.
+Orchestrate spreads one piece of work across tracked [Herdr](https://github.com/infiquetra)
+agent sessions. Each unit runs on its own Git branch and worktree, while one local run record keeps
+the operator's view of dependencies, live sessions, commits, and landing state coherent.
 
-**This release ships the register, tracked herdr event subscriber, child session lifecycle,
-completion, planning, routing, admission, and spend accounting** — write-ahead launch,
-interaction readiness, scoped worktrees, recorded reaping, the only path a child reaches
-`verified`, work-shape routing with recorded substitutions, register-owned per-vendor
-and aggregate bounds that queue rather than reject, and a spend ceiling from observed
-actuals. Planning never launches. See `skills/orchestrate/SKILL.md` for the full contract
-and `CHANGELOG.md` for what is and is not implemented yet. The full design lives in
-`docs/plans/2026-08-12-orchestrate-plugin-plan.md`.
+The plugin is deliberately small. It ships two Python modules:
 
-## Planning, routing, admission, and spend
+- `skills/orchestrate/scripts/orchestrate.py` is the standard-library command-line interface. It
+  validates a plan, creates and launches units, records state, waits for Herdr events, reports drift,
+  lands completed branches, and cleans up worktrees and sessions.
+- `skills/orchestrate/scripts/herdr_events.py` validates Herdr protocol 19 event messages and holds
+  the `events.subscribe` connection used by `wait`. When the event socket is unavailable,
+  `orchestrate.py` falls back to bounded per-session waits.
 
-`scripts/planning.py` decides the split and the route and then stops. `commit_plan`
-requires a presentation receipt whose digest matches the rendered plan; this unit
-does not deliver that text to the operator. `scripts/admission.py` enforces
-host-wide per-vendor and aggregate bounds from durable reservations and
-documented defaults (or an operator-written `admission.policy` file); a full
-vendor queues. Admission does not write `phase`.
-`scripts/accounting.py` engages the spend ceiling from observed actuals, or from a
-declared per-child maximum for a vendor with no usage line, and fails closed when
-a vendor that should report usage has not. Routing is documented in
-`references/routing.md`.
+The operator-facing procedure and planning contract live in
+`commands/orchestrate.md` and `skills/orchestrate/SKILL.md`. The Python modules execute an approved
+plan; they do not invent its split or choose vendors on their own.
 
-## Register
+## Quick start
 
-The live register is the whole state model for a run: one row per dispatched child, one for the
-mirror, one for the subscriber. It is one JSON document per `run_id`, held outside every
-working tree (default `~/.orchestrate/registers/<run_id>.json`). A `run_id` is host-global, so
-two runtimes on one host and one checkout that name the same id share one live document.
-Two checkouts of one `run_id` are a collision. `retire_run` forgets the per-run secret
-first, then archives into the recorded work location, then deletes the live file and the
-recorded-root sidecar. Sidecar create, key mint, key delete, and retirement share one
-per-run lock, so when retirement returns that generation's key and sidecar are gone.
-Forgetting the key requires that recorded location, including when the live file is
-already gone. See `scripts/register.py`'s module docstring for the full column reference.
+Resolve the installed script, then run it from the repository being coordinated:
 
-## Event subscriber
+```bash
+S="$CLAUDE_PLUGIN_ROOT/skills/orchestrate/scripts/orchestrate.py"
+[ -f "$S" ] || S=$(ls -d ~/.claude/plugins/cache/*/orchestrate/*/skills/orchestrate/scripts/orchestrate.py | sort -V | tail -1)
 
-`scripts/herdr_events.py` validates and holds protocol 19 `events.subscribe` streams over
-`~/.config/herdr/herdr.sock`. `scripts/subscriber.py` carries its own ordinary register row, wakes
-the orchestrator with `agent.prompt`, and runs one bounded snapshot catch-up at startup and after
-every reconnect. Catch-up records lifecycle disagreement and checks whether each declared
-`artifact_path` exists. That column is written only once an artifact has actually settled, and as an
-absolute path: declaring it at dispatch would make every reconnect of every in-flight child ask the
-operator for attention about a file that is not supposed to exist yet, and a relative path would be
-resolved against the ambient checkout while a mutating child's artifact lives in its worktree.
+python3 "$S" roster
+python3 "$S" start --plan .orchestrate/plan.json
+python3 "$S" go
+python3 "$S" wait
+python3 "$S" settle
+python3 "$S" status
+python3 "$S" land
+python3 "$S" check
+python3 "$S" collect
+python3 "$S" clean --merged --branches
+```
 
-See `references/herdr-event-api.md` for the exact request shape, dotted-versus-underscored event
-vocabularies, sentinel revision guard, and subscriber command-line interface.
+The command uses only Python's standard library, so the driven repository does not need a Python
+environment. `roster` reads the local `agents` wrapper at invocation time instead of relying on a
+stored vendor list.
 
-## Session lifecycle
+## State and task files
 
-`scripts/session_lifecycle.py` previews and launches children through the `agent` wrapper's
-control-only path. It records launch intent before the side effect, recovers interrupted launches
-by their run-bound task label, and records the wrapper's returned workspace, tab, pane, and actual
-agent name.
+The run record is `.orchestrate/run.json`. Long task text and hand-authored briefs belong under
+`.orchestrate/tasks/`; do not point a unit at a session scratchpad or temporary directory that can
+disappear before the unit reads it. `start` adds `.orchestrate/` once to the driven repository's
+local `.git/info/exclude`, preserving existing rules, so run state does not appear as untracked work
+and is never committed merely to keep the working tree clean.
 
-Readiness is a bounded interaction, not a lifecycle-status guess: the child must assemble and emit
-a unique nonce-bound sentinel that never appears whole in the echoed prompt. Mutating work gets a
-branch worktree and an explicit environment setup; read-only work stays in the ambient checkout.
-Every child records a launch commit. Committed and repository-visible uncommitted changes are
-compared with the declared scope even when the work predicate passes, and any attributed ambient
-checkout change violates a mutating child's isolated landing boundary. Git-ignored paths are an
-explicit limitation, not silently described as covered. Every child is launched with its runtime's
-ordinary workspace-write posture — a read-only flag would have forbidden the artifact every child is
-required to write, and no supported CLI accepts a path allowlist. That posture is the only real
-containment: it prevents writes *outside* the workspace. Inside the workspace nothing is prevented.
-The boundary check is post-hoc, partial detection — it runs after the child stops, reports rather
-than blocks, sees only tracked and non-ignored paths, and cannot establish authorship in a shared
-checkout — and a read-only child's empty repository write allowlist means any repository-visible
-write fails its completion.
-Launch and observation are fixed to Herdr's default session. See
-`references/substrate-contract.md` for the adapter and failure contract.
+Each unit records its stable name, requested vendor and tier, task, ordering edges, worktree, branch,
+Herdr identifiers, status, and notes. Git and Herdr remain the source of truth: `status` computes the
+current commit count and landed state, while `check` compares the record with both systems and
+reports branches, sessions, or commits the record no longer describes.
 
-## Completion
+## Execution model
 
-`scripts/completion.py` is the only place a child reaches `verified`. The orchestrator establishes
-the expected evidence identity *before* dispatch — run-binding token, destination pre-state,
-predicate dependency closure and content digest — then settles the artifact by renaming the child's
-in-flight file itself, runs the bounded predicate, checks the boundary, verifies the destination
-changed, and for judgment work requires a claimed independent verifier's depth sample.
+`start` creates one run branch. `go` creates a branch and worktree for each eligible unit, launches
+the selected agent there, and delivers the task only after the session is ready. The two ordering
+edges gate launch in the same way but carry different meaning:
 
-The live register sits outside every landing, addressed by `run_id`. A sandboxed child cannot
-write it by working in its landing. Claude and Muse expose no workspace-write flag. Mode
-`0600` on the run key excludes other operating-system accounts, not a child running as this
-account, so for those runtimes this module does not defend against a child that reads the
-key. The durable records still carry a keyed digest so a digest that does not match this
-run's key authenticates against nothing. The seal does not establish authorship against a
-child that can read the key. Evaluation is safe to re-run for one dispatch, and a
-row's phase is `verified` if and only if its latest verdict is a pass.
+- `after` means the unit needs another unit's output.
+- `serialize` means the units must not overlap, without claiming an output dependency.
 
-`references/predicates.md` states what each control establishes and — control by control, with the
-closure walk enumerated member by member — what it does not.
+`land` merges completed unit branches into the run branch through a detached throwaway worktree. A
+merge conflict retains and names that worktree for recovery. `collect` is the separate, final merge
+from the run branch into the operator's current tree and therefore still requires that tree to be
+clean.
+
+`wait` uses `herdr_events.py` to wake on session changes, then confirms idle observations before a
+unit can settle. A single idle observation is only a gap between turns. `status` and `check` surface
+delivery warnings and units that committed nothing instead of silently treating an idle session as
+successful work.
+
+## Boundaries
+
+Orchestrate coordinates sessions; it does not prove that a child followed its instructions, impose a
+spend ceiling, reserve host-wide capacity, or run a private review-consensus policy. A unit's branch,
+worktree, Herdr session, commit history, and task files are retained when the command cannot safely
+show that the work landed.

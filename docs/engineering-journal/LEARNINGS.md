@@ -19,6 +19,109 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-08-20
+
+### Git registration and live-worktree admission answer different questions  {#git-c-finds-enclosing-repository}
+
+**Context.** Orchestrate reused a leftover at its canonical landing path after proving the merge
+shape found there. The path was assumed to be the detached worktree that an earlier land created.
+
+**Evidence.** In a real repository, a plain ignored `.orchestrate/land-r1` directory had no `.git`
+entry and no record in `git worktree list`. With the operator checkout attached to the run branch at
+a valid landing merge, both the leftover-path and retained-pointer reuse arms accepted that merge,
+then the binding checkout silently detached the operator's checkout. Two neighbouring inputs caused
+the identical harm: a real linked worktree removed with `rm -rf` and recreated as a plain directory
+while its registration remained prunable, and a canonical landing-path symlink resolving to the
+repository root. Parameterized regressions in `tests/test_orchestrate_land_worktree.py` reproduce all
+three inputs on both reuse arms and assert that land refuses while the operator remains attached to
+the unchanged run branch. A real locked, live linked worktree remains covered as successful reuse.
+
+**Mechanism.** `git -C <path>` does not establish that `<path>` is a repository or worktree. When
+the directory has no Git administrative entry, discovery walks upward and runs against an enclosing
+repository. Clean-status, merge-shape, checkout, and `HEAD` readback commands can therefore all agree
+while inspecting and mutating the wrong checkout. The original `worktree_registered` predicate was
+Git-list membership by design, including missing prunable entries. That is the right answer to the
+prune-reconciliation question, "does Git still record this path even though its directory is
+missing?" It is the wrong answer to reuse admission, "will `git -C <path>` address a live linked
+worktree at this exact path, separate from the primary and operator checkouts?"
+
+**Fix.** The two questions now have distinctly named predicates. Prune reconciliation uses
+`worktree_registration_exists(path)`, which deliberately includes stale and prunable registrations.
+Reuse admission uses `live_linked_worktree_at(path)`, which requires repository-owned registration,
+excludes Git's primary worktree and the checkout running Orchestrate, and accepts only when
+`git -C <path> rev-parse --show-toplevel` resolves back to the exact candidate. Anything else falls
+through to the existing inspect-or-remove refusal; the publication ancestry proof, checkout
+readback, and guarded reference advance remain unchanged.
+
+**Generalizable rule.** Treat `git -C <path>` as repository discovery, not membership proof. Name
+predicates for the exact question they answer: administrative registration may intentionally include
+dead state for reconciliation, while mutation admission must prove a live, exact, separate target.
+
+**Refs.** [[#published-worktree-needs-current-base]], [[#detached-land-needs-publish]].
+
+### Published is not the same as current merge base  {#published-worktree-needs-current-base}
+
+**Context.** Orchestrate kept using a detached landing worktree when its proven-published merge
+could not be removed. A later direct commit advanced the run branch while that worktree remained at
+the older merge.
+
+**Evidence.** In a real repository, Git accepted the leftover merge as an ancestor of the run tip,
+then refused to remove the locked worktree. Merging the next unit there and running the guarded
+`update-ref` dropped the intervening run-branch commit while `land` exited 3 and reported success.
+The regression test keeps a real locked worktree, advances the run branch, lands a later unit through
+both reuse arms, and asserts the intervening commit remains reachable.
+
+**Mechanism.** An ancestry check proves that a commit is already published; it does not prove that
+the worktree is still checked out at the tip used as the compare-and-swap expectation. Git's
+`update-ref <ref> <new> <expected>` protects only against the reference changing during the command.
+It does not require `<new>` to descend from `<expected>`.
+
+**Fix.** Every reused landing worktree is checked out detached at the current run tip, then `HEAD`
+is read back and compared with that tip. A failed checkout, failed read, or mismatch refuses to
+reuse the directory. Only a verified match reaches the merge loop.
+
+**Generalizable rule.** Proof that stale state is safe to discard is not proof that it is safe to
+continue from. Before reusing mutable state, bind it to the exact version the next atomic update
+expects and verify that binding from the owning system.
+
+**Refs.** [[#resolved-detached-land-is-an-exact-merge]], [[#detached-land-needs-publish]].
+
+### A detached conflict worktree needs an explicit publish step  {#detached-land-needs-publish}
+
+**Context.** Orchestrate moved `land` into a detached worktree so the run branch could remain
+checked out in an operator's dirty tree. On conflict it retained that worktree and told the operator
+to resolve and commit there.
+
+**Evidence.** A real two-unit repository showed that the resolving commit moved only detached
+`HEAD`; the run branch stayed unchanged, and every later `land` refused while the directory existed.
+Deleting the directory by hand left its Git registration behind, so the next `git worktree add`
+failed on a missing-but-registered path. A later recovery test exposed two neighbouring failures:
+clearing the record pointer in `clean` hid that registration from `land`, while clearing the pointer
+only after worktree removal let a cleanup failure leave an already-published merge labelled as an
+unresolved conflict. Regression coverage is in `tests/test_orchestrate_land_worktree.py`.
+
+**Mechanism.** A detached worktree has no branch reference for `git commit` to advance. Its merge
+commit is useful evidence only when it has exactly the current run tip as first parent and a current
+unit tip as second parent. The filesystem directory and Git's worktree registration are also
+separate state; deleting one does not clear the other. The conflict pointer has a third, narrower
+ownership boundary: it names unresolved merge work, so publication ends its job even when resource
+cleanup fails. Git's registration must therefore be inspected independently of that pointer.
+
+**Fix.** A rerun recognises only that exact clean merge shape, advances the run branch with
+`git update-ref <ref> <new> <expected>`, and clears the record pointer before attempting cleanup. A
+cleanup failure is carried to the final exit after every remaining unit has had its merge attempt.
+On retry, a clean exact retained merge is cleaned up as already published only when Git proves it is
+an ancestor of the run branch. Before creating the canonical land path, `land` checks Git's own
+worktree list and prunes a missing registration even when no record pointer remains.
+
+**Generalizable rule.** When work happens on detached `HEAD`, recovery is incomplete until a guarded
+operation publishes the verified commit to its owner reference. Clear semantic recovery state at
+the publication boundary, carry cleanup failure separately, and inspect each resource through its
+real owner: the run record for unresolved work, the filesystem for the directory, and Git for the
+registration.
+
+**Refs.** [[#resolved-detached-land-is-an-exact-merge]].
+
 ## 2026-08-19
 
 ### A launcher flag after the vendor token is not a launcher flag  {#launcher-flag-position-is-not-passthrough}

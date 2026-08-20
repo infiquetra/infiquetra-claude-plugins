@@ -1,4 +1,95 @@
 # Decisions — Infiquetra Claude Plugins
+## 2026-08-20
+
+### Group A removes only proved or invocation-owned landing worktrees {#group-a-worktree-removal-proof}
+
+**Decision.** Every path-scoped worktree removal introduced by Group A must either pass
+`live_linked_worktree_at` immediately before removal or be safe by construction: created by the
+same invocation with `git worktree add --detach` and not exposed to an external actor. A recorded
+`conflict_worktree` is not invocation-owned. Plain `clean` now applies the existing proof and, when
+it fails, keeps both the pointer and path and reports the conflict worktree in the ordinary kept
+line. It does not remove, prune, or clear anything in that branch.
+
+**Audit of the five Group A removal sites.**
+
+- Resolved retained-conflict cleanup in `land` is protected by `live_linked_worktree_at`; the same
+  branch also proves that the exact resolved merge was published before removal.
+- Canonical leftover cleanup in `land` is protected by `live_linked_worktree_at`; it removes only
+  after proving that the exact merge is published on the run branch.
+- Successful transient landing cleanup in `land` is safe by construction; that invocation created
+  the path with `git worktree add --detach`, never exposed it externally, and skips removal when a
+  conflict turns the path into a retained recovery surface.
+- Recorded conflict cleanup in `clean` is protected by `live_linked_worktree_at`; an unproven path,
+  including a symlink to another registered worktree, is kept with its record pointer intact.
+- Discovered canonical or numbered landing cleanup in `clean` is protected by
+  `live_linked_worktree_at`; `clean --merged` additionally proves the exact merge was published.
+
+**Accepted residual.** The verifier's path-separator finding remains unchanged. `cmd_start`
+validates a run identifier as one safe path component, but a hand-edited run record can bypass that
+entry check. `land` can then leave a numbered nested landing worktree that neither `check` nor
+`clean` discovers. This bounded repair does not change run-record validation or landing-path
+discovery.
+
+### Landing merges use a newly constructed worktree, never a pre-existing path {#landing-worktree-is-fresh-by-construction}
+
+**Decision.** `land` never uses a pre-existing canonical landing path for a merge. It may inspect a
+path proved to be a separate live linked worktree and remove it only when the existing exact-merge
+rules show that its work is already published. If the canonical path is not that proven shape, or
+if removal fails for any reason, `land` leaves it untouched, names the path and reason, and creates
+the lowest unused numbered sibling with `git worktree add --detach`. That newly added path is exact
+by construction. Canonical and numbered landing paths are both reported by `check` when no conflict
+record owns them, and `clean` can retry their safe removal. `live_linked_worktree_at` remains only
+as a housekeeping proof; it reads the worktree registration, gitfile, administrative directory,
+and back-pointer without running `git -C` against the candidate.
+
+**Why.** A check-then-act proof cannot survive a destructive operation between the check and its
+use. Git can unlink a linked worktree's registration and `.git` file before failing to remove a
+later file. Reusing that partly removed directory then makes `git -C` walk up into the operator's
+checkout. Strengthening the admission predicate cannot close a failure that `land` itself creates
+after admission. A new detached worktree has no earlier proof to go stale.
+
+**Rejected alternatives.** *Add another reuse predicate* leaves the destructive ordering intact.
+*Re-prove after failed removal* still runs a path-scoped Git command against the now-untrusted path.
+*Delete any pre-existing canonical path* would destroy evidence and can follow a symlink into a real
+worktree. The old path is therefore preserved and only a new path receives merge commands.
+
+**Supersedes.** This replaces the reuse portion of
+[[#resolved-detached-land-is-an-exact-merge]]. The exact retained-merge publication and guarded
+reference update rules remain unchanged.
+
+### A resolved detached land is published only as an exact guarded merge {#resolved-detached-land-is-an-exact-merge}
+
+**Decision.** A retained landing worktree may advance the run branch only when its worktree is
+clean and its `HEAD` is exactly one two-parent merge: the current run-branch tip first and exactly
+one current, merge-enabled, done unit branch tip second. Publication uses Git's compare-and-swap
+`update-ref` with that current run tip as the expected value. Any other state remains retained and
+refused. Successful publication clears and saves `conflict_worktree` immediately after the guarded
+reference advance, before worktree cleanup, because that pointer names unresolved work rather than
+cleanup debt. A cleanup failure has a distinct exit status, but the same invocation continues every
+remaining merge. On re-entry, cleanup self-heals only when the retained `HEAD` is still a clean exact
+unit merge and Git proves that commit is already an ancestor of the run branch. That ancestry proves
+the leftover is published and safe to replace; it does not prove the leftover is the current merge
+base. Before reusing the worktree for another unit, `land` must successfully check out the current
+run tip detached and then read `HEAD` back as that exact commit. A checkout failure, read failure, or
+mismatch abandons reuse and restores the existing inspect-or-remove refusal.
+
+**Rejected alternatives.** *Treating ancestry alone as publication proof* repeats the empty-unit
+false positive: a branch can contain work it did not author. Ancestry is accepted only after the
+clean two-parent shape and unique current-unit match prove what the retained commit is. *Telling the
+operator to run `update-ref`* moves a load-bearing comparison and recovery procedure outside the
+command that owns both. *Force-adding at a missing retained path* hides the stale registration
+instead of reconciling it. *Clearing the pointer on every retry* discards the only durable name for
+unresolved work; it is cleared only after guarded publication or proven prior publication.
+*Reusing a proven-published worktree at its existing `HEAD`* is rejected because that commit may be
+only an ancestor of the current run tip; the guarded reference update cannot detect a merge built on
+that stale base and can therefore replace the tip with a non-descendant commit.
+
+**Revisit when** the run record carries an authenticated landing-unit identity that can replace the
+second-parent lookup without weakening it, or Git provides a targeted stale-registration removal
+that avoids repository-wide pruning.
+
+**Refs.** LEARNINGS [[#detached-land-needs-publish]].
+
 ## 2026-08-19
 
 ### The external reviewer is a Code Review concept behind a replaceable transport {#external-reviewer-transport-seam}

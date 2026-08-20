@@ -1,5 +1,56 @@
 # Changelog
 
+## [1.19.0] - 2026-08-20
+
+Group A combines the first three run-integrity repairs with the documentation-and-hygiene unit.
+
+### Fixed
+
+- **U1 — `land` no longer touches or refuses the operator's working tree.** Unit branches merge in
+  a detached throwaway worktree, the run branch advances explicitly, successful worktrees are
+  removed, and conflicting worktrees are retained and named for recovery. After the operator
+  resolves and commits a conflict there, a rerun publishes only an exact two-parent merge of the
+  current run tip and current unit tip, using the same guarded reference advance as the ordinary
+  path. Once that merge is published, its conflict pointer is cleared before cleanup; a cleanup
+  failure no longer blocks later units, and a clean exact merge already in run-branch history is
+  cleaned up on retry. Missing landing directories have stale Git registrations pruned before
+  reuse even when `clean` already cleared the record pointer. Retained-worktree refusals now
+  distinguish unresolved changes, a non-merge `HEAD`, a missing unit match, and a moved run-branch
+  base without weakening the publication gate. `clean --all` preserves any recovery work it
+  reports as kept, and its help names that retention. The checked-out-run-branch warning names the
+  staged-deletion hazard and recovery command, and cleanup failure reports completed merges under
+  its own exit status instead of calling the land a merge failure. A pre-existing canonical landing
+  path is never reused for merges. If it is not a proven separate linked worktree, does not contain
+  an exact published merge, or cannot be removed, `land` preserves and names it, then creates the
+  lowest unused numbered detached worktree. The new path is exact by construction. The housekeeping
+  proof reads the linked-worktree metadata without running `git -C` against an unverified path, and
+  `check` and `clean` discover both canonical and numbered cleanup paths. Plain `clean` now applies
+  that proof to a recorded conflict path too; an unproven path and its record pointer are reported
+  as kept, so a planted symlink cannot remove another registered worktree or its uncommitted files.
+  Across Group A's landing paths, partial removal performed by Git itself, a gitfile rewritten to
+  the primary Git directory, plain or stale directories, and symlinks cannot become merge targets
+  or cleanup targets.
+- **U2 — a missing run branch fails loudly instead of producing false unit results.** The branch is
+  resolved once when a run loads; `status`, `check`, and `clean` remain available for diagnosis,
+  while `go` and `land` refuse with the missing branch named, even when no unit is eligible. `adopt`
+  also remains available: it names the missing branch and conservatively marks a stranded unit
+  without a live session as failed when commit-based classification is unavailable.
+- **U3 — delivery warnings and unit status are honest and readable.** Warnings append to existing
+  notes, clear after a commit, and appear in `status` and `check`; the status table now handles long
+  model names and multiline tasks while showing commit counts and landed state. Pane handover notes
+  and pane-fallback diagnostics both append, including when a long task has no setup lines. Task and
+  note columns are both bounded, and one run-branch history walk classifies every unit's landed
+  state instead of repeating that walk for each row; the unused single-unit wrapper is removed.
+- **U11 — local state and documentation match the plugin that ships.** `start` idempotently excludes
+  `.orchestrate/` through the driven repository's local Git exclude file, hand-authored briefs use
+  `.orchestrate/tasks/`, and the README documents only `orchestrate.py` and `herdr_events.py`. The
+  exclude path is resolved from the repository root even when `start` runs in a subdirectory, and
+  an existing final rule without a newline is preserved correctly.
+- **Run and adoption paths use Git's real path and ref shapes.** A run identifier must be one safe
+  path component before the run branch or landing directory is created. `adopt` now matches Git's
+  `refs/heads/` worktree output to a stored short branch name, so it recovers the live worktree and
+  Herdr session instead of rebuilding an incomplete unit row.
+
 ## [1.18.0] - 2026-08-19
 
 Sixteen fixes found by watching real runs rather than by anything erroring. The unifying shape:

@@ -1,0 +1,1025 @@
+"""Land completed units without touching the operator's checkout.
+
+These tests use real repositories and real linked worktrees.  The contract under test is Git's
+behavior: a landing worktree must be detached because the run branch may already be checked out,
+and a merge conflict must leave a usable recovery surface rather than an aborted merge.
+"""
+
+from __future__ import annotations
+
+import argparse
+import importlib.util
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+from types import ModuleType
+from typing import Any, cast
+
+import pytest
+
+SCRIPT = (
+    Path(__file__).resolve().parents[1]
+    / "plugins"
+    / "orchestrate"
+    / "skills"
+    / "orchestrate"
+    / "scripts"
+    / "orchestrate.py"
+)
+
+
+@pytest.fixture(scope="module")
+def orchestrate() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("_orchestrate_land_worktree", SCRIPT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True)
+
+
+def _git_out(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def _commit(repo: Path, path: str, content: str | None = None) -> None:
+    (repo / path).write_text(content if content is not None else f"{path}\n")
+    _git(repo, "add", path)
+    _git(repo, "commit", "-m", f"write {path}")
+
+
+def _repo(tmp_path: Path, units: tuple[str, ...], *, conflicting: bool = False) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test")
+    _commit(repo, "base.txt", "base\n")
+    if conflicting:
+        _commit(repo, "shared.txt", "base\n")
+    _git(repo, "branch", "orch/r1")
+
+    for unit in units:
+        _git(repo, "checkout", "-b", f"orch/r1-{unit}", "orch/r1")
+        if conflicting:
+            _commit(repo, "shared.txt", f"{unit}\n")
+        else:
+            _commit(repo, f"{unit}.txt")
+        _git(repo, "checkout", "main")
+    return repo
+
+
+def _unit(name: str, **overrides: Any) -> dict[str, Any]:
+    return {
+        "name": name,
+        "vendor": "claude",
+        "task": "test landing",
+        "branch": f"orch/r1-{name}",
+        "status": "done",
+        **overrides,
+    }
+
+
+def _write_run(repo: Path, units: list[dict[str, Any]], **overrides: Any) -> Path:
+    payload = {
+        "run_id": "r1",
+        "source": "land-worktree test",
+        "base": _git_out(repo, "rev-parse", "main"),
+        "branch": "orch/r1",
+        "units": units,
+        **overrides,
+    }
+    run_file = repo / ".orchestrate" / "run.json"
+    run_file.parent.mkdir(parents=True, exist_ok=True)
+    run_file.write_text(json.dumps(payload, indent=2) + "\n")
+    return run_file
+
+
+def _land_path(repo: Path) -> Path:
+    return repo / ".orchestrate" / "land-r1"
+
+
+def _branch_file(repo: Path, branch: str, path: str) -> str:
+    return _git_out(repo, "show", f"{branch}:{path}")
+
+
+def _add_nonconflicting_unit(repo: Path, name: str) -> None:
+    _git(repo, "checkout", "-b", f"orch/r1-{name}", "orch/r1")
+    _commit(repo, f"{name}.txt")
+    _git(repo, "checkout", "main")
+
+
+def _resolve_retained_conflict(run_file: Path, content: str = "resolved\n") -> Path:
+    retained = Path(json.loads(run_file.read_text())["conflict_worktree"])
+    (retained / "shared.txt").write_text(content)
+    _git(retained, "add", "shared.txt")
+    _git(retained, "commit", "-m", "resolve retained landing")
+    return retained
+
+
+def _prepare_stale_locked_land_path(repo: Path) -> tuple[Path, str, str]:
+    """Publish one exact unit merge, retain its worktree, then advance the run branch."""
+    land_path = _land_path(repo)
+    _git(repo, "worktree", "add", "--detach", str(land_path), "orch/r1")
+    _git(land_path, "merge", "--no-ff", "--no-edit", "orch/r1-alpha")
+    published_tip = _git_out(land_path, "rev-parse", "HEAD")
+    old_tip = _git_out(repo, "rev-parse", "orch/r1")
+    _git(repo, "update-ref", "refs/heads/orch/r1", published_tip, old_tip)
+
+    _git(repo, "checkout", "orch/r1")
+    _commit(repo, "hotfix.txt")
+    hotfix_tip = _git_out(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "main")
+    _git(repo, "worktree", "lock", "--reason", "retain stale landing worktree", str(land_path))
+    return land_path, published_tip, hotfix_tip
+
+
+def _attach_operator_to_run_branch_after_alpha(repo: Path) -> str:
+    """Put the main checkout in the shape a path-scoped Git escape could mistake for land."""
+    _git(repo, "checkout", "orch/r1")
+    _git(repo, "merge", "--no-ff", "--no-edit", "orch/r1-alpha")
+    return _git_out(repo, "rev-parse", "HEAD")
+
+
+def _publish_alpha_in_landing_worktree(
+    repo: Path, land_path: Path | None = None
+) -> tuple[Path, str]:
+    """Leave a real detached landing worktree at an already-published alpha merge."""
+    land_path = land_path or _land_path(repo)
+    _git(repo, "worktree", "add", "--detach", str(land_path), "orch/r1")
+    _git(land_path, "merge", "--no-ff", "--no-edit", "orch/r1-alpha")
+    published_tip = _git_out(land_path, "rev-parse", "HEAD")
+    old_tip = _git_out(repo, "rev-parse", "orch/r1")
+    _git(repo, "update-ref", "refs/heads/orch/r1", published_tip, old_tip)
+    return land_path, published_tip
+
+
+def _make_worktree_removal_fail(repo: Path, land_path: Path) -> tuple[str, Path]:
+    """Create a real removal failure, preferring one that deletes `.git` before failing."""
+    protected = land_path / "base.txt"
+    chflags = shutil.which("chflags")
+    if chflags:
+        result = subprocess.run([chflags, "uchg", str(protected)], capture_output=True, text=True)
+        if result.returncode == 0:
+            return "chflags", protected
+
+    chattr = shutil.which("chattr")
+    if chattr:
+        result = subprocess.run([chattr, "+i", str(protected)], capture_output=True, text=True)
+        if result.returncode == 0:
+            return "chattr", protected
+
+    # Some containers expose neither immutable-file operation. A Git worktree lock is still a
+    # real removal failure (the command runs and refuses); the fresh-path assertion remains a
+    # regression because the old implementation reuses the locked worktree.
+    _git(repo, "worktree", "lock", "--reason", "force a real removal failure", str(land_path))
+    return "lock", land_path
+
+
+def _clear_removal_failure(repo: Path, method: str, protected: Path) -> None:
+    if method == "chflags":
+        subprocess.run(["chflags", "nouchg", str(protected)], check=False, capture_output=True)
+    elif method == "chattr":
+        subprocess.run(["chattr", "-i", str(protected)], check=False, capture_output=True)
+    else:
+        subprocess.run(
+            ["git", "worktree", "unlock", str(protected)],
+            cwd=repo,
+            check=False,
+            capture_output=True,
+        )
+
+
+def _assert_fresh_numbered_land(
+    repo: Path,
+    land_path: Path,
+    output: str,
+    *,
+    expected_fresh: Path | None = None,
+) -> None:
+    fresh = expected_fresh or land_path.with_name(f"{land_path.name}-1")
+    assert _git_out(repo, "rev-parse", "--abbrev-ref", "HEAD") == "orch/r1"
+    assert _branch_file(repo, "orch/r1", "gamma.txt") == "gamma.txt"
+    assert not (repo / "gamma.txt").exists()
+    assert os.path.lexists(land_path)
+    assert f"landing path left untouched at {land_path}" in output
+    assert f"using fresh detached landing worktree at {fresh}" in output
+    assert not os.path.lexists(fresh)
+    assert f"worktree {fresh}" not in _git_out(repo, "worktree", "list", "--porcelain")
+
+
+def _land(orchestrate: ModuleType) -> int:
+    return int(orchestrate.cmd_land(argparse.Namespace(clean=False)))
+
+
+def _clean_merged(orchestrate: ModuleType, *, all_state: bool = False) -> int:
+    return int(
+        orchestrate.cmd_clean(argparse.Namespace(merged=True, branches=False, all=all_state))
+    )
+
+
+def test_land_succeeds_with_a_dirty_operator_tree_and_preserves_its_changes(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = _repo(tmp_path, ("alpha",))
+    _write_run(repo, [_unit("alpha")])
+    dirty_path = repo / "base.txt"
+    dirty_path.write_text("operator edit\n")
+    before_status = _git_out(repo, "status", "--porcelain", "--untracked-files=no")
+    before_bytes = dirty_path.read_bytes()
+    monkeypatch.chdir(repo)
+
+    assert _land(orchestrate) == 0
+
+    assert _branch_file(repo, "orch/r1", "alpha.txt") == "alpha.txt"
+    assert dirty_path.read_bytes() == before_bytes
+    assert _git_out(repo, "status", "--porcelain", "--untracked-files=no") == before_status
+
+
+def test_two_units_land_and_the_throwaway_worktree_is_removed(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = _repo(tmp_path, ("alpha", "beta"))
+    _write_run(repo, [_unit("alpha"), _unit("beta")])
+    monkeypatch.chdir(repo)
+
+    assert _land(orchestrate) == 0
+
+    assert _branch_file(repo, "orch/r1", "alpha.txt") == "alpha.txt"
+    assert _branch_file(repo, "orch/r1", "beta.txt") == "beta.txt"
+    assert not _land_path(repo).exists()
+    assert str(_land_path(repo)) not in _git_out(repo, "worktree", "list", "--porcelain")
+
+
+def test_conflict_retains_and_reports_the_detached_landing_worktree(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = _repo(tmp_path, ("alpha", "beta"), conflicting=True)
+    run_file = _write_run(repo, [_unit("alpha"), _unit("beta")])
+    monkeypatch.chdir(repo)
+
+    assert _land(orchestrate) == 1
+
+    record = json.loads(run_file.read_text())
+    retained = Path(record["conflict_worktree"])
+    output = capsys.readouterr().out
+    assert retained == _land_path(repo)
+    assert retained.is_dir()
+    assert str(retained) in output
+    assert "CONFLICT landing beta" in output
+    assert "on orch/r1, finish" not in output
+    assert "stage and commit the merge" in output
+    assert "rerun `orchestrate.py land`" in output
+    assert "UU shared.txt" in _git_out(retained, "status", "--porcelain")
+    assert _branch_file(repo, "orch/r1", "shared.txt") == "alpha"
+
+    assert _land(orchestrate) == 1
+    retry_output = capsys.readouterr().out
+    assert "worktree has uncommitted or unresolved changes" in retry_output
+    assert "Resolve the conflicts there" in retry_output
+    assert "it is left untouched" in retry_output
+    assert retained.is_dir()
+
+
+def test_resolved_conflict_is_published_on_rerun_and_the_recovery_worktree_is_removed(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = _repo(tmp_path, ("alpha", "beta"), conflicting=True)
+    run_file = _write_run(repo, [_unit("alpha"), _unit("beta")])
+    monkeypatch.chdir(repo)
+    assert _land(orchestrate) == 1
+    capsys.readouterr()
+    retained = Path(json.loads(run_file.read_text())["conflict_worktree"])
+    expected_run_tip = _git_out(repo, "rev-parse", "orch/r1")
+    expected_unit_tip = _git_out(repo, "rev-parse", "orch/r1-beta")
+
+    (retained / "shared.txt").write_text("resolved alpha and beta\n")
+    _git(retained, "add", "shared.txt")
+    _git(retained, "commit", "-m", "resolve beta landing")
+    recovered_tip = _git_out(retained, "rev-parse", "HEAD")
+    assert _git_out(retained, "rev-list", "--parents", "-n", "1", "HEAD").split() == [
+        recovered_tip,
+        expected_run_tip,
+        expected_unit_tip,
+    ]
+
+    assert _land(orchestrate) == 0
+
+    output = capsys.readouterr().out
+    assert "landed on orch/r1: beta (+1)" in output
+    assert _git_out(repo, "rev-parse", "orch/r1") == recovered_tip
+    assert _branch_file(repo, "orch/r1", "shared.txt") == "resolved alpha and beta"
+    assert json.loads(run_file.read_text())["conflict_worktree"] is None
+    assert not retained.exists()
+    assert str(retained) not in _git_out(repo, "worktree", "list", "--porcelain")
+
+
+def test_clean_non_merge_retained_head_names_the_missing_merge_commit(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = _repo(tmp_path, ("alpha", "beta"), conflicting=True)
+    run_file = _write_run(repo, [_unit("alpha"), _unit("beta")])
+    monkeypatch.chdir(repo)
+    assert _land(orchestrate) == 1
+    capsys.readouterr()
+    retained = Path(json.loads(run_file.read_text())["conflict_worktree"])
+    _git(retained, "merge", "--abort")
+    _git(retained, "reset", "--hard", json.loads(run_file.read_text())["base"])
+
+    assert _land(orchestrate) == 1
+
+    output = capsys.readouterr().out
+    assert "HEAD is clean but is not a committed two-parent merge" in output
+    assert "uncommitted or unresolved changes" not in output
+    assert retained.is_dir()
+
+
+def test_retained_merge_with_no_current_unit_match_names_that_gate(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = _repo(tmp_path, ("alpha", "beta"), conflicting=True)
+    run_file = _write_run(repo, [_unit("alpha"), _unit("beta")])
+    monkeypatch.chdir(repo)
+    assert _land(orchestrate) == 1
+    capsys.readouterr()
+    retained = _resolve_retained_conflict(run_file)
+    _git(repo, "branch", "-D", "orch/r1-beta")
+
+    assert _land(orchestrate) == 1
+
+    output = capsys.readouterr().out
+    assert "second parent does not match exactly one current DONE, merge-enabled unit tip" in output
+    assert "Resolve the conflicts there" not in output
+    assert retained.is_dir()
+
+
+def test_retained_merge_on_a_moved_base_names_the_required_remerge(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = _repo(tmp_path, ("alpha", "beta"), conflicting=True)
+    run_file = _write_run(repo, [_unit("alpha"), _unit("beta")])
+    monkeypatch.chdir(repo)
+    assert _land(orchestrate) == 1
+    capsys.readouterr()
+    retained = _resolve_retained_conflict(run_file)
+    _git(repo, "checkout", "orch/r1")
+    _commit(repo, "hotfix.txt")
+    _git(repo, "checkout", "main")
+
+    assert _land(orchestrate) == 1
+
+    output = capsys.readouterr().out
+    assert "run branch orch/r1 has advanced since beta's retained merge was built" in output
+    assert "Re-merge beta onto the current tip in that worktree" in output
+    assert "Resolve the conflicts there" not in output
+    assert retained.is_dir()
+
+
+def test_already_published_retained_merge_is_cleaned_and_later_units_continue(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = _repo(tmp_path, ("alpha", "beta"), conflicting=True)
+    _add_nonconflicting_unit(repo, "gamma")
+    run_file = _write_run(repo, [_unit("alpha"), _unit("beta"), _unit("gamma")])
+    monkeypatch.chdir(repo)
+    assert _land(orchestrate) == 1
+    capsys.readouterr()
+    retained = _resolve_retained_conflict(run_file, "published resolution\n")
+    old_tip = _git_out(repo, "rev-parse", "orch/r1")
+    recovered_tip = _git_out(retained, "rev-parse", "HEAD")
+    _git(repo, "update-ref", "refs/heads/orch/r1", recovered_tip, old_tip)
+
+    assert _land(orchestrate) == 0
+
+    output = capsys.readouterr().out
+    assert "landed on orch/r1: gamma (+1)" in output
+    assert _branch_file(repo, "orch/r1", "shared.txt") == "published resolution"
+    assert _branch_file(repo, "orch/r1", "gamma.txt") == "gamma.txt"
+    assert json.loads(run_file.read_text())["conflict_worktree"] is None
+    assert not retained.exists()
+
+
+def test_missing_retained_directory_is_pruned_before_the_land_path_is_reused(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = _repo(tmp_path, ("alpha", "beta"), conflicting=True)
+    run_file = _write_run(repo, [_unit("alpha"), _unit("beta")])
+    monkeypatch.chdir(repo)
+    assert _land(orchestrate) == 1
+    capsys.readouterr()
+    retained = Path(json.loads(run_file.read_text())["conflict_worktree"])
+    shutil.rmtree(retained)
+    assert not retained.exists()
+    assert str(retained) in _git_out(repo, "worktree", "list", "--porcelain")
+
+    # The retry reaches the real merge again. Without pruning, `git worktree add` fatals on the
+    # missing-but-registered path before it can report this conflict.
+    assert _land(orchestrate) == 1
+
+    output = capsys.readouterr().out
+    assert "CONFLICT landing beta" in output
+    assert "cannot create detached landing worktree" not in output
+    assert retained.is_dir()
+    registrations = _git_out(repo, "worktree", "list", "--porcelain")
+    assert registrations.count(f"worktree {retained}") == 1
+
+
+def test_clean_merged_recognises_and_keeps_a_retained_conflict_worktree(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = _repo(tmp_path, ("alpha", "beta"), conflicting=True)
+    run_file = _write_run(repo, [_unit("alpha"), _unit("beta")])
+    monkeypatch.chdir(repo)
+    assert _land(orchestrate) == 1
+    capsys.readouterr()
+    retained = Path(json.loads(run_file.read_text())["conflict_worktree"])
+
+    assert _clean_merged(orchestrate) == 0
+
+    output = capsys.readouterr().out
+    assert retained.is_dir()
+    assert str(retained) in output
+    assert "kept" in output
+
+
+def test_plain_clean_keeps_a_symlinked_conflict_pointer_and_its_victim_worktree(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path, ())
+    victim = tmp_path / "operator-linked-worktree"
+    _git(repo, "worktree", "add", "-b", "operator-work", str(victim), "main")
+    uncommitted = victim / "operator-notes.txt"
+    uncommitted.write_text("operator work in progress\n")
+
+    conflict_path = _land_path(repo)
+    run_file = _write_run(repo, [], conflict_worktree=str(conflict_path))
+    conflict_path.symlink_to(victim, target_is_directory=True)
+
+    cleaned = subprocess.run(
+        [sys.executable, str(SCRIPT), "clean"],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert cleaned.returncode == 0, cleaned.stderr
+    assert victim.is_dir()
+    assert f"worktree {victim}" in _git_out(repo, "worktree", "list", "--porcelain")
+    assert uncommitted.read_text() == "operator work in progress\n"
+    assert "?? operator-notes.txt" in _git_out(victim, "status", "--porcelain")
+    assert conflict_path.is_symlink()
+    assert json.loads(run_file.read_text())["conflict_worktree"] == str(conflict_path)
+
+    label = f"conflict worktree at {conflict_path}"
+    assert "closed: nothing" in cleaned.stdout
+    assert f"kept (not done, or its work not on the run branch): {label}" in cleaned.stdout
+
+
+def test_clean_merged_reaps_an_unrecorded_numbered_landing_worktree(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = _repo(tmp_path, ("alpha",))
+    numbered = _land_path(repo).with_name("land-r1-1")
+    _publish_alpha_in_landing_worktree(repo, numbered)
+    _write_run(repo, [_unit("alpha")])
+    monkeypatch.chdir(repo)
+
+    assert _clean_merged(orchestrate) == 0
+
+    output = capsys.readouterr().out
+    assert f"landing worktree at {numbered}" in output
+    assert not numbered.exists()
+    assert f"worktree {numbered}" not in _git_out(repo, "worktree", "list", "--porcelain")
+
+
+def test_land_prunes_a_missing_registration_after_clean_clears_the_pointer(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = _repo(tmp_path, ("alpha", "beta"), conflicting=True)
+    run_file = _write_run(repo, [_unit("alpha"), _unit("beta")])
+    monkeypatch.chdir(repo)
+    assert _land(orchestrate) == 1
+    capsys.readouterr()
+    retained = Path(json.loads(run_file.read_text())["conflict_worktree"])
+    shutil.rmtree(retained)
+    assert str(retained) in _git_out(repo, "worktree", "list", "--porcelain")
+
+    assert _clean_merged(orchestrate) == 0
+
+    capsys.readouterr()
+    assert json.loads(run_file.read_text())["conflict_worktree"] is None
+    assert str(retained) in _git_out(repo, "worktree", "list", "--porcelain")
+
+    # `land` must consult Git's registration even though `clean` no longer leaves a record pointer.
+    assert _land(orchestrate) == 1
+
+    output = capsys.readouterr().out
+    assert "CONFLICT landing beta" in output
+    assert "cannot create detached landing worktree" not in output
+    assert retained.is_dir()
+    assert _git_out(repo, "worktree", "list", "--porcelain").count(f"worktree {retained}") == 1
+
+
+def test_clean_merged_all_keeps_both_the_conflict_worktree_and_its_run_record(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = _repo(tmp_path, ("alpha", "beta"), conflicting=True)
+    run_file = _write_run(repo, [_unit("alpha"), _unit("beta")])
+    monkeypatch.chdir(repo)
+    assert _land(orchestrate) == 1
+    capsys.readouterr()
+    retained = Path(json.loads(run_file.read_text())["conflict_worktree"])
+
+    assert _clean_merged(orchestrate, all_state=True) == 0
+
+    output = capsys.readouterr().out
+    assert "run state retained because cleanup kept work" in output
+    assert f"conflict worktree at {retained}" in output
+    assert retained.is_dir()
+    assert run_file.is_file()
+
+
+def test_land_advances_a_run_branch_checked_out_in_the_dirty_operator_tree(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = _repo(tmp_path, ("alpha",))
+    _write_run(repo, [_unit("alpha")])
+    _git(repo, "checkout", "orch/r1")
+    dirty_path = repo / "base.txt"
+    dirty_path.write_text("operator edit on run branch\n")
+    before_bytes = dirty_path.read_bytes()
+    old_tip = _git_out(repo, "rev-parse", "orch/r1")
+    monkeypatch.chdir(repo)
+
+    assert _land(orchestrate) == 0
+
+    new_tip = _git_out(repo, "rev-parse", "orch/r1")
+    assert new_tip != old_tip
+    assert _branch_file(repo, "orch/r1", "alpha.txt") == "alpha.txt"
+    assert dirty_path.read_bytes() == before_bytes
+    assert _git_out(repo, "rev-parse", "--abbrev-ref", "HEAD") == "orch/r1"
+    output = capsys.readouterr().out
+    assert "checked out" in output
+    assert "staged for deletion" in output
+    assert "Do not commit that index" in output
+    assert f"git -C {repo} reset" in output
+    assert "D  alpha.txt" in _git_out(repo, "status", "--porcelain")
+
+
+def test_a_worktree_already_holding_the_run_branch_does_not_block_land(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = _repo(tmp_path, ("alpha",))
+    _write_run(repo, [_unit("alpha")])
+    retained = tmp_path / "retained-conflict"
+    _git(repo, "worktree", "add", str(retained), "orch/r1")
+    monkeypatch.chdir(repo)
+
+    assert _land(orchestrate) == 0
+
+    assert retained.is_dir()
+    assert _branch_file(repo, "orch/r1", "alpha.txt") == "alpha.txt"
+    assert not _land_path(repo).exists()
+
+
+def test_land_path_cannot_collide_with_a_unit_named_for_the_land_worktree(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = _repo(tmp_path, ())
+    unit_worktree = repo.parent / "orch-land-r1"
+    _git(
+        repo,
+        "worktree",
+        "add",
+        str(unit_worktree),
+        "-b",
+        "orch/r1-land-r1",
+        "orch/r1",
+    )
+    _commit(unit_worktree, "unit.txt")
+    _write_run(repo, [_unit("land-r1", worktree=str(unit_worktree))])
+    monkeypatch.chdir(repo)
+
+    assert _land(orchestrate) == 0
+
+    assert unit_worktree.is_dir()
+    assert unit_worktree != _land_path(repo)
+    assert _branch_file(repo, "orch/r1", "unit.txt") == "unit.txt"
+    assert not _land_path(repo).exists()
+
+
+def test_ref_advance_failure_retains_the_merge_and_a_rerun_publishes_it(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = _repo(tmp_path, ("alpha",))
+    run_file = _write_run(repo, [_unit("alpha")])
+    old_tip = _git_out(repo, "rev-parse", "orch/r1")
+    monkeypatch.chdir(repo)
+    original_run = orchestrate.run
+    failed = False
+
+    def fail_first_update_ref(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        nonlocal failed
+        if cmd[:2] == ["git", "update-ref"] and not failed:
+            failed = True
+            return subprocess.CompletedProcess(
+                cmd,
+                returncode=1,
+                stdout="",
+                stderr="simulated compare-and-swap failure",
+            )
+        return cast(subprocess.CompletedProcess[str], original_run(cmd, **kwargs))
+
+    monkeypatch.setattr(orchestrate, "run", fail_first_update_ref)
+
+    assert _land(orchestrate) == 1
+
+    first_output = capsys.readouterr().out
+    retained = Path(json.loads(run_file.read_text())["conflict_worktree"])
+    assert "LANDING REF UPDATE FAILED" in first_output
+    assert "simulated compare-and-swap failure" in first_output
+    assert retained.is_dir()
+    assert _git_out(repo, "rev-parse", "orch/r1") == old_tip
+    assert len(_git_out(retained, "rev-list", "--parents", "-n", "1", "HEAD").split()) == 3
+
+    assert _land(orchestrate) == 0
+
+    second_output = capsys.readouterr().out
+    assert "landed on orch/r1: alpha (+1)" in second_output
+    assert _branch_file(repo, "orch/r1", "alpha.txt") == "alpha.txt"
+    assert json.loads(run_file.read_text())["conflict_worktree"] is None
+    assert not retained.exists()
+
+
+def test_cleanup_failure_reports_the_successful_merge_with_a_distinct_exit_status(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = _repo(tmp_path, ("alpha",))
+    _write_run(repo, [_unit("alpha")])
+    land_path = _land_path(repo)
+    monkeypatch.chdir(repo)
+    original_run = orchestrate.run
+
+    def fail_worktree_remove(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if cmd[:4] == ["git", "worktree", "remove", "--force"] and cmd[-1] == str(land_path):
+            return subprocess.CompletedProcess(
+                cmd,
+                returncode=1,
+                stdout="",
+                stderr="simulated cleanup failure",
+            )
+        return cast(subprocess.CompletedProcess[str], original_run(cmd, **kwargs))
+
+    monkeypatch.setattr(orchestrate, "run", fail_worktree_remove)
+
+    assert _land(orchestrate) == 3
+
+    output = capsys.readouterr().out
+    assert "landed on orch/r1: alpha (+1)" in output
+    assert "LANDING CLEANUP FAILED" in output
+    assert "simulated cleanup failure" in output
+    assert output.index("landed on orch/r1") < output.index("LANDING CLEANUP FAILED")
+    assert _branch_file(repo, "orch/r1", "alpha.txt") == "alpha.txt"
+    assert land_path.is_dir()
+
+
+def test_recovery_cleanup_failure_lands_remaining_units_and_the_next_land_self_heals(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = _repo(tmp_path, ("alpha", "beta"), conflicting=True)
+    _add_nonconflicting_unit(repo, "gamma")
+    run_file = _write_run(repo, [_unit("alpha"), _unit("beta"), _unit("gamma")])
+    land_path = _land_path(repo)
+    monkeypatch.chdir(repo)
+    assert _land(orchestrate) == 1
+    capsys.readouterr()
+    _resolve_retained_conflict(run_file, "recovered resolution\n")
+    original_run = orchestrate.run
+
+    def fail_worktree_remove(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if cmd[:4] == ["git", "worktree", "remove", "--force"] and cmd[-1] == str(land_path):
+            return subprocess.CompletedProcess(
+                cmd,
+                returncode=1,
+                stdout="",
+                stderr="simulated recovery cleanup failure",
+            )
+        return cast(subprocess.CompletedProcess[str], original_run(cmd, **kwargs))
+
+    monkeypatch.setattr(orchestrate, "run", fail_worktree_remove)
+
+    assert _land(orchestrate) == 3
+
+    output = capsys.readouterr().out
+    assert "landed on orch/r1: beta (+1), gamma (+1)" in output
+    assert "LANDING CLEANUP FAILED" in output
+    assert "simulated recovery cleanup failure" in output
+    assert _branch_file(repo, "orch/r1", "shared.txt") == "recovered resolution"
+    assert _branch_file(repo, "orch/r1", "gamma.txt") == "gamma.txt"
+    assert json.loads(run_file.read_text())["conflict_worktree"] is None
+    assert land_path.is_dir()
+
+    monkeypatch.setattr(orchestrate, "run", original_run)
+
+    assert _land(orchestrate) == 0
+
+    retry_output = capsys.readouterr().out
+    assert "CONFLICT worktree" not in retry_output
+    assert not land_path.exists()
+    assert str(land_path) not in _git_out(repo, "worktree", "list", "--porcelain")
+
+
+@pytest.mark.parametrize("record_pointer", [False, True], ids=["leftover-path", "retained-pointer"])
+def test_locked_published_land_worktree_is_left_and_later_units_use_a_fresh_path(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    record_pointer: bool,
+) -> None:
+    repo = _repo(tmp_path, ("alpha", "gamma"))
+    land_path, _, hotfix_tip = _prepare_stale_locked_land_path(repo)
+    _git(repo, "checkout", "orch/r1")
+    overrides = {"conflict_worktree": str(land_path)} if record_pointer else {}
+    _write_run(repo, [_unit("alpha"), _unit("gamma")], **overrides)
+    monkeypatch.chdir(repo)
+
+    assert _land(orchestrate) == 3
+
+    run_tip = _git_out(repo, "rev-parse", "orch/r1")
+    _git(repo, "merge-base", "--is-ancestor", hotfix_tip, run_tip)
+    assert _branch_file(repo, "orch/r1", "hotfix.txt") == "hotfix.txt"
+    output = capsys.readouterr().out
+    assert "landed on orch/r1: gamma (+1)" in output
+    assert "LANDING CLEANUP FAILED" in output
+    _assert_fresh_numbered_land(repo, land_path, output)
+
+
+@pytest.mark.parametrize("record_pointer", [False, True], ids=["leftover-path", "retained-pointer"])
+def test_unregistered_land_directory_is_left_while_a_fresh_path_lands(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    record_pointer: bool,
+) -> None:
+    repo = _repo(tmp_path, ("alpha", "gamma"))
+    (repo / ".git" / "info" / "exclude").write_text(".orchestrate/\n")
+    _attach_operator_to_run_branch_after_alpha(repo)
+    land_path = _land_path(repo)
+    land_path.mkdir(parents=True)
+    (land_path / "leftover.txt").write_text("not a Git worktree\n")
+    overrides = {"conflict_worktree": str(land_path)} if record_pointer else {}
+    _write_run(repo, [_unit("alpha"), _unit("gamma")], **overrides)
+    monkeypatch.chdir(repo)
+
+    assert not (land_path / ".git").exists()
+    assert str(land_path) not in _git_out(repo, "worktree", "list", "--porcelain")
+    assert _land(orchestrate) == 3
+
+    output = capsys.readouterr().out
+    assert (land_path / "leftover.txt").read_text() == "not a Git worktree\n"
+    _assert_fresh_numbered_land(repo, land_path, output)
+
+
+@pytest.mark.parametrize("record_pointer", [False, True], ids=["leftover-path", "retained-pointer"])
+def test_prunable_land_registration_is_left_while_a_fresh_path_lands(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    record_pointer: bool,
+) -> None:
+    repo = _repo(tmp_path, ("alpha", "gamma"))
+    (repo / ".git" / "info" / "exclude").write_text(".orchestrate/\n")
+    land_path = _land_path(repo)
+    _git(repo, "worktree", "add", "--detach", str(land_path), "orch/r1")
+    shutil.rmtree(land_path)
+    land_path.mkdir()
+    (land_path / "leftover.txt").write_text("no longer a Git worktree\n")
+    _attach_operator_to_run_branch_after_alpha(repo)
+    overrides = {"conflict_worktree": str(land_path)} if record_pointer else {}
+    _write_run(repo, [_unit("alpha"), _unit("gamma")], **overrides)
+    monkeypatch.chdir(repo)
+
+    registrations = _git_out(repo, "worktree", "list", "--porcelain")
+    assert f"worktree {land_path}" in registrations
+    assert "prunable gitdir file points to non-existent location" in registrations
+    assert _git_out(land_path, "rev-parse", "--show-toplevel") == str(repo)
+    assert _land(orchestrate) == 3
+
+    output = capsys.readouterr().out
+    assert (land_path / "leftover.txt").read_text() == "no longer a Git worktree\n"
+    _assert_fresh_numbered_land(repo, land_path, output)
+
+
+@pytest.mark.parametrize("record_pointer", [False, True], ids=["leftover-path", "retained-pointer"])
+def test_symlink_to_repository_root_is_left_while_a_fresh_path_lands(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    record_pointer: bool,
+) -> None:
+    repo = _repo(tmp_path, ("alpha", "gamma"))
+    (repo / ".git" / "info" / "exclude").write_text(".orchestrate/\n")
+    _attach_operator_to_run_branch_after_alpha(repo)
+    land_path = _land_path(repo)
+    overrides = {"conflict_worktree": str(land_path)} if record_pointer else {}
+    _write_run(repo, [_unit("alpha"), _unit("gamma")], **overrides)
+    land_path.symlink_to(repo, target_is_directory=True)
+    monkeypatch.chdir(repo)
+
+    assert land_path.resolve() == repo.resolve()
+    assert _land(orchestrate) == 3
+
+    output = capsys.readouterr().out
+    assert land_path.is_symlink()
+    _assert_fresh_numbered_land(repo, land_path, output)
+
+
+@pytest.mark.parametrize("record_pointer", [False, True], ids=["leftover-path", "retained-pointer"])
+def test_symlink_to_another_live_worktree_does_not_remove_its_target(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    record_pointer: bool,
+) -> None:
+    repo = _repo(tmp_path, ("alpha", "gamma"))
+    (repo / ".git" / "info" / "exclude").write_text(".orchestrate/\n")
+    sibling = tmp_path / "published-landing"
+    _, sibling_tip = _publish_alpha_in_landing_worktree(repo, sibling)
+    _git(repo, "checkout", "orch/r1")
+    land_path = _land_path(repo)
+    overrides = {"conflict_worktree": str(land_path)} if record_pointer else {}
+    _write_run(repo, [_unit("alpha"), _unit("gamma")], **overrides)
+    land_path.symlink_to(sibling, target_is_directory=True)
+    monkeypatch.chdir(repo)
+
+    assert _land(orchestrate) == 3
+
+    output = capsys.readouterr().out
+    assert land_path.is_symlink()
+    assert (sibling / ".git").is_file()
+    assert _git_out(sibling, "rev-parse", "HEAD") == sibling_tip
+    assert f"worktree {sibling}" in _git_out(repo, "worktree", "list", "--porcelain")
+    _assert_fresh_numbered_land(repo, land_path, output)
+
+
+@pytest.mark.parametrize("record_pointer", [False, True], ids=["leftover-path", "retained-pointer"])
+def test_rewritten_landing_gitfile_is_left_while_a_fresh_path_lands(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    record_pointer: bool,
+) -> None:
+    repo = _repo(tmp_path, ("alpha", "gamma"))
+    (repo / ".git" / "info" / "exclude").write_text(".orchestrate/\n")
+    land_path, _ = _publish_alpha_in_landing_worktree(repo)
+    _git(repo, "checkout", "orch/r1")
+    (land_path / ".git").write_text(f"gitdir: {repo / '.git'}\n")
+    overrides = {"conflict_worktree": str(land_path)} if record_pointer else {}
+    _write_run(repo, [_unit("alpha"), _unit("gamma")], **overrides)
+    monkeypatch.chdir(repo)
+
+    assert _land(orchestrate) == 3
+
+    output = capsys.readouterr().out
+    assert (land_path / ".git").read_text() == f"gitdir: {repo / '.git'}\n"
+    _assert_fresh_numbered_land(repo, land_path, output)
+
+
+@pytest.mark.parametrize("record_pointer", [False, True], ids=["leftover-path", "retained-pointer"])
+def test_real_removal_failure_never_reuses_the_partially_removed_path(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    record_pointer: bool,
+) -> None:
+    repo = _repo(tmp_path, ("alpha", "gamma"))
+    (repo / ".git" / "info" / "exclude").write_text(".orchestrate/\n")
+    land_path, _ = _publish_alpha_in_landing_worktree(repo)
+    _git(repo, "checkout", "orch/r1")
+    overrides = {"conflict_worktree": str(land_path)} if record_pointer else {}
+    _write_run(repo, [_unit("alpha"), _unit("gamma")], **overrides)
+    method, protected = _make_worktree_removal_fail(repo, land_path)
+    monkeypatch.chdir(repo)
+
+    try:
+        assert _land(orchestrate) == 3
+    finally:
+        _clear_removal_failure(repo, method, protected)
+
+    output = capsys.readouterr().out
+    assert "LANDING CLEANUP FAILED" in output
+    _assert_fresh_numbered_land(repo, land_path, output)
+
+
+def test_fresh_landing_path_uses_the_lowest_unused_number(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = _repo(tmp_path, ("alpha", "gamma"))
+    (repo / ".git" / "info" / "exclude").write_text(".orchestrate/\n")
+    _attach_operator_to_run_branch_after_alpha(repo)
+    land_path = _land_path(repo)
+    land_path.mkdir(parents=True)
+    (land_path / "leftover.txt").write_text("canonical evidence\n")
+    occupied = land_path.with_name(f"{land_path.name}-1")
+    occupied.mkdir()
+    (occupied / "leftover.txt").write_text("number one is already used\n")
+    _write_run(repo, [_unit("alpha"), _unit("gamma")])
+    monkeypatch.chdir(repo)
+
+    assert _land(orchestrate) == 3
+
+    output = capsys.readouterr().out
+    fresh = land_path.with_name(f"{land_path.name}-2")
+    _assert_fresh_numbered_land(repo, land_path, output, expected_fresh=fresh)
+    assert (occupied / "leftover.txt").read_text() == "number one is already used\n"
+    assert fresh.parent == land_path.parent
+    assert fresh.name == "land-r1-2"
+
+
+def test_land_fails_loudly_when_the_run_branch_does_not_resolve(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = _repo(tmp_path, ("alpha",))
+    _write_run(repo, [_unit("alpha")])
+    _git(repo, "branch", "-D", "orch/r1")
+    monkeypatch.chdir(repo)
+
+    with pytest.raises(SystemExit, match=r"orch/r1.*does not resolve"):
+        _land(orchestrate)
+
+    assert not _land_path(repo).exists()

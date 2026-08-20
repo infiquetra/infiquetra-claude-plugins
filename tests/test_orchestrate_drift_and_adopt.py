@@ -122,6 +122,24 @@ class TestCheck:
         assert orchestrate.cmd_check(argparse.Namespace()) == 0
         assert "the record agrees with the repository" in capsys.readouterr().out
 
+    def test_an_unrecorded_numbered_landing_worktree_is_reported(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _write_run(repo, [_unit("alpha"), _unit("beta")])
+        retained = repo / ".orchestrate" / "land-r1-1"
+        _git(repo, "worktree", "add", "--detach", str(retained), "orch/r1")
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_check(argparse.Namespace()) == 1
+
+        out = capsys.readouterr().out
+        assert f"LANDING WORKTREE {retained}" in out
+        assert "run `orchestrate.py clean --merged` to retry cleanup" in out
+
     def test_a_branch_with_no_unit_is_unrecorded(
         self,
         orchestrate: ModuleType,
@@ -395,6 +413,29 @@ class TestAdopt:
         assert "nothing written -- rerun with --yes" in out
         assert [u["name"] for u in _read_run(repo)["units"]] == ["alpha", "beta"]
 
+    def test_an_unresolvable_run_branch_is_reported_and_degrades_without_a_traceback(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _git(repo, "checkout", "-b", "orch/r1-stray", "orch/r1")
+        _commit(repo, "stray.txt")
+        _git(repo, "checkout", "main")
+        _git(repo, "branch", "-m", "orch/r1", "orch/r1-renamed")
+        _write_run(repo, [_unit("alpha"), _unit("beta")])
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(orchestrate, "live_agents", lambda: [])
+
+        assert orchestrate.cmd_adopt(argparse.Namespace(yes=False)) == 0
+
+        output = capsys.readouterr().out
+        assert "WARNING: run branch 'orch/r1' does not resolve" in output
+        assert "would adopt: stray" in output
+        assert "status=failed" in output
+        assert "nothing written -- rerun with --yes" in output
+
     def test_with_yes_the_unit_lands_in_the_record(
         self,
         orchestrate: ModuleType,
@@ -417,6 +458,51 @@ class TestAdopt:
         assert "stray" in units
         assert units["stray"]["branch"] == "orch/r1-stray"
         assert units["stray"]["note"] == "adopted: created outside the run record"
+
+    def test_refs_heads_worktree_listing_recovers_the_adopted_units_live_session(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        worktree = tmp_path / "stray-worktree"
+        _git(
+            repo,
+            "worktree",
+            "add",
+            "-b",
+            "orch/r1-stray",
+            str(worktree),
+            "orch/r1",
+        )
+        _commit(worktree, "stray.txt")
+        _write_run(repo, [_unit("alpha"), _unit("beta")])
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(
+            orchestrate,
+            "live_agents",
+            lambda: [
+                {
+                    "name": "stray-agent",
+                    "agent": "codex",
+                    "agent_status": "working",
+                    "cwd": str(worktree),
+                    "tab_id": "tab-1",
+                    "pane_id": "pane-1",
+                }
+            ],
+        )
+
+        assert orchestrate.cmd_adopt(argparse.Namespace(yes=True)) == 0
+
+        units = {u["name"]: u for u in _read_run(repo)["units"]}
+        assert units["stray"]["worktree"] == str(worktree)
+        assert units["stray"]["vendor"] == "codex"
+        assert units["stray"]["status"] == "running"
+        assert units["stray"]["agent_name"] == "stray-agent"
+        assert units["stray"]["tab_id"] == "tab-1"
+        assert units["stray"]["pane_id"] == "pane-1"
 
     def test_a_branch_with_commits_and_no_session_is_done(
         self,

@@ -365,6 +365,18 @@ class Unit:
     note: str = ""
 
 
+@dataclass(frozen=True)
+class RunBranchState:
+    """The recorded run branch and the commit it resolved to when the run was loaded."""
+
+    name: str
+    commit: str | None
+
+
+class RunBranchResolutionError(RuntimeError):
+    """A branch-dependent predicate was asked about an unresolvable run branch."""
+
+
 @dataclass
 class Run:
     run_id: str
@@ -384,6 +396,8 @@ class Run:
     Every unit branches from here and lands back here when it finishes, so the next phase opens on
     everything the earlier phases actually produced rather than on one predecessor's branch. At the
     end this is the single branch that merges into the operator's tree."""
+    branch_state: RunBranchState | None = field(default=None, init=False, repr=False)
+    """One load-time resolution of ``branch``; absent only for a legacy branchless run."""
     conflict_worktree: str | None = None
     """A detached land worktree retained so the operator can resolve a merge conflict."""
     workspace: str | None = None
@@ -417,7 +431,7 @@ class Run:
     @classmethod
     def load(cls, path: Path = RUN_FILE) -> Run:
         raw = json.loads(path.read_text())
-        return cls(
+        loaded = cls(
             run_id=raw["run_id"],
             source=raw["source"],
             base=raw["base"],
@@ -430,6 +444,44 @@ class Run:
             status_map=raw.get("status_map", {}),
             workspace=raw.get("workspace") or None,
         )
+        loaded.resolve_branch_once()
+        return loaded
+
+    def resolve_branch_once(self) -> None:
+        """Resolve the named run branch once and retain both success and failure as state."""
+        if not self.branch:
+            self.branch_state = None
+            return
+        if self.branch_state is None or self.branch_state.name != self.branch:
+            self.branch_state = RunBranchState(self.branch, resolve_ref(self.branch))
+
+    @property
+    def resolved_branch(self) -> str | None:
+        """The cached run-branch commit, or None for a legacy or unresolvable branch."""
+        self.resolve_branch_once()
+        return self.branch_state.commit if self.branch_state is not None else None
+
+    @property
+    def unresolvable_branch(self) -> str | None:
+        """The recorded branch name when its one load-time resolution failed."""
+        self.resolve_branch_once()
+        if self.branch_state is not None and self.branch_state.commit is None:
+            return self.branch_state.name
+        return None
+
+    def resolved_run_ref(self) -> str:
+        """The cached run commit, or the historical HEAD fallback for a branchless run."""
+        if not self.branch:
+            return "HEAD"
+        commit = self.resolved_branch
+        if commit is None:
+            raise RunBranchResolutionError(f"run branch {self.branch!r} does not resolve")
+        return commit
+
+    def record_branch_advance(self, commit: str) -> None:
+        """Keep the cached resolution current after this process advances the run branch."""
+        if self.branch:
+            self.branch_state = RunBranchState(self.branch, commit)
 
     def save(self, path: Path = RUN_FILE) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -644,7 +696,7 @@ def produced_anything(dep: Unit, r: Run) -> bool:
 
 def branch_produced_anything(branch: str, r: Run) -> bool:
     """The branch-level reading behind ``produced_anything`` -- see its docstring for the why."""
-    base = r.branch or "HEAD"
+    base = r.resolved_run_ref()
     mb = run(["git", "merge-base", base, branch], check=False)
     if mb.returncode != 0:
         return False
@@ -662,14 +714,14 @@ def landed_by_merge(branch: str, r: Run) -> bool:
     advanced run branch: both tips are on the run branch's first-parent history. Inferring either
     from ancestry would let the empty unit launch dependents and be reaped as if it saved work.
 
-    The ref measured is ``r.branch or "HEAD"`` -- the same fallback ``branch_produced_anything``
-    uses -- because a run with no stored run branch predates the run-branch design and landed its
-    units straight onto the operator's tree, where this shape is just as readable. Refusing that
-    case left a legacy unit whose work WAS merged reading as produced nothing: ``check`` shouted
-    NO COMMITS at landed work, and ``clean --merged`` would not reap it. When ``r.base`` is
-    absent too there is no earlier bound to name, so the range is the ref's whole history.
+    The ref measured is the run branch commit cached at load. A run with no stored run branch
+    predates the run-branch design and falls back to ``HEAD`` -- those units landed straight onto
+    the operator's tree, where this shape is just as readable. Refusing that case left a legacy
+    unit whose work WAS merged reading as produced nothing: ``check`` shouted NO COMMITS at landed
+    work, and ``clean --merged`` would not reap it. When ``r.base`` is absent too there is no
+    earlier bound to name, so the range is the ref's whole history.
     """
-    ref = r.branch or "HEAD"
+    ref = r.resolved_run_ref()
     tip = run(["git", "rev-parse", "--verify", "--quiet", branch], check=False)
     if tip.returncode != 0 or not tip.stdout.strip():
         return False
@@ -1739,6 +1791,8 @@ def cmd_go(args: argparse.Namespace) -> int:
     if not ready:
         print("nothing eligible -- either everything is running or dependencies are unmet.")
         return 0
+    if r.unresolvable_branch:
+        raise SystemExit(f"run branch {r.unresolvable_branch!r} does not resolve; cannot go")
     root = repo_root()
     for unit in ready[: args.limit] if args.limit else ready:
         if unit.tab_id:
@@ -1767,6 +1821,8 @@ def cmd_status(args: argparse.Namespace) -> int:
     r = Run.load()
     live = {u.name: poll(u) for u in r.units if u.status == RUNNING}
     print(f"run {r.run_id}   base {r.base[:8]}   {r.source}\n")
+    if r.unresolvable_branch:
+        print(f"WARNING: run branch {r.unresolvable_branch!r} does not resolve\n")
     head = f"{'unit':10s} {'vendor':9s} {'model':14s} {'effort':7s} {'state':9s} {'herdr':9s} task"
     print(head)
     print("-" * len(head))
@@ -2119,7 +2175,8 @@ def cmd_land(args: argparse.Namespace) -> int:
     r = Run.load()
     if not r.branch:
         raise SystemExit("this run has no run branch; it predates `land` -- start a new run")
-    if resolve_ref(r.branch) is None:
+    branch_tip = r.resolved_branch
+    if branch_tip is None:
         raise SystemExit(f"run branch {r.branch!r} does not resolve; cannot land")
 
     root = repo_root()
@@ -2148,7 +2205,7 @@ def cmd_land(args: argparse.Namespace) -> int:
             "without touching its uncommitted files, so the checkout will read against a new base"
         )
 
-    added = run(["git", "worktree", "add", "--detach", str(land_path), r.branch], check=False)
+    added = run(["git", "worktree", "add", "--detach", str(land_path), branch_tip], check=False)
     if added.returncode != 0:
         detail = (added.stderr or added.stdout or "unknown git error").strip()
         raise SystemExit(f"cannot create detached landing worktree at {land_path}: {detail}")
@@ -2173,22 +2230,12 @@ def cmd_land(args: argparse.Namespace) -> int:
                 held.append(unit.name)
                 continue
             ahead = run(
-                ["git", "rev-list", "--count", f"{r.branch}..{unit.branch}"], check=False
+                ["git", "rev-list", "--count", f"{branch_tip}..{unit.branch}"], check=False
             ).stdout.strip()
             if ahead in ("", "0"):
                 (already if produced_anything(unit, r) else empty).append(unit.name)
                 continue
-            expected_tip = resolve_ref(r.branch)
-            if expected_tip is None:
-                keep_land_worktree = True
-                r.conflict_worktree = str(land_path)
-                r.save()
-                print(
-                    f"  LANDING STOPPED: run branch {r.branch!r} disappeared; "
-                    f"recovery worktree retained at {land_path}"
-                )
-                _report_failed_writebacks(writeback_failures)
-                return 1
+            expected_tip = branch_tip
             merge = run(
                 ["git", "-C", str(land_path), "merge", "--no-ff", "--no-edit", unit.branch],
                 check=False,
@@ -2218,6 +2265,8 @@ def cmd_land(args: argparse.Namespace) -> int:
                 )
                 _report_failed_writebacks(writeback_failures)
                 return 1
+            branch_tip = merged_tip
+            r.record_branch_advance(merged_tip)
             landed.append(f"{unit.name} (+{ahead})")
             landed_names.append(unit.name)
             # The boundary just passed: write it back to the board here, where it happened, rather
@@ -2307,7 +2356,7 @@ def landed(branch: str, r: Run) -> bool | None:
     A run with no run branch predates `land`. There is nothing else to measure against, so the
     operator's tree it is.
     """
-    base = r.branch or "HEAD"
+    base = r.resolved_run_ref()
     ahead = run(["git", "rev-list", "--count", f"{base}..{branch}"], check=False)
     if ahead.returncode != 0 or ahead.stdout.strip() not in ("", "0"):
         return False
@@ -2353,6 +2402,8 @@ def reapable(unit: Unit, r: Run) -> bool:
     failed, and this plugin keeps no other record.
     """
     if unit.status != DONE or not unit.branch:
+        return False
+    if r.unresolvable_branch:
         return False
     return landed(unit.branch, r) is True
 
@@ -2442,6 +2493,11 @@ def cmd_clean(args: argparse.Namespace) -> int:
     workspace ends up with a dozen idle tabs nobody can tell apart.
     """
     r = Run.load()
+    if r.unresolvable_branch:
+        print(
+            f"WARNING: run branch {r.unresolvable_branch!r} does not resolve; "
+            "branch-dependent cleanup checks are unavailable"
+        )
     closed, kept = reap(r, merged_only=args.merged, branches=args.branches)
     if args.all:
         shutil.rmtree(RUN_FILE.parent, ignore_errors=True)
@@ -2463,6 +2519,11 @@ def cmd_check(args: argparse.Namespace) -> int:
     """
     r = Run.load()
     findings: list[str] = []
+    branch_error = r.unresolvable_branch
+    branch_tip = r.resolved_branch
+
+    if branch_error:
+        findings.append(f"RUN BRANCH -- run branch {branch_error!r} does not resolve")
 
     for name, branch in discover_unrecorded(r):
         findings.append(f"UNRECORDED {name} -- branch {branch} is not a unit in this run")
@@ -2475,13 +2536,14 @@ def cmd_check(args: argparse.Namespace) -> int:
             continue
         state = poll(unit, agents)
         if unit.status == DONE:
-            if not produced_anything(unit, r):
+            if branch_error is None and not produced_anything(unit, r):
                 findings.append(
                     f"NO COMMITS {unit.name} -- marked done, but its branch committed nothing"
                 )
-            if unit.merge and r.branch and unit.branch:
+            if branch_error is None and unit.merge and r.branch and unit.branch:
+                assert branch_tip is not None
                 ahead = run(
-                    ["git", "rev-list", "--count", f"{r.branch}..{unit.branch}"], check=False
+                    ["git", "rev-list", "--count", f"{branch_tip}..{unit.branch}"], check=False
                 )
                 count = ahead.stdout.strip() if ahead.returncode == 0 else ""
                 if count not in ("", "0"):
@@ -2493,7 +2555,7 @@ def cmd_check(args: argparse.Namespace) -> int:
                 )
         elif state == "gone":
             findings.append(f"SESSION GONE {unit.name} -- marked running, but its session is gone")
-        elif state in {"idle", "done"} and produced_anything(unit, r):
+        elif branch_error is None and state in {"idle", "done"} and produced_anything(unit, r):
             # Idle with nothing committed is not drift -- a session is also idle between turns,
             # thinking. Idle with commits is a unit that finished while the record still calls it
             # running, and nothing else will notice until an operator asks why the run stopped.
@@ -2554,9 +2616,10 @@ def diff_against(r: Run) -> str | None:
     The run branch when there is one; the run base for a run predating it -- those units all
     branched from the base, so it is still the honest comparison. None when neither resolves,
     which leaves nothing to diff against."""
-    for ref in (r.branch, r.base):
-        if resolve_ref(ref) is not None:
-            return ref
+    if r.branch and r.resolved_branch is not None:
+        return r.branch
+    if resolve_ref(r.base) is not None:
+        return r.base
     return None
 
 

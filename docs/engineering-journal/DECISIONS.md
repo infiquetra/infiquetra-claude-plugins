@@ -1,6 +1,33 @@
 # Decisions — Infiquetra Claude Plugins
 ## 2026-08-20
 
+### Landing merges use a newly constructed worktree, never a pre-existing path {#landing-worktree-is-fresh-by-construction}
+
+**Decision.** `land` never uses a pre-existing canonical landing path for a merge. It may inspect a
+path proved to be a separate live linked worktree and remove it only when the existing exact-merge
+rules show that its work is already published. If the canonical path is not that proven shape, or
+if removal fails for any reason, `land` leaves it untouched, names the path and reason, and creates
+the lowest unused numbered sibling with `git worktree add --detach`. That newly added path is exact
+by construction. Canonical and numbered landing paths are both reported by `check` when no conflict
+record owns them, and `clean` can retry their safe removal. `live_linked_worktree_at` remains only
+as a housekeeping proof; it reads the worktree registration, gitfile, administrative directory,
+and back-pointer without running `git -C` against the candidate.
+
+**Why.** A check-then-act proof cannot survive a destructive operation between the check and its
+use. Git can unlink a linked worktree's registration and `.git` file before failing to remove a
+later file. Reusing that partly removed directory then makes `git -C` walk up into the operator's
+checkout. Strengthening the admission predicate cannot close a failure that `land` itself creates
+after admission. A new detached worktree has no earlier proof to go stale.
+
+**Rejected alternatives.** *Add another reuse predicate* leaves the destructive ordering intact.
+*Re-prove after failed removal* still runs a path-scoped Git command against the now-untrusted path.
+*Delete any pre-existing canonical path* would destroy evidence and can follow a symlink into a real
+worktree. The old path is therefore preserved and only a new path receives merge commands.
+
+**Supersedes.** This replaces the reuse portion of
+[[#resolved-detached-land-is-an-exact-merge]]. The exact retained-merge publication and guarded
+reference update rules remain unchanged.
+
 ### A resolved detached land is published only as an exact guarded merge {#resolved-detached-land-is-an-exact-merge}
 
 **Decision.** A retained landing worktree may advance the run branch only when its worktree is

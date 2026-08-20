@@ -122,6 +122,24 @@ class TestCheck:
         assert orchestrate.cmd_check(argparse.Namespace()) == 0
         assert "the record agrees with the repository" in capsys.readouterr().out
 
+    def test_an_unrecorded_numbered_landing_worktree_is_reported(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _write_run(repo, [_unit("alpha"), _unit("beta")])
+        retained = repo / ".orchestrate" / "land-r1-1"
+        _git(repo, "worktree", "add", "--detach", str(retained), "orch/r1")
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_check(argparse.Namespace()) == 1
+
+        out = capsys.readouterr().out
+        assert f"LANDING WORKTREE {retained}" in out
+        assert "run `orchestrate.py clean --merged` to retry cleanup" in out
+
     def test_a_branch_with_no_unit_is_unrecorded(
         self,
         orchestrate: ModuleType,

@@ -19,15 +19,14 @@ Group A combines the first three run-integrity repairs with the documentation-an
   base without weakening the publication gate. `clean --all` preserves any recovery work it
   reports as kept, and its help names that retention. The checked-out-run-branch warning names the
   staged-deletion hazard and recovery command, and cleanup failure reports completed merges under
-  its own exit status instead of calling the land a merge failure. Before a leftover landing
-  worktree is reused, it is detached at the current run tip and its `HEAD` is read back; a failed
-  checkout or mismatch restores the existing inspect-or-remove refusal instead of merging on a
-  stale base and rewinding the run branch. Reuse admission now proves the canonical landing path is
-  a live, separate linked worktree before any path-scoped Git command runs: Git must list the path,
-  `git -C` must resolve back to that exact top level, and neither the primary nor operator worktree
-  may match. This refuses the whole enclosing-repository escape class, including plain leftover
-  directories, stale or prunable registrations whose directory reappears, and symlinks resolving to
-  the repository root, before Git can detach the operator checkout.
+  its own exit status instead of calling the land a merge failure. A pre-existing canonical landing
+  path is never reused for merges. If it is not a proven separate linked worktree, does not contain
+  an exact published merge, or cannot be removed, `land` preserves and names it, then creates the
+  lowest unused numbered detached worktree. The new path is exact by construction. The housekeeping
+  proof reads the linked-worktree metadata without running `git -C` against an unverified path, and
+  `check` and `clean` discover both canonical and numbered cleanup paths. This closes the full
+  operator-checkout escape class: partial removal performed by Git itself, a gitfile rewritten to
+  the primary Git directory, plain or stale directories, and symlinks cannot become merge targets.
 - **U2 — a missing run branch fails loudly instead of producing false unit results.** The branch is
   resolved once when a run loads; `status`, `check`, and `clean` remain available for diagnosis,
   while `go` and `land` refuse with the missing branch named, even when no unit is eligible. `adopt`

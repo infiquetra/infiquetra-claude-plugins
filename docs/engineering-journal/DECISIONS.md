@@ -1,6 +1,68 @@
 # Decisions — Infiquetra Claude Plugins
 ## 2026-08-19
 
+### The external reviewer is a Code Review concept behind a replaceable transport {#external-reviewer-transport-seam}
+
+**Decision.** Cross-vendor reviewer diversity stays in the **non-scoring** external-reviewer seat,
+excluded as it is today from the consensus denominator, the 9.0 acceptance and the 7.0 floor. A seam
+is drawn through it: **external-reviewer identity, the request, typed evidence, adjudication and
+lifecycle semantics belong to Code Review**, while **launch and collection are a replaceable
+transport**. `plugins/saga/scripts/engine_session_runner.py` — a managed terminal session — is the
+planned transport for this work, and no Herdr migration enters it.
+
+**Rejected alternatives.** *Letting the second seat score* — it reopens the denominator and quorum
+questions the settled acceptance rule avoids, and the seat's whole value is an independent read that
+cannot be gamed into the arithmetic. *Dropping cross-vendor diversity now that one top-level
+controller replaces the duplicate-review panel* — rejected on evidence: on run `orch-2026-08-19-a` one
+reviewer returned zero findings on a 15,400-line diff while another returned four, every one
+independently confirmed real, so a single-vendor controller would have shipped that diff effectively
+unreviewed. *Naming Herdr as the transport now* — it would couple the canonical review contract to a
+background process before that process can meet the contract.
+
+**Revisit when** a named Herdr agent can satisfy all six of: cross-vendor selection, durable agent
+identity, visible lifecycle state, resumable collection, timeout and failure handling, and
+provenance-equivalent typed output. The swap is then admissible **only** if it changes nothing above
+the seam — not lens selection, scoring, quorum, the non-scoring seat, adjudication, or the
+review-result contract.
+
+---
+
+### The canonical roster is fourteen lenses with specified dimensions {#canonical-fourteen-lens-roster}
+
+**Decision.** One versioned machine-readable roster at `plugins/saga/references/lens-roster.json`
+(`"schema": "lens_roster.v1"`, following `bridge-signatures.json`) carries fourteen lenses: four
+always-on — `correctness`, `security`, `testing`, `architecture-maintainability` — and ten
+conditional — `deployment-infrastructure`, `reliability`, `performance`, `api-contract`,
+`adversarial`, `privacy`, `documentation-clarity`, `agent-usability`, `previous-comments`,
+`accessibility-human-usability`. Roughly seventy-five dimensions are specified across them. Every
+conditional lens is selected by **judgment with a recorded one-line reason**; keyword matching alone
+is not a valid trigger. A selected lens with zero applicable dimensions is invalid, and each
+non-applicable dimension records an explicit cause. Lens identifiers are stable: `api-contract` keeps
+its name while its scope broadens. Scoring is Python under `plugins/saga/scripts/`, not skill prose,
+because Code Review ships no code today and unenforced prose is exactly what drifted in Team
+Execution.
+
+**Rejected alternatives.** *Intersecting the two rosters* to force a match — it would delete
+`correctness` and `privacy` from the review path, and `correctness` is the always-on lens that catches
+silent breakage. *Keeping two rosters synchronised by convention* — they had already drifted to where
+only three of Team Execution's ten reviewers map cleanly onto a Code Review lens, with no mechanism
+that would have reported it. *A fifteenth lens* — the audit found no independent judgment domain left:
+data integrity sits in `correctness`, application observability in `reliability`, infrastructure
+observability and cost in `deployment-infrastructure`, supply chain in `security`, developer and
+operator experience in `accessibility-human-usability`, and product ambition remains Founder Review's.
+*Renaming `api-contract` to match its broadened scope* — it would break every stored result and the
+parity test.
+
+**Two tier changes ship with it and are stated rather than discovered:** `devils-advocate-reviewer`
+moves from always-spawned to conditional, and `testing-reviewer` from optional to always-on.
+
+**Revisit when** a genuinely independent judgment domain appears that none of the fourteen can hold —
+not when an existing lens merely grows a sub-domain.
+
+**Refs.** `docs/plans/2026-08-19-code-review-consensus-ownership-implementation-plan.md`.
+
+---
+
 ### Code Review owns review policy; Orchestrate routes and Work mutates {#code-review-owns-consensus-orchestrate-routes}
 
 **Decision.** Saga's Code Review skill is the single owner of the canonical lens roster, the

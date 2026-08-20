@@ -94,7 +94,16 @@ are not rerun** but retain the revision they reviewed.
 
 ---
 
-## Part 2 — The canonical thirteen-lens roster
+## Part 2 — The canonical roster
+
+> **SUPERSEDED 2026-08-19 by operator approval: the roster is FOURTEEN lenses, not thirteen.** After
+> auditing every Code Review lens, every Team Execution reviewer, the Code Review engine contracts and
+> the Saga Quality Assurance risk taxonomy, the operator approved an amended roster adding a tenth
+> conditional lens, `accessibility-human-usability`, and specified roughly seventy-five dimensions
+> across the fourteen. The authoritative roster, its dimensions and its triggers live in
+> `docs/plans/2026-08-19-code-review-consensus-ownership-implementation-plan.md`. The thirteen-lens
+> table below is retained as the audit's original recommendation and is **not** the specification.
+
 
 One versioned, machine-readable roster under Code Review. Team Execution consumes it rather than
 maintaining parallel policy. The union preserves both current surfaces:
@@ -166,7 +175,7 @@ fixer reads. It is emitted only as prose today.
 
 | # | Defect | Evidence | Priority |
 |---|---|---|---|
-| O1 | `land` and `collect` run in the operator's checkout and refuse on a dirty tree | `orchestrate.py` `cmd_land` — `git status --porcelain` refuse, then `git checkout r.branch`; `cmd_collect` carries the same pair. Live refusal on the Home Lab run at 16:14:24Z: `your working tree has uncommitted changes; commit or stash them, then rerun land` | P0 |
+| O1 | `land` runs in the operator's checkout and refuses on a dirty tree | `orchestrate.py` `cmd_land` — `git status --porcelain` refuse, then a gratuitous `git checkout r.branch`. Live refusal on the Home Lab run at 16:14:24Z: `your working tree has uncommitted changes; commit or stash them, then rerun land`. **Narrowed to land-only by operator ruling 2026-08-19** — `cmd_collect` merges *into* the operator's tree by design, so a worktree cannot help it and its refusal is git's constraint, not a defect. See Part 6 choice F | P0 |
 | O2 | The run branch is stored by name and never re-verified; predicates degrade to False | `branch_produced_anything` runs `git merge-base <run branch> <unit branch>` and returns False on non-zero exit; `landed_by_merge` fails the same way. `r.branch` is tested for presence in six places and for resolution only at `start`. Reproduced: `check` reports `NO COMMITS` on four units that are ancestors of `origin/main` | P0 |
 | O3 | The delivery-failure note is write-only | `unit.note` assigned in seven places, read in one (`if not unit.note:`, a guard). `cmd_status` and `cmd_check` never reference it | P1 |
 | O4 | The delivery check fires falsely and overwrites the handover note | `took_the_task` gives 15s then writes the warning; it fired on two Home Lab reviewers that produced 846 and 2010 word reviews. `pane_text` sets a file-handover note that `took_the_task` then clobbers — `.orchestrate/tasks/review-qwen.md` exists while that unit's note records only the false warning | P1 |
@@ -254,9 +263,9 @@ F (independent) --> any time
 
 | # | Item | Phase | Surface | Closes |
 |---|---|---|---|---|
-| 1 | Land and collect in a throwaway worktree | A | orchestrate | O1 |
+| 1 | Land in a throwaway worktree (collect unchanged) | A | orchestrate | O1 |
 | 2 | Resolve the run branch once; fail loudly when gone | A | orchestrate | O2 |
-| 3 | Versioned machine-readable thirteen-lens roster | B | saga | C5, T1 |
+| 3 | Versioned machine-readable **fourteen**-lens roster | B | saga | C5, T1 |
 | 4 | Dimensions, derived overall, contradiction rejection, thresholds | B | saga | C1, C2 |
 | 5 | Cycle state, selective rerun, three-cycle cap, best-available | B | saga | C2, C3 |
 | 6 | Typed result emission beside the Markdown artifact | B | saga | C4 |
@@ -281,8 +290,10 @@ Every one of the 25 defects is closed by at least one item.
 
 Items O1, O2, O3, O4, O5.
 
-1. `land` and `collect` merge inside a throwaway worktree created on the run branch, then remove it.
-   No `git checkout` of the operator's tree, no dirty-tree refusal.
+1. `land` merges inside a throwaway worktree created on the run branch, removed on success and
+   **retained and named on conflict** so the operator has a real recovery surface; the cleanup path
+   recognises a retained conflict worktree. No `git checkout` of the operator's tree, no dirty-tree
+   refusal. `collect` is unchanged: its clean-tree requirement is a **known limitation**, not a defect.
 2. Resolve `r.branch` once at load. When it does not resolve, say so and stop, rather than letting
    each predicate answer False independently. `resolve_ref` already exists and is used elsewhere.
 3. Print the note in `status`; add a `check` finding for a unit whose note records a delivery failure.
@@ -300,7 +311,7 @@ with no column overflow on a 21-character model name.
 
 Items C1–C5.
 
-1. The versioned machine-readable thirteen-lens roster, with a stable identifier per lens.
+1. The versioned machine-readable **fourteen**-lens roster, with a stable identifier per lens.
 2. Dimensions per lens, the derived arithmetic-mean overall, rejection of a contradictory reported
    overall, and the exact thresholds.
 3. The typed result of Part 3, emitted beside the existing Markdown artifact.
@@ -369,20 +380,21 @@ in the same pull request. Phase F may ride either.
 
 ## Part 6 — Remaining choices
 
-**Six remain open.** These are recommendations, **not approvals** — no operator consent has been
-given to any of them. Implementation of Phase B is blocked until choices A and D are answered. Phase
-A is blocked only on F. Letters are stable identifiers and are never reused, so C stays in the table
-as a settled marker.
+**All seven are now settled** — A through G were answered by the operator on 2026-08-19 during Saga
+Plan interrogation. Letters are stable identifiers and are never reused, so every settled choice stays
+in the table as a marker rather than being deleted. The authoritative statement of each ruling is the
+implementation plan at
+`docs/plans/2026-08-19-code-review-consensus-ownership-implementation-plan.md`.
 
 | # | Choice | Recommendation | Reason |
 |---|---|---|---|
-| A | Approve the thirteen-lens union | **Approve** | Preserves both surfaces; closes the four lenses with no reviewer and the three reviewers with no lens |
-| B | Best available is the latest successfully integrated revision reviewed in cycle three | **Approve** | Ranking revisions would be new policy invented at the worst moment |
+| ~~A~~ | **SETTLED 2026-08-19 as amended.** Approved at **fourteen** lenses — the union plus `accessibility-human-usability` — with per-lens dimensions specified | n/a | The union preserves both surfaces; the operator's audit added the fourteenth lens and the dimension specification |
+| ~~B~~ | **SETTLED 2026-08-19.** Best available is the latest successfully integrated revision reviewed in cycle three; no cross-cycle ranking | n/a | Accepted lenses retain scores against different revisions, so totals are not comparable |
 | ~~C~~ | **SETTLED 2026-08-19 — moved to Part 1.** Exhausted reviewer-delivery retries are `review_incomplete`, consuming no cycle and fabricating no score | n/a | The operator enumerated this among the settled rules. The letter is retained rather than reused so existing cross-references stay valid |
-| D | Lens selection trigger: judgment from the diff, or keyword match against the plan | **Judgment from the diff** | Keyword matching a plan document cannot see what the code actually touched |
-| E | Where cross-vendor review diversity lives, now that the Orchestrate panel is not restored | **Code Review's external-reviewer seat**, via its existing managed-session runner | Otherwise multi-vendor review disappears; the 0-versus-4 finding split is the argument for keeping it |
-| F | Whether `land` and `collect` may merge in a throwaway worktree | **Yes** | It is what the operator's session did by hand; it never touches the operator's tree, and the refusal buys nothing |
-| G | Whether `settle` should refuse `done` for a unit with a delivery note and no commits | **No** | It would have been wrong on this run — both flagged units were working normally. Surface the note instead (item O3) |
+| ~~D~~ | **SETTLED 2026-08-19.** Every conditional lens uses a judgment trigger with a recorded one-line reason; keyword matching alone is not valid | n/a | Answered by the same operator ruling that amended the roster |
+| ~~E~~ | **SETTLED 2026-08-19.** Cross-vendor diversity stays in the non-scoring external-reviewer seat. Identity, request, typed evidence, adjudication and lifecycle belong to Code Review; launch and collection are a replaceable transport, currently `engine_session_runner.py` | n/a | Preserves the diversity the 0-versus-4 split argues for without coupling the review contract to a background process |
+| ~~F~~ | **SETTLED 2026-08-19.** `land` merges in a throwaway worktree, retained and named on conflict; `collect` is unchanged and its clean-tree requirement is a known limitation | n/a | Grounding during planning showed the two are different defects: `land`'s checkout is gratuitous, `collect`'s is inherent |
+| ~~G~~ | **SETTLED 2026-08-19.** `settle` unchanged. The warning is surfaced, `check` reports warning-plus-no-commits, and the warning clears on first commit | n/a | The 15-second delivery signal produced two false positives out of two; a stricter transition would have stalled the run |
 
 ---
 

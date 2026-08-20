@@ -48,18 +48,17 @@ Or provide an existing plan:
 
 ## What You Get
 
-### Base Reviewers
+### Canonical Review Lenses
 
-Always included:
+Team Execution reads Saga's versioned `references/lens-roster.json`; it does not ship a parallel
+reviewer list or scoring policy. The roster identifies always-on and conditional lenses, the
+judgment required to select them, their dimensions and anchors, and the Team Execution agent that
+implements each lens.
 
-| Reviewer | Focus |
-|----------|-------|
-| `devils-advocate-reviewer` | Assumptions, edge cases, failure modes, scope creep |
-| `security-reviewer` | OWASP Top 10, secrets, auth/authZ, PII, supply chain |
-| `architecture-reviewer` | Design patterns, separation of concerns, convention adherence |
-
-Optional reviewers are still available for infrastructure, API, testing, code quality,
-privacy, clarity, and AI-usefulness review.
+The coordinator records a one-line reason for every selected conditional lens, reuses an agent when
+several lenses map to it, and keeps a separate structured result per lens. Saga's shared
+`review_consensus.py` scorer derives acceptance. Reviewer verdict prose, finding priority, and
+finding confidence do not become additional gates.
 
 ### Validators
 
@@ -103,8 +102,9 @@ missing setup is resolved or the user explicitly changes the plan.
 ## Phase B Order
 
 1. Workers complete approved implementation tasks.
-2. Reviewers run the consensus protocol.
-3. Reviewer non-consensus blocks validators unless the user explicitly overrides.
+2. Team Execution selects canonical lenses, collects evidence, and invokes Saga's shared scorer and
+   transition engine.
+3. A nonterminal review result blocks validators unless the user explicitly overrides.
 4. Scanners run against the local result.
 5. PR, CI, merge, and nonprod deployment are coordinated only after gates pass.
 6. Testers validate the deployed nonprod result.
@@ -178,7 +178,8 @@ team-execution/
 │   └── team-execution/
 │       ├── SKILL.md
 │       ├── scripts/
-│       │   └── dispatch_settlement_adapter.py
+│       │   ├── dispatch_settlement_adapter.py
+│       │   └── consensus_advisory.py  # quarantined legacy characterization only
 │       └── references/
 │           ├── consensus-protocol.md
 │           ├── review-criteria.md

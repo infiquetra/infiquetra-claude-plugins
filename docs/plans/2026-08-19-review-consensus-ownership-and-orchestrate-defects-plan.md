@@ -22,10 +22,17 @@ commits, on no remote, with a worktree still checked out under a temporary direc
 Two sources, both re-readable:
 
 1. **A live Orchestrate run**, `orch-2026-08-19-a` in the `home-lab` repository, driven by Claude
-   session `4107f334-9c41-47a9-9677-b4dfee3755a3` on 2026-08-19 using orchestrate **1.17.0**. Its
-   record survives at `home-lab/.orchestrate/run.json` and `plan.json`. Findings below were
-   reproduced against orchestrate **1.18.0** source in this repository, so they are current unless
-   marked otherwise.
+   session `4107f334-9c41-47a9-9677-b4dfee3755a3` on 2026-08-19 using orchestrate **1.17.0**.
+   Findings below were reproduced against orchestrate **1.18.0** source in this repository, so they
+   are current unless marked otherwise.
+
+   **Correction, 2026-08-19 evening.** `home-lab/.orchestrate/` and `.saga/` **no longer exist** —
+   they were removed after the audit, which is what `clean --all` does (`shutil.rmtree` on the run
+   file's parent). An earlier revision of this plan cited `run.json` and `plan.json` as durable
+   evidence; that citation was wrong within hours of being written. What survives in `home-lab` is
+   the five branches `orch/orch-2026-08-19-a-{build-grok,review-agy,review-qwen,fix-grok,
+   parity-contract}` and the Claude transcript above. **The branches are the run's durable record,
+   not the run file** — which is itself corroboration of defect O7 and of why O6 matters.
 2. **Direct source inspection** of the four surfaces in this repository. Every claim below cites a
    file and line so it can be re-checked without re-running anything.
 
@@ -61,9 +68,26 @@ gates remain separately authoritative and are never folded into the score.
 | Code Review | Review policy and state. Read-only. | Mutate code |
 | Orchestrate | Invoking or resuming Code Review; persisting its structured result; mapping fix requests to responsible existing Work workers; landing the updated revision; returning it to Code Review | Interpret review policy; define lenses or scoring |
 | Work | The only mutator | Keep its own review gate |
-| Team Execution | Transport, settlement, liveness, advisory seats, scanners, worker coordination | Maintain a parallel roster or parallel scoring policy |
+| Team Execution | Transport, **evidence-based settlement**, liveness, advisory seats, scanners, worker coordination | Maintain a parallel roster or parallel scoring policy |
+
+**Settlement stays evidence-based.** Team Execution's adapter validates a real returned result and
+settles missing, incomplete, prose-only or pointer-only output as `silent-no-op`; trust flags and
+caller-supplied digests are never accepted. Consuming Code Review's roster and state machine must not
+weaken that — the typed result is evidence to be validated, not a claim to be trusted.
 
 **The archived Orchestrate consensus panel and review loop are not restored.**
+
+**One top-level Code Review controller replaces duplicate full-review units.** A review phase is a
+single Code Review invocation that fans out to lenses internally — not N units each running a full
+review. This is the shape Orchestrate ships today and must leave behind:
+`commands/orchestrate.md:27` ("A review phase is a panel… two units, two tabs, two worktrees"),
+`:112` ("Three reviewers is three rows") and `orchestrate.py:457` ("a review phase is units, one per
+reviewer"). Recommendation E is the corollary — with one controller, cross-vendor diversity has to
+live inside Code Review's external-reviewer seat or it disappears.
+
+**Delivery failure is `review_incomplete`.** After bounded retries, a reviewer that cannot be
+reached yields `review_incomplete`: no score is fabricated and **no scoring cycle is consumed**. The
+retry bound is Code Review's, not Orchestrate's.
 
 **Priority and confidence remain finding metadata**, never a second acceptance gate. **Accepted lenses
 are not rerun** but retain the revision they reviewed.
@@ -109,8 +133,10 @@ unchanged, or the arithmetic changes silently.
 
 ## Part 3 — The typed evidence contract
 
-Code Review emits a typed result beside its existing Markdown artifact. Orchestrate persists it
-verbatim and does not interpret policy from it.
+Code Review emits a typed result beside its existing Markdown artifact. **To Orchestrate the result
+is opaque**: it is persisted verbatim, keyed and handed back, and Orchestrate reads only the routing
+fields it needs to dispatch repairs — `owner`, touched paths, and the outcome. It never derives,
+recomputes or second-guesses a score, a threshold, a verdict or a cycle count from it.
 
 **Required fields:** selected lens identifiers; attempted lens identifiers; the revision each lens
 reviewed; applicable dimensions per lens; the derived overall per lens; verdict; findings; cycle
@@ -124,7 +150,7 @@ best-available revision; a residual summary; and the next action.
 | `accepted` | Every selected lens met the acceptance rule |
 | `repairs_requested` | At least one lens failed; fix requests are consolidated and a cycle remains |
 | `cycle_cap_best_available` | Three cycles used; proceeding with the best available revision and reporting residuals |
-| `review_incomplete` | Reviewer delivery could not be established; no cycle consumed and no score fabricated |
+| `review_incomplete` | Reviewer delivery could not be established after bounded retries; no cycle consumed and no score fabricated |
 
 **The fix-request half already exists in design and only needs serializing.**
 `plugins/saga/skills/code-review/references/findings-schema.md` already carries `autofix_class`
@@ -134,9 +160,9 @@ fixer reads. It is emitted only as prose today.
 
 ---
 
-## Part 4 — Combined defect register (24)
+## Part 4 — Combined defect register (25)
 
-### Orchestrate (11)
+### Orchestrate (12)
 
 | # | Defect | Evidence | Priority |
 |---|---|---|---|
@@ -151,6 +177,7 @@ fixer reads. It is emitted only as prose today.
 | O9 | Only a Boolean Code Review marker; no review-result state and no loop seam | `Run.reviews_separately()` is a regex over unit task text returning `bool`, passed as `review_elsewhere=`. No review result is persisted anywhere | P1 |
 | O10 | Worker sessions are reaped at land time, destroying the session a repair would reuse | `reapable()` keys on DONE plus work landed — which is exactly when a fix request arrives | P1 |
 | O11 | README documents six modules the plugin does not ship | The plugin ships `orchestrate.py` and `herdr_events.py`. `README.md` cites `scripts/register.py`, `subscriber.py`, `session_lifecycle.py`, `completion.py`, `mirror.py`, `runner.py` across eight lines — the deleted pre-rewrite architecture | P2 |
+| O12 | Dispatches N duplicate full-review units instead of one Code Review controller | `commands/orchestrate.md:27,112` and `orchestrate.py:457` — "a review phase is units, one per reviewer". The Home Lab run ran two full reviews with nothing able to reconcile them | P1 |
 
 ### Code Review (5)
 
@@ -235,7 +262,7 @@ F (independent) --> any time
 | 6 | Typed result emission beside the Markdown artifact | B | saga | C4 |
 | 7 | Team Execution consumes the roster; parallel registry deleted | C | team-execution | T1 |
 | 8 | Helper requires dimensions and derives the overall; the `< 5.0` terminal stop is deleted from the prose | C | team-execution | T2, T3, T4 |
-| 9 | Orchestrate persists the result, maps fixes, lands, resubmits | D | orchestrate | O9 |
+| 9 | Orchestrate invokes ONE Code Review controller, persists the opaque result, maps fixes, lands, resubmits | D | orchestrate | O9, O12 |
 | 10 | Stop reaping a worker a pending fix request still needs | D | orchestrate | O10 |
 | 11 | Work drops its own gate and reads Code Review's acceptance | C | saga | W1 |
 | 12 | Reconcile the cycle-three prose to one statement | C | team-execution | T5, T6 |
@@ -248,7 +275,7 @@ F (independent) --> any time
 | 19 | Point hand-authored briefs at `.orchestrate/tasks/` | F | orchestrate | O7 |
 | 20 | Warn on an unrecorded branch in the run namespace | F | orchestrate | O8 |
 
-Every one of the 24 defects is closed by at least one item.
+Every one of the 25 defects is closed by at least one item.
 
 ### Phase A — Orchestrate run integrity · depends on nothing · release surface: orchestrate
 
@@ -342,13 +369,16 @@ in the same pull request. Phase F may ride either.
 
 ## Part 6 — Remaining choices
 
-Implementation of Phase B is blocked until choices A and D are answered. Phase A is blocked only on F.
+**Six remain open.** These are recommendations, **not approvals** — no operator consent has been
+given to any of them. Implementation of Phase B is blocked until choices A and D are answered. Phase
+A is blocked only on F. Letters are stable identifiers and are never reused, so C stays in the table
+as a settled marker.
 
 | # | Choice | Recommendation | Reason |
 |---|---|---|---|
 | A | Approve the thirteen-lens union | **Approve** | Preserves both surfaces; closes the four lenses with no reviewer and the three reviewers with no lens |
 | B | Best available is the latest successfully integrated revision reviewed in cycle three | **Approve** | Ranking revisions would be new policy invented at the worst moment |
-| C | Exhausted reviewer-delivery retries are `review_incomplete`, consuming no cycle and fabricating no score | **Approve** | Two Home Lab units were flagged as never started and had produced full reviews; a fabricated score there would have been worse than an honest "incomplete" |
+| ~~C~~ | **SETTLED 2026-08-19 — moved to Part 1.** Exhausted reviewer-delivery retries are `review_incomplete`, consuming no cycle and fabricating no score | n/a | The operator enumerated this among the settled rules. The letter is retained rather than reused so existing cross-references stay valid |
 | D | Lens selection trigger: judgment from the diff, or keyword match against the plan | **Judgment from the diff** | Keyword matching a plan document cannot see what the code actually touched |
 | E | Where cross-vendor review diversity lives, now that the Orchestrate panel is not restored | **Code Review's external-reviewer seat**, via its existing managed-session runner | Otherwise multi-vendor review disappears; the 0-versus-4 finding split is the argument for keeping it |
 | F | Whether `land` and `collect` may merge in a throwaway worktree | **Yes** | It is what the operator's session did by hand; it never touches the operator's tree, and the refusal buys nothing |
@@ -365,7 +395,8 @@ reproductions:
 - **O2** — rename a run branch, then run `check`; every unit reports `NO COMMITS` regardless of its
   actual commits.
 
-The Home Lab record at `home-lab/.orchestrate/run.json` is the primary artefact for the run-derived
-findings and has not been modified by either audit. The originating Claude session transcript is
-`4107f334-9c41-47a9-9677-b4dfee3755a3`, retained under the `home-lab` project directory, but this plan
-is written so that reading it is not required.
+For the run-derived findings the surviving artefacts are the five `orch/orch-2026-08-19-a-*` branches
+in `home-lab` and the originating Claude session transcript
+`4107f334-9c41-47a9-9677-b4dfee3755a3`, retained under the `home-lab` project directory. The run file
+itself is gone — see the correction in the evidence-base section. This plan is written so that
+reading either is not required.

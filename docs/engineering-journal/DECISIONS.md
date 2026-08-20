@@ -27,6 +27,14 @@ verdict unavailable to any caller that is not running a team, and Orchestrate is
 caller. *Keeping two rosters in sync by convention* — they already diverged to the point where only
 three of ten reviewers map cleanly onto a lens, with no mechanism that would have reported the drift.
 
+**One controller, not a panel of duplicates.** A review phase is a single top-level Code Review
+invocation that fans out to lenses internally, replacing the N-units-per-reviewer shape Orchestrate
+ships today (`plugins/orchestrate/commands/orchestrate.md:27,112`,
+`plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py:457`). Cross-vendor diversity, if it
+is kept, therefore lives in Code Review's external-reviewer seat rather than in Orchestrate's
+dispatch. Delivery failure after bounded retries is `review_incomplete`: no fabricated score, and no
+scoring cycle consumed.
+
 **No second gate.** 9.0 overall and 7.0 per applicable dimension are the only review acceptance
 thresholds, and the three-cycle best-available outcome is the only terminal condition. The
 `< 5.0` "blocking stop" at `team-execution/.../references/consensus-protocol.md:283` is **deleted**,

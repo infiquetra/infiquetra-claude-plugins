@@ -1,6 +1,124 @@
 # Decisions — Infiquetra Claude Plugins
 ## 2026-08-19
 
+### The external reviewer is a Code Review concept behind a replaceable transport {#external-reviewer-transport-seam}
+
+**Decision.** Cross-vendor reviewer diversity stays in the **non-scoring** external-reviewer seat,
+excluded as it is today from the consensus denominator, the 9.0 acceptance and the 7.0 floor. A seam
+is drawn through it: **external-reviewer identity, the request, typed evidence, adjudication and
+lifecycle semantics belong to Code Review**, while **launch and collection are a replaceable
+transport**. `plugins/saga/scripts/engine_session_runner.py` — a managed terminal session — is the
+planned transport for this work, and no Herdr migration enters it.
+
+**Rejected alternatives.** *Letting the second seat score* — it reopens the denominator and quorum
+questions the settled acceptance rule avoids, and the seat's whole value is an independent read that
+cannot be gamed into the arithmetic. *Dropping cross-vendor diversity now that one top-level
+controller replaces the duplicate-review panel* — rejected on evidence: on run `orch-2026-08-19-a` one
+reviewer returned zero findings on a 15,400-line diff while another returned four, every one
+independently confirmed real, so a single-vendor controller would have shipped that diff effectively
+unreviewed. *Naming Herdr as the transport now* — it would couple the canonical review contract to a
+background process before that process can meet the contract.
+
+**Revisit when** a named Herdr agent can satisfy all six of: cross-vendor selection, durable agent
+identity, visible lifecycle state, resumable collection, timeout and failure handling, and
+provenance-equivalent typed output. The swap is then admissible **only** if it changes nothing above
+the seam — not lens selection, scoring, quorum, the non-scoring seat, adjudication, or the
+review-result contract.
+
+---
+
+### The canonical roster is fourteen lenses with specified dimensions {#canonical-fourteen-lens-roster}
+
+**Decision.** One versioned machine-readable roster at `plugins/saga/references/lens-roster.json`
+(`"schema": "lens_roster.v1"`, following `bridge-signatures.json`) carries fourteen lenses: four
+always-on — `correctness`, `security`, `testing`, `architecture-maintainability` — and ten
+conditional — `deployment-infrastructure`, `reliability`, `performance`, `api-contract`,
+`adversarial`, `privacy`, `documentation-clarity`, `agent-usability`, `previous-comments`,
+`accessibility-human-usability`. Roughly seventy-five dimensions are specified across them. Every
+conditional lens is selected by **judgment with a recorded one-line reason**; keyword matching alone
+is not a valid trigger. A selected lens with zero applicable dimensions is invalid, and each
+non-applicable dimension records an explicit cause. Lens identifiers are stable: `api-contract` keeps
+its name while its scope broadens. Scoring is Python under `plugins/saga/scripts/`, not skill prose,
+because Code Review ships no code today and unenforced prose is exactly what drifted in Team
+Execution.
+
+**Rejected alternatives.** *Intersecting the two rosters* to force a match — it would delete
+`correctness` and `privacy` from the review path, and `correctness` is the always-on lens that catches
+silent breakage. *Keeping two rosters synchronised by convention* — they had already drifted to where
+only three of Team Execution's ten reviewers map cleanly onto a Code Review lens, with no mechanism
+that would have reported it. *A fifteenth lens* — the audit found no independent judgment domain left:
+data integrity sits in `correctness`, application observability in `reliability`, infrastructure
+observability and cost in `deployment-infrastructure`, supply chain in `security`, developer and
+operator experience in `accessibility-human-usability`, and product ambition remains Founder Review's.
+*Renaming `api-contract` to match its broadened scope* — it would break every stored result and the
+parity test.
+
+**Two tier changes ship with it and are stated rather than discovered:** `devils-advocate-reviewer`
+moves from always-spawned to conditional, and `testing-reviewer` from optional to always-on.
+
+**Revisit when** a genuinely independent judgment domain appears that none of the fourteen can hold —
+not when an existing lens merely grows a sub-domain.
+
+**Refs.** `docs/plans/2026-08-19-code-review-consensus-ownership-implementation-plan.md`.
+
+---
+
+### Code Review owns review policy; Orchestrate routes and Work mutates {#code-review-owns-consensus-orchestrate-routes}
+
+**Decision.** Saga's Code Review skill is the single owner of the canonical lens roster, the
+dimensions, the derived per-lens scores, the acceptance rule (overall >= 9.0 with no applicable
+dimension < 7.0), fix consolidation, rerunning only failing lenses, the three-cycle cap,
+best-available termination, and the final score and residual report. Every selected lens must supply
+at least one applicable dimension score, and Code Review derives the arithmetic-mean overall or
+rejects a reported overall that contradicts its dimensions. After the third unsuccessful cycle it
+proceeds with the best available revision and reports every score and unresolved fix — that is not a
+human-halt condition. Code Review stays read-only. Orchestrate invokes or resumes it, persists its
+typed result without interpreting policy, maps fix requests to responsible existing Work workers,
+lands the revision, and returns it for another cycle. Work is the only mutator and drops its own
+Priority 0/1 gate. Team Execution consumes the roster and transition engine while keeping transport,
+settlement, liveness, advisory seats, scanners and worker coordination. Scanner, test, deployment,
+casualty and operational-safety gates remain independently authoritative and are never folded into
+the score. The full backlog, evidence and acceptance criteria are in
+`docs/plans/2026-08-19-review-consensus-ownership-and-orchestrate-defects-plan.md`.
+
+**Rejected alternatives.** *Restoring the archived Orchestrate consensus panel and review loop* —
+that is the duplication this ruling exists to remove, and the deleted architecture is the same
+mistake the plugin was rewritten to escape. *Leaving consensus in Team Execution and having Code
+Review escalate to it*, which is what `code-review/SKILL.md:250` does today — it makes the review
+verdict unavailable to any caller that is not running a team, and Orchestrate is exactly such a
+caller. *Keeping two rosters in sync by convention* — they already diverged to the point where only
+three of ten reviewers map cleanly onto a lens, with no mechanism that would have reported the drift.
+
+**One controller, not a panel of duplicates.** A review phase is a single top-level Code Review
+invocation that fans out to lenses internally, replacing the N-units-per-reviewer shape Orchestrate
+ships today (`plugins/orchestrate/commands/orchestrate.md:27,112`,
+`plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py:457`). Cross-vendor diversity, if it
+is kept, therefore lives in Code Review's external-reviewer seat rather than in Orchestrate's
+dispatch. Delivery failure after bounded retries is `review_incomplete`: no fabricated score, and no
+scoring cycle consumed.
+
+**No second gate.** 9.0 overall and 7.0 per applicable dimension are the only review acceptance
+thresholds, and the three-cycle best-available outcome is the only terminal condition. The
+`< 5.0` "blocking stop" at `team-execution/.../references/consensus-protocol.md:283` is **deleted**,
+not ported: 4.9 is already below 7.0, so it changes no acceptance, and its distinct effect — "no
+completion until that dimension reaches >= 7.0" — forbids the termination this ruling requires. Its
+routing half survives as fix-request priority only. Scanner, test, deployment, casualty and
+operational-safety gates keep their independent authority; a review-dimension threshold is not one of
+them and does not qualify for that carve-out.
+
+**Relationship to [#consensus-authority-is-asymmetric](#consensus-authority-is-asymmetric)
+(2026-08-16).** That decision governs *seat admission and quorum* for a constructed reviewer roster —
+who may vote, vendor exclusion, and a denominator that never shrinks. This decision governs *lens
+acceptance scoring* — dimensions, derived overall, thresholds, cycles and termination. They are
+different mechanisms and both stand. Where the earlier decision speaks to the Orchestrate consensus
+panel specifically, this one supersedes it: that panel is archived and is not restored.
+
+**Revisit when** a second consumer needs a scoring rule Team Execution's thresholds cannot express,
+or when a lens must carry a weight rather than an equal share of the arithmetic mean. Neither is a
+reason to re-open where the policy lives.
+
+---
+
 ### Workspace placement is a field, not a launch_args entry  {#orchestrate-workspace-is-a-field-not-a-passthrough}
 
 **Decision.** A unit (and optionally a run) carries a `workspace` NAME. `agent_argv` emits

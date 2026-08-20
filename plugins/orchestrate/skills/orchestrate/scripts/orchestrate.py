@@ -384,6 +384,8 @@ class Run:
     Every unit branches from here and lands back here when it finishes, so the next phase opens on
     everything the earlier phases actually produced rather than on one predecessor's branch. At the
     end this is the single branch that merges into the operator's tree."""
+    conflict_worktree: str | None = None
+    """A detached land worktree retained so the operator can resolve a merge conflict."""
     workspace: str | None = None
     """Default herdr workspace NAME every unit inherits unless it sets its own.
 
@@ -422,6 +424,7 @@ class Run:
             units=[read_unit(u) for u in raw["units"]],
             backend=raw.get("backend", "inline"),
             branch=raw.get("branch", ""),
+            conflict_worktree=raw.get("conflict_worktree") or None,
             engine_prefs=raw.get("engine_prefs", {}),
             issues=raw.get("issues", {}),
             status_map=raw.get("status_map", {}),
@@ -436,6 +439,7 @@ class Run:
             "base": self.base,
             "backend": self.backend,
             "branch": self.branch,
+            "conflict_worktree": self.conflict_worktree,
             "engine_prefs": self.engine_prefs,
             "issues": self.issues,
             "status_map": self.status_map,
@@ -1042,11 +1046,12 @@ def run_branches(run_id: str) -> list[str]:
 def worktree_on_branch(branch: str) -> str | None:
     """The path of the worktree checked out on this branch, if any."""
     proc = run(["git", "worktree", "list", "--porcelain"])
+    wanted = branch if branch.startswith("refs/") else f"refs/heads/{branch}"
     path: str | None = None
     for line in proc.stdout.splitlines():
         if line.startswith("worktree "):
             path = line[len("worktree ") :]
-        elif line.startswith("branch ") and line[len("branch ") :] == branch:
+        elif line.startswith("branch ") and line[len("branch ") :] == wanted:
             return path
     return None
 
@@ -2104,7 +2109,8 @@ def cmd_land(args: argparse.Namespace) -> int:
     announces nothing either.
 
     The exit status is deliberate, and three-way. 0: every merge and every board write converged.
-    1: the land itself could not finish -- a dirty tree, or a merge conflict, named above. 2:
+    1: the land itself could not finish -- a missing run branch, retained conflict, merge conflict,
+    ref-advance failure, or cleanup failure, named above. 2:
     every merge landed, but at least one board writeback did not converge; the units are named
     above with their retry. A failed writeback never undoes or blocks a merge: the code on the
     run branch is right, and only the claim that the board was updated is wrong -- a caller
@@ -2113,14 +2119,47 @@ def cmd_land(args: argparse.Namespace) -> int:
     r = Run.load()
     if not r.branch:
         raise SystemExit("this run has no run branch; it predates `land` -- start a new run")
-    dirty = run(["git", "status", "--porcelain", "--untracked-files=no"]).stdout.strip()
-    if dirty:
-        print("your working tree has uncommitted changes; commit or stash them, then rerun land")
-        return 1
+    if resolve_ref(r.branch) is None:
+        raise SystemExit(f"run branch {r.branch!r} does not resolve; cannot land")
 
-    on = run(["git", "rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()
-    run(["git", "checkout", r.branch])
-    landed, empty, already, held = [], [], [], []
+    root = repo_root()
+    land_path = (root / RUN_FILE.parent / f"land-{r.run_id}").resolve()
+    if r.conflict_worktree:
+        retained = Path(r.conflict_worktree)
+        if retained.exists():
+            print(
+                f"  CONFLICT worktree is still retained at {retained}; "
+                "resolve it there before rerunning land"
+            )
+            return 1
+        # The recovery directory was removed outside Orchestrate. Do not let a stale pointer make
+        # every later land look blocked, but persist the observation before creating new state.
+        r.conflict_worktree = None
+        r.save()
+    if land_path.exists():
+        raise SystemExit(
+            f"landing worktree path already exists at {land_path}; inspect or remove it first"
+        )
+
+    held_at = worktree_on_branch(r.branch)
+    if held_at:
+        print(
+            f"WARNING: {r.branch} is checked out at {held_at}; land will advance that branch ref "
+            "without touching its uncommitted files, so the checkout will read against a new base"
+        )
+
+    added = run(["git", "worktree", "add", "--detach", str(land_path), r.branch], check=False)
+    if added.returncode != 0:
+        detail = (added.stderr or added.stdout or "unknown git error").strip()
+        raise SystemExit(f"cannot create detached landing worktree at {land_path}: {detail}")
+
+    branch_ref = r.branch if r.branch.startswith("refs/") else f"refs/heads/{r.branch}"
+    keep_land_worktree = False
+    cleanup_error = ""
+    landed: list[str] = []
+    empty: list[str] = []
+    already: list[str] = []
+    held: list[str] = []
     # The bare names, kept apart from ``landed``'s display strings: ``--clean`` reaps exactly the
     # units this invocation merged, and a name recovered by stripping " (+3)" off a display string
     # would break on the first unit name containing a bracket.
@@ -2139,14 +2178,44 @@ def cmd_land(args: argparse.Namespace) -> int:
             if ahead in ("", "0"):
                 (already if produced_anything(unit, r) else empty).append(unit.name)
                 continue
-            merge = run(["git", "merge", "--no-ff", "--no-edit", unit.branch], check=False)
-            if merge.returncode != 0:
-                run(["git", "merge", "--abort"], check=False)
+            expected_tip = resolve_ref(r.branch)
+            if expected_tip is None:
+                keep_land_worktree = True
+                r.conflict_worktree = str(land_path)
+                r.save()
                 print(
-                    f"  CONFLICT landing {unit.name}; on {r.branch}, finish with "
-                    f"`git merge --no-ff {unit.branch}` and resolve it there"
+                    f"  LANDING STOPPED: run branch {r.branch!r} disappeared; "
+                    f"recovery worktree retained at {land_path}"
+                )
+                _report_failed_writebacks(writeback_failures)
+                return 1
+            merge = run(
+                ["git", "-C", str(land_path), "merge", "--no-ff", "--no-edit", unit.branch],
+                check=False,
+            )
+            if merge.returncode != 0:
+                keep_land_worktree = True
+                r.conflict_worktree = str(land_path)
+                r.save()
+                print(
+                    f"  CONFLICT landing {unit.name}; retained worktree at {land_path}. "
+                    f"Resolve and commit there; the failed command was "
+                    f"`git merge --no-ff {unit.branch}`"
                 )
                 # Name any writeback that already failed before the conflict buries the return.
+                _report_failed_writebacks(writeback_failures)
+                return 1
+            merged_tip = run(["git", "-C", str(land_path), "rev-parse", "HEAD"]).stdout.strip()
+            advanced = run(["git", "update-ref", branch_ref, merged_tip, expected_tip], check=False)
+            if advanced.returncode != 0:
+                keep_land_worktree = True
+                r.conflict_worktree = str(land_path)
+                r.save()
+                detail = (advanced.stderr or advanced.stdout or "unknown git error").strip()
+                print(
+                    f"  LANDING REF UPDATE FAILED for {r.branch}: {detail}; "
+                    f"recovery worktree retained at {land_path}"
+                )
                 _report_failed_writebacks(writeback_failures)
                 return 1
             landed.append(f"{unit.name} (+{ahead})")
@@ -2160,7 +2229,14 @@ def cmd_land(args: argparse.Namespace) -> int:
             report_announcements(records)
             writeback_failures.extend(_failed_writebacks(records))
     finally:
-        run(["git", "checkout", on], check=False)
+        if not keep_land_worktree:
+            removed = run(["git", "worktree", "remove", "--force", str(land_path)], check=False)
+            if removed.returncode != 0:
+                cleanup_error = (removed.stderr or removed.stdout or "unknown git error").strip()
+
+    if cleanup_error:
+        print(f"  LANDING CLEANUP FAILED at {land_path}: {cleanup_error}")
+        return 1
 
     print(f"landed on {r.branch}: {', '.join(landed) or 'nothing new'}")
     if already:
@@ -2276,7 +2352,9 @@ def reapable(unit: Unit, r: Run) -> bool:
     reaping away from a DONE unit that saved nothing: its worktree is the evidence the session
     failed, and this plugin keeps no other record.
     """
-    return unit.status == DONE and bool(unit.branch) and landed(unit.branch, r) is True
+    if unit.status != DONE or not unit.branch:
+        return False
+    return landed(unit.branch, r) is True
 
 
 def reap(
@@ -2319,6 +2397,27 @@ def reap(
         if branches and unit.branch:
             run(["git", "branch", "-D", unit.branch], check=False)
         closed.append(unit.name)
+
+    if r.conflict_worktree:
+        conflict_path = Path(r.conflict_worktree)
+        label = f"conflict worktree at {conflict_path}"
+        if conflict_path.exists() and merged_only:
+            # A conflicted merge is, by definition, not merged. Name the recovery surface in the
+            # ordinary kept report so `clean --merged` cannot look like it silently swept it up.
+            kept.append(label)
+        elif conflict_path.exists():
+            removed = run(["git", "worktree", "remove", "--force", str(conflict_path)], check=False)
+            if removed.returncode == 0 or not conflict_path.exists():
+                closed.append(label)
+                r.conflict_worktree = None
+                r.save()
+            else:
+                kept.append(label)
+        else:
+            # The directory was removed by hand. Clear the stale pointer so future clean and land
+            # commands report what still exists rather than a recovery surface that is already gone.
+            r.conflict_worktree = None
+            r.save()
     return closed, kept
 
 

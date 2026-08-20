@@ -169,7 +169,7 @@ fixer reads. It is emitted only as prose today.
 
 ---
 
-## Part 4 — Combined defect register (25)
+## Part 4 — Combined defect register (25 recorded; **23 live, 2 withdrawn** after planning verification)
 
 ### Orchestrate (12)
 
@@ -182,10 +182,10 @@ fixer reads. It is emitted only as prose today.
 | O5 | `cmd_status` breaks on real data and omits what matters | 14-character model column overflows on `gemini-3.7-flash-high` and `qwen3.8-max-preview`; task text printed raw so newlines break the table; no branch, commits, landed or note column | P1 |
 | O6 | No end-of-run hygiene; run state left untracked in the driven repository | This repository gitignores `.orchestrate/` and `.saga/`; nothing carries that to the repository being driven. Both sit untracked in `home-lab` | P2 |
 | O7 | Hand-authored briefs recorded as session-temporary paths | The Home Lab `fix-grok` unit's permanent task is `Read /private/tmp/claude-501/.../scratchpad/fix-brief.md`. The plugin owns a durable `.orchestrate/tasks/` with a path-containment guard and does not teach its use | P2 |
-| O8 | The `orch/<run_id>-*` branch namespace is not reserved | Two codex sessions created `orch/orch-2026-08-19-a-parity-contract` after the run ended. `check` and `adopt` detect and repair this; nothing warns at creation | P3 |
+| ~~O8~~ | **WITHDRAWN 2026-08-19** — `check` already reports `UNRECORDED`, verified live. Original claim: the `orch/<run_id>-*` branch namespace is not reserved | Two codex sessions created `orch/orch-2026-08-19-a-parity-contract` after the run ended. `check` and `adopt` detect and repair this; nothing warns at creation | P3 |
 | O9 | Only a Boolean Code Review marker; no review-result state and no loop seam | `Run.reviews_separately()` is a regex over unit task text returning `bool`, passed as `review_elsewhere=`. No review result is persisted anywhere | P1 |
 | O10 | Worker sessions are reaped at land time, destroying the session a repair would reuse | `reapable()` keys on DONE plus work landed — which is exactly when a fix request arrives | P1 |
-| O11 | README documents six modules the plugin does not ship | The plugin ships `orchestrate.py` and `herdr_events.py`. `README.md` cites `scripts/register.py`, `subscriber.py`, `session_lifecycle.py`, `completion.py`, `mirror.py`, `runner.py` across eight lines — the deleted pre-rewrite architecture | P2 |
+| O11 | README documents seven modules the plugin does not ship | **Corrected 2026-08-19:** the plugin ships `orchestrate.py` and `herdr_events.py`; `plugins/orchestrate/README.md` cites eight distinct modules across eight lines (`planning.py:18`, `admission.py:20`, `accounting.py:24`, `register.py:40`, `herdr_events.py:44`, `subscriber.py:45`, `session_lifecycle.py:58`, `completion.py:82`), only one of which exists. An earlier revision said six and named `mirror.py` and `runner.py`, which the README does not cite | P2 |
 | O12 | Dispatches N duplicate full-review units instead of one Code Review controller | `commands/orchestrate.md:27,112` and `orchestrate.py:457` — "a review phase is units, one per reviewer". The Home Lab run ran two full reviews with nothing able to reconcile them | P1 |
 
 ### Code Review (5)
@@ -282,9 +282,11 @@ F (independent) --> any time
 | 17 | Rewrite the Orchestrate README to the shipped architecture | F | orchestrate | O11 |
 | 18 | Write `.orchestrate/` to `.git/info/exclude` at start | F | orchestrate | O6 |
 | 19 | Point hand-authored briefs at `.orchestrate/tasks/` | F | orchestrate | O7 |
-| 20 | Warn on an unrecorded branch in the run namespace | F | orchestrate | O8 |
+| ~~20~~ | **WITHDRAWN** — already implemented; see O8 | — | — | — |
 
-Every one of the 25 defects is closed by at least one item.
+Every one of the 23 live defects is closed by at least one item. T7 and O8 are withdrawn, and
+item 20 is withdrawn with O8. T2, T3 and T4 survive but describe a module with no production caller,
+and are re-scoped in the implementation plan rather than patched.
 
 ### Phase A — Orchestrate run integrity · depends on nothing · release surface: orchestrate
 

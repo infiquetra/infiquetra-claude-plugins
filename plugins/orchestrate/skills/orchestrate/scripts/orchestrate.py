@@ -1179,9 +1179,11 @@ def rebuild_unit(name: str, branch: str, r: Run, agents: list[dict]) -> Unit:
     vendor = str(agent.get("agent", "unknown")) if agent else "unknown"
     if agent is not None and agent.get("agent_status") == "working":
         status = RUNNING
-    elif agent is not None or produced_anything(
-        Unit(name=name, vendor=vendor, task="", branch=branch), r
-    ):
+    elif agent is not None:
+        status = DONE
+    elif r.unresolvable_branch:
+        status = FAILED
+    elif produced_anything(Unit(name=name, vendor=vendor, task="", branch=branch), r):
         status = DONE
     else:
         status = FAILED
@@ -2352,6 +2354,15 @@ def worktree_registered(path: Path) -> bool:
     )
 
 
+def bind_reused_land_worktree(path: Path, branch_tip: str) -> bool:
+    """Bind a proven-published leftover to the exact tip the next ref update expects."""
+    checked_out = run(["git", "-C", str(path), "checkout", "--detach", branch_tip], check=False)
+    if checked_out.returncode != 0:
+        return False
+    verified = run(["git", "-C", str(path), "rev-parse", "HEAD"], check=False)
+    return verified.returncode == 0 and verified.stdout.strip() == branch_tip
+
+
 def cmd_land(args: argparse.Namespace) -> int:
     """Merge finished units back onto the run branch.
 
@@ -2521,7 +2532,14 @@ def cmd_land(args: argparse.Namespace) -> int:
             detail = (added.stderr or added.stdout or "unknown git error").strip()
             raise SystemExit(f"cannot create detached landing worktree at {land_path}: {detail}")
 
-    active_land_path = active_land_path.resolve() if reuse_land_worktree else land_path
+    if reuse_land_worktree:
+        active_land_path = active_land_path.resolve()
+        if not bind_reused_land_worktree(active_land_path, branch_tip):
+            raise SystemExit(
+                f"landing worktree path already exists at {land_path}; inspect or remove it first"
+            )
+    else:
+        active_land_path = land_path
 
     keep_land_worktree = False
     skip_final_cleanup = bool(cleanup_failures)
@@ -3069,6 +3087,11 @@ def cmd_adopt(args: argparse.Namespace) -> int:
     would be added.
     """
     r = Run.load()
+    if r.unresolvable_branch:
+        print(
+            f"WARNING: run branch {r.unresolvable_branch!r} does not resolve; commit-based "
+            "adoption checks are unavailable, so units without a live session are marked failed"
+        )
     found = discover_unrecorded(r)
     if not found:
         print("nothing to adopt -- every run branch is already a unit")

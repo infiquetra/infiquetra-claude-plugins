@@ -21,6 +21,33 @@
 
 ## 2026-08-20
 
+### Published is not the same as current merge base  {#published-worktree-needs-current-base}
+
+**Context.** Orchestrate kept using a detached landing worktree when its proven-published merge
+could not be removed. A later direct commit advanced the run branch while that worktree remained at
+the older merge.
+
+**Evidence.** In a real repository, Git accepted the leftover merge as an ancestor of the run tip,
+then refused to remove the locked worktree. Merging the next unit there and running the guarded
+`update-ref` dropped the intervening run-branch commit while `land` exited 3 and reported success.
+The regression test keeps a real locked worktree, advances the run branch, lands a later unit through
+both reuse arms, and asserts the intervening commit remains reachable.
+
+**Mechanism.** An ancestry check proves that a commit is already published; it does not prove that
+the worktree is still checked out at the tip used as the compare-and-swap expectation. Git's
+`update-ref <ref> <new> <expected>` protects only against the reference changing during the command.
+It does not require `<new>` to descend from `<expected>`.
+
+**Fix.** Every reused landing worktree is checked out detached at the current run tip, then `HEAD`
+is read back and compared with that tip. A failed checkout, failed read, or mismatch refuses to
+reuse the directory. Only a verified match reaches the merge loop.
+
+**Generalizable rule.** Proof that stale state is safe to discard is not proof that it is safe to
+continue from. Before reusing mutable state, bind it to the exact version the next atomic update
+expects and verify that binding from the owning system.
+
+**Refs.** [[#resolved-detached-land-is-an-exact-merge]], [[#detached-land-needs-publish]].
+
 ### A detached conflict worktree needs an explicit publish step  {#detached-land-needs-publish}
 
 **Context.** Orchestrate moved `land` into a detached worktree so the run branch could remain

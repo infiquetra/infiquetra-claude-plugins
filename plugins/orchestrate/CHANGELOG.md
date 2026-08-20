@@ -19,10 +19,15 @@ Group A combines the first three run-integrity repairs with the documentation-an
   base without weakening the publication gate. `clean --all` preserves any recovery work it
   reports as kept, and its help names that retention. The checked-out-run-branch warning names the
   staged-deletion hazard and recovery command, and cleanup failure reports completed merges under
-  its own exit status instead of calling the land a merge failure.
+  its own exit status instead of calling the land a merge failure. Before a leftover landing
+  worktree is reused, it is detached at the current run tip and its `HEAD` is read back; a failed
+  checkout or mismatch restores the existing inspect-or-remove refusal instead of merging on a
+  stale base and rewinding the run branch.
 - **U2 — a missing run branch fails loudly instead of producing false unit results.** The branch is
   resolved once when a run loads; `status`, `check`, and `clean` remain available for diagnosis,
-  while `go` and `land` refuse with the missing branch named, even when no unit is eligible.
+  while `go` and `land` refuse with the missing branch named, even when no unit is eligible. `adopt`
+  also remains available: it names the missing branch and conservatively marks a stranded unit
+  without a live session as failed when commit-based classification is unavailable.
 - **U3 — delivery warnings and unit status are honest and readable.** Warnings append to existing
   notes, clear after a commit, and appear in `status` and `check`; the status table now handles long
   model names and multiline tasks while showing commit counts and landed state. Pane handover notes

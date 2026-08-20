@@ -125,6 +125,10 @@ def test_delivery_warning_appends_to_the_file_handover_note(
 ) -> None:
     """The warning must not erase where the session's full task was handed over."""
     monkeypatch.chdir(tmp_path)
+    launcher = tmp_path / "test-agent-launcher"
+    launcher.write_text("#!/bin/sh\nexit 0\n")
+    launcher.chmod(0o755)
+    monkeypatch.setenv("ORCHESTRATE_AGENT_LAUNCHER", str(launcher))
     unit = orchestrate.Unit(name="review", vendor="qwen", task="x" * 900)
     orchestrate.pane_text(unit, unit.task)
     handover_note = unit.note

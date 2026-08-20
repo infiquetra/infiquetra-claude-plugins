@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.19.0] - 2026-08-20
+
+Group A combines the first three run-integrity repairs with the documentation-and-hygiene unit.
+
+### Fixed
+
+- **U1 — `land` no longer touches or refuses the operator's working tree.** Unit branches merge in
+  a detached throwaway worktree, the run branch advances explicitly, successful worktrees are
+  removed, and conflicting worktrees are retained and named for recovery.
+- **U2 — a missing run branch fails loudly instead of producing false unit results.** The branch is
+  resolved once when a run loads; `status`, `check`, and `clean` remain available for diagnosis,
+  while `go` and `land` refuse with the missing branch named.
+- **U3 — delivery warnings and unit status are honest and readable.** Warnings append to existing
+  notes, clear after a commit, and appear in `status` and `check`; the status table now handles long
+  model names and multiline tasks while showing commit counts and landed state.
+- **U11 — local state and documentation match the plugin that ships.** `start` idempotently excludes
+  `.orchestrate/` through the driven repository's local Git exclude file, hand-authored briefs use
+  `.orchestrate/tasks/`, and the README documents only `orchestrate.py` and `herdr_events.py`.
+
 ## [1.18.0] - 2026-08-19
 
 Sixteen fixes found by watching real runs rather than by anything erroring. The unifying shape:

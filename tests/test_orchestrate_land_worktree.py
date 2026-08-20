@@ -689,6 +689,35 @@ def test_reused_land_worktree_is_reset_to_the_run_tip_before_later_units_merge(
     assert "LANDING CLEANUP FAILED" in output
 
 
+@pytest.mark.parametrize("record_pointer", [False, True], ids=["leftover-path", "retained-pointer"])
+def test_unregistered_land_directory_is_refused_without_detaching_operator_checkout(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    record_pointer: bool,
+) -> None:
+    repo = _repo(tmp_path, ("alpha", "gamma"))
+    (repo / ".git" / "info" / "exclude").write_text(".orchestrate/\n")
+    _git(repo, "checkout", "orch/r1")
+    _git(repo, "merge", "--no-ff", "--no-edit", "orch/r1-alpha")
+    branch_tip = _git_out(repo, "rev-parse", "HEAD")
+    land_path = _land_path(repo)
+    land_path.mkdir(parents=True)
+    (land_path / "leftover.txt").write_text("not a Git worktree\n")
+    overrides = {"conflict_worktree": str(land_path)} if record_pointer else {}
+    _write_run(repo, [_unit("alpha"), _unit("gamma")], **overrides)
+    monkeypatch.chdir(repo)
+
+    assert not (land_path / ".git").exists()
+    assert str(land_path) not in _git_out(repo, "worktree", "list", "--porcelain")
+    with pytest.raises(SystemExit, match="landing worktree path already exists.*inspect or remove"):
+        _land(orchestrate)
+
+    assert _git_out(repo, "rev-parse", "--abbrev-ref", "HEAD") == "orch/r1"
+    assert _git_out(repo, "rev-parse", "HEAD") == branch_tip
+    assert _git_out(repo, "rev-parse", "orch/r1") == branch_tip
+
+
 @pytest.mark.parametrize("failed_step", ["checkout", "verification"])
 def test_reused_land_worktree_refuses_when_tip_binding_cannot_be_proven(
     orchestrate: ModuleType,

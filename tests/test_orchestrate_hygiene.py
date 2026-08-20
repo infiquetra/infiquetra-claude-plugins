@@ -184,3 +184,16 @@ def test_skill_keeps_hand_authored_briefs_with_the_run() -> None:
     skill = " ".join(SKILL.read_text().split())
     assert "Hand-authored briefs belong in `.orchestrate/tasks/`" in skill
     assert "give the unit the brief's absolute path" in skill
+
+
+def test_clean_all_help_and_docstring_name_run_state_retention(
+    orchestrate: ModuleType,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as raised:
+        orchestrate.main(["clean", "--help"])
+
+    assert raised.value.code == 0
+    assert "delete run state only when cleanup keeps no work" in capsys.readouterr().out
+    docstring = orchestrate.cmd_clean.__doc__ or ""
+    assert "With ``--all``, run state is deleted only when the sweep keeps nothing" in docstring

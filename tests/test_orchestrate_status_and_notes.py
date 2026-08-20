@@ -177,6 +177,38 @@ def test_long_task_handover_appends_after_the_setup_prompt_fallback_note(
     assert "; task handed over as a file, too long to type:" in unit.note
 
 
+def test_long_task_without_setup_keeps_both_pane_fallback_diagnostics(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The task-file writer runs before the pane-fallback writer on the default setup path."""
+    monkeypatch.chdir(tmp_path)
+    unit = orchestrate.Unit(name="review", vendor="qwen", task="x" * 900)
+
+    def pane_fallback(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            cmd,
+            returncode=1 if cmd[:3] == ["herdr", "agent", "prompt"] else 0,
+            stdout="",
+            stderr="prompt unavailable",
+        )
+
+    monkeypatch.setattr(orchestrate, "run", pane_fallback)
+
+    orchestrate.send(unit, "pane-1")
+
+    assert unit.note.startswith("task handed over as a file, too long to type:")
+    assert (
+        "; prompted through its pane; this agent does not report interactive readiness" in unit.note
+    )
+
+
+def test_status_uses_only_the_batched_commit_status_helper(orchestrate: ModuleType) -> None:
+    assert hasattr(orchestrate, "unit_commit_statuses")
+    assert not hasattr(orchestrate, "unit_commit_status")
+
+
 def test_settle_clears_only_the_delivery_warning_after_the_first_commit(
     orchestrate: ModuleType,
     repo: Path,

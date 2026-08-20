@@ -7,14 +7,19 @@
 clean and its `HEAD` is exactly one two-parent merge: the current run-branch tip first and exactly
 one current, merge-enabled, done unit branch tip second. Publication uses Git's compare-and-swap
 `update-ref` with that current run tip as the expected value. Any other state remains retained and
-refused. Successful publication removes the worktree before clearing `conflict_worktree`; a cleanup
-failure has a distinct exit status because the merge itself is already on the run branch.
+refused. Successful publication clears and saves `conflict_worktree` immediately after the guarded
+reference advance, before worktree cleanup, because that pointer names unresolved work rather than
+cleanup debt. A cleanup failure has a distinct exit status, but the same invocation continues every
+remaining merge. On re-entry, cleanup self-heals only when the retained `HEAD` is still a clean exact
+unit merge and Git proves that commit is already an ancestor of the run branch.
 
-**Rejected alternatives.** *Treating ancestry as proof* repeats the empty-unit false positive: a
-branch can contain work it did not author. *Telling the operator to run `update-ref`* moves a
-load-bearing comparison and recovery procedure outside the command that owns both. *Force-adding at
-a missing retained path* hides the stale registration instead of reconciling it. *Clearing the
-pointer on every retry* discards the only durable name for unresolved work.
+**Rejected alternatives.** *Treating ancestry alone as publication proof* repeats the empty-unit
+false positive: a branch can contain work it did not author. Ancestry is accepted only after the
+clean two-parent shape and unique current-unit match prove what the retained commit is. *Telling the
+operator to run `update-ref`* moves a load-bearing comparison and recovery procedure outside the
+command that owns both. *Force-adding at a missing retained path* hides the stale registration
+instead of reconciling it. *Clearing the pointer on every retry* discards the only durable name for
+unresolved work; it is cleared only after guarded publication or proven prior publication.
 
 **Revisit when** the run record carries an authenticated landing-unit identity that can replace the
 second-parent lookup without weakening it, or Git provides a targeted stale-registration removal

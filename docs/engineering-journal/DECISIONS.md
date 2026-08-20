@@ -1,6 +1,54 @@
 # Decisions — Infiquetra Claude Plugins
 ## 2026-08-19
 
+### Code Review owns review policy; Orchestrate routes and Work mutates {#code-review-owns-consensus-orchestrate-routes}
+
+**Decision.** Saga's Code Review skill is the single owner of the canonical lens roster, the
+dimensions, the derived per-lens scores, the acceptance rule (overall >= 9.0 with no applicable
+dimension < 7.0), fix consolidation, rerunning only failing lenses, the three-cycle cap,
+best-available termination, and the final score and residual report. Every selected lens must supply
+at least one applicable dimension score, and Code Review derives the arithmetic-mean overall or
+rejects a reported overall that contradicts its dimensions. After the third unsuccessful cycle it
+proceeds with the best available revision and reports every score and unresolved fix — that is not a
+human-halt condition. Code Review stays read-only. Orchestrate invokes or resumes it, persists its
+typed result without interpreting policy, maps fix requests to responsible existing Work workers,
+lands the revision, and returns it for another cycle. Work is the only mutator and drops its own
+Priority 0/1 gate. Team Execution consumes the roster and transition engine while keeping transport,
+settlement, liveness, advisory seats, scanners and worker coordination. Scanner, test, deployment,
+casualty and operational-safety gates remain independently authoritative and are never folded into
+the score. The full backlog, evidence and acceptance criteria are in
+`docs/plans/2026-08-19-review-consensus-ownership-and-orchestrate-defects-plan.md`.
+
+**Rejected alternatives.** *Restoring the archived Orchestrate consensus panel and review loop* —
+that is the duplication this ruling exists to remove, and the deleted architecture is the same
+mistake the plugin was rewritten to escape. *Leaving consensus in Team Execution and having Code
+Review escalate to it*, which is what `code-review/SKILL.md:250` does today — it makes the review
+verdict unavailable to any caller that is not running a team, and Orchestrate is exactly such a
+caller. *Keeping two rosters in sync by convention* — they already diverged to the point where only
+three of ten reviewers map cleanly onto a lens, with no mechanism that would have reported the drift.
+
+**No second gate.** 9.0 overall and 7.0 per applicable dimension are the only review acceptance
+thresholds, and the three-cycle best-available outcome is the only terminal condition. The
+`< 5.0` "blocking stop" at `team-execution/.../references/consensus-protocol.md:283` is **deleted**,
+not ported: 4.9 is already below 7.0, so it changes no acceptance, and its distinct effect — "no
+completion until that dimension reaches >= 7.0" — forbids the termination this ruling requires. Its
+routing half survives as fix-request priority only. Scanner, test, deployment, casualty and
+operational-safety gates keep their independent authority; a review-dimension threshold is not one of
+them and does not qualify for that carve-out.
+
+**Relationship to [#consensus-authority-is-asymmetric](#consensus-authority-is-asymmetric)
+(2026-08-16).** That decision governs *seat admission and quorum* for a constructed reviewer roster —
+who may vote, vendor exclusion, and a denominator that never shrinks. This decision governs *lens
+acceptance scoring* — dimensions, derived overall, thresholds, cycles and termination. They are
+different mechanisms and both stand. Where the earlier decision speaks to the Orchestrate consensus
+panel specifically, this one supersedes it: that panel is archived and is not restored.
+
+**Revisit when** a second consumer needs a scoring rule Team Execution's thresholds cannot express,
+or when a lens must carry a weight rather than an equal share of the arithmetic mean. Neither is a
+reason to re-open where the policy lives.
+
+---
+
 ### Workspace placement is a field, not a launch_args entry  {#orchestrate-workspace-is-a-field-not-a-passthrough}
 
 **Decision.** A unit (and optionally a run) carries a `workspace` NAME. `agent_argv` emits

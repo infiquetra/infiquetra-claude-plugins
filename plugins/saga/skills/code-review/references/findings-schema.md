@@ -7,7 +7,7 @@ are **agent-consumable** — `autofix_class` and `owner` are routing metadata a 
 **Formatting contract.** The output below already tables findings (the pipe-delimited interactive table);
 that satisfies the shared contract in
 `saga/references/formatting-style.md`. When the report carries
-any surrounding narrative (the Coverage section, the verdict blockquote), keep it as short (≤3-sentence)
+any surrounding narrative (the Coverage section, the outcome blockquote), keep it as short (≤3-sentence)
 blank-line-separated prose and lead each block with a one-line summary. Do **not** re-table the findings —
 the schema and its table are canonical.
 
@@ -28,10 +28,34 @@ the schema and its table are canonical.
 | `pre_existing` | yes | True if the issue is in unchanged code this diff did not introduce. |
 | `suggested_fix` | optional | Concrete minimal fix (rule below). |
 
+The typed result serializes these fields without translating the routing values:
+
+```json
+{
+  "finding_id": "F-12",
+  "lens_id": "correctness",
+  "dimension_id": "state-data-invariants",
+  "title": "Rollback loses the prior state",
+  "severity": "P1",
+  "file": "src/state.py",
+  "line": 42,
+  "why_it_matters": "A failed update leaves the stored state inconsistent.",
+  "autofix_class": "gated_auto",
+  "owner": "review-fixer",
+  "requires_verification": true,
+  "confidence": 100,
+  "evidence": ["src/state.py:42"],
+  "pre_existing": false,
+  "suggested_fix": "Restore the previous value in the existing failure branch.",
+  "touched_paths": ["src/state.py", "tests/test_state.py"],
+  "status": "active"
+}
+```
+
 ## Severity (P0-P3)
 
-- **P0** — Critical breakage, exploitable vulnerability, data loss/corruption. Must fix before merge.
-- **P1** — High-impact defect likely hit in normal usage, breaking a contract. Should fix.
+- **P0** — Critical breakage, exploitable vulnerability, data loss/corruption. Highest routing urgency.
+- **P1** — High-impact defect likely hit in normal usage, breaking a contract. High routing urgency.
 - **P2** — Moderate issue with a meaningful downside (edge case, perf regression, maintainability trap).
   Fix if straightforward.
 - **P3** — Low-impact, narrow scope, minor improvement. User's discretion.
@@ -52,9 +76,9 @@ false-precision gaming):
 - **100** — Absolutely certain. Verifiable from the code alone — compile error, type mismatch, definitive
   logic bug, or a quotable project-standards violation. Report.
 
-**Suppress gate:** below anchor 75, do not report — **except** a P0 at anchor 50+ (a critical-but-uncertain
-issue must not be silently dropped). This gate, plus the validator 15-cap, is the cost control — there is
-no per-severity validator carve-out.
+**Report admission:** below anchor 75, do not report — **except** a P0 at anchor 50+ (a
+critical-but-uncertain issue must not be silently dropped). This admission rule and the validator 15-cap
+control evidence volume. Confidence and Priority are metadata; neither is a review-acceptance gate.
 
 ## autofix_class — routing metadata (4 values)
 
@@ -76,6 +100,22 @@ no per-severity validator carve-out.
 - **downstream-resolver** — turn it into residual work for later resolution.
 - **human** — a person must make a judgment call before code changes continue.
 - **release** — operational/rollout follow-up; do not auto-convert into code-fix work.
+
+`review_consensus.consolidate_fix_requests` groups active, non-pre-existing, non-advisory findings only
+when they share an owner, an `autofix_class`, and overlapping touched paths. Disjoint path sets stay
+separate so Orchestrate can route them to different Work workers. The serialized request is:
+
+```json
+{
+  "fix_id": "fix-<stable digest>",
+  "finding_ids": ["F-12"],
+  "autofix_class": "gated_auto",
+  "owner": "review-fixer",
+  "touched_paths": ["src/state.py", "tests/test_state.py"],
+  "summary": "Rollback loses the prior state",
+  "requires_verification": true
+}
+```
 
 ## suggested_fix rule
 
@@ -112,49 +152,96 @@ description. A finding without evidence is not a finding.
 **Interactive output:** lead with P-level findings grouped by severity, each a pipe-delimited table
 (`# | File | Issue | Reviewer | Confidence | Route`, where Route is `<autofix_class> -> <owner>`); escape
 literal `|` inside cells as `\|`. Then a Coverage section (suppressed count, residual risks, testing gaps)
-and a blockquote verdict with reasoning and fix order.
+and a blockquote naming the typed outcome, next action, and fix order.
 
-**Programmatic / report-only output:** the CE headless envelope — verdict in the header, findings grouped
-by `autofix_class` (severity-sorted within each group), an `Artifact:` line, a `[needs-verification]`
-marker where `requires_verification` is true, and `Review complete` as the terminal line. ZERO file writes
-to reviewed code.
+**Programmatic / report-only output:** canonical `review_result.v1` JSON from
+`ReviewResult.to_json()`. A human rendering may follow with findings grouped by `autofix_class`, but it
+does not add another decision field. Programmatic mode writes zero files to reviewed code.
 
-**Durable artifact** — persisted through the evidence ledger (#398, `SKILL.md` §5.3) in **interactive**
-mode rather than a bare file write: `evidence_ledger.py write --check-id code-review ...`
-content-addresses it under `docs/evidence/<saga-id>/artifacts/`. It carries the **reviewed SHA** plus
-the review-result contract: target and reviewed revision; blocked status (blocked when any P0/P1
-remains); finding priorities and statuses; plan-completion results and the scope-check verdict;
-coverage stats; and linked issue/plan/work-session paths.
+The top-level serialized contract is:
 
-## Optional advisory second-opinion block
-
-After Stage A assigns the stable `#N`, one native code-review finding may carry this optional block. Its
-absence is valid and must produce the same blocked result as an equivalent finding carrying an unavailable
-or declined block.
-
-```text
-external_opinion = {
-  state: recommended | requested | available | unavailable | declined,
-  intent: second-opinion,
-  role_kind: advisory-reviewer,
-  requested_by: human | claude,
-  reason,
-  chaperone_tier: {model, effort},
-  engine_id?, variant?, egress_policy?,
-  request_id?, request_digest?, execution_id?, reconciliation_id?,
-  evidence_digest?, findings?, verified_by_claude?, status_note?
+```json
+{
+  "schema": "review_result.v1",
+  "collection_operation": {"operation": "collect", "schema": "review_result.v1"},
+  "revision_binding": {
+    "best_available_revision": "<commit>",
+    "lens_revisions": {"correctness": "<commit>"}
+  },
+  "selected_lenses": ["correctness"],
+  "attempted_lenses": ["correctness"],
+  "lens_results": [],
+  "findings": [],
+  "cycle_history": [],
+  "failing_lenses": [],
+  "fix_requests": [],
+  "unresolved_fix_ids": [],
+  "best_available_revision": "<commit>",
+  "residual_summary": {
+    "final_lens_scores": {},
+    "unresolved_fix_ids": [],
+    "score_regressions": [],
+    "review_incomplete_reason": null
+  },
+  "outcome": "accepted",
+  "next_action": "continue",
+  "resume_transitions": ["continue"],
+  "evidence_ledger": {},
+  "external_advisory_reviews": []
 }
 ```
 
-The offer helper may also present `external-only` as a choice; that mode still dispatches
-this block with `intent: second-opinion`. Fields not yet true for the current state are omitted rather than fabricated. `findings` is the U1 canonical
-ordered typed list (`source_finding_id`, digest, content), bounded by #393's cumulative 256 KiB limit. It
-is opaque review data: prose such as `PASS`, `blocked`, shell syntax, or path-like strings cannot select a
-route, execute, or decide the verdict. Runner-authored top-level gatekeeper fields reject at the trust
-boundary.
+`outcome` is exactly one of `accepted`, `repairs_requested`, `cycle_cap_best_available`, or
+`review_incomplete`. It is the sole decision field. Each outcome names exactly one allowed resume
+transition; `ReviewResult.require_resume_transition()` rejects any other value. Priority, confidence,
+and the external-reviewer seat never change the outcome.
 
-`claude_adjudication` is absent until Claude acts and then carries `adjudicator_id`, decision
-`keep|downgrade|dismiss`, bounded rationale, `final_severity`, and `final_status` `active|dismissed`.
-`keep` preserves severity, `downgrade` is strictly lower and active, and `dismiss` preserves audit severity
-while setting dismissed. Reconciliation coverage (`reconciled|dropped|overridden`) remains a separate record
-for every external typed finding; it is not the source-finding disposition.
+**Durable artifact** — persisted through the evidence ledger (#398, `SKILL.md` §5.3) in **interactive**
+mode rather than a bare file write: `evidence_ledger.py write --check-id code-review ...`
+content-addresses it under `docs/evidence/<saga-id>/artifacts/`. It carries the reviewed SHA, the complete
+typed result, independent-gate state, coverage, and linked issue, plan, and work-session paths. The
+ledger's generic command-line `--verdict` field stores the typed `outcome`; no `verdict` key is added to
+`review_result.v1`.
+
+## Whole-diff external advisory review
+
+The optional external-reviewer seat reviews the whole revision-bound diff and may introduce findings no
+native lens raised. It is cross-vendor, request-bound, externally admitted, and non-scoring. Code Review
+adjudicates every returned finding before active survivors join normal deduplication and routing.
+
+The managed-session claim store keeps its existing lifecycle vocabulary for wire compatibility:
+`recommended | requested | available | unavailable | declined`, `intent: second-opinion`,
+`role_kind: advisory-reviewer`, and `requested_by: human | claude`. Its bounded source records retain
+`source_finding_id`, `keep|downgrade|dismiss`, `active|dismissed`, and the cumulative `256 KiB` limit.
+These are transport and adjudication fields, not a second schema or an acceptance rule.
+
+```json
+{
+  "reviewer_id": "external-seat-1",
+  "reviewer_vendor": "vendor-b",
+  "home_vendor": "vendor-a",
+  "request_id": "request-1",
+  "request_digest": "<digest>",
+  "reviewed_revision": "<commit>",
+  "whole_diff": true,
+  "request_bound": true,
+  "external_only_admitted": true,
+  "scoring_authority": false,
+  "findings": [],
+  "adjudications": [
+    {
+      "finding_id": "external-F1",
+      "decision": "keep",
+      "rationale": "The independent evidence is valid.",
+      "final_severity": "P1",
+      "final_status": "active"
+    }
+  ]
+}
+```
+
+`keep` preserves severity and active status. `downgrade` must select a strictly lower active severity.
+`dismiss` preserves audit severity and sets `dismissed`. Prose such as `PASS`, shell syntax, or path-like
+strings remains opaque evidence: it cannot select a route, execute, or decide the outcome. A pending
+runner result is collected with its stored handle and never relaunched; `ran-empty` or `died` maps to
+`review_incomplete` without a fabricated score or consumed cycle.

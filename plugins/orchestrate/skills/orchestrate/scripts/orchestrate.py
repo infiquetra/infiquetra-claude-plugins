@@ -36,6 +36,7 @@ except ImportError:  # pragma: no cover - only when the sibling module is missin
     herdr_events = None  # type: ignore[assignment]
 
 RUN_FILE = Path(".orchestrate/run.json")
+LOCAL_RUN_STATE_EXCLUDE = ".orchestrate/"
 
 # Where task text lives when it does not belong inside run.json. Two mechanisms write here,
 # named apart: the spill (see ``TASK_SPILL_THRESHOLD``) moves a long unit task out of the run
@@ -643,6 +644,27 @@ def run(
 
 def repo_root() -> Path:
     return Path(run(["git", "rev-parse", "--show-toplevel"]).stdout.strip())
+
+
+def ensure_local_run_state_excluded() -> None:
+    """Keep Orchestrate's local run state out of the driven repository's status.
+
+    ``git rev-parse --git-path`` resolves the shared ``info/exclude`` file correctly for both a
+    primary checkout and a linked worktree. Existing rules stay byte-for-byte intact; the only
+    addition is one newline when the previous final line needs terminating, followed by the one
+    Orchestrate rule. Repeated ``start`` calls therefore do not grow the file.
+    """
+    result = run(["git", "rev-parse", "--git-path", "info/exclude"])
+    exclude_path = Path(result.stdout.strip())
+    if not exclude_path.is_absolute():
+        exclude_path = repo_root() / exclude_path
+    exclude_path.parent.mkdir(parents=True, exist_ok=True)
+    existing = exclude_path.read_text() if exclude_path.exists() else ""
+    if LOCAL_RUN_STATE_EXCLUDE in (line.strip() for line in existing.splitlines()):
+        return
+    separator = "" if not existing or existing.endswith("\n") else "\n"
+    with exclude_path.open("a", encoding="utf-8") as exclude_file:
+        exclude_file.write(f"{separator}{LOCAL_RUN_STATE_EXCLUDE}\n")
 
 
 # ----------------------------------------------------------------- launching
@@ -1506,6 +1528,7 @@ def cmd_start(args: argparse.Namespace) -> int:
     exists = run(["git", "rev-parse", "--verify", "--quiet", r.branch], check=False)
     if exists.returncode != 0:
         run(["git", "branch", r.branch, base])
+    ensure_local_run_state_excluded()
     r.save()
     print(f"run branch {r.branch} from {base[:8]} — units land here, it merges out once")
     order = " -> ".join(u.name for u in r.units)

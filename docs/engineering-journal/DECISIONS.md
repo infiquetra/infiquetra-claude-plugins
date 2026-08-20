@@ -11,7 +11,11 @@ refused. Successful publication clears and saves `conflict_worktree` immediately
 reference advance, before worktree cleanup, because that pointer names unresolved work rather than
 cleanup debt. A cleanup failure has a distinct exit status, but the same invocation continues every
 remaining merge. On re-entry, cleanup self-heals only when the retained `HEAD` is still a clean exact
-unit merge and Git proves that commit is already an ancestor of the run branch.
+unit merge and Git proves that commit is already an ancestor of the run branch. That ancestry proves
+the leftover is published and safe to replace; it does not prove the leftover is the current merge
+base. Before reusing the worktree for another unit, `land` must successfully check out the current
+run tip detached and then read `HEAD` back as that exact commit. A checkout failure, read failure, or
+mismatch abandons reuse and restores the existing inspect-or-remove refusal.
 
 **Rejected alternatives.** *Treating ancestry alone as publication proof* repeats the empty-unit
 false positive: a branch can contain work it did not author. Ancestry is accepted only after the
@@ -20,6 +24,9 @@ operator to run `update-ref`* moves a load-bearing comparison and recovery proce
 command that owns both. *Force-adding at a missing retained path* hides the stale registration
 instead of reconciling it. *Clearing the pointer on every retry* discards the only durable name for
 unresolved work; it is cleared only after guarded publication or proven prior publication.
+*Reusing a proven-published worktree at its existing `HEAD`* is rejected because that commit may be
+only an ancestor of the current run tip; the guarded reference update cannot detect a merge built on
+that stale base and can therefore replace the tip with a non-descendant commit.
 
 **Revisit when** the run record carries an authenticated landing-unit identity that can replace the
 second-parent lookup without weakening it, or Git provides a targeted stale-registration removal

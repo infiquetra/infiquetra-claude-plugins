@@ -395,6 +395,29 @@ class TestAdopt:
         assert "nothing written -- rerun with --yes" in out
         assert [u["name"] for u in _read_run(repo)["units"]] == ["alpha", "beta"]
 
+    def test_an_unresolvable_run_branch_is_reported_and_degrades_without_a_traceback(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _git(repo, "checkout", "-b", "orch/r1-stray", "orch/r1")
+        _commit(repo, "stray.txt")
+        _git(repo, "checkout", "main")
+        _git(repo, "branch", "-m", "orch/r1", "orch/r1-renamed")
+        _write_run(repo, [_unit("alpha"), _unit("beta")])
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr(orchestrate, "live_agents", lambda: [])
+
+        assert orchestrate.cmd_adopt(argparse.Namespace(yes=False)) == 0
+
+        output = capsys.readouterr().out
+        assert "WARNING: run branch 'orch/r1' does not resolve" in output
+        assert "would adopt: stray" in output
+        assert "status=failed" in output
+        assert "nothing written -- rerun with --yes" in output
+
     def test_with_yes_the_unit_lands_in_the_record(
         self,
         orchestrate: ModuleType,

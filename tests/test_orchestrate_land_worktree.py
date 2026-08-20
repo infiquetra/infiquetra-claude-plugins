@@ -125,6 +125,23 @@ def _resolve_retained_conflict(run_file: Path, content: str = "resolved\n") -> P
     return retained
 
 
+def _prepare_stale_locked_land_path(repo: Path) -> tuple[Path, str, str]:
+    """Publish one exact unit merge, retain its worktree, then advance the run branch."""
+    land_path = _land_path(repo)
+    _git(repo, "worktree", "add", "--detach", str(land_path), "orch/r1")
+    _git(land_path, "merge", "--no-ff", "--no-edit", "orch/r1-alpha")
+    published_tip = _git_out(land_path, "rev-parse", "HEAD")
+    old_tip = _git_out(repo, "rev-parse", "orch/r1")
+    _git(repo, "update-ref", "refs/heads/orch/r1", published_tip, old_tip)
+
+    _git(repo, "checkout", "orch/r1")
+    _commit(repo, "hotfix.txt")
+    hotfix_tip = _git_out(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "main")
+    _git(repo, "worktree", "lock", "--reason", "retain stale landing worktree", str(land_path))
+    return land_path, published_tip, hotfix_tip
+
+
 def _land(orchestrate: ModuleType) -> int:
     return int(orchestrate.cmd_land(argparse.Namespace(clean=False)))
 
@@ -644,6 +661,67 @@ def test_recovery_cleanup_failure_lands_remaining_units_and_the_next_land_self_h
     assert "CONFLICT worktree" not in retry_output
     assert not land_path.exists()
     assert str(land_path) not in _git_out(repo, "worktree", "list", "--porcelain")
+
+
+@pytest.mark.parametrize("record_pointer", [False, True], ids=["leftover-path", "retained-pointer"])
+def test_reused_land_worktree_is_reset_to_the_run_tip_before_later_units_merge(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    record_pointer: bool,
+) -> None:
+    repo = _repo(tmp_path, ("alpha", "gamma"))
+    land_path, _, hotfix_tip = _prepare_stale_locked_land_path(repo)
+    overrides = {"conflict_worktree": str(land_path)} if record_pointer else {}
+    _write_run(repo, [_unit("alpha"), _unit("gamma")], **overrides)
+    monkeypatch.chdir(repo)
+
+    assert _land(orchestrate) == 3
+
+    run_tip = _git_out(repo, "rev-parse", "orch/r1")
+    _git(repo, "merge-base", "--is-ancestor", hotfix_tip, run_tip)
+    assert _branch_file(repo, "orch/r1", "hotfix.txt") == "hotfix.txt"
+    assert _branch_file(repo, "orch/r1", "gamma.txt") == "gamma.txt"
+    assert _git_out(land_path, "rev-parse", "HEAD") == run_tip
+    output = capsys.readouterr().out
+    assert "landed on orch/r1: gamma (+1)" in output
+    assert "LANDING CLEANUP FAILED" in output
+
+
+@pytest.mark.parametrize("failed_step", ["checkout", "verification"])
+def test_reused_land_worktree_refuses_when_tip_binding_cannot_be_proven(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failed_step: str,
+) -> None:
+    repo = _repo(tmp_path, ("alpha", "gamma"))
+    land_path, published_tip, hotfix_tip = _prepare_stale_locked_land_path(repo)
+    _write_run(repo, [_unit("alpha"), _unit("gamma")])
+    monkeypatch.chdir(repo)
+    original_run = orchestrate.run
+
+    def fail_binding(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        checkout = ["git", "-C", str(land_path), "checkout", "--detach", hotfix_tip]
+        verification = ["git", "-C", str(land_path), "rev-parse", "HEAD"]
+        if failed_step == "checkout" and cmd == checkout:
+            return subprocess.CompletedProcess(
+                cmd, returncode=1, stdout="", stderr="checkout failed"
+            )
+        if failed_step == "verification" and cmd == verification:
+            return subprocess.CompletedProcess(
+                cmd, returncode=0, stdout=f"{published_tip}\n", stderr=""
+            )
+        return cast(subprocess.CompletedProcess[str], original_run(cmd, **kwargs))
+
+    monkeypatch.setattr(orchestrate, "run", fail_binding)
+
+    with pytest.raises(SystemExit, match="landing worktree path already exists.*inspect or remove"):
+        _land(orchestrate)
+
+    assert _git_out(repo, "rev-parse", "orch/r1") == hotfix_tip
+    _git(repo, "merge-base", "--is-ancestor", hotfix_tip, "orch/r1")
 
 
 def test_land_fails_loudly_when_the_run_branch_does_not_resolve(

@@ -2427,7 +2427,7 @@ def cmd_land(args: argparse.Namespace) -> int:
 
     if r.conflict_worktree:
         retained = Path(r.conflict_worktree)
-        if retained.exists():
+        if retained.exists() and worktree_registered(retained):
             recovered = resolved_retained_land(r, retained)
             if isinstance(recovered, str):
                 print(f"  CONFLICT worktree is still retained at {retained}: {recovered}")
@@ -2493,7 +2493,7 @@ def cmd_land(args: argparse.Namespace) -> int:
                 active_land_path = retained
                 reuse_land_worktree = True
 
-    if not reuse_land_worktree and land_path.exists():
+    if not reuse_land_worktree and land_path.exists() and worktree_registered(land_path):
         # A previous recovery may have published and cleared its pointer before cleanup failed.
         # Reuse or remove this path only with the same exact merge and ancestry proof used above.
         leftover = resolved_retained_land(r, land_path)
@@ -2508,10 +2508,10 @@ def cmd_land(args: argparse.Namespace) -> int:
                     detail = (removed.stderr or removed.stdout or "unknown git error").strip()
                     cleanup_failures.append((land_path, detail))
                     reuse_land_worktree = True
-        if land_path.exists() and not reuse_land_worktree:
-            raise SystemExit(
-                f"landing worktree path already exists at {land_path}; inspect or remove it first"
-            )
+    if land_path.exists() and not reuse_land_worktree:
+        raise SystemExit(
+            f"landing worktree path already exists at {land_path}; inspect or remove it first"
+        )
 
     # The canonical land path can outlive the record pointer: `clean --merged` deliberately clears
     # a pointer to a missing directory. Inspect Git itself, and prune before every such path reuse.

@@ -479,6 +479,40 @@ def test_clean_merged_recognises_and_keeps_a_retained_conflict_worktree(
     assert "kept" in output
 
 
+def test_plain_clean_keeps_a_symlinked_conflict_pointer_and_its_victim_worktree(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path, ())
+    victim = tmp_path / "operator-linked-worktree"
+    _git(repo, "worktree", "add", "-b", "operator-work", str(victim), "main")
+    uncommitted = victim / "operator-notes.txt"
+    uncommitted.write_text("operator work in progress\n")
+
+    conflict_path = _land_path(repo)
+    run_file = _write_run(repo, [], conflict_worktree=str(conflict_path))
+    conflict_path.symlink_to(victim, target_is_directory=True)
+
+    cleaned = subprocess.run(
+        [sys.executable, str(SCRIPT), "clean"],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert cleaned.returncode == 0, cleaned.stderr
+    assert victim.is_dir()
+    assert f"worktree {victim}" in _git_out(repo, "worktree", "list", "--porcelain")
+    assert uncommitted.read_text() == "operator work in progress\n"
+    assert "?? operator-notes.txt" in _git_out(victim, "status", "--porcelain")
+    assert conflict_path.is_symlink()
+    assert json.loads(run_file.read_text())["conflict_worktree"] == str(conflict_path)
+
+    label = f"conflict worktree at {conflict_path}"
+    assert "closed: nothing" in cleaned.stdout
+    assert f"kept (not done, or its work not on the run branch): {label}" in cleaned.stdout
+
+
 def test_clean_merged_reaps_an_unrecorded_numbered_landing_worktree(
     orchestrate: ModuleType,
     tmp_path: Path,

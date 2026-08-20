@@ -2593,6 +2593,8 @@ def cmd_land(args: argparse.Namespace) -> int:
                     r.conflict_worktree = None
                     r.save()
 
+                # Protected by live_linked_worktree_at at retained-path admission: this is the
+                # exact separate linked worktree whose resolved merge was just proved published.
                 removed = run(["git", "worktree", "remove", "--force", str(retained)], check=False)
                 if removed.returncode != 0:
                     detail = (removed.stderr or removed.stdout or "unknown git error").strip()
@@ -2629,6 +2631,8 @@ def cmd_land(args: argparse.Namespace) -> int:
                     ["git", "merge-base", "--is-ancestor", leftover_tip, branch_tip], check=False
                 )
                 if published.returncode == 0:
+                    # Protected by live_linked_worktree_at at canonical-path admission: this
+                    # separate linked worktree's exact merge was also proved published.
                     removed = run(
                         ["git", "worktree", "remove", "--force", str(land_path)], check=False
                     )
@@ -2760,6 +2764,9 @@ def cmd_land(args: argparse.Namespace) -> int:
             writeback_failures.extend(_failed_writebacks(records))
     finally:
         if not keep_land_worktree:
+            # Safe by construction: this invocation created `landing_worktree` with
+            # `git worktree add --detach` and has not exposed it to an external actor. A conflict
+            # sets `keep_land_worktree` and skips this removal.
             removed = run(
                 ["git", "worktree", "remove", "--force", str(landing_worktree)], check=False
             )
@@ -2945,13 +2952,20 @@ def reap(
             # ordinary kept report so `clean --merged` cannot look like it silently swept it up.
             kept.append(label)
         elif conflict_path.exists():
-            removed = run(["git", "worktree", "remove", "--force", str(conflict_path)], check=False)
-            if removed.returncode == 0 or not conflict_path.exists():
-                closed.append(label)
-                r.conflict_worktree = None
-                r.save()
-            else:
+            if not live_linked_worktree_at(conflict_path, operator_worktree=root):
                 kept.append(label)
+            else:
+                # Protected by live_linked_worktree_at immediately above: the record names an
+                # exact separate linked worktree, not a symlink or another untrusted path.
+                removed = run(
+                    ["git", "worktree", "remove", "--force", str(conflict_path)], check=False
+                )
+                if removed.returncode == 0 or not conflict_path.exists():
+                    closed.append(label)
+                    r.conflict_worktree = None
+                    r.save()
+                else:
+                    kept.append(label)
         else:
             # The directory was removed by hand. Clear the pointer so clean reports the filesystem
             # truth. `land` independently inspects and prunes the canonical path's Git registration
@@ -2989,6 +3003,8 @@ def reap(
             if published.returncode != 0:
                 kept.append(label)
                 continue
+        # Protected by live_linked_worktree_at above: the discovered candidate is an exact
+        # separate linked worktree; `--merged` additionally proves its merge was published.
         removed = run(["git", "worktree", "remove", "--force", str(candidate)], check=False)
         if removed.returncode == 0 or not os.path.lexists(candidate):
             closed.append(label)

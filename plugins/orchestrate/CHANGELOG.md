@@ -24,9 +24,12 @@ Group A combines the first three run-integrity repairs with the documentation-an
   an exact published merge, or cannot be removed, `land` preserves and names it, then creates the
   lowest unused numbered detached worktree. The new path is exact by construction. The housekeeping
   proof reads the linked-worktree metadata without running `git -C` against an unverified path, and
-  `check` and `clean` discover both canonical and numbered cleanup paths. This closes the full
-  operator-checkout escape class: partial removal performed by Git itself, a gitfile rewritten to
-  the primary Git directory, plain or stale directories, and symlinks cannot become merge targets.
+  `check` and `clean` discover both canonical and numbered cleanup paths. Plain `clean` now applies
+  that proof to a recorded conflict path too; an unproven path and its record pointer are reported
+  as kept, so a planted symlink cannot remove another registered worktree or its uncommitted files.
+  Across Group A's landing paths, partial removal performed by Git itself, a gitfile rewritten to
+  the primary Git directory, plain or stale directories, and symlinks cannot become merge targets
+  or cleanup targets.
 - **U2 — a missing run branch fails loudly instead of producing false unit results.** The branch is
   resolved once when a run loads; `status`, `check`, and `clean` remain available for diagnosis,
   while `go` and `land` refuse with the missing branch named, even when no unit is eligible. `adopt`

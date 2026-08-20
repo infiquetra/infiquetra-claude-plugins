@@ -21,7 +21,7 @@
 
 ## 2026-08-20
 
-### A path-scoped Git command can escape an unregistered directory  {#git-c-finds-enclosing-repository}
+### Git registration and live-worktree admission answer different questions  {#git-c-finds-enclosing-repository}
 
 **Context.** Orchestrate reused a leftover at its canonical landing path after proving the merge
 shape found there. The path was assumed to be the detached worktree that an earlier land created.
@@ -29,23 +29,33 @@ shape found there. The path was assumed to be the detached worktree that an earl
 **Evidence.** In a real repository, a plain ignored `.orchestrate/land-r1` directory had no `.git`
 entry and no record in `git worktree list`. With the operator checkout attached to the run branch at
 a valid landing merge, both the leftover-path and retained-pointer reuse arms accepted that merge,
-then the binding checkout silently detached the operator's checkout. The parameterized regression
-in `tests/test_orchestrate_land_worktree.py` reproduces both arms and asserts that land refuses while
-the operator remains attached to the unchanged run branch.
+then the binding checkout silently detached the operator's checkout. Two neighbouring inputs caused
+the identical harm: a real linked worktree removed with `rm -rf` and recreated as a plain directory
+while its registration remained prunable, and a canonical landing-path symlink resolving to the
+repository root. Parameterized regressions in `tests/test_orchestrate_land_worktree.py` reproduce all
+three inputs on both reuse arms and assert that land refuses while the operator remains attached to
+the unchanged run branch. A real locked, live linked worktree remains covered as successful reuse.
 
 **Mechanism.** `git -C <path>` does not establish that `<path>` is a repository or worktree. When
 the directory has no Git administrative entry, discovery walks upward and runs against an enclosing
-repository. Clean-status, merge-shape, checkout, and `HEAD` readback commands can therefore all
-agree while inspecting and mutating the wrong checkout.
+repository. Clean-status, merge-shape, checkout, and `HEAD` readback commands can therefore all agree
+while inspecting and mutating the wrong checkout. The original `worktree_registered` predicate was
+Git-list membership by design, including missing prunable entries. That is the right answer to the
+prune-reconciliation question, "does Git still record this path even though its directory is
+missing?" It is the wrong answer to reuse admission, "will `git -C <path>` address a live linked
+worktree at this exact path, separate from the primary and operator checkouts?"
 
-**Fix.** Both reuse candidate arms require the existing `worktree_registered(path)` proof before
-running any path-scoped Git command. An unregistered directory falls through to the existing
-inspect-or-remove refusal; the publication ancestry proof, checkout readback, and guarded reference
-advance remain unchanged.
+**Fix.** The two questions now have distinctly named predicates. Prune reconciliation uses
+`worktree_registration_exists(path)`, which deliberately includes stale and prunable registrations.
+Reuse admission uses `live_linked_worktree_at(path)`, which requires repository-owned registration,
+excludes Git's primary worktree and the checkout running Orchestrate, and accepts only when
+`git -C <path> rev-parse --show-toplevel` resolves back to the exact candidate. Anything else falls
+through to the existing inspect-or-remove refusal; the publication ancestry proof, checkout
+readback, and guarded reference advance remain unchanged.
 
-**Generalizable rule.** Treat `git -C <path>` as repository discovery, not membership proof. Before
-using it across a trust boundary, ask Git whether the exact path is the registered worktree the
-operation intends to inspect or mutate.
+**Generalizable rule.** Treat `git -C <path>` as repository discovery, not membership proof. Name
+predicates for the exact question they answer: administrative registration may intentionally include
+dead state for reconciliation, while mutation admission must prove a live, exact, separate target.
 
 **Refs.** [[#published-worktree-needs-current-base]], [[#detached-land-needs-publish]].
 

@@ -22,9 +22,12 @@ Group A combines the first three run-integrity repairs with the documentation-an
   its own exit status instead of calling the land a merge failure. Before a leftover landing
   worktree is reused, it is detached at the current run tip and its `HEAD` is read back; a failed
   checkout or mismatch restores the existing inspect-or-remove refusal instead of merging on a
-  stale base and rewinding the run branch. Reuse analysis now also requires the canonical landing
-  path to be a registered Git worktree before any path-scoped Git command runs, so a plain leftover
-  directory is refused before Git can discover and detach the enclosing operator checkout.
+  stale base and rewinding the run branch. Reuse admission now proves the canonical landing path is
+  a live, separate linked worktree before any path-scoped Git command runs: Git must list the path,
+  `git -C` must resolve back to that exact top level, and neither the primary nor operator worktree
+  may match. This refuses the whole enclosing-repository escape class, including plain leftover
+  directories, stale or prunable registrations whose directory reappears, and symlinks resolving to
+  the repository root, before Git can detach the operator checkout.
 - **U2 — a missing run branch fails loudly instead of producing false unit results.** The branch is
   resolved once when a run loads; `status`, `check`, and `clean` remain available for diagnosis,
   while `go` and `land` refuse with the missing branch named, even when no unit is eligible. `adopt`

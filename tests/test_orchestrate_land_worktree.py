@@ -142,6 +142,13 @@ def _prepare_stale_locked_land_path(repo: Path) -> tuple[Path, str, str]:
     return land_path, published_tip, hotfix_tip
 
 
+def _attach_operator_to_run_branch_after_alpha(repo: Path) -> str:
+    """Put the main checkout in the shape a path-scoped Git escape could mistake for land."""
+    _git(repo, "checkout", "orch/r1")
+    _git(repo, "merge", "--no-ff", "--no-edit", "orch/r1-alpha")
+    return _git_out(repo, "rev-parse", "HEAD")
+
+
 def _land(orchestrate: ModuleType) -> int:
     return int(orchestrate.cmd_land(argparse.Namespace(clean=False)))
 
@@ -684,6 +691,7 @@ def test_reused_land_worktree_is_reset_to_the_run_tip_before_later_units_merge(
     assert _branch_file(repo, "orch/r1", "hotfix.txt") == "hotfix.txt"
     assert _branch_file(repo, "orch/r1", "gamma.txt") == "gamma.txt"
     assert _git_out(land_path, "rev-parse", "HEAD") == run_tip
+    assert _git_out(repo, "rev-parse", "--abbrev-ref", "HEAD") == "main"
     output = capsys.readouterr().out
     assert "landed on orch/r1: gamma (+1)" in output
     assert "LANDING CLEANUP FAILED" in output
@@ -698,9 +706,7 @@ def test_unregistered_land_directory_is_refused_without_detaching_operator_check
 ) -> None:
     repo = _repo(tmp_path, ("alpha", "gamma"))
     (repo / ".git" / "info" / "exclude").write_text(".orchestrate/\n")
-    _git(repo, "checkout", "orch/r1")
-    _git(repo, "merge", "--no-ff", "--no-edit", "orch/r1-alpha")
-    branch_tip = _git_out(repo, "rev-parse", "HEAD")
+    branch_tip = _attach_operator_to_run_branch_after_alpha(repo)
     land_path = _land_path(repo)
     land_path.mkdir(parents=True)
     (land_path / "leftover.txt").write_text("not a Git worktree\n")
@@ -710,6 +716,62 @@ def test_unregistered_land_directory_is_refused_without_detaching_operator_check
 
     assert not (land_path / ".git").exists()
     assert str(land_path) not in _git_out(repo, "worktree", "list", "--porcelain")
+    with pytest.raises(SystemExit, match="landing worktree path already exists.*inspect or remove"):
+        _land(orchestrate)
+
+    assert _git_out(repo, "rev-parse", "--abbrev-ref", "HEAD") == "orch/r1"
+    assert _git_out(repo, "rev-parse", "HEAD") == branch_tip
+    assert _git_out(repo, "rev-parse", "orch/r1") == branch_tip
+
+
+@pytest.mark.parametrize("record_pointer", [False, True], ids=["leftover-path", "retained-pointer"])
+def test_prunable_land_registration_is_refused_without_detaching_operator_checkout(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    record_pointer: bool,
+) -> None:
+    repo = _repo(tmp_path, ("alpha", "gamma"))
+    (repo / ".git" / "info" / "exclude").write_text(".orchestrate/\n")
+    land_path = _land_path(repo)
+    _git(repo, "worktree", "add", "--detach", str(land_path), "orch/r1")
+    shutil.rmtree(land_path)
+    land_path.mkdir()
+    (land_path / "leftover.txt").write_text("no longer a Git worktree\n")
+    branch_tip = _attach_operator_to_run_branch_after_alpha(repo)
+    overrides = {"conflict_worktree": str(land_path)} if record_pointer else {}
+    _write_run(repo, [_unit("alpha"), _unit("gamma")], **overrides)
+    monkeypatch.chdir(repo)
+
+    registrations = _git_out(repo, "worktree", "list", "--porcelain")
+    assert f"worktree {land_path}" in registrations
+    assert "prunable gitdir file points to non-existent location" in registrations
+    assert _git_out(land_path, "rev-parse", "--show-toplevel") == str(repo)
+    with pytest.raises(SystemExit, match="landing worktree path already exists.*inspect or remove"):
+        _land(orchestrate)
+
+    assert _git_out(repo, "rev-parse", "--abbrev-ref", "HEAD") == "orch/r1"
+    assert _git_out(repo, "rev-parse", "HEAD") == branch_tip
+    assert _git_out(repo, "rev-parse", "orch/r1") == branch_tip
+
+
+@pytest.mark.parametrize("record_pointer", [False, True], ids=["leftover-path", "retained-pointer"])
+def test_symlink_to_repository_root_is_refused_without_detaching_operator_checkout(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    record_pointer: bool,
+) -> None:
+    repo = _repo(tmp_path, ("alpha", "gamma"))
+    (repo / ".git" / "info" / "exclude").write_text(".orchestrate/\n")
+    branch_tip = _attach_operator_to_run_branch_after_alpha(repo)
+    land_path = _land_path(repo)
+    overrides = {"conflict_worktree": str(land_path)} if record_pointer else {}
+    _write_run(repo, [_unit("alpha"), _unit("gamma")], **overrides)
+    land_path.symlink_to(repo, target_is_directory=True)
+    monkeypatch.chdir(repo)
+
+    assert land_path.resolve() == repo.resolve()
     with pytest.raises(SystemExit, match="landing worktree path already exists.*inspect or remove"):
         _land(orchestrate)
 

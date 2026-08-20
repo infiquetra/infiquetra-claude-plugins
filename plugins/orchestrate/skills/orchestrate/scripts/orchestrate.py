@@ -2340,18 +2340,41 @@ def resolved_retained_land(r: Run, retained: Path) -> tuple[Unit, str, str] | st
     return matches[0], parts[0], parts[1]
 
 
-def worktree_registered(path: Path) -> bool:
-    """Whether Git still records ``path``, including a missing prunable worktree."""
+def registered_worktree_paths() -> list[Path]:
+    """Return every path Git records, including missing prunable worktrees."""
     listed = run(["git", "worktree", "list", "--porcelain", "-z"], check=False)
     if listed.returncode != 0:
         detail = (listed.stderr or listed.stdout or "unknown git error").strip()
         raise SystemExit(f"cannot inspect registered worktrees before land: {detail}")
-    wanted = path.resolve()
-    return any(
-        Path(field.removeprefix("worktree ")).resolve() == wanted
+    return [
+        Path(field.removeprefix("worktree ")).resolve()
         for field in listed.stdout.split("\0")
         if field.startswith("worktree ")
-    )
+    ]
+
+
+def worktree_registration_exists(path: Path) -> bool:
+    """Whether Git still records ``path``, including a missing prunable worktree."""
+    wanted = path.resolve()
+    return wanted in registered_worktree_paths()
+
+
+def live_linked_worktree_at(path: Path, *, operator_worktree: Path) -> bool:
+    """Whether path-scoped Git commands address this exact separate linked worktree."""
+    wanted = path.resolve()
+    registered = registered_worktree_paths()
+    # Git lists its primary worktree first. The operator can also invoke Orchestrate from another
+    # linked worktree, so both checkouts are distinct exclusions from a reusable landing worktree.
+    if (
+        not registered
+        or wanted == registered[0]
+        or wanted == operator_worktree.resolve()
+        or wanted not in registered
+    ):
+        return False
+    top_level = run(["git", "-C", str(wanted), "rev-parse", "--show-toplevel"], check=False)
+    reported = top_level.stdout.strip()
+    return top_level.returncode == 0 and bool(reported) and Path(reported).resolve() == wanted
 
 
 def bind_reused_land_worktree(path: Path, branch_tip: str) -> bool:
@@ -2427,7 +2450,7 @@ def cmd_land(args: argparse.Namespace) -> int:
 
     if r.conflict_worktree:
         retained = Path(r.conflict_worktree)
-        if retained.exists() and worktree_registered(retained):
+        if retained.exists() and live_linked_worktree_at(retained, operator_worktree=root):
             recovered = resolved_retained_land(r, retained)
             if isinstance(recovered, str):
                 print(f"  CONFLICT worktree is still retained at {retained}: {recovered}")
@@ -2493,7 +2516,11 @@ def cmd_land(args: argparse.Namespace) -> int:
                 active_land_path = retained
                 reuse_land_worktree = True
 
-    if not reuse_land_worktree and land_path.exists() and worktree_registered(land_path):
+    if (
+        not reuse_land_worktree
+        and land_path.exists()
+        and live_linked_worktree_at(land_path, operator_worktree=root)
+    ):
         # A previous recovery may have published and cleared its pointer before cleanup failed.
         # Reuse or remove this path only with the same exact merge and ancestry proof used above.
         leftover = resolved_retained_land(r, land_path)
@@ -2515,7 +2542,11 @@ def cmd_land(args: argparse.Namespace) -> int:
 
     # The canonical land path can outlive the record pointer: `clean --merged` deliberately clears
     # a pointer to a missing directory. Inspect Git itself, and prune before every such path reuse.
-    if not reuse_land_worktree and not land_path.exists() and worktree_registered(land_path):
+    if (
+        not reuse_land_worktree
+        and not land_path.exists()
+        and worktree_registration_exists(land_path)
+    ):
         pruned = run(["git", "worktree", "prune", "--expire", "now"], check=False)
         if pruned.returncode != 0:
             detail = (pruned.stderr or pruned.stdout or "unknown git error").strip()

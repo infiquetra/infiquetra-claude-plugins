@@ -1,6 +1,35 @@
 # Decisions — Infiquetra Claude Plugins
 ## 2026-08-20
 
+### Group A removes only proved or invocation-owned landing worktrees {#group-a-worktree-removal-proof}
+
+**Decision.** Every path-scoped worktree removal introduced by Group A must either pass
+`live_linked_worktree_at` immediately before removal or be safe by construction: created by the
+same invocation with `git worktree add --detach` and not exposed to an external actor. A recorded
+`conflict_worktree` is not invocation-owned. Plain `clean` now applies the existing proof and, when
+it fails, keeps both the pointer and path and reports the conflict worktree in the ordinary kept
+line. It does not remove, prune, or clear anything in that branch.
+
+**Audit of the five Group A removal sites.**
+
+- Resolved retained-conflict cleanup in `land` is protected by `live_linked_worktree_at`; the same
+  branch also proves that the exact resolved merge was published before removal.
+- Canonical leftover cleanup in `land` is protected by `live_linked_worktree_at`; it removes only
+  after proving that the exact merge is published on the run branch.
+- Successful transient landing cleanup in `land` is safe by construction; that invocation created
+  the path with `git worktree add --detach`, never exposed it externally, and skips removal when a
+  conflict turns the path into a retained recovery surface.
+- Recorded conflict cleanup in `clean` is protected by `live_linked_worktree_at`; an unproven path,
+  including a symlink to another registered worktree, is kept with its record pointer intact.
+- Discovered canonical or numbered landing cleanup in `clean` is protected by
+  `live_linked_worktree_at`; `clean --merged` additionally proves the exact merge was published.
+
+**Accepted residual.** The verifier's path-separator finding remains unchanged. `cmd_start`
+validates a run identifier as one safe path component, but a hand-edited run record can bypass that
+entry check. `land` can then leave a numbered nested landing worktree that neither `check` nor
+`clean` discovers. This bounded repair does not change run-record validation or landing-path
+discovery.
+
 ### Landing merges use a newly constructed worktree, never a pre-existing path {#landing-worktree-is-fresh-by-construction}
 
 **Decision.** `land` never uses a pre-existing canonical landing path for a merge. It may inspect a

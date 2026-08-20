@@ -915,6 +915,25 @@ def agent_argv(unit: Unit, default_workspace: str | None = None) -> list[str]:
 # reads that idle as done and only `land` notices, a phase later, that it committed nothing.
 LAUNCH_SETTLE_SECONDS = 30.0
 DELIVERY_CHECK_SECONDS = 15.0
+DELIVERY_WARNING = (
+    "SENT BUT NEVER STARTED: idle after being given its task. Check the tab before "
+    "trusting this unit -- it may have been prompted while still booting."
+)
+
+
+def append_unit_note(unit: Unit, note: str) -> None:
+    """Add one fact without erasing a note recorded by an earlier delivery step."""
+    unit.note = f"{unit.note}; {note}" if unit.note else note
+
+
+def has_delivery_warning(unit: Unit) -> bool:
+    """Whether the unit still carries the exact warning written by ``launch``."""
+    return DELIVERY_WARNING in unit.note.split("; ")
+
+
+def clear_delivery_warning(unit: Unit) -> None:
+    """Remove only the delivery warning, preserving every other semicolon-delimited note."""
+    unit.note = "; ".join(note for note in unit.note.split("; ") if note != DELIVERY_WARNING)
 
 
 def agent_row(unit: Unit, agents: list[dict] | None = None) -> dict | None:
@@ -973,10 +992,7 @@ def launch(unit: Unit, backend: str = "inline", *, review_elsewhere: bool = Fals
     send(unit, pane_id, backend, review_elsewhere=review_elsewhere)
     unit.status = RUNNING
     if not took_the_task(unit):
-        unit.note = (
-            "SENT BUT NEVER STARTED: idle after being given its task. Check the tab before "
-            "trusting this unit -- it may have been prompted while still booting."
-        )
+        append_unit_note(unit, DELIVERY_WARNING)
 
 
 # How long a line may be before typing it into a pane stops delivering it as an instruction.
@@ -1817,28 +1833,93 @@ def cmd_go(args: argparse.Namespace) -> int:
     return 0
 
 
+def unit_commit_status(unit: Unit, r: Run) -> tuple[str, str]:
+    """Return this unit's own commit count and whether those commits have landed.
+
+    Once a unit is merged, its branch tip is also in the run branch and their ordinary merge base
+    is the unit tip.  Counting from that point would report zero for work that plainly exists, so
+    the landing merge's first parent recovers the branch point used for the honest count.
+    """
+    if not unit.branch:
+        return "-", "-"
+    if r.unresolvable_branch:
+        return "?", "unknown"
+    branch = unit.branch
+    if resolve_ref(branch) is None:
+        return "?", "missing"
+    comparison = r.resolved_run_ref()
+    merged = landing_merge(branch, comparison)
+    base = merge_base(f"{merged}^1", branch) if merged else merge_base(comparison, branch)
+    if base is None:
+        return "?", "yes" if merged else "unknown"
+    count = run(["git", "rev-list", "--count", f"{base}..{branch}"], check=False)
+    if count.returncode != 0 or not count.stdout.strip():
+        return "?", "yes" if merged else "unknown"
+    return count.stdout.strip(), "yes" if merged else "no"
+
+
+def one_line(text: str) -> str:
+    """Collapse arbitrary task and note whitespace so one unit always occupies one table row."""
+    return " ".join(text.split())
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     r = Run.load()
     live = {u.name: poll(u) for u in r.units if u.status == RUNNING}
     print(f"run {r.run_id}   base {r.base[:8]}   {r.source}\n")
     if r.unresolvable_branch:
         print(f"WARNING: run branch {r.unresolvable_branch!r} does not resolve\n")
-    head = f"{'unit':10s} {'vendor':9s} {'model':14s} {'effort':7s} {'state':9s} {'herdr':9s} task"
-    print(head)
-    print("-" * len(head))
-    for u in r.units:
-        tail = u.task[:44]
-        if u.status == PENDING:
-            why = r.wait_reason(u)
+    headers = (
+        "unit",
+        "vendor",
+        "model",
+        "effort",
+        "state",
+        "herdr",
+        "commits",
+        "landed",
+        "task",
+        "note",
+    )
+    rows: list[tuple[str, ...]] = []
+    for unit in r.units:
+        tail = one_line(unit.task)[:44]
+        if unit.status == PENDING:
+            why = r.wait_reason(unit)
             if why:
                 # The wait is the interesting thing about a blocked unit -- its task is in the
                 # plan. Naming the kind of edge is the fix for a run that looked blocked for a
                 # reason that does not exist.
                 tail = f"[{why}]"
-        print(
-            f"{u.name:10s} {u.vendor:9s} {(u.model or '-'):14s} {(u.effort or '-'):7s} "
-            f"{u.status:9s} {live.get(u.name, '-'):9s} {tail}"
+        commits, is_landed = unit_commit_status(unit, r)
+        rows.append(
+            (
+                unit.name,
+                unit.vendor,
+                unit.model or "-",
+                unit.effort or "-",
+                unit.status,
+                live.get(unit.name, "-"),
+                commits,
+                is_landed,
+                tail,
+                one_line(unit.note),
+            )
         )
+    widths = [
+        max([len(headers[index]), *(len(row[index]) for row in rows)])
+        for index in range(len(headers) - 1)
+    ]
+
+    def format_row(values: Sequence[str]) -> str:
+        fixed = " ".join(value.ljust(widths[index]) for index, value in enumerate(values[:-1]))
+        return f"{fixed} {values[-1]}".rstrip()
+
+    head = format_row(headers)
+    print(head)
+    print("-" * len(head))
+    for row in rows:
+        print(format_row(row))
     return 0
 
 
@@ -1869,6 +1950,12 @@ def cmd_settle(args: argparse.Namespace) -> int:
         time.sleep(args.interval)
         second = settle_reading(running)
     for unit in running:
+        if (
+            has_delivery_warning(unit)
+            and r.unresolvable_branch is None
+            and produced_anything(unit, r)
+        ):
+            clear_delivery_warning(unit)
         a, b = first[unit.name], second[unit.name]
         if a in {"idle", "done"} and b in {"idle", "done"}:
             unit.status = DONE
@@ -2512,8 +2599,8 @@ def cmd_check(args: argparse.Namespace) -> int:
 
     Read-only: no writes, no merges, no launches. The record is one JSON file and the truth is git
     plus herdr, and the two can drift -- a session started by hand leaves a branch with no row; a
-    unit marked done saved nothing; a unit marked running finished while nobody was looking. Six
-    shapes of drift are reported, and finding any of them is the non-zero exit; ``adopt`` is the
+    unit marked done saved nothing; a unit marked running finished while nobody was looking. Each
+    shape of drift is reported, and finding any of them is the non-zero exit; ``adopt`` is the
     repair for the first one, and ``settle`` is the repair for the last -- it reads idle twice,
     ``interval`` seconds apart, and only marks the unit done when both readings agree.
     """
@@ -2532,6 +2619,11 @@ def cmd_check(args: argparse.Namespace) -> int:
     # so it is never matched against the list at all.
     agents = live_agents()
     for unit in r.units:
+        if branch_error is None and has_delivery_warning(unit) and not produced_anything(unit, r):
+            findings.append(
+                f"DELIVERY WARNING {unit.name} -- sent its task but was never observed starting, "
+                "and its branch has no commits"
+            )
         if unit.status not in (RUNNING, DONE):
             continue
         state = poll(unit, agents)

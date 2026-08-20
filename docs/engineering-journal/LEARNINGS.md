@@ -30,21 +30,30 @@ to resolve and commit there.
 **Evidence.** A real two-unit repository showed that the resolving commit moved only detached
 `HEAD`; the run branch stayed unchanged, and every later `land` refused while the directory existed.
 Deleting the directory by hand left its Git registration behind, so the next `git worktree add`
-failed on a missing-but-registered path. Regression coverage is in
-`tests/test_orchestrate_land_worktree.py`.
+failed on a missing-but-registered path. A later recovery test exposed two neighbouring failures:
+clearing the record pointer in `clean` hid that registration from `land`, while clearing the pointer
+only after worktree removal let a cleanup failure leave an already-published merge labelled as an
+unresolved conflict. Regression coverage is in `tests/test_orchestrate_land_worktree.py`.
 
 **Mechanism.** A detached worktree has no branch reference for `git commit` to advance. Its merge
 commit is useful evidence only when it has exactly the current run tip as first parent and a current
 unit tip as second parent. The filesystem directory and Git's worktree registration are also
-separate state; deleting one does not clear the other.
+separate state; deleting one does not clear the other. The conflict pointer has a third, narrower
+ownership boundary: it names unresolved merge work, so publication ends its job even when resource
+cleanup fails. Git's registration must therefore be inspected independently of that pointer.
 
 **Fix.** A rerun recognises only that exact clean merge shape, advances the run branch with
-`git update-ref <ref> <new> <expected>`, removes the worktree, and clears the record pointer. A
-missing retained directory triggers `git worktree prune --expire now` before the path is reused.
+`git update-ref <ref> <new> <expected>`, and clears the record pointer before attempting cleanup. A
+cleanup failure is carried to the final exit after every remaining unit has had its merge attempt.
+On retry, a clean exact retained merge is cleaned up as already published only when Git proves it is
+an ancestor of the run branch. Before creating the canonical land path, `land` checks Git's own
+worktree list and prunes a missing registration even when no record pointer remains.
 
 **Generalizable rule.** When work happens on detached `HEAD`, recovery is incomplete until a guarded
-operation publishes the verified commit to its owner reference. Treat a worktree's directory and
-registration as two lifecycle resources.
+operation publishes the verified commit to its owner reference. Clear semantic recovery state at
+the publication boundary, carry cleanup failure separately, and inspect each resource through its
+real owner: the run record for unresolved work, the filesystem for the directory, and Git for the
+registration.
 
 **Refs.** [[#resolved-detached-land-is-an-exact-merge]].
 

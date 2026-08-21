@@ -37,7 +37,10 @@ TEAM_AGENTS = ROOT / "plugins" / "team-execution" / "agents"
 SECURITY_REVIEWER = TEAM_AGENTS / "security-reviewer.md"
 ARCHITECTURE_REVIEWER = TEAM_AGENTS / "architecture-reviewer.md"
 DEVILS_ADVOCATE_REVIEWER = TEAM_AGENTS / "devils-advocate-reviewer.md"
-CODE_REVIEW_SKILL = ROOT / "plugins" / "saga" / "skills" / "code-review" / "SKILL.md"
+CODE_REVIEW_SKILL_ROOT = ROOT / "plugins" / "saga" / "skills" / "code-review"
+CODE_REVIEW_SKILL = CODE_REVIEW_SKILL_ROOT / "SKILL.md"
+CODE_REVIEW_REFERENCES = CODE_REVIEW_SKILL_ROOT / "references"
+BUILT_VS_PLANNED = CODE_REVIEW_REFERENCES / "built-vs-planned.md"
 WORK_GATE_REFERENCE = (
     ROOT / "plugins" / "saga" / "skills" / "work" / "references" / "test-and-gates.md"
 )
@@ -51,6 +54,7 @@ LIVE_POLICY_DOCS = (
     TEAM_SKILL,
     README,
     *sorted(TEAM_AGENTS.glob("*.md")),
+    *sorted(CODE_REVIEW_REFERENCES.glob("*.md")),
 )
 CYCLE_CAP_CONSUMERS = (
     CONSENSUS_PROTOCOL,
@@ -128,6 +132,16 @@ def test_live_team_execution_policy_is_only_a_pointer_to_roster_and_scorer() -> 
         assert "9.0" not in text, path
         assert "7.0" not in text, path
         assert "5.0" not in text, path
+        assert (
+            re.search(
+                r"\bP0/P1\b[^.]{0,120}\b(?:gate|blocks?|blocked|blocking)\b",
+                " ".join(text.split()),
+                re.IGNORECASE,
+            )
+            is None
+        ), path
+
+    assert BUILT_VS_PLANNED.read_text(encoding="utf-8").count("typed `outcome`") == 2
 
     criteria = REVIEW_CRITERIA.read_text(encoding="utf-8")
     protocol = CONSENSUS_PROTOCOL.read_text(encoding="utf-8")

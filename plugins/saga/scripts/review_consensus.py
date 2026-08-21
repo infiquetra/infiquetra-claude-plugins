@@ -206,6 +206,7 @@ class ReviewFinding:
 
     finding_id: str
     lens_id: str
+    dimension_id: str | None
     title: str
     severity: str
     file: str
@@ -217,7 +218,6 @@ class ReviewFinding:
     confidence: int
     evidence: tuple[str, ...]
     pre_existing: bool = False
-    dimension_id: str | None = None
     suggested_fix: str | None = None
     touched_paths: tuple[str, ...] = ()
     status: str = "active"
@@ -731,6 +731,15 @@ class ResidualSummary:
         return result
 
 
+def _is_fix_request_candidate(finding: ReviewFinding) -> bool:
+    """Return whether an unresolved finding is actionable by the repair loop."""
+    return (
+        finding.status == "active"
+        and not finding.pre_existing
+        and finding.autofix_class != "advisory"
+    )
+
+
 def _score_with_typed_findings(
     score: LensScore,
     findings: Iterable[ReviewFinding],
@@ -776,8 +785,8 @@ def _score_with_typed_findings(
         scoring_by_id[finding.finding_id] = FindingEvidence(
             finding_id=finding.finding_id,
             dimension_id=finding.dimension_id,
-            critical=(existing.critical if existing is not None else False)
-            or finding.severity == "P0",
+            critical=_is_fix_request_candidate(finding)
+            and (existing.critical if existing is not None else finding.severity == "P0"),
             resolved=resolved,
             priority=finding.severity,
             confidence=finding.confidence,
@@ -1051,13 +1060,7 @@ class RunnerDeliveryResolution:
 def consolidate_fix_requests(findings: Iterable[ReviewFinding]) -> tuple[FixRequest, ...]:
     """Consolidate actionable findings without joining disjoint worker paths."""
     candidates = sorted(
-        (
-            item
-            for item in findings
-            if item.status == "active"
-            and not item.pre_existing
-            and item.autofix_class != "advisory"
-        ),
+        (item for item in findings if _is_fix_request_candidate(item)),
         key=lambda item: (
             item.owner,
             item.autofix_class,

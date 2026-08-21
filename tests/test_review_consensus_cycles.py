@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
+from dataclasses import MISSING, fields
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -13,6 +14,9 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = ROOT / "plugins" / "saga" / "scripts" / "review_consensus.py"
+FINDINGS_SCHEMA_PATH = (
+    ROOT / "plugins" / "saga" / "skills" / "code-review" / "references" / "findings-schema.md"
+)
 
 
 def _load_module() -> ModuleType:
@@ -64,6 +68,7 @@ def _finding(
     autofix_class: str = "safe_auto",
     owner: str = "review-fixer",
     severity: str = "P1",
+    pre_existing: bool = False,
 ) -> Any:
     return CONSENSUS.ReviewFinding(
         finding_id=finding_id,
@@ -83,6 +88,7 @@ def _finding(
         requires_verification=True,
         confidence=100,
         evidence=(f"src/{lens_id}.py:10",),
+        pre_existing=pre_existing,
         suggested_fix="Apply the bounded repair and rerun this lens.",
     )
 
@@ -186,7 +192,7 @@ def test_critical_typed_finding_cannot_bypass_scoring_or_result_validation() -> 
     ):
         CONSENSUS.ReviewResult.from_dict(accepted_payload)
 
-    noncritical = _finding("correctness", "F-priority-metadata", severity="P1")
+    noncritical = _finding("correctness", "F-priority-metadata", severity="P0")
     noncritical_evidence = CONSENSUS.FindingEvidence(
         finding_id=noncritical.finding_id,
         dimension_id=noncritical.dimension_id,
@@ -210,6 +216,49 @@ def test_critical_typed_finding_cannot_bypass_scoring_or_result_validation() -> 
 
     assert metadata_result.outcome == "accepted"
     assert metadata_result.fix_requests
+    assert metadata_result.lens_results[0].score.findings[0].critical is False
+
+
+@pytest.mark.parametrize(
+    ("autofix_class", "pre_existing"),
+    (
+        pytest.param("safe_auto", True, id="pre-existing"),
+        pytest.param("advisory", False, id="advisory"),
+    ),
+)
+def test_non_gating_p0_findings_remain_metadata_on_passing_scores(
+    autofix_class: str,
+    pre_existing: bool,
+) -> None:
+    finding = _finding(
+        "correctness",
+        f"F-{autofix_class}",
+        autofix_class=autofix_class,
+        severity="P0",
+        pre_existing=pre_existing,
+    )
+    state = CONSENSUS.ReviewCycleState(("correctness",))
+
+    result = state.record_cycle(
+        "revision-1",
+        {"correctness": _score("correctness", 9.4)},
+        findings=(finding,),
+    )
+
+    assert result.outcome == "accepted"
+    assert result.fix_requests == ()
+    assert result.lens_results[0].score.findings[0].critical is False
+    assert result.lens_results[0].score.findings[0].priority == "P0"
+
+
+def test_review_finding_dimension_is_required_in_type_and_schema() -> None:
+    dimension = next(
+        field for field in fields(CONSENSUS.ReviewFinding) if field.name == "dimension_id"
+    )
+    schema = FINDINGS_SCHEMA_PATH.read_text(encoding="utf-8")
+
+    assert dimension.default is MISSING
+    assert "| `dimension_id` | yes |" in schema
 
 
 def test_three_failing_cycles_return_latest_revision_and_complete_residuals() -> None:

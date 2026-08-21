@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.139.0] - 2026-08-20
+
+### Added
+
+- **Code Review now owns the shared review-consensus contract.** A versioned fourteen-lens roster
+  defines applicability, dimensions, score anchors, and the only two acceptance thresholds. The new
+  consensus engine validates evidence-grounded scores, keeps accepted lenses across bounded repair
+  cycles, delta-checks them against the final revision, and emits revision-bound typed outcomes with
+  structured fix requests and residuals. The whole-diff external-reviewer seat remains advisory and
+  outside scoring.
+
+### Changed
+
+- **Work consumes Code Review's typed outcome instead of maintaining a second acceptance gate.**
+  `accepted` and `cycle_cap_best_available` may continue, while `repairs_requested` and
+  `review_incomplete` block; review freshness and independent scanner, test, deployment, and
+  built-versus-planned gates remain unchanged.
+
 ## [0.138.0] - 2026-08-17
 
 ### Added

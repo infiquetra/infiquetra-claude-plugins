@@ -38,7 +38,8 @@ python3 "$S" status                                # the table, with live herdr 
 python3 "$S" settle                                # idle sessions become done
 python3 "$S" expand --plan .orchestrate/next.json  # append units a finished phase named
 python3 "$S" review-result --file <result.json>     # persist the typed result and route repairs
-python3 "$S" collect                               # merge each finished unit's branch
+python3 "$S" land                                  # merge finished unit branches onto the run branch
+python3 "$S" collect                               # merge the run branch into the operator tree
 python3 "$S" clean --branches                      # close tabs, remove worktrees
 ```
 

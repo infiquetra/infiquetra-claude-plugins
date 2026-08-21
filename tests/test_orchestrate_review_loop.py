@@ -237,6 +237,32 @@ def test_a_missing_live_match_creates_a_replacement_work_worker(
     assert replacement.status == "pending"
 
 
+def test_repeated_routing_reuses_the_pending_replacement_for_the_same_fix(
+    orchestrate: ModuleType,
+) -> None:
+    controller = _controller(orchestrate)
+    original = _worker(
+        orchestrate,
+        "retired-api-builder",
+        "review-fixer",
+        "src/api",
+        live=False,
+    )
+    run = _run(orchestrate, original, controller)
+    raw = _result(
+        "repairs_requested",
+        _request("fix-new-route", "review-fixer", "src/api/new_route.py"),
+    )
+
+    routings = [orchestrate.route_review_result(run, raw, agents=[]) for _ in range(4)]
+
+    replacement = routings[0].replacements[0]
+    assert [routing.replacements for routing in routings] == [[replacement], [], [], []]
+    assert run.units == [original, controller, replacement]
+    assert [request["fix_id"] for request in replacement.fix_requests] == ["fix-new-route"]
+    assert run.eligible() == [replacement]
+
+
 def test_generated_replacement_with_a_code_review_path_never_becomes_a_controller(
     orchestrate: ModuleType,
 ) -> None:
@@ -546,6 +572,39 @@ def test_status_collapses_untrusted_review_fields_to_one_line(
     assert "src/file.py forged-status-row" in operator_lines[0]
 
 
+def test_status_preserves_the_complete_operator_action_line(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    fix_id = "fix-operator-action-with-a-long-stable-identity"
+    touched_paths = [
+        "plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py",
+        "tests/test_orchestrate_review_loop.py",
+        "plugins/orchestrate/README.md",
+    ]
+    run = _run(orchestrate, _controller(orchestrate))
+    run.operator_fix_requests = [
+        {
+            "owner": "human",
+            "fix_id": fix_id,
+            "touched_paths": touched_paths,
+        }
+    ]
+    run.save(tmp_path / ".orchestrate" / "run.json")
+    monkeypatch.chdir(tmp_path)
+
+    assert orchestrate.cmd_status(argparse.Namespace()) == 0
+    operator_lines = [
+        line for line in capsys.readouterr().out.splitlines() if line.startswith("OPERATOR ACTION:")
+    ]
+
+    assert operator_lines == [
+        f"OPERATOR ACTION: human owns fix {fix_id} for {', '.join(touched_paths)}"
+    ]
+
+
 def test_accepted_outcome_dispatches_nothing_and_adds_no_metadata_gate(
     orchestrate: ModuleType,
 ) -> None:
@@ -739,6 +798,84 @@ def test_land_names_the_operator_request_holding_review_resubmission(
     output = capsys.readouterr().out
 
     assert "Code Review resubmission held by operator-owned fix request: operator-open" in output
+
+
+def test_land_retries_a_failed_review_resubmission_after_the_repair_is_already_landed(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test")
+    _commit(repo, "base.txt")
+    base = _git_out(repo, "rev-parse", "HEAD")
+    _git(repo, "branch", "orch/review-run")
+    worktree = tmp_path / "repair-worker"
+    _git(
+        repo,
+        "worktree",
+        "add",
+        str(worktree),
+        "-b",
+        "orch/review-repair",
+        "orch/review-run",
+    )
+    _commit(worktree, "repair.txt")
+
+    worker = _worker(
+        orchestrate,
+        "builder",
+        "review-fixer",
+        "repair.txt",
+        live=False,
+    )
+    worker.branch = "orch/review-repair"
+    worker.worktree = str(worktree)
+    worker.fix_requests = [_request("fix-work", "review-fixer", "repair.txt")]
+    controller = _controller(orchestrate)
+    run = orchestrate.Run(
+        run_id="review-run",
+        source="test",
+        base=base,
+        branch="orch/review-run",
+        units=[worker, controller],
+        review_result=_result("repairs_requested"),
+        review_outcome="repairs_requested",
+        review_resubmit_pending=True,
+    )
+    run.save(repo / ".orchestrate" / "run.json")
+    monkeypatch.chdir(repo)
+    attempts: list[str] = []
+
+    def flaky_prompt(_unit: Any, _pane_id: str | None, text: str) -> None:
+        attempts.append(text)
+        if len(attempts) == 1:
+            raise SystemExit("controller prompt failed")
+
+    monkeypatch.setattr(orchestrate, "say", flaky_prompt)
+
+    assert orchestrate.cmd_land(argparse.Namespace(clean=False)) == 4
+    first_output = capsys.readouterr().out
+    landed_tip = _git_out(repo, "rev-parse", "orch/review-run")
+    failed = orchestrate.Run.load()
+    assert "REVIEW RESUBMIT FAILED: controller prompt failed" in first_output
+    assert failed.review_resubmit_pending is True
+    assert failed.unit("builder").fix_requests == []
+
+    assert orchestrate.cmd_land(argparse.Namespace(clean=False)) == 0
+    second_output = capsys.readouterr().out
+    retried = orchestrate.Run.load()
+    assert "resubmitted landed revision" in second_output
+    assert "landed on orch/review-run: nothing new" in second_output
+    assert _git_out(repo, "rev-parse", "orch/review-run") == landed_tip
+    assert len(attempts) == 2
+    assert all(landed_tip in prompt for prompt in attempts)
+    assert retried.review_resubmit_pending is False
+    assert retried.unit("code-review-controller").status == "running"
 
 
 def test_landed_work_repairs_resubmit_the_exact_revision_to_the_same_controller(

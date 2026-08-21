@@ -1,284 +1,241 @@
 # Consensus Protocol — team-execution
 
-This file defines the review-revise cycle used in Step B3 of the orchestration protocol.
-Read this before running the review cycle to understand scoring, fix routing, and escalation.
+This file defines Team Execution's transport and worker-coordination role during review. Saga Code
+Review owns the roster, scoring policy, transition state, and final result. Team Execution loads and
+executes that policy; it never recomputes or restates it.
+
+Read `reviewer-registry.md` for roster-driven selection and `review-criteria.md` for the canonical
+policy pointer before starting this protocol.
 
 ---
 
-## Overview
+## Resolve the Canonical Review Runtime
 
-After implementation is complete (Step B2), the **Team Lead** (the main orchestrator agent, Claude/Gemini) coordinates a structured review cycle with all spawned **Reviewers** (the specialized reviewer subagents).
+Before selecting or spawning a reviewer, run the packaged settlement preflight:
 
-The goal is a mutual consensus agreement between the Team Lead and the Reviewers:
-1. **Reviewers** evaluate the implementation and score their dimensions per their own agent prompt's rubric. A reviewer whose prompt defines a dimension with a repo-state precondition (currently: architecture-reviewer's Architecture Documentation Coverage) excludes that dimension when the precondition is absent, rather than scoring it with a fabricated default — see "Non-applicable dimensions". Every other reviewer's dimensions are always-applicable by their own prompt's design; this exclusion mechanism only activates for a reviewer whose prompt defines it. Each reviewer must achieve an overall score of **>= 9.0/10** to signal acceptance.
-2. **Team Lead** reviews each reviewer's assessment, verifies that all requested fixes are soundly implemented, and provides the final lead consensus sign-off.
-3. The **Human User (Client/Stakeholder)** is **not** part of this consensus loop or the review-revise iterations. They are kept informed of progress and only alerted for severe escalations.
-
-Maximum iterations: **3**. After 3 cycles, proceed with the best available version regardless of scores.
-
----
-
-## Cycle Structure
-
-```
-For iteration 1..3:
-
-  B3a. Spawn all reviewers IN PARALLEL as NAMED, persistent teammates (using Agent `name` + `run_in_background`). The Team Lead MUST record each reviewer's handle/name for later re-engagement (no anonymous one-shot spawns). Provide each with:
-        - Full plan context (what was being built)
-        - git diff of all changes made — above the SKILL.md Step B1 threshold, an `artifact-pointer` block (see `artifact-pointers.md`) instead of the inlined diff
-        - Intended outcome (what success looks like)
-        - Path to review-criteria.md for scoring rubrics
-
-        At this fan-out boundary, renew the trusted Claude session through
-        `scripts/lease_protocol.py renew`. Saga's `PreToolUse` lifecycle hook then reserves each
-        exact reviewer immediately before its Agent provider call. Do not create a second
-        team-execution reservation; see `lease-protocol.md`.
-
-        Before any Agent call, the Team Lead runs the packaged `dispatch_settlement_adapter.py
-        preflight`; it resolves independently installed Saga and fails loud before the first Agent
-        call if unavailable. The adapter writes one canonical dispatch-settlement manifest for the
-        complete reviewer roster and appends each reviewer's spawn attempt immediately before that
-        reviewer's Agent call, using the stable reviewer idempotency key. The manifest and attempts
-        are `run_fact.v1` facts written through Saga's resolved canonical CLI; no mutable queue or
-        second ledger is allowed.
-
-  B3b. Each reviewer:
-        - Scores each APPLICABLE dimension (0-10) per its own prompt; for a reviewer whose
-          prompt defines a precondition-bearing dimension (currently only architecture-reviewer),
-          a dimension whose repo-state precondition is absent is EXCLUDED, not scored with a
-          fabricated default — see "Non-applicable dimensions" below. A reviewer with no
-          precondition-bearing dimension scores all of its dimensions; "applicable" is a no-op
-          restriction for it.
-        - Produces overall score (average of the applicable dimensions)
-        - Issues verdict: ACCEPT (>= 9.0) or NEEDS REVISION (< 9.0)
-        - If NEEDS REVISION: provides specific fix requests
-
-  B3c. Collect and display scores:
-        Devil's Advocate:      8.7/10 — NEEDS REVISION (2 fixes)
-        Security Reviewer:     9.2/10 — ACCEPT
-        Architecture Reviewer: 9.4/10 — ACCEPT
-        [Optional reviewers if spawned...]
-        External Advisory Seat: report-only — PARTICIPATED/HALTED/ABSENT (excluded from gate)
-        Claude-vs-external convergence: converged / Claude-only / external-only / conflicting
-
-        Settle every attempted reviewer with `dispatch_settlement_adapter.py settle --kind reviewer`
-        from a persisted structured score result. The adapter validates reviewer identity, score,
-        non-empty dimension scores, and findings, materializes `dispatch.artifact.v1`, and submits an
-        actual-file evidence descriptor to Saga. Missing/empty output, success prose, or an artifact pointer
-        without that expected contract is `silent-no-op`. Run the casualty report before B3d;
-        `halt_required=true` blocks consensus, and retry-eligible units are claimed from the derived
-        DLQ at the next cycle.
-
-  B3d. If ALL gated Claude reviewer scores >= 9.0 → consensus reached → proceed to Step B4
-
-  B3e. Else:
-        - Consolidate fix requests from ALL reviewers scoring < 9.0
-        - Deduplicate overlapping fixes
-        - Route consolidated list to the worker(s) responsible for the affected code
-        - Workers implement fixes
-        - Re-run B3a..B3d for ONLY the reviewers that scored < 9.0:
-          - RE-ENGAGE the same named reviewer via SendMessage (reusing the existing teammate)
-          - Do NOT spawn a fresh reviewer. A reviewer who already reviewed once is never re-spawned from cold — they must be messaged to preserve context and residency.
-          - (Reviewers who already ACCEPTED do not re-review)
-
-After 3 iterations: proceed with best version, document final scores in completion report
+```bash
+TEAM_SETTLEMENT="${CLAUDE_PLUGIN_ROOT:-plugins/team-execution}/skills/team-execution/scripts/dispatch_settlement_adapter.py"
+SAGA_PREFLIGHT_JSON="$(python3 "$TEAM_SETTLEMENT" preflight)"
 ```
 
----
+The returned JSON names the resolved Saga root. Load these files below that root:
 
-## Scoring Threshold
+- `references/lens-roster.json` — the only roster and policy declaration.
+- `scripts/review_consensus.py` — the shared scorer and review transition engine.
 
-| Score | Meaning |
-|-------|---------|
-| >= 9.0 | ACCEPT — reviewer approves this dimension/overall |
-| 7.0 – 8.9 | NEEDS REVISION — issues exist but not blocking if isolated |
-| < 7.0 | BLOCKING — dimension must be fixed before proceeding |
-
-**Pass threshold**: Overall score (average of applicable dimensions) >= 9.0 AND no individual
-*applicable* dimension < 7.0. An EXCLUDED dimension carries no score and cannot trigger this
-rule — see "Non-applicable dimensions" below.
-
-If any applicable dimension scores < 7.0, that reviewer MUST be re-run in the next cycle regardless of overall score.
+Fail before the first reviewer call when either file is absent or has an unknown schema. Do not use
+the quarantined `scripts/consensus_advisory.py` as a fallback.
 
 ---
 
-## Non-applicable dimensions (R7/R8/R9)
+## Lens Selection and Agent Residency
 
-This mechanism activates only for a reviewer whose own agent prompt defines a
-precondition-bearing dimension — currently `architecture-reviewer` only (its Architecture
-Documentation Coverage dimension). The other reviewer prompts in this roster define all of
-their dimensions as always-applicable and carry no exclusion instruction; extending this
-mechanism to a future reviewer requires updating that reviewer's own prompt, not just this
-document.
+Run the selection procedure in `reviewer-registry.md` against the loaded roster. The selected lens
+identifier is the dispatch and settlement unit identifier. Its
+`implementations.team_execution.agent` value chooses the resident agent that performs the review.
 
-A dimension whose repo-state precondition is absent (e.g. no architecture-decision docs to
-check for Architecture Documentation Coverage) is EXCLUDED from that reviewer's overall, not
-scored with a fabricated default. Exclusion is dimension-granular: a reviewer whose entire
-lens is non-applicable is excluded WHOLE from the consensus denominator, with a logged cause.
-The cause vocabulary is shared with the Layer A `execution-spec.md` contract:
-`static-non-applicable` (R9) — the two surfaces name the same kind of absence even though
-they run on distinct paths (this reference's dimensions are precondition-bearing and
-reconciled by prompt; Layer A's verifiers are homogeneous and reconciled by generated code).
+Several lenses may map to the same agent. Spawn one named resident for that agent and re-engage it
+for each mapped lens, while keeping separate structured results and evidence for each lens. Never
+collapse lens dimensions into an agent-wide score.
 
-A static exclusion is never a failure signal: it does not lower the overall score, does not
-count against the "no applicable dimension < 7.0" rule, and does not trigger the re-review
-path below — an excluded dimension/reviewer has nothing further to say and is not re-run in
-subsequent cycles.
-
-Example: a repo with no `docs/adrs/` and no observable architectural patterns scores the 4
-precondition-independent dimensions and excludes Architecture Documentation Coverage; the
-overall is the average of those 4, named as such ("avg of 4 applicable") rather than folding
-a fabricated N/A default into a 5-dimension average.
-
-## External advisory seat (always excluded)
-
-The external advisory seat is a report-only participant. It is never a base reviewer, never an
-optional Claude reviewer, and never part of the consensus denominator. It is an always-excluded
-external advisory seat: its score, verdict, halt, absence, or divergent recommendation cannot move
-the `>= 9.0` pass threshold, cannot trigger the `< 7.0` blocking-stop rule, and cannot add itself to
-the re-review set.
-
-When it participates, the Team Lead attaches a Claude-vs-external convergence report to the verdict
-artifact. The first version is key/fingerprint based and has exactly four buckets:
-
-| Bucket | Meaning |
-| --- | --- |
-| `converged` | Claude and the external seat reported the same keyed finding. |
-| `Claude-only` | The Claude panel reported the finding and the external seat did not. |
-| `external-only` | The external seat reported the finding and the Claude panel did not. |
-| `conflicting` | Both reported the same key but disagreed on summary, severity, or recommendation. |
-
-If the external engine is unavailable, fails preflight, or halts, record the advisory seat as absent
-or halted and run the Claude-only consensus flow unchanged. Absence is not a panel failure.
+For every conditional lens, retain the required one-line selection reason with the review record.
+Keyword matching alone is not selection evidence.
 
 ---
 
-## Re-review Scoping
+## Review Execution
 
-To minimize cost, only re-run reviewers that scored < 9.0 (an EXCLUDED dimension/reviewer has
-no score and is never re-run on that basis):
+For the initial pass, give each mapped agent:
 
-```
-Cycle 1 scores:
-  Devils Advocate:      8.5 → NEEDS REVISION
-  Security:             9.3 → ACCEPT
-  Architecture:         8.2 → NEEDS REVISION
-  Infra:                9.1 → ACCEPT
+- the selected lens identifier;
+- that lens's canonical dimensions and anchors from the roster;
+- the plan and intended outcome;
+- the complete reviewed diff, using `artifact-pointers.md` when pointerization is required;
+- the revision being reviewed; and
+- the required structured-result fields.
 
-Cycle 2: Only re-run Devils Advocate + Architecture
-  (Security and Infra already accepted — no need to re-review)
-```
-
----
-
-## Fix Consolidation
-
-When multiple reviewers flag the same file/area, consolidate before routing to workers:
-
-1. Group fix requests by file
-2. Within each file, group by section
-3. Deduplicate identical fixes
-4. Resolve conflicts (if reviewers disagree, use judgment or ask user)
-5. Send consolidated list to worker(s) in one message
-
----
-
-## Score Display Format
-
-Display scores in this format after each review cycle:
-
-```
-## Review Cycle [N] Results
-
-| Reviewer | Score | Verdict | Issues |
-|----------|-------|---------|--------|
-| Devil's Advocate | 8.7/10 | NEEDS REVISION | 2 fixes |
-| Security Reviewer | 9.2/10 | ACCEPT | — |
-| Architecture Reviewer | 9.4/10 | ACCEPT | — |
-| Infra Reviewer | 8.0/10 | NEEDS REVISION | 3 fixes |
-
-Consensus: NOT REACHED — proceeding to fixes
-```
-
----
-
-## After 3 Cycles
-
-If consensus is not reached after 3 iterations:
-
-1. Proceed to Step B4 (Completion) with the current best version
-2. Document final scores in the completion report:
-   ```
-   Note: Consensus not reached after 3 review cycles.
-   Final scores: DA=8.8, Security=9.4, Architecture=9.1, Infra=8.3
-   Unresolved issues: [list remaining fix requests]
-   ```
-3. Flag to user: "3-cycle cap reached. The following issues were not resolved and may need follow-up."
-
----
-
-## Reviewer Context Template
-
-When spawning reviewers in Step B3a (Initial Pass, Iteration 1), provide this context:
-
-`````
-You are reviewing the implementation of the following plan:
-
-## Plan Summary
-[1-3 sentence description of what was being built]
-
-## Intended Outcome
-[What success looks like — what should work after this change]
-
-## Changes Made
-Below the SKILL.md Step B1 threshold: inline the git diff or summary of files changed, as today.
-Above threshold: an `artifact-pointer` block in place of the inlined diff — dereference it per
-`references/artifact-pointers.md` (full read, no per-lens scoping) before scoring. The block is the
-JSON emitted by `artifact_pointer.py snapshot` (do not hand-construct it — the `base` field must be a
-real base-tree OID or the deref fails):
+Below the SKILL.md Step B1 threshold, inline the reviewed diff. Above that threshold, pass the
+producer-generated pointer in place of the diff and require the receiver to follow
+`artifact-pointers.md`:
 
 ```artifact-pointer
 {"kind":"diff","locator":"refs/team-execution/snapshots/<run-id>/<epoch>","hash":"<snapshot-tree-oid>","epoch":"<epoch>","deref":"git diff <base-tree> <snapshot-tree>","base":"<base-tree-oid>"}
 ```
 
-## Review Instructions
-Score the implementation against your 5 dimensions from:
-team-execution/skills/team-execution/references/review-criteria.md
+The returned result must identify the lens settlement unit, the mapped agent, the reviewed revision,
+every applicable dimension score, every non-applicable dimension cause, the reported overall, and
+the findings. Findings retain priority and confidence as metadata.
 
-Produce your score table, verdict, and fix requests (if NEEDS REVISION).
-`````
+Use the shared `static-non-applicable` cause vocabulary from the
+[architecture reviewer prompt](../../../agents/architecture-reviewer.md) when a roster precondition is
+absent. Such an exclusion is never a failure signal and does not trigger the re-review path.
+It is never re-run on that basis; the remaining applicable dimensions still go to the shared scorer.
+The former `execution-spec.md` pointer was stale: that file does not define this vocabulary, so the
+linked reviewer prompt above is the authoritative source.
 
-When re-engaging reviewers in Step B3e (Re-engagement, Iteration N >= 2), send a message carrying only the delta context to preserve conversation history and residency:
+Before any reviewer call, create one settlement manifest containing every selected lens identifier.
+Append the stable spawn attempt immediately before that reviewer's Agent call, using the selected
+lens identifier as the settlement unit:
 
-`````
-The requested fixes have been implemented. Review the specific delta/changes made since your last review pass:
+```text
+for each selected lens, append its spawn immediately before that
+        reviewer's Agent call
+```
 
-## Implemented Fixes
-[Description of specific fixes made in response to your prior fix requests]
+```bash
+python3 "$TEAM_SETTLEMENT" manifest --kind reviewer --repo-root "$REPO_ROOT" \
+  --subplot-id "$SAGA_ID" --dispatch-id "$DISPATCH_ID" \
+  --roster-json "$SELECTED_LENS_IDS_JSON" --at "$NOW"
+python3 "$TEAM_SETTLEMENT" saga -- --repo-root "$REPO_ROOT" --subplot-id "$SAGA_ID" spawn \
+  --dispatch-id "$DISPATCH_ID" --unit-id "$LENS_ID" --attempt "$ATTEMPT" \
+  --idempotency-key "team-execution:reviewer:$LENS_ID" --at "$NOW"
+```
+
+Store each returned result as JSON, with its `reviewer` field equal to the lens settlement unit, and
+settle it through the existing adapter:
+
+```bash
+python3 "$TEAM_SETTLEMENT" settle --kind reviewer --repo-root "$REPO_ROOT" \
+  --subplot-id "$SAGA_ID" --dispatch-id "$DISPATCH_ID" \
+  --unit-id "$LENS_ID" --attempt "$ATTEMPT" --at "$NOW" \
+  --source-json ".claude/team-execution/reviews/$LENS_ID.json" \
+  --receipt-path ".claude/team-execution/settlement/$DISPATCH_ID-$LENS_ID.json"
+```
+
+The settlement adapter remains evidence-based. It validates identity, a bounded reported score,
+non-empty dimension scores, and a findings list before materializing `dispatch.artifact.v1`.
+Returned success prose, an artifact pointer presented as the result, or missing structured evidence
+settles as `silent-no-op`; it never becomes a review score.
+
+Run the casualty report before scoring. A casualty halt remains an independent operational gate.
+Claim retry-eligible units through Saga's derived dead-letter view at the next review boundary.
+
+---
+
+## Invoke the Shared Scorer
+
+Load the resolved `review_consensus.py` module and call its public U5 API. For every settled lens
+result:
+
+1. Construct `FindingEvidence` values from the recorded findings.
+2. Call `score_lens_review` with the lens identifier, applicable dimension map,
+   non-applicable-dimension causes, reported overall, and findings.
+3. Collect the returned `LensScore` without replacing its derived fields with reviewer prose.
+4. Call `evaluate_review_readiness` with all selected lens scores and the independently authoritative
+   gates that apply.
+
+The scorer loads the policy from the roster. Team Execution must not calculate an overall, compare a
+score to a local cutoff, trust a reviewer verdict, or use finding priority or confidence as another
+acceptance gate. A contradictory reported overall or finding-to-dimension record is invalid evidence,
+not a result to repair locally.
+
+Scanner, test, deployment, built-versus-planned, casualty, and operational-safety gates remain
+separate inputs. Passing review does not bypass them, and their status never changes a lens score.
+
+---
+
+## Repair and Re-engagement
+
+When the shared result requests repairs:
+
+1. Consolidate fix requests by touched path and section.
+2. Merge duplicates by the canonical finding fingerprint while preserving cross-reviewer agreement.
+3. Route each structured request to the responsible worker. Finding priority may order this work but
+   cannot change review acceptance.
+4. After repairs land, re-engage only the resident agents for the failing lens identifiers. Send the
+   delta since each lens's reviewed revision instead of spawning a fresh agent.
+5. Leave accepted lenses with the revision they actually reviewed; the Code Review transition engine
+   owns their later delta-check.
+
+Do not pause or terminate review solely because a dimension crosses a reviewer-local severity band.
+Urgent evidence is routed first, while the canonical scorer and the independent safety gates retain
+their separate authority.
+
+**Cycle-cap termination:** when the transition engine returns `cycle_cap_best_available`, stop review
+attempts, proceed with its named best-available revision, and report every residual score and fix.
+
+Delivery that remains missing after bounded retry yields the transition engine's incomplete-review
+outcome without fabricating evidence or consuming a scoring transition.
+
+---
+
+## External Advisory Seat (Non-Scoring)
+
+Read the external seat's defaults from the roster. The seat reviews the whole diff and may contribute
+new findings to Code Review adjudication, but its opinion is never passed to `score_lens_review` or
+`evaluate_review_readiness` as a scoring lens.
+
+When present, display `External Advisory Seat: report-only` and attach a key/fingerprint based
+convergence report with these buckets:
+
+- `converged`
+- `Claude-only`
+- `external-only`
+- `conflicting`
+
+When absent, halted, or unavailable, record that state and continue with the selected scoring lenses.
+Absence is not a panel failure. The quarantined legacy helper may still characterize convergence
+rendering in tests, but it is not a production consensus path.
+
+---
+
+## Result Display
+
+After each scoring transition, display the scorer's derived values and evidence without creating a
+second verdict:
+
+```text
+Review transition: <outcome>
+Revision: <reviewed revision>
+Lens: <lens identifier>
+Mapped agent: <Team Execution agent>
+Derived overall: <value from LensScore>
+Failing dimensions: <identifiers from LensScore>
+Fix requests: <structured identifiers>
+Independent gates: <unchanged gate results>
+```
+
+The typed Code Review outcome is the decision field. Reviewer prose is supporting evidence only.
+
+---
+
+## Context Templates
+
+Initial review message:
+
+````text
+Review the implementation for lens <lens-id> at revision <revision>.
+
+Use only the dimensions and anchors supplied from the canonical Saga roster. Return the structured
+dimension evidence and findings requested by the Team Execution settlement contract. Do not decide
+whether the overall review proceeds; Saga's scorer owns that decision.
+
+Plan: <summary and intended outcome>
+Changes: <inline diff below the SKILL.md Step B1 threshold, otherwise this artifact pointer>
+
+```artifact-pointer
+{"kind":"diff","locator":"refs/team-execution/snapshots/<run-id>/<epoch>","hash":"<snapshot-tree-oid>","epoch":"<epoch>","deref":"git diff <base-tree> <snapshot-tree>","base":"<base-tree-oid>"}
+```
+````
+
+Re-engagement message:
+
+````text
+Re-evaluate lens <lens-id> at revision <revision> after the requested repairs.
+
+Review this delta against your prior revision and return a new structured lens result. Preserve
+unresolved finding identifiers and record the disposition of resolved requests.
+
+Implemented fixes: <summary>
 
 ## Changes Made (Delta Only)
-Below threshold: inline a git diff showing only the changes made since your last pass, NOT the full
-diff. Above threshold: an UPDATED `artifact-pointer` block (epoch incremented from your prior pass)
-in place of the inlined delta — dereference it per `references/artifact-pointers.md`.
+Below the SKILL.md Step B1 threshold, inline only the delta since the prior review. Above the
+threshold, pass an UPDATED `artifact-pointer` block with its epoch incremented from the prior pass.
 
 ```artifact-pointer
 {"kind":"diff","locator":"refs/team-execution/snapshots/<run-id>/<epoch+1>","hash":"<snapshot-tree-oid>","epoch":"<epoch+1>","deref":"git diff <base-tree> <snapshot-tree>","base":"<base-tree-oid>"}
 ```
+````
 
-## Review Instructions
-Re-evaluate the implementation, focusing on whether your previous fix requests have been satisfied. Update your scores, verdict, and remaining issues.
-`````
-
----
-
-## Escalation
-
-If a reviewer scores a dimension < 5.0 (severe), immediately:
-
-1. Flag to user (do not wait for cycle to complete)
-2. Pause other reviewers if the severe issue would affect their review scope
-3. Route the fix to the responsible worker with high priority
-4. Resume review cycle after fix is implemented
-
-A score < 5.0 on any security or auth dimension is treated as a **blocking stop** — no
-completion until that dimension reaches >= 7.0.
+The andon-cord remains available for fabricated evidence, unsafe mutation, or a wrong-direction
+build. It is independent of numeric review acceptance and transition termination.

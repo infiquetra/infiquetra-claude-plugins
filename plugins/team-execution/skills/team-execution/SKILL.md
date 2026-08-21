@@ -123,15 +123,13 @@ Read:
 - `team-execution/skills/team-execution/references/review-criteria.md`
 - `team-execution/skills/team-execution/references/consensus-protocol.md`
 
-Base reviewers always included:
+Resolve Saga as described by the reviewer registry and load its canonical
+`references/lens-roster.json`. Select its always-on lenses and judge conditional lenses against the
+actual change, recording the required one-line reason. For each selected lens, use only the roster's
+`implementations.team_execution` mapping. Do not maintain a base-reviewer list, optional-reviewer
+keyword table, dimensions, anchors, or acceptance rules in this skill.
 
-- `devils-advocate-reviewer`
-- `security-reviewer`
-- `architecture-reviewer`
-
-Optional reviewers are suggested from plan and repo signals.
-
-Reviewer non-consensus blocks validators unless the user explicitly overrides.
+A review result that still requires work blocks validators unless the user explicitly overrides.
 
 ---
 
@@ -244,11 +242,9 @@ skills/plan/SKILL.md`). -->
 
 
 ### Reviewers
-| Agent | Role | Required | Selection Reason |
-|-------|------|----------|------------------|
-| `devils-advocate-reviewer` | Devil's Advocate Reviewer | yes | Base reviewer |
-| `security-reviewer` | Security Reviewer | yes | Base reviewer |
-| `architecture-reviewer` | Architecture Reviewer | yes | Base reviewer |
+| Lens | Mapped Agent | Required | Selection Reason |
+|------|--------------|----------|------------------|
+| `<lens-id from canonical roster>` | `<implementations.team_execution.agent>` | yes/no | `<always-on or recorded conditional reason>` |
 
 ### Validators
 | Agent | Group | Required | Selection Reason | Blocking |
@@ -256,8 +252,8 @@ skills/plan/SKILL.md`). -->
 | `security-scanner` | Scanner | yes/no | [Why selected] | hard-fail blocks automation |
 
 ### Execution Gates
-- Reviewer consensus threshold: >= 9.0/10 from every reviewer.
-- Reviewer non-consensus blocks validators unless the user explicitly overrides.
+- Saga's shared scorer evaluates every selected lens using the canonical roster.
+- A review result that requires more work blocks validators unless the user explicitly overrides.
 - Scanners run before PR/CI/merge/nonprod coordination.
 - Tester hard-fail blocks completion.
 - Maximum 3 remediation loops before escalation.
@@ -400,9 +396,8 @@ Workers execute approved tasks. Coordinate dependencies, keep work scoped to the
   `andon_halt` into the shared mid-run adjustment envelope (`.saga/adjustment-envelope.json`) via
   `adjustment_envelope.raise_andon(...)`. At the next wave/tick boundary the coordinator polls the
   envelope and, on a raised andon, **does not dispatch the next wave** and writes an operator-surface
-  HALT record. This is an additional, orthogonal halt path — it does **not** replace or weaken the
-  3-cycle consensus cap or the 3-loop remediation cap (an andon and an iteration-cap
-  "proceed-with-best-available" are distinct, coexisting outcomes). Full protocol in
+  HALT record. This is an additional, orthogonal halt path — it does **not** replace or weaken Code
+  Review's transition termination or the validator remediation cap. Full protocol in
   `team-execution/skills/team-execution/references/andon-cord.md`.
 
 Each worker writes a provenance manifest at segment/unit exit — see
@@ -483,11 +478,16 @@ python3 "$TEAM_SETTLEMENT" saga -- --repo-root "$REPO_ROOT" --subplot-id "$SAGA_
 HALT when `halt_required=true`. At the next review boundary, use `saga -- ... claim-retry` before new
 reviewer work; the idempotency key remains stable.
 
-- All confirmed reviewers score the implementation.
-- Consensus requires overall score >= 9.0/10 and no dimension < 7.0.
-- Security/auth/secrets dimension < 5.0 is a blocking stop.
-- Reviewer non-consensus blocks validators unless the user explicitly overrides.
-- Maximum 3 review cycles.
+Load `references/lens-roster.json` and `scripts/review_consensus.py` from the Saga root returned by
+the settlement preflight. For each settled lens result, construct the scorer's `FindingEvidence`,
+call `score_lens_review`, and pass the resulting `LensScore` values plus independent gates to
+`evaluate_review_readiness`. Never calculate an overall, apply a cutoff, or trust a reviewer verdict
+inside Team Execution. Finding priority and confidence are repair metadata only.
+
+- Every selected lens returns structured evidence from its roster-mapped agent.
+- Missing, empty, prose-only, and contradictory evidence is rejected rather than scored.
+- A result that requests repairs blocks validators unless the user explicitly overrides.
+- Review transition termination follows the shared engine and `consensus-protocol.md`.
 
 ---
 

@@ -1,20 +1,22 @@
 # Validator Execution Order - team-execution
 
-Validators run after implementation and reviewer consensus.
+Validators run after implementation and a Code Review transition that permits progression.
 
 ---
 
 ## Phase B Order
 
 1. Workers complete changes.
-2. Reviewers reach consensus.
+2. Team Execution collects reviewer evidence and invokes Saga's shared review scorer and transition
+   engine.
 3. Scanners run against local artifacts and code.
 4. PR/CI/merge/nonprod coordination happens only if scanner gates pass.
 5. Testers validate deployed nonprod results.
 6. Monitors verify CI and runtime signals.
 7. Completion reports evidence and residual risk.
 
-Reviewer non-consensus blocks validators unless the user explicitly overrides.
+A nonterminal review result blocks validators unless the user explicitly overrides. Team Execution
+does not infer that state from reviewer prose or a private cutoff.
 
 ---
 

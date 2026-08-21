@@ -11,7 +11,7 @@ the operator how to split it, and run the pieces across herdr agent sessions.
 Each unit gets its own git worktree and branch, so sessions cannot overwrite each other. Each unit
 can invoke any saga capability (`/plan`, `/brainstorm`, `/doc-review`, `/work`, `/code-review`,
 `/qa`, `/investigate`, …) or just take a plain prompt. Any agent configured on this machine can run
-any unit.
+any unit. Code Review is one top-level controller unit, not one Orchestrate unit per lens or reviewer.
 
 ## How to use it
 
@@ -37,7 +37,9 @@ python3 "$S" go                                    # launch every eligible unit
 python3 "$S" status                                # the table, with live herdr state
 python3 "$S" settle                                # idle sessions become done
 python3 "$S" expand --plan .orchestrate/next.json  # append units a finished phase named
-python3 "$S" collect                               # merge each finished unit's branch
+python3 "$S" review-result --file <result.json>     # persist the typed result and route repairs
+python3 "$S" land                                  # merge finished unit branches onto the run branch
+python3 "$S" collect                               # merge the run branch into the operator tree
 python3 "$S" clean --branches                      # close tabs, remove worktrees
 ```
 
@@ -71,11 +73,27 @@ which saga reads and skips the question. Keyed by stage (`ideate`, `brainstorm`,
 `doc-review`, `code-review`) with an `intent` of `none`, `offload`, `second-opinion` or
 `external-only`, plus a tier `model` and `effort`.
 
+**Code Review has one controller and owns acceptance.** Its plan row declares
+`role: "review-controller"`; `start` and `expand` refuse a second. Work rows that may receive repairs
+declare `role: "review-fixer"` or `role: "downstream-resolver"` and repository-relative `paths`.
+When the controller emits its typed result, run `review-result --file <path>`. Orchestrate first
+stores the complete UTF-8 string verbatim, then reads only its routing envelope: outcome and the fix
+request identity, owner role, and touched paths. It never imports the scorer or makes a second
+acceptance decision.
+
+An overlapping live Work worker is told to merge the current run branch, then receives the request in
+its existing session. Otherwise a replacement inherits the matching role's approved vendor and tier
+and launches through `go`. `human` and `release` requests are printed and retained as operator
+actions and never become Work units. `clean --merged` keeps every worker carrying an outstanding
+request; once all Work repairs land, `land` resubmits the landed revision through the same controller.
+Operator-owned requests prevent that resubmission.
+
 ## State
 
-One file, `.orchestrate/run.json`: run id, source, base commit, and per unit its name, vendor,
-model, effort, task, dependencies, worktree, branch, tab, herdr agent name, and status. If it is
-wrong, delete it — `herdr agent list` is the real truth.
+One file, `.orchestrate/run.json`: run id, source, base commit, the verbatim review result and routing
+state, and per unit its name, vendor, model, effort, task, role, owned paths, outstanding fix requests,
+dependencies, worktree, branch, tab, Herdr agent name, and status. If session state is wrong,
+`herdr agent list` is the real truth.
 
 `start` adds `.orchestrate/` to the driven repository's local `.git/info/exclude`, preserving every
 existing rule and never duplicating its own. The run record and task material therefore stay local

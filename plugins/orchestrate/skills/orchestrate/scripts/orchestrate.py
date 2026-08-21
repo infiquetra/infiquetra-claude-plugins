@@ -272,6 +272,14 @@ SAGA_SYNTAX: dict[str, str] = {
 
 PENDING, RUNNING, DONE, FAILED = "pending", "running", "done", "failed"
 
+REVIEW_CONTROLLER_ROLE = "review-controller"
+WORK_FIX_ROLES = frozenset({"review-fixer", "downstream-resolver"})
+OPERATOR_FIX_ROLES = frozenset({"human", "release"})
+REVIEW_RESULT_SCHEMA = "review_result.v1"
+REVIEW_OUTCOMES = frozenset(
+    {"accepted", "repairs_requested", "cycle_cap_best_available", "review_incomplete"}
+)
+
 
 @dataclass
 class Unit:
@@ -339,6 +347,22 @@ class Unit:
     rather than guessed. This plugin does not compare branches for overlapping paths to work it out:
     that is real work, wrong in both directions, and it decides something the person who wrote the
     phase already knows."""
+    role: str | None = None
+    """The unit's review-loop role, when it participates in that loop.
+
+    ``review-controller`` identifies the one top-level Code Review invocation. Work workers use
+    ``review-fixer`` or ``downstream-resolver`` so an opaque result can be routed without treating a
+    unit name as policy. Older run records carry no role and continue to load unchanged."""
+    paths: list[str] = field(default_factory=list)
+    """Repository paths this Work worker owns for review-fix routing.
+
+    A directory path owns its descendants. Routing requires both path overlap and the matching
+    ``role``; neither a familiar unit name nor a vendor choice substitutes for ownership."""
+    fix_requests: list[dict[str, Any]] = field(default_factory=list)
+    """Outstanding routing-only fix requests assigned to this Work worker.
+
+    The complete typed result remains an opaque string on ``Run``. These are only the request fields
+    Orchestrate is allowed to act on, retained until the worker's repair lands."""
     after: list[str] = field(default_factory=list)
     serialize: list[str] = field(default_factory=list)
     """Wait for these units to finish, without claiming anything about needing their output.
@@ -368,6 +392,19 @@ class Unit:
     ``name`` -- which is the plan's identity and the dependency key, and never changes."""
     status: str = PENDING
     note: str = ""
+
+
+@dataclass
+class ReviewRouting:
+    """Routing actions extracted from an otherwise opaque typed review result."""
+
+    outcome: str
+    run_branch: str = ""
+    work_requests: int = 0
+    dispatches: list[tuple[Unit, dict[str, Any]]] = field(default_factory=list)
+    replacements: list[Unit] = field(default_factory=list)
+    assignments: list[tuple[Unit, dict[str, Any]]] = field(default_factory=list)
+    operator_requests: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -432,6 +469,14 @@ class Run:
     A key present here wins over ``DEFAULT_STATUS_MAP`` for that prefix; every other prefix keeps
     the default. Values are still checked against the board's Status ladder -- an override is a way
     to re-route a phase, not a way to invent a status. See ``mapped_status``."""
+    review_result: str | None = None
+    """The latest typed Code Review result, stored verbatim and never normalized."""
+    review_outcome: str | None = None
+    """The result's routing outcome, copied without deriving a review-policy decision."""
+    review_resubmit_pending: bool = False
+    """Whether landed Work repairs must be resubmitted to the one review controller."""
+    operator_fix_requests: list[dict[str, Any]] = field(default_factory=list)
+    """Outstanding ``human`` or ``release`` requests, surfaced rather than dispatched as Work."""
 
     @classmethod
     def load(cls, path: Path = RUN_FILE) -> Run:
@@ -448,6 +493,10 @@ class Run:
             issues=raw.get("issues", {}),
             status_map=raw.get("status_map", {}),
             workspace=raw.get("workspace") or None,
+            review_result=raw.get("review_result"),
+            review_outcome=raw.get("review_outcome"),
+            review_resubmit_pending=bool(raw.get("review_resubmit_pending", False)),
+            operator_fix_requests=raw.get("operator_fix_requests", []),
         )
         loaded.resolve_branch_once()
         return loaded
@@ -501,6 +550,10 @@ class Run:
             "issues": self.issues,
             "status_map": self.status_map,
             "workspace": self.workspace,
+            "review_result": self.review_result,
+            "review_outcome": self.review_outcome,
+            "review_resubmit_pending": self.review_resubmit_pending,
+            "operator_fix_requests": self.operator_fix_requests,
             "units": [spill_unit(u) for u in self.units],
         }
         path.write_text(json.dumps(payload, indent=2) + "\n")
@@ -515,10 +568,21 @@ class Run:
         """Does this run have a code-review phase of its own?
 
         Read off the unit table rather than asked, because the interview already wrote the answer
-        there: a review phase is units, one per reviewer. Matching is on the saga capability in the
-        task text, in any vendor's spelling, since ``normalize_task`` has not run yet at this point.
+        there: a review phase is one top-level Code Review controller. An explicit role is
+        authoritative. Role-less legacy units retain task-text inference in any vendor's spelling,
+        since ``normalize_task`` has not run yet at this point.
         """
-        return any(re.search(r"[/$](saga:)?code-review\b", u.task) for u in self.units)
+        return any(is_review_controller(unit) for unit in self.units)
+
+    def review_controller(self) -> Unit | None:
+        """Return the single Code Review controller, refusing an ambiguous legacy panel."""
+        controllers = [unit for unit in self.units if is_review_controller(unit)]
+        if len(controllers) > 1:
+            raise SystemExit(
+                "this run has more than one Code Review controller; one review phase is one "
+                "top-level controller invocation"
+            )
+        return controllers[0] if controllers else None
 
     def eligible(self) -> list[Unit]:
         """Pending units whose every ordering edge is satisfied.
@@ -607,6 +671,358 @@ def read_unit(raw: dict[str, Any]) -> Unit:
         note = f"spilled task file is gone: {spill}"
         unit.note = f"{unit.note}; {note}" if unit.note else note
     return unit
+
+
+def is_code_review_task(task: str) -> bool:
+    """Whether task text invokes Saga's Code Review controller in any supported spelling."""
+    return bool(re.search(r"[/$](saga:)?code-review\b", task))
+
+
+def is_review_controller(unit: Unit) -> bool:
+    """Identify a controller without letting generated Work prose override an explicit role."""
+    return unit.role == REVIEW_CONTROLLER_ROLE or (
+        unit.role is None and is_code_review_task(unit.task)
+    )
+
+
+def plan_units(plan: Mapping[str, Any]) -> list[Unit]:
+    """Load unit rows and enforce one top-level Code Review controller per plan.
+
+    Older plans identified Code Review only through their task text. Preserve that authoring shape,
+    but assign the explicit controller role while loading it and refuse the former N-reviewer panel.
+    Work routing roles require path ownership because a role alone cannot identify the responsible
+    worker for a finding.
+    """
+    raw_units = plan.get("units")
+    if not isinstance(raw_units, list):
+        raise SystemExit("plan `units` must be a list")
+    units: list[Unit] = []
+    for raw in raw_units:
+        if not isinstance(raw, dict):
+            raise SystemExit("every plan unit must be an object")
+        try:
+            unit = Unit(**raw)
+        except TypeError as exc:
+            raise SystemExit(f"invalid plan unit: {exc}") from None
+        if unit.role == REVIEW_CONTROLLER_ROLE:
+            if not is_code_review_task(unit.task):
+                raise SystemExit(
+                    f"unit {unit.name!r} declares {REVIEW_CONTROLLER_ROLE!r} but does not invoke "
+                    "Code Review"
+                )
+        elif unit.role is None and is_code_review_task(unit.task):
+            unit.role = REVIEW_CONTROLLER_ROLE
+        if unit.role in WORK_FIX_ROLES and not unit.paths:
+            raise SystemExit(
+                f"Work worker {unit.name!r} declares role {unit.role!r} without owned paths"
+            )
+        if unit.paths:
+            unit.paths = [
+                _route_path(path, label=f"unit {unit.name!r} owned path") for path in unit.paths
+            ]
+        units.append(unit)
+    assert_single_review_controller(units)
+    return units
+
+
+def assert_single_review_controller(units: Sequence[Unit]) -> None:
+    """Refuse the superseded one-full-review-per-reviewer plan shape."""
+    controllers = [unit for unit in units if is_review_controller(unit)]
+    if len(controllers) > 1:
+        names = ", ".join(unit.name for unit in controllers)
+        raise SystemExit(
+            f"review phase has {len(controllers)} controller units ({names}); create exactly one "
+            "top-level Code Review controller"
+        )
+
+
+def _route_path(value: object, *, label: str) -> str:
+    """Normalize one repository-relative path used only for ownership overlap."""
+    if not isinstance(value, str) or not value.strip():
+        raise SystemExit(f"{label} must be non-empty text")
+    if "\n" in value or "\r" in value:
+        raise SystemExit(f"{label} must not contain a newline")
+    path = value.strip().replace("\\", "/")
+    while path.startswith("./"):
+        path = path[2:]
+    path = path.rstrip("/")
+    if not path or path.startswith("/") or ".." in path.split("/"):
+        raise SystemExit(f"{label} must be a repository-relative path: {value!r}")
+    return path
+
+
+def route_paths_overlap(left: Sequence[str], right: Sequence[str]) -> bool:
+    """Whether two exact-or-directory-prefix repository path sets overlap."""
+    left_paths = [_route_path(path, label="worker path") for path in left]
+    right_paths = [_route_path(path, label="fix request touched path") for path in right]
+    return any(
+        a == b or a.startswith(f"{b}/") or b.startswith(f"{a}/")
+        for a in left_paths
+        for b in right_paths
+    )
+
+
+def _review_routing_fields(raw_result: str) -> tuple[str, list[dict[str, Any]]]:
+    """Read only the result fields Orchestrate is authorized to route.
+
+    Scores, dimensions, cycles, priorities, confidence, and all other Code Review policy stay
+    untouched. The original string is persisted separately on ``Run`` before this function is
+    called by the command surface.
+    """
+    try:
+        payload = json.loads(raw_result)
+    except (TypeError, ValueError) as exc:
+        raise SystemExit(f"review result is not JSON: {exc}") from None
+    if not isinstance(payload, dict):
+        raise SystemExit("review result must be a JSON object")
+    schema = payload.get("schema")
+    if schema != REVIEW_RESULT_SCHEMA:
+        raise SystemExit(
+            f"review result has unsupported schema {schema!r}; expected {REVIEW_RESULT_SCHEMA!r}"
+        )
+    outcome = payload.get("outcome")
+    if not isinstance(outcome, str) or outcome not in REVIEW_OUTCOMES:
+        raise SystemExit(f"review result has unsupported routing outcome {outcome!r}")
+    if outcome != "repairs_requested":
+        return str(outcome), []
+
+    raw_requests = payload.get("fix_requests")
+    if not isinstance(raw_requests, list):
+        raise SystemExit("repairs_requested result requires a fix_requests list")
+    requests: list[dict[str, Any]] = []
+    for index, item in enumerate(raw_requests):
+        if not isinstance(item, dict):
+            raise SystemExit(f"fix request {index} must be an object")
+        owner = item.get("owner")
+        if not isinstance(owner, str) or owner not in WORK_FIX_ROLES | OPERATOR_FIX_ROLES:
+            raise SystemExit(f"fix request {index} has unsupported owner role {owner!r}")
+        fix_id = item.get("fix_id")
+        if not isinstance(fix_id, str) or not fix_id.strip():
+            raise SystemExit(f"fix request {index} requires a non-empty fix_id")
+        if "\n" in fix_id or "\r" in fix_id:
+            raise SystemExit(f"fix request {index} fix_id must not contain a newline")
+        touched = item.get("touched_paths")
+        if not isinstance(touched, list) or not touched:
+            raise SystemExit(f"fix request {fix_id!r} requires touched_paths")
+        normalized = [
+            _route_path(path, label=f"fix request {fix_id!r} touched path") for path in touched
+        ]
+        request = json.loads(json.dumps(item, ensure_ascii=False))
+        request["owner"] = owner
+        request["fix_id"] = fix_id.strip()
+        request["touched_paths"] = normalized
+        requests.append(request)
+    return str(outcome), requests
+
+
+def _unit_is_live(unit: Unit, agents: Sequence[Mapping[str, Any]]) -> bool:
+    """Whether Herdr still reports the worker's recorded pane or agent identity."""
+    return any(
+        (unit.pane_id and row.get("pane_id") == unit.pane_id)
+        or ((unit.agent_name or unit.name) == row.get("name"))
+        for row in agents
+    )
+
+
+def _fix_request_id(request: Mapping[str, Any]) -> str:
+    """Return the already-validated request identity."""
+    return str(request["fix_id"])
+
+
+def _unit_has_fix_request(unit: Unit, fix_id: str) -> bool:
+    """Whether a unit already carries the identified review repair."""
+    return any(_fix_request_id(request) == fix_id for request in unit.fix_requests)
+
+
+def _park_fix_request(r: Run, holder: Unit, request: dict[str, Any]) -> None:
+    """Keep one outstanding copy of a review repair on its actionable holder."""
+    fix_id = _fix_request_id(request)
+    for unit in r.units:
+        unit.fix_requests = [
+            existing for existing in unit.fix_requests if _fix_request_id(existing) != fix_id
+        ]
+    holder.fix_requests.append(request)
+
+
+def _request_prompt(request: Mapping[str, Any], *, run_branch: str = "") -> str:
+    """A Work instruction carrying the structured request without the surrounding result."""
+    refresh = (
+        f"Before editing, merge the current run branch `{run_branch}` into this unit branch so the "
+        "repair is based on the reviewed revision. "
+        if run_branch
+        else ""
+    )
+    return (
+        refresh
+        + "Apply only this Code Review fix request as Work. Keep the request's owner role and path "
+        "scope, commit the repair on this unit's branch, run the relevant checks, and stop. The "
+        "complete review result remains opaque to Orchestrate; this is its routing request:\n\n"
+        + json.dumps(request, ensure_ascii=False, sort_keys=True)
+    )
+
+
+def _replacement_name(template: Unit, request: Mapping[str, Any], existing: set[str]) -> str:
+    """Create a stable safe unit name without treating the request identity as a path."""
+    slug = re.sub(r"[^a-z0-9]+", "-", _fix_request_id(request).lower()).strip("-") or "repair"
+    stem = f"{template.name}-fix-{slug}"[:80].rstrip("-")
+    candidate = stem
+    suffix = 2
+    while candidate in existing:
+        candidate = f"{stem}-{suffix}"
+        suffix += 1
+    return candidate
+
+
+def _replacement_worker(
+    template: Unit, request: dict[str, Any], controller: Unit | None, existing: set[str]
+) -> Unit:
+    """Create a fresh Work unit from an approved worker's execution configuration."""
+    name = _replacement_name(template, request, existing)
+    task = f"/saga:work {_request_prompt(request)}"
+    replacement = Unit(
+        name=name,
+        vendor=template.vendor,
+        task=task,
+        model=template.model,
+        effort=template.effort,
+        permission=template.permission,
+        setup=list(template.setup),
+        launch_args=list(template.launch_args),
+        workspace=template.workspace,
+        merge=True,
+        role=str(request["owner"]),
+        paths=list(request["touched_paths"]),
+        fix_requests=[request],
+        serialize=[controller.name] if controller is not None else [],
+    )
+    existing.add(name)
+    return replacement
+
+
+def route_review_result(
+    r: Run,
+    raw_result: str,
+    *,
+    agents: Sequence[Mapping[str, Any]] | None = None,
+) -> ReviewRouting:
+    """Route one persisted result without making or recomputing a review decision."""
+    outcome, requests = _review_routing_fields(raw_result)
+    r.review_outcome = outcome
+    r.operator_fix_requests = []
+    routing = ReviewRouting(outcome=outcome, run_branch=r.branch)
+    if outcome != "repairs_requested":
+        r.review_resubmit_pending = False
+        return routing
+
+    live = list(live_agents() if agents is None else agents)
+    controller = r.review_controller()
+    names = {unit.name for unit in r.units}
+    for request in requests:
+        owner = str(request["owner"])
+        if owner in OPERATOR_FIX_ROLES:
+            r.operator_fix_requests.append(request)
+            routing.operator_requests.append(request)
+            continue
+
+        routing.work_requests += 1
+        fix_id = _fix_request_id(request)
+        touched_paths = list(request["touched_paths"])
+        role_workers = [unit for unit in r.units if unit.role == owner]
+        matching = [unit for unit in role_workers if route_paths_overlap(unit.paths, touched_paths)]
+        reusable = [unit for unit in matching if _unit_is_live(unit, live)]
+        if reusable:
+            worker = reusable[0]
+            _park_fix_request(r, worker, request)
+            routing.dispatches.append((worker, request))
+            continue
+
+        eligible_names = {unit.name for unit in r.eligible()}
+        assigned = next(
+            (
+                unit
+                for unit in r.units
+                if _unit_has_fix_request(unit, fix_id)
+                and (_unit_is_live(unit, live) or unit.name in eligible_names)
+            ),
+            None,
+        )
+        if assigned is not None:
+            _park_fix_request(r, assigned, request)
+            routing.assignments.append((assigned, request))
+            continue
+
+        templates = matching or role_workers
+        if not templates:
+            raise SystemExit(
+                f"no Work worker declares owner role {owner!r}; cannot choose a replacement "
+                "vendor or execution tier"
+            )
+        replacement = _replacement_worker(templates[0], request, controller, names)
+        r.units.append(replacement)
+        _park_fix_request(r, replacement, request)
+        if templates[0].name in r.issues:
+            r.issues[replacement.name] = r.issues[templates[0].name]
+        routing.replacements.append(replacement)
+
+    r.review_resubmit_pending = routing.work_requests > 0
+    return routing
+
+
+def dispatch_review_routing(
+    routing: ReviewRouting,
+    *,
+    sender: Callable[[Unit, str], None] | None = None,
+) -> list[str]:
+    """Send routed requests to live workers; replacement units launch through ordinary ``go``."""
+    send_one = sender or (lambda unit, text: say(unit, unit.pane_id, text))
+    dispatched: list[str] = []
+    for unit, request in routing.dispatches:
+        send_one(unit, _request_prompt(request, run_branch=routing.run_branch))
+        unit.status = RUNNING
+        append_unit_note(unit, f"outstanding review fix {_fix_request_id(request)}")
+        dispatched.append(unit.name)
+    return dispatched
+
+
+def complete_landed_fix_requests(r: Run, landed_names: Sequence[str]) -> list[str]:
+    """Clear only requests whose assigned worker was merged by this land invocation."""
+    completed: list[str] = []
+    for name in landed_names:
+        unit = r.unit(name)
+        if not unit.fix_requests:
+            continue
+        completed.extend(_fix_request_id(request) for request in unit.fix_requests)
+        unit.fix_requests.clear()
+        append_unit_note(unit, "review fix landed")
+    return completed
+
+
+def resubmit_review_if_ready(
+    r: Run,
+    revision: str,
+    *,
+    sender: Callable[[Unit, str], None] | None = None,
+) -> bool:
+    """Resubmit the landed revision through the same controller when every Work repair landed."""
+    if not r.review_resubmit_pending:
+        return False
+    if r.operator_fix_requests or any(unit.fix_requests for unit in r.units):
+        return False
+    controller = r.review_controller()
+    if controller is None:
+        raise SystemExit("review repairs landed, but this run has no Code Review controller")
+    task = normalize_task(controller.vendor, controller.task, r.backend)
+    task += (
+        f" The routed Work repairs are now landed on the run branch at revision {revision}. "
+        "Resubmit that exact revision through this same Code Review controller and emit the next "
+        "complete typed result for `review-result` collection."
+    )
+    send_one = sender or (lambda unit, text: say(unit, unit.pane_id, text))
+    send_one(controller, task)
+    controller.status = RUNNING
+    append_unit_note(controller, f"resubmitted landed revision {revision}")
+    r.review_resubmit_pending = False
+    return True
 
 
 def run(
@@ -1520,7 +1936,7 @@ def _report_landing_cleanup_failures(failures: Sequence[tuple[Path, str]]) -> No
 def cmd_start(args: argparse.Namespace) -> int:
     plan = json.loads(Path(args.plan).read_text())
     assert_safe_path_component(plan["run_id"], "run id")
-    units = [Unit(**u) for u in plan["units"]]
+    units = plan_units(plan)
     assert_safe_unit_names(units)
     base = args.base or run(["git", "rev-parse", "HEAD"]).stdout.strip()
     r = Run(
@@ -1818,7 +2234,7 @@ def cmd_expand(args: argparse.Namespace) -> int:
     """
     r = Run.load()
     added = json.loads(Path(args.plan).read_text())
-    incoming = [Unit(**u) for u in added["units"]]
+    incoming = plan_units(added)
     assert_safe_unit_names(incoming)
 
     existing = {u.name for u in r.units}
@@ -1828,6 +2244,7 @@ def cmd_expand(args: argparse.Namespace) -> int:
             raise SystemExit(f"unit {unit.name!r} is already in this run; give the new one a name")
         seen.add(unit.name)
     assert_dependencies_reachable(incoming, existing)
+    assert_single_review_controller([*r.units, *incoming])
 
     assert_vendors_available(incoming)
     assert_saga_reachable(incoming)
@@ -1840,6 +2257,62 @@ def cmd_expand(args: argparse.Namespace) -> int:
     r.save()
     print(f"added {len(incoming)}: {', '.join(u.name for u in incoming)}")
     print("`orchestrate.py go` to launch whatever is now eligible.")
+    return 0
+
+
+def cmd_review_result(args: argparse.Namespace) -> int:
+    """Persist one typed result verbatim, then act only on its routing fields."""
+    try:
+        raw_result = Path(args.file).read_bytes().decode("utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise SystemExit(f"cannot read review result {args.file!r}: {exc}") from None
+
+    r = Run.load()
+    if r.review_result == raw_result and r.review_outcome is not None:
+        print("review result is already recorded byte-for-byte; nothing dispatched twice")
+        return 0
+
+    # Persist before interpreting even the routing envelope. A bad or unsupported route must not
+    # discard the controller's evidence; the operator can inspect the exact string that failed.
+    r.review_result = raw_result
+    r.review_outcome = None
+    r.save()
+    routing = route_review_result(r, raw_result)
+    # ``review_outcome`` is the completion marker used by the byte-identical replay guard. Keep it
+    # unset until every live-worker prompt succeeds, while saving the routed fix requests first so
+    # cleanup cannot reap their workers across this process boundary.
+    r.review_outcome = None
+    r.save()  # outstanding requests protect workers before any prompt crosses a process boundary
+
+    try:
+        dispatched = dispatch_review_routing(routing)
+    except SystemExit as exc:
+        r.save()
+        print(f"REVIEW FIX DISPATCH FAILED: {exc}")
+        return 1
+    routed_work = len(dispatched) + len(routing.replacements) + len(routing.assignments)
+    if routed_work != routing.work_requests:
+        r.save()
+        print(
+            f"REVIEW FIX ROUTING FAILED: routed {routed_work} of "
+            f"{routing.work_requests} Work fix requests; the result remains retryable"
+        )
+        return 1
+    r.review_outcome = routing.outcome
+    r.save()
+
+    print(f"recorded Code Review routing outcome: {routing.outcome}")
+    for name in dispatched:
+        print(f"  dispatched Work repair to live worker {name}")
+    for unit in routing.replacements:
+        print(f"  created replacement Work worker {unit.name}; `orchestrate.py go` launches it")
+    for unit, request in routing.assignments:
+        print(f"  kept Work repair {_fix_request_id(request)} on actionable worker {unit.name}")
+    for request in routing.operator_requests:
+        print(
+            f"  OPERATOR ACTION: {request['owner']} owns fix {_fix_request_id(request)} "
+            f"for {', '.join(request['touched_paths'])}; it was not dispatched as Work"
+        )
     return 0
 
 
@@ -1986,6 +2459,26 @@ def cmd_status(args: argparse.Namespace) -> int:
     print("-" * (sum(widths) + len(widths) - 1))
     for row in rows:
         print(format_row(row))
+    if r.review_outcome:
+        outstanding_work = any(unit.fix_requests for unit in r.units)
+        if r.review_resubmit_pending and outstanding_work and r.operator_fix_requests:
+            state = "awaiting landed Work repairs and operator-owned fix requests"
+        elif r.review_resubmit_pending and outstanding_work:
+            state = "awaiting landed Work repairs"
+        elif r.review_resubmit_pending and r.operator_fix_requests:
+            state = "resubmission held by operator-owned fix requests"
+        elif r.review_resubmit_pending:
+            state = "awaiting Code Review resubmission"
+        elif r.operator_fix_requests:
+            state = "operator-owned fix requests outstanding"
+        else:
+            state = "recorded"
+        print(f"\nCode Review result: {one_line(str(r.review_outcome))} ({state})")
+    for request in r.operator_fix_requests:
+        owner = one_line(str(request.get("owner", "?")))
+        fix_id = one_line(str(request.get("fix_id", "?")))
+        touched_paths = one_line(", ".join(str(path) for path in request.get("touched_paths", [])))
+        print(f"OPERATOR ACTION: {owner} owns fix {fix_id} for {touched_paths}")
     return 0
 
 
@@ -2488,13 +2981,14 @@ def cmd_land(args: argparse.Namespace) -> int:
     batch would never be announced at all -- the next land sees those units already merged and
     announces nothing either.
 
-    The exit status is deliberate, and four-way. 0: every merge and every board write converged.
+    The exit status is deliberate, and five-way. 0: every merge and every board write converged.
     1: the land itself could not finish -- a missing run branch, retained conflict, merge conflict,
     or ref-advance failure, named above. 2: every merge landed, but at least one board writeback did
     not converge; the units are named above with their retry. 3: every merge landed, but a landing
     path remains because it was unsafe to touch or could not be removed. A failed writeback or
     cleanup never undoes a merge: the code on the run branch is right, and only the bookkeeping is
-    incomplete -- a caller scripting this has to be able to tell those failures apart.
+    incomplete. 4: repairs landed but could not be resubmitted to the recorded Code Review
+    controller. A caller scripting this has to be able to tell those failures apart.
     """
     r = Run.load()
     if not r.branch:
@@ -2514,6 +3008,7 @@ def cmd_land(args: argparse.Namespace) -> int:
     # units this invocation merged, and a name recovered by stripping " (+3)" off a display string
     # would break on the first unit name containing a bracket.
     landed_names: list[str] = []
+    completed_fix_ids: list[str] = []
     writeback_failures: list[dict[str, Any]] = []
     cleanup_failures: list[tuple[Path, str]] = []
     preserved_landing_paths: list[tuple[Path, str]] = []
@@ -2584,6 +3079,8 @@ def cmd_land(args: argparse.Namespace) -> int:
                     r.save()
                     landed.append(f"{unit.name} (+{recovered_ahead or '?'})")
                     landed_names.append(unit.name)
+                    completed_fix_ids.extend(complete_landed_fix_requests(r, [unit.name]))
+                    r.save()
                     records = announce_units(r, [unit.name])
                     report_announcements(records)
                     writeback_failures.extend(_failed_writebacks(records))
@@ -2754,6 +3251,8 @@ def cmd_land(args: argparse.Namespace) -> int:
             r.record_branch_advance(merged_tip)
             landed.append(f"{unit.name} (+{ahead})")
             landed_names.append(unit.name)
+            completed_fix_ids.extend(complete_landed_fix_requests(r, [unit.name]))
+            r.save()
             # The boundary just passed: write it back to the board here, where it happened, rather
             # than as a separate operator step -- and now, before the next merge is attempted, so
             # a later conflict cannot discard this unit's announcement. A no-op for a run with no
@@ -2774,7 +3273,27 @@ def cmd_land(args: argparse.Namespace) -> int:
                 detail = (removed.stderr or removed.stdout or "unknown git error").strip()
                 cleanup_failures.append((landing_worktree, detail))
 
+    resubmit_failed = False
+    if r.review_resubmit_pending:
+        try:
+            if resubmit_review_if_ready(r, branch_tip):
+                print(f"resubmitted landed revision {branch_tip} to the Code Review controller")
+        except SystemExit as exc:
+            resubmit_failed = True
+            print(f"REVIEW RESUBMIT FAILED: {exc}")
+        r.save()
+
+    outstanding_work = any(unit.fix_requests for unit in r.units)
+    if r.review_resubmit_pending and r.operator_fix_requests and not outstanding_work:
+        fix_ids = ", ".join(
+            one_line(str(request.get("fix_id", "?"))) for request in r.operator_fix_requests
+        )
+        request_label = "request" if len(r.operator_fix_requests) == 1 else "requests"
+        print(f"Code Review resubmission held by operator-owned fix {request_label}: {fix_ids}")
+
     print(f"landed on {r.branch}: {', '.join(landed) or 'nothing new'}")
+    if completed_fix_ids:
+        print(f"review fixes landed: {', '.join(completed_fix_ids)}")
     if already:
         print(f"already there: {', '.join(already)}")
     if held:
@@ -2803,6 +3322,8 @@ def cmd_land(args: argparse.Namespace) -> int:
             print(f"reaped: {', '.join(closed)}")
         else:
             print("nothing to reap: this land merged nothing")
+    if resubmit_failed:
+        return 4
     return 2 if writeback_failures else 0
 
 
@@ -2883,14 +3404,18 @@ def cmd_collect(args: argparse.Namespace) -> int:
 
 
 def reapable(unit: Unit, r: Run) -> bool:
-    """May ``--merged`` reap this unit: it is DONE, and everything it committed is landed.
+    """May ``--merged`` reap this unit: its DONE work is landed and no review needs its controller.
 
-    Both halves are load-bearing. The status gate keeps reaping away from anything still working:
+    ``reap`` keeps a worker carrying a routed fix before this predicate is reached. Here, pending
+    resubmission or operator-owned work keeps the controller available. The status gate keeps
+    reaping away from anything still working:
     zero commits ahead of the run branch is also exactly what a unit that has not committed yet
     looks like, and that reading once cost four live units their worktrees. The commit gate keeps
     reaping away from a DONE unit that saved nothing: its worktree is the evidence the session
     failed, and this plugin keeps no other record.
     """
+    if is_review_controller(unit) and (r.review_resubmit_pending or bool(r.operator_fix_requests)):
+        return False
     if unit.status != DONE or not unit.branch:
         return False
     if r.unresolvable_branch:
@@ -2907,10 +3432,10 @@ def reap(
 ) -> tuple[list[str], list[str]]:
     """Close tabs and remove worktrees; return ``(closed, kept)`` by unit name.
 
-    ``merged_only`` applies the ``--merged`` rule -- see ``reapable`` -- and keeps everything
-    else. Without it, every unit is closed regardless of its state: a last resort, run with the
-    table in front of you, because it also discards the worktree that is the evidence a unit
-    failed.
+    A worker carrying an outstanding review fix is always kept. Otherwise, ``merged_only`` applies
+    the ``--merged`` rule -- see ``reapable`` -- and keeps everything else. Without it, every other
+    unit is closed regardless of its state: a last resort, run with the table in front of you,
+    because it also discards the worktree that is the evidence a unit failed.
 
     ``only`` narrows the sweep to those unit names; every other unit is kept, whatever its
     state. ``land --clean`` passes the units that land just merged, so reaping there is a
@@ -2931,6 +3456,9 @@ def reap(
     scope = set(only) if only is not None else None
     for unit in r.units:
         if scope is not None and unit.name not in scope:
+            kept.append(unit.name)
+            continue
+        if unit.fix_requests:
             kept.append(unit.name)
             continue
         if merged_only and not reapable(unit, r):
@@ -3364,6 +3892,13 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("expand", help="append units to a run in flight, once a phase names them")
     s.add_argument("--plan", required=True)
     s.set_defaults(func=cmd_expand)
+
+    s = sub.add_parser(
+        "review-result",
+        help="persist a typed Code Review result verbatim and route its fix requests",
+    )
+    s.add_argument("--file", required=True, help="UTF-8 file containing the complete typed result")
+    s.set_defaults(func=cmd_review_result)
 
     s = sub.add_parser("go", help="launch every unit whose dependencies are met")
     s.add_argument("--limit", type=int, default=0, help="launch at most this many now")

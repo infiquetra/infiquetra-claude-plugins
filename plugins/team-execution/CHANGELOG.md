@@ -4,6 +4,19 @@ All notable changes to this plugin are documented here.
 
 ---
 
+## [3.1.0] - 2026-08-20
+
+### Changed
+
+- **Reviewer consensus now uses Saga's canonical roster and scoring engine.** Team Execution selects
+  the shared always-on and judgment-based conditional lenses, maps them to its reviewer agents, and
+  submits their dimension evidence to the same transition engine Code Review uses. Its former roster,
+  score thresholds, score anchors, and competing cycle-cap rules are now pointers to that shared
+  policy instead of independent prose.
+- **The unused local consensus helper is explicitly quarantined.** It remains only as legacy
+  characterization and has no production caller; evidence-based settlement, external advisory
+  transport, validators, liveness, and safety gates remain independently authoritative.
+
 ## [3.0.1] - 2026-08-08
 
 ### Added - house-style presentation contract across the 25 review and test agents (#704)

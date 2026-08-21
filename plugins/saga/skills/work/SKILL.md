@@ -1,6 +1,6 @@
 ---
 name: work
-description: Execute a settled Infiquetra plan to PR-ready, then own the round-N PR continuation loop. Restores and writes the work-thread saga (the primary writer), recommends an execution backend, runs risk-gated tests, calls /code-review programmatically and reads its envelope, gates hard on P0/P1 and stale reviews, and coordinates PR-open/review-request/merge under explicit confirmation — without owning deploy. Triggers on "build it", "work this plan", "execute the plan", "resume work on #N", or a plan-ready / resume-ready handoff issue.
+description: Execute a settled Infiquetra plan to PR-ready, then own the round-N PR continuation loop. Restores and writes the work-thread saga (the primary writer), recommends an execution backend, runs risk-gated tests, calls /code-review programmatically and reads its typed outcome, blocks on repair, incomplete, or stale review state, and coordinates PR-open/review-request/merge under explicit confirmation — without owning deploy. Triggers on "build it", "work this plan", "execute the plan", "resume work on #N", or a plan-ready / resume-ready handoff issue.
 ---
 
 # Work
@@ -54,9 +54,11 @@ it leaves `lifecycle_phase=work` because `/qa` does not yet advance the phase (s
 5. **Coordinate the PR loop, mutate only under confirmation.** Offer PR-open, review-request, and merge
    — each an explicitly confirmed git/`gh` op, **never silent**. Deploy mutation routes to
    `deploy`; issue comments and board moves route to `mission-control`.
-6. **Hard review gate, honest override.** Block PR-ready on unresolved P0/P1 findings or a **stale**
-   review (commits since the reviewed SHA). Allow an explicit operator override only with a **recorded**
-   rationale — never a silent skip.
+6. **Outcome-driven review gate, honest override.** Treat Code Review's typed `outcome` as the sole
+   review-acceptance decision: `accepted` and `cycle_cap_best_available` may reach PR-ready;
+   `repairs_requested` and `review_incomplete` block. Independently block a **stale** review (commits
+   since the reviewed SHA). Finding Priority and confidence are metadata only, never another gate.
+   Allow an explicit operator override only with a **recorded** rationale — never a silent skip.
 
 ## Interaction method
 
@@ -233,10 +235,11 @@ and `Verification` field. See `references/execution-strategy.md`.
 ### 1.3 Doc-review gate
 
 Before executing from a plan, confirm the plan cleared `/doc-review`. Use same-session review output or
-the latest matching artifact under `docs/reviews/`. If `/doc-review` reported unresolved P0 or P1
-findings, **block execution** unless the operator explicitly overrides and gives a rationale — record the
-override rationale (it flows into the Phase-4 issue comment via `--doc-review-override`). Do not treat
-chat memory alone as durable evidence after a resume.
+the latest matching artifact under `docs/reviews/`. If `/doc-review` did not clear the plan, **block
+execution** unless the operator explicitly overrides and gives a rationale — record the override
+rationale (it flows into the Phase-4 issue comment via `--doc-review-override`). Do not reinterpret
+finding metadata to make that decision, and do not treat chat memory alone as durable evidence after a
+resume.
 
 ### 1.3b Move the card to Active
 
@@ -754,27 +757,45 @@ programmatic mode).
 
 ### 5.2 Read the gate input (the envelope)
 
-Read `/code-review`'s structured findings envelope (the programmatic shape — findings grouped by
-`autofix_class`, verdict in the header). That envelope is the gate input. Record the review outcome (the
-verdict, the P-level counts, and `REVIEWED_SHA`) in the Phase-4 work-session writeup; if you want a
-durable artifact, persist the envelope through the evidence ledger (#398) —
+Read `/code-review`'s serialized `review_result.v1`; any accompanying human rendering may group
+findings by `autofix_class`, but it adds no decision field. The result's `outcome` is the sole decision
+field and is the gate input. Record that outcome, the finding inventory as metadata, and `REVIEWED_SHA`
+in the Phase-4 work-session writeup; if you want a durable artifact, persist the result through the
+evidence ledger (#398) —
 `evidence_ledger.py write --check-id code-review --reviewed-sha "$REVIEWED_SHA" --producer work-gate
---verdict <the envelope's verdict> --artifact-file <envelope-text-file>` — rather than a bare file write,
-so this programmatic-mode persistence gets the same no-clobber/custody guarantee as `/code-review`'s own
-interactive-mode write (SKILL.md §5.3).
+--verdict <the typed result's outcome> --artifact-file <result-json-file>` — rather than a bare file
+write, so this programmatic-mode persistence gets the same no-clobber/custody guarantee as
+`/code-review`'s own interactive-mode write (SKILL.md §5.3). `--verdict` is the evidence-ledger field
+name; it does not create a second decision field beside `outcome`.
 
-### 5.3 Hard review gate (block on P0/P1 or stale)
+### 5.3 Outcome-driven review gate (typed outcome or stale)
 
-Block PR-ready when **either** holds (see `references/test-and-gates.md` for the full mechanism):
+Route the complete typed outcome set as follows:
 
-- **Unresolved P0 or P1 findings** in the code-review envelope, **or**
-- a **stale** review — the code moved since `REVIEWED_SHA`. Compute it directly against the SHA `/work`
-  captured at review time (no artifact parse):
+- **`accepted`** — proceed to PR-ready even when the result still carries findings, including Priority 2
+  findings.
+- **`repairs_requested`** — block PR-ready and route the consolidated fix requests through Work.
+- **`cycle_cap_best_available`** — proceed with the cycle-three best-available revision and surface
+  every residual.
+- **`review_incomplete`** — block PR-ready and say that the review did not run: delivery did not
+  establish a review, so do not invent acceptance.
+
+These four values are the complete outcome set. Work does not recompute scores, inspect thresholds, or
+derive acceptance from findings. Finding Priority and confidence are reporting and routing metadata;
+neither can change the typed outcome. `/code-review` never changes reviewed code. Work is the only
+mutator and applies any authorized repairs before resubmitting.
+
+Independently, a **stale** review blocks PR-ready because the code moved since `REVIEWED_SHA`. This is a
+freshness decision, not an acceptance decision. Compute it directly against the SHA `/work` captured at
+review time (see `references/test-and-gates.md` for the staleness mechanism only; do not read an
+acceptance rule from that reference):
+
   ```bash
   git rev-list <REVIEWED_SHA>..HEAD --count
   ```
-  A count `> 0` means commits landed since the review → re-run `/code-review` (capturing a fresh
-  `REVIEWED_SHA`) before any PR/merge offer.
+
+A count `> 0` means commits landed since the review: keep PR-ready blocked and re-run `/code-review`,
+capturing a fresh `REVIEWED_SHA`, before any PR/merge offer.
 
 Allow an explicit operator override only with a **recorded** rationale (it flows into the issue comment
 via `--doc-review-override` / the work-session). Never a silent skip.
@@ -852,9 +873,9 @@ gate, record, coordinate the PR loop under confirmation — then stop.
   dispatch (U-ID preservation), the incremental-commit heuristic, already-shipped-verify, and the
   runnable `recommend_execution_backend()` integration. "How work gets executed."
 - `references/test-and-gates.md` — test discovery, scenario completeness, the system-wide check,
-  `requires_hard_test_gate` rules, merge-base-before-tests, the review-readiness gate (P0/P1 block + the
-  computed staleness mechanism), override-with-recorded-rationale, and the gstack autonomy contract
-  (stop-for / never-stop-for). "What must pass before PR-ready."
+  `requires_hard_test_gate` rules, merge-base-before-tests, the computed review-staleness mechanism,
+  override-with-recorded-rationale, and the gstack autonomy contract (stop-for / never-stop-for). "What
+  must pass before PR-ready."
 - `references/pr-continuation-loop.md` — the total PR-state transition table (the `gh pr view --json`
   reads, the per-state actions, round-bump via `rounds_seen`, merge-under-confirmation, and the
   qa/resume advisory routing + the qa-deferral). "How the round-N loop runs after PR-ready."

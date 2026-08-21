@@ -181,6 +181,89 @@ def test_reviewer_success_prose_or_artifact_pointer_cannot_materialize_delivery(
         )
 
 
+def test_reviewer_success_prose_settles_as_silent_no_op(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    saga = _saga_root(tmp_path / "saga")
+    capture = tmp_path / "settlement-args.json"
+    saga_script = saga / "scripts" / "dispatch_settlement.py"
+    saga_script.write_text(
+        """import json
+import os
+import sys
+from pathlib import Path
+
+Path(os.environ["SETTLEMENT_CAPTURE"]).write_text(
+    json.dumps(sys.argv[1:]), encoding="utf-8"
+)
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("SAGA_PLUGIN_ROOT", str(saga))
+    monkeypatch.setenv("SETTLEMENT_CAPTURE", str(capture))
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    source = repo / "reviewer.json"
+    source.write_text(json.dumps({"prose": "Everything passed."}), encoding="utf-8")
+
+    result = ADAPTER.main(
+        [
+            "settle",
+            "--kind",
+            "reviewer",
+            "--repo-root",
+            str(repo),
+            "--subplot-id",
+            "team-run",
+            "--dispatch-id",
+            "review-dispatch",
+            "--unit-id",
+            "security",
+            "--attempt",
+            "1",
+            "--at",
+            "2026-08-20T00:00:00Z",
+            "--source-json",
+            "reviewer.json",
+            "--receipt-path",
+            "receipt.json",
+        ]
+    )
+
+    forwarded = json.loads(capture.read_text(encoding="utf-8"))
+    evidence_index = forwarded.index("--evidence-json")
+    assert result == 0
+    assert forwarded[evidence_index + 1] == "null"
+    assert not (repo / "receipt.json").exists()
+
+
+def test_reviewer_result_with_empty_dimensions_is_still_rejected(tmp_path: Path) -> None:
+    source = tmp_path / "reviewer.json"
+    source.write_text(
+        json.dumps(
+            {
+                "reviewer": "security",
+                "score": 9,
+                "dimension_scores": {},
+                "findings": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ADAPTER.IncompleteEvidenceError, match="requires non-empty dimension_scores"
+    ):
+        ADAPTER.materialize_artifact(
+            kind="reviewer",
+            unit_id="security",
+            source_path=source,
+            receipt_path=tmp_path / "receipt.json",
+            repo_root=tmp_path,
+        )
+
+
 def test_corrupt_or_contradictory_team_evidence_halts_instead_of_settling_missing(
     tmp_path: Path,
 ) -> None:

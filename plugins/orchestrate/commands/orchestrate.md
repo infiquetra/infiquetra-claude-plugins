@@ -18,14 +18,17 @@ it. Each unit gets its own git worktree and branch, so sessions cannot overwrite
 
 A single issue is one lifecycle. A parent issue with children is one lifecycle per child, each with
 its own phases. A phase is not always one unit: three vendors writing competing plans is one phase
-and three units, and `/work` is one phase and however many units the plan calls for.
+and three units, and `/work` is one phase and however many units the plan calls for. Code Review is
+the exception: its phase is one top-level controller unit, and that controller owns its lens work.
 
 **Choices are made at the layer that owns them and inherited downward.** The operator picks which
-vendors may be used at all, and how many reviewers each review phase gets. `/work` takes its vendors
-from the plan and `/code-review` takes its lenses from the plan, not from the interview.
+vendors may be used at all. `/work` takes its vendors and path ownership from the plan, and the one
+`/code-review` controller takes its lenses and external-reviewer seat from Code Review's contract,
+not from an Orchestrate interview.
 
-**A review phase is a panel.** "Two reviewers on the plan" is two units, two tabs, two worktrees,
-two vendors — never one vendor holding a review seat.
+**Code Review is one controller, not one unit per reviewer.** Orchestrate launches and resumes that
+controller, persists its typed result verbatim, and routes only the result's owner, touched paths,
+and outcome. It never scores a lens or rebuilds Code Review policy.
 
 ## Phase 1 — read the input
 
@@ -107,13 +110,10 @@ order — not a checklist, and stop as soon as the answers determine the table:
    two or three vendors each write a plan independently, in their own worktrees, with no knowledge
    of each other. If so, **this session reads all of them and writes the merged plan itself** — no
    merge unit, no extra tab. Say which parts came from where.
-5. **How many reviewers does each review phase get?** **A review is a panel, not a seat.** Ask for a
-   count per review phase, not a vendor — "two reviewers on the plan" — and turn each into its own
-   unit with its own tab, worktree and vendor. Three reviewers is three rows. Assign them yourself
-   from the allow-list, never the vendor that produced the thing being reviewed.
-
-   The count is a **default for when nobody is watching**, not a lock. The operator re-confirms the
-   actual reviewer rows at the expansion gate (Phase 5), in this session, where they are present.
+5. **Which review shape applies?** Independent `/doc-review` passes may still be separate rows when
+   the operator asks for them. A `/code-review` phase is always one row with
+   `role: "review-controller"`, using a vendor other than the builders. Do not ask for a Code Review
+   reviewer count and do not turn lenses into Orchestrate units; Code Review owns both.
 6. **Anything out of scope?**
 
 Do **not** ask about `/work` vendors or `/code-review` lenses. Those come from the plan.
@@ -142,18 +142,19 @@ a background tab is a unit lost. The dispatched task carries the rule: take the 
 option from a known set and say which; for a real question about the work, write it into the output
 and stop, so this session can bring it to the operator instead of a tab swallowing it.
 
-**Use `none` for review stages.** The panel is orchestrate's job: the operator asked for N
-reviewers and gets N units. Letting each of those *also* take a saga second opinion doubles the
-sessions without being asked for. The value of the stored answer here is that it stops the tab
-hanging, not that it adds an opinion.
+For Code Review, store the engine choice its own contract calls for. Orchestrate does not multiply
+that choice into reviewer units or treat the external-reviewer seat as another controller. For an
+independent document-review panel, `none` still prevents each already-independent row from adding an
+unrequested second opinion. The stored value exists to stop an unattended tab hanging; it is not an
+Orchestrate review-policy decision.
 
 Stages: `ideate`, `brainstorm`, `work`, `doc-review`, `code-review` — there is no `plan` stage.
 Intents: `none`, `offload`, `second-opinion`, `external-only`. Models are tier names —
 `fable`, `opus`, `sonnet`, `haiku`. Efforts: `low`, `medium`, `high`, `xhigh`.
 
-`/code-review` still runs its own lens consensus inside each unit — its lenses, quorum and
-gated-versus-advisory verdicts are its business, not something to rebuild here. The plan chooses
-which lenses; the interview does not ask.
+The one `/code-review` controller runs its own lens consensus. Its lenses, acceptance, external seat,
+cycle state, and typed outcome are its business, not something to rebuild here. The interview does
+not ask Orchestrate to decide any of them.
 
 ## Phase 3 — hand over the table
 
@@ -162,7 +163,7 @@ the plan, which does not exist when the operator is reading this. Say so rather 
 
 ```
 run <run_id>   <-  <what the input was>
-vendors allowed: claude, codex, grok, qwen        reviewers: 2 on the plan, 2 on the code
+vendors allowed: claude, codex, grok, qwen        document reviewers: 2; Code Review controller: 1
 
  phase  what it does                    saga cap       agent     model         effort  after     serialize
  -----  -----------------------------   ------------   -------   -----------   ------  -----     ---------
@@ -172,8 +173,7 @@ vendors allowed: claude, codex, grok, qwen        reviewers: 2 on the plan, 2 on
  p2a    tear up the merged plan         /doc-review    grok      grok-4.6      xhigh   p1a p1b   -
  p2b    tear up the merged plan         /doc-review    qwen      qwen3-max     high*   p1a p1b   -
  p3     build it                        /work          <from the plan>                 p2a p2b   -
- p4a    review the build                /code-review   <from the plan>                 p3        -
- p4b    review the build                /code-review   <from the plan>                 p3        -
+ p4     review the build                /code-review   one non-builder                 p3        -
 ```
 
 Rules for the table:
@@ -182,6 +182,10 @@ Rules for the table:
   stronger model; mechanical and survey work does not. One line of why if it is not obvious.
 - **A reviewing unit is never the agent that produced what it reviews.** Do not hand a session its
   own output to bless.
+- **One Code Review row only.** Give it `role: "review-controller"`. Give every Work row that may
+  receive repairs `role: "review-fixer"` or `role: "downstream-resolver"` plus its
+  repository-relative `paths`. A directory owns its descendants. Owner role and path overlap are
+  the complete worker routing key; a unit name is never one.
 - **Two ordering edges, one gate.** `after` and `serialize` both hold a unit until every name they
   list is done; units with no dependency run at the same time. What differs is what they *claim*,
   and the claim is all a reader has — so pick the honest one:
@@ -206,10 +210,10 @@ Rules for the table:
 
 Then ask to approve, edit, or cancel. **Nothing launches before the operator says yes.**
 
-**Editing is plain language, not a form.** "Make p1b grok", "swap the two reviewers", "drop p2b",
-"opus on the builder", "add a third plan from qwen" — take it, redraw the whole table, and show it
-again. Any cell is fair game, including which vendor sits in a competing-plan row. Redraw rather
-than describing the change, so what they approve is what runs.
+**Editing is plain language, not a form.** "Make p1b grok", "swap the two document reviewers",
+"drop p2b", "opus on the builder", "add a third plan from qwen" — take it, redraw the whole table,
+and show it again. Any cell is fair game, including which vendor sits in a competing-plan row.
+Redraw rather than describing the change, so what they approve is what runs.
 
 ### Workspaces: one per lifecycle, once a run outgrows a screen
 
@@ -315,6 +319,7 @@ python3 "$S" wait                                  # block until one settles (he
 python3 "$S" settle                                # idle sessions become done
 python3 "$S" land                                  # finished units -> the run branch
 python3 "$S" go                                    # the next phase, now able to see their work
+python3 "$S" review-result --file <result.json>     # persist the controller result and route repairs
 python3 "$S" collect                               # the run branch -> your tree, once
 python3 "$S" clean --merged --branches             # close what has landed
 ```
@@ -391,6 +396,47 @@ python3 "$S" go
 
 `expand` refuses a name already in the run and a dependency that is in no run, so a bad table fails
 before anything launches.
+
+When the expansion includes Work and Code Review, make ownership executable in the rows themselves:
+
+```json
+{
+  "units": [
+    {"name": "build-api", "vendor": "claude", "task": "/saga:work docs/plans/x.md",
+     "role": "review-fixer", "paths": ["src/api", "tests/api"], "after": ["docreview"]},
+    {"name": "review-controller", "vendor": "grok", "task": "/saga:code-review the build",
+     "role": "review-controller", "after": ["build-api"], "merge": false}
+  ]
+}
+```
+
+`start` and `expand` refuse a second Code Review controller. They also refuse a Work routing role
+without owned paths, because a role alone cannot select the responsible worker.
+
+### Collect and route the typed review result
+
+The Code Review controller emits one complete typed result. Preserve its exact UTF-8 bytes in a file
+and collect it once:
+
+```bash
+python3 "$S" review-result --file .orchestrate/review-result.json
+```
+
+The command stores the complete string in `run.json` before it reads any route. It reads only the
+routing envelope: `outcome` plus each fix request's identity, `owner`, and `touched_paths`. It never
+imports Code Review's scorer, derives an overall, applies an acceptance threshold, counts cycles, or
+treats finding priority or confidence as another gate.
+
+For `review-fixer` and `downstream-resolver`, role plus path overlap selects a still-live Work worker.
+That worker is told to merge the current run branch first, receives the request in its existing
+session, and is protected from cleanup until the repair lands. If no matching worker remains live,
+Orchestrate creates a replacement from the matching role's approved vendor, model, effort, and
+permission configuration; run `go` to launch it.
+For `human` and `release`, the command prints and persists `OPERATOR ACTION` and creates no Work unit.
+
+After every routed Work request has landed, `land` resubmits the exact landed revision through the
+same Code Review controller. Any outstanding human or release request prevents that resubmission;
+Orchestrate never pretends operator-owned work was repaired.
 
 **Competing plans are read, not merged by git.** When `/plan` ran in several vendors' worktrees, open
 each one's plan document directly and write the merged plan yourself. Do not `collect` those

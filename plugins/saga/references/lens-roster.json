@@ -1,0 +1,1353 @@
+{
+  "schema": "lens_roster.v1",
+  "score_scale": {
+    "minimum": 0,
+    "maximum": 10,
+    "anchor_bands": ["10", "9", "7-8", "5-6", "0-4"]
+  },
+  "acceptance": {
+    "combiner": "all",
+    "only_acceptance_thresholds": true,
+    "rules": [
+      {
+        "id": "derived-overall-minimum",
+        "metric": "derived_overall",
+        "operator": ">=",
+        "value": 9.0
+      },
+      {
+        "id": "applicable-dimension-floor",
+        "metric": "applicable_dimension",
+        "operator": ">=",
+        "value": 7.0
+      }
+    ],
+    "finding_priority_is_gate": false,
+    "finding_confidence_is_gate": false
+  },
+  "applicability": {
+    "selected_lens_requires_applicable_dimension": true,
+    "non_applicable_dimension_requires_cause": true
+  },
+  "finding_policy": {
+    "fingerprint_fields": ["path", "line", "category"],
+    "duplicate_action": "merge",
+    "record_cross_reviewer_agreement": true
+  },
+  "participant_defaults": {
+    "external_advisory_seat": {
+      "id": "external-reviewer",
+      "scoring": false,
+      "consensus_denominator": false,
+      "applies_acceptance_rules": []
+    },
+    "custom_reviewer": {
+      "scoring": false,
+      "consensus_denominator": false,
+      "applies_acceptance_rules": [],
+      "voting_authority": "requires-explicit-policy-grant"
+    }
+  },
+  "lenses": [
+    {
+      "id": "architecture-maintainability",
+      "name": "Architecture and maintainability",
+      "trigger": {
+        "class": "always-on",
+        "judgment_required": false,
+        "recorded_reason_required": false,
+        "keyword_match_sufficient": false,
+        "guidance": "Run for every review to assess architectural fit, dependency structure, simplicity, conventions, and decision documentation."
+      },
+      "implementations": {
+        "code_review": {
+          "procedure": "roster-scoring-lens",
+          "path": "plugins/saga/skills/code-review/references/lens-catalog.md",
+          "section": "Run a roster scoring lens"
+        },
+        "team_execution": {
+          "agent": "architecture-reviewer",
+          "path": "plugins/team-execution/agents/architecture-reviewer.md"
+        }
+      },
+      "dimensions": [
+        {
+          "id": "architectural-fit-ownership-single-sources",
+          "name": "Architectural fit, ownership, and single sources of truth",
+          "focus": "The change follows established patterns, assigns policy and state to clear owners, and does not create competing authorities.",
+          "anchor_source": "Architecture Reviewer Rubric / Pattern Consistency",
+          "legacy_focus": ["Pattern Consistency"],
+          "anchors": {
+            "10": "New code follows the established patterns in neighboring files and the broader codebase",
+            "9": "1 minor deviation from existing patterns with a reasonable implicit rationale",
+            "7-8": "A meaningful pattern deviation without explicit rationale",
+            "5-6": "A pattern contradiction in a core area of the codebase",
+            "0-4": "Multiple pattern contradictions; implementation would create architectural inconsistency"
+          }
+        },
+        {
+          "id": "separation-of-concerns",
+          "name": "Separation of concerns",
+          "focus": "Responsibilities remain cohesive and policy, orchestration, transport, persistence, and presentation do not leak across layers.",
+          "anchor_source": "Architecture Reviewer Rubric / Separation of Concerns",
+          "anchors": {
+            "10": "Each module/class/function has a single, clear responsibility; no blending of layers",
+            "9": "1 minor case of mixed concerns that is unlikely to grow into a problem",
+            "7-8": "A meaningful mixing of concerns (e.g., business logic in a data layer)",
+            "5-6": "Multiple layers blended; hard to change one without affecting others",
+            "0-4": "No discernible separation of concerns; monolithic logic scattered throughout"
+          }
+        },
+        {
+          "id": "dependency-direction",
+          "name": "Dependency direction",
+          "focus": "Dependencies flow toward stable contracts without cycles, reverse ownership, or unnecessary coupling.",
+          "anchor_source": "Architecture Reviewer Rubric / Dependency Direction",
+          "anchors": {
+            "10": "Dependencies flow in the correct direction; no circular dependencies; abstractions used at boundaries",
+            "9": "1 minor dependency that goes \"the wrong way\" but is unlikely to create problems",
+            "7-8": "A meaningful reverse dependency or tight coupling that will impede future changes",
+            "5-6": "Multiple reverse dependencies; circular imports or coupling across unrelated modules",
+            "0-4": "Dependency structure is fundamentally inverted or circular"
+          }
+        },
+        {
+          "id": "simplicity-abstraction-duplication-changeability",
+          "name": "Simplicity, abstraction, duplication, and changeability",
+          "focus": "The design uses the smallest useful abstractions, avoids harmful duplication, and keeps likely changes local.",
+          "legacy_focus": ["DRY / Duplication"],
+          "anchors": {
+            "10": "The design is direct, appropriately factored, and easy to change without duplicated policy or behavior.",
+            "9": "The design is simple with one minor duplication or abstraction imperfection.",
+            "7-8": "A meaningful duplication, indirection, or misplaced abstraction raises maintenance cost.",
+            "5-6": "Multiple abstractions or copies obscure ownership and make ordinary changes risky.",
+            "0-4": "The design is needlessly complex or duplicates core behavior across competing implementations."
+          }
+        },
+        {
+          "id": "readability-naming-error-contracts",
+          "name": "Readability, naming, and error contracts",
+          "focus": "Names expose intent, control flow is readable, and public failure behavior is consistent and actionable.",
+          "legacy_focus": ["Complexity & Readability", "Naming & Abstraction", "Error Handling Quality"],
+          "anchors": {
+            "10": "A new maintainer can follow the design quickly; names and error contracts make behavior explicit.",
+            "9": "The code is clear with one or two minor naming or diagnostic imperfections.",
+            "7-8": "A meaningful section is difficult to understand or exposes an ambiguous error contract.",
+            "5-6": "Multiple unclear names, complex flows, or inconsistent errors impede safe maintenance.",
+            "0-4": "Core behavior is opaque and its errors cannot be interpreted or handled reliably."
+          }
+        },
+        {
+          "id": "conventions-portability-configuration",
+          "name": "Conventions, portability, and configuration",
+          "focus": "The change follows repository conventions, runs on supported environments, and keeps environment-specific values configurable.",
+          "anchor_source": "Architecture Reviewer Rubric / Convention Adherence",
+          "anchors": {
+            "10": "Naming, file structure, API conventions, and project-specific idioms all followed consistently",
+            "9": "1-2 minor naming or convention lapses that are harmless",
+            "7-8": "A meaningful convention violation (wrong naming pattern, wrong file location, wrong API shape)",
+            "5-6": "Multiple convention violations; new code would confuse a reader familiar with the rest of the codebase",
+            "0-4": "Implementation ignores the project's established conventions throughout"
+          }
+        },
+        {
+          "id": "significant-decision-documentation",
+          "name": "Significant-decision documentation",
+          "focus": "Material architectural choices and changes to established patterns are recorded where future maintainers will find them.",
+          "anchor_source": "Architecture Reviewer Rubric / Architecture Documentation Coverage",
+          "anchors": {
+            "10": "Significant new patterns or decisions are documented; existing docs updated if changed",
+            "9": "1 minor undocumented choice that is self-evident from the code",
+            "7-8": "A meaningful architectural decision made without documentation",
+            "5-6": "A significant cross-cutting decision with no documentation, making it hard for future developers",
+            "0-4": "Major new patterns introduced with no documentation; future maintainers would have no context"
+          }
+        }
+      ]
+    },
+    {
+      "id": "deployment-infrastructure",
+      "name": "Deployment and infrastructure",
+      "trigger": {
+        "class": "conditional",
+        "judgment_required": true,
+        "recorded_reason_required": true,
+        "reason_format": "one-line",
+        "keyword_match_sufficient": false,
+        "guidance": "Select when the reviewed change materially affects infrastructure, configuration, migration, rollout, rollback, deployed verification, or infrastructure operations."
+      },
+      "implementations": {
+        "code_review": {
+          "procedure": "roster-scoring-lens",
+          "path": "plugins/saga/skills/code-review/references/lens-catalog.md",
+          "section": "Run a roster scoring lens"
+        },
+        "team_execution": {
+          "agent": "infra-reviewer",
+          "path": "plugins/team-execution/agents/infra-reviewer.md"
+        }
+      },
+      "dimensions": [
+        {
+          "id": "infrastructure-configuration-least-privilege",
+          "name": "Infrastructure and configuration correctness with least privilege",
+          "focus": "Infrastructure and configuration express the intended deployed state with minimum necessary permissions.",
+          "legacy_focus": ["IaC Correctness", "IAM Least Privilege"],
+          "anchors": {
+            "10": "Infrastructure and configuration are correct, validated, and grant only the permissions required.",
+            "9": "The deployed definition is correct with one minor low-risk configuration or permission excess.",
+            "7-8": "A meaningful configuration error, validation gap, or over-permissive grant remains.",
+            "5-6": "Multiple resources are incorrect or materially over-privileged.",
+            "0-4": "The infrastructure cannot deploy safely or grants broad unauthorized access."
+          }
+        },
+        {
+          "id": "migrations-backfills-compatibility-rollout-order",
+          "name": "Migrations, backfills, compatibility, and rollout order",
+          "focus": "Schema and data changes preserve compatibility and use a safe, explicit rollout and backfill sequence.",
+          "anchors": {
+            "10": "Every migration phase, backfill, compatibility window, and deployment order is explicit, bounded, and verified.",
+            "9": "The rollout is safe with one minor sequencing or evidence detail implicit.",
+            "7-8": "A material compatibility, backfill, or ordering risk lacks a complete control.",
+            "5-6": "Multiple phases can break running code, overload data stores, or strand partially migrated data.",
+            "0-4": "The proposed order predictably breaks production compatibility or destroys required data."
+          }
+        },
+        {
+          "id": "rollback-reversibility-drift",
+          "name": "Rollback, reversibility, and drift",
+          "focus": "The change has a tested recovery path and accounts for irreversible operations and deployed-state drift.",
+          "anchors": {
+            "10": "Rollback or forward recovery is explicit and verified, irreversible steps are guarded, and drift is detected.",
+            "9": "Recovery is credible with one minor low-risk manual step or drift check implicit.",
+            "7-8": "A material rollback, irreversibility, or drift case is incompletely handled.",
+            "5-6": "Multiple failure points lack safe recovery or can leave environments divergent.",
+            "0-4": "A common failure causes unrecoverable loss or leaves no viable restore path."
+          }
+        },
+        {
+          "id": "cost-resilience",
+          "name": "Cost and resilience",
+          "focus": "Resource choices avoid accidental cost growth and meet the required availability and failure-domain posture.",
+          "legacy_focus": ["Cost Awareness", "Resilience"],
+          "anchors": {
+            "10": "Cost drivers and failure domains are measured, bounded, and aligned with stated service requirements.",
+            "9": "Cost and resilience are sound with one minor assumption not directly measured.",
+            "7-8": "A meaningful cost multiplier or single point of failure lacks mitigation.",
+            "5-6": "Multiple resource choices create material unbounded cost or avoidable outages.",
+            "0-4": "The design contains an immediate cost bomb or cannot survive an expected infrastructure failure."
+          }
+        },
+        {
+          "id": "deployed-state-verification-observability",
+          "name": "Deployed-state verification and infrastructure observability",
+          "focus": "Operators can prove the intended version and state are live and can detect material infrastructure failures.",
+          "legacy_focus": ["Observability"],
+          "anchors": {
+            "10": "Deployment readback, metrics, alarms, logs, and operator evidence prove both state and health.",
+            "9": "Operational evidence is complete with one minor low-risk signal gap.",
+            "7-8": "A material deployed-state or failure condition is not directly observable.",
+            "5-6": "Multiple important infrastructure failures can remain silent or the deployed version cannot be proven.",
+            "0-4": "The change can fail or drift in production with no reliable detection or verification path."
+          }
+        }
+      ]
+    },
+    {
+      "id": "correctness",
+      "name": "Correctness",
+      "trigger": {
+        "class": "always-on",
+        "judgment_required": false,
+        "recorded_reason_required": false,
+        "keyword_match_sufficient": false,
+        "guidance": "Run for every review to check intent, behavior, state, boundaries, side effects, and exhaustive consumers."
+      },
+      "implementations": {
+        "code_review": {
+          "procedure": "roster-scoring-lens",
+          "path": "plugins/saga/skills/code-review/references/lens-catalog.md",
+          "section": "Run a roster scoring lens"
+        },
+        "team_execution": {
+          "agent": "code-quality-reviewer",
+          "path": "plugins/team-execution/agents/code-quality-reviewer.md"
+        }
+      },
+      "dimensions": [
+        {
+          "id": "intent-behavior-completeness",
+          "name": "Intent and behavior completeness",
+          "focus": "The implementation satisfies the settled intent and every required behavior without silent omissions.",
+          "anchors": {
+            "10": "All required behavior is present, correct, and supported by direct evidence.",
+            "9": "Behavior is correct with one or two minor omissions that do not affect required outcomes.",
+            "7-8": "A meaningful intent detail or behavior is incomplete, ambiguous, or weakly evidenced.",
+            "5-6": "Multiple required behaviors are missing or materially incorrect.",
+            "0-4": "Core intent is not implemented or common required behavior fails."
+          }
+        },
+        {
+          "id": "state-data-invariants-transactions-concurrency",
+          "name": "State and data invariants, transactions, concurrency, and transitions",
+          "focus": "State changes preserve invariants under normal, concurrent, partial, and repeated execution.",
+          "anchors": {
+            "10": "All invariants and transitions are explicit, atomic where required, and verified under concurrency and repetition.",
+            "9": "Invariants hold with one minor transition or concurrency case left implicit.",
+            "7-8": "A material invariant, transaction boundary, or concurrent transition is insufficiently protected.",
+            "5-6": "Multiple state paths can violate invariants or produce inconsistent data.",
+            "0-4": "Ordinary execution can corrupt state, lose data, or perform an invalid transition."
+          }
+        },
+        {
+          "id": "boundary-types-serialization-numeric-time",
+          "name": "Boundary types, serialization, numeric, and time handling",
+          "focus": "Values retain their intended meaning across language, storage, numeric, temporal, and serialization boundaries.",
+          "anchors": {
+            "10": "Every boundary conversion is explicit, lossless for the contract, and verified at meaningful limits.",
+            "9": "Boundary handling is correct with one minor low-risk conversion assumption.",
+            "7-8": "A meaningful type, serialization, precision, timezone, or range case is not handled clearly.",
+            "5-6": "Multiple boundary conversions can silently change values or reject valid data.",
+            "0-4": "Common inputs are corrupted, misinterpreted, or unserializable across a required boundary."
+          }
+        },
+        {
+          "id": "side-effects-errors-resource-lifecycle",
+          "name": "Side effects, errors, and resource lifecycle",
+          "focus": "Side effects occur exactly when intended, failures propagate honestly, and resources are acquired and released safely.",
+          "legacy_focus": ["Error Handling Quality"],
+          "anchors": {
+            "10": "Side effects, errors, cleanup, and ownership are complete, consistent, and verified on success and failure.",
+            "9": "Lifecycle behavior is correct with one minor diagnostic or cleanup inconsistency.",
+            "7-8": "A meaningful failure, cleanup, or conditional side-effect path is weak or inconsistent.",
+            "5-6": "Multiple paths swallow errors, leak resources, or perform misleading or partial side effects.",
+            "0-4": "Common failures silently succeed, required effects are skipped, or resources are routinely leaked."
+          }
+        },
+        {
+          "id": "caller-enum-consumer-completeness",
+          "name": "Caller and enum consumer completeness",
+          "focus": "Every caller, switch, allowlist, serializer, and downstream consumer handles changed values and contracts.",
+          "anchors": {
+            "10": "All direct and indirect consumers were exhaustively traced and correctly updated or proven unaffected.",
+            "9": "Consumer coverage is complete with one minor low-risk use left implicit.",
+            "7-8": "A material caller or enum consumer may retain stale behavior or fall through incorrectly.",
+            "5-6": "Several consumers are untraced or demonstrably inconsistent with the changed contract.",
+            "0-4": "A common caller or consumer is broken by the change or silently applies the wrong default."
+          }
+        }
+      ]
+    },
+    {
+      "id": "security",
+      "name": "Security",
+      "trigger": {
+        "class": "always-on",
+        "judgment_required": false,
+        "recorded_reason_required": false,
+        "keyword_match_sufficient": false,
+        "guidance": "Run for every review to examine authorization, trust boundaries, secrets, dependencies, and confidentiality."
+      },
+      "implementations": {
+        "code_review": {
+          "procedure": "roster-scoring-lens",
+          "path": "plugins/saga/skills/code-review/references/lens-catalog.md",
+          "section": "Run a roster scoring lens"
+        },
+        "team_execution": {
+          "agent": "security-reviewer",
+          "path": "plugins/team-execution/agents/security-reviewer.md"
+        }
+      },
+      "dimensions": [
+        {
+          "id": "authentication-authorization-tenant-isolation",
+          "name": "Authentication, authorization, tenant isolation, and default deny",
+          "focus": "Every protected operation authenticates the caller, authorizes the action and object, isolates tenants, and denies by default.",
+          "anchor_source": "Security Reviewer Rubric / Auth & AuthZ",
+          "anchors": {
+            "10": "All endpoints/mutations properly authenticated AND authorized; principle of least privilege followed",
+            "9": "Authentication complete; 1 minor authZ gap in a low-risk area",
+            "7-8": "AuthZ missing on an endpoint or over-permissive role",
+            "5-6": "Authentication missing on an endpoint or significant privilege escalation risk",
+            "0-4": "Auth fundamentally broken or bypassed"
+          }
+        },
+        {
+          "id": "input-trust-boundaries-injection",
+          "name": "Input trust boundaries and injection resistance",
+          "focus": "External, file, path, network, serialized, and model-generated inputs are validated before privileged interpretation or use.",
+          "anchor_source": "Security Reviewer Rubric / Input Validation & Injection",
+          "anchors": {
+            "10": "All external inputs validated; parameterized queries used; no injection vectors",
+            "9": "1-2 minor validation gaps on low-risk inputs",
+            "7-8": "A meaningful validation gap on a user-controlled field",
+            "5-6": "SQL/NoSQL/command injection vector present",
+            "0-4": "Direct user input in queries or shell commands without sanitization"
+          }
+        },
+        {
+          "id": "secrets-cryptography-session-handling",
+          "name": "Secrets, cryptography, and session handling",
+          "focus": "Secrets are managed and compared safely, cryptography uses appropriate primitives, and sessions cannot be forged or reused improperly.",
+          "anchor_source": "Security Reviewer Rubric / Secrets Management",
+          "anchors": {
+            "10": "All secrets via a secrets manager or env vars; no hardcoded values; no logging of secrets",
+            "9": "1 minor config value (non-sensitive) passed as env var without secrets management",
+            "7-8": "A sensitive value in env var format instead of a secrets manager",
+            "5-6": "A secret in a config file that could be committed",
+            "0-4": "Hardcoded secret in source code"
+          }
+        },
+        {
+          "id": "dependency-supply-chain",
+          "name": "Dependency and supply-chain provenance",
+          "focus": "Dependencies, generated artifacts, actions, plugins, and build inputs are necessary, pinned appropriately, trusted, and vulnerability-aware.",
+          "anchor_source": "Security Reviewer Rubric / Dependency & Supply Chain",
+          "anchors": {
+            "10": "All deps necessary, pinned to exact versions, no known CVEs",
+            "9": "Dependencies pinned; 1 non-critical CVE in a low-impact dependency",
+            "7-8": "A dependency not pinned to exact version or with a moderate CVE",
+            "5-6": "An unnecessary dependency or a dependency with a significant CVE",
+            "0-4": "Dependency with critical CVE or from an unvetted source"
+          }
+        },
+        {
+          "id": "confidentiality-logs-errors-egress",
+          "name": "Confidentiality across logs, errors, and egress",
+          "focus": "Sensitive data is not exposed through logs, error messages, telemetry, URLs, model context, or outbound integrations.",
+          "anchors": {
+            "10": "All sensitive flows are identified, minimized, redacted, and constrained to authorized destinations.",
+            "9": "Confidentiality controls are complete with one minor low-risk diagnostic exposure concern.",
+            "7-8": "A meaningful log, error, telemetry, or egress path can reveal more data than necessary.",
+            "5-6": "Multiple routine paths expose sensitive data or lack destination controls.",
+            "0-4": "Secrets or highly sensitive data are exposed through a common log, error, URL, or egress path."
+          }
+        }
+      ]
+    },
+    {
+      "id": "testing",
+      "name": "Testing",
+      "trigger": {
+        "class": "always-on",
+        "judgment_required": false,
+        "recorded_reason_required": false,
+        "keyword_match_sufficient": false,
+        "guidance": "Run for every review to assess behavioral evidence, failure cases, realistic seams, and test trustworthiness."
+      },
+      "implementations": {
+        "code_review": {
+          "procedure": "roster-scoring-lens",
+          "path": "plugins/saga/skills/code-review/references/lens-catalog.md",
+          "section": "Run a roster scoring lens"
+        },
+        "team_execution": {
+          "agent": "testing-reviewer",
+          "path": "plugins/team-execution/agents/testing-reviewer.md"
+        }
+      },
+      "dimensions": [
+        {
+          "id": "requirements-regression-coverage",
+          "name": "Requirements and regression coverage",
+          "focus": "Tests cover the changed requirements and the existing behavior most likely to regress.",
+          "legacy_focus": ["Coverage Adequacy"],
+          "anchors": {
+            "10": "Every changed requirement and material regression risk has direct, behavior-sensitive coverage.",
+            "9": "Coverage is complete with one minor low-risk path not exercised directly.",
+            "7-8": "A meaningful changed requirement or regression path lacks direct coverage.",
+            "5-6": "Multiple required behaviors or likely regressions are untested.",
+            "0-4": "Core changed behavior has no trustworthy regression coverage."
+          }
+        },
+        {
+          "id": "negative-edge-state-concurrency-time",
+          "name": "Negative, edge, state, concurrency, and time cases",
+          "focus": "Tests exercise invalid inputs, boundaries, state transitions, concurrent behavior, clocks, timezones, and deadlines where applicable.",
+          "legacy_focus": ["Edge Case Testing"],
+          "anchors": {
+            "10": "All meaningful negative and boundary classes are exercised with explicit expected outcomes.",
+            "9": "Boundary coverage is strong with one minor low-probability case omitted.",
+            "7-8": "A notable error, state, concurrency, or time boundary is untested.",
+            "5-6": "Multiple failure and boundary classes are missing and likely to hide defects.",
+            "0-4": "Tests cover only the happy path while common invalid or boundary cases fail."
+          }
+        },
+        {
+          "id": "behavior-sensitive-assertions",
+          "name": "Behavior-sensitive assertions",
+          "focus": "Assertions prove outcomes and invariants and would fail when the reviewed behavior changes incorrectly.",
+          "legacy_focus": ["Test Quality"],
+          "anchors": {
+            "10": "Assertions precisely prove externally meaningful behavior, state, and failure semantics.",
+            "9": "Assertions are behavior-sensitive with one minor indirect or broad assertion.",
+            "7-8": "A meaningful test mostly proves execution, mocks, or incidental structure instead of behavior.",
+            "5-6": "Multiple tests can pass while the required behavior is wrong.",
+            "0-4": "The suite provides little or no evidence about the changed behavior."
+          }
+        },
+        {
+          "id": "realistic-seams-mocks-integration-evidence",
+          "name": "Realistic seams, mocks, integration, and behavioral evidence",
+          "focus": "Mocks stop at appropriate boundaries and at least one real chain proves interactions when the behavior crosses layers.",
+          "legacy_focus": ["Mock/Fixture Appropriateness"],
+          "anchors": {
+            "10": "Mocks isolate only true boundaries and realistic integration evidence proves every material cross-layer interaction.",
+            "9": "Seams are realistic with one minor interaction represented indirectly.",
+            "7-8": "A material interaction is over-mocked or lacks real-chain evidence.",
+            "5-6": "Multiple interacting layers are replaced by fixtures that merely restate the implementation.",
+            "0-4": "The tests mock the behavior under test or claim integration without exercising any real interaction."
+          }
+        },
+        {
+          "id": "determinism-isolation-diagnostics-maintainability",
+          "name": "Determinism, isolation, diagnostics, and maintainability",
+          "focus": "Tests are repeatable, independent, debuggable, and economical to update when intended behavior changes.",
+          "legacy_focus": ["Test Maintainability"],
+          "anchors": {
+            "10": "Tests are deterministic, isolated, diagnostically clear, and structured around stable behavior contracts.",
+            "9": "The suite is maintainable with one minor source of noise or coupling.",
+            "7-8": "A meaningful ordering, clock, network, shared-state, or diagnostic weakness remains.",
+            "5-6": "Multiple tests are flaky, tightly coupled, or difficult to diagnose and update.",
+            "0-4": "The suite is routinely nondeterministic or unusable as reliable change evidence."
+          }
+        }
+      ]
+    },
+    {
+      "id": "reliability",
+      "name": "Reliability",
+      "trigger": {
+        "class": "conditional",
+        "judgment_required": true,
+        "recorded_reason_required": true,
+        "reason_format": "one-line",
+        "keyword_match_sufficient": false,
+        "guidance": "Select when the change materially affects failure handling, asynchronous work, concurrency, retries, cancellation, health signals, or recovery."
+      },
+      "implementations": {
+        "code_review": {
+          "procedure": "roster-scoring-lens",
+          "path": "plugins/saga/skills/code-review/references/lens-catalog.md",
+          "section": "Run a roster scoring lens"
+        },
+        "team_execution": {
+          "agent": "devils-advocate-reviewer",
+          "path": "plugins/team-execution/agents/devils-advocate-reviewer.md"
+        }
+      },
+      "dimensions": [
+        {
+          "id": "timeouts-retries-circuit-breakers-idempotency",
+          "name": "Timeouts, retries, circuit breakers, and idempotency",
+          "focus": "Remote and fallible operations terminate, retry only when safe, avoid retry storms, and remain idempotent.",
+          "anchors": {
+            "10": "Every fallible call has bounded timing, safe retry policy, overload protection, and verified idempotency where needed.",
+            "9": "Controls are complete with one minor low-risk retry or timeout detail implicit.",
+            "7-8": "A meaningful call lacks a timeout, bounded retry, circuit control, or idempotency proof.",
+            "5-6": "Multiple operations can hang, duplicate effects, or amplify an outage.",
+            "0-4": "Common failures cause unbounded hangs, retry storms, or repeated destructive effects."
+          }
+        },
+        {
+          "id": "queues-jobs-dead-letters-ordering-backpressure",
+          "name": "Queues, jobs, dead letters, ordering, and backpressure",
+          "focus": "Asynchronous work handles duplicates, ordering, poison messages, capacity, and terminal failure visibly.",
+          "anchors": {
+            "10": "Queue semantics, retries, dead letters, ordering, capacity, and operator recovery are explicit and verified.",
+            "9": "Asynchronous behavior is sound with one minor low-risk operational detail implicit.",
+            "7-8": "A material duplicate, ordering, poison-message, or backpressure case is weakly handled.",
+            "5-6": "Multiple queue failure modes can lose, duplicate, or indefinitely stall work.",
+            "0-4": "Expected asynchronous failures silently lose required work or destabilize the service."
+          }
+        },
+        {
+          "id": "concurrency-partial-failure-recovery",
+          "name": "Concurrency, partial failure, and recovery",
+          "focus": "Concurrent and partially completed operations preserve consistency and can resume without compounding damage.",
+          "anchors": {
+            "10": "Concurrent, interrupted, and partial paths are atomic or explicitly compensating, with verified recovery.",
+            "9": "Recovery is complete with one minor low-risk interleaving left implicit.",
+            "7-8": "A meaningful partial or concurrent path can leave ambiguous state or require unsafe manual repair.",
+            "5-6": "Multiple interruptions or races leave inconsistent state or duplicate effects.",
+            "0-4": "A common partial failure corrupts state with no reliable recovery path."
+          }
+        },
+        {
+          "id": "graceful-degradation-cancellation-cleanup",
+          "name": "Graceful degradation, cancellation, and cleanup",
+          "focus": "The system fails proportionally, honors cancellation and deadlines, and cleans up work and resources.",
+          "anchors": {
+            "10": "Degraded modes, cancellation, deadlines, cleanup, and user-visible failure are explicit and verified.",
+            "9": "Failure behavior is graceful with one minor cleanup or messaging gap.",
+            "7-8": "A material failure path blocks unnecessarily, ignores cancellation, or leaves temporary state behind.",
+            "5-6": "Multiple failures cascade, leak resources, or prevent recovery.",
+            "0-4": "A routine dependency failure causes widespread outage or persistent orphaned state."
+          }
+        },
+        {
+          "id": "health-signals-observability-runbooks",
+          "name": "Health signals, observability, alerts, and runbooks",
+          "focus": "Logs, metrics, traces, alerts, health checks, runbooks, and service-level evidence expose actionable failure state.",
+          "anchors": {
+            "10": "Every material failure is observable with actionable context, calibrated alerting, and a verified operator response.",
+            "9": "Signals are complete with one minor low-risk diagnostic or runbook gap.",
+            "7-8": "A meaningful failure is difficult to distinguish, alert on, or recover from operationally.",
+            "5-6": "Multiple failures are silent, noisy without context, or unsupported by recovery guidance.",
+            "0-4": "The service can be materially unhealthy while reporting green or offering no actionable evidence."
+          }
+        }
+      ]
+    },
+    {
+      "id": "performance",
+      "name": "Performance",
+      "trigger": {
+        "class": "conditional",
+        "judgment_required": true,
+        "recorded_reason_required": true,
+        "reason_format": "one-line",
+        "keyword_match_sufficient": false,
+        "guidance": "Select when the change can materially affect latency, throughput, computational cost, queries, input-output behavior, memory, caching, capacity, or cost."
+      },
+      "implementations": {
+        "code_review": {
+          "procedure": "roster-scoring-lens",
+          "path": "plugins/saga/skills/code-review/references/lens-catalog.md",
+          "section": "Run a roster scoring lens"
+        },
+        "team_execution": {
+          "agent": "performance-tester",
+          "path": "plugins/team-execution/agents/performance-tester.md"
+        }
+      },
+      "dimensions": [
+        {
+          "id": "measured-latency-throughput",
+          "name": "Measured latency and throughput",
+          "focus": "Performance claims use representative baselines, workloads, percentiles, and reproducible measurements.",
+          "anchors": {
+            "10": "Representative measurements prove latency and throughput meet explicit targets without hidden regressions.",
+            "9": "Evidence is strong with one minor low-risk workload or percentile gap.",
+            "7-8": "A material performance claim lacks a representative baseline or measurement.",
+            "5-6": "Multiple claims rely on intuition or non-representative microbenchmarks.",
+            "0-4": "Required performance regresses materially or no credible evidence exists for a load-bearing claim."
+          }
+        },
+        {
+          "id": "algorithm-query-index-cost",
+          "name": "Algorithmic, query, and index cost",
+          "focus": "Algorithms and data access scale appropriately and use indexes and query shapes suited to realistic cardinality.",
+          "anchors": {
+            "10": "Complexity and query plans are appropriate, bounded, and evidenced at representative scale.",
+            "9": "Cost is sound with one minor low-risk optimization opportunity.",
+            "7-8": "A meaningful nested operation, repeated scan, N+1 query, or missing index remains.",
+            "5-6": "Multiple hot paths scale poorly or issue avoidable high-cost queries.",
+            "0-4": "Common workloads trigger catastrophic complexity, full scans, or database overload."
+          }
+        },
+        {
+          "id": "io-batching-concurrency-waterfalls",
+          "name": "Input-output batching, concurrency, and waterfalls",
+          "focus": "Independent operations are batched or parallelized safely and avoid avoidable serial network or storage waterfalls.",
+          "anchors": {
+            "10": "Input-output scheduling minimizes round trips while preserving ordering, limits, and failure semantics.",
+            "9": "Scheduling is efficient with one minor low-volume serial operation.",
+            "7-8": "A meaningful waterfall, chatty loop, or underused safe concurrency path remains.",
+            "5-6": "Multiple hot paths serialize avoidable remote work or create uncontrolled concurrency.",
+            "0-4": "Ordinary workloads cause severe latency or overload through an obvious input-output waterfall."
+          }
+        },
+        {
+          "id": "memory-resource-use",
+          "name": "Memory and resource use",
+          "focus": "Memory, file descriptors, connections, processes, threads, and temporary storage remain bounded and released.",
+          "anchors": {
+            "10": "All material resources are bounded, streamed or pooled appropriately, and released under success and failure.",
+            "9": "Resource use is sound with one minor low-risk sizing assumption.",
+            "7-8": "A meaningful allocation, buffer, pool, or lifecycle can grow beyond expected bounds.",
+            "5-6": "Multiple paths leak or retain large resources under routine load.",
+            "0-4": "Common workloads exhaust memory, connections, descriptors, or storage."
+          }
+        },
+        {
+          "id": "cache-correctness-invalidation",
+          "name": "Cache correctness and invalidation",
+          "focus": "Caches have explicit keys, freshness, invalidation, consistency, stampede, and failure behavior.",
+          "anchors": {
+            "10": "Cache identity, freshness, invalidation, concurrency, and fallback are complete and verified.",
+            "9": "Cache behavior is correct with one minor low-risk freshness assumption.",
+            "7-8": "A meaningful invalidation, keying, stampede, or stale-read case is weakly controlled.",
+            "5-6": "Multiple cache paths can serve incorrect data or amplify load.",
+            "0-4": "The cache routinely returns wrong data, never invalidates, or makes failure materially worse."
+          }
+        },
+        {
+          "id": "capacity-cost-tradeoffs",
+          "name": "Capacity and cost tradeoffs",
+          "focus": "Capacity assumptions and performance improvements account for monetary cost, operational limits, and expected growth.",
+          "anchors": {
+            "10": "Capacity, limits, growth, and cost are quantified and balanced against explicit performance goals.",
+            "9": "Tradeoffs are sound with one minor low-risk assumption not measured directly.",
+            "7-8": "A meaningful capacity limit or cost multiplier is omitted from the decision.",
+            "5-6": "Multiple choices buy performance with unbounded cost or insufficient capacity.",
+            "0-4": "The design cannot meet expected load or does so only through an immediate, uncontrolled cost increase."
+          }
+        }
+      ]
+    },
+    {
+      "id": "api-contract",
+      "name": "API and interface contract",
+      "trigger": {
+        "class": "conditional",
+        "judgment_required": true,
+        "recorded_reason_required": true,
+        "reason_format": "one-line",
+        "keyword_match_sufficient": false,
+        "guidance": "Select when the change materially affects Hypertext Transfer Protocol, events, command-line interfaces, configuration, exported types, file formats, or their consumers."
+      },
+      "implementations": {
+        "code_review": {
+          "procedure": "roster-scoring-lens",
+          "path": "plugins/saga/skills/code-review/references/lens-catalog.md",
+          "section": "Run a roster scoring lens"
+        },
+        "team_execution": {
+          "agent": "api-reviewer",
+          "path": "plugins/team-execution/agents/api-reviewer.md"
+        }
+      },
+      "dimensions": [
+        {
+          "id": "interface-contract-compatibility",
+          "name": "Interface and contract compatibility",
+          "focus": "Changed Hypertext Transfer Protocol, event, command-line, configuration, exported-type, and file-format contracts remain compatible or explicitly migrated.",
+          "legacy_focus": ["API Contract Correctness"],
+          "anchors": {
+            "10": "Every affected interface matches its declared contract and preserves supported consumers or supplies a complete migration.",
+            "9": "Compatibility is complete with one minor low-risk ambiguity.",
+            "7-8": "A meaningful consumer, field, flag, event, type, or format compatibility risk remains.",
+            "5-6": "Multiple supported consumers can break without an adequate transition.",
+            "0-4": "A common supported interface is silently broken or contradicts its declared contract."
+          }
+        },
+        {
+          "id": "versioning-deprecation",
+          "name": "Versioning and deprecation",
+          "focus": "Breaking or behaviorally significant changes use an explicit version, compatibility window, and removal path.",
+          "legacy_focus": ["Versioning & Deprecation"],
+          "anchors": {
+            "10": "Version boundaries, deprecation notices, migration timing, and removal criteria are complete and enforced.",
+            "9": "Versioning is correct with one minor communication or timing detail implicit.",
+            "7-8": "A meaningful breaking change lacks a complete deprecation or migration path.",
+            "5-6": "Multiple contract changes bypass versioning or remove supported behavior prematurely.",
+            "0-4": "The change breaks common consumers immediately with no version or migration mechanism."
+          }
+        },
+        {
+          "id": "serialization-errors",
+          "name": "Serialization and error contracts",
+          "focus": "Wire and file representations are stable and failures use documented, machine-actionable shapes and semantics.",
+          "legacy_focus": ["Error Response Design"],
+          "anchors": {
+            "10": "Serialization and error shapes are complete, compatible, documented, and verified for success and failure.",
+            "9": "Contracts are sound with one minor low-risk error-detail inconsistency.",
+            "7-8": "A meaningful representation or error response is ambiguous, inconsistent, or undocumented.",
+            "5-6": "Multiple paths produce incompatible or unactionable representations and errors.",
+            "0-4": "Common consumers cannot parse required responses or distinguish routine failure states."
+          }
+        },
+        {
+          "id": "retry-idempotency-semantics",
+          "name": "Retry and idempotency semantics",
+          "focus": "Contracts state which operations may be retried and prevent duplicate effects when retry is expected.",
+          "legacy_focus": ["Idempotency"],
+          "anchors": {
+            "10": "Retryability, idempotency keys, duplicate handling, and terminal errors are explicit and verified.",
+            "9": "Semantics are correct with one minor low-risk retry detail implicit.",
+            "7-8": "A meaningful mutation or event can be retried without a clear duplicate-effect contract.",
+            "5-6": "Multiple retry paths can duplicate effects or lose required work.",
+            "0-4": "Normal retry behavior causes destructive duplication or corrupts contract state."
+          }
+        },
+        {
+          "id": "pagination-rate-limits",
+          "name": "Pagination and rate limits",
+          "focus": "Collection and high-volume interfaces expose stable pagination, ordering, limits, and throttling behavior.",
+          "anchors": {
+            "10": "Pagination, ordering, cursors, limits, quotas, and retry guidance are complete and verified at boundaries.",
+            "9": "Volume controls are sound with one minor low-risk boundary detail implicit.",
+            "7-8": "A meaningful page, ordering, quota, or throttling behavior is ambiguous or inconsistent.",
+            "5-6": "Multiple collection or rate-limit paths can skip, duplicate, or indefinitely block work.",
+            "0-4": "Common clients cannot traverse results reliably or safely respond to throttling."
+          }
+        },
+        {
+          "id": "sdk-generated-client-impact",
+          "name": "Software development kit and generated-client impact",
+          "focus": "Generated clients, typed consumers, examples, and downstream libraries remain buildable and behaviorally compatible.",
+          "legacy_focus": ["SDK Impact"],
+          "anchors": {
+            "10": "All generated and handwritten client impacts are identified, regenerated or migrated, and verified.",
+            "9": "Client impact is complete with one minor low-risk consumer implicit.",
+            "7-8": "A meaningful generated or typed consumer is not accounted for.",
+            "5-6": "Multiple client surfaces are stale or incompatible with the changed contract.",
+            "0-4": "Common clients fail to build or operate against the new interface."
+          }
+        },
+        {
+          "id": "specification-documentation-parity",
+          "name": "Specification and documentation parity",
+          "focus": "Specifications, schemas, help output, examples, and reference documentation describe the interface that actually ships.",
+          "anchors": {
+            "10": "Every authoritative specification and example matches implemented behavior and is validated where tooling exists.",
+            "9": "Parity is complete with one minor low-risk wording or example gap.",
+            "7-8": "A meaningful contract detail differs between implementation and documentation.",
+            "5-6": "Multiple authoritative sources disagree with the shipped interface.",
+            "0-4": "Consumers following the primary specification or documentation encounter a broken common path."
+          }
+        }
+      ]
+    },
+    {
+      "id": "adversarial",
+      "name": "Adversarial",
+      "trigger": {
+        "class": "conditional",
+        "judgment_required": true,
+        "recorded_reason_required": true,
+        "reason_format": "one-line",
+        "keyword_match_sufficient": false,
+        "guidance": "Select for load-bearing assumptions, abuse potential, authentication, money, mutation, external integration, lifecycle or state-machine changes, policy and gates, deployment, agent orchestration, or a large or complex diff."
+      },
+      "implementations": {
+        "code_review": {
+          "procedure": "roster-scoring-lens",
+          "path": "plugins/saga/skills/code-review/references/lens-catalog.md",
+          "section": "Run a roster scoring lens"
+        },
+        "team_execution": {
+          "agent": "devils-advocate-reviewer",
+          "path": "plugins/team-execution/agents/devils-advocate-reviewer.md"
+        }
+      },
+      "dimensions": [
+        {
+          "id": "load-bearing-assumptions",
+          "name": "Load-bearing assumptions",
+          "focus": "Assumptions that determine correctness, safety, or operability are explicit and verified against the real codebase and environment.",
+          "anchor_source": "Devil's Advocate Rubric / Assumption Validity",
+          "anchors": {
+            "10": "All assumptions are explicitly stated and verifiably correct in this codebase context",
+            "9": "1-2 minor assumptions that are reasonable but unstated",
+            "7-8": "A load-bearing assumption that may not hold in edge cases",
+            "5-6": "An assumption that is likely wrong or untested",
+            "0-4": "Multiple incorrect assumptions; implementation will fail in common scenarios"
+          }
+        },
+        {
+          "id": "abuse-edge-cases",
+          "name": "Abuse and edge cases",
+          "focus": "The design remains safe under malicious, extreme, empty, repeated, concurrent, first-run, and malformed inputs.",
+          "anchor_source": "Devil's Advocate Rubric / Edge Case Coverage",
+          "anchors": {
+            "10": "All meaningful boundary conditions handled or explicitly out-of-scope",
+            "9": "1-2 minor edge cases unhandled but unlikely to be hit in practice",
+            "7-8": "A notable edge case (empty input, concurrent modification, timeout) unhandled",
+            "5-6": "Multiple edge cases unhandled; would cause runtime failures",
+            "0-4": "Common edge cases ignored; implementation not production-safe"
+          }
+        },
+        {
+          "id": "failure-amplification-silent-green",
+          "name": "Failure amplification and silent-green paths",
+          "focus": "Failures remain visible and contained rather than being swallowed, reported as success, retried into overload, or propagated across systems.",
+          "anchor_source": "Devil's Advocate Rubric / Failure Mode Analysis",
+          "anchors": {
+            "10": "All failure paths handled gracefully; errors are informative",
+            "9": "1-2 failure paths with generic error handling",
+            "7-8": "A meaningful failure path with no error handling (swallowed exception, unhandled state)",
+            "5-6": "Multiple unhandled failures; silent failures present",
+            "0-4": "No meaningful error handling; implementation will fail silently"
+          }
+        },
+        {
+          "id": "environment-operator-failure",
+          "name": "Environment and operator failure",
+          "focus": "The implementation behaves honestly when configuration, permissions, tools, hosts, credentials, or operator actions differ from the happy path.",
+          "anchors": {
+            "10": "Every material environment and operator failure is detected early, explained, and recoverable without false success.",
+            "9": "Failure handling is complete with one minor low-risk diagnostic gap.",
+            "7-8": "A meaningful missing tool, permission, configuration, or operator-error path is ambiguous or unsafe.",
+            "5-6": "Multiple ordinary environment failures produce misleading state or difficult recovery.",
+            "0-4": "Common environmental or operator error is treated as success or causes irreversible damage."
+          }
+        },
+        {
+          "id": "scope-creep-risk",
+          "name": "Scope creep risk",
+          "focus": "The implementation stays within the settled behavior and avoids unrelated mechanisms, abstractions, or lifecycle continuation.",
+          "anchor_source": "Devil's Advocate Rubric / Scope Creep Risk",
+          "anchors": {
+            "10": "Implementation does exactly what the plan asked; no gold-plating",
+            "9": "1-2 minor additions that are harmless but unnecessary",
+            "7-8": "A meaningful addition that creates maintenance burden",
+            "5-6": "Significant scope beyond the plan; implementation is harder to maintain",
+            "0-4": "Implementation has substantially more scope than needed"
+          }
+        },
+        {
+          "id": "alternatives-considered",
+          "name": "Alternatives considered",
+          "focus": "The chosen design reflects the smallest safe option after credible alternatives and existing mechanisms were evaluated.",
+          "anchor_source": "Devil's Advocate Rubric / Alternatives Considered",
+          "anchors": {
+            "10": "Clear evidence that alternatives were weighed and the chosen approach is defensible",
+            "9": "Approach is reasonable; 1-2 obvious alternatives not mentioned but unlikely to be better",
+            "7-8": "A simpler or more idiomatic approach exists that wasn't considered",
+            "5-6": "Approach is over-engineered vs. a simpler alternative that would work equally well",
+            "0-4": "Implementation introduces unnecessary complexity over a much simpler known pattern"
+          }
+        },
+        {
+          "id": "recovery",
+          "name": "Recovery",
+          "focus": "After interruption, partial execution, bad input, or an external failure, the system can return to a known safe state without compounding damage.",
+          "anchors": {
+            "10": "Recovery is explicit, bounded, idempotent, and verified for every material failure class.",
+            "9": "Recovery is sound with one minor low-risk manual step implicit.",
+            "7-8": "A meaningful failure requires ambiguous or unverified recovery.",
+            "5-6": "Multiple failures leave state that is difficult or risky to repair.",
+            "0-4": "A common failure leaves no credible safe recovery path."
+          }
+        }
+      ]
+    },
+    {
+      "id": "privacy",
+      "name": "Privacy",
+      "trigger": {
+        "class": "conditional",
+        "judgment_required": true,
+        "recorded_reason_required": true,
+        "reason_format": "one-line",
+        "keyword_match_sufficient": false,
+        "guidance": "Select when the change materially affects personal or sensitive data collection, use, sharing, retention, deletion, residency, telemetry, or artificial-intelligence processing."
+      },
+      "implementations": {
+        "code_review": {
+          "procedure": "roster-scoring-lens",
+          "path": "plugins/saga/skills/code-review/references/lens-catalog.md",
+          "section": "Run a roster scoring lens"
+        },
+        "team_execution": {
+          "agent": "privacy-reviewer",
+          "path": "plugins/team-execution/agents/privacy-reviewer.md"
+        }
+      },
+      "dimensions": [
+        {
+          "id": "data-flow-inventory-classification",
+          "name": "Data-flow inventory and classification",
+          "focus": "Collected, derived, stored, transmitted, logged, cached, and backed-up data is inventoried and classified by sensitivity.",
+          "anchors": {
+            "10": "Every material data flow and copy is inventoried, classified, owned, and linked to its controls.",
+            "9": "The inventory is complete with one minor low-risk derived or temporary copy implicit.",
+            "7-8": "A meaningful flow, copy, or classification is missing or ambiguous.",
+            "5-6": "Multiple stores or transfers of sensitive data are unclassified or unowned.",
+            "0-4": "The system handles personal or sensitive data without knowing where it goes or what protections apply."
+          }
+        },
+        {
+          "id": "data-minimization-purpose-consent",
+          "name": "Data minimization, purpose, and consent",
+          "focus": "Only necessary data is collected and used for explicit purposes supported by the required consent or lawful basis.",
+          "legacy_focus": ["Data Minimization", "Consent & Purpose Limitation"],
+          "anchors": {
+            "10": "Every collected field is necessary, purpose-bound, and supported by the required consent or lawful basis.",
+            "9": "Collection and use are sound with one minor low-risk purpose detail implicit.",
+            "7-8": "A meaningful field or secondary use lacks clear necessity, purpose, or consent.",
+            "5-6": "Multiple data elements are excessive or reused outside their stated purpose.",
+            "0-4": "The design broadly collects or repurposes personal data without necessity or valid authorization."
+          }
+        },
+        {
+          "id": "personal-data-protection-sharing-third-parties",
+          "name": "Personal-data protection, sharing, and third parties",
+          "focus": "Personal information is classified, protected, and shared only with authorized parties under explicit controls.",
+          "anchor_source": "Security Reviewer Rubric / PII / Data Privacy",
+          "legacy_focus": ["PII Handling & Classification"],
+          "anchors": {
+            "10": "PII identified, minimized, encrypted at rest, with retention defined",
+            "9": "PII handling largely correct; 1 minor gap (e.g., retention period not explicitly set)",
+            "7-8": "PII field not encrypted or logged unnecessarily",
+            "5-6": "PII in logs, unencrypted at rest, or shared without consent mechanism",
+            "0-4": "PII fundamentally mishandled"
+          }
+        },
+        {
+          "id": "retention-deletion-all-copies",
+          "name": "Retention and deletion across all copies",
+          "focus": "Retention and deletion cover primary stores, logs, caches, indexes, exports, replicas, and backups with verifiable completion semantics.",
+          "legacy_focus": ["Retention & Deletion"],
+          "anchors": {
+            "10": "Retention and deletion rules cover every copy, execute on schedule, and produce verifiable evidence.",
+            "9": "Lifecycle controls are complete with one minor low-risk delayed or derived copy documented.",
+            "7-8": "A meaningful copy, retention window, or deletion completion path is unaddressed.",
+            "5-6": "Multiple stores retain data indefinitely or cannot honor deletion reliably.",
+            "0-4": "Required deletion is impossible or personal data is retained without limit or authority."
+          }
+        },
+        {
+          "id": "portability-residency-legal-flags",
+          "name": "Portability, residency, and legal flags",
+          "focus": "Data export, geographic handling, regulatory constraints, and legal-review needs are explicit and enforced where applicable.",
+          "legacy_focus": ["Cross-Border & Compliance"],
+          "anchors": {
+            "10": "Portability, residency, transfer, and regulatory requirements are identified, enforced, and verified.",
+            "9": "Compliance handling is complete with one minor low-risk documentation gap.",
+            "7-8": "A meaningful residency, transfer, portability, or regulatory question remains unresolved.",
+            "5-6": "Multiple legal or geographic constraints are ignored or left to informal operation.",
+            "0-4": "The design predictably violates a binding residency, transfer, or data-right requirement."
+          }
+        },
+        {
+          "id": "ai-telemetry-training-reidentification",
+          "name": "Artificial-intelligence, telemetry, training, and re-identification use",
+          "focus": "Artificial-intelligence and telemetry uses are purpose-bound, minimize data, control training and retention, and account for inference and re-identification risk.",
+          "anchors": {
+            "10": "Model, telemetry, and training flows are explicit, minimized, consented where required, and protected against re-identification.",
+            "9": "Controls are complete with one minor low-risk model or telemetry detail implicit.",
+            "7-8": "A meaningful training, retention, inference, or re-identification risk lacks a clear control.",
+            "5-6": "Multiple artificial-intelligence or telemetry uses exceed stated purpose or expose personal data.",
+            "0-4": "Sensitive data is routinely sent to uncontrolled training or telemetry systems or is readily re-identified."
+          }
+        }
+      ]
+    },
+    {
+      "id": "documentation-clarity",
+      "name": "Documentation and clarity",
+      "trigger": {
+        "class": "conditional",
+        "judgment_required": true,
+        "recorded_reason_required": true,
+        "reason_format": "one-line",
+        "keyword_match_sufficient": false,
+        "guidance": "Select when documentation, specifications, runbooks, examples, help text, or other operator and maintainer guidance materially changes or is required for the code change."
+      },
+      "implementations": {
+        "code_review": {
+          "procedure": "roster-scoring-lens",
+          "path": "plugins/saga/skills/code-review/references/lens-catalog.md",
+          "section": "Run a roster scoring lens"
+        },
+        "team_execution": {
+          "agent": "clarity-reviewer",
+          "path": "plugins/team-execution/agents/clarity-reviewer.md"
+        }
+      },
+      "dimensions": [
+        {
+          "id": "shipped-behavior-parity",
+          "name": "Parity with shipped behavior",
+          "focus": "Documentation describes the behavior, defaults, limits, errors, and operational reality that actually ship.",
+          "anchors": {
+            "10": "Every material statement matches verified shipped behavior and current interfaces.",
+            "9": "Parity is complete with one minor low-risk wording imprecision.",
+            "7-8": "A meaningful behavior, default, limit, or failure mode is stale or ambiguous.",
+            "5-6": "Multiple instructions or claims disagree with shipped behavior.",
+            "0-4": "Following the primary documentation breaks a common required workflow or creates material risk."
+          }
+        },
+        {
+          "id": "completeness-audience-prerequisites",
+          "name": "Completeness, audience, and prerequisites",
+          "focus": "The intended reader has the required context, prerequisites, permissions, inputs, outputs, and limitations.",
+          "legacy_focus": ["Completeness", "Understandability"],
+          "anchors": {
+            "10": "The target audience can complete the task without guessing because every prerequisite and material limitation is explicit.",
+            "9": "Coverage is complete with one minor self-evident prerequisite or audience detail implicit.",
+            "7-8": "A meaningful prerequisite, concept, limitation, or audience assumption is missing.",
+            "5-6": "Multiple gaps force readers to infer important setup or behavior.",
+            "0-4": "The intended audience cannot safely use the document without substantial outside knowledge."
+          }
+        },
+        {
+          "id": "structure-navigation",
+          "name": "Structure and navigation",
+          "focus": "Information is ordered, titled, linked, and grouped so readers can find and follow the relevant path efficiently.",
+          "legacy_focus": ["Structure & Navigation"],
+          "anchors": {
+            "10": "Readers can locate, understand, and traverse every major task or concept without unnecessary scanning.",
+            "9": "Structure is clear with one minor navigation or ordering imperfection.",
+            "7-8": "A meaningful task or concept is difficult to find or appears in a confusing order.",
+            "5-6": "Multiple sections are poorly organized, duplicated, or disconnected.",
+            "0-4": "The document's structure prevents the intended audience from finding the required path."
+          }
+        },
+        {
+          "id": "terminology-cross-document-consistency",
+          "name": "Terminology and cross-document consistency",
+          "focus": "Terms, identifiers, states, examples, and linked documents use one coherent vocabulary and contract.",
+          "legacy_focus": ["Precision of Language"],
+          "anchors": {
+            "10": "Terminology is precise and consistent across every authoritative document and interface.",
+            "9": "Language is consistent with one minor harmless synonym or wording variation.",
+            "7-8": "A meaningful term or state is ambiguous or conflicts with another live source.",
+            "5-6": "Multiple inconsistencies force readers to infer which source is authoritative.",
+            "0-4": "Core terms or instructions contradict each other and lead to wrong action."
+          }
+        },
+        {
+          "id": "runnable-examples-actionability",
+          "name": "Runnable examples and actionability",
+          "focus": "Examples use current syntax and realistic inputs, and each section leaves the reader knowing what to do and how to verify it.",
+          "legacy_focus": ["Actionability"],
+          "anchors": {
+            "10": "Examples run as written, cover meaningful outcomes, and provide explicit verification and next actions.",
+            "9": "Examples are actionable with one minor low-risk omission or placeholder clearly marked.",
+            "7-8": "A meaningful example is incomplete, stale, or lacks a way to verify success.",
+            "5-6": "Multiple examples cannot run or leave required decisions unexplained.",
+            "0-4": "Primary instructions are not executable or direct readers toward an unsafe or broken action."
+          }
+        },
+        {
+          "id": "runbook-safety-rollback-links-generated-drift",
+          "name": "Runbook safety, rollback, links, and generated-document drift",
+          "focus": "Operational instructions are bounded and recoverable, links resolve, and generated or copied content cannot silently diverge.",
+          "anchors": {
+            "10": "Operational steps, rollback, verification, links, ownership, and generation sources are complete and validated.",
+            "9": "Runbook and reference hygiene are sound with one minor low-risk link or generation detail.",
+            "7-8": "A meaningful rollback, safety bound, link, or generated-source relationship is missing.",
+            "5-6": "Multiple operational steps are unsafe, unrecoverable, stale, or disconnected from their source.",
+            "0-4": "Following the runbook can cause material damage with no recovery or the primary references are unusable."
+          }
+        }
+      ]
+    },
+    {
+      "id": "agent-usability",
+      "name": "Agent usability",
+      "trigger": {
+        "class": "conditional",
+        "judgment_required": true,
+        "recorded_reason_required": true,
+        "reason_format": "one-line",
+        "keyword_match_sufficient": false,
+        "guidance": "Select when the change adds or alters a capability, prompt, skill, command, API, tool schema, machine-readable result, or workflow that an agent must discover or operate."
+      },
+      "implementations": {
+        "code_review": {
+          "procedure": "roster-scoring-lens",
+          "path": "plugins/saga/skills/code-review/references/lens-catalog.md",
+          "section": "Run a roster scoring lens"
+        },
+        "team_execution": {
+          "agent": "ai-usefulness-reviewer",
+          "path": "plugins/team-execution/agents/ai-usefulness-reviewer.md"
+        }
+      },
+      "dimensions": [
+        {
+          "id": "capability-parity-reachability",
+          "name": "Capability parity and reachability",
+          "focus": "The capability is reachable through the intended tool, command-line, API, and skill surfaces without a human-only dead end.",
+          "anchors": {
+            "10": "Every intended agent surface can discover, invoke, observe, and complete the capability with equivalent semantics.",
+            "9": "Reachability is complete with one minor low-risk convenience gap.",
+            "7-8": "A meaningful capability exists only on one surface or requires undocumented human intervention.",
+            "5-6": "Multiple intended agent surfaces cannot reach or complete the feature.",
+            "0-4": "The advertised capability is effectively human-only or unreachable by the intended agent."
+          }
+        },
+        {
+          "id": "discoverability-invocation-schemas",
+          "name": "Discoverability and invocation schemas",
+          "focus": "Names, descriptions, parameters, defaults, examples, and error messages let an agent choose and invoke the capability correctly.",
+          "anchors": {
+            "10": "Discovery metadata and schemas are complete, precise, validated, and sufficient for correct invocation without guessing.",
+            "9": "Invocation is clear with one minor low-risk description or schema detail implicit.",
+            "7-8": "A meaningful parameter, default, constraint, or routing condition is ambiguous.",
+            "5-6": "Multiple schema or discovery gaps cause likely misuse or repeated clarification.",
+            "0-4": "The capability cannot be invoked reliably from its published schema or description."
+          }
+        },
+        {
+          "id": "context-constraints-acceptance-examples",
+          "name": "Context, constraints, acceptance criteria, and examples",
+          "focus": "The agent receives enough grounded context, explicit boundaries, verifiable success conditions, and representative examples to act safely.",
+          "legacy_focus": ["Context Completeness", "Unambiguous Acceptance Criteria", "Example Coverage", "Constraint Explicitness"],
+          "anchors": {
+            "10": "Context, constraints, success criteria, and examples cover every material decision and boundary without follow-up.",
+            "9": "The instruction is complete with one minor low-risk example or context detail implicit.",
+            "7-8": "A meaningful constraint, success condition, input, output, or edge case requires inference.",
+            "5-6": "Multiple omissions force the agent to guess about scope, risk, or completion.",
+            "0-4": "The instruction is too ambiguous to execute safely or verify honestly."
+          }
+        },
+        {
+          "id": "machine-readable-output-actionable-errors",
+          "name": "Deterministic machine-readable output and actionable errors",
+          "focus": "Results have stable schemas and states, while failures name the cause, safe recovery, and unverified boundaries.",
+          "legacy_focus": ["Machine-Parseable Structure"],
+          "anchors": {
+            "10": "Outputs and errors are deterministic, versioned where needed, completely parseable, and route the next safe action.",
+            "9": "The contract is reliable with one minor low-risk human-oriented field or diagnostic gap.",
+            "7-8": "A meaningful state or error requires prose parsing or undocumented interpretation.",
+            "5-6": "Multiple outputs are unstable, ambiguous, or unactionable for automation.",
+            "0-4": "The agent cannot distinguish success, failure, or next action from the returned result."
+          }
+        },
+        {
+          "id": "safe-bounded-idempotent-resumable-context-cost",
+          "name": "Safe, bounded, idempotent, resumable operation and context cost",
+          "focus": "Agent operation has explicit bounds, safe retries, durable resume state, honest stops, and proportionate context requirements.",
+          "anchors": {
+            "10": "Execution bounds, retry identity, resume state, stop conditions, and context use are explicit and verified.",
+            "9": "Operation is safe with one minor low-risk efficiency or resume detail implicit.",
+            "7-8": "A meaningful retry, resume, bound, or context-cost behavior is ambiguous or fragile.",
+            "5-6": "Multiple agent paths duplicate work, lose state, overrun bounds, or require excessive context.",
+            "0-4": "Routine retries or resumes cause unsafe duplicate action, lost work, or unbounded execution."
+          }
+        }
+      ]
+    },
+    {
+      "id": "previous-comments",
+      "name": "Previous comments",
+      "trigger": {
+        "class": "conditional",
+        "judgment_required": true,
+        "recorded_reason_required": true,
+        "reason_format": "one-line",
+        "keyword_match_sufficient": false,
+        "guidance": "Select only when the reviewed pull request has prior review comments or unresolved threads that apply to the current revision."
+      },
+      "implementations": {
+        "code_review": {
+          "procedure": "roster-scoring-lens",
+          "path": "plugins/saga/skills/code-review/references/lens-catalog.md",
+          "section": "Run a roster scoring lens"
+        },
+        "team_execution": {
+          "agent": "code-quality-reviewer",
+          "path": "plugins/team-execution/agents/code-quality-reviewer.md"
+        }
+      },
+      "dimensions": [
+        {
+          "id": "resolution-completeness",
+          "name": "Resolution completeness",
+          "focus": "Every unresolved thread is inventoried against the current revision, verified in code and tests, checked for regression, and given an evidence-backed disposition.",
+          "anchors": {
+            "10": "Every prior thread is mapped to the current revision and its resolution or justified disposition is verified with direct evidence.",
+            "9": "Resolution is complete with one minor low-risk evidence or bookkeeping gap.",
+            "7-8": "A meaningful prior comment lacks code or test verification, regression checking, or a clear disposition.",
+            "5-6": "Multiple prior comments are answered only in prose, incompletely fixed, or not checked against the current revision.",
+            "0-4": "Common or blocking prior feedback remains unresolved or is falsely reported as complete."
+          }
+        }
+      ]
+    },
+    {
+      "id": "accessibility-human-usability",
+      "name": "Accessibility and human usability",
+      "trigger": {
+        "class": "conditional",
+        "judgment_required": true,
+        "recorded_reason_required": true,
+        "reason_format": "one-line",
+        "keyword_match_sufficient": false,
+        "guidance": "Select when the change materially affects a human-operated visual, interactive, content, or command surface."
+      },
+      "implementations": {
+        "code_review": {
+          "procedure": "roster-scoring-lens",
+          "path": "plugins/saga/skills/code-review/references/lens-catalog.md",
+          "section": "Run a roster scoring lens"
+        },
+        "team_execution": {
+          "agent": "ui-regression-tester",
+          "path": "plugins/team-execution/agents/ui-regression-tester.md"
+        }
+      },
+      "dimensions": [
+        {
+          "id": "semantics-assistive-technology",
+          "name": "Semantics and assistive-technology support",
+          "focus": "Structure, roles, names, states, relationships, announcements, and alternatives are available to assistive technology.",
+          "anchors": {
+            "10": "All affected content and controls expose correct semantics, names, states, relationships, and announcements.",
+            "9": "Assistive support is complete with one minor low-impact semantic imperfection.",
+            "7-8": "A meaningful control, region, state, or update lacks correct assistive semantics.",
+            "5-6": "Multiple important interactions are confusing or unavailable to assistive technology.",
+            "0-4": "A common required flow is unusable with assistive technology."
+          }
+        },
+        {
+          "id": "keyboard-focus",
+          "name": "Keyboard and focus behavior",
+          "focus": "Every interactive path works without a pointer and focus order, visibility, trapping, restoration, and shortcuts behave predictably.",
+          "anchors": {
+            "10": "All affected interactions are keyboard-complete with logical, visible, and correctly restored focus.",
+            "9": "Keyboard and focus behavior is complete with one minor low-impact polish gap.",
+            "7-8": "A meaningful interaction has confusing order, weak focus visibility, or incomplete keyboard operation.",
+            "5-6": "Multiple controls or dialogs have broken focus behavior or require a pointer.",
+            "0-4": "A common required flow cannot be completed by keyboard."
+          }
+        },
+        {
+          "id": "contrast-zoom-motion-responsiveness",
+          "name": "Contrast, zoom, motion, and responsiveness",
+          "focus": "Content remains perceivable and operable across contrast needs, zoom and reflow, reduced motion, screen sizes, and input modes.",
+          "anchors": {
+            "10": "All affected states meet contrast, zoom, reflow, motion, and responsive requirements with verified behavior.",
+            "9": "Presentation is accessible with one minor low-impact responsive or motion imperfection.",
+            "7-8": "A meaningful state has weak contrast, clipped zoom, unavoidable motion, or a responsive failure.",
+            "5-6": "Multiple states are difficult to perceive or operate under common accessibility settings.",
+            "0-4": "A common required flow becomes unreadable, inaccessible, or unsafe under supported display settings."
+          }
+        },
+        {
+          "id": "labels-forms-loading-empty-error-states",
+          "name": "Labels, forms, loading, empty, and error states",
+          "focus": "Controls and inputs have clear labels and instructions, validation is recoverable, and every loading, empty, success, and error state communicates status and next action.",
+          "anchors": {
+            "10": "Every control and state is clearly named, associated, announced, actionable, and verified across success and failure.",
+            "9": "Forms and states are complete with one minor low-impact wording or association gap.",
+            "7-8": "A meaningful label, validation message, loading state, empty state, or recovery action is unclear.",
+            "5-6": "Multiple controls or states leave users unable to understand input requirements or recover from failure.",
+            "0-4": "A common required flow provides no usable labels, status, or error recovery."
+          }
+        },
+        {
+          "id": "localization-content-resilience",
+          "name": "Localization and content resilience",
+          "focus": "Layout, parsing, sorting, formatting, directionality, and meaning remain correct across supported languages, locales, and content lengths.",
+          "anchors": {
+            "10": "All affected content and layout handle supported locales, directionality, formats, and realistic expansion without loss.",
+            "9": "Localization behavior is complete with one minor low-impact content-length imperfection.",
+            "7-8": "A meaningful locale, direction, format, or content-length case is fragile or unhandled.",
+            "5-6": "Multiple supported locales or realistic content values break layout or meaning.",
+            "0-4": "A common supported locale cannot complete the required flow or receives materially wrong data."
+          }
+        },
+        {
+          "id": "discoverability-defaults-error-recovery-command-surfaces",
+          "name": "Discoverability, safe defaults, and error recovery for human-operated surfaces",
+          "focus": "People can discover the capability, understand consequences, accept safe defaults, prevent destructive mistakes, and recover from errors in visual and command surfaces.",
+          "anchors": {
+            "10": "The capability is discoverable, defaults safely, previews consequential action, reports results clearly, and supports verified recovery.",
+            "9": "Human operation is clear and safe with one minor low-impact discoverability or recovery gap.",
+            "7-8": "A meaningful command, control, default, consequence, or recovery path is hard to discover or understand.",
+            "5-6": "Multiple common actions invite mistakes, hide consequences, or leave users without recovery.",
+            "0-4": "A common human action can cause material harm through an unsafe default or unrecoverable error."
+          }
+        }
+      ]
+    }
+  ]
+}

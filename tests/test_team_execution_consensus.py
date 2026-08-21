@@ -1,13 +1,18 @@
-"""Drift-guard tests for the Layer B consensus contract (#293 U4).
+"""Drift-guard tests for the Team Execution consensus contract (#293 U4).
 
-architecture-reviewer.md and consensus-protocol.md are the executable spec the reviewer
-agent follows (KTD7) -- there is no scoring engine to unit-test, so these assert the contract
-text itself: the fabricated N/A->8.0 default is gone, the applicable-dimensions denominator is
-defined, and a static exclusion is never a failure signal.
+The reviewer documents retain reviewer-facing instructions, while Saga's canonical lens roster and
+shared scorer own acceptance policy. These tests bind each guard to the surface that now owns it.
 """
 
+import importlib.util
+import json
 import re
+import sys
 from pathlib import Path
+from types import ModuleType
+from typing import Any, cast
+
+import pytest
 
 ROOT = Path(__file__).parent.parent
 PLUGIN_ROOT = ROOT / "plugins" / "team-execution"
@@ -21,10 +26,28 @@ REVIEWER_REGISTRY = (
 EXTERNAL_ENGINE_WORKERS = (
     PLUGIN_ROOT / "skills" / "team-execution" / "references" / "external-engine-workers.md"
 )
+ROSTER = ROOT / "plugins" / "saga" / "references" / "lens-roster.json"
+SCORER = ROOT / "plugins" / "saga" / "scripts" / "review_consensus.py"
 
 
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def _load_roster() -> dict[str, Any]:
+    return cast(dict[str, Any], json.loads(_read(ROSTER)))
+
+
+def _load_scorer() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("review_consensus_for_consensus_guards", SCORER)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+SCORING: Any = _load_scorer()
 
 
 def test_dimension_exclusion_replaces_fabricated_default() -> None:
@@ -43,16 +66,63 @@ def test_dimension_exclusion_replaces_fabricated_default() -> None:
 
 
 def test_consensus_gate_evaluates_applicable_dimensions() -> None:
-    """R7/R8: consensus-protocol.md defines the applicable-dimensions denominator for the
-    >=9.0 / no-dimension-<7.0 gate, and the whole-lens exclusion rule."""
-    doc = _read(CONSENSUS_PROTOCOL)
+    """R7/R8: the roster and shared scorer own the denominator and both thresholds."""
+    roster = _load_roster()
+    acceptance = roster["acceptance"]
+    rules = {rule["id"]: rule for rule in acceptance["rules"]}
 
-    assert "average of applicable dimensions" in doc
-    # Line-wrapped in the source doc, so pinned as two adjacent contiguous fragments rather
-    # than one substring or fully-independent tokens.
-    assert "no individual" in doc
-    assert "applicable* dimension < 7.0" in doc
-    assert "excluded WHOLE from the consensus denominator" in doc
+    assert acceptance["combiner"] == "all"
+    assert acceptance["only_acceptance_thresholds"] is True
+    assert rules["derived-overall-minimum"] == {
+        "id": "derived-overall-minimum",
+        "metric": "derived_overall",
+        "operator": ">=",
+        "value": 9.0,
+    }
+    assert rules["applicable-dimension-floor"] == {
+        "id": "applicable-dimension-floor",
+        "metric": "applicable_dimension",
+        "operator": ">=",
+        "value": 7.0,
+    }
+    assert roster["applicability"] == {
+        "selected_lens_requires_applicable_dimension": True,
+        "non_applicable_dimension_requires_cause": True,
+    }
+
+    policy = SCORING.load_scoring_policy(ROSTER)
+    assert policy.overall_minimum == 9.0
+    assert policy.dimension_floor == 7.0
+
+    lens_id = "correctness"
+    dimensions = policy.dimensions_for(lens_id)
+    excluded_dimension = dimensions[0]
+    applicable_scores = dict.fromkeys(dimensions[1:], 9.0)
+    excluded_result = SCORING.score_lens_review(
+        lens_id,
+        applicable_scores,
+        non_applicable_dimensions={excluded_dimension: "static-non-applicable"},
+        policy=policy,
+    )
+    assert excluded_result.derived_overall == 9.0
+    assert excluded_result.accepted is True
+
+    below_overall = SCORING.score_lens_review(
+        lens_id,
+        dict.fromkeys(dimensions, 8.9),
+        policy=policy,
+    )
+    assert below_overall.accepted is False
+    assert below_overall.failing_dimensions == ()
+
+    floor_lens = "architecture-maintainability"
+    floor_scores = dict.fromkeys(policy.dimensions_for(floor_lens), 10.0)
+    floor_dimension = next(iter(floor_scores))
+    floor_scores[floor_dimension] = 6.9
+    below_floor = SCORING.score_lens_review(floor_lens, floor_scores, policy=policy)
+    assert below_floor.derived_overall >= policy.overall_minimum
+    assert below_floor.accepted is False
+    assert below_floor.failing_dimensions == (floor_dimension,)
 
 
 def test_static_skip_no_floor() -> None:
@@ -106,16 +176,30 @@ def test_external_advisory_seat_is_distinct_from_reviewer_tables() -> None:
 
 
 def test_external_advisory_seat_is_always_excluded_from_consensus_gate() -> None:
+    roster = _load_roster()
+    seat = roster["participant_defaults"]["external_advisory_seat"]
+    policy = SCORING.load_scoring_policy(ROSTER)
     doc = _read(CONSENSUS_PROTOCOL)
 
+    assert seat == {
+        "id": "external-reviewer",
+        "scoring": False,
+        "consensus_denominator": False,
+        "applies_acceptance_rules": [],
+    }
+    assert seat["id"] not in policy.lens_dimensions
+    with pytest.raises(SCORING.ReviewScoringError, match="unknown scoring lens"):
+        SCORING.score_lens_review(
+            seat["id"],
+            {"whole-diff": policy.maximum_score},
+            policy=policy,
+        )
+
     assert "External Advisory Seat: report-only" in doc
-    assert "ALL gated Claude reviewer scores >= 9.0" in doc
-    assert "always-excluded" in doc
-    assert "external advisory seat" in doc
-    assert "`>= 9.0` pass threshold" in doc
-    assert "`< 7.0` blocking-stop rule" in doc
-    assert "cannot add itself to" in doc
-    assert "re-review set" in doc
+    assert "Read the external seat's defaults from the roster." in doc
+    assert (
+        "never passed to `score_lens_review` or\n`evaluate_review_readiness` as a scoring lens"
+    ) in doc
 
 
 def test_convergence_report_buckets_are_documented() -> None:

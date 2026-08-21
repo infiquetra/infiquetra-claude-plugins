@@ -104,10 +104,10 @@ For each surface identified:
 
 ### Step 3: Score Each Dimension
 
-Score 0-10 using rubrics in `review-criteria.md`. Overall = average of 5 dimensions.
-
-**ACCEPT**: Overall >= 9.0 AND no dimension < 7.0
-**BLOCKING (< 5.0)**: Any auth or secrets dimension < 5.0 is a hard stop
+Score each dimension using the anchors in Saga's canonical roster at
+`plugins/saga/references/lens-roster.json`, following `review-criteria.md`. Return the dimension
+evidence and reported overall to Team Execution's shared scorer. Do not apply a local acceptance or
+terminal threshold in this prompt.
 
 ### Step 4: Issue Fix Requests
 
@@ -141,17 +141,16 @@ Score 0-10 using rubrics in `review-criteria.md`. Overall = average of 5 dimensi
 | Dependency & Supply Chain | [0-10] | [Brief justification] |
 | **Overall** | **[avg]** | |
 
-### Verdict: [ACCEPT / NEEDS REVISION / BLOCKING]
+### Reviewer Assessment: [Evidence summary; the shared scorer computes acceptance]
 
-### Fix Requests (if NEEDS REVISION or BLOCKING)
+### Fix Requests (if findings are present)
 [Fix requests here, one per issue]
 ```
 
 ---
 
-## Severity Escalation
+## Security Finding Routing
 
-If any issue scores < 5.0 on Auth & AuthZ or Secrets Management:
-- Mark verdict as **BLOCKING**
-- Immediately notify the orchestrator (do not wait for cycle end)
-- The fix must be routed with high priority before other review cycles continue
+Give every authentication, authorization, or secrets finding concrete evidence and the supported
+Priority, confidence, and repair-routing metadata. Return it through the ordinary cycle result; do not
+abort the cycle or notify the orchestrator through a separate acceptance path.

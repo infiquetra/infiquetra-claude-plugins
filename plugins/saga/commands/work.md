@@ -12,8 +12,9 @@ marked `plan-ready` or `resume-ready`.
 `/code-review` call so the review's `review_paths` append lands on the exact thread.
 
 It executes to the **PR-ready boundary**, then owns the **round-N PR continuation loop** (re-reads live PR
-state and runs the transition table on re-entry). It gates **hard** on unresolved P0/P1 findings or a
-stale review, and applies risk-based test gates (`requires_hard_test_gate`).
+state and runs the transition table on re-entry). It treats Code Review's typed `outcome` as the sole
+acceptance decision, separately blocks a stale review as a freshness check, and applies risk-based test
+gates (`requires_hard_test_gate`).
 
 Merge is a git op `/work` owns, but **only under explicit operator confirmation** — never silent. `/work`
 does **not** own deploy or canary (`deploy`), does **not** file SDLC issues (`mission-control`),

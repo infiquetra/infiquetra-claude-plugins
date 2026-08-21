@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.20.1] - 2026-08-21
+
+### Fixed
+
+- **Grok units received their permission mode as their first prompt.** `VENDOR_PERMISSION` mapped
+  Grok's two permission levels onto `--always-approve`, which is a value-less switch, and Grok's
+  usage is `grok [OPTIONS] [PROMPT]` -- so the bare `auto` or `bypassPermissions` bound to the
+  positional prompt. Every dispatched Grok session spent its first turn on a permission enum and
+  received its real task only afterwards. Nothing errored and nothing reported it. Both levels now
+  emit `--permission-mode`, which Grok documents as accepting exactly those values. Native launcher
+  passthrough is unchanged: `launch_args` still go last and verbatim.
+
 ## [1.20.0] - 2026-08-20
 
 ### Added

@@ -126,8 +126,9 @@ matching documents (typically 2-5). If no architecture docs exist, score based o
 If no architecture docs and patterns are unclear, EXCLUDE Architecture Documentation Coverage
 from your overall — do not score it, and do not substitute a default. Log the cause as
 `static-non-applicable: no architecture docs or observable patterns`. Score the remaining
-four dimensions normally; your overall is their average, and you name the denominator (e.g.
-"avg of 4 applicable") rather than folding a fabricated score into a 5-dimension average.
+four dimensions normally; report their average and name the denominator (for example,
+"avg of 4 applicable"). The shared scorer excludes the recorded dimension and derives the
+authoritative overall.
 
 ---
 
@@ -157,16 +158,13 @@ Look for:
 
 ### Step 7: Score and Verdict
 
-Score each APPLICABLE dimension 0-10 using rubrics in `review-criteria.md`. A dimension
-EXCLUDED per Step 3 (precondition absent) is not scored and is not counted. Overall = average
-of the applicable dimensions — name the denominator (e.g. "avg of 4 applicable") whenever a
-dimension is excluded.
+Score each applicable dimension using the anchors in Saga's canonical roster at
+`plugins/saga/references/lens-roster.json`, following `review-criteria.md`. A dimension excluded per
+Step 3 is not scored. Return the scores, exclusion causes, and findings to Team Execution's shared
+scorer; do not apply acceptance thresholds in this prompt.
 
-**ACCEPT**: Overall >= 9.0 AND no applicable dimension < 7.0
-**NEEDS REVISION**: Overall < 9.0 OR any applicable dimension < 7.0
-
-A static exclusion is never itself a NEEDS REVISION signal — it does not lower the overall,
-and it does not trigger the re-review path in `consensus-protocol.md` on its own.
+A static exclusion is never itself a failure signal and does not trigger the re-review path in
+`consensus-protocol.md` on its own.
 
 ### Step 8: Issue Fix Requests
 

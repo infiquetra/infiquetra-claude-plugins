@@ -786,7 +786,7 @@ def _score_with_typed_findings(
             finding_id=finding.finding_id,
             dimension_id=finding.dimension_id,
             critical=_is_fix_request_candidate(finding)
-            and (existing.critical if existing is not None else finding.severity == "P0"),
+            and (finding.severity == "P0" or (existing is not None and existing.critical)),
             resolved=resolved,
             priority=finding.severity,
             confidence=finding.confidence,

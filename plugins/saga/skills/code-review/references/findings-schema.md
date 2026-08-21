@@ -18,6 +18,7 @@ the schema and its table are canonical.
 | `title` | yes | Short, specific issue title (<= 10 words). |
 | `severity` | yes | `P0` / `P1` / `P2` / `P3`. |
 | `dimension_id` | yes | Canonical dimension identifier whose score reflects this finding. |
+| `critical` | yes | `FindingEvidence` score-consistency signal described below; this field is not serialized on `ReviewFinding`. |
 | `file` | yes | Repo-relative path. |
 | `line` | yes | Primary line number (>= 1). |
 | `why_it_matters` | yes | The failure mode — what *breaks*, not what is wrong. |
@@ -28,6 +29,12 @@ the schema and its table are canonical.
 | `evidence` | yes | >= 1 code-grounded item, each citing `file:line` or a snippet. |
 | `pre_existing` | yes | True if the issue is in unchanged code this diff did not introduce. |
 | `suggested_fix` | optional | Concrete minimal fix (rule below). |
+
+`critical` is a score-consistency assertion, not another Priority or outcome gate. A reviewer sets it
+to `true` when an unresolved finding means its mapped dimension cannot honestly be non-applicable or
+meet the dimension floor; set it to `false` otherwise. Reconciliation still treats every active,
+non-pre-existing, non-advisory P0 as critical, so an omitted or default `false` cannot downgrade that
+derived signal. A pre-existing or advisory P0 remains non-critical for scoring and creates no fix request.
 
 The typed result serializes these fields without translating the routing values:
 

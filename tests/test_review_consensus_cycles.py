@@ -17,6 +17,7 @@ MODULE_PATH = ROOT / "plugins" / "saga" / "scripts" / "review_consensus.py"
 FINDINGS_SCHEMA_PATH = (
     ROOT / "plugins" / "saga" / "skills" / "code-review" / "references" / "findings-schema.md"
 )
+WORK_COMMAND_PATH = ROOT / "plugins" / "saga" / "commands" / "work.md"
 
 
 def _load_module() -> ModuleType:
@@ -192,31 +193,49 @@ def test_critical_typed_finding_cannot_bypass_scoring_or_result_validation() -> 
     ):
         CONSENSUS.ReviewResult.from_dict(accepted_payload)
 
-    noncritical = _finding("correctness", "F-priority-metadata", severity="P0")
-    noncritical_evidence = CONSENSUS.FindingEvidence(
-        finding_id=noncritical.finding_id,
-        dimension_id=noncritical.dimension_id,
-        critical=False,
+    silent_critical = _finding("correctness", "F-default-critical", severity="P0")
+    default_evidence = CONSENSUS.FindingEvidence(
+        finding_id=silent_critical.finding_id,
+        dimension_id=silent_critical.dimension_id,
         resolved=False,
-        priority=noncritical.severity,
-        confidence=noncritical.confidence,
+        priority=silent_critical.severity,
+        confidence=silent_critical.confidence,
     )
-    metadata_state = CONSENSUS.ReviewCycleState(("correctness",))
-    metadata_result = metadata_state.record_cycle(
+    assert default_evidence.critical is False
+    evidence_state = CONSENSUS.ReviewCycleState(("correctness",))
+
+    with pytest.raises(
+        CONSENSUS.ContradictoryReviewEvidenceError,
+        match="unresolved critical finding.*passing score",
+    ):
+        evidence_state.record_cycle(
+            "revision-1",
+            {
+                "correctness": _score(
+                    "correctness",
+                    9.4,
+                    findings=(default_evidence,),
+                )
+            },
+            findings=(silent_critical,),
+        )
+    assert evidence_state.cycle_count == 0
+
+
+def test_priority_alone_does_not_gate_a_passing_dimension() -> None:
+    finding = _finding("correctness", "F-priority-metadata", severity="P2")
+    state = CONSENSUS.ReviewCycleState(("correctness",))
+
+    result = state.record_cycle(
         "revision-1",
-        {
-            "correctness": _score(
-                "correctness",
-                9.4,
-                findings=(noncritical_evidence,),
-            )
-        },
-        findings=(noncritical,),
+        {"correctness": _score("correctness", 9.4)},
+        findings=(finding,),
     )
 
-    assert metadata_result.outcome == "accepted"
-    assert metadata_result.fix_requests
-    assert metadata_result.lens_results[0].score.findings[0].critical is False
+    assert result.outcome == "accepted"
+    assert result.fix_requests
+    assert result.lens_results[0].score.findings[0].critical is False
+    assert result.lens_results[0].score.findings[0].priority == "P2"
 
 
 @pytest.mark.parametrize(
@@ -251,7 +270,7 @@ def test_non_gating_p0_findings_remain_metadata_on_passing_scores(
     assert result.lens_results[0].score.findings[0].priority == "P0"
 
 
-def test_review_finding_dimension_is_required_in_type_and_schema() -> None:
+def test_review_finding_dimension_and_critical_evidence_are_documented() -> None:
     dimension = next(
         field for field in fields(CONSENSUS.ReviewFinding) if field.name == "dimension_id"
     )
@@ -259,6 +278,17 @@ def test_review_finding_dimension_is_required_in_type_and_schema() -> None:
 
     assert dimension.default is MISSING
     assert "| `dimension_id` | yes |" in schema
+    assert "| `critical` | yes |" in schema
+    assert "A reviewer sets it\nto `true` when an unresolved finding" in schema
+    assert "an omitted or default `false` cannot downgrade" in schema
+
+
+def test_work_command_uses_typed_outcome_and_keeps_freshness_separate() -> None:
+    contract = WORK_COMMAND_PATH.read_text(encoding="utf-8")
+
+    assert "typed `outcome` as the sole\nacceptance decision" in contract
+    assert "stale review as a freshness check" in contract
+    assert "unresolved P0/P1 findings" not in contract
 
 
 def test_three_failing_cycles_return_latest_revision_and_complete_residuals() -> None:

@@ -131,14 +131,27 @@ MODEL_LIST: dict[str, list[str]] = {
 # grok share that exact vocabulary. ``bypass`` is the operator's everyday mode, granted per unit
 # when the work needs it. Either way the worktree is the blast radius: a unit reaches its own tree
 # and nothing else. A vendor with an empty list already behaves that way unflagged.
+# Which flags in ``VENDOR_PERMISSION`` take a value. Anything not named here must stand alone.
+#
+# This exists because a value-less switch followed by a bare permission word does not fail: the word
+# lands in the vendor's positional PROMPT slot. `grok --always-approve auto` sent every unit the word
+# `auto` as its first prompt and its real task only afterwards, and nothing reported it. The rule the
+# table must obey is structural -- a bare enum is only ever a value -- so it is stated here and
+# enforced by tests rather than left to whoever edits the table next.
+PERMISSION_FLAGS_TAKING_A_VALUE = frozenset({"--permission-mode", "--sandbox", "--approval-mode"})
+
 VENDOR_PERMISSION: dict[str, dict[str, list[str]]] = {
     "claude": {
         "auto": ["--permission-mode", "auto"],
         "bypass": ["--permission-mode", "bypassPermissions"],
     },
+    # `--always-approve` is a value-less switch and grok's usage is `grok [OPTIONS] [PROMPT]`, so
+    # `--always-approve auto` put the bare word `auto` in the PROMPT position: every grok unit spent
+    # its first turn on a permission enum and only got its real task afterwards. Verified against
+    # grok 1.0.5, whose `--permission-mode <MODE>` accepts both of these values.
     "grok": {
-        "auto": ["--always-approve", "auto"],
-        "bypass": ["--always-approve", "bypassPermissions"],
+        "auto": ["--permission-mode", "auto"],
+        "bypass": ["--permission-mode", "bypassPermissions"],
     },
     "codex": {
         "auto": ["--sandbox", "workspace-write"],

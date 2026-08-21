@@ -19,6 +19,52 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-08-21
+
+### A value-less flag followed by a bare word feeds that word to the tool as a prompt  {#value-less-flag-eats-the-next-token}
+
+**Context.** Orchestrate hands each dispatched session its permission level as command-line tokens
+appended right after the vendor name. For Grok those tokens were `--always-approve` plus the mode.
+Every Grok unit this plugin has ever launched was affected, across two full orchestration lifecycles,
+and the runs completed and produced usable work the whole time.
+
+**Evidence.** `plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py:139-142` before this
+change mapped `auto` to `["--always-approve", "auto"]`. `grok --help` at version 1.0.5 documents
+`--always-approve` with no value placeholder ("Auto-approve all tool executions"), a separate
+`--permission-mode <MODE>` whose possible values include `auto` and `bypassPermissions`, and a usage
+line of `grok [OPTIONS] [PROMPT] [COMMAND]`. The operator confirmed it from saved Grok prompt
+histories: two reviewers received `bypassPermissions` as their first prompt and the actual task only
+after the interrupted turn.
+
+**Mechanism.** A value-less switch consumes no argument, so the next token falls through to the first
+free positional slot. That slot is the tool's prompt. The result is not an error at any layer: the
+flag parses, the tool starts, the session runs, and the only symptom is one wasted turn on a nonsense
+prompt before the real task arrives. Nothing in the launcher, the wrapper or the plugin can see it,
+because from every one of their points of view the command line was accepted.
+
+**Fix.** Both levels now emit `--permission-mode`. `PERMISSION_FLAGS_TAKING_A_VALUE` declares which
+flags in the table take a value, and `tests/test_orchestrate_vendor_permissions.py` asserts the exact
+argv for both Grok modes plus the structural rule for every vendor: a token that is not a flag must
+be the value of a flag that takes one.
+
+**Validation.** Four mutations, all caught: restoring the original Grok mapping fails five tests; the
+same mistake introduced on a different vendor, a bare enum leading a list, and a value-taking flag
+left without a value each fail one. Before the fix ships, the same defect was confirmed absent from
+every other vendor by probing all seven installed command-line tools for flag arity.
+
+**What surprised.** The audit found exactly one broken row. The instinct after three rounds of
+partial repairs on this plugin was that a defect like this would be everywhere; checking is what
+turned that instinct into a fact, and the check cost one command.
+
+**Generalizable rule.** When a table maps an internal vocabulary onto another tool's flags, the
+dangerous entries are the ones where a flag takes no value and the tool has a positional argument —
+that pair degrades silently instead of failing. Assert the exact argv, not the presence of a flag,
+and declare in source which flags take values so the invariant is checkable rather than remembered.
+
+**Refs.** Fixes the queued item recorded during the Lifecycle B-D orchestration run; see
+[#shipped-on-origin-not-in-stale-local-tree](#shipped-on-origin-not-in-stale-local-tree) for the
+sibling lesson that a green run proves nothing about what it could not observe.
+
 ## 2026-08-20
 
 ### Git registration and live-worktree admission answer different questions  {#git-c-finds-enclosing-repository}

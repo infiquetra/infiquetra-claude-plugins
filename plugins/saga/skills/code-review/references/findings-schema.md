@@ -17,6 +17,7 @@ the schema and its table are canonical.
 |-------|----------|-------------|
 | `title` | yes | Short, specific issue title (<= 10 words). |
 | `severity` | yes | `P0` / `P1` / `P2` / `P3`. |
+| `dimension_id` | yes | Canonical dimension identifier whose score reflects this finding. |
 | `file` | yes | Repo-relative path. |
 | `line` | yes | Primary line number (>= 1). |
 | `why_it_matters` | yes | The failure mode — what *breaks*, not what is wrong. |

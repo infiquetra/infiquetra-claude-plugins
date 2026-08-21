@@ -923,6 +923,20 @@ def route_review_result(
             routing.dispatches.append((worker, request))
             continue
 
+        assigned = next(
+            (
+                unit
+                for unit in r.units
+                if any(
+                    _fix_request_id(existing) == _fix_request_id(request)
+                    for existing in unit.fix_requests
+                )
+            ),
+            None,
+        )
+        if assigned is not None:
+            continue
+
         templates = matching or role_workers
         if not templates:
             raise SystemExit(
@@ -2436,11 +2450,9 @@ def cmd_status(args: argparse.Namespace) -> int:
             state = "recorded"
         print(f"\nCode Review result: {status_cell(str(r.review_outcome))} ({state})")
     for request in r.operator_fix_requests:
-        owner = status_cell(str(request.get("owner", "?")))
-        fix_id = status_cell(str(request.get("fix_id", "?")))
-        touched_paths = status_cell(
-            ", ".join(str(path) for path in request.get("touched_paths", []))
-        )
+        owner = one_line(str(request.get("owner", "?")))
+        fix_id = one_line(str(request.get("fix_id", "?")))
+        touched_paths = one_line(", ".join(str(path) for path in request.get("touched_paths", [])))
         print(f"OPERATOR ACTION: {owner} owns fix {fix_id} for {touched_paths}")
     return 0
 
@@ -3237,7 +3249,7 @@ def cmd_land(args: argparse.Namespace) -> int:
                 cleanup_failures.append((landing_worktree, detail))
 
     resubmit_failed = False
-    if landed_names and r.review_resubmit_pending:
+    if r.review_resubmit_pending:
         try:
             if resubmit_review_if_ready(r, branch_tip):
                 print(f"resubmitted landed revision {branch_tip} to the Code Review controller")

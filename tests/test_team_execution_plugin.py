@@ -62,9 +62,7 @@ def test_team_execution_metadata_is_v2_and_marketplace_matches() -> None:
     marketplace = json.loads(_read(ROOT / ".claude-plugin" / "marketplace.json"))
     entry = next(p for p in marketplace["plugins"] if p["name"] == "team-execution")
 
-    assert (
-        plugin_json["version"] == "3.0.1"
-    )  # house-style presentation contract across 25 agents (#704)
+    assert plugin_json["version"] == "3.1.0"  # reviewer consensus consumes Saga's canonical policy
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/team-execution"
     assert "validator" in plugin_json["description"].lower()

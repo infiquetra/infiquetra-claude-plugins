@@ -483,6 +483,54 @@ def test_failed_live_dispatch_keeps_the_result_retryable_and_the_worker_protecte
     assert len(attempts) == 2
 
 
+def test_failed_dispatch_to_a_worker_that_dies_moves_the_fix_to_one_replacement(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = _worker(orchestrate, "builder", "review-fixer", "src")
+    run = _run(orchestrate, worker, _controller(orchestrate))
+    run_path = tmp_path / ".orchestrate" / "run.json"
+    result_path = tmp_path / "result.json"
+    raw = _result(
+        "repairs_requested",
+        _request("retry-after-worker-died", "review-fixer", "src/file.py"),
+    )
+    result_path.write_text(raw)
+    run.save(run_path)
+    monkeypatch.chdir(tmp_path)
+    live = _live(worker)
+    monkeypatch.setattr(orchestrate, "live_agents", lambda: live)
+    attempts: list[str] = []
+
+    def failed_prompt(_unit: Any, _pane_id: str | None, text: str) -> None:
+        attempts.append(text)
+        raise SystemExit("worker pane died before receiving the prompt")
+
+    monkeypatch.setattr(orchestrate, "say", failed_prompt)
+
+    assert orchestrate.cmd_review_result(argparse.Namespace(file=str(result_path))) == 1
+    live.clear()
+    assert orchestrate.cmd_review_result(argparse.Namespace(file=str(result_path))) == 0
+
+    recovered = orchestrate.Run.load()
+    replacements = [
+        unit for unit in recovered.units if unit.name != worker.name and unit.fix_requests
+    ]
+    assert recovered.review_outcome == "repairs_requested"
+    assert recovered.unit(worker.name).fix_requests == []
+    assert len(replacements) == 1
+    assert [request["fix_id"] for request in replacements[0].fix_requests] == [
+        "retry-after-worker-died"
+    ]
+    assert recovered.eligible() == replacements
+    assert len(attempts) == 1
+
+    assert orchestrate.cmd_review_result(argparse.Namespace(file=str(result_path))) == 0
+    assert len(orchestrate.Run.load().units) == len(recovered.units)
+    assert len(attempts) == 1
+
+
 def test_unknown_result_schema_is_persisted_verbatim_but_never_routed(
     orchestrate: ModuleType,
     tmp_path: Path,
@@ -547,7 +595,7 @@ def test_status_collapses_untrusted_review_fields_to_one_line(
 ) -> None:
     run = _run(orchestrate, _controller(orchestrate))
     run.review_result = _result("repairs_requested")
-    run.review_outcome = "repairs_requested"
+    run.review_outcome = "repairs_requested\nwith-a-long-value-that-exceeds-table-width"
     run.review_resubmit_pending = True
     run.operator_fix_requests = [
         {
@@ -564,7 +612,8 @@ def test_status_collapses_untrusted_review_fields_to_one_line(
 
     review_lines = [line for line in lines if line.startswith("Code Review result:")]
     assert review_lines == [
-        "Code Review result: repairs_requested (resubmission held by operator-owned fix requests)"
+        "Code Review result: repairs_requested with-a-long-value-that-exceeds-table-width "
+        "(resubmission held by operator-owned fix requests)"
     ]
     operator_lines = [line for line in lines if line.startswith("OPERATOR ACTION:")]
     assert len(operator_lines) == 1
@@ -780,6 +829,7 @@ def test_land_names_the_operator_request_holding_review_resubmission(
     _commit(repo, "base.txt")
     base = _git_out(repo, "rev-parse", "HEAD")
     _git(repo, "branch", "orch/review-run")
+    fix_id = "operator-fix-with-a-long-stable-identity-that-must-remain-complete"
     run = orchestrate.Run(
         run_id="review-run",
         source="test",
@@ -789,7 +839,7 @@ def test_land_names_the_operator_request_holding_review_resubmission(
         review_result=_result("repairs_requested"),
         review_outcome="repairs_requested",
         review_resubmit_pending=True,
-        operator_fix_requests=[_request("operator-open", "human", "src/operator.txt")],
+        operator_fix_requests=[_request(fix_id, "human", "src/operator.txt")],
     )
     run.save(repo / ".orchestrate" / "run.json")
     monkeypatch.chdir(repo)
@@ -797,7 +847,7 @@ def test_land_names_the_operator_request_holding_review_resubmission(
     assert orchestrate.cmd_land(argparse.Namespace(clean=False)) == 0
     output = capsys.readouterr().out
 
-    assert "Code Review resubmission held by operator-owned fix request: operator-open" in output
+    assert f"Code Review resubmission held by operator-owned fix request: {fix_id}" in output
 
 
 def test_land_retries_a_failed_review_resubmission_after_the_repair_is_already_landed(

@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.20.0] - 2026-08-20
+
+### Added
+
+- **Review phases now run through one Code Review controller and an opaque typed result.** Orchestrate
+  persists the result without recomputing review policy, routes `review-fixer` and
+  `downstream-resolver` requests to matching live Work workers by role and touched paths, creates a
+  replacement worker when needed, and resubmits the landed revision through the same controller.
+  Requests owned by `human` or `release` remain visible operator actions and are never dispatched as
+  Work.
+
 ## [1.19.0] - 2026-08-20
 
 Group A combines the first three run-integrity repairs with the documentation-and-hygiene unit.

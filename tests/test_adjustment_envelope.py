@@ -38,6 +38,7 @@ AE = _load("adjustment_envelope")
 M = _load("outcome")
 SPEC = _load("outcome_spec")
 STORE = _load("outcome_store")
+REVIEW_CONSENSUS = _load("review_consensus")
 
 TEAM_REFS = ROOT / "plugins" / "team-execution" / "skills" / "team-execution" / "references"
 
@@ -267,10 +268,13 @@ def test_andon_blocks_next_wave(repo: Path) -> None:
 
 def test_andon_does_not_weaken_team_execution_iteration_caps() -> None:
     # R9: the andon-cord is an ORTHOGONAL halt path — it must not remove or relax the existing
-    # per-loop iteration caps. Guard that both caps remain verbatim in the reference docs.
+    # per-loop iteration caps. Review's cap is executable policy; Team Execution points to its
+    # terminal result instead of restating the numeric limit.
     consensus = (TEAM_REFS / "consensus-protocol.md").read_text(encoding="utf-8")
     validator = (TEAM_REFS / "validator-execution-order.md").read_text(encoding="utf-8")
-    assert "Maximum iterations: **3**" in consensus  # the 3-cycle best-available cap survives
+    assert REVIEW_CONSENSUS.MAX_REVIEW_CYCLES == 3
+    assert consensus.count("**Cycle-cap termination:**") == 1
+    assert "`cycle_cap_best_available`, stop review\nattempts" in consensus
     assert "maximum of 3 remediation loops" in validator  # the re-run loop cap survives
 
 

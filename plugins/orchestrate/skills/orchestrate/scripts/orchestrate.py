@@ -400,8 +400,10 @@ class ReviewRouting:
 
     outcome: str
     run_branch: str = ""
+    work_requests: int = 0
     dispatches: list[tuple[Unit, dict[str, Any]]] = field(default_factory=list)
     replacements: list[Unit] = field(default_factory=list)
+    assignments: list[tuple[Unit, dict[str, Any]]] = field(default_factory=list)
     operator_requests: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -827,6 +829,21 @@ def _fix_request_id(request: Mapping[str, Any]) -> str:
     return str(request["fix_id"])
 
 
+def _unit_has_fix_request(unit: Unit, fix_id: str) -> bool:
+    """Whether a unit already carries the identified review repair."""
+    return any(_fix_request_id(request) == fix_id for request in unit.fix_requests)
+
+
+def _park_fix_request(r: Run, holder: Unit, request: dict[str, Any]) -> None:
+    """Keep one outstanding copy of a review repair on its actionable holder."""
+    fix_id = _fix_request_id(request)
+    for unit in r.units:
+        unit.fix_requests = [
+            existing for existing in unit.fix_requests if _fix_request_id(existing) != fix_id
+        ]
+    holder.fix_requests.append(request)
+
+
 def _request_prompt(request: Mapping[str, Any], *, run_branch: str = "") -> str:
     """A Work instruction carrying the structured request without the surrounding result."""
     refresh = (
@@ -900,7 +917,6 @@ def route_review_result(
     live = list(live_agents() if agents is None else agents)
     controller = r.review_controller()
     names = {unit.name for unit in r.units}
-    work_requests = 0
     for request in requests:
         owner = str(request["owner"])
         if owner in OPERATOR_FIX_ROLES:
@@ -908,33 +924,31 @@ def route_review_result(
             routing.operator_requests.append(request)
             continue
 
-        work_requests += 1
+        routing.work_requests += 1
+        fix_id = _fix_request_id(request)
         touched_paths = list(request["touched_paths"])
         role_workers = [unit for unit in r.units if unit.role == owner]
         matching = [unit for unit in role_workers if route_paths_overlap(unit.paths, touched_paths)]
         reusable = [unit for unit in matching if _unit_is_live(unit, live)]
         if reusable:
             worker = reusable[0]
-            if not any(
-                _fix_request_id(existing) == _fix_request_id(request)
-                for existing in worker.fix_requests
-            ):
-                worker.fix_requests.append(request)
+            _park_fix_request(r, worker, request)
             routing.dispatches.append((worker, request))
             continue
 
+        eligible_names = {unit.name for unit in r.eligible()}
         assigned = next(
             (
                 unit
                 for unit in r.units
-                if any(
-                    _fix_request_id(existing) == _fix_request_id(request)
-                    for existing in unit.fix_requests
-                )
+                if _unit_has_fix_request(unit, fix_id)
+                and (_unit_is_live(unit, live) or unit.name in eligible_names)
             ),
             None,
         )
         if assigned is not None:
+            _park_fix_request(r, assigned, request)
+            routing.assignments.append((assigned, request))
             continue
 
         templates = matching or role_workers
@@ -945,11 +959,12 @@ def route_review_result(
             )
         replacement = _replacement_worker(templates[0], request, controller, names)
         r.units.append(replacement)
+        _park_fix_request(r, replacement, request)
         if templates[0].name in r.issues:
             r.issues[replacement.name] = r.issues[templates[0].name]
         routing.replacements.append(replacement)
 
-    r.review_resubmit_pending = work_requests > 0
+    r.review_resubmit_pending = routing.work_requests > 0
     return routing
 
 
@@ -2275,6 +2290,14 @@ def cmd_review_result(args: argparse.Namespace) -> int:
         r.save()
         print(f"REVIEW FIX DISPATCH FAILED: {exc}")
         return 1
+    routed_work = len(dispatched) + len(routing.replacements) + len(routing.assignments)
+    if routed_work != routing.work_requests:
+        r.save()
+        print(
+            f"REVIEW FIX ROUTING FAILED: routed {routed_work} of "
+            f"{routing.work_requests} Work fix requests; the result remains retryable"
+        )
+        return 1
     r.review_outcome = routing.outcome
     r.save()
 
@@ -2283,6 +2306,8 @@ def cmd_review_result(args: argparse.Namespace) -> int:
         print(f"  dispatched Work repair to live worker {name}")
     for unit in routing.replacements:
         print(f"  created replacement Work worker {unit.name}; `orchestrate.py go` launches it")
+    for unit, request in routing.assignments:
+        print(f"  kept Work repair {_fix_request_id(request)} on actionable worker {unit.name}")
     for request in routing.operator_requests:
         print(
             f"  OPERATOR ACTION: {request['owner']} owns fix {_fix_request_id(request)} "
@@ -2448,7 +2473,7 @@ def cmd_status(args: argparse.Namespace) -> int:
             state = "operator-owned fix requests outstanding"
         else:
             state = "recorded"
-        print(f"\nCode Review result: {status_cell(str(r.review_outcome))} ({state})")
+        print(f"\nCode Review result: {one_line(str(r.review_outcome))} ({state})")
     for request in r.operator_fix_requests:
         owner = one_line(str(request.get("owner", "?")))
         fix_id = one_line(str(request.get("fix_id", "?")))
@@ -3261,7 +3286,7 @@ def cmd_land(args: argparse.Namespace) -> int:
     outstanding_work = any(unit.fix_requests for unit in r.units)
     if r.review_resubmit_pending and r.operator_fix_requests and not outstanding_work:
         fix_ids = ", ".join(
-            status_cell(str(request.get("fix_id", "?"))) for request in r.operator_fix_requests
+            one_line(str(request.get("fix_id", "?"))) for request in r.operator_fix_requests
         )
         request_label = "request" if len(r.operator_fix_requests) == 1 else "requests"
         print(f"Code Review resubmission held by operator-owned fix {request_label}: {fix_ids}")

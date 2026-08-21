@@ -66,10 +66,12 @@ The returned result must identify the lens settlement unit, the mapped agent, th
 every applicable dimension score, every non-applicable dimension cause, the reported overall, and
 the findings. Findings retain priority and confidence as metadata.
 
-Use the shared `static-non-applicable` cause vocabulary from `execution-spec.md` when a roster
-precondition is absent. Such an exclusion is never a failure signal, does not trigger the re-review
-path, and is never re-run on that basis; the remaining applicable dimensions still go to the shared
-scorer.
+Use the shared `static-non-applicable` cause vocabulary from the
+[architecture reviewer prompt](../../../agents/architecture-reviewer.md) when a roster precondition is
+absent. Such an exclusion is never a failure signal and does not trigger the re-review path.
+It is never re-run on that basis; the remaining applicable dimensions still go to the shared scorer.
+The former `execution-spec.md` pointer was stale: that file does not define this vocabulary, so the
+linked reviewer prompt above is the authoritative source.
 
 Before any reviewer call, create one settlement manifest containing every selected lens identifier.
 Append the stable spawn attempt immediately before that reviewer's Agent call, using the selected

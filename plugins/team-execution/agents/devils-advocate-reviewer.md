@@ -102,10 +102,10 @@ before scoring. Ask for each piece:
 
 ### Step 3: Score Each Dimension
 
-Score 0-10 using rubrics in `review-criteria.md`. Overall = average of 5 dimensions.
-
-**ACCEPT**: Overall >= 9.0 AND no dimension < 7.0
-**NEEDS REVISION**: Overall < 9.0 OR any dimension < 7.0
+Score each dimension using the anchors in Saga's canonical roster at
+`plugins/saga/references/lens-roster.json`, following `review-criteria.md`. Return the dimension
+evidence, reported overall, and findings to Team Execution's shared scorer. Do not apply acceptance
+thresholds in this prompt.
 
 ### Step 4: Issue Fix Requests
 

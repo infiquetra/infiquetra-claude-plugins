@@ -33,6 +33,14 @@ ANDON_CORD = REFERENCES / "andon-cord.md"
 VALIDATOR_ORDER = REFERENCES / "validator-execution-order.md"
 TEAM_SKILL = TEAM_SKILL_ROOT / "SKILL.md"
 README = ROOT / "plugins" / "team-execution" / "README.md"
+TEAM_AGENTS = ROOT / "plugins" / "team-execution" / "agents"
+SECURITY_REVIEWER = TEAM_AGENTS / "security-reviewer.md"
+ARCHITECTURE_REVIEWER = TEAM_AGENTS / "architecture-reviewer.md"
+DEVILS_ADVOCATE_REVIEWER = TEAM_AGENTS / "devils-advocate-reviewer.md"
+CODE_REVIEW_SKILL = ROOT / "plugins" / "saga" / "skills" / "code-review" / "SKILL.md"
+WORK_GATE_REFERENCE = (
+    ROOT / "plugins" / "saga" / "skills" / "work" / "references" / "test-and-gates.md"
+)
 
 LIVE_POLICY_DOCS = (
     REVIEWER_REGISTRY,
@@ -42,6 +50,7 @@ LIVE_POLICY_DOCS = (
     VALIDATOR_ORDER,
     TEAM_SKILL,
     README,
+    *sorted(TEAM_AGENTS.glob("*.md")),
 )
 CYCLE_CAP_CONSUMERS = (
     CONSENSUS_PROTOCOL,
@@ -133,6 +142,65 @@ def test_live_team_execution_policy_is_only_a_pointer_to_roster_and_scorer() -> 
     assert roster["acceptance"]["rules"]
     assert all(
         dimension["anchors"] for lens in roster["lenses"] for dimension in lens["dimensions"]
+    )
+
+    for reviewer in (
+        SECURITY_REVIEWER,
+        ARCHITECTURE_REVIEWER,
+        DEVILS_ADVOCATE_REVIEWER,
+    ):
+        assert "plugins/saga/references/lens-roster.json" in reviewer.read_text(encoding="utf-8")
+
+    security = SECURITY_REVIEWER.read_text(encoding="utf-8")
+    assert "hard stop" not in security
+    assert "do not wait for cycle end" not in security
+
+
+def test_code_review_stage_c_scores_findings_and_evaluates_independent_gates() -> None:
+    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    stage_c = skill.split("### Stage C — score, repair, and terminate", 1)[1].split(
+        "## Phase 5 — Report, route, and saga", 1
+    )[0]
+
+    assert "construct a `FindingEvidence` value" in stage_c
+    assert "through the `findings` argument" in stage_c
+    assert "`IndependentGateResult`" in stage_c
+    assert "built-versus-planned" in stage_c
+    assert "evaluate_review_readiness" in stage_c
+    assert "A gate result never changes a dimension score" in stage_c
+
+
+def test_work_gate_reference_uses_typed_outcome_and_keeps_freshness_separate() -> None:
+    contract = WORK_GATE_REFERENCE.read_text(encoding="utf-8")
+
+    for outcome in (
+        "accepted",
+        "repairs_requested",
+        "cycle_cap_best_available",
+        "review_incomplete",
+    ):
+        assert f"**`{outcome}`**" in contract
+    assert "use `outcome` as the sole acceptance decision" in contract
+    assert "finding Priority, confidence, or fix-request counts" in contract
+    for obsolete in (r"\bP0\b", r"\bP1\b", r"Priority 0", r"Priority 1", r"P-level"):
+        assert re.search(obsolete, contract, flags=re.IGNORECASE) is None
+    assert "a blocking typed outcome or a stale review" in contract
+    assert "git rev-list <REVIEWED_SHA>..HEAD --count" in contract
+
+
+def test_static_non_applicable_vocabulary_pointer_resolves_to_its_source() -> None:
+    protocol = CONSENSUS_PROTOCOL.read_text(encoding="utf-8")
+    match = re.search(
+        r"cause vocabulary from the\s+\[[^]]+\]\(([^)]+)\)",
+        protocol,
+    )
+
+    assert match is not None
+    target = (CONSENSUS_PROTOCOL.parent / match.group(1)).resolve()
+    assert target.is_file()
+    assert target == ARCHITECTURE_REVIEWER.resolve()
+    assert "static-non-applicable: no architecture docs or observable patterns" in target.read_text(
+        encoding="utf-8"
     )
 
 

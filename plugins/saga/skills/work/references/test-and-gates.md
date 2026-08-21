@@ -75,15 +75,18 @@ Derive `change_kinds` from the plan's unit types and the `parse_issue.py` flags 
 
 ## Review-readiness gate (the hard PR gate)
 
-Before PR-ready, run `/code-review` programmatically (SKILL Phase 5.1) and read its returned envelope,
-then block PR-ready when **either** condition holds:
+Before PR-ready, run `/code-review` programmatically (SKILL Phase 5.1), deserialize its
+`review_result.v1` envelope, and use `outcome` as the sole acceptance decision:
 
-### 1. Unresolved P0/P1 findings
+- **`accepted`** — the review acceptance gate passes.
+- **`repairs_requested`** — block PR-ready and route the typed fix requests through Work.
+- **`cycle_cap_best_available`** — proceed with the cycle-three revision and surface every residual.
+- **`review_incomplete`** — block PR-ready because delivery did not establish a review.
 
-Read `/code-review`'s structured findings envelope (the programmatic shape it returns to the caller).
-Any unresolved **P0** or **P1** finding blocks PR-ready.
+Do not derive another acceptance decision from finding Priority, confidence, or fix-request counts.
+Those values remain reporting and routing metadata.
 
-### 2. Stale review (computed from `/work`'s own captured SHA)
+### Stale review (computed from `/work`'s own captured SHA)
 
 `/code-review` in programmatic mode writes no durable artifact (the caller owns persistence) and the saga
 has no `reviewed_sha` field — so `/work` captures the reviewed commit **itself** at review time and
@@ -118,7 +121,7 @@ constrained to the PR-ready boundary (deploy/canary belong to `deploy`):
   confirmation).
 - Merge conflicts that cannot be auto-resolved (show them).
 - In-branch test failures (fix before proceeding; do not push past a red suite).
-- The hard review gate firing (unresolved P0/P1 or a stale review) with no recorded override.
+- The hard review gate firing (a blocking typed outcome or a stale review) with no recorded override.
 - The hard test gate firing on a risky change-kind with no tests and no recorded rationale.
 - Any **outward GitHub mutation**: PR-open, review-request, and merge are each explicitly confirmed.
 - A PR-state transition that needs operator judgment (CLOSED-unmerged; ambiguous saga match).

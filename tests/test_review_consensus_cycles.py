@@ -28,9 +28,14 @@ def _load_module() -> ModuleType:
 CONSENSUS: Any = _load_module()
 
 
-def _score(lens_id: str, value: float) -> Any:
+def _score(
+    lens_id: str,
+    value: float,
+    *,
+    findings: tuple[Any, ...] = (),
+) -> Any:
     dimensions = dict.fromkeys(CONSENSUS.DEFAULT_SCORING_POLICY.dimensions_for(lens_id), value)
-    return CONSENSUS.score_lens_review(lens_id, dimensions)
+    return CONSENSUS.score_lens_review(lens_id, dimensions, findings=findings)
 
 
 def _delta(
@@ -58,13 +63,18 @@ def _finding(
     *,
     autofix_class: str = "safe_auto",
     owner: str = "review-fixer",
+    severity: str = "P1",
 ) -> Any:
     return CONSENSUS.ReviewFinding(
         finding_id=finding_id,
         lens_id=lens_id,
-        dimension_id=None,
+        dimension_id=(
+            None
+            if lens_id == "external-reviewer"
+            else CONSENSUS.DEFAULT_SCORING_POLICY.dimensions_for(lens_id)[0]
+        ),
         title=f"Repair {finding_id}",
-        severity="P1",
+        severity=severity,
         file=f"src/{lens_id}.py",
         line=10,
         why_it_matters="The reviewed behavior remains incorrect.",
@@ -145,6 +155,61 @@ def test_only_failing_lenses_are_rerun_and_accepted_revisions_are_retained() -> 
         "security": "revision-3",
         "testing": "revision-1",
     }
+
+
+def test_critical_typed_finding_cannot_bypass_scoring_or_result_validation() -> None:
+    finding = _finding("correctness", "F-critical-route", severity="P0")
+    state = CONSENSUS.ReviewCycleState(("correctness",))
+
+    with pytest.raises(
+        CONSENSUS.ContradictoryReviewEvidenceError,
+        match="unresolved critical finding.*passing score",
+    ):
+        state.record_cycle(
+            "revision-1",
+            {"correctness": _score("correctness", 9.4)},
+            findings=(finding,),
+        )
+    assert state.cycle_count == 0
+
+    accepted_payload = _accepted_result().to_dict()
+    fix_requests = CONSENSUS.consolidate_fix_requests((finding,))
+    accepted_payload["findings"] = [finding.to_dict()]
+    accepted_payload["fix_requests"] = [item.to_dict() for item in fix_requests]
+    accepted_payload["unresolved_fix_ids"] = [item.fix_id for item in fix_requests]
+    accepted_payload["residual_summary"]["unresolved_fix_ids"] = [
+        item.fix_id for item in fix_requests
+    ]
+    with pytest.raises(
+        CONSENSUS.ContradictoryReviewEvidenceError,
+        match="unresolved critical finding.*passing score",
+    ):
+        CONSENSUS.ReviewResult.from_dict(accepted_payload)
+
+    noncritical = _finding("correctness", "F-priority-metadata", severity="P1")
+    noncritical_evidence = CONSENSUS.FindingEvidence(
+        finding_id=noncritical.finding_id,
+        dimension_id=noncritical.dimension_id,
+        critical=False,
+        resolved=False,
+        priority=noncritical.severity,
+        confidence=noncritical.confidence,
+    )
+    metadata_state = CONSENSUS.ReviewCycleState(("correctness",))
+    metadata_result = metadata_state.record_cycle(
+        "revision-1",
+        {
+            "correctness": _score(
+                "correctness",
+                9.4,
+                findings=(noncritical_evidence,),
+            )
+        },
+        findings=(noncritical,),
+    )
+
+    assert metadata_result.outcome == "accepted"
+    assert metadata_result.fix_requests
 
 
 def test_three_failing_cycles_return_latest_revision_and_complete_residuals() -> None:

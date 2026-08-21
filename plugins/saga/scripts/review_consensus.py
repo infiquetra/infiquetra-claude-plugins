@@ -731,6 +731,68 @@ class ResidualSummary:
         return result
 
 
+def _score_with_typed_findings(
+    score: LensScore,
+    findings: Iterable[ReviewFinding],
+    *,
+    policy: ReviewScoringPolicy,
+) -> LensScore:
+    """Reconcile routed findings with scoring evidence before a result can carry either."""
+    typed_findings = tuple(findings)
+    scoring_by_id = {item.finding_id: item for item in score.findings}
+    if len(scoring_by_id) != len(score.findings):
+        raise ReviewConsensusError(f"lens {score.lens_id!r} has duplicate scoring findings")
+
+    for finding in typed_findings:
+        if not isinstance(finding, ReviewFinding) or finding.lens_id != score.lens_id:
+            raise ReviewConsensusError(
+                f"lens {score.lens_id!r} received a mismatched typed finding"
+            )
+        if finding.dimension_id is None:
+            raise ReviewConsensusError(
+                f"finding {finding.finding_id!r} requires a dimension before scoring"
+            )
+
+        existing = scoring_by_id.get(finding.finding_id)
+        resolved = finding.status != "active"
+        if existing is not None:
+            if existing.dimension_id != finding.dimension_id:
+                raise ReviewConsensusError(
+                    f"finding {finding.finding_id!r} contradicts its scoring dimension"
+                )
+            if existing.resolved is not resolved:
+                raise ReviewConsensusError(
+                    f"finding {finding.finding_id!r} contradicts its scoring status"
+                )
+            if existing.priority not in {None, finding.severity}:
+                raise ReviewConsensusError(
+                    f"finding {finding.finding_id!r} contradicts its scoring priority"
+                )
+            if existing.confidence not in {None, finding.confidence}:
+                raise ReviewConsensusError(
+                    f"finding {finding.finding_id!r} contradicts its scoring confidence"
+                )
+
+        scoring_by_id[finding.finding_id] = FindingEvidence(
+            finding_id=finding.finding_id,
+            dimension_id=finding.dimension_id,
+            critical=(existing.critical if existing is not None else False)
+            or finding.severity == "P0",
+            resolved=resolved,
+            priority=finding.severity,
+            confidence=finding.confidence,
+        )
+
+    return score_lens_review(
+        score.lens_id,
+        score.dimension_scores,
+        non_applicable_dimensions=score.non_applicable_dimensions,
+        reported_overall=score.derived_overall,
+        findings=tuple(sorted(scoring_by_id.values(), key=lambda item: item.finding_id)),
+        policy=policy,
+    )
+
+
 @dataclass(frozen=True)
 class ReviewResult:
     """The versioned result callers persist and route without rescoring."""
@@ -781,6 +843,29 @@ class ReviewResult:
         results_by_id = {item.lens_id: item for item in self.lens_results}
         if len(results_by_id) != len(self.lens_results):
             raise ReviewConsensusError("duplicate lens results")
+        findings_by_lens: dict[str, list[ReviewFinding]] = {
+            lens_id: [] for lens_id in results_by_id
+        }
+        for finding in self.findings:
+            if not isinstance(finding, ReviewFinding):
+                raise ReviewConsensusError("review result findings must be ReviewFinding values")
+            if finding.lens_id == "external-reviewer":
+                continue
+            if finding.lens_id not in findings_by_lens:
+                raise ReviewConsensusError(
+                    f"finding {finding.finding_id!r} names a lens without a score"
+                )
+            findings_by_lens[finding.lens_id].append(finding)
+        for lens_id, lens_result in results_by_id.items():
+            reconciled = _score_with_typed_findings(
+                lens_result.score,
+                findings_by_lens[lens_id],
+                policy=DEFAULT_SCORING_POLICY,
+            )
+            if reconciled != lens_result.score:
+                raise ReviewConsensusError(
+                    f"lens {lens_id!r} scoring findings contradict the typed findings"
+                )
         calculated_failing = tuple(
             lens_id
             for lens_id in self.selected_lenses
@@ -1104,6 +1189,9 @@ class ReviewCycleState:
             raise ReviewConsensusError(
                 f"expected scores for {list(expected)}, got {sorted(lens_scores)}"
             )
+        cycle_findings = tuple(findings)
+        if any(item.lens_id not in expected for item in cycle_findings):
+            raise ReviewConsensusError("cycle finding belongs to an unattempted lens")
         cycle = self.cycle_count + 1
         next_results = dict(self._lens_results)
         regressions = list(self._score_regressions)
@@ -1112,6 +1200,11 @@ class ReviewCycleState:
             score = lens_scores[lens_id]
             if not isinstance(score, LensScore) or score.lens_id != lens_id:
                 raise ReviewConsensusError(f"mismatched score for {lens_id!r}")
+            score = _score_with_typed_findings(
+                score,
+                (finding for finding in cycle_findings if finding.lens_id == lens_id),
+                policy=self._policy,
+            )
             prior = next_results.get(lens_id)
             if prior is not None and score.derived_overall < prior.score.derived_overall:
                 regressions.append(
@@ -1159,7 +1252,7 @@ class ReviewCycleState:
         next_findings = self._merge_findings(
             revision=revision,
             attempted_lenses=expected,
-            findings=tuple(findings),
+            findings=cycle_findings,
             external_review=external_review,
         )
         fix_requests = consolidate_fix_requests(next_findings)

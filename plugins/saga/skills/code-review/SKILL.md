@@ -349,11 +349,26 @@ not a per-severity exemption.
 
 ### Stage C — score, repair, and terminate
 
-Pass each selected lens's applicable dimensions, recorded non-applicable causes, scoring evidence, and
-reported overall to `review_consensus.score_lens_review`. Then create `ReviewCycleState` with the selected
-roster identifiers and call `record_cycle` only after the candidate revision was successfully integrated.
-The first cycle attempts every selected lens. Later cycles attempt exactly `state.next_lenses`; accepted
-lenses retain the revision they actually reviewed.
+For every recorded finding owned by a scoring lens, construct a `FindingEvidence` value with the same
+finding and dimension identifiers, its critical and resolved evidence state, and its Priority and
+confidence metadata. Pass those values through the `findings` argument together with each selected
+lens's applicable dimensions, recorded non-applicable causes, and reported overall to
+`review_consensus.score_lens_review`. The full `ReviewFinding` values passed to `record_cycle` must name
+the same finding and dimension records; the cycle controller reconciles the two forms and refuses a
+typed result whose routed findings were not scored.
+
+After collecting the selected `LensScore` values, construct `IndependentGateResult` values for the
+built-versus-planned audit and every applicable scanner, test, deployment, casualty, and
+operational-safety gate. Call `review_consensus.evaluate_review_readiness` with the scores and those
+independent gate results. Enforce `ReviewReadiness.can_proceed`: a failed independent gate blocks
+readiness even when numeric review acceptance passes. A gate result never changes a dimension score,
+derived overall, accepted flag, or failing-dimension list; do not rescore a lens from gate state.
+
+Then create `ReviewCycleState` with the selected roster identifiers and call `record_cycle` only after
+the candidate revision was successfully integrated. The first cycle attempts every selected lens.
+Later cycles attempt exactly `state.next_lenses`; accepted lenses retain the revision they actually
+reviewed. `ReviewResult.outcome` remains the sole decision field inside the serialized result; carry
+the independent `ReviewReadiness` state alongside it rather than rewriting that outcome.
 
 When a repaired revision would otherwise finish the loop, delta-check every accepted lens retained from
 an older revision. A passing delta-check keeps the original reviewed revision without a full rerun. A

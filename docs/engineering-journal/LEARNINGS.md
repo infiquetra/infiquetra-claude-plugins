@@ -19,6 +19,50 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-08-22
+
+### A parity check that matches on one repository's wording reports a surviving fact as lost  {#wording-is-not-the-fact}
+
+**Context.** Unit U9 of the UniFi portability pilot has to prove, before releasing the topology
+relocation, that the agent reading the deployed operator site profile still knows every site fact
+it used to carry in its own prose. This repository already owns the authoritative list of those
+facts, in `tests/test_unifi_site_profile_loader.py` as `PRIOR_AGENT_FACTS`, so the comparison
+reused it rather than re-deriving one.
+
+**Evidence.** Each entry in that list is a triple of label, literal string, and regular expression.
+The repository's own test uses the literal to assert the fact survives in its relocation fixture and
+the expression to assert the fact is gone from the agent definition. Comparing the *deployed*
+profile with the literal alone reported three of twenty-two facts missing: two address ranges the
+fixture writes hyphenated and the deployed profile writes as a span, and a camera recorder the
+fixture spells out and the deployed profile abbreviates. All three facts were present.
+Recorded in `docs/evidence/2026-08-22-unifi-transition-evidence.md`.
+
+**Mechanism.** The literal was never a definition of the fact. It was one repository's phrasing,
+correct against a fixture that repository authored, and load-bearing only for that fixture. The
+deployed profile was authored independently in another repository against the same contract, so it
+is free to say the same thing differently. A substring test against a phrasing therefore measures
+authorship agreement, not fact survival, and the two diverge the moment a second author appears.
+
+**Fix.** The comparison accepts either form and records which one matched, so an
+equivalent-phrasing match is visible in the evidence rather than silently equal to a literal one.
+Three rows in the pre-activation evidence carry `equivalent-phrasing`, and the document says which
+facts they are and how the wording differs.
+
+**Validation.** Fifty fields compared across the three profile states, fifty passed, zero failed,
+with the deployed profile's bytes recorded only by digest.
+
+**What surprised.** The false negative pointed at the *deployed* artifact, which was correct, and
+away from the comparison, which was not. A parity check that fails is normally read as evidence
+about its subject; here it was evidence about itself.
+
+**Generalizable rule.** When a check crosses an authorship boundary, assert the fact, not the
+string. If the only available matcher is one side's wording, treat a mismatch as a question about
+the matcher before treating it as a finding about the subject — and when both a literal and a
+pattern exist, record which one matched rather than collapsing them into a bare pass.
+
+**Refs.** `docs/evidence/2026-08-22-unifi-transition-evidence.md`; the relocation itself in
+`f8c8f7a0`.
+
 ## 2026-08-21
 
 ### A value-less flag followed by a bare word feeds that word to the tool as a prompt  {#value-less-flag-eats-the-next-token}

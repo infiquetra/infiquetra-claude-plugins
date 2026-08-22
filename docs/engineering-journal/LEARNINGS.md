@@ -21,6 +21,51 @@
 
 ## 2026-08-22
 
+### The release-surface bump guard checks that `plugin.json` was touched, not that the version moved  {#bump-guard-checks-touch-not-delta}
+
+**Context.** Activating the held `unifi` release meant closing the tri-lock across three
+surfaces that had sat at `1.2.1` while two units of behavior changes accumulated under
+`[Unreleased]`. The expectation going in was that the PR-scoped bump guard would already be
+red on this branch and that activation would turn it green. It was green the whole time.
+
+**Evidence.** `tools/release_surface_diff_guard.py:82-84` computes
+`bumped_plugin_json = ".claude-plugin/plugin.json" in relative_paths` — set membership of a
+changed-path list. Run against `origin/main` before any edit in this unit, the guard printed
+`all changed plugins bumped their release surfaces` with `unifi` still at `1.2.1` and both
+clients' behavior already changed. The reason is commit `ddeafe98` (Unit U6), which edited
+`plugin.json`'s `description` to drop four Protect capabilities the client no longer
+implements, and edited `CHANGELOG.md` under `[Unreleased]`. Both required paths appeared in
+the diff; neither carried a version bump.
+
+**Mechanism.** The guard's question is "did the author touch the release surfaces alongside a
+non-doc change?", which is a proxy for "did the author bump?". The proxy is exact when the only
+reason to touch `plugin.json` is to bump it. It fails whenever `plugin.json` holds a second
+mutable field — here `description` — because an edit to that field satisfies the membership
+test with no version delta. `CHANGELOG.md` has the same hole in a stronger form: writing under
+`[Unreleased]` is the documented way to record a change you are deliberately *not* releasing,
+so the file's own intended use satisfies the guard.
+
+**What surprised.** The two units did nothing wrong. U6 and U7 correctly declined to bump —
+their commits say so explicitly, and U9 held the release for a receipt on purpose. The guard
+agreeing with them was not a bug being exercised; it was the guard being unable to tell a
+deliberate hold from an oversight. The failure mode is silence in the case the guard exists to
+catch, and this branch was in that case for three commits.
+
+**Fix (or queued).** Not fixed here — the fix belongs to the guard's own plugin surface, not
+to a `unifi` activation commit, and tightening it mid-activation would put an untested guard
+change in a release PR. Queued: compare `plugin.json`'s `version` value across the diff rather
+than testing path membership, and treat a change confined to `[Unreleased]` as not a bump. Both
+need the `[Unreleased]` hold to stay expressible, so the guard must gain a way to distinguish a
+declared hold from a missing bump rather than banning the former.
+
+**Generalizable rule.** A guard that tests whether a file was *touched* is a proxy for whether
+the *value in it changed*, and the proxy holds only while that file has exactly one mutable
+field. Add a second field and the guard goes quietly permissive — not red, not warning, just
+agreeing. When a gate's subject is a value, assert on the value.
+
+**Refs.** DECISIONS `{#removed-default-is-breaking}`, `tools/release_surface_diff_guard.py`,
+commits `ddeafe98` (U6) and `f8c8f7a0` (U7).
+
 ### A parity check that matches on one repository's wording reports a surviving fact as lost  {#wording-is-not-the-fact}
 
 **Context.** Unit U9 of the UniFi portability pilot has to prove, before releasing the topology

@@ -2,7 +2,42 @@
 
 ## [Unreleased]
 
-### Fixed - documentation now matches the shipped clients (upstream repair, not yet released)
+## [2.0.0] - 2026-08-22
+
+Activates the work Units U6 and U7 authored and deliberately left unreleased. The hold was
+lifted by the deployed-profile receipt for the operator site profile: its deployed SHA-256
+digest equals the private input digest the pre-activation evidence was taken against, so that
+evidence covers exactly the bytes now deployed. Evidence:
+`docs/evidence/2026-08-22-unifi-transition-evidence.md`.
+
+**Why this is a major version and not a minor one.** Three of the changes below require an
+installation to do something before it works the way it did, and any one of them would carry
+the bump on its own.
+
+The removed controller-address default is the clearest case. Both clients previously fell back
+to a baked-in address when neither `--host` nor `UNIFI_HOST` was given, so an invocation that
+succeeded with only `UNIFI_API_KEY` set now exits 1. That is an incompatible change to
+observable behavior, and this release records it as one. The obvious counterargument — that the
+default was a defect rather than a promise, so removing it restores the contract rather than
+breaking it — is a sound argument about whether the change is *right* and a poor one about
+whether it *breaks callers*. Semantic versioning classifies compatibility, not intent. The
+default was also a private-range address, so on any network but its author's it resolved to
+whatever happened to occupy that address locally: usually nothing, and never anything the
+caller had chosen. Replacing that silent misdirection with a named error is an improvement and
+a change in observable behavior at the same time. Understating it would save a version number
+and cost an operator a surprise.
+
+Second, the `unifi-network-ops` agent no longer carries site topology in its own text. Until an
+operator deploys a site profile, it answers `unknown` where it used to state subnets, host
+ranges, and a camera count. No fact was lost — the relocation was proved fact by fact against
+the deployed profile, fifty fields compared and fifty passed — but reading those facts again
+requires a deployed profile, which is a new obligation on the installation.
+
+Third, both skills dropped the non-specification `triggers` frontmatter field, so skill
+activation is keyed by the specification's own fields alone. This is the lightest of the three
+and would not carry a major bump by itself.
+
+### Fixed - documentation now matches the shipped clients
 
 - Removed every reference to the four UniFi Protect capabilities the client does not
   implement — camera stream URLs, PTZ control, event listing, and NVR info. They were
@@ -33,7 +68,7 @@
   argument parsers and the client sources, so this class of drift fails a build instead of
   surviving five months unnoticed.
 
-### Removed - the hard-coded controller address, from both clients (upstream repair, not yet released)
+### Removed - the hard-coded controller address, from both clients
 
 - `UNIFI_HOST` is required and has no default. Both clients previously fell back to one
   operator's controller address, which every installation received as though it were
@@ -73,6 +108,13 @@
 - Both skills drop the non-specification `triggers` and `script` frontmatter fields. Their
   content moved into each skill's body as a "When to use this skill" list and a "Script"
   line, so nothing is lost and the frontmatter carries only permitted fields.
+
+### Changed - the three release surfaces move together
+
+- Version `1.2.1 → 2.0.0` on the plugin manifest, on the `unifi` entry in
+  `.claude-plugin/marketplace.json`, and on this changelog's top dated heading. The
+  marketplace entry is regenerated from `plugin.json` via `scripts/sync_marketplace.py`
+  rather than hand-edited, because it is a generated mirror and not a source.
 
 ## [1.2.1] - 2026-08-08
 

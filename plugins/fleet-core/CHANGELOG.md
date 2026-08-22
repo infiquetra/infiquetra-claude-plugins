@@ -5,6 +5,27 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.2] - 2026-08-22
+
+### Fixed
+
+- **A non-finite `Retry-After` no longer costs the caller its typed rate-limit surface.**
+  `float()` accepts `inf`, `-inf`, `nan`, and any overlarge literal such as `1e400`, so
+  `parse_retry_after` reduced a header carrying one of those to a non-finite "delay" and handed it
+  back as though the server had given a usable hint. The sleep path hid the problem — `inf` clamped
+  to `max_delay` and `nan` failed its `> 0` test — so the retries themselves looked correct. The
+  damage surfaced only once retries were exhausted and the caller reduced the hint to whole seconds:
+  `math.ceil(inf)` raises `OverflowError` and `math.ceil(nan)` raises `ValueError`, both UniFi
+  clients caught that in their broad handler, and the operator was told `Unexpected error: cannot
+  convert float infinity to integer` instead of how long to wait. `1e400` is the shape that matters
+  in practice — an ordinary overlarge integer in a header, nothing exotic.
+- A non-finite value is exactly the "no usable hint" case `parse_retry_after` already documents, so
+  it now yields `None` and the caller falls back to computed jittered backoff. The rule covers the
+  numeric path as well as the string one, because a caller that parses its own header hands the
+  number straight in. A postcondition test asserts that every hint the function returns survives
+  being turned into whole seconds, for every header shape at once — a listing of non-finite
+  spellings is only ever as complete as the imagination of whoever wrote it.
+
 ## [0.25.1] - 2026-08-22
 
 ### Fixed

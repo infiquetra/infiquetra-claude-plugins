@@ -21,6 +21,53 @@
 
 ## 2026-08-22
 
+### `float()` accepts `inf` and `1e400`, so widening a parser widened what counts as a delay  {#non-finite-retry-after-defeats-the-typed-429}
+
+**Context.** fleet-core 0.25.1 replaced a caller-side `int()` with `parse_retry_after` so both RFC
+7231 `Retry-After` forms would back a request off. Swapping `int()` for `float()` also quietly
+enlarged the set of accepted inputs: `float()` takes `inf`, `-inf`, `nan`, and any overlarge literal
+such as `1e400`. Those reduced to a non-finite "delay" and travelled onward as though the server had
+given a usable hint. A cycle-4 reviewer found it; an independent end-to-end probe on the real client
+confirmed it before any repair was written.
+
+**Evidence.** `plugins/fleet-core/scripts/fleet_commons/retry_backoff.py` `parse_retry_after`;
+consumed at `unifi_network_client.py:203` and `unifi_protect_client.py:203`. Reproduction, with
+`requests.request` replaced so no call leaves the machine: a 429 carrying `Retry-After: 1e400` makes
+the client print `Unexpected error: cannot convert float infinity to integer` and exit 1, after
+burning all three attempts. The same request carrying `Retry-After: 120` prints
+`Rate limited. Retry after 120 seconds` with `status_code: 429`.
+
+**Mechanism.** Two guards had to miss for this to reach an operator, and the first one hid the
+second. The sleep path *looks* correct on a non-finite hint — `inf` clamps to `max_delay`, and `nan`
+fails its `> 0` test and falls through to computed backoff — so every retry behaves. The damage lands
+only after retries are exhausted, where the caller reduces the hint to whole seconds to advise the
+operator: `math.ceil(inf)` raises `OverflowError`, `math.ceil(nan)` raises `ValueError`. Both clients
+catch that in a broad `except Exception`, which converts it into a generic message. So the typed 429
+surface the 0.25.1 repair existed to preserve was destroyed at exactly the moment it was needed, and
+nothing crashed loudly enough to notice.
+
+**Fix.** `_usable_delay` returns `None` for any non-finite result, on both the numeric and the string
+path, so a non-finite hint becomes the "no usable hint" case the function already documented.
+fleet-core 0.25.2.
+
+**Validation.** Eleven assertions fail against the unrepaired primitive and pass against the repaired
+one; `parse_retry_after` holds 100% line coverage. Test names pin the caller's actual need rather
+than the spellings.
+
+**What surprised.** The clamp was doing its job and that is precisely why the bug survived review.
+A guard that neutralizes a bad value locally can stop it from ever being reported, and the value
+keeps travelling to a consumer with no such guard.
+
+**Generalizable rule.** When you widen a parser, assert the *postcondition its consumer depends on*,
+not a list of the inputs you thought of. Here the consumer needs "whatever comes back can be turned
+into whole seconds," which is one assertion covering every header shape at once; a list of
+non-finite spellings is only ever as complete as the imagination of whoever wrote it, and `1e400` is
+not a spelling most people would list. Corollary: a downstream `except Exception` converts a
+contract violation into a support ticket instead of a test failure — look there when a defect
+reaches production without a stack trace.
+
+**Refs.** `{#retry-after-caller-side-repair}`, `{#retry-after-http-date-escapes-the-retry-path}`.
+
 ### Repairing the primitive left the defect intact; the custody boundary is the call site  {#retry-after-caller-side-repair}
 
 **Context.** fleet-core 0.25.1 taught the shared 429 primitive to read both RFC 7231 forms of

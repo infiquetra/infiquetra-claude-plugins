@@ -6,6 +6,7 @@ Deterministic: injected ``sleep``/``rng``/``clock`` seams — no real time passe
 from __future__ import annotations
 
 import importlib.util
+import math
 import random
 from pathlib import Path
 from types import ModuleType
@@ -281,6 +282,62 @@ def test_all_three_http_date_forms_parse(header: str) -> None:
 @pytest.mark.parametrize("value", [None, "", "   ", True, False, object()])
 def test_values_that_are_not_a_delay_parse_to_none(value: Any) -> None:
     assert RB.parse_retry_after(value, now=_now) is None
+
+
+@pytest.mark.parametrize("header", ["inf", "Infinity", "-inf", "nan", "1e400", "  inf  "])
+def test_a_non_finite_delta_seconds_header_is_not_a_usable_hint(header: str) -> None:
+    """``float()`` accepts every one of these; a delay cannot be any of them.
+
+    A non-finite hint used to travel on as though it were a delay. The sleep path hid it —
+    ``inf`` clamped to ``max_delay`` and ``nan`` failed its ``> 0`` test — so the retries
+    themselves looked correct and the damage surfaced only after they were exhausted, when
+    the caller reduced the hint to whole seconds: ``math.ceil(inf)`` raises ``OverflowError``
+    and ``math.ceil(nan)`` raises ``ValueError``. The caller lost its typed 429 surface and
+    told the operator "Unexpected error" instead of how long to wait. ``1e400`` is the shape
+    that matters in practice: an ordinary overlarge integer in a header, nothing exotic.
+    """
+    assert RB.parse_retry_after(header, now=_now) is None
+
+
+@pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan")])
+def test_a_pre_parsed_non_finite_number_is_refused_too(value: float) -> None:
+    # A caller that parses its own header hands the number straight in, so the numeric path
+    # needs the same rule. Guarding only the string path would leave that door open.
+    assert RB.parse_retry_after(value, now=_now) is None
+
+
+def test_a_non_finite_hint_falls_back_to_computed_backoff() -> None:
+    delays = _delays_for("1e400", base_delay=2.0)
+    assert len(delays) == 1
+    assert 1.0 <= delays[0] <= 2.0
+
+
+def test_every_reduced_hint_survives_being_turned_into_whole_seconds() -> None:
+    """The property the repair actually buys, stated as the caller needs it.
+
+    Callers reduce the hint to whole seconds to advise the operator. This asserts the
+    postcondition that makes that safe for every input shape at once, rather than listing
+    the non-finite spellings one at a time — a listing is only ever as complete as the
+    imagination of whoever wrote it, and ``1e400`` is not a spelling most people would list.
+    """
+    headers = [
+        "30",
+        "inf",
+        "Infinity",
+        "nan",
+        "1e400",
+        "-inf",
+        "0",
+        FUTURE_DATE,
+        PAST_DATE,
+        EXCESSIVE_DATE,
+        "next Tuesday-ish",
+        "",
+    ]
+    for header in headers:
+        hint = RB.parse_retry_after(header, now=_now)
+        if hint is not None:
+            math.ceil(hint)  # must not raise, for any header a server can send
 
 
 def test_a_caller_that_pre_parses_with_parse_retry_after_keeps_the_retry() -> None:

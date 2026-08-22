@@ -1,19 +1,14 @@
 # UniFi Protect API Endpoints Reference
 
-Base URL pattern: `https://<UNIFI_HOST>/proxy/protect/api/`
+Base URL pattern: `https://<UNIFI_HOST>/proxy/protect/integration/v1`
 
-All requests use the `X-Api-Key` header for authentication on UniFi OS 3.x+. SSL verification is disabled (UDM uses a self-signed certificate).
+This document is derived from `scripts/unifi_protect_client.py` and describes only what that
+client calls. The Integration API accepts API key authentication through the `X-Api-Key`
+header. The older `/proxy/protect/api` path requires cookie-based authentication and is not
+used by this client.
 
----
-
-## NVR (Bootstrap / System Info)
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/proxy/protect/api/bootstrap` | Full NVR bootstrap: NVR info, all cameras, lights, sensors, viewers, liveviews, and current state |
-| GET | `/proxy/protect/api/nvr` | NVR system info (firmware, storage, uptime, network interfaces) |
-
-The bootstrap endpoint is the most efficient way to retrieve all device data in a single request. The client caches this response and filters by device type.
+All requests send `X-Api-Key` and `Content-Type: application/json`, use a 30-second timeout,
+and disable TLS verification by default because the UDM presents a self-signed certificate.
 
 ---
 
@@ -21,71 +16,19 @@ The bootstrap endpoint is the most efficient way to retrieve all device data in 
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/proxy/protect/api/cameras` | List all cameras |
-| GET | `/proxy/protect/api/cameras/{id}` | Get a specific camera by ID |
-| PATCH | `/proxy/protect/api/cameras/{id}` | Update camera settings (name, recording modes, smart detections, etc.) |
-| GET | `/proxy/protect/api/cameras/{id}/snapshot` | Get a JPEG snapshot from the camera |
-| GET | `/proxy/protect/api/cameras/{id}/streams` | Get camera stream URLs (RTSP, RTMP) |
+| GET | `/proxy/protect/integration/v1/cameras` | List all cameras |
+| GET | `/proxy/protect/integration/v1/cameras/{id}` | Get a specific camera by ID |
+| GET | `/proxy/protect/integration/v1/cameras/{id}/snapshot` | Get a JPEG snapshot from the camera |
+| PATCH | `/proxy/protect/integration/v1/cameras/{id}` | Update camera settings |
 
-**Snapshot query params**: `?ts=<unix_timestamp>` (optional, defaults to now), `?force=true` (bypass cache)
+The snapshot request is sent with no query parameters. The response body is raw
+`image/jpeg` bytes: the client writes them to the path given by `--output`, or base64-encodes
+them into its JSON wrapper when `--output` is omitted.
 
-**Stream URL response** includes RTSP URLs for high, medium, and low quality streams.
-
-**Camera update body examples**:
+**Camera update body example**:
 ```json
 { "name": "Front Door" }
-{ "recordingSettings": { "mode": "always" } }
-{ "smartDetectSettings": { "objectTypes": ["person", "vehicle"] } }
 ```
-
-**Recording mode values**: `always`, `never`, `motion`, `smartDetect`
-
----
-
-## PTZ Control
-
-PTZ commands are sent as PATCH requests to the camera endpoint with a `cameraActions` payload.
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/proxy/protect/api/cameras/{id}` | Lists `featureFlags.hasPtz` and `ptzPresetsCount` |
-| PATCH | `/proxy/protect/api/cameras/{id}` | Send PTZ move, zoom, preset, or patrol commands |
-
-**PTZ command body examples**:
-```json
-{ "cameraActions": [{ "action": "gotoPreset", "preset": 1 }] }
-{ "cameraActions": [{ "action": "patrolStart" }] }
-{ "cameraActions": [{ "action": "patrolStop" }] }
-{ "cameraActions": [{ "action": "move", "pan": 0.5, "tilt": -0.3, "speed": 0.5 }] }
-{ "cameraActions": [{ "action": "zoom", "speed": 1.0 }] }
-```
-
-**Pan/tilt range**: -1.0 to 1.0 (normalized). **Speed range**: 0.0 to 1.0.
-
-**Preset index**: 0-based in the API, displayed as 1-based in the client CLI (`--preset-id 1` maps to preset index 0).
-
-Presets are stored in the camera object as `ptzPresets` (array of `{ name, slot }` objects) and are retrieved from the bootstrap or camera GET response.
-
----
-
-## Events
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/proxy/protect/api/events` | List events with optional filters |
-| GET | `/proxy/protect/api/events/{id}` | Get a specific event by ID |
-
-**Event query params**:
-- `?type=motion` — filter by event type
-- `?type=smartDetectZone` — filter by smart detection events
-- `?limit=50` — number of events to return (default: 50)
-- `?start=<unix_ms>` — events after this timestamp
-- `?end=<unix_ms>` — events before this timestamp
-- `?cameraId=<id>` — filter by specific camera
-
-**Event type values**: `motion`, `smartDetectZone`, `ring`, `disconnect`, `connection`, `provisionCamera`
-
-**Smart detection object types** (in event `metadata.detectedObjects`): `person`, `vehicle`, `animal`, `package`, `licensePlate`
 
 ---
 
@@ -93,26 +36,25 @@ Presets are stored in the camera object as `ptzPresets` (array of `{ name, slot 
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/proxy/protect/api/liveviews` | List all saved liveviews |
-| POST | `/proxy/protect/api/liveviews` | Create a new liveview |
-| PATCH | `/proxy/protect/api/liveviews/{id}` | Update a liveview |
-| DELETE | `/proxy/protect/api/liveviews/{id}` | Delete a liveview |
+| GET | `/proxy/protect/integration/v1/liveviews` | List all saved liveviews |
+| GET | `/proxy/protect/integration/v1/liveviews/{id}` | Get a specific liveview by ID |
+| POST | `/proxy/protect/integration/v1/liveviews` | Create a new liveview |
+| PUT | `/proxy/protect/integration/v1/liveviews/{id}` | Update a liveview |
+| DELETE | `/proxy/protect/integration/v1/liveviews/{id}` | Delete a liveview |
+
+The update verb is `PUT`, not `PATCH`. Delete returns an empty body, which the client
+normalizes to `{}`.
 
 **Liveview body example**:
 ```json
 {
   "name": "Security Overview",
-  "isDefault": false,
-  "isGlobal": true,
-  "layout": 1,
   "slots": [
-    { "cameras": ["<camera_id_1>"], "cycleMode": "none", "cycleInterval": 10 },
-    { "cameras": ["<camera_id_2>"], "cycleMode": "none", "cycleInterval": 10 }
+    { "cameras": ["<camera_id_1>"] },
+    { "cameras": ["<camera_id_2>"] }
   ]
 }
 ```
-
-**Layout values**: `1` (1x1), `2` (2x1), `4` (2x2), `9` (3x3), `16` (4x4)
 
 ---
 
@@ -120,26 +62,14 @@ Presets are stored in the camera object as `ptzPresets` (array of `{ name, slot 
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/proxy/protect/api/lights` | List all UniFi Flood Lights |
-| GET | `/proxy/protect/api/lights/{id}` | Get a specific light |
-| PATCH | `/proxy/protect/api/lights/{id}` | Update light settings |
+| GET | `/proxy/protect/integration/v1/lights` | List all UniFi Flood Lights |
+| GET | `/proxy/protect/integration/v1/lights/{id}` | Get a specific light |
+| PATCH | `/proxy/protect/integration/v1/lights/{id}` | Update light settings |
 
 **Light update body example**:
 ```json
-{
-  "lightModeSettings": {
-    "mode": "motion",
-    "enableAt": "dark"
-  },
-  "lightOnSettings": {
-    "isLedForceOn": false,
-    "ledLevel": 3
-  }
-}
+{ "lightModeSettings": { "mode": "motion" } }
 ```
-
-**Mode values**: `off`, `motion`, `always`, `schedule`
-**enableAt values**: `dark`, `always`
 
 ---
 
@@ -147,11 +77,9 @@ Presets are stored in the camera object as `ptzPresets` (array of `{ name, slot 
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/proxy/protect/api/sensors` | List all sensors (door/window, temperature, humidity, light) |
-| GET | `/proxy/protect/api/sensors/{id}` | Get a specific sensor |
-| PATCH | `/proxy/protect/api/sensors/{id}` | Update sensor settings |
-
-Sensor data includes `stats` (current temperature, humidity, light level) and `alarmSettings` (motion sensitivity, tamper detection).
+| GET | `/proxy/protect/integration/v1/sensors` | List all sensors |
+| GET | `/proxy/protect/integration/v1/sensors/{id}` | Get a specific sensor |
+| PATCH | `/proxy/protect/integration/v1/sensors/{id}` | Update sensor settings |
 
 ---
 
@@ -159,10 +87,9 @@ Sensor data includes `stats` (current temperature, humidity, light level) and `a
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/proxy/protect/api/chimes` | List all UniFi Chimes |
-| GET | `/proxy/protect/api/chimes/{id}` | Get a specific chime |
-| PATCH | `/proxy/protect/api/chimes/{id}` | Update chime settings (volume, ringtone) |
-| POST | `/proxy/protect/api/chimes/{id}/play-speaker` | Play a ringtone on demand |
+| GET | `/proxy/protect/integration/v1/chimes` | List all UniFi Chimes |
+| GET | `/proxy/protect/integration/v1/chimes/{id}` | Get a specific chime |
+| PATCH | `/proxy/protect/integration/v1/chimes/{id}` | Update chime settings |
 
 ---
 
@@ -170,17 +97,57 @@ Sensor data includes `stats` (current temperature, humidity, light level) and `a
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/proxy/protect/api/viewers` | List all UniFi Viewers |
-| GET | `/proxy/protect/api/viewers/{id}` | Get a specific viewer |
-| PATCH | `/proxy/protect/api/viewers/{id}` | Update viewer settings (active liveview, volume) |
+| GET | `/proxy/protect/integration/v1/viewers` | List all UniFi Viewers |
+| GET | `/proxy/protect/integration/v1/viewers/{id}` | Get a specific viewer |
+| PATCH | `/proxy/protect/integration/v1/viewers/{id}` | Update viewer settings |
+
+---
+
+## Paths This Client Does Not Call
+
+The client reaches no path outside the six groups above. In particular:
+
+- Not implemented: any `stream` or stream-URL path under a camera.
+- Not implemented: any `ptz` or `cameraActions` path or payload.
+- Not implemented: any `events` path.
+- Not implemented: any `nvr` or `bootstrap` path.
+- Not implemented: the chime `play-speaker` path.
+
+An earlier revision of this document described all of these against the cookie-authenticated
+`/proxy/protect/api` base. Commit `8a14ad49` on 2026-03-17 moved the client to the Integration
+API and removed the corresponding code; the description outlived it until this repair.
+
+---
+
+## Response Handling
+
+The client maps controller responses to a fixed JSON surface and exits non-zero on failure.
+
+| Status | Client behavior |
+|--------|-----------------|
+| 429 | Retries with bounded exponential backoff, honoring `Retry-After` (default 60 seconds). On exhaustion, emits a typed rate-limit error and exits 1 |
+| 401 | `API key invalid or expired`, exit 1 |
+| 403 | `Insufficient permissions. Check API key scope.`, exit 1 |
+| 404 | `Resource not found. Verify camera/device ID.`, exit 1 |
+| 4xx (other) | `API error: <status>`, exit 1 |
+| 5xx | `Controller error: <status>`, exit 1 |
+| 2xx, empty body | Normalized to `{}` |
+
+Network-level failures are reported the same way: a 30-second timeout, a TLS verification
+failure, and an unreachable host each produce a typed error and exit 1.
 
 ---
 
 ## API Notes
 
-- **Authentication**: `X-Api-Key` header with a key generated in UniFi OS → Settings → API Keys. The same key works for both the Network and Protect APIs.
-- **SSL**: The UDM uses a self-signed TLS certificate. All requests must disable SSL verification (`verify=False` in requests, `urllib3.InsecureRequestWarning` suppressed).
-- **IDs**: UniFi Protect uses 24-character hex string IDs (e.g., `64a2f3b1c8e4d500011a2b3c`). These are returned in list/get responses and required for all targeted operations.
-- **Bootstrap caching**: The bootstrap endpoint returns all device state in one call. The client uses it for list operations to minimize API calls. The `lastUpdateId` field can be used with the WebSocket event stream for real-time updates (not implemented in this CLI client).
-- **Timestamps**: All timestamps in Protect are Unix milliseconds (not seconds).
-- **Snapshot content type**: `image/jpeg`. The client returns raw bytes when `--output` is specified, or base64-encodes into a JSON wrapper for programmatic use.
+- **Authentication**: `X-Api-Key` header with a key generated in UniFi OS → Settings → API
+  Keys. The same key works for both the Network and Protect APIs.
+- **SSL**: The UDM uses a self-signed TLS certificate. Requests disable verification by
+  default (`--verify-ssl` turns it on) and `urllib3.InsecureRequestWarning` is suppressed.
+- **IDs**: UniFi Protect uses 24-character hex string IDs (for example
+  `64a2f3b1c8e4d500011a2b3c`). They are returned in list and get responses and are required
+  for every targeted operation.
+- **Dry run**: `POST`, `PUT`, `PATCH`, and `DELETE` print their method, URL, and body and
+  exit 0 unless `--confirm` is passed. `GET` is never gated.
+- **Host**: taken from `--host`, else `UNIFI_HOST`. There is no default; an absent or
+  empty value exits 1 with a structured error before any request is sent.

@@ -7,7 +7,7 @@ port forwards, VPN, DNS, DHCP, and network stats via the UniFi OS API.
 
 Environment Variables:
     UNIFI_API_KEY: UniFi OS API key (required)
-    UNIFI_HOST: UDM IP or hostname (default: 10.220.1.1)
+    UNIFI_HOST: UniFi controller IP or hostname (required; no default)
     UNIFI_SITE: UniFi site name (default: default)
 
 Usage:
@@ -74,7 +74,8 @@ class UnifiNetworkClient:
 
         Args:
             api_key: UniFi OS API key (defaults to UNIFI_API_KEY env var)
-            host: UDM IP or hostname (defaults to UNIFI_HOST env var or 10.220.1.1)
+            host: controller IP or hostname (defaults to the UNIFI_HOST env var;
+                required, and an absent or empty value exits 1)
             site: UniFi site name (defaults to UNIFI_SITE env var or default)
             verify_ssl: Whether to verify SSL certificates (default: False)
         """
@@ -83,7 +84,20 @@ class UnifiNetworkClient:
             self._error("UNIFI_API_KEY environment variable not set")
             sys.exit(1)
 
-        self.host = host or os.getenv("UNIFI_HOST", "10.220.1.1")
+        # The controller address has no baked-in default. One used to ship here, which
+        # meant every installation carried one operator's address, and substituting a
+        # different address would only move that problem rather than remove it. An absent
+        # host now fails exactly the way an absent API key does, before any network call.
+        # The empty string is absent, not a value: without the strip, an unset-but-present
+        # UNIFI_HOST built the malformed URL "https:///proxy/network/...".
+        self.host = (host or os.getenv("UNIFI_HOST") or "").strip()
+        if not self.host:
+            self._error(
+                "UNIFI_HOST environment variable not set; "
+                "pass --host or set UNIFI_HOST to the controller address"
+            )
+            sys.exit(1)
+
         self.site = site or os.getenv("UNIFI_SITE", "default")
         self.verify_ssl = verify_ssl
         self.base_v1 = f"https://{self.host}/proxy/network/api/s/{self.site}"
@@ -835,7 +849,7 @@ def main():
         default=False,
         help="Confirm write operations (POST/PUT/PATCH/DELETE). Without this flag, write ops show a dry-run.",
     )
-    parser.add_argument("--host", help="Override UNIFI_HOST")
+    parser.add_argument("--host", help="Controller IP or hostname; overrides UNIFI_HOST")
     parser.add_argument("--site", help="Override UNIFI_SITE")
     parser.add_argument(
         "--verify-ssl",

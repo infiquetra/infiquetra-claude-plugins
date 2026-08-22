@@ -1,4 +1,48 @@
 # Decisions — Infiquetra Claude Plugins
+## 2026-08-22
+
+### Removing a baked-in default is a MAJOR bump, however wrong the default was {#removed-default-is-breaking}
+
+**Decision.** The `unifi` plugin's activation of Units U6 and U7 releases as `2.0.0`, not
+`1.3.0`. Both clients previously fell back to a baked-in controller address when neither
+`--host` nor `UNIFI_HOST` was supplied; that fallback is gone, so an invocation which
+succeeded with only `UNIFI_API_KEY` set now exits 1. This repository classifies that as a
+breaking change and spends the major version on it.
+
+**Rationale.** The tempting counterargument is that the default was a defect rather than a
+promise, so deleting it restores the intended contract instead of breaking it — and that
+every installation except one was already misdirected by it, since the value was a private-range
+address that resolved to whatever occupied it on the caller's own network. All of that is true,
+and all of it is an argument about whether the change is *right*, not about whether it *breaks
+callers*. Semantic versioning classifies observable compatibility, not intent. The single
+installation that could genuinely depend on the default is precisely the one that did, and for
+everyone else the failure mode still changed shape — from a late, confusing network failure to
+an early, named one. Both are changes a consumer can observe on upgrade.
+
+Two further changes independently require the same bump, so the decision does not rest on the
+default alone: the `unifi-network-ops` agent no longer carries site topology in its own text and
+answers `unknown` until an operator deploys a site profile, which is a new obligation on the
+installation; and both skills dropped the non-specification `triggers` frontmatter field.
+
+**Rejected alternatives.**
+
+- *`1.3.0`, on the reasoning that a defect's removal is a fix.* Rejected. It would save a version
+  number and spend an operator's surprise instead. `{#outcome-release-flip-stance}` already
+  established that a version number is a signal and that a major which overstates the change
+  falsely signals a break; the same principle deflated is the same lie, pointed the other way.
+- *A deprecation window keeping the default alive behind a warning.* Rejected. The default's
+  whole defect is that it silently directs traffic somewhere the caller did not choose; a
+  deprecation period preserves exactly the behavior that needed to stop, and this is a
+  single-operator plugin with no third-party consumers to stage.
+
+**Revisit when.** A future release removes a default that genuinely has no dependent
+invocation — for instance one unreachable from any documented entry point. The reasoning above
+turns on a caller being able to observe the change; where none can, minor is defensible.
+
+**Refs.** LEARNINGS `{#bump-guard-checks-touch-not-delta}`, evidence at
+`docs/evidence/2026-08-22-unifi-transition-evidence.md`, precedent
+`team-execution 2.25.0 → 3.0.0` in `{#u7-deletes-the-fleet-lease-broker-whole-684}`.
+
 ## 2026-08-20
 
 ### Group A removes only proved or invocation-owned landing worktrees {#group-a-worktree-removal-proof}

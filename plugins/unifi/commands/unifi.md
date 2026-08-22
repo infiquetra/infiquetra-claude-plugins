@@ -1,6 +1,6 @@
 ---
 name: unifi
-description: UniFi network and protect operations — devices, clients, cameras, events
+description: UniFi network and protect operations — devices, clients, cameras, liveviews
 ---
 
 # UniFi Command
@@ -23,5 +23,5 @@ Provides quick access to UniFi Network and Protect operations for your home lab 
 
 **Protect**:
 - `/unifi cameras list` — list all cameras
-- `/unifi events list --type motion` — recent motion events
 - `/unifi cameras snapshot --id <id>` — grab a snapshot
+- `/unifi liveviews list` — list saved liveviews

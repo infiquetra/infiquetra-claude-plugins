@@ -149,4 +149,5 @@ failure, and an unreachable host each produce a typed error and exit 1.
   for every targeted operation.
 - **Dry run**: `POST`, `PUT`, `PATCH`, and `DELETE` print their method, URL, and body and
   exit 0 unless `--confirm` is passed. `GET` is never gated.
-- **Host**: taken from `--host`, else `UNIFI_HOST`, else `10.220.1.1`.
+- **Host**: taken from `--host`, else `UNIFI_HOST`. There is no default; an absent or
+  empty value exits 1 with a structured error before any request is sent.

@@ -33,6 +33,41 @@
   argument parsers and the client sources, so this class of drift fails a build instead of
   surviving five months unnoticed.
 
+### Removed - the hard-coded controller address, from both clients (upstream repair, not yet released)
+
+- `UNIFI_HOST` is required and has no default. Both clients previously fell back to one
+  operator's controller address, which every installation received as though it were
+  universal. With no `--host` and no `UNIFI_HOST`, each client now prints a structured error
+  naming the variable and exits 1 before any network call, exactly as it already does for a
+  missing `UNIFI_API_KEY`. Substituting a different address would only have moved the problem.
+- A present-but-empty `UNIFI_HOST` now fails the same way. It previously built the malformed
+  URL `https:///proxy/network/api/s/default` and failed later, one layer away from the mistake.
+- Every remaining address in the plugin's documentation is an RFC 5737 documentation address,
+  and the agent definition uses named placeholders, so no example can be mistaken for a real
+  operator's addressing.
+
+### Changed - the agent reads site context from a profile instead of carrying it
+
+- The `unifi-network-ops` agent no longer states a site topology. Its controller address, four
+  subnets, three host ranges, Proxmox master, camera count, and wireless standard were one
+  operator's facts shipped to every installation; they moved into an operator site profile.
+- `skills/unifi-network/scripts/site_profile_loader.py` is the Claude adapter's reader for the
+  portable contract `urn:infiquetra:unifi:site-profile:1.0`, released on branch
+  `orch/orch-2026-08-22-unifi-run-a` at commit `097909d7` of `infiquetra-agent-plugins`. It
+  imports the standard library only, so a host with no third-party parser can still read a
+  profile. The Claude repository carries its own loader because the upstream agent cannot
+  depend on a file that lives only in the other repository.
+- Resolution order is the `UNIFI_SITE_PROFILE` environment variable, then the path remembered
+  in `${XDG_CONFIG_HOME:-~/.config}/infiquetra/unifi/config.json`, then no profile at all.
+  No profile is a supported state, not an error; a path an operator named explicitly must
+  exist, and a missing one is reported rather than quietly skipped.
+- The no-inference rule is enforced in code. Without a profile, and for any subject a profile
+  does not name, trust role, criticality, ownership, and intended policy return an explicit
+  unknown. Absent intent is reported as absent, never as a default and never as a guess.
+- `tests/test_unifi_site_profile_loader.py` carries the relocated profile and asserts, fact by
+  fact, that everything the agent used to say survives in it and that none of it survives in
+  the agent.
+
 ### Changed - skill frontmatter conforms to the open Agent Skills specification
 
 - Both skills drop the non-specification `triggers` and `script` frontmatter fields. Their

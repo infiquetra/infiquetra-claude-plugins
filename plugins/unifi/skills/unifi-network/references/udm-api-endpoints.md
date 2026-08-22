@@ -71,10 +71,10 @@ pair an earlier revision of this document described, and the client sends no suc
   "name": "IoT",
   "purpose": "corporate",
   "vlan": 30,
-  "ip_subnet": "10.220.30.1/24",
+  "ip_subnet": "198.51.100.1/24",
   "dhcpd_enabled": true,
-  "dhcpd_start": "10.220.30.100",
-  "dhcpd_stop": "10.220.30.254"
+  "dhcpd_start": "198.51.100.100",
+  "dhcpd_stop": "198.51.100.254"
 }
 ```
 
@@ -138,7 +138,7 @@ Traffic routes are a v2 resource. An earlier revision of this document placed th
 ```json
 {
   "name": "Plex",
-  "fwd": "10.220.1.50",
+  "fwd": "192.0.2.50",
   "fwd_port": "32400",
   "dst_port": "32400",
   "proto": "tcp",
@@ -193,7 +193,7 @@ called.
 ```json
 {
   "key": "proxmox.home",
-  "value": "10.220.1.7",
+  "value": "192.0.2.7",
   "record_type": "A"
 }
 ```
@@ -266,6 +266,7 @@ The client maps controller responses to a fixed JSON surface and exits non-zero 
 - **v1 versus v2**: Everything uses the v1 path except traffic routes and static DNS, which
   are v2. That split is read off the client, not assumed.
 - **Site**: taken from `--site`, else `UNIFI_SITE`, else `default`.
-- **Host**: taken from `--host`, else `UNIFI_HOST`, else `10.220.1.1`.
+- **Host**: taken from `--host`, else `UNIFI_HOST`. There is no default; an absent or
+  empty value exits 1 with a structured error before any request is sent.
 - **Dry run**: `POST`, `PUT`, `PATCH`, and `DELETE` print their method, URL, and payload and
   exit 0 unless `--confirm` is passed. `GET` is never gated.

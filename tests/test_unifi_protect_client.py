@@ -18,6 +18,17 @@ sys.path.insert(
 
 from unifi_protect_client import UnifiProtectClient
 
+# The clients require a controller address and no longer carry a default (plan unit U7).
+# Every test below constructs a client, so the address is supplied once here; the tests that
+# assert the requirement itself remove it explicitly. RFC 5737 TEST-NET-1, so no real
+# operator's address is ever what a test asserts on.
+TEST_HOST = "192.0.2.1"
+
+
+@pytest.fixture(autouse=True)
+def _supply_controller_host(monkeypatch):
+    monkeypatch.setenv("UNIFI_HOST", TEST_HOST)
+
 
 class TestInit:
     """Test UnifiProtectClient initialization."""
@@ -42,7 +53,7 @@ class TestInit:
         client = UnifiProtectClient()
 
         assert client.api_key == "test-key-123"
-        assert client.base_url == "https://10.220.1.1/proxy/protect/integration/v1"
+        assert client.base_url == "https://192.0.2.1/proxy/protect/integration/v1"
 
     def test_init_custom_host(self, monkeypatch):
         """Test UNIFI_HOST env var overrides the default host in base_url."""
@@ -54,14 +65,57 @@ class TestInit:
         assert client.base_url == "https://192.168.1.1/proxy/protect/integration/v1"
         assert client.host == "192.168.1.1"
 
-    def test_init_default_host(self, monkeypatch):
-        """Test default host is 10.220.1.1 when UNIFI_HOST is not set."""
+    def test_init_missing_host(self, monkeypatch, capsys):
+        """No flag, no environment, no default: exit 1 naming UNIFI_HOST, before any request."""
         monkeypatch.setenv("UNIFI_API_KEY", "test-key-123")
         monkeypatch.delenv("UNIFI_HOST", raising=False)
 
+        with (
+            patch("unifi_protect_client.requests.request") as mock_request,
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            UnifiProtectClient()
+
+        assert exc_info.value.code == 1
+        assert mock_request.call_count == 0
+        output = json.loads(capsys.readouterr().out)
+        assert output["error"] is True
+        assert "UNIFI_HOST" in output["message"]
+
+    def test_init_empty_host_fails_loudly(self, monkeypatch, capsys):
+        """A present-but-empty variable is absent, not a value.
+
+        Without this the client built "https:///proxy/protect/integration/v1" and only failed
+        at request time, one layer away from the mistake.
+        """
+        monkeypatch.setenv("UNIFI_API_KEY", "test-key-123")
+        monkeypatch.setenv("UNIFI_HOST", "   ")
+
+        with pytest.raises(SystemExit) as exc_info:
+            UnifiProtectClient()
+
+        assert exc_info.value.code == 1
+        assert "UNIFI_HOST" in json.loads(capsys.readouterr().out)["message"]
+
+    def test_init_host_flag_wins_over_the_environment(self, monkeypatch):
+        """An explicitly passed host is used and the environment is not consulted."""
+        monkeypatch.setenv("UNIFI_API_KEY", "test-key-123")
+        monkeypatch.setenv("UNIFI_HOST", "198.51.100.9")
+
+        client = UnifiProtectClient(host="192.0.2.1")
+
+        assert client.host == "192.0.2.1"
+        assert "198.51.100.9" not in client.base_url
+
+    def test_init_host_from_environment_only(self, monkeypatch):
+        """With no flag, the environment supplies the address."""
+        monkeypatch.setenv("UNIFI_API_KEY", "test-key-123")
+        monkeypatch.setenv("UNIFI_HOST", "198.51.100.9")
+
         client = UnifiProtectClient()
 
-        assert client.host == "10.220.1.1"
+        assert client.host == "198.51.100.9"
+        assert client.base_url == "https://198.51.100.9/proxy/protect/integration/v1"
 
     def test_init_verify_ssl_false_by_default(self, monkeypatch):
         """Test SSL verification is disabled by default."""
@@ -96,7 +150,7 @@ class TestRequestHandling:
         mock_request.return_value = mock_response
 
         client = UnifiProtectClient()
-        result = client._request("GET", "https://10.220.1.1/proxy/protect/integration/v1/cameras")
+        result = client._request("GET", "https://192.0.2.1/proxy/protect/integration/v1/cameras")
 
         assert result == [{"id": "cam1"}]
 
@@ -114,7 +168,7 @@ class TestRequestHandling:
         client = UnifiProtectClient()
         result = client._request(
             "POST",
-            "https://10.220.1.1/proxy/protect/integration/v1/cameras/cam1/ptz",
+            "https://192.0.2.1/proxy/protect/integration/v1/cameras/cam1/ptz",
             data={"type": "goto"},
             confirm=True,
         )
@@ -133,7 +187,7 @@ class TestRequestHandling:
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit) as exc_info:
-            client._request("GET", "https://10.220.1.1/proxy/protect/integration/v1/cameras")
+            client._request("GET", "https://192.0.2.1/proxy/protect/integration/v1/cameras")
 
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
@@ -152,7 +206,7 @@ class TestRequestHandling:
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit) as exc_info:
-            client._request("GET", "https://10.220.1.1/proxy/protect/integration/v1/cameras")
+            client._request("GET", "https://192.0.2.1/proxy/protect/integration/v1/cameras")
 
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
@@ -172,7 +226,7 @@ class TestRequestHandling:
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit) as exc_info:
-            client._request("GET", "https://10.220.1.1/proxy/protect/integration/v1/cameras/bad-id")
+            client._request("GET", "https://192.0.2.1/proxy/protect/integration/v1/cameras/bad-id")
 
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
@@ -194,7 +248,7 @@ class TestRequestHandling:
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit) as exc_info:
-            client._request("GET", "https://10.220.1.1/proxy/protect/integration/v1/cameras")
+            client._request("GET", "https://192.0.2.1/proxy/protect/integration/v1/cameras")
 
         assert exc_info.value.code == 1
         # The request was retried (bounded) before the exit surface — proves adoption of the primitive.
@@ -216,7 +270,7 @@ class TestRequestHandling:
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit) as exc_info:
-            client._request("GET", "https://10.220.1.1/proxy/protect/integration/v1/cameras")
+            client._request("GET", "https://192.0.2.1/proxy/protect/integration/v1/cameras")
 
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
@@ -234,7 +288,7 @@ class TestRequestHandling:
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit) as exc_info:
-            client._request("GET", "https://10.220.1.1/proxy/protect/integration/v1/cameras")
+            client._request("GET", "https://192.0.2.1/proxy/protect/integration/v1/cameras")
 
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
@@ -252,13 +306,13 @@ class TestRequestHandling:
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit) as exc_info:
-            client._request("GET", "https://10.220.1.1/proxy/protect/integration/v1/cameras")
+            client._request("GET", "https://192.0.2.1/proxy/protect/integration/v1/cameras")
 
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
         output = json.loads(captured.out)
         assert output["error"] is True
-        assert "10.220.1.1" in output["message"]
+        assert "192.0.2.1" in output["message"]
 
     @patch("unifi_protect_client.requests.request")
     def test_request_ssl_error(self, mock_request, monkeypatch, capsys):
@@ -270,7 +324,7 @@ class TestRequestHandling:
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit) as exc_info:
-            client._request("GET", "https://10.220.1.1/proxy/protect/integration/v1/cameras")
+            client._request("GET", "https://192.0.2.1/proxy/protect/integration/v1/cameras")
 
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
@@ -290,7 +344,7 @@ class TestDryRun:
         with pytest.raises(SystemExit) as exc_info:
             client._request(
                 "POST",
-                "https://10.220.1.1/proxy/protect/integration/v1/cameras/c1/ptz",
+                "https://192.0.2.1/proxy/protect/integration/v1/cameras/c1/ptz",
                 confirm=False,
             )
 
@@ -307,7 +361,7 @@ class TestDryRun:
         with pytest.raises(SystemExit) as exc_info:
             client._request(
                 "PUT",
-                "https://10.220.1.1/proxy/protect/integration/v1/liveviews/lv1",
+                "https://192.0.2.1/proxy/protect/integration/v1/liveviews/lv1",
                 confirm=False,
             )
 
@@ -323,7 +377,7 @@ class TestDryRun:
         client = UnifiProtectClient()
         with pytest.raises(SystemExit) as exc_info:
             client._request(
-                "PATCH", "https://10.220.1.1/proxy/protect/integration/v1/cameras/c1", confirm=False
+                "PATCH", "https://192.0.2.1/proxy/protect/integration/v1/cameras/c1", confirm=False
             )
 
         assert exc_info.value.code == 0
@@ -339,7 +393,7 @@ class TestDryRun:
         with pytest.raises(SystemExit) as exc_info:
             client._request(
                 "DELETE",
-                "https://10.220.1.1/proxy/protect/integration/v1/liveviews/lv1",
+                "https://192.0.2.1/proxy/protect/integration/v1/liveviews/lv1",
                 confirm=False,
             )
 
@@ -356,7 +410,7 @@ class TestDryRun:
         with pytest.raises(SystemExit):
             client._request(
                 "POST",
-                "https://10.220.1.1/proxy/protect/integration/v1/cameras/c1/ptz",
+                "https://192.0.2.1/proxy/protect/integration/v1/cameras/c1/ptz",
                 confirm=False,
             )
 
@@ -367,7 +421,7 @@ class TestDryRun:
     def test_dry_run_includes_url(self, monkeypatch, capsys):
         """Test dry-run output includes the request URL."""
         monkeypatch.setenv("UNIFI_API_KEY", "test-key-123")
-        url = "https://10.220.1.1/proxy/protect/integration/v1/cameras/cam-abc/ptz"
+        url = "https://192.0.2.1/proxy/protect/integration/v1/cameras/cam-abc/ptz"
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit):
@@ -386,7 +440,7 @@ class TestDryRun:
         with pytest.raises(SystemExit):
             client._request(
                 "POST",
-                "https://10.220.1.1/proxy/protect/integration/v1/cameras/c1/ptz",
+                "https://192.0.2.1/proxy/protect/integration/v1/cameras/c1/ptz",
                 data=body,
                 confirm=False,
             )
@@ -404,7 +458,7 @@ class TestDryRun:
         with pytest.raises(SystemExit):
             client._request(
                 "POST",
-                "https://10.220.1.1/proxy/protect/integration/v1/cameras/c1/ptz",
+                "https://192.0.2.1/proxy/protect/integration/v1/cameras/c1/ptz",
                 confirm=False,
             )
 
@@ -881,7 +935,7 @@ class TestEdgeCases:
     def test_dry_run_includes_endpoint(self, monkeypatch, capsys):
         """Test dry-run output includes the full URL endpoint."""
         monkeypatch.setenv("UNIFI_API_KEY", "test-key-123")
-        url = "https://10.220.1.1/proxy/protect/integration/v1/cameras/cam-xyz"
+        url = "https://192.0.2.1/proxy/protect/integration/v1/cameras/cam-xyz"
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit):

@@ -10,7 +10,7 @@ Note: The integration API supports API key auth (X-Api-Key). The older
 
 Environment Variables:
     UNIFI_API_KEY: UniFi OS API key (required)
-    UNIFI_HOST: UDM IP or hostname (default: 10.220.1.1)
+    UNIFI_HOST: UniFi controller IP or hostname (required; no default)
 
 Usage:
     python unifi_protect_client.py cameras list
@@ -76,7 +76,8 @@ class UnifiProtectClient:
 
         Args:
             api_key: UniFi OS API key (defaults to UNIFI_API_KEY env var)
-            host: UDM IP or hostname (defaults to UNIFI_HOST env var or 10.220.1.1)
+            host: controller IP or hostname (defaults to the UNIFI_HOST env var;
+                required, and an absent or empty value exits 1)
             verify_ssl: Whether to verify SSL certificates (default: False for self-signed certs)
         """
         self.api_key = api_key or os.getenv("UNIFI_API_KEY")
@@ -84,7 +85,20 @@ class UnifiProtectClient:
             self._error("UNIFI_API_KEY environment variable not set")
             sys.exit(1)
 
-        self.host = host or os.getenv("UNIFI_HOST", "10.220.1.1")
+        # The controller address has no baked-in default. One used to ship here, which
+        # meant every installation carried one operator's address, and substituting a
+        # different address would only move that problem rather than remove it. An absent
+        # host now fails exactly the way an absent API key does, before any network call.
+        # The empty string is absent, not a value: without the strip, an unset-but-present
+        # UNIFI_HOST built the malformed URL "https:///proxy/protect/integration/v1".
+        self.host = (host or os.getenv("UNIFI_HOST") or "").strip()
+        if not self.host:
+            self._error(
+                "UNIFI_HOST environment variable not set; "
+                "pass --host or set UNIFI_HOST to the controller address"
+            )
+            sys.exit(1)
+
         self.verify_ssl = verify_ssl
         self.base_url = f"https://{self.host}/proxy/protect/integration/v1"
         self.headers = {
@@ -472,7 +486,7 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--confirm", action="store_true", help="Confirm mutating operations")
-    parser.add_argument("--host", help="Override UNIFI_HOST (UDM IP or hostname)")
+    parser.add_argument("--host", help="Controller IP or hostname; overrides UNIFI_HOST")
     parser.add_argument(
         "--verify-ssl",
         action="store_true",

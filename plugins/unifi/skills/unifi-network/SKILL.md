@@ -33,7 +33,7 @@ Use it when the request is about UniFi network infrastructure, for example:
 
 ```bash
 export UNIFI_API_KEY="your-api-key"          # required
-export UNIFI_HOST="10.220.1.1"               # optional, default: 10.220.1.1
+export UNIFI_HOST="192.0.2.1"                # required, no default
 export UNIFI_SITE="default"                  # optional, default: default
 ```
 
@@ -107,7 +107,7 @@ python unifi_network_client.py traffic-routes delete --id <id> --confirm
 ```bash
 python unifi_network_client.py port-forwards list
 python unifi_network_client.py port-forwards get --id <id>
-python unifi_network_client.py port-forwards create --json '{"name":"Plex","fwd":"10.220.1.50","fwd_port":32400,"dst_port":32400,"proto":"tcp"}' --confirm
+python unifi_network_client.py port-forwards create --json '{"name":"Plex","fwd":"192.0.2.50","fwd_port":32400,"dst_port":32400,"proto":"tcp"}' --confirm
 python unifi_network_client.py port-forwards update --id <id> --json '{"enabled":false}' --confirm
 python unifi_network_client.py port-forwards delete --id <id> --confirm
 ```
@@ -130,8 +130,8 @@ python unifi_network_client.py vpn get --id <id>
 ```bash
 python unifi_network_client.py dns list
 python unifi_network_client.py dns get --id <id>
-python unifi_network_client.py dns create --json '{"key":"proxmox.home","value":"10.220.1.7","record_type":"A"}' --confirm
-python unifi_network_client.py dns update --id <id> --json '{"value":"10.220.1.8"}' --confirm
+python unifi_network_client.py dns create --json '{"key":"proxmox.home","value":"192.0.2.7","record_type":"A"}' --confirm
+python unifi_network_client.py dns update --id <id> --json '{"value":"192.0.2.8"}' --confirm
 python unifi_network_client.py dns delete --id <id> --confirm
 ```
 

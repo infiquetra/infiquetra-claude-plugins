@@ -29,7 +29,7 @@ Use it when the request is about UniFi Protect devices, for example:
 
 ```bash
 export UNIFI_API_KEY="your-api-key"   # required (same key as unifi-network)
-export UNIFI_HOST="10.220.1.1"        # optional, default: 10.220.1.1
+export UNIFI_HOST="192.0.2.1"         # required, no default
 ```
 
 ## Safety: Dry-Run by Default

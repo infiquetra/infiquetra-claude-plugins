@@ -17,6 +17,18 @@ sys.path.insert(
 
 from unifi_network_client import UnifiNetworkClient
 
+# The clients require a controller address and no longer carry a default (plan unit U7).
+# Every test below constructs a client, so the address is supplied once here; the tests that
+# assert the requirement itself remove it explicitly. RFC 5737 TEST-NET-1, so no real
+# operator's address is ever what a test asserts on.
+TEST_HOST = "192.0.2.1"
+
+
+@pytest.fixture(autouse=True)
+def _supply_controller_host(monkeypatch):
+    monkeypatch.setenv("UNIFI_HOST", TEST_HOST)
+
+
 # ---------------------------------------------------------------------------
 # TestInit
 # ---------------------------------------------------------------------------
@@ -41,17 +53,16 @@ class TestInit:
     def test_init_success(self, monkeypatch):
         """Test successful initialization with all expected attributes."""
         monkeypatch.setenv("UNIFI_API_KEY", "test-key-123")
-        monkeypatch.delenv("UNIFI_HOST", raising=False)
         monkeypatch.delenv("UNIFI_SITE", raising=False)
 
         client = UnifiNetworkClient()
 
         assert client.api_key == "test-key-123"
-        assert client.host == "10.220.1.1"
+        assert client.host == "192.0.2.1"
         assert client.site == "default"
-        assert "10.220.1.1" in client.base_v1
+        assert "192.0.2.1" in client.base_v1
         assert "default" in client.base_v1
-        assert "10.220.1.1" in client.base_v2
+        assert "192.0.2.1" in client.base_v2
         assert "default" in client.base_v2
         assert client.headers["X-Api-Key"] == "test-key-123"
         assert client.headers["Content-Type"] == "application/json"
@@ -78,14 +89,58 @@ class TestInit:
         assert "homelab" in client.base_v1
         assert "homelab" in client.base_v2
 
-    def test_init_default_host(self, monkeypatch):
-        """Test that host defaults to 10.220.1.1 when UNIFI_HOST is not set."""
+    def test_init_missing_host(self, monkeypatch, capsys):
+        """No flag, no environment, no default: exit 1 naming UNIFI_HOST, before any request."""
         monkeypatch.setenv("UNIFI_API_KEY", "test-key-123")
         monkeypatch.delenv("UNIFI_HOST", raising=False)
 
+        with (
+            patch("unifi_network_client.requests.request") as mock_request,
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            UnifiNetworkClient()
+
+        assert exc_info.value.code == 1
+        assert mock_request.call_count == 0
+        output = json.loads(capsys.readouterr().out)
+        assert output["error"] is True
+        assert "UNIFI_HOST" in output["message"]
+
+    def test_init_empty_host_fails_loudly(self, monkeypatch, capsys):
+        """A present-but-empty variable is absent, not a value.
+
+        Without this the client built "https:///proxy/network/api/s/default" and only failed
+        at request time, one layer away from the mistake.
+        """
+        monkeypatch.setenv("UNIFI_API_KEY", "test-key-123")
+        monkeypatch.setenv("UNIFI_HOST", "   ")
+
+        with pytest.raises(SystemExit) as exc_info:
+            UnifiNetworkClient()
+
+        assert exc_info.value.code == 1
+        assert "UNIFI_HOST" in json.loads(capsys.readouterr().out)["message"]
+
+    def test_init_host_flag_wins_over_the_environment(self, monkeypatch):
+        """An explicitly passed host is used and the environment is not consulted."""
+        monkeypatch.setenv("UNIFI_API_KEY", "test-key-123")
+        monkeypatch.setenv("UNIFI_HOST", "198.51.100.9")
+
+        client = UnifiNetworkClient(host="192.0.2.1")
+
+        assert client.host == "192.0.2.1"
+        assert "198.51.100.9" not in client.base_v1
+        assert "198.51.100.9" not in client.base_v2
+
+    def test_init_host_from_environment_only(self, monkeypatch):
+        """With no flag, the environment supplies the address."""
+        monkeypatch.setenv("UNIFI_API_KEY", "test-key-123")
+        monkeypatch.setenv("UNIFI_HOST", "198.51.100.9")
+
         client = UnifiNetworkClient()
 
-        assert client.host == "10.220.1.1"
+        assert client.host == "198.51.100.9"
+        assert "198.51.100.9" in client.base_v1
 
     def test_init_default_site(self, monkeypatch):
         """Test that site defaults to 'default' when UNIFI_SITE is not set."""
@@ -1703,13 +1758,13 @@ class TestEdgeCases:
         monkeypatch.setenv("UNIFI_API_KEY", "test-key-123")
 
         client = UnifiNetworkClient()
-        client._dry_run("POST", "https://10.220.1.1/api/endpoint")
+        client._dry_run("POST", "https://192.0.2.1/api/endpoint")
 
         captured = capsys.readouterr()
         output = json.loads(captured.out)
         assert output["dry_run"] is True
         assert output["action"] == "POST"
-        assert output["endpoint"] == "https://10.220.1.1/api/endpoint"
+        assert output["endpoint"] == "https://192.0.2.1/api/endpoint"
         assert "message" in output
 
     def test_base_v1_url_construction(self, monkeypatch):

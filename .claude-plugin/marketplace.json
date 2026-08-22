@@ -38,7 +38,7 @@
     {
       "name": "unifi",
       "source": "./plugins/unifi",
-      "version": "2.0.1",
+      "version": "2.0.2",
       "description": "UniFi Network and Protect CLI for managing UDM devices, clients, VLANs, firewall rules, traffic routes, DNS, cameras, liveviews, lights, sensors, chimes, and viewers",
       "author": {
         "name": "Infiquetra",

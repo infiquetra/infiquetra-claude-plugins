@@ -21,6 +21,49 @@
 
 ## 2026-08-22
 
+### A package shipped both halves of a contract and they disagreed about its version  {#site-profile-pin-drifted-from-its-own-contract}
+
+**Context.** The UniFi portability pilot published this repository's `site_profile_loader.py` pinned
+to schema `urn:infiquetra:unifi:site-profile:1.0`, naming in its own docstring the exact
+`infiquetra-agent-plugins` commit that released that contract. A later cycle of the same pilot
+advanced the portable contract to `1.1` — adding the rule that the secret-free guarantee covers
+values, not only property names — and nothing moved the pin. The portable package ships both halves:
+`schemas/site-profile.schema.json` at `1.1`, and this loader, byte-copied, at `1.0`.
+
+**Evidence.** `plugins/unifi/skills/unifi-network/scripts/site_profile_loader.py:73,76` against
+`infiquetra-agent-plugins/plugins/unifi/schemas/site-profile.schema.json` (`$id` `…:1.1`, enum
+`["1.0","1.1"]`). Probed live on the shipped adapter copy: a `schema_version: "1.1"` document raised
+`UnsupportedSchemaVersionError`, and `notes: "authorization: Bearer <opaque>"` was ACCEPTED at `1.0`
+while the portable loader refused the identical document.
+
+**Mechanism.** The pin was deliberate and correct when written — "rejects any other outright rather
+than applying part of a document it does not understand" is the right posture for a consumer of
+someone else's contract. What was missing is that nothing failed when the contract moved. The pin
+lived in a constant in one repository and the contract lived in a JSON file in another, with no test
+that reads both. Two independent reviewers found the skew on the fourth review cycle; three earlier
+cycles, and every gate in both repositories, passed the whole time.
+
+**Fix.** `SUPPORTED_SCHEMA_VERSIONS = ("1.0", "1.1")`, `SCHEMA_IDENTIFIER` at `1.1`, and the value
+half of the guarantee ported across so the version and its meaning arrive together. unifi 2.0.2.
+
+**Validation.** Fourteen assertions fail against the unported loader and pass against the ported one.
+A nine-case probe runs the Claude-side and portable loaders over the same documents and asserts they
+agree on every one.
+
+**What surprised.** The failure was invisible from inside either repository. Each half was
+self-consistent and fully green; only holding the two side by side showed the disagreement, and the
+package that ships them both is exactly where an operator meets it.
+
+**Generalizable rule.** A version pin that names a contract in another repository is a claim about
+something you do not control, so it needs a test that reads *both* sides and fails when they part.
+Absent that, drift does not present as an error — it presents as a package that rejects its own
+documentation, which is worse, because every gate stays green while an operator following the
+instructions is told they are wrong. Corollary: when accepting a new contract version, ship what
+that version *means* in the same change; taking the number while ignoring the rule it stands for
+just restates the disagreement more quietly.
+
+**Refs.** `{#non-finite-retry-after-defeats-the-typed-429}`, `{#retry-after-caller-side-repair}`.
+
 ### `float()` accepts `inf` and `1e400`, so widening a parser widened what counts as a delay  {#non-finite-retry-after-defeats-the-typed-429}
 
 **Context.** fleet-core 0.25.1 replaced a caller-side `int()` with `parse_retry_after` so both RFC

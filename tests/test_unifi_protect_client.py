@@ -244,7 +244,8 @@ class TestRequestHandling:
         mock_response.headers = {"Retry-After": "30"}
         mock_request.return_value = mock_response
         # #348: the shared primitive now retries a 429 before exiting; no real backoff sleep in tests.
-        monkeypatch.setattr("time.sleep", lambda *a, **k: None)
+        delays: list[float] = []
+        monkeypatch.setattr("time.sleep", delays.append)
 
         client = UnifiProtectClient()
         with pytest.raises(SystemExit) as exc_info:
@@ -253,11 +254,69 @@ class TestRequestHandling:
         assert exc_info.value.code == 1
         # The request was retried (bounded) before the exit surface — proves adoption of the primitive.
         assert mock_request.call_count == 3
+        # The delta-seconds form is honored exactly as it was before the caller-side repair.
+        assert delays == [30.0, 30.0]
         captured = capsys.readouterr()
         output = json.loads(captured.out)
         assert output["error"] is True
         assert output["status_code"] == 429
         assert output["retry_after"] == 30
+
+    @patch("unifi_protect_client.requests.request")
+    def test_request_429_http_date_retry_after_retries(self, mock_request, monkeypatch):
+        """A 429 whose Retry-After is an HTTP-date backs off and retries instead of raising.
+
+        Before the caller-side repair the raw date went through ``int()``, which raised
+        ``ValueError`` inside the request path. That error carries no 429 status, so the shared
+        primitive judged it non-retryable and propagated it: the operator saw a generic
+        "Unexpected error" after one request, with no backoff retry at all.
+        """
+        monkeypatch.setenv("UNIFI_API_KEY", "test-key-123")
+
+        rate_limited = MagicMock()
+        rate_limited.status_code = 429
+        rate_limited.headers = {"Retry-After": "Fri, 31 Dec 2100 23:59:59 GMT"}
+        ok = MagicMock()
+        ok.status_code = 200
+        ok.content = b'[{"id": "cam1"}]'
+        ok.json.return_value = [{"id": "cam1"}]
+        mock_request.side_effect = [rate_limited, rate_limited, ok]
+        delays: list[float] = []
+        monkeypatch.setattr("time.sleep", delays.append)
+
+        client = UnifiProtectClient()
+        result = client._request("GET", "https://192.0.2.1/proxy/protect/integration/v1/cameras")
+
+        assert result == [{"id": "cam1"}]
+        assert mock_request.call_count == 3
+        # The date parsed to a large positive hint, clamped to the primitive's 60s max_delay.
+        assert delays == [60.0, 60.0]
+
+    @patch("unifi_protect_client.requests.request")
+    def test_request_429_unparseable_retry_after_computes_backoff(self, mock_request, monkeypatch):
+        """An unparseable Retry-After is no hint at all: computed backoff, and still retried."""
+        monkeypatch.setenv("UNIFI_API_KEY", "test-key-123")
+
+        rate_limited = MagicMock()
+        rate_limited.status_code = 429
+        rate_limited.headers = {"Retry-After": "next Tuesday-ish"}
+        ok = MagicMock()
+        ok.status_code = 200
+        ok.content = b'[{"id": "cam1"}]'
+        ok.json.return_value = [{"id": "cam1"}]
+        mock_request.side_effect = [rate_limited, rate_limited, ok]
+        delays: list[float] = []
+        monkeypatch.setattr("time.sleep", delays.append)
+
+        client = UnifiProtectClient()
+        result = client._request("GET", "https://192.0.2.1/proxy/protect/integration/v1/cameras")
+
+        assert result == [{"id": "cam1"}]
+        assert mock_request.call_count == 3
+        # Computed backoff (base 1s, doubling, 50-100% jitter) — never the flat 60s a hint gives.
+        assert len(delays) == 2
+        assert 0.5 <= delays[0] <= 1.0
+        assert 1.0 <= delays[1] <= 2.0
 
     @patch("unifi_protect_client.requests.request")
     def test_request_500_server_error(self, mock_request, monkeypatch, capsys):

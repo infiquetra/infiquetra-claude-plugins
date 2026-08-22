@@ -21,6 +21,55 @@
 
 ## 2026-08-22
 
+### Repairing the primitive left the defect intact; the custody boundary is the call site  {#retry-after-caller-side-repair}
+
+**Context.** fleet-core 0.25.1 taught the shared 429 primitive to read both RFC 7231 forms of
+`Retry-After` (see `{#retry-after-http-date-escapes-the-retry-path}`, the entry directly below this
+one). That release shipped green and closed its review. The defect it described was still live in
+production code afterwards, and two independent reviewers found it again on the next pass — the same
+finding, at full confidence, from both.
+
+**Evidence.** After the primitive shipped, `plugins/unifi/skills/unifi-network/scripts/`
+`unifi_network_client.py:176` and `plugins/unifi/skills/unifi-protect/scripts/`
+`unifi_protect_client.py:176` both still read `int(resp.headers.get("Retry-After", 60))`. Reproduced
+by reverting only that one line and running the new caller-side tests: the client printed
+`Unexpected error: invalid literal for int() with base 10: 'next Tuesday-ish'` and made exactly one
+request.
+
+**Mechanism.** The primitive parses the hint it is *handed*. A caller that destroys the header before
+handing it over is upstream of every improvement made downstream. `parse_retry_after` was reachable
+and correct; nothing called it. The 0.25.1 release knew this — it shipped a characterization test,
+`test_a_caller_that_pre_parses_with_int_still_loses_the_retry`, that asserted the broken caller
+behaviour on purpose. A test that documents a live defect is not a fix, and a green suite containing
+one reports the same colour as a suite with no defect in it.
+
+**Fix.** Both clients now call `_retry_backoff.parse_retry_after(resp.headers.get("Retry-After"))` and
+raise `_RateLimited` with the parsed hint (`float | None`), so a 429 still carries its status into the
+backoff primitive. Released as unifi 2.0.1. Two consequences worth naming: an absent or unparseable
+header is now `None` — no hint, computed jittered backoff — where it previously substituted a literal
+60 and slept a flat minute per attempt; and the operator-facing `retry_after` field is `math.ceil` of
+the parsed hint, falling back to 60 when there is no hint, so the exit surface keeps its existing
+integer-seconds shape.
+
+**Validation.** The characterization test was **inverted rather than deleted**, and now asserts the
+repaired contract under the name `test_a_caller_that_pre_parses_with_parse_retry_after_keeps_the_retry`
+— the boundary it guards is still real, so the guard was kept and its polarity flipped. Six new
+caller-side tests (three per client: HTTP-date retries, delta-seconds unchanged, unparseable falls
+back to computed backoff) were each run against the reverted line first and observed to fail, then
+against the fix and observed to pass.
+
+**What surprised.** The characterization test made the shortfall *legible* and still did not prevent
+it. Writing down "this is not yet fixed" inside the artifact that claims to fix it satisfies honesty
+and does nothing for the operator, whose next rate-limited request fails exactly as before.
+
+**Generalizable rule.** A defect is closed at the boundary that owns the broken behaviour, not at the
+boundary where the mechanism was easiest to correct. If closing a finding requires shipping a test
+that pins the defect as still-live, the work is not done — file the caller repair as part of the same
+unit, or the review that finds it again is the only thing standing between the defect and production.
+
+**Refs.** LEARNINGS `{#retry-after-http-date-escapes-the-retry-path}` (the primitive-side half);
+DECISIONS `{#fleet-commons-mechanism-463}`; unifi CHANGELOG 2.0.1; fleet-core CHANGELOG 0.25.1.
+
 ### An exception raised while reading a rate-limit header is not a rate-limit error  {#retry-after-http-date-escapes-the-retry-path}
 
 **Context.** Both UniFi clients wrap their HTTP call in fleet-core's shared 429 primitive
@@ -35,6 +84,9 @@ typed rate-limit surface.
 section 7.1.3 allows two forms, delta-seconds *and* an absolute HTTP-date; on the date form `int()`
 raises `ValueError`. Reproduced as a characterization test that survives the fix:
 `tests/test_retry_backoff.py::test_a_caller_that_pre_parses_with_int_still_loses_the_retry`.
+*(Superseded: the caller repair in unifi 2.0.1 inverted that test to
+`test_a_caller_that_pre_parses_with_parse_retry_after_keeps_the_retry`. See
+`{#retry-after-caller-side-repair}` above.)*
 
 **Mechanism.** The retry decision is `_status_of(exc) == on_status`, and `_status_of` reads
 `status_code` / `status` off the raised exception. A `ValueError` from parsing the header carries

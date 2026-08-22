@@ -283,24 +283,35 @@ def test_values_that_are_not_a_delay_parse_to_none(value: Any) -> None:
     assert RB.parse_retry_after(value, now=_now) is None
 
 
-def test_a_caller_that_pre_parses_with_int_still_loses_the_retry() -> None:
-    """Pins the boundary of this repair: the primitive fixes the hint it is handed.
+def test_a_caller_that_pre_parses_with_parse_retry_after_keeps_the_retry() -> None:
+    """The repaired call-site contract: pre-parse with ``parse_retry_after``, never with ``int()``.
 
-    A call site that converts the header with ``int()`` before raising turns a 429 into a
-    ``ValueError``, which carries no status and so is not retryable — one request, no backoff.
-    Call sites must hand the raw header to ``retry_after`` (or pre-parse with ``parse_retry_after``).
+    This inverts the characterization test shipped alongside the primitive repair in fleet-core
+    0.25.1, which pinned the then-unrepaired UniFi call sites: converting the header with ``int()``
+    turned a 429 into a ``ValueError`` that carried no status, so the primitive judged it
+    non-retryable and no backoff ran at all. Both UniFi clients now pre-parse with
+    ``parse_retry_after`` (unifi 2.0.1), so the assertion here is the CORRECT behaviour — the 429
+    keeps its status, the HTTP-date becomes the delay, and the call is retried.
     """
     calls = {"n": 0}
 
-    def fn() -> None:
+    def fn() -> str:
         calls["n"] += 1
-        int(FUTURE_DATE)  # what a call site that pre-parses the header with int() does
+        if calls["n"] == 1:
+            # What a repaired call site does: parse the header, then raise a 429-carrying error.
+            raise RawHeaderRateError(RB.parse_retry_after(FUTURE_DATE, now=_now))
+        return "ok"
 
     delays, sleep = _recorder()
-    with pytest.raises(ValueError):
-        RB.retry_with_backoff(fn, sleep=sleep, now=_now)
-    assert calls["n"] == 1  # no retry: the ValueError never looked like a 429
-    assert delays == []
+    result = RB.retry_with_backoff(
+        fn,
+        retry_after=lambda exc: getattr(exc, "retry_after", None),
+        sleep=sleep,
+        now=_now,
+    )
+    assert result == "ok"
+    assert calls["n"] == 2  # retried: the pre-parse left the 429 status intact
+    assert delays == [45.0]  # the HTTP-date became the delay instead of raising ValueError
 
 
 # --------------------------------------------------------------------------- CircuitBreaker / bridge_call

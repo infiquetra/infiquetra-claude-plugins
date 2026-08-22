@@ -5,6 +5,36 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.1] - 2026-08-22
+
+### Fixed
+
+- **A `Retry-After` HTTP-date now backs the request off instead of killing it (review finding O3).**
+  RFC 7231 section 7.1.3 allows `Retry-After` in two forms — delta-seconds and an absolute HTTP-date —
+  and real controllers send the date form. `retry_backoff.py` only ever understood a number, so a
+  caller that reduced the header to seconds itself raised `ValueError` inside the wrapped call. That
+  error carries no `status_code`, `retry_with_backoff` therefore judged it non-retryable and
+  propagated it immediately, and the caller's typed rate-limit handler never saw it: one request, no
+  backoff, a generic error — the exact opposite of what the rate-limit primitive exists to do.
+- New public `parse_retry_after(value, *, now=time.time)` reduces either form to a non-negative delay
+  in seconds. It accepts an already-numeric hint unchanged, a delta-seconds string, and all three
+  date forms `email.utils.parsedate_to_datetime` covers (IMF-fixdate, the obsolete RFC 850 form, and
+  asctime, whose missing zone is read as GMT per the specification). An absent, empty, or unparseable
+  value returns `None` — "no usable hint" — so the caller answers with computed jittered backoff.
+- A date already in the past parses to `0.0`, never a negative delay. The non-positive-hint rule from
+  0.8.1 then applies unchanged, so a stale date falls back to computed backoff rather than becoming a
+  zero-sleep retry loop. Clamping stays where it was, in `_retry_delay`, so an absurd date and an
+  absurd number are both bounded by `max_delay` on the same line of code. Jitter is untouched.
+- `retry_with_backoff` gains a keyword-only `now` seam (epoch seconds, default `time.time`) so an
+  HTTP-date resolves deterministically under test. It is distinct from `CircuitBreaker`'s monotonic
+  `clock`; `bridge_call` forwards it through `**retry_kwargs`. The `retry_after` callable's type
+  widens to `float | str | None` — additive, so every existing caller keeps working.
+- **Consumer note, not yet actioned here:** both UniFi clients still call
+  `int(resp.headers.get("Retry-After", 60))` before raising, so they keep converting the header
+  themselves and remain exposed to this defect until they pass the raw value through. That change
+  lands with the UniFi plugin, not with fleet-core; `tests/test_retry_backoff.py::
+  test_a_caller_that_pre_parses_with_int_still_loses_the_retry` pins the boundary.
+
 ## [0.25.0] - 2026-08-13
 
 ### Added

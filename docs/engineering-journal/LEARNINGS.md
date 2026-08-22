@@ -21,6 +21,53 @@
 
 ## 2026-08-22
 
+### An exception raised while reading a rate-limit header is not a rate-limit error  {#retry-after-http-date-escapes-the-retry-path}
+
+**Context.** Both UniFi clients wrap their HTTP call in fleet-core's shared 429 primitive
+(`retry_with_backoff`) so a rate-limited request backs off and retries instead of exiting. Two
+independent review cycles found that against a controller sending `Retry-After` as an HTTP-date, the
+primitive did the opposite: one request, no backoff, and a generic "Unexpected error" instead of the
+typed rate-limit surface.
+
+**Evidence.** `plugins/unifi/skills/unifi-network/scripts/unifi_network_client.py:174` and
+`plugins/unifi/skills/unifi-protect/scripts/unifi_protect_client.py:174` both read
+`int(resp.headers.get("Retry-After", 60))` inside the function handed to `retry_with_backoff`. RFC 7231
+section 7.1.3 allows two forms, delta-seconds *and* an absolute HTTP-date; on the date form `int()`
+raises `ValueError`. Reproduced as a characterization test that survives the fix:
+`tests/test_retry_backoff.py::test_a_caller_that_pre_parses_with_int_still_loses_the_retry`.
+
+**Mechanism.** The retry decision is `_status_of(exc) == on_status`, and `_status_of` reads
+`status_code` / `status` off the raised exception. A `ValueError` from parsing the header carries
+neither, so it reads as a *non-retryable* error and re-raises on the first attempt. The caller's
+`except _RateLimited` does not catch a `ValueError` either, so the typed handler is skipped too. The
+header-reading code sits *inside* the retried callable, which is what lets a parse failure impersonate
+a non-rate-limit outcome. Everything downstream then behaves correctly on a premise that is wrong.
+
+**Fix.** `plugins/fleet-core/scripts/fleet_commons/retry_backoff.py` grows public
+`parse_retry_after(value, *, now=time.time)`, which reduces either RFC 7231 form to a non-negative
+delay and returns `None` for anything unusable; `retry_with_backoff` routes the hint through it, so
+the callable may now hand back the raw header string. A past date parses to `0.0`, never a negative
+delay, and the 0.8.1 non-positive-hint rule then answers with computed backoff rather than a
+zero-sleep loop. Clamp and jitter are untouched. Released as fleet-core 0.25.1.
+
+**Validation.** `uv run pytest tests/test_retry_backoff.py` — 25 passed, including the five enumerated
+cases (delta-seconds unchanged, future date, past date, unparseable, excessive date clamped) and all
+three date forms `email.utils.parsedate_to_datetime` accepts. The 138 UniFi client tests still pass.
+
+**What surprised.** The primitive was doing exactly what it was told. Nothing in it was wrong; the
+defect was that the *question it asks* ("does this error carry a 429?") is only meaningful for errors
+that came from the response, and a parse failure is not one of those. A guard that classifies errors
+by an attribute silently misclassifies every error raised before that attribute could be set.
+
+**Generalizable rule.** Parse a protocol field in the primitive that owns the protocol, never in the
+callable a retry wrapper is guarding. Code that runs inside a retried callable can only fail as the
+thing being retried, so a parse error there is indistinguishable from a non-retryable response — and
+"not retryable" is the failure mode that looks like normal operation.
+
+**Refs.** DECISIONS `{#fleet-commons-mechanism-463}` (one implementation, additive-only in 0.x);
+fleet-core CHANGELOG 0.8.1 (the earlier `Retry-After` clamp, whose non-positive rule this fix reuses);
+`docs/work-sessions/2026-08-22-fleetcore-retry-after-http-date.md`.
+
 ### The release-surface bump guard checks that `plugin.json` was touched, not that the version moved  {#bump-guard-checks-touch-not-delta}
 
 **Context.** Activating the held `unifi` release meant closing the tri-lock across three

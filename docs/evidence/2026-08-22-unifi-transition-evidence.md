@@ -3,6 +3,37 @@
 Unit U9 of the UniFi and portable Fleet Core portability pilot, Run B, in
 `infiquetra-claude-plugins`.
 
+## Activation addendum, 2026-08-22
+
+**Added after the fact, and additive only.** Nothing below this section was edited. Every
+finding, count, digest, and conclusion in the original document stands exactly as U9 wrote
+it, including the sections that report the release as not activated — those were true when
+written and are the record of the state this evidence was taken in.
+
+What changed afterwards is the second gate condition. The deployed-profile receipt arrived,
+naming the runtime path and a deployed SHA-256 digest of
+`7b42dc2220707f47f41c1d9fd66c6949c3b99c4526cb90898cb0c8422882cb2a`. That equals the private
+input digest recorded below, so the test this document set for itself — "if that digest
+equals ..., the pre-activation evidence above was taken against exactly the bytes Run C
+deployed ... and activation may proceed" — is met on its own terms rather than waived. The
+release was then activated as version `2.0.0`, dated 2026-08-22, across all three surfaces.
+
+The post-activation requirement is **not** discharged by that activation. Of the four items
+the original document lists as outstanding, two are now provable from the released bytes and
+two are not:
+
+| Outstanding item | Status | Why |
+| --- | --- | --- |
+| Tri-lock parity across the three release surfaces | Proved from the released bytes | `scripts/check_release_surface_parity.py`, run against the activation commit |
+| Generated marketplace file matches its generator | Proved from the released bytes | `scripts/sync_marketplace.py --check` |
+| Installed version and digest readback | **Still outstanding** | Requires a marketplace refresh and a fresh client session, which this repository cannot perform on its own bytes |
+| Three profile states re-proved against the installed release | **Still outstanding** | Same reason, and the original document is right that a running client can hold a cached earlier version |
+
+The two outstanding items remain the controller's to run after
+`/plugin marketplace update` and a new session. A source tree cannot settle what an installed
+client is holding, which is the point the original document already made and which activation
+does not change.
+
 ## What this document is for
 
 Units U6 and U7 corrected the `unifi` plugin's documentation and moved one operator's lab

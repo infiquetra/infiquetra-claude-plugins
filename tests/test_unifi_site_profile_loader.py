@@ -266,11 +266,46 @@ def test_a_credential_written_into_a_free_text_value_is_refused(version: str, no
 @pytest.mark.parametrize(
     "notes",
     [
+        f"authorization: Bearer <redacted> {_OPAQUE_TOKEN}",
+        f"authorization: Bearer ${{UNIFI_API_KEY}} {_OPAQUE_TOKEN}",
+        f"authorization: Bearer vault:infiquetra/unifi {_OPAQUE_TOKEN}",
+    ],
+)
+def test_a_credential_hidden_behind_a_placeholder_is_refused(notes: str) -> None:
+    """A placeholder between the scheme word and the credential ended the search.
+
+    A fixed two-token window graded the placeholder, saw it names a secret rather
+    than being one, and cleared the real credential standing behind it. The walk
+    steps over both scheme words and placeholders instead of stopping at them.
+    """
+    document = _valid_profile()
+    document["schema_version"] = "1.1"
+    document["subjects"][0]["notes"] = notes
+    with pytest.raises(loader.ProfileInvalidError) as caught:
+        loader.validate_profile(document)
+    assert "credential value is not permitted" in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "notes",
+    [
         "api_key: vault:infiquetra/unifi#api_key",
         "password: <redacted>",
         "api_key: ${UNIFI_API_KEY}",
         "see the runbook for the rotation procedure",
         "the site uses certificate authentication end to end",
+        # Prose whose first token is a long English word. Entropy per character
+        # does not separate English from a credential -- `rotation` scores 2.50
+        # against a 2.50 floor -- so grading token zero unconditionally rejected
+        # these as credentials.
+        "auth: rotation procedure documented in the runbook",
+        "token: rotation happens quarterly",
+        "secret: managed elsewhere",
+        "auth: Rotation Procedure Documented",
+        "secret: internationalization",
+        # Carries a digit, but is never graded: the walk stops at the first
+        # substantive token rather than searching the sentence.
+        "auth: see ticket ABC-1234 for rotation",
     ],
 )
 def test_a_value_that_names_where_a_secret_lives_is_accepted(notes: str) -> None:

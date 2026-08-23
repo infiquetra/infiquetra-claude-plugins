@@ -18,16 +18,18 @@
 
 ### Fixed
 
-- **Digit-free passwords are no longer accepted.** `password: rainbowtrout`,
-  `password: sunshine` and `api_key: correcthorsebattery` all shipped accepted,
-  because the retired rule required a digit or twenty-four characters before a
-  value counted. Under a strict key there is now no floor below which a literal
-  stops being a credential, so `password: secret` is refused too.
-- **Ordinary technical prose is no longer refused.** `credentials: oauth2 is
-  configured at the controller`, `token: base64 of the site identifier` and
-  `secret: sha256 checksum recorded in the manifest` were all rejected as
-  credentials. A strict key followed by several substantive words is a sentence
-  about a credential rather than a credential, and in `description` and `notes` —
+- **Digit-free passwords are no longer accepted.** A `password` key assigned
+  `rainbowtrout` or `sunshine`, or an `api_key` assigned
+  `correcthorsebattery`, all shipped accepted, because the retired rule required
+  a digit or twenty-four characters before a value counted. Under a strict key
+  there is now no floor below which a literal stops being a credential, so a
+  `password` assigned the word `secret` is refused too.
+- **Ordinary technical prose is no longer refused.** A `credentials` key
+  followed by `oauth2 is configured at the controller`, a `token` followed by
+  `base64 of the site identifier`, and a `secret` followed by
+  `sha256 checksum recorded in the manifest` were all rejected as credentials.
+  A strict key followed by several substantive words is a sentence about a
+  credential rather than a credential, and in `description` and `notes` —
   the two fields the schema keeps for prose — that is allowed. Every other field
   in the contract holds an identifier or an enumerated value, so the allowance
   does not reach them.

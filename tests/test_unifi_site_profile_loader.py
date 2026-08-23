@@ -26,7 +26,7 @@ inference, and the no-inference rule this contract exists to enforce forbids exa
 machine-local runtime path. It lives here as the relocation record — the source U8 transports
 from, and the evidence that nothing was lost on the way out of the agent.
 
-The contract itself is ``urn:infiquetra:unifi:site-profile:1.0``, released by Run A on branch
+The contract itself is ``urn:infiquetra:unifi:site-profile:1.1``, released by Run A on branch
 ``orch/orch-2026-08-22-unifi-run-a`` at commit ``097909d7`` of ``infiquetra-agent-plugins``.
 """
 
@@ -211,6 +211,78 @@ def _valid_profile() -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------------------
+# 0. The loader enforces the 1.1 contract the package documents
+# --------------------------------------------------------------------------------------
+
+_OPAQUE_TOKEN = "qY7vP2xK9rLm4aZbC8dEfGhJkNpQsTuWxYz1234567890"
+
+
+def _profile_with_notes(version: str, notes: str) -> dict[str, Any]:
+    document = _valid_profile()
+    document["schema_version"] = version
+    document["subjects"][0]["notes"] = notes
+    return document
+
+
+@pytest.mark.parametrize("version", ["1.0", "1.1"])
+def test_both_contract_versions_load(version: str) -> None:
+    """The package documents ``1.1``; this loader ships inside that package.
+
+    It was published pinned to ``1.0`` while the portable half advanced to ``1.1``, so an
+    operator who wrote the document the package documents had it rejected here — one
+    package disagreeing with itself.
+    """
+    loader.validate_profile(_profile_with_notes(version, "rack B, spare uplink"))
+
+
+def test_an_unknown_contract_version_is_still_refused_outright() -> None:
+    with pytest.raises(loader.UnsupportedSchemaVersionError):
+        loader.validate_profile(_profile_with_notes("1.2", "rack B"))
+
+
+@pytest.mark.parametrize("version", ["1.0", "1.1"])
+@pytest.mark.parametrize(
+    "notes",
+    [
+        f"authorization: Bearer {_OPAQUE_TOKEN}",
+        f"authorization: Basic {_OPAQUE_TOKEN}",
+        f"api_key={_OPAQUE_TOKEN}",
+        "controller password=hunter2",
+    ],
+)
+def test_a_credential_written_into_a_free_text_value_is_refused(version: str, notes: str) -> None:
+    """``1.1`` is the version that says the secret-free guarantee covers values.
+
+    A ``1.0`` document is held to it too, because a credential in a ``1.0`` profile is
+    exactly as exposed. The scheme-word shapes matter on their own: grading only the first
+    token of the value graded the word ``Bearer``, which carries no entropy, and cleared
+    the credential standing behind it.
+    """
+    with pytest.raises(loader.ProfileInvalidError) as caught:
+        loader.validate_profile(_profile_with_notes(version, notes))
+    assert "credential value is not permitted" in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "notes",
+    [
+        "api_key: vault:infiquetra/unifi#api_key",
+        "password: <redacted>",
+        "api_key: ${UNIFI_API_KEY}",
+        "see the runbook for the rotation procedure",
+        "the site uses certificate authentication end to end",
+    ],
+)
+def test_a_value_that_names_where_a_secret_lives_is_accepted(notes: str) -> None:
+    """A profile is expected to point at where the credential lives, so these must pass.
+
+    Ordinary prose has to pass too: several English words clear the entropy floor on their
+    own, so a rule that graded every token of a value would fire on a sentence.
+    """
+    loader.validate_profile(_profile_with_notes("1.1", notes))
+
+
+# --------------------------------------------------------------------------------------
 # 1. The agent carries no address, and the relocation lost nothing
 # --------------------------------------------------------------------------------------
 
@@ -378,8 +450,8 @@ def test_default_paths_follow_the_xdg_base_directory_specification() -> None:
 
 
 def test_loader_is_pinned_to_the_released_contract() -> None:
-    assert loader.SCHEMA_IDENTIFIER == "urn:infiquetra:unifi:site-profile:1.0"
-    assert loader.SUPPORTED_SCHEMA_VERSIONS == ("1.0",)
+    assert loader.SCHEMA_IDENTIFIER == "urn:infiquetra:unifi:site-profile:1.1"
+    assert loader.SUPPORTED_SCHEMA_VERSIONS == ("1.0", "1.1")
 
 
 def test_unrecognized_schema_version_is_rejected_rather_than_partially_applied() -> None:
@@ -551,7 +623,7 @@ def test_loader_imports_nothing_outside_the_standard_library(tmp_path: Path) -> 
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert completed.stdout.strip() == "urn:infiquetra:unifi:site-profile:1.0"
+    assert completed.stdout.strip() == "urn:infiquetra:unifi:site-profile:1.1"
 
 
 def test_command_line_reports_discovery_only_mode(tmp_path: Path, capsys, monkeypatch) -> None:

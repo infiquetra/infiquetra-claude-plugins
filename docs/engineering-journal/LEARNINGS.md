@@ -21,6 +21,55 @@
 
 ## 2026-08-22
 
+### I fixed a positional bug with a slightly wider positional window  {#credential-span-window-vs-walk}
+
+**Context.** The credential-value rule graded the first whitespace token of an assigned value,
+so `authorization: Bearer <token>` graded the word `Bearer` and cleared the credential behind
+it. The repair widened the window to two tokens: the first, plus the next one when the first
+is an auth scheme word. Two independent reviewers found two defects in that repair on the very
+next cycle, both at full confidence.
+
+**Evidence.** `plugins/unifi/skills/unifi-network/scripts/site_profile_loader.py` and the two
+copies of the same rule in `infiquetra-agent-plugins`. Probed live: with the two-token window,
+`authorization: Bearer <redacted> <45-char token>` was ACCEPTED, and
+`token: rotation happens quarterly` was REJECTED as a credential.
+
+**Mechanism.** Two failures from one decision, in opposite directions.
+
+The bypass: a placeholder in slot two consumed the window. `<redacted>` *names* a secret rather
+than being one, so it was correctly skipped — and the window ended there, so the real credential
+in slot three was never examined. A separate truncation had the same effect by a different
+route: the captured span excluded `}`, so `Bearer ${VAR} <token>` was cut off before the token.
+
+The false positive: entropy per character cannot tell English from a credential. `rotation`
+scores 2.50 against a 2.50 floor; `hunter2` scores 2.81. Any floor admitting the password
+rejects the prose. Character-class mixing is no better — `Rotation` mixes case and `hunter2`
+does not.
+
+**Fix.** Walk the value, stepping over scheme words and placeholders, and grade the first token
+that is neither — then stop. Qualify it with a discriminator that actually separates the two
+populations: a digit, or 24+ characters without one. Across every sample the rule is tested
+against, every credential shape carries a digit and no English word does. unifi 2.0.3.
+
+**What the stopping buys.** A scan that kept looking would reach `ABC-1234` in
+`auth: see ticket ABC-1234 for rotation` and grade the ticket number. Walking fixes the bypass;
+stopping is what keeps the fix from creating a new false-positive class.
+
+**What surprised.** My own must-not-fire test was blind to the class it existed to cover. It
+used `auth: see the runbook for the rotation procedure`, whose first token is three characters
+and falls under the length floor — so it passed for a reason unrelated to the rule being right.
+A test can cover a category by name and still test nothing.
+
+**Generalizable rule.** When a positional rule is wrong, widening the position is almost never
+the fix — it moves the boundary and leaves an off-by-one somewhere else. Replace the position
+with a predicate: describe what you are looking for and search until you find it. And when you
+write the negative test set, pick examples that would fail for the *right* reason if the code
+were wrong; an example that passes because of an unrelated guard is worse than no test, because
+it reports coverage you do not have.
+
+**Refs.** `{#site-profile-pin-drifted-from-its-own-contract}`,
+`{#non-finite-retry-after-defeats-the-typed-429}`.
+
 ### A package shipped both halves of a contract and they disagreed about its version  {#site-profile-pin-drifted-from-its-own-contract}
 
 **Context.** The UniFi portability pilot published this repository's `site_profile_loader.py` pinned

@@ -292,6 +292,12 @@ def test_a_credential_hidden_behind_a_placeholder_is_refused(notes: str) -> None
         "api_key: vault:infiquetra/unifi#api_key",
         "password: <redacted>",
         "api_key: ${UNIFI_API_KEY}",
+        # A reference written across several whitespace-separated pieces. Split
+        # naively this yields a bare inner word as the candidate, so the
+        # expression is collapsed to one placeholder before the value is split.
+        "api_key: {{ lookup }}",
+        "password: {{ vault_lookup site }}",
+        "token: %(UNIFI_TOKEN)s",
         "see the runbook for the rotation procedure",
         "the site uses certificate authentication end to end",
         # Prose whose first token is a long English word. Entropy per character
@@ -302,7 +308,6 @@ def test_a_credential_hidden_behind_a_placeholder_is_refused(notes: str) -> None
         "token: rotation happens quarterly",
         "secret: managed elsewhere",
         "auth: Rotation Procedure Documented",
-        "secret: internationalization",
         # Carries a digit, but is never graded: the walk stops at the first
         # substantive token rather than searching the sentence.
         "auth: see ticket ABC-1234 for rotation",
@@ -315,6 +320,120 @@ def test_a_value_that_names_where_a_secret_lives_is_accepted(notes: str) -> None
     own, so a rule that graded every token of a value would fire on a sentence.
     """
     loader.validate_profile(_profile_with_notes("1.1", notes))
+
+
+@pytest.mark.parametrize(
+    "notes",
+    [
+        # Digit-free, dictionary-word passwords. The retired rule required a
+        # digit or twenty-four characters before a value counted, so every one of
+        # these shipped accepted -- the rule refused technical prose and let real
+        # passwords through, in that order.
+        "password: rainbowtrout",
+        "password: sunshine",
+        "api_key: correcthorsebattery",
+        "passphrase: correcthorsebattery",
+        # Short and low entropy. Under a strict key there is no floor below which
+        # a literal stops being a credential.
+        "password: secret",
+        "password: hunter2",
+        # A lone English word is still a lone literal, which is what makes this
+        # the one case the previous suite asserted the other way round.
+        "secret: internationalization",
+        # A literal padded with a placeholder must not be cleared by it.
+        "password: rainbowtrout <redacted>",
+        # A harmless key must not swallow a strict one standing inside its
+        # value: the scan has to resume at the delimiter, not past the whole
+        # value it just read.
+        "notes: controller password=hunter2",
+        "description: call it with bearer=aB9dEf2GhJ4kLm7Q",
+    ],
+)
+def test_a_literal_under_a_strict_key_is_refused_whatever_it_looks_like(notes: str) -> None:
+    """The key decides, not the value.
+
+    Every value here was accepted by the entropy-and-digit rule this replaced.
+    None of them is a placeholder or a reference, so under a key the contract
+    calls secret-bearing each one is a credential.
+    """
+    with pytest.raises(loader.ProfileInvalidError) as caught:
+        loader.validate_profile(_profile_with_notes("1.1", notes))
+    assert "credential value is not permitted" in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "notes",
+    [
+        # Technical vocabulary carrying a digit. The retired rule read the digit
+        # as proof of a credential and refused all of these in a `notes` field.
+        "credentials: oauth2 is configured at the controller",
+        "token: base64 of the site identifier",
+        "secret: sha256 checksum recorded in the manifest",
+        "auth: vlan40 handles the guest network",
+        "password: md5 is not used anywhere in this site",
+        "api_key: utf8 encoding is assumed throughout",
+        # The same words with no assignment at all.
+        "the controller uses oauth2 for operator access",
+        "sha256 digests are recorded beside each export",
+    ],
+)
+def test_technical_prose_in_a_descriptive_field_is_accepted(notes: str) -> None:
+    """A sentence about a credential is not a credential.
+
+    ``notes`` is one of the two fields the schema keeps for operator prose, so a
+    strict key followed by several substantive words is a description. This is
+    the class the digit test refused: `oauth2` carries a digit and 2.585 bits,
+    which is *less* entropy than `rainbowtrout`, so grading the value grades the
+    wrong thing.
+    """
+    loader.validate_profile(_profile_with_notes("1.1", notes))
+
+
+def test_the_prose_allowance_does_not_reach_a_structured_field() -> None:
+    """Only the prose fields get the several-words allowance.
+
+    Every other field in the contract holds an identifier or an enumerated value,
+    so a sentence there is not prose -- it is a value that should not be shaped
+    like one, and the strict reading applies.
+    """
+    document = _valid_profile()
+    document["schema_version"] = "1.1"
+    document["site"]["identifier"] = "credentials: oauth2 is configured here"
+    with pytest.raises(loader.ProfileInvalidError) as caught:
+        loader.validate_profile(document)
+    assert "credential value is not permitted" in str(caught.value)
+
+
+def test_the_strict_key_set_is_the_property_name_taxonomy() -> None:
+    """The two halves of one rule must not drift into two dialects.
+
+    ``_credential_field`` grades property *names* and ``_credential_in_text``
+    grades keys written inside a value. They read the same fragment list, and
+    this fails if a later edit gives either one its own.
+    """
+    for fragment in loader.CREDENTIAL_NAME_FRAGMENTS:
+        assert loader._is_strict_credential_key(fragment)
+        assert loader._is_strict_credential_key(fragment.upper())
+    for extra in loader.CREDENTIAL_KEY_EXACT_IN_TEXT:
+        assert loader._is_strict_credential_key(extra)
+    # Matched whole, not as a substring, or an ordinary metadata key becomes a
+    # credential key: `author` contains `auth`.
+    assert not loader._is_strict_credential_key("author")
+    assert not loader._is_strict_credential_key("description")
+    assert not loader._is_strict_credential_key("notes")
+
+
+def test_the_descriptive_fields_are_declared_by_the_schema() -> None:
+    """``DESCRIPTIVE_FIELDS`` is derived from the contract, not remembered.
+
+    A field that stops being part of the schema must stop being a prose field in
+    the same edit, which is what deriving it from the field tuples buys.
+    """
+    schema_fields = set(
+        loader.SITE_FIELDS + loader.SUBJECT_FIELDS + loader.POLICY_FIELDS + loader.CONSTRAINT_FIELDS
+    )
+    assert schema_fields >= loader.DESCRIPTIVE_FIELDS
+    assert {"description", "notes"} == loader.DESCRIPTIVE_FIELDS
 
 
 # --------------------------------------------------------------------------------------

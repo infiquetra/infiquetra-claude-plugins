@@ -342,6 +342,11 @@ def test_a_value_that_names_where_a_secret_lives_is_accepted(notes: str) -> None
         "secret: internationalization",
         # A literal padded with a placeholder must not be cleared by it.
         "password: rainbowtrout <redacted>",
+        # A harmless key must not swallow a strict one standing inside its
+        # value: the scan has to resume at the delimiter, not past the whole
+        # value it just read.
+        "notes: controller password=hunter2",
+        "description: call it with bearer=aB9dEf2GhJ4kLm7Q",
     ],
 )
 def test_a_literal_under_a_strict_key_is_refused_whatever_it_looks_like(notes: str) -> None:

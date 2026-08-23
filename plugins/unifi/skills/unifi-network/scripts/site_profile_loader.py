@@ -158,9 +158,13 @@ CREDENTIAL_KEY_EXACT_IN_TEXT = ("auth", "accesskey", "clientsecret")
 # The key is captured generically and graded by that taxonomy instead of being
 # spelled out in the pattern, and the value floor is one character: under a
 # strict key there is no length below which a literal stops being a credential.
+# The value is captured by lookahead so the match itself ends at the delimiter.
+# Consuming the value instead let an innocent key swallow a strict one standing
+# inside it: in ``"notes": "controller password=hunter2"`` the scan matched
+# ``notes``, found it harmless, and resumed *after* the password it had eaten.
 CREDENTIAL_ASSIGNMENT_IN_TEXT = re.compile(
     r"(?i)(?:^|[^A-Za-z0-9_-])([A-Za-z][A-Za-z0-9_-]{1,31})[\"']?\s*[:=]\s*[\"']?"
-    r"([^\"',;]{1,200})"
+    r"(?=([^\"',;]{1,200}))"
 )
 
 # An auth scheme word sits between the key and the credential in the shape an

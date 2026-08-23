@@ -837,8 +837,17 @@ CREDENTIAL_VERDICT_CORPUS = (
     ("password: abc123 <redacted>", True),
     ("notes: controller password=hunter2", True),
     ("description: call it with bearer=aB9dEf2GhJ4kLm7Q", True),
-    # An innocent key must not eat the newline and the strict assignment behind it.
+    # An innocent key must not eat the break and the strict assignment behind it.
     ("see notes:\npassword=hunter2", True),
+    # Every key spelling that reaches the rule only through the exact in-text
+    # set. `auth` and `accesskey` match no name fragment, so emptying that tuple
+    # silently retires them; these entries are what makes that fail.
+    ("auth: rainbowtrout", True),
+    ("accesskey: rainbowtrout", True),
+    ("access_key: rainbowtrout", True),
+    ("access-key: rainbowtrout", True),
+    ("clientsecret: rainbowtrout", True),
+    ("client_secret: rainbowtrout", True),
     ("credentials: oauth2 is configured at the controller", False),
     ("token: base64 of the site identifier", False),
     ("secret: sha256 checksum recorded in the manifest", False),
@@ -886,3 +895,81 @@ def test_an_innocent_key_does_not_eat_the_line_break_before_a_strict_one() -> No
 def test_an_assignment_split_across_a_line_break_is_not_matched() -> None:
     """The reference says neither copy matches this, so it has to be true."""
     loader.validate_profile(_profile_with_notes("1.1", "password:\n  hunter2"))
+
+
+#: Every boundary `str.splitlines()` recognises, plus the two-character sequence.
+#: The rule's contract is "an assignment is one line", so both copies have to
+#: agree on where a line ends. Naming only `\n` fixed one instance of that and
+#: left nine, eight of them fail-open in the loader.
+LINE_BREAKS = (
+    ("newline", "\n"),
+    ("carriage return", "\r"),
+    ("CRLF", "\r\n"),
+    ("vertical tab", "\x0b"),
+    ("form feed", "\x0c"),
+    ("file separator", "\x1c"),
+    ("group separator", "\x1d"),
+    ("record separator", "\x1e"),
+    ("NEL", "\x85"),
+    ("LINE SEPARATOR", "\u2028"),
+    ("PARAGRAPH SEPARATOR", "\u2029"),
+)
+
+
+@pytest.mark.parametrize("name,character", LINE_BREAKS)
+def test_an_innocent_key_never_eats_a_break_whichever_break_it_is(
+    name: str, character: str
+) -> None:
+    """The swallow shape, once per boundary the gate recognises.
+
+    Reachable through ordinary JSON: a carriage return survives as the standard
+    `\r` escape, and LINE SEPARATOR is legal literally inside a JSON string.
+    """
+    text = f"see notes:{character}password=hunter2"
+    assert loader._credential_in_text(text, descriptive=True) is not None, name
+
+
+@pytest.mark.parametrize("name,character", LINE_BREAKS)
+def test_a_split_assignment_is_matched_at_no_boundary(name: str, character: str) -> None:
+    """The documented sentence, once per boundary."""
+    text = f"password:{character}  hunter2"
+    assert loader._credential_in_text(text, descriptive=True) is None, name
+
+
+def test_the_break_set_is_exactly_what_splitlines_recognises() -> None:
+    """Derived from the standard library's behaviour, not from memory.
+
+    If a future Python adds a boundary, this fails rather than letting the two
+    copies quietly disagree about where a line ends again.
+    """
+    recognised = {
+        chr(code)
+        for code in list(range(0x20)) + [0x85, 0x2028, 0x2029]
+        if len(f"a{chr(code)}b".splitlines()) > 1
+    }
+    assert set(loader.CREDENTIAL_LINE_BREAKS) == recognised
+
+
+def test_the_exact_key_set_cannot_be_emptied_without_failures() -> None:
+    """A-02: the tuple must be load-bearing, not decorative.
+
+    Iterating `CREDENTIAL_KEY_EXACT_IN_TEXT` to assert its members are strict is
+    vacuous -- empty the tuple and the loop body never runs. These spellings are
+    written out literally and checked by behaviour, so retiring the tuple retires
+    a verdict and fails here.
+
+    `auth` and `accesskey` match no name fragment and reach the rule only through
+    that tuple. `clientsecret` normalises to contain `secret`, so it is covered by
+    the fragment path as well; it is included because the contract names it, not
+    because it proves the tuple.
+    """
+    for key in ("auth", "accesskey", "access_key", "access-key"):
+        text = f"{key}: rainbowtrout"
+        assert loader._credential_in_text(text, descriptive=True) is not None, key
+        assert loader._is_strict_credential_key(key), key
+    for key in ("clientsecret", "client_secret"):
+        assert loader._is_strict_credential_key(key), key
+    # And the derived half, so retiring a fragment fails here too.
+    for fragment in loader.CREDENTIAL_NAME_FRAGMENTS:
+        text = f"{fragment}: rainbowtrout"
+        assert loader._credential_in_text(text, descriptive=True) is not None, fragment

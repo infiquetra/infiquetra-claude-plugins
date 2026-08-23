@@ -814,3 +814,75 @@ def test_command_line_reports_a_broken_profile_as_a_structured_error(
     payload = json.loads(capsys.readouterr().out)
     assert payload["error"] is True
     assert payload["error_type"] == "ProfileNotFoundError"
+
+
+# --------------------------------------------------------------------------------------
+# One assignment is one line, and the gate must agree
+# --------------------------------------------------------------------------------------
+
+#: Lines whose verdict is pinned identically here and in the portable catalog's
+#: two copies. A shared corpus exists because the three copies drifted apart on
+#: shapes none of their individual suites carried: the loader read across a line
+#: break and the repository gate did not, so one accepted a credential the other
+#: refused. Per-part agreement tests could all pass while the verdicts differed.
+CREDENTIAL_VERDICT_CORPUS = (
+    # (text, fires)
+    ("password: rainbowtrout", True),
+    ("password: sunshine", True),
+    ("api_key: correcthorsebattery", True),
+    ("password: secret", True),
+    ("password: hunter2", True),
+    ("secret: internationalization", True),
+    ("authorization: Bearer <redacted> qY7vP2xK9rLm4aZbC8dEfGhJkNpQ", True),
+    ("password: abc123 <redacted>", True),
+    ("notes: controller password=hunter2", True),
+    ("description: call it with bearer=aB9dEf2GhJ4kLm7Q", True),
+    # An innocent key must not eat the newline and the strict assignment behind it.
+    ("see notes:\npassword=hunter2", True),
+    ("credentials: oauth2 is configured at the controller", False),
+    ("token: base64 of the site identifier", False),
+    ("secret: sha256 checksum recorded in the manifest", False),
+    ("auth: vlan40 handles the guest network", False),
+    ("token: rotation happens quarterly", False),
+    ("auth: see ticket ABC-1234 for rotation", False),
+    ("password: redacted", False),
+    ("password: env:UNIFI_API_KEY", False),
+    ("password: vault:kv/unifi", False),
+    ("password: ${UNIFI_KEY}", False),
+    ("api_key: {{ lookup }}", False),
+    ("token: %(UNIFI_TOKEN)s", False),
+    ("authorization: Bearer <token>", False),
+    ("password: change-me", False),
+    ("author: someone wrote this note", False),
+    # An assignment split across a line break is matched by neither copy. The
+    # reference documents exactly this, so it is pinned rather than described.
+    ("password:\n  hunter2", False),
+)
+
+
+@pytest.mark.parametrize("text,fires", CREDENTIAL_VERDICT_CORPUS)
+def test_the_verdict_corpus_is_the_rule(text: str, fires: bool) -> None:
+    """Every corpus line, one verdict, pinned."""
+    assert (loader._credential_in_text(text, descriptive=True) is not None) is fires
+
+
+def test_an_innocent_key_does_not_eat_the_line_break_before_a_strict_one() -> None:
+    """The residual half of the swallow defect, across a newline instead of along a line.
+
+    `` \\s*`` around the delimiter spanned the line break, so ``see notes:`` matched,
+    consumed the newline with it, and left ``password=hunter2`` with no preceding
+    character to begin a fresh match against. The loader accepted the credential;
+    the repository gate, which splits lines first, refused it. That divergence is
+    the defect, and it is fail-open in the copy operators actually load.
+    """
+    document = _valid_profile()
+    document["schema_version"] = "1.1"
+    document["subjects"][0]["notes"] = "see notes:\npassword=hunter2"
+    with pytest.raises(loader.ProfileInvalidError) as caught:
+        loader.validate_profile(document)
+    assert "credential value is not permitted" in str(caught.value)
+
+
+def test_an_assignment_split_across_a_line_break_is_not_matched() -> None:
+    """The reference says neither copy matches this, so it has to be true."""
+    loader.validate_profile(_profile_with_notes("1.1", "password:\n  hunter2"))

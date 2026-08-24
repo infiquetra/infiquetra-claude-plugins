@@ -2332,7 +2332,7 @@ def main(argv: list[str] | None = None) -> int:
     p_advance.add_argument(
         "--workflow-available",
         action="store_true",
-        help="this host can run cc-workflows-ultracode (the Workflow tool is present)",
+        help="this host can run cc-workflows-ultracode (the Workflow tool is present; requires --host-capable)",
     )
     p_advance.add_argument(
         "--persist",

@@ -21,6 +21,59 @@
 
 ## 2026-08-24
 
+### A halt reason can only explain a CLI flag the decision function never sees  {#unavailable-reason-rides-the-available-set}
+
+**Context.** Leaf #657 asked that an operator who passes `outcome.py advance --workflow-available`
+without `--host-capable` get an explanation naming the second flag, rather than an availability halt
+that reads as a host fault. Amending the CLI help was the easy half. The hard half was the receipt:
+the operator who is hurt by this is the one running unattended, and what they read afterwards is the
+halt or degrade reason, not the help text.
+
+**Evidence.** Pull request 799. The two functions that compose the reason string —
+`plugins/saga/scripts/outcome_dispatcher.py` `dispatch` (`:184`) and `degrade_decision` (`:390`) —
+take only `req`/`backend` and a `Sequence[str]` of available backends. Neither has ever received
+`host_capable` or `workflow_available`; those live on the argparse namespace consumed at
+`plugins/saga/scripts/outcome.py:2570` and are converted to a backend set by `resolve_available`
+before any decision function runs. Pinned at the pre-fix revision, the degrade reason read
+`cc-workflows-ultracode unavailable; autonomous + away -> degraded to team-execution (R23)` — a
+sentence with nowhere to put the flag.
+
+**Mechanism.** The flags are erased by design. `resolve_available` is the deliberate narrowing point
+(KTD9 — the coordinator cannot self-probe host capability, so availability is a runtime *input*, and
+everything downstream reasons about a set, not about how the set was derived). That narrowing is
+correct and worth keeping, which means the *only* place an explanation can survive is on the value
+that crosses the seam. Hence `AvailableBackends`, a `tuple[str, ...]` subclass carrying an
+`unavailable_reasons` mapping: every existing consumer keeps full sequence and equality semantics
+(`avail == ("inline", "team-execution", "manual")` still holds), while the three reason-composing
+sites read the explanation through `getattr(available, "unavailable_reasons", {})` and fall back to
+their original wording when handed a plain tuple.
+
+**Fix.** `resolve_available` attaches the coupling reason when `workflow_available and not
+host_capable`; `dispatch`, `degrade_decision`, and `captured_degrade_decision` prefer it over their
+generic phrasing; `effective_available` carries the mapping across the captured ∩ runtime
+intersection so the #373 posture path keeps it. The conservative default is untouched — with neither
+flag only `ALWAYS_AVAILABLE` resolves, and `cc-workflows-ultracode` still requires both flags.
+
+**Validation.** Four tests fail at the pre-fix revision and pass after: the `resolve_available`
+combination and the `dispatch` halt receipt (`tests/test_outcome_dispatcher.py`), the
+`degrade_policy: "halt"` advance regression, and the default-policy degrade receipt
+(`tests/test_outcome_backends.py`). 142 tests green across the three touched suites.
+
+**What surprised.** The degrade path, not the halt path, is the one that needed this most. Under the
+default policy the tick *succeeds* — one rung down, no halt, no page — so the pre-fix operator saw a
+green run that never touched the external backend. The leaf's own reproduction only exposed the
+coupling because every probe node carried `degrade_policy: "halt"`.
+
+**Generalizable rule.** When a diagnostic message must name an input that an earlier layer
+deliberately discarded, do not re-thread the input through the call chain — attach the explanation to
+the value that already crosses the seam, as a transparent subtype whose consumers need no change.
+Re-threading spreads the coupling; a carrier keeps it at the one place that knows.
+
+**Refs.** Leaf #657 under objective `defects-claude-plugins`; run plan
+`docs/plans/2026-08-24-defects-claude-plugins-run-plan.md` section U9;
+`{#lease-ttl-honest-without-a-reader}` for the sibling case of a payload nobody reads.
+
+
 ### A lease TTL nobody reads is still worth deriving, because the payload is the only surviving record  {#lease-ttl-honest-without-a-reader}
 
 **Context.** #694 asked for the workflow execution lease to outlive the run it guards. By the time

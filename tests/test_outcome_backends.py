@@ -332,6 +332,43 @@ def test_advance_workflow_available_degrade_policy_halt_regression(tmp_path: Pat
     )
 
 
+def test_advance_workflow_available_degrade_reason_names_host_capable(tmp_path: Path) -> None:
+    # #657: the leaf's "appears to succeed" path — default degrade policy, autonomous + away — is
+    # where the coupling used to be invisible. The tick still degrades one rung, but the visible
+    # DegradeReceipt reason now names --host-capable instead of blaming the host.
+    repo = _repo(tmp_path)
+    ENG.start(
+        repo,
+        "o",
+        "ship",
+        nodes=[
+            {
+                "subplot_id": "build",
+                "title": "B",
+                "kind": "code",
+                "backend": "cc-workflows-ultracode",
+            }
+        ],
+    )
+    _approve(repo, "o")
+    avail = D.resolve_available(host_capable=False, workflow_available=True)
+    result = ENG.advance(
+        repo,
+        "o",
+        dispatcher=D.make_dispatcher(available=SPEC.NODE_BACKENDS),
+        available=avail,
+        attending=False,  # autonomous + away -> degrade, not halt
+    )
+    assert result.dispatched == ["build"] and result.halted == []
+    assert len(result.degraded) == 1
+    degraded = result.degraded[0]
+    assert degraded["to_backend"] == "team-execution"
+    assert (
+        "cc-workflows-ultracode unavailable: --workflow-available requires --host-capable"
+        in degraded["reason"]
+    )
+
+
 def test_repeated_halt_appends_one_ledger_record_not_n(tmp_path: Path) -> None:
     # P2 regression: an attended leaf polling advance against a persistently-unavailable backend must
     # NOT grow the ledger by one halt record per tick (append-once on (halt, key)).

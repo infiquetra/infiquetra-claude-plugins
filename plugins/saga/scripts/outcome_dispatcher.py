@@ -304,13 +304,15 @@ class AvailableBackends(tuple[str, ...]):
 
 def resolve_available(
     *, host_capable: bool = False, workflow_available: bool = False
-) -> tuple[str, ...]:
+) -> AvailableBackends:
     """The runnable backend set for this host (R6), ordered by the spec's ``NODE_BACKENDS`` vocabulary.
 
     ``ALWAYS_AVAILABLE`` (inline / team-execution / manual) is unconditional. ``host_capable`` enables
     the forked-context backends (``fork`` / ``subagent`` / ``goal``); ``workflow_available`` additionally
-    enables ``cc-workflows-ultracode`` (requires ``host_capable``). The conservative default (both False) is the always-available
-    floor — the coordinator never claims a host-dependent backend it cannot verify.
+    enables ``cc-workflows-ultracode`` — and ONLY together with ``host_capable``, which is why a lone
+    ``workflow_available`` returns the floor carrying the explanatory ``unavailable_reasons`` entry
+    instead. The conservative default (both False) is the always-available floor — the coordinator
+    never claims a host-dependent backend it cannot verify.
     """
     avail = set(ALWAYS_AVAILABLE)
     if host_capable:
@@ -478,7 +480,7 @@ def captured_posture(intent: Any) -> Any | None:
 
 def effective_available(
     backends_permitted: Sequence[str] | None, available: Sequence[str] | None
-) -> tuple[str, ...] | None:
+) -> AvailableBackends | None:
     """The run's effective backend menu: captured-permitted ∩ runtime-available (#373 AC1).
 
     The captured half is the run-start authorization (what the operator permitted, once); the
@@ -487,7 +489,9 @@ def effective_available(
     intersection can only NARROW: a captured backend the host cannot run is not effective, and
     a host-available backend the envelope did not permit is not effective. ``None``/``None``
     means no availability decision exists at all (the legacy direct-dispatch path). Ordered by
-    the spec's ``NODE_BACKENDS`` vocabulary for deterministic receipts.
+    the spec's ``NODE_BACKENDS`` vocabulary for deterministic receipts. Any ``unavailable_reasons``
+    the runtime half carries survives the intersection, so a captured-posture halt explains an
+    unavailable backend in the same words a direct dispatch would.
     """
     if backends_permitted is None and available is None:
         return None
@@ -497,7 +501,7 @@ def effective_available(
         return AvailableBackends(backends, unavailable_reasons=unavail_reasons)
     if available is None:
         backends = tuple(b for b in outcome_spec.NODE_BACKENDS if b in set(backends_permitted))
-        return tuple(backends)
+        return AvailableBackends(backends, unavailable_reasons=unavail_reasons)
     both = set(backends_permitted) & set(available)
     backends = tuple(b for b in outcome_spec.NODE_BACKENDS if b in both)
     return AvailableBackends(backends, unavailable_reasons=unavail_reasons)

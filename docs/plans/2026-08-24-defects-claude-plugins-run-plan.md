@@ -87,13 +87,18 @@ execute each leaf without re-deriving decisions.
 
 ## Key Technical Decisions
 
-- KTD1 (U7, #691): fix advisory cross-unit bleed by **filtering at attach time on the existing
-  per-entry `unit` tag**, not by resetting the accumulator at unit boundaries. Every pushed entry
-  already carries `unit: unitId` (`execution_spec.py:812`); a boundary reset (`__advisories.length
-  = 0`) is racy when units run concurrently in the same wave, and per-unit array maps are more
-  moving parts than a filter over data already keyed correctly.
+- KTD1 (U7, #691; S3-repaired per F8): fix advisory cross-unit bleed by **filtering in `__halt`
+  only, on the existing per-entry `unit` tag** — pass `unitId` into `__halt` and attach
+  `error.advisory_corrections` filtered to the halting unit (`execution_spec.py:781-784`; every
+  pushed entry already carries `unit: unitId`, `:812`). The top-level run return
+  (`return { units, advisory_corrections: __advisories }`, `:3949-3952`) is the run-wide list
+  keyed by `unit` and stays complete. A boundary reset (`__advisories.length = 0`) is racy when
+  units run concurrently in the same wave, and per-unit array maps are more moving parts than a
+  filter over data already keyed correctly.
 - KTD2 (U8, #694): keep the lease payload and **derive `execution_ttl_seconds` from the run's
-  expected scale** (curation fix shape (a)), rather than retiring the TTL semantics (shape (b)).
+  expected scale** (curation fix shape (a); pinned in U8 as
+  `max(900, 300 × multiplicity-aware unit count)` per S3 F4), rather than retiring the TTL
+  semantics (shape (b)).
   Post-#677 the broker is gone and the surface is emit-time only; an honest derived value is the
   smaller diff and keeps `workflow_emitter.py:94-95` validation unchanged. The unit first verifies
   what (if anything) consumes teardown/release results post-broker; if nothing does, it records
@@ -105,8 +110,8 @@ execute each leaf without re-deriving decisions.
   it weakens the conservative-default contract `resolve_available`'s docstring pins ("the
   coordinator never claims a host-dependent backend it cannot verify").
 - KTD4 (U10, #652): **evaluate the certificate gate before resolving the mission-control root**
-  (lazy resolution only on the non-gated path), rather than mapping unresolvable-root errors on
-  would-be-gated ops to `gated`. A gated verdict needs no writer; post-hoc error mapping keeps the
+  (the root is resolved only on an `AUTHORIZED` verdict — pinned in U10 per S3 F16), rather than
+  mapping unresolvable-root errors on would-be-gated ops to `gated`. A gated verdict needs no writer; post-hoc error mapping keeps the
   unused eager work and muddies the error surface.
 - KTD5 (U11, #784): option (a) — **docstrings + worked example + guard test**, not option (b) (a
   new CLI subcommand). The observed failure (six failed direct-drive attempts) is cured by
@@ -120,12 +125,14 @@ execute each leaf without re-deriving decisions.
   pure-tightening live attaches. The current direction is conservative (costs one extra
   re-approval, never skips one); changing approval machinery is a behavior change the defect does
   not require.
-- KTD7 (U20, #584 R3-residual): the parity `--live` leg's explicit-SKIP lands **inside the parity
-  script (or its generation source), not in `ci.yml`** — the script self-reports
-  "SKIP: unauthenticated (<reason>)" when the live leg cannot run. This keeps #588 (U18) the sole
-  ci.yml writer. `check_issue_contract_parity.py` sits under
-  `plugins/mission-control/config/generated/` — the unit must locate the generator/source before
-  editing and change the source, never only the generated artifact.
+- KTD7 (U20, #584 R3-residual; S3-repaired per F2/F3): the parity `--live` leg's explicit-SKIP
+  lands **inside the parity script, not in `ci.yml`** — the default (no `--live`) path prints
+  `SKIPPED live parity leg: <reason>` so no invocation is ever silent (today the skip prints only
+  under `if args.live`, `:184-201`, and neither `ci.yml:40` nor `gate.sh:119` passes `--live`).
+  This keeps #588 (U18) the sole ci.yml writer. No generator for this script exists in this repo
+  (only the two data modules carry `.sha256` sidecars; the repo already hand-edits the script), so
+  `plugins/mission-control/config/generated/check_issue_contract_parity.py` is edited directly;
+  `infiquetra-sdlc` is never opened.
 - KTD8 (U19/U20 paths): mission-control tests are authored in `plugins/mission-control/tests/`
   (matching the existing 21 test modules there); the leaf bodies' `tests/…` spellings are corrected
   to the verified layout. `check_pagination.py` is at `plugins/mission-control/scripts/`.
@@ -206,25 +213,30 @@ frozen head, merge under global serialization, leaf closed with evidence.
 before recording the unit as tasked; non-acceptance becomes a named, visible failure state with a
 bounded retry.
 
-**Smallest viable fix:** add a post-send delivery check to the dispatch path that currently gates
-only on `row.get("interactive_ready")` (`orchestrate.py:1413`; the acknowledged gap comment sits at
-`:1368`): after the first prompt send, confirm acceptance through the Herdr read surface Orchestrate
-already wraps (pane transcript/consumption delta after the send); on non-acceptance, retry a small
-fixed number of times, then record the new named unit state `prompt_undelivered` instead of tasked.
+**Smallest viable fix (S3-repaired per F5/F13):** reuse the existing, test-pinned acceptance probe
+`took_the_task` (`orchestrate.py:1419-1433`) — no transcript/consumption-delta probe and no new
+delivery-check helper is invented. The real defect is ordering: dispatch sets
+`unit.status = RUNNING` before the check, and a failed check only appends a warning
+(`:1447-1451`; the acknowledged gap comment sits at `:1368`, and dispatch gates on
+`row.get("interactive_ready")` at `:1413`). Reorder: run `took_the_task` after the first prompt
+send; on failure, resend at most **2 times**, and only while the session has never left idle —
+that is the dialog-swallow case, so a resend cannot double-task; if still unaccepted, record the
+named unit state `prompt_undelivered` instead of `RUNNING`.
 
-**Existing mechanism reused:** the run-record unit state machine (`status`/`settle` already read
-named states), the Herdr pane read/wait seams orchestrate.py already wraps, and the stubbed-pane
+**Existing mechanism reused:** `took_the_task` (already exists and is test-pinned), the run-record
+unit state machine (`status`/`settle` already read named states), and the stubbed-pane
 test pattern used across `tests/test_orchestrate_task_dispatch.py`.
 
-**New moving parts:** one named state (`prompt_undelivered`) and one delivery-check helper with a
-bounded retry. Justified: the in-scope failure is silent first-prompt loss on ready-reporting panes
+**New moving parts:** one named state (`prompt_undelivered`) and the status-ordering change —
+nothing else. Justified: the in-scope failure is silent first-prompt loss on ready-reporting panes
 (at least four occurrences in session b31ec85e on 2026-08-23 — folder-trust and account-verification
 dialogs swallow the send while Herdr reports `interactive_ready`). A smaller change (documentation
 telling coordinators to watch the token counter) cannot satisfy the acceptance criteria, which
 require a test-pinned named failure state and no silently-tasked unit.
 
 **Larger alternative rejected:** fixing Herdr readiness detection or vendor startup dialogs
-(explicitly out of scope — dependency context routed elsewhere); an unbounded retry or a
+(explicitly out of scope — dependency context routed elsewhere); a new transcript/consumption-delta
+probe (F5 — `took_the_task` already exists and is test-pinned); an unbounded retry or a
 generalized delivery-manager subsystem (no current failure requires more than detect → bounded
 retry → loud fail).
 
@@ -233,8 +245,10 @@ retry → loud fail).
 orchestrate release surfaces + `.claude-plugin/marketplace.json`.
 
 **Tests:** `tests/test_orchestrate_delivery.py` (new): a stubbed pane reporting
-`interactive_ready` that does not accept input → unit never recorded tasked, named
-delivery-failure state appears, bounded retry fires; happy path (accepted prompt → tasked).
+`interactive_ready` that does not accept input → unit never recorded `RUNNING`, named
+delivery-failure state appears, and the pinned 2-resend-then-`prompt_undelivered` policy fires
+with the resend count asserted; a resend is attempted only while the session has never left idle;
+happy path (accepted prompt → tasked).
 
 **Acceptance-criteria mapping:** AC1 (pytest green incl. the ready-but-deaf regression) → the new
 test module; AC2 (`status` shows the named state) → status-path assertion via stubbed state; AC3
@@ -248,16 +262,17 @@ retry-or-fail policy.
 **Goal:** `settle` records `done` only with completion evidence, `failed` only with failure
 evidence; session-gone-without-evidence becomes a distinct orphaned state.
 
-**Smallest viable fix:** apply `land`'s existing branch-truth model at settle time: before
-`cmd_settle` (`orchestrate.py:2508`) accepts a pane-state verdict, check the evidence `cmd_land`
-(`:2974`) already computes — commit-on-branch first, typed result file or declared artifact where
-the unit declares one. `done` without evidence stays unsettled; a closed session whose branch
-carries the expected output settles `done`; session-gone without evidence yields a new named
-`orphaned` state. Update the SKILL.md settlement contract including the "what this deliberately
-does not do" paragraph (`SKILL.md:176-181`, `:189-193`).
+**Smallest viable fix (S3-repaired per F6/F12):** gate settlement on the evidence probe that
+already exists: `produced_anything` (`orchestrate.py:1128`), which `cmd_settle`
+(`orchestrate.py:2508`) already calls at `:2528` — but today only to clear a delivery warning.
+Make it the settlement gate: idle without evidence stays running; session gone with commits on the
+unit branch settles `done`; session gone without evidence yields a distinct named failed/orphaned
+note — never `failed` for committed work. `cmd_check` (`:3653-3680`) is the existing evidence
+model to mirror. Update the SKILL.md settlement contract including the "what this deliberately
+does not do" paragraph (`SKILL.md:189-193`).
 
-**Existing mechanism reused:** `land`'s branch/commit inspection (the exact check that caught
-incident 1), the run-record state machine, existing settle-path tests
+**Existing mechanism reused:** `produced_anything` (the branch-truth probe settle already
+invokes), `cmd_check`'s evidence model, the run-record state machine, existing settle-path tests
 (`tests/test_orchestrate_settle_debounce.py` patterns).
 
 **New moving parts:** one named `orphaned` state and the evidence requirement at settle. Justified:
@@ -295,9 +310,12 @@ become visible.
 **Smallest viable fix:** three edges on existing machinery: (1) regression tests locking the
 complete flag set and its position ahead of the vendor token in `agent_argv()`
 (`orchestrate.py:1334`), plus a post-plan-expansion test proving new units launch through the
-central path; (2) `status`/`doctor` output that names coordinator-created worktrees or sessions
-matching the run but absent from its record (report, require explicit adoption or run-owned
-cleanup — never silently treat as valid expansion); (3) coordinator instructions in
+central path; (2) surface the existing `discover_unrecorded` results (`orchestrate.py:1633`,
+already used by `cmd_check` at `:3638`, printing `UNRECORDED <name> -- branch <branch> is not a
+unit in this run`, with `cmd_adopt` as the repair path) from `status` as well — or name `check` as
+the acceptance criterion's "doctor", since no `doctor` command exists today — so
+coordinator-created resources absent from the record are reported, with explicit adoption or
+run-owned cleanup required, never silently treated as valid expansion; (3) coordinator instructions in
 `commands/orchestrate.md` and SKILL.md explicitly prohibiting manual worktree creation or direct
 `agents` invocation for run units, and representing unsupported post-launch setup (including
 interactive OpenCode variant selection) as a controlled post-launch step rather than a bypass
@@ -309,11 +327,12 @@ enforcement, not implementation), the run record, existing `tests/test_orchestra
 and `tests/test_orchestrate_launch_and_land.py`, existing drift/adopt machinery
 (`tests/test_orchestrate_drift_and_adopt.py` patterns).
 
-**New moving parts:** the unrecorded-resource detection in status/doctor. Justified: the observed
-failure was nine focus-stealing launches made by a coordinator that bypassed `expand`/`go`
-silently — instructions alone were already present and did not hold; detection makes the bypass
-loud. A smaller change cannot satisfy the "status or doctor identifies coordinator-created
-worktrees/sessions absent from the record" acceptance criterion.
+**New moving parts:** none — S3 repair F7 removed the invented detector. The detection reuses
+`discover_unrecorded` and `cmd_check`/`cmd_adopt`, which already exist and already print the
+UNRECORDED line; the unit only surfaces those results from `status` or names `check` as the
+acceptance criterion's "doctor". The observed failure (nine focus-stealing launches bypassing
+`expand`/`go`) is answered by making the existing detection reach the AC's surface, not by new
+machinery.
 
 **Larger alternative rejected:** changing the `agents` wrapper's interactive default or Herdr focus
 behavior globally (explicit non-goals); attempting hard technical prevention of direct wrapper
@@ -332,9 +351,24 @@ integration case; cleanup stays scoped to run-owned resources.
 
 **Acceptance-criteria mapping:** persisted-before-created and central-launch ACs → expansion test;
 prohibition AC → commands/SKILL text; flag-set AC → the position-locking test; drift AC →
-status/doctor detection; focus AC → the before/after pane test; run-record completeness AC →
-launch-receipt assertions; cleanup AC → scoped-cleanup case. Leaf stop conditions are copied into
-the unit's task brief verbatim.
+surfacing `discover_unrecorded` from `status`/`check`; focus AC → the before/after pane test;
+run-record completeness AC → launch-receipt assertions; cleanup AC → scoped-cleanup case.
+
+**Failure modes / pre-mortem (from #773, verbatim — S3 F10):**
+
+| Condition | Required response |
+|---|---|
+| A later phase needs a launch behavior the run schema cannot represent | Stop and extend the typed launch contract; do not call the wrapper manually |
+| `agents` or Herdr changes its focus flags | Fail the launch probe before creating workers and update the single central adapter |
+| A session is created but not recorded | Treat launch as failed, retain evidence, and do not submit the task |
+| The operator explicitly asks to focus a worker | Record that as an explicit foreground launch rather than changing the background default |
+| A run-related untracked session is discovered | Report it and require explicit adoption or run-owned cleanup; do not infer ownership |
+
+**Stop conditions (from #773, verbatim — S3 F10):**
+
+- Stop before creating a session if the unit is not present in the run record.
+- Stop before task submission if the launch receipt does not prove a run-owned Herdr pane and the background no-focus path.
+- Stop rather than invoking `agents` directly when `go` cannot represent the requested launch.
 
 **Dependencies:** after U2; U4 builds on this seam.
 
@@ -382,8 +416,22 @@ request selects `xhigh`, never `max`); loud failure when the requested variant i
 unverifiable; non-OpenCode vendors keep native controls (no `/variants` sent); owned-session
 cleanup scope.
 
-**Acceptance-criteria mapping:** each checkbox maps to a named test or doc change above; the
-failure-modes table and stop conditions are copied into the unit's task brief verbatim.
+**Acceptance-criteria mapping:** each checkbox maps to a named test or doc change above.
+
+**Failure modes / pre-mortem (from #772, verbatim — S3 F10):**
+
+| Condition | Required response |
+|---|---|
+| The picker labels change | Read the live picker, refuse an unavailable exact value, and resolve "maximum available" from the presented choices |
+| The picker cannot be controlled or verified | Stop before submitting the task and surface the failed preflight |
+| The session opens on the wrong model or workspace | Close only that run-owned session and relaunch through the approved recipe |
+| A non-OpenCode vendor is assigned | Use that vendor's documented native model and effort controls; do not send `/variants` |
+| A user explicitly requests headless OpenCode | Treat that as a different approved transport and record it visibly |
+
+**Stop conditions (from #772, verbatim — S3 F10):**
+
+- Stop before task submission if Herdr does not report the created session, the selected model or variant cannot be verified, or the working directory differs from the unit worktree.
+- Stop rather than silently substituting a model, variant, vendor, or transport.
 
 **Dependencies:** after U3 (builds on the enforced seam).
 
@@ -433,7 +481,9 @@ post-launch verification.
 **Goal:** the Orchestrate skill pre-teaches the supported wait mechanism for the three recurring
 wait shapes, so guard-blocked sleep-chains stop costing a turn each.
 
-**Smallest viable fix:** docs-only: a "Waiting" section in SKILL.md naming (a) sibling herdr
+**Smallest viable fix (S3-repaired per F12):** docs-only: extend the existing
+`## Waiting, and empty dependencies` section (`SKILL.md:174`) — not a second waiting section —
+naming (a) sibling herdr
 agent/pane output → `herdr agent wait` / `pane wait-output` / `orchestrate.py wait`; (b) PR checks
 and other external state → a Monitor-style until-loop; (c) a command the session itself started →
 background run with completion notification — one copy-pasteable example each, an explicit "never
@@ -466,13 +516,14 @@ the orchestrator, not by this unit's tests.
 **Goal:** a unit's returned `advisory_corrections` contains only that unit's advisories, in
 multi-unit emitted harnesses.
 
-**Smallest viable fix (KTD1):** filter at attach time on the existing per-entry `unit` tag. The
-emitted helper (`_JS_ADVISORY_HELPER`, `execution_spec.py:750`) already pushes
-`{ unit: unitId, round, corrections, dropped }` (`:812`); the two attach sites — the halt path
-(`e.advisory_corrections = __advisories`, `:783`) and the result assembly
-(`advisory_corrections: __advisories`, `:3951`) — attach the whole module-scope array. Change both
-to attach only entries whose `unit` matches the attaching unit. Gating semantics, render/scrub/
-truncation from #686, per-round caps, and `__advisoryRounds` are untouched (leaf non-goals).
+**Smallest viable fix (KTD1, S3-repaired per F8):** filter ONLY in the halt path. Pass `unitId`
+into `__halt` and attach `e.advisory_corrections` filtered to entries whose `unit` matches the
+halting unit (`_JS_ADVISORY_HELPER`, `execution_spec.py:750`; the halt attach at `:781-784`;
+entries already pushed as `{ unit: unitId, round, corrections, dropped }` at `:812`). The
+top-level run return (`return { units, advisory_corrections: __advisories }`, `:3949-3952`) is
+the run-wide list keyed by `unit` — it stays complete; a consumer reading per-unit advice filters
+by `unit` caller-side. Gating semantics, render/scrub/truncation from #686, per-round caps, and
+`__advisoryRounds` are untouched (leaf non-goals).
 
 **Existing mechanism reused:** the per-entry `unit` tag already recorded by `__logAdvisory`; the
 node-executed harness test pattern already in `tests/test_saga_execution_spec.py`
@@ -482,19 +533,26 @@ node-executed harness test pattern already in `tests/test_saga_execution_spec.py
 
 **Larger alternative rejected:** resetting the accumulator at unit boundaries (racy when units run
 concurrently in one wave — the reset from a starting unit would drop a concurrent unit's pending
-advisories); per-unit accumulator maps (more emitted state than the filter, same outcome).
+advisories); per-unit accumulator maps (more emitted state than the filter, same outcome);
+filtering the top-level run return as well (F8 — that list is deliberately run-wide, keyed by
+`unit`; stripping it loses the run record).
 
 **Owned paths:** `plugins/saga/scripts/execution_spec.py`, `tests/test_saga_execution_spec.py`,
 `plugins/saga/references/execution-spec.md`, saga release surfaces + marketplace.
 
-**Tests:** node-executed two-unit harness where each unit's panel reports one advisory → second
-unit's returned array has length 1; a halt raised in the second unit does not carry the first
-unit's advisories; existing `advisory_corrections` tests pass unchanged; mutation proof (revert the
-filter in a scratch copy → new test fails) recorded in the PR body.
+**Tests:** node-executed two-unit harness where each unit's panel reports one advisory → a halt
+raised in the second unit carries `error.advisory_corrections` of length 1 (only its own), pinned
+against `error.advisory_corrections` (and/or a demonstrated caller-side filter by `unit`) — never
+against a stripped run return, which stays complete; existing `advisory_corrections` tests pass
+unchanged; mutation proof (revert the filter in a scratch copy → new test fails) recorded in the
+PR body.
 
 **Acceptance-criteria mapping:** AC1/AC4 (suite green, no pass-count reduction) → full pytest; AC2
-(cross-unit isolation, length 1 not 2) → the two-unit test; AC3 (mutation proof in PR body) → the
-scratch-revert record; AC5 (release surfaces tell the same story) → R7 parity.
+(cross-unit isolation, length 1 not 2) → the two-unit halt test; AC3 (mutation proof in PR body) →
+the scratch-revert record, and (S3 F17) the PR body must quote #691 AC3's "Reverting the reset"
+wording and state that the shipped change is an attach-time filter — reverting THAT filter makes
+the new test fail, satisfying the mutation proof under the leaf's older wording; AC5 (release
+surfaces tell the same story) → R7 parity.
 
 **Dependencies:** lane B head; blocks U8 (same file).
 
@@ -503,15 +561,18 @@ scratch-revert record; AC5 (release surfaces tell the same story) → R7 parity.
 **Goal:** the recorded lease contract is honest for runs of arbitrary length; a fixed
 `execution_ttl_seconds: 300` no longer expires long before the run it describes.
 
-**Smallest viable fix (KTD2):** derive `execution_ttl_seconds` at emit time from the run's expected
-scale (a per-unit allowance times the multiplicity-aware unit count, with a floor no lower than the
-current 300), replacing the literal at `execution_spec.py:3649`; `claim_ttl_seconds` (`:3648`) is
-unchanged. `workflow_emitter.py` validation (`:94-95`, positive-value checks) is already
-shape-compatible and stays as is. First step inside the unit: verify what consumes
+**Smallest viable fix (KTD2, S3-repaired per F4):** derive `execution_ttl_seconds` at emit time
+with the pinned formula `execution_ttl_seconds = max(900, 300 × multiplicity-aware unit count)` —
+the 900 floor is the leaf's 10-minute AC1 plus a named 5-minute margin (a 300 floor would fail AC1
+for a one-unit spec) — replacing the literal at `execution_spec.py:3649`; `claim_ttl_seconds`
+(`:3648`) is unchanged. `workflow_emitter.py` validation (`:94-95`, positive-value checks) is
+already shape-compatible and stays as is. First step inside the unit: verify what consumes
 teardown/release results post-#677 (the broker — `lease_broker.py` — is deleted); if nothing
 consumes them, record that in the PR and issue close-out and explicitly drop the original
 "teardown distinguishes released-held from nothing-to-release" criterion per the curation comment;
-if a consumer exists, pin the distinguishable result with a test instead.
+if a consumer exists, pin the distinguishable result with a test instead. The same sweep covers
+readers of `execution_ttl_seconds` itself: zero readers → drop AC1 explicitly per the leaf's own
+allowance and record that in the unit instead (F4).
 
 **Existing mechanism reused:** the emit-time payload assembly and `workflow_emitter` validation
 (the surviving contract surface named by the curation); the spec's own unit/multiplicity data
@@ -531,8 +592,9 @@ revisit if the unit finds the payload has zero consumers).
 (The original body's `lease_broker.py` and `SKILL.md:552` references are historical per the
 curation comment.)
 
-**Tests:** emitted TTL is derived from run scale, pinned by a test that a long-run spec's lease is
-still nominally held past the 10-minute mark (time-advanced assertion against the recorded TTL);
+**Tests:** emitted TTL matches the pinned formula `max(900, 300 × multiplicity-aware unit count)`,
+pinned by a test that a long-run spec's lease is still nominally held past the 10-minute mark
+(time-advanced assertion against the recorded TTL);
 `grep -c '"execution_ttl_seconds": 300'` returns 0; mutation proof (revert to the literal → test
 fails); the teardown criterion handled per the consumer-verification outcome above.
 
@@ -590,9 +652,9 @@ unresolvable; a non-gated op there still fails loud (exit 1).
 mission-control root in both CLIs — `board_progression.py` `write` (eager resolve at `:533`, gate
 inside `authorize_and_write` at `:191-194`) and `reconcile_controller.py` `reconcile` (resolve at
 `:424`, gate inside `reconcile_and_correct`; `:448` already maps `gated`/`halt` to exit 0 when
-control reaches it). Mechanically: compute the gate verdict first (the gate needs no writer), and
-resolve the root lazily only on the non-gated path — via a pre-gate check or a lazy writer
-factory, whichever the existing call shape absorbs with the smaller diff.
+control reaches it). Mechanically (pinned, S3 F16): evaluate the reversibility certificate first,
+then resolve the mission-control root only on `AUTHORIZED` — the smaller diff against the linear
+CLI shape at `board_progression.py:532-541`. The lazy-writer-factory alternative is dropped.
 
 **Existing mechanism reused:** the existing gate functions and the existing exit-code mapping at
 `reconcile_controller.py:448`; the pre-#620 contract being restored is the repo's own.
@@ -821,39 +883,47 @@ confirm the new assertions fail against the unrepaired primitive before the fix 
 **Goal:** a supported full-gate invocation that survives the ten-minute foreground tool timeout,
 avoids duplicate concurrent runs, and captures completion status reliably.
 
-**Smallest viable fix:** document and lightly tool: in `CLAUDE.md`'s Running Quality Checks
-section, the supported invocation is a backgrounded run with a named log/result location and the
-statement that the 24-step gate is expected to exceed common foreground timeouts, restating the
-0/1/2 exit contract beside it. In `scripts/gate.sh`: write a final status line to a stable result
-file inside the existing `LOG_DIR` mechanism (the script already ends with `logs: $LOG_DIR`), and
-add duplicate-run protection — an atomic lock (mkdir-style) with a stale-lock/safe re-entry rule
-stated where documented. Coverage contract, `GATE INCOMPLETE` self-audit, step content, and exit
-codes unchanged.
+**Smallest viable fix (S3-repaired per F14):** document and lightly tool: in `CLAUDE.md`'s Running
+Quality Checks section, the supported invocation is a backgrounded run with a named log/result
+location, the statement that the 24-step gate is expected to exceed common foreground timeouts,
+the 0/1/2 exit contract restated, and a documented **safe re-entry rule** (what to do after a
+kill-at-600s or a suspected concurrent run). In `scripts/gate.sh`: write a final status line to a
+stable result file inside the existing `LOG_DIR` mechanism (the script already ends with
+`logs: $LOG_DIR`). The leaf's AC3 is `duplicate-run protection OR an explicit safe re-entry rule`
+(grep `lock|already running|re-entry`) — the default shape here is marker + documented re-entry
+rule, not a lock; a lock is kept only as the explicitly-justified alternative, and if chosen the
+stale-lock re-entry rule becomes mandatory (the kill-at-600s case leaves a stale lock behind).
+Coverage contract, `GATE INCOMPLETE` self-audit, step content, and exit codes unchanged.
 
 **Existing mechanism reused:** gate.sh's existing `LOG_DIR` logging; the existing CLAUDE.md
 section; the Bash tool's own background-run mechanism (no new runner).
 
-**New moving parts:** the lock and the result marker. Justified: the observed failure is exit 143
-at exactly the 600000ms default with a wasted ten-minute cycle per fresh session, and the naive
-retry after a kill risks overlapping gate runs mutating the same logs; a docs-only fix cannot
-satisfy the grep-pinned lock/re-entry criterion.
+**New moving parts:** the result marker only (default shape, per F14). Justified: the observed
+failure is exit 143 at exactly the 600000ms default with a wasted ten-minute cycle per fresh
+session and completion status captured ad hoc; the marker makes the outcome capturable from a
+named file. Duplicate-run risk is handled by the documented safe re-entry rule; a lock is added
+only if implementation finds the rule insufficient, and then it carries the mandatory stale-lock
+re-entry rule.
 
 **Larger alternative rejected:** changing gate coverage or speed (explicit non-goals); a wrapper
-daemon, make target, or separate runner script (a lock plus a marker inside the existing script is
-sufficient for the single-user context).
+daemon, make target, or separate runner script (a marker inside the existing script plus a
+documented re-entry rule is sufficient for the single-user context); a mandatory lock (demoted to
+the explicitly-justified alternative per F14).
 
 **Owned paths:** `CLAUDE.md` (sole writer in this run), `scripts/gate.sh`,
-`tests/test_gate_invocation.py` (new, minimal) or an in-script self-test — whichever the lock
-mechanism makes cheaper; the unit picks one and records it.
+`tests/test_gate_invocation.py` (new, minimal — pinned per F15).
 
-**Tests:** assert the marker file appears with the final status and the lock refuses a concurrent
-second run / documents safe re-entry; `bash -n scripts/gate.sh` clean; implementation validates one
-run to completion and one early-killed run, confirming captured status both times (leaf
-verification block).
+**Tests (pinned per F15):** since AC2 puts a marker in `gate.sh`, add
+`tests/test_gate_invocation.py` asserting the marker file appears with the final status and the
+re-entry rule text is greppable; `bash -n scripts/gate.sh` clean; implementation validates one run
+to completion and one early-killed run, confirming captured status both times (leaf verification
+block). Only if the unit unexpectedly ends docs-only: record `Test expectation: none` and rely on
+the grep acceptance criteria.
 
 **Acceptance-criteria mapping:** AC1 (`grep -n "background" CLAUDE.md`) → the docs section; AC2
-(outcome capturable from a named file) → the result marker; AC3 (lock/re-entry greppable) → the
-lock + rule; AC4 (`bash -n` + 0/1/2 restated) → syntax check + doc text.
+(outcome capturable from a named file) → the result marker; AC3 (lock OR re-entry rule greppable)
+→ the documented safe re-entry rule (default), or the explicitly-justified lock alternative with
+its mandatory stale-lock rule; AC4 (`bash -n` + 0/1/2 restated) → syntax check + doc text.
 
 **Dependencies:** after U15. Until this unit merges, all units background the gate manually with
 output redirection (contract rule).
@@ -921,10 +991,14 @@ missing lane dir fails loud; endpoint-position check.
    surfaced in `tools/` are triaged in-unit (trivial fix or annotation).
 4. Reduce the vacuous disjunct at `tests/real_adapter/test_worktree_liveness.py:74` to the single
    meaningful assertion.
-5. Wiring canary coupling: document the hard coupling to the literal `name: readonly-verifier`
-   anchor at both ends (the canary test and `plugins/saga/agents/readonly-verifier.md`) — chosen
-   over a fixture-only rewrite because the live-registry execution is the canary's point; the
-   documentation makes the rename hazard visible, which is the defect.
+5. Wiring canary coupling (S3-repaired per F11): document both ends of the coupling inside
+   `tests/test_wiring_canary.py` itself — the test quotes the saga path
+   (`plugins/saga/agents/readonly-verifier.md`) and the literal `name: readonly-verifier` anchor
+   it depends on. No lane-C write to the saga agent file. If close-out strictly requires the
+   comment in the saga agent file, that is a one-line permitted-exception to record on #787
+   first — never a silent cross-lane write. Chosen over a fixture-only rewrite because the
+   live-registry execution is the canary's point; the documentation makes the rename hazard
+   visible, which is the defect.
 6. Registry binding: bind the in-use fake (`FakeWT`) where mechanical; otherwise record beside the
    registration why the purpose-built fake stands in (the curation accepts either; the binding is
    attempted first).
@@ -941,10 +1015,9 @@ suffices).
 **Owned paths:** `scripts/lint_test_shape.py`, `scripts/check_fake_fixtures.py` (if the pairing
 needs it), `.github/workflows/ci.yml` (sole writer in this run), `tests/fakes_registry.py`,
 `tests/test_check_fake_fixtures.py`, `tests/test_lint_test_shape.py`,
-`tests/real_adapter/test_worktree_liveness.py`, `tests/test_wiring_canary.py`,
-`plugins/saga/agents/readonly-verifier.md` (doc note only, item 5). The saga-file doc note is a
-comment-only edit coordinated with lane B through global merge serialization; it changes no saga
-behavior or release surface.
+`tests/real_adapter/test_worktree_liveness.py`, `tests/test_wiring_canary.py`. No lane-C write to
+`plugins/saga/agents/readonly-verifier.md` (S3 F11) — both ends of the canary coupling are
+documented inside the canary test itself.
 
 **Tests:** the selector `uv run pytest -q -k 'fake_fixtures or test_shape or wiring_canary or
 worktree_liveness'` green; pairing-removal red-first proof; lint fixtures for the two evasion
@@ -990,6 +1063,10 @@ draft; fixing the draft and gating readiness fixes the body).
 `plugins/mission-control/tests/test_sdlc_draft_revision.py` (new — path per KTD8),
 mission-control release surfaces + marketplace.
 
+**Superseded leaf verification (S3 F9):** the leaf's `tests/test_sdlc_draft_revision.py` spelling
+is superseded — the module is created at `plugins/mission-control/tests/test_sdlc_draft_revision.py`;
+close-out runs the plugin-path commands; no shim file is left at the stale repo-root location.
+
 **Tests:** prepare a draft in a tmp path, revise it twice through the confirmed path, assert
 exactly two `---` fences and one body (`grep -c '^---$'` = 2 asserted in-test); a deliberately
 doubled draft fails readiness with a blocking gap naming the multi-fence shape; the rendered
@@ -1005,7 +1082,8 @@ created-body assertion (zero fences, no duplicated section pairs) per the curati
 
 **Goal:** close R1/R2/R4 and the R3 residual from the #424 panel.
 
-**Smallest viable fix:** four bounded edits:
+**Smallest viable fix (S3-repaired per F1/F2/F3):** two bounded edits, one verification, one
+output fix:
 
 - R1: paginate `QUERY_GET_PROJECT_FIELDS` (`sdlc_manager.py:941`, `fields(first: 30)` with no
   `hasNextPage`) and the census path (`board_census.py`) with a `hasNextPage` loop through the
@@ -1014,18 +1092,33 @@ created-body assertion (zero fences, no duplicated section pairs) per the curati
 - R2: make `plugins/mission-control/scripts/check_pagination.py` query-scoped (per-query analysis
   instead of the file-level `hasNextPage` text check at `:115-119`), so an unpaginated query inside
   a file that paginates elsewhere is flagged; fixture-pinned.
-- R4: `board_move` fails loud on an unresolvable Status option (`sdlc_manager.py:1259-1266`
-  soft-continue), matching `flow_set_field`'s RuntimeError behavior (`:2387-2393`); test-pinned.
-  (The dormant `_sync_label_fields_for_item` half is recorded as observed-not-in-AC — no
-  `label_fields` key exists in project-mappings.json today; noted in the PR, not changed.)
-- R3 residual (KTD7): the parity live leg self-reports — `check_issue_contract_parity.py` (via its
-  generation source under `plugins/mission-control/config/generated/`; locate the generator before
-  editing) prints an explicit "SKIP: unauthenticated (<reason>)" when the live leg cannot run, so
-  CI output shows the skip without touching `ci.yml` (U18 is the sole ci.yml writer).
+- R4 is already shipped (F1, P0): an unresolvable Status option is fail-loud today —
+  `sdlc_manager.py:1293-1301` sets `failed = True`, the CLI maps False → `SystemExit(1)` at
+  `:6040-6047`, the option `RuntimeError` lives in `_resolve_field_option` (`:2425-2430`), and
+  `plugins/mission-control/tests/test_board_move_exit.py` pins it as #609. This unit re-runs the
+  #609 tests; if green, R4 is recorded as already satisfied in the PR and the #584 close-out. No
+  change to `board_move`. (This plan's earlier `:1259-1266`/`:2387-2393` citations were stale and
+  are corrected by this disposition. The dormant `_sync_label_fields_for_item` half stays recorded
+  as observed-not-in-AC — no `label_fields` key exists in project-mappings.json today; noted in
+  the PR, not changed.)
+- R3 residual (KTD7, F2/F3): `check_issue_contract_parity.py` prints its live-leg skip only under
+  `if args.live` (`:184-201`), and neither CI (`ci.yml:40`) nor `gate.sh:119` passes `--live` — so
+  the leg is silently absent today. Repair: on the default (no `--live`) path print
+  `SKIPPED live parity leg: <reason>` so no invocation is ever silent; `ci.yml` untouched by this
+  unit (U18 is its sole writer). There is no generator for this script in this repo — only the two
+  data modules carry `.sha256` sidecars, and the repo already hand-edits the script (the `--live`
+  leg itself) — so edit
+  `plugins/mission-control/config/generated/check_issue_contract_parity.py` directly; never open
+  `infiquetra-sdlc`. The leaf acceptance criterion reads: "CI either runs the parity `--live` leg
+  with an explicit printed SKIP-with-reason when unauthenticated (never silently absent), or
+  `ci.yml` carries an inline decision comment saying why not." If close-out reads that strictly as
+  attempt-live-then-skip, the default path gains the live attempt behind an auth probe — decided
+  at the unit against the quoted criterion.
 
 **Existing mechanism reused:** `paginate_or_raise` (the exact helper #424 installed for this
 class), the existing lint's fixture tests (`plugins/mission-control/tests/test_check_pagination.py`),
-`flow_set_field`'s fail-loud idiom.
+and the already-shipped #609 fail-loud behavior pinned by
+`plugins/mission-control/tests/test_board_move_exit.py`.
 
 **New moving parts:** none — pagination through the existing helper, a lint scope fix, an error
 raise, a printed skip.
@@ -1033,18 +1126,24 @@ raise, a printed skip.
 **Larger alternative rejected:** giving CI a Projects-scoped token so the live legs really run
 (credential/infrastructure change out of proportion for a single-user repo; the explicit printed
 SKIP satisfies the "skipped, not silently passed" contract); a generalized fail-loud sweep across
-every write path (R4's AC names `board_move`; the dormant path is recorded, not speculatively
+every write path (R4 is already shipped as #609; the dormant path is recorded, not speculatively
 hardened).
 
 **Owned paths:** `plugins/mission-control/scripts/sdlc_manager.py`,
 `plugins/mission-control/scripts/board_census.py`,
 `plugins/mission-control/scripts/check_pagination.py`,
-`plugins/mission-control/config/generated/check_issue_contract_parity.py` (via its source),
+`plugins/mission-control/config/generated/check_issue_contract_parity.py` (edited directly — no
+generator exists in this repo, S3 F3),
 `plugins/mission-control/tests/` (test_check_pagination.py, test_board_census.py,
 test_board_move_exit.py extensions), mission-control release surfaces + marketplace.
 
-**Tests:** >30-field pagination fixture; query-scoped lint fixture; `board_move` RuntimeError pin;
-parity-skip output assertion; selector `uv run pytest -q -k 'sdlc_manager or board_census or
+**Superseded leaf verification (S3 F9):** the leaf's repo-root `scripts/check_pagination.py`
+spelling is superseded — the checker is `plugins/mission-control/scripts/check_pagination.py`;
+close-out runs the plugin-path commands; no shim files at stale locations.
+
+**Tests:** >30-field pagination fixture; query-scoped lint fixture; the #609 test re-run
+(`test_board_move_exit.py`) recording R4 as already satisfied; default-path parity-skip output
+assertion; selector `uv run pytest -q -k 'sdlc_manager or board_census or
 pagination'` green.
 
 **Acceptance-criteria mapping:** the four curation checkboxes map to the four bullets; the fifth
@@ -1090,9 +1189,10 @@ pagination'` green.
   re-resolves its version at merge time; merges are one-at-a-time.
 - **U18 item 3 (bandit over `tools/`) surfaces findings:** the step is advisory in CI; findings are
   triaged in-unit; worst case is an annotation, never a blocked merge.
-- **U20's parity script is under `config/generated/`:** the unit locates the generation source
-  first; editing only the generated artifact would be overwritten and is prohibited by the unit's
-  own steps.
+- **U20's parity script is under `config/generated/` but has no generator in this repo** (S3 F3):
+  the directory name is historical — only the two data modules carry `.sha256` sidecars, and the
+  repo already hand-edits the script — so it is edited directly, and `infiquetra-sdlc` is never
+  opened.
 - **U13 sign-off timing:** the run does not wait on the gate to finish other lanes; #692 parks
   cleanly if sign-off does not arrive (19/20 is a defined success).
 - **U4 depends on live-picker behavior:** the recipe reads the live picker and refuses unavailable

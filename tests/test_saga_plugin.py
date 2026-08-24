@@ -45,7 +45,9 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.139.1"  # #691: advisory accumulator cross-unit bleed fix
+    assert (
+        plugin_json["version"] == "0.139.2"
+    )  # #694: workflow lease execution TTL derived from run scale
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]

@@ -1649,6 +1649,19 @@ def unit_spend(unit: Unit) -> int:
     return total
 
 
+def unit_multiplicity(unit: Unit) -> int:
+    """Multiplicity-aware agent invocation count for one unit (#694).
+
+    Accounts for fan-out targets and verifier panels (including consensus iteration rounds)
+    mirroring the call structure in ``unit_spend``.
+    """
+    calls = len(unit.targets) if (unit.fanout and unit.targets) else 1
+    if unit.verify is not None:
+        iterations = unit.verify.max_iterations if unit.verify.iterate_to_consensus else 1
+        calls += unit.verify.n * iterations
+    return calls
+
+
 @dataclass
 class SpendEnvelope:
     """Run-scoped spend accumulator (#366 U3) -- 'ask once, at the crossing'.
@@ -1726,6 +1739,10 @@ class ExecutionSpec:
     def spec_spend(self) -> int:
         """The multiplicity-aware summed ordinal spend across every unit (#366 KTD8)."""
         return sum(unit_spend(u) for u in self.units)
+
+    def multiplicity_aware_unit_count(self) -> int:
+        """The multiplicity-aware summed unit count across every unit (#694)."""
+        return sum(unit_multiplicity(u) for u in self.units)
 
     def validate(
         self,
@@ -3649,6 +3666,7 @@ def workflow_lease_metadata(
     batch_id = (
         None if invocation_digest is None else f"workflow:{spec_digest[:24]}:{invocation_digest}"
     )
+    execution_ttl = max(900, 300 * spec.multiplicity_aware_unit_count())
     return {
         "schema": "workflow_lease_reservation.v1",
         "batch_id": batch_id,
@@ -3661,7 +3679,7 @@ def workflow_lease_metadata(
         "policy_sha256": limits.policy_sha256(),
         "mutation": mutation,
         "claim_ttl_seconds": 30,
-        "execution_ttl_seconds": 300,
+        "execution_ttl_seconds": execution_ttl,
         "slots": [f"slot-{index:03d}" for index in range(1, width + 1)],
         "workload_unit_ids": [unit.unit_id for unit in spec.units],
         "requires_prelaunch_reservation": True,

@@ -529,6 +529,20 @@ def main(argv: list[str] | None = None) -> int:
             Path(args.ledger_dir).resolve() if args.ledger_dir else _default_ledger_dir(repo_root)
         )
         payload = json.loads(args.payload) if args.payload else None
+        cert = _cert()
+        if cert.authorize_write(args.op) != cert.AUTHORIZED:
+            record = authorize_and_write(
+                args.op,
+                args.repo,
+                args.number,
+                args.target_state,
+                board_writer=lambda **_kw: None,
+                ledger_dir=ledger_dir,
+                payload=payload,
+            )
+            print(json.dumps(record))
+            return 0
+
         try:
             mission_control_root, _rung = resolve_mission_control_root()
         except RuntimeError as exc:

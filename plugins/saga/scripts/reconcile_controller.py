@@ -413,6 +413,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "reconcile":
         bp = _bp()
+        cert = _cert()
         repo_root = Path(args.repo_root).resolve() if args.repo_root else _repo_root_default()
         ledger_dir = (
             Path(args.ledger_dir).resolve()
@@ -420,6 +421,20 @@ def main(argv: list[str] | None = None) -> int:
             else bp._default_ledger_dir(repo_root)  # noqa: SLF001
         )
         payload = json.loads(args.payload) if args.payload else None
+        if cert.authorize_write(args.op) != cert.AUTHORIZED:
+            record = reconcile_op(
+                args.op,
+                args.repo,
+                args.number,
+                args.target_state,
+                board_writer=lambda **_kw: None,
+                ledger_dir=ledger_dir,
+                live_reader=None,
+                payload=payload,
+            )
+            print(json.dumps(record))
+            return 0
+
         try:
             mission_control_root, _rung = bp.resolve_mission_control_root()
         except RuntimeError as exc:

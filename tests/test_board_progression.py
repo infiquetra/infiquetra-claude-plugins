@@ -304,6 +304,65 @@ def test_cli_gated_op_prints_gated_exit_zero(tmp_path: Path, capsys: Any) -> Non
     assert rc == 0
 
 
+def test_cli_gated_op_unresolvable_mission_control_still_gated_exit_zero(
+    tmp_path: Path, capsys: Any, monkeypatch: Any
+) -> None:
+    """#652: a gated op evaluates the certificate BEFORE resolving mission-control, returning
+    {"status":"gated"} and exiting 0 even when mission-control cannot be resolved."""
+
+    def boom() -> tuple[Path, int]:
+        raise RuntimeError("plugin-resolution: could not resolve a 'mission-control' root")
+
+    monkeypatch.setattr(BP, "resolve_mission_control_root", boom)
+    rc = BP.main(
+        [
+            "write",
+            "--op",
+            "merge-pr",
+            "--repo",
+            "infiquetra/x",
+            "--number",
+            "42",
+            "--ledger-dir",
+            str(tmp_path),
+        ]
+    )
+    out = json.loads(capsys.readouterr().out)
+    assert out["status"] == "gated"
+    assert out["verdict"] == "GATE"
+    assert rc == 0
+
+
+def test_cli_authorized_op_unresolvable_mission_control_exits_nonzero(
+    tmp_path: Path, capsys: Any, monkeypatch: Any
+) -> None:
+    """#652: an authorized op in an unresolvable environment fails loud with exit 1 and stderr error."""
+
+    def boom() -> tuple[Path, int]:
+        raise RuntimeError("plugin-resolution: could not resolve a 'mission-control' root")
+
+    monkeypatch.setattr(BP, "resolve_mission_control_root", boom)
+    rc = BP.main(
+        [
+            "write",
+            "--op",
+            "set-field-status",
+            "--repo",
+            "infiquetra/x",
+            "--number",
+            "42",
+            "--target-state",
+            "Done",
+            "--ledger-dir",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 1
+    err = json.loads(capsys.readouterr().err.strip())
+    assert err["ok"] is False
+    assert "could not resolve" in err["error"]
+
+
 def test_cli_authorized_op_written(tmp_path: Path, capsys: Any, monkeypatch: Any) -> None:
     """CLI: an authorized op prints {"status":"written"} — concrete writer patched (no live gh)."""
     calls: list[tuple[str, str, int]] = []

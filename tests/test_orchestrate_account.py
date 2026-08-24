@@ -545,3 +545,155 @@ class TestCmdGoAccountIntegration:
         assert "account mismatch" in worker.note
         # Task was never sent to the worker on the wrong account
         assert sent_tasks == []
+
+
+@pytest.mark.usefixtures("launcher_on_path")
+class TestStatuslineAccountEvidence:
+    """The account is read off the session's own statusline, which exists at preflight time.
+
+    Claude writes ``projects/<slug>/<id>.jsonl`` when the first prompt arrives, and preflight runs
+    before the task is sent, so a transcript-only check has nothing to read at the moment it runs.
+    """
+
+    @staticmethod
+    def _pane(monkeypatch: pytest.MonkeyPatch, orchestrate: ModuleType, text: str | None) -> None:
+        def fake_run(cmd: list[str], *args: Any, **kwargs: Any) -> Any:
+            if cmd[:3] == ["herdr", "pane", "read"]:
+                if text is None:
+                    return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="no such pane")
+                return subprocess.CompletedProcess(cmd, 0, stdout=text, stderr="")
+            raise AssertionError(f"unexpected command {cmd}")
+
+        monkeypatch.setattr(orchestrate, "run", fake_run)
+        monkeypatch.setenv("USER", "jefcox")
+
+    def test_company_statusline_is_read_as_company(
+        self, orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._pane(
+            monkeypatch,
+            orchestrate,
+            "  jefcox [company]:/infiquetra/rev-781 (review/781)   /rc\n",
+        )
+        assert orchestrate.pane_account_label("pane-1") == "company"
+
+    def test_plain_statusline_is_read_as_personal(
+        self, orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._pane(monkeypatch, orchestrate, "  jefcox:/infiquetra/rev-781 (review/781)   /rc\n")
+        assert orchestrate.pane_account_label("pane-1") == "personal"
+
+    def test_unreadable_pane_reports_nothing(
+        self, orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._pane(monkeypatch, orchestrate, None)
+        assert orchestrate.pane_account_label("pane-1") is None
+
+    def test_statuslineless_pane_reports_nothing(
+        self, orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._pane(monkeypatch, orchestrate, "some agent output with no statusline row\n")
+        assert orchestrate.pane_account_label("pane-1") is None
+
+    def test_ansi_coloured_statusline_is_read(
+        self, orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._pane(
+            monkeypatch,
+            orchestrate,
+            "\x1b[0;36mjefcox\x1b[0m\x1b[0;35m [company]\x1b[0m:/infiquetra/rev-781\n",
+        )
+        assert orchestrate.pane_account_label("pane-1") == "company"
+
+    def test_statusline_wins_over_a_stale_transcript_under_the_other_root(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        fake_claude_roots: tuple[Path, Path],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        personal_root, _ = fake_claude_roots
+        slug = orchestrate.claude_project_slug(repo)
+        (personal_root / slug).mkdir(parents=True, exist_ok=True)
+        (personal_root / slug / "old.jsonl").write_text("{}\n")
+        self._pane(monkeypatch, orchestrate, "jefcox [company]:/x (main)\n")
+        unit = orchestrate.Unit(
+            name="worker", vendor="claude", task="do work", worktree=str(repo), account="company"
+        )
+        assert orchestrate.check_unit_account(unit, "pane-1", seconds=0) == (True, None)
+
+    def test_no_transcript_yet_and_personal_statusline_is_a_loud_mismatch(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        fake_claude_roots: tuple[Path, Path],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The 2026-08-23 incident, at the moment preflight actually runs: no transcript exists."""
+        self._pane(monkeypatch, orchestrate, "jefcox:/infiquetra/orch-u5 (orch/r1-u5)\n")
+        unit = orchestrate.Unit(
+            name="worker", vendor="claude", task="do work", worktree=str(repo), account="company"
+        )
+        ok, error = orchestrate.check_unit_account(unit, "pane-1", seconds=0)
+        assert ok is False
+        assert error is not None and "on the personal account when company was required" in error
+
+    def test_unreadable_account_is_a_stop_not_a_pass(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        fake_claude_roots: tuple[Path, Path],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        self._pane(monkeypatch, orchestrate, None)
+        unit = orchestrate.Unit(
+            name="worker", vendor="claude", task="do work", worktree=str(repo), account="company"
+        )
+        ok, error = orchestrate.check_unit_account(unit, "pane-1", seconds=0)
+        assert ok is False
+        assert error is not None and "account unverified" in error
+
+    def test_unknown_account_value_is_rejected_rather_than_ignored(
+        self, orchestrate: ModuleType, repo: Path
+    ) -> None:
+        unit = orchestrate.Unit(
+            name="worker", vendor="claude", task="do work", worktree=str(repo), account="compnay"
+        )
+        ok, error = orchestrate.check_unit_account(unit, "pane-1", seconds=0)
+        assert ok is False
+        assert error is not None and "unknown account selection" in error
+
+    def test_no_account_requested_is_not_checked(self, orchestrate: ModuleType, repo: Path) -> None:
+        unit = orchestrate.Unit(name="worker", vendor="claude", task="do work", worktree=str(repo))
+        assert orchestrate.check_unit_account(unit, "pane-1", seconds=0) == (None, None)
+
+    def test_dotted_worktree_slug_matches_claudes_own(self, orchestrate: ModuleType) -> None:
+        """``/Users/jefcox/.claude`` is stored as ``-Users-jefcox--claude``: dots become dashes."""
+        assert orchestrate.claude_project_slug("/Users/jefcox/.claude") == "-Users-jefcox--claude"
+
+    def test_non_claude_unit_naming_an_account_is_recorded_as_requested_not_confirmed(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        fake_claude_roots: tuple[Path, Path],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A vendor with no account to read must not have one stamped as confirmed."""
+        unit = orchestrate.Unit(
+            name="worker",
+            vendor="grok",
+            task="do work",
+            worktree=str(repo),
+            account="company",
+            tab_id="tab-9",
+            pane_id="pane-9",
+        )
+        monkeypatch.setattr(
+            orchestrate,
+            "live_agents",
+            lambda: [{"pane_id": "pane-9", "cwd": str(repo), "interactive_ready": True}],
+        )
+
+        receipt = orchestrate.verify_unit_preflight(unit, "pane-9", ready=True)
+        assert "account" in receipt["requested_only"]
+        assert "account" not in receipt["confirmed_against_herdr"]

@@ -1431,6 +1431,12 @@ def agent_argv(
 LAUNCH_SETTLE_SECONDS = 30.0
 DELIVERY_CHECK_SECONDS = 15.0
 DELIVERY_RESENDS = 2
+
+# How long to give a new session to say which account it is on. A session that is interactive has
+# painted its statusline, so this is a short grace for the paint rather than a wait for the tool:
+# the other answer, a transcript under one of the two roots, does not arrive until the first prompt
+# does, which is after this check.
+ACCOUNT_SETTLE_SECONDS = 10.0
 DELIVERY_WARNING = (
     "SENT BUT NEVER STARTED: idle after being given its task. Check the tab before "
     "trusting this unit -- it may have been prompted while still booting."
@@ -1693,9 +1699,14 @@ def claude_transcript_roots() -> tuple[Path, Path]:
 
 
 def claude_project_slug(worktree: str | Path) -> str:
-    """The project directory slug Claude generates for a given worktree path."""
+    """The project directory slug Claude generates for a given worktree path.
+
+    Every separator and dot becomes a dash: ``/Users/jefcox/.claude`` is stored as
+    ``-Users-jefcox--claude``, which is where the dot belongs in this class -- a worktree whose
+    name carries one would otherwise be looked for under a directory that does not exist.
+    """
     resolved = Path(worktree).resolve().as_posix()
-    return re.sub(r"[/\\:]", "-", resolved)
+    return re.sub(r"[/\\:.]", "-", resolved)
 
 
 def find_claude_transcripts(root: Path, worktree: str | None) -> list[Path]:
@@ -1711,69 +1722,116 @@ def find_claude_transcripts(root: Path, worktree: str | None) -> list[Path]:
     return matches
 
 
-def check_unit_account(unit: Unit) -> tuple[bool | None, str | None]:
-    """Check whether a launched Claude unit's transcript matches the requested account.
+def transcript_account(unit: Unit) -> str | None:
+    """Which account's transcript root holds this worker's session, when either one does.
+
+    Both roots can hold a transcript for the same worktree -- a relaunch after a wrong-account
+    launch leaves the earlier one in place -- so the newer file decides. Returns ``None`` while
+    neither root has one, which is the ordinary state at preflight: Claude writes
+    ``projects/<slug>/<id>.jsonl`` when the first prompt arrives, and preflight runs before the
+    task is sent.
+    """
+    personal_root, company_root = claude_transcript_roots()
+    newest: list[tuple[float, str]] = []
+    for label, root in (("personal", personal_root), ("company", company_root)):
+        files = find_claude_transcripts(root, unit.worktree)
+        if files:
+            newest.append((max(f.stat().st_mtime for f in files), label))
+    if not newest:
+        return None
+    return max(newest)[1]
+
+
+def pane_account_label(pane_id: str | None) -> str | None:
+    """The account this session's own statusline reports, or None while it does not say.
+
+    The wrapper exports ``CLAUDE_ACCOUNT_LABEL`` into the pane before the tool starts and the
+    statusline renders it beside the user -- ``jefcox [company]:`` against a plain ``jefcox:`` on
+    the personal account. That row is on screen as soon as the session is interactive, which is
+    exactly where the transcript is not, so it is the evidence a launch-time check can actually
+    read. Only what is on screen now is considered: scrollback carries the task text, and a task
+    that happens to name the operator is not a statusline.
+    """
+    if not pane_id:
+        return None
+    user = os.environ.get("USER") or os.environ.get("LOGNAME") or ""
+    if not user:
+        return None
+    proc = run(["herdr", "pane", "read", pane_id, "--source", "visible"], check=False)
+    if proc.returncode != 0:
+        return None
+    text = strip_ansi(proc.stdout)
+    last = None
+    for match in re.finditer(rf"\b{re.escape(user)}\s*(?:\[(\w+)\])?:", text):
+        last = match
+    if last is None:
+        return None
+    return (last.group(1) or "personal").lower()
+
+
+def observed_account(unit: Unit, pane_id: str | None, seconds: float) -> str | None:
+    """The account the launched session is actually on, waiting briefly for it to say.
+
+    The statusline answers first because it is painted at startup; the transcript root answers
+    for a session whose statusline this machine does not print. Neither is instant, so the window
+    is spent before the question is given up on.
+    """
+    deadline = time.monotonic() + seconds
+    while True:
+        from_pane = pane_account_label(pane_id)
+        if from_pane:
+            return from_pane
+        from_transcript = transcript_account(unit)
+        if from_transcript:
+            return from_transcript
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(1.0)
+
+
+def check_unit_account(
+    unit: Unit, pane_id: str | None = None, seconds: float = ACCOUNT_SETTLE_SECONDS
+) -> tuple[bool | None, str | None]:
+    """Check whether a launched Claude unit is on the account the plan asked for.
 
     Returns:
-        (True, None) if transcript was found in the expected root.
-        (False, error_msg) if transcript was found in the wrong root (mismatch).
-        (None, None) if no transcripts exist yet or account check is not applicable.
+        (True, None) when the session reports the requested account.
+        (False, error_msg) when it reports a different one, when the plan named an account this
+        script does not know, or when no account could be read at all -- an unverified account is
+        a stop, not a pass, because the failure being guarded against is invisible by nature.
+        (None, None) when no account was requested, or the vendor has no account to check.
     """
-    if unit.vendor != "claude" or not unit.account or not unit.worktree:
+    if unit.vendor != "claude" or not unit.account:
         return None, None
-
-    personal_root, company_root = claude_transcript_roots()
-    personal_files = find_claude_transcripts(personal_root, unit.worktree)
-    company_files = find_claude_transcripts(company_root, unit.worktree)
 
     if is_company_account(unit.account):
-        if personal_files and not company_files:
-            return (
-                False,
-                f"account mismatch: worker transcript found under personal root ({personal_root}) "
-                f"when company account ({company_root}) was required",
-            )
-        if personal_files and company_files:
-            latest_personal = max(f.stat().st_mtime for f in personal_files)
-            latest_company = max(f.stat().st_mtime for f in company_files)
-            if latest_personal > latest_company:
-                return (
-                    False,
-                    f"account mismatch: worker transcript under personal root ({personal_root}) "
-                    f"is newer than company root ({company_root})",
-                )
-            return True, None
-        if company_files:
-            return True, None
-        return None, None
+        requested = "company"
+    elif is_personal_account(unit.account):
+        requested = "personal"
+    else:
+        return (
+            False,
+            f"unknown account selection {unit.account!r}; expected 'company' or 'personal'",
+        )
 
-    if is_personal_account(unit.account):
-        if company_files and not personal_files:
-            return (
-                False,
-                f"account mismatch: worker transcript found under company root ({company_root}) "
-                f"when personal account ({personal_root}) was required",
-            )
-        if company_files and personal_files:
-            latest_company = max(f.stat().st_mtime for f in company_files)
-            latest_personal = max(f.stat().st_mtime for f in personal_files)
-            if latest_company > latest_personal:
-                return (
-                    False,
-                    f"account mismatch: worker transcript under company root ({company_root}) "
-                    f"is newer than personal root ({personal_root})",
-                )
-            return True, None
-        if personal_files:
-            return True, None
-        return None, None
-
-    return None, None
+    observed = observed_account(unit, pane_id, seconds)
+    if observed is None:
+        return (
+            False,
+            f"account unverified: the session reported no account in its statusline and neither "
+            f"transcript root holds its session, so {requested!r} could not be confirmed",
+        )
+    if observed != requested:
+        return (
+            False,
+            f"account mismatch: worker is on the {observed} account when {requested} was required",
+        )
+    return True, None
 
 
-def verify_unit_account(unit: Unit) -> bool | None:
+def verify_unit_account(unit: Unit, pane_id: str | None = None) -> bool | None:
     """Verify the account for a launched unit, closing the session and raising on mismatch."""
-    confirmed, error = check_unit_account(unit)
+    confirmed, error = check_unit_account(unit, pane_id)
     if error:
         close_run_session(unit)
         unit.status = ACCOUNT_MISMATCH
@@ -1835,7 +1893,11 @@ def verify_unit_preflight(
         observed_ready = bool(row.get("interactive_ready")) if ready is None else bool(ready)
         confirmed.append("readiness")
 
-    account_confirmed = verify_unit_account(unit)
+    # A Claude unit that names an account either confirms it or raises: an account that could not
+    # be read is the failure this check exists for, wearing the same face as one that was never
+    # checked. Every other vendor has no account to read, so a unit that names one anyway is
+    # recorded as having asked rather than as having been confirmed.
+    account_confirmed = verify_unit_account(unit, pane_id)
     if unit.account:
         if account_confirmed:
             confirmed.append("account")

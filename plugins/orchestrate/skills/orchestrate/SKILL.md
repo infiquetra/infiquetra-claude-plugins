@@ -153,14 +153,19 @@ The run's `account` field (`company` or `personal`) is the default every unit in
 its own `account` and that wins. There is no other precedence.
 
 For Claude units, selecting `company` emits `--company-account` after the vendor token, directing the
-wrapper to swap configuration directories (`~/.claude-company`) before launching. Non-Claude vendors
-preserve account selections via passthrough.
+wrapper to swap configuration directories (`~/.claude-company`) before launching. The field is Claude-only
+today: other vendors ignore it, and a vendor-specific account flag goes in that unit's `launch_args`.
 
-**Post-launch account verification.** After launch, Orchestrate probes the worker's transcript root
-(`~/.claude-company/projects` vs `~/.claude/projects`). If an account mismatch is detected (such as a
-worker launched under a company-account plan whose transcript lands under the personal root),
-Orchestrate immediately closes the run-owned session and marks the unit launch failed with the named
-state `account_mismatch` — never allowing a unit to silently run under the personal account.
+**Post-launch account verification.** Before the task is submitted, Orchestrate reads the session's own
+statusline off the pane, which reports the account the wrapper put the session on (`jefcox [company]`
+against a plain `jefcox`). Where a machine does not print that, it falls back to which transcript root
+(`~/.claude-company/projects` vs `~/.claude/projects`) holds the session. If the account read back is not
+the one the plan asked for — or if no account can be read at all within `ACCOUNT_SETTLE_SECONDS` —
+Orchestrate closes the run-owned session and marks the unit launch failed with the named state
+`account_mismatch`, never allowing a unit to silently run under the wrong account. A plan naming an
+account value other than `company` or `personal` fails the same way rather than quietly launching
+under whatever the environment defaults to. A unit that sets no `account` is not checked and keeps
+today's behaviour.
 
 ## Agents
 

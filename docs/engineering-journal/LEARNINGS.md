@@ -21,6 +21,22 @@
 
 ## 2026-08-24
 
+### A launch-time account check has to read the statusline, because the transcript is not written yet  {#orchestrate-account-evidence-timing}
+
+**Context.** Issue #781: four Orchestrate workers launched from a company-account coordinator on 2026-08-23 all came up on the personal account — wrong billing and rate-limit pool, a different plugin tree, transcripts under the wrong identity, and invisible until someone checked where the transcripts landed. The fix adds a plan-level `account` field, emits `--company-account` for Claude units, and verifies the account before the task is submitted.
+
+**Evidence.** The first version of that verification probed the transcript roots (`~/.claude/projects` vs `~/.claude-company/projects`) for a `*.jsonl` belonging to the unit's worktree. It never fires. `launch()` calls `verify_unit_preflight` before `send()`, and Claude creates `projects/<slug>/<session-id>.jsonl` when the **first prompt arrives**, not at startup: in this repo's own review worktree the project directory `~/.claude-company/projects/-Users-jefcox-workspace-infiquetra-rev-781/` was born at 09:49:47 and its transcript at 09:50:14, 26.8 seconds later; the same ordering held for `rev-780` (+3s), `rev-779` (+45s) and eight of twelve sampled sessions (+10–30s), and `-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/b6ef4122-dd5a-46b9-9301-573a7e720a66/` is a session directory with no transcript at all. So both roots are empty at preflight, the check returns "cannot tell", `account` lands in `requested_only`, the receipt still reads `verified: true`, and the task goes to a worker whose account was never established — the 2026-08-23 failure, reproduced unflagged.
+
+**Mechanism.** The evidence a launch-time check needs must exist at launch time. A transcript is a record of work; it cannot predate the work. What does exist the moment the session is interactive is the session's own statusline: `~/.local/bin/agent-herdr` runs `export CLAUDE_CONFIG_DIR=… CLAUDE_ACCOUNT_LABEL=company` in the pane before starting the tool (`_configure_claude_company_account`), and `~/.claude/statusline-command.sh:778-780` renders that as ` [company]` beside the user. Read off a live pane: `jefcox [company]:/infiquetra/rev-781 (review/781)`.
+
+**Fix.** `pane_account_label()` reads the account off the pane's visible rows through the existing `herdr pane read` seam, `transcript_account()` keeps the root probe as the fallback for a machine that does not print it, and `observed_account()` spends `ACCOUNT_SETTLE_SECONDS` before giving up. An account that reads back wrong, an account value the script does not know, and an account that cannot be read at all are all `account_mismatch`: the session is closed and no task is submitted.
+
+**Validation.** `tests/test_orchestrate_account.py` — 29 tests, including the 2026-08-23 incident at the moment preflight actually runs (personal statusline, no transcript on either root), an unreadable account treated as a stop rather than a pass, and a stale transcript under the other root losing to the live statusline.
+
+**Generalizable rule.** Before writing a check, ask when its evidence comes into existence relative to when the check runs. A probe for evidence that arrives later does not fail — it returns "unknown", which is indistinguishable from "fine" unless you make unknown a stop. Extends {#opencode-variants-picker-live-resolution}: that entry's rule was to write a check against fields the source actually publishes; this one is to write it against evidence the source has published *yet*.
+
+**Refs.** Issue #781, PR #805; {#opencode-variants-picker-live-resolution}.
+
 ### OpenCode variant ladder is an interactive live picker, not a flag or a static guess  {#opencode-variants-picker-live-resolution}
 
 **Context.** OpenCode does not take reasoning effort or model variant as a command-line flag during interactive session launch. Its effort ladder (`Default`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) is exposed exclusively through the interactive `/variants` picker inside the TUI. When a Team Mimir deployment run requested "maximum available" variant, Orchestrate's guidance previously claimed the picker could not be automated from unattended tabs, prompting the coordinator to explore unsupported headless `opencode run` and `AgentConfig.variant` workarounds.

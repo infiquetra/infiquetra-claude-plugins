@@ -21,6 +21,23 @@
 
 ## 2026-08-24
 
+### One unattended Orchestrate run closed the defects-claude-plugins Objective end to end  {#unattended-orchestrate-run-787}
+
+**Context.** Run `orch-2026-08-24-787` executed the issue #787 contract unattended: one Fable 5 plan, one Grok 4.6 doc review (17/17 findings validated and repaired), twenty Antigravity work units across four serialized lanes, twenty one-process Opus 5 Saga Code Reviews, twenty serialized squash-merges, and one operator decision gate (#692) that parked on a draft PR and resumed on the recorded ruling.
+
+**Evidence.** Issue #787 (opening comment: S0 preflight + S3 finding-disposition ledger; closing comment: per-lane outcome tables), PRs #788–#809, defect #792, and the final `GATE GREEN — 24 steps, 0 blocking failures` at merged HEAD `2660d0c2`.
+
+**Mechanism.** Three failure classes dominated an otherwise clean run. (1) The saga pre-push gate runs pytest inside the session hook's ~40-column terminal, where an argparse help-text assert wraps and fails — every in-session `git push` was blocked by one environmental false positive (6,204/6,206 green); pushes were routed through plain Herdr shell panes with CI as the arbiter, and two Opus reviewers independently hit and diagnosed the same wall. (2) Herdr `idle` flickers between an agent's polling turns made pane-state settlement false-positive twice; only evidence-based settlement — commits on the branch, an open PR, a typed reply — never misfired, the same model #780 then shipped into orchestrate's own `settle`. (3) Every plugin PR bumps `.claude-plugin/marketplace.json`, so each serialized merge re-dirties the surviving PRs; the tax is one reintegration per merge (PR #805 took three).
+
+**Fix (or queued).** The width-stable-assert fix is filed as defect #792 (on the board, outside the run's frozen scope). The settlement fix merged inside the run itself (#780 via PR #793). The merge-queue tax has no code fix — the durable practice is a short queue and an immediate reintegration after each merge.
+
+**Validation.** All twenty leaves merged with `accepted` review outcomes; the closing GraphQL sweep showed 20/20 sub-issues CLOSED with board Status Done and Objective intact, zero deviations.
+
+**Generalizable rule.** In unattended multi-agent runs, settle only on durable evidence artifacts — commits, pull requests, typed outcomes — never on pane or agent state; and never let a session-environment gate overrule CI: route around it loudly, file the environmental defect, and disclose the bypass in the PR record.
+
+**Refs.** Issue #787 closing comment; defect #792; the #692 quorum DECISIONS entry (same date).
+
+
 ### A `pass_rule`-narrowing guard is load-bearing correctness, and a green suite does not pin it  {#pass-rule-exclusion-guard-needs-its-own-pin-692}
 
 **Context.** Leaf #692 (Option 3, missing-aware quorum tightening) added a fail-closed gate to the

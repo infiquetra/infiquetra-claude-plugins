@@ -1579,9 +1579,14 @@ def live_agents(*, timeout: float = 20) -> list[dict[str, Any]]:
 def run_branches(run_id: str) -> list[str]:
     """Every local unit branch of this run, exactly as git records them.
 
-    The list is the discovery source for ``check`` and ``adopt``: a unit branch that exists without
-    a row in the table is work the record lost track of. The run branch itself is excluded by the
-    pattern -- it carries no unit-name suffix, so it can never be mistaken for one.
+    The list is the discovery source for ``check``, ``adopt`` and ``status``: a unit branch that
+    exists without a row in the table is work the record lost track of. The run branch itself is
+    excluded by the pattern -- it carries no unit-name suffix, so it can never be mistaken for one.
+
+    ``check=False`` because ``status`` is a display command and reads this on every poll: a run
+    record left behind in a directory that is no longer a repository made a read-only command exit
+    non-zero on a git error it has no way to act on. ``check`` reaches ``repo_root`` first, so it
+    still fails loudly when git itself cannot answer.
     """
     proc = run(
         ["git", "branch", "--list", f"orch/{run_id}-*", "--format=%(refname:short)"], check=False
@@ -1593,9 +1598,7 @@ def run_branches(run_id: str) -> list[str]:
 
 def worktree_on_branch(branch: str) -> str | None:
     """The path of the worktree checked out on this branch, if any."""
-    proc = run(["git", "worktree", "list", "--porcelain"], check=False)
-    if proc.returncode != 0:
-        return None
+    proc = run(["git", "worktree", "list", "--porcelain"])
     wanted = branch if branch.startswith("refs/") else f"refs/heads/{branch}"
     path: str | None = None
     for line in proc.stdout.splitlines():

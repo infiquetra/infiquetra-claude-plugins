@@ -405,9 +405,11 @@ before any worktree or session is created, and must launch only through `go` via
 omits background launch flags (`--no-focus --current --herdr --herdr-control-only`), and steals
 operator focus. Unsupported post-launch setup (such as interactive OpenCode variant selection) is a
 controlled post-launch step performed inside the launched session; it does not authorize bypassing
-`expand` or `go`. Worktrees or sessions created outside the run record are flagged as unrecorded drift
-by `status` and `check`, requiring explicit adoption with `adopt --yes` or run-owned cleanup rather
-than being silently treated as valid expansion.
+`expand` or `go`. A branch in the run's `orch/<run-id>-<unit>` series with no row in the table is
+flagged as unrecorded drift by `status` and `check`, requiring explicit adoption with `adopt --yes`
+or run-owned cleanup rather than being silently treated as valid expansion. That detection reads
+branches and nothing else: a hand-made worktree or session named outside that series is invisible to
+both commands, which is the second reason never to make one.
 
 When the expansion includes Work and Code Review, make ownership executable in the rows themselves:
 

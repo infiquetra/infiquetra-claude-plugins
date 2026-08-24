@@ -21,6 +21,58 @@
 
 ## 2026-08-24
 
+### The launcher was already right; nothing made anyone use it  {#launch-seam-is-enforcement-not-implementation}
+
+**Context.** Nine Team Mimir worker launches in one run each stole the operator's UI focus.
+Orchestrate's `agent_argv` had emitted `--no-focus --current --herdr --herdr-control-only` the whole
+time and was never wrong. The coordinator simply did not call it: at the Work expansion boundary it
+made nine worktrees by hand and invoked the `agents` wrapper itself, where the wrapper's ordinary
+interactive default is `--focus`.
+
+**Evidence.** Issue #773, PR #798. `plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py`
+`agent_argv` (the flag prefix, unchanged by the fix) against the observed direct calls quoted in the
+issue, which carried `--workspace`, `--task` and `--cwd` and none of the four background flags. A
+read-only launcher dry run reproduces both halves: the direct shape resolves to
+`agent-herdr prepare ... --focus`, Orchestrate's shape to `agent-herdr prepare ... --no-focus`.
+orchestrate 1.20.3.
+
+**Mechanism.** The defect lived one level above the code. A correct central adapter only holds if
+every path reaches it, and nothing in the plugin made the expansion boundary a path: the run record
+is written by this script for actions this script performed, so a unit created outside it does not
+exist to `go`, cannot be given `agent_argv`, and cannot be reaped. Every guarantee the adapter
+offers is conditional on being called, and that condition was documented rather than enforced.
+
+**Fix.** Three edges on machinery that already existed, no new moving parts (orchestrate 1.20.4):
+regression tests that lock the complete four-flag prefix *and its position ahead of the vendor
+token* for every vendor in the permission and flag registries; a post-plan-expansion test proving
+units added by `expand` still launch through `go`; the existing `discover_unrecorded` results
+surfaced from `status` as well as `check`, so a bypass is visible on every poll; and both operator
+surfaces stating the prohibition outright. Deliberately rejected: a new `doctor` command and a
+second detector — the run plan's S3 repair (findings F7/F10) had already removed them, because
+`discover_unrecorded`, `cmd_check` and `cmd_adopt` cover the detection and the repair between them.
+
+**Validation.** 376 orchestrate tests green at PR #798. The reviewed revision also had to be walked
+back in two places found in code review: `worktree_on_branch` had been switched to a silent
+`check=False`, which suppresses the pre-`land` "run branch is checked out at ..." warning and lets
+`adopt` rebuild a unit with no worktree, and neither `status` nor `discover_unrecorded` calls it —
+only `run_branches` does, where the softening is genuinely load-bearing (`status` in a directory
+that is no longer a repository otherwise exits non-zero). Both surfaces had also claimed that
+"worktrees or sessions" outside the record are flagged, when the detector reads only branches in the
+`orch/<run-id>-<unit>` series.
+
+**What surprised.** The fix touches twelve lines of product code and three hundred lines of test.
+That ratio is the finding, not an accident of it: when implementation is already correct, the whole
+repair is the enforcement, and enforcement is mostly assertions.
+
+**Generalizable rule.** When a correct helper produces a wrong outcome, do not re-examine the helper
+— find the caller that never used it, and ask what made skipping it possible. And when you soften a
+subprocess from raising to returning, check every caller of the helper you softened: a guard that
+warns before a mutation reads a silent failure as "nothing to warn about".
+
+**Refs.** LEARNINGS [`{#idleness-is-not-completion}`](#idleness-is-not-completion); DECISIONS
+[`{#defects-run-plan-ktds-787}`](DECISIONS.md#defects-run-plan-ktds-787); plan
+`docs/plans/2026-08-24-defects-claude-plugins-run-plan.md` section U3.
+
 ### Process idleness is not task completion: settlement must verify branch evidence  {#idleness-is-not-completion}
 
 **Context.** Orchestrate's `settle` previously inferred `done` from Herdr pane idleness across two

@@ -79,9 +79,12 @@ created, and must launch only through `go` via the central `agent_argv` path. Ne
 manually or invoke `agents` directly for a run unit. Direct wrapper calls bypass Orchestrate's
 background launch flags (`--no-focus --current --herdr --herdr-control-only`) and steal operator UI
 focus. Unsupported post-launch setup (such as interactive OpenCode variant selection) is a
-controlled post-launch step, not a license to bypass `expand` or `go`. Worktrees or sessions created
-outside the run record are flagged as unrecorded drift by `status` and `check`, requiring explicit
-adoption with `adopt --yes` or run-owned cleanup rather than being silently treated as valid expansion.
+controlled post-launch step, not a license to bypass `expand` or `go`. A branch in the run's
+`orch/<run-id>-<unit>` series with no row in the table is flagged as unrecorded drift by `status` and
+`check`, requiring explicit adoption with `adopt --yes` or run-owned cleanup rather than being
+silently treated as valid expansion. That detection reads branches and nothing else: a hand-made
+worktree or session named outside that series is invisible to both commands, which is the second
+reason never to make one.
 
 **Saga's external-engine offer is answered before dispatch.** A `/doc-review` or `/code-review`
 session with no stored preference stops and asks the operator, in a tab nobody is watching. The

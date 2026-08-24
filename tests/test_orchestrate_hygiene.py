@@ -194,6 +194,11 @@ def test_clean_all_help_and_docstring_name_run_state_retention(
         orchestrate.main(["clean", "--help"])
 
     assert raised.value.code == 0
-    assert "delete run state only when cleanup keeps no work" in capsys.readouterr().out
+    # Collapsed the way this module reads SKILL.md: argparse wraps help to the terminal it is
+    # run under, so asserting against raw output makes the test pass or fail on the width of
+    # whoever runs it -- narrow panes split this line and reddened the pre-push gate while
+    # `scripts/gate.sh` and CI stayed green.
+    help_text = " ".join(capsys.readouterr().out.split())
+    assert "delete run state only when cleanup keeps no work" in help_text
     docstring = orchestrate.cmd_clean.__doc__ or ""
     assert "With ``--all``, run state is deleted only when the sweep keeps nothing" in docstring

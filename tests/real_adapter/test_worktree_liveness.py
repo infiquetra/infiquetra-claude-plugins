@@ -71,7 +71,7 @@ def test_liveness_true_for_live_worktree_via_real_git(real_repo: Path) -> None:
     path = str(WT.worktree_path(real_repo, "o", "s1"))
     assert ops.add(path, WT.worktree_name("o", "s1")) is True
     assert ops.exists(path) is True
-    assert path in {os.path.realpath(p) for p in ops.list_paths()} or ops.exists(path)
+    assert path in {os.path.realpath(p) for p in ops.list_paths()}
 
 
 def test_liveness_false_for_never_created_worktree(real_repo: Path) -> None:

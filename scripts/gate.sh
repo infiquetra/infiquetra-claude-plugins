@@ -23,16 +23,55 @@
 # job is to predict CI. Never mark a step advisory to make the gate pass.
 #
 # USAGE
-#   scripts/gate.sh                 # run everything
+#   # Supported long-run background invocation:
+#   GATE_LOG_DIR=/tmp/gate-run bash scripts/gate.sh > /tmp/gate.log 2>&1 &
+#   # Foreground inner-loop invocation:
+#   scripts/gate.sh
 #   GATE_LOG_DIR=/tmp/g scripts/gate.sh
 #
-# Exit: 0 green · 1 a blocking step failed · 2 coverage is short of ci.yml
+# RESULT CAPTURE & SAFE RE-ENTRY
+#   - Stable result marker: writes $LOG_DIR/result.txt on completion or interruption.
+#   - Safe re-entry rule: if a prior gate run timed out, was killed, or is already running:
+#       1. Check for running gate processes: pgrep -fl "scripts/gate.sh"
+#       2. Kill the stale pid that step 1 named: kill <pid>.  Do NOT reach for
+#          `pkill -f "scripts/gate.sh"` by reflex — it kills every gate on the machine,
+#          including live gate runs in your other worktrees.
+#       3. Clean up or set a fresh GATE_LOG_DIR and re-run.
+#
+# Exit: 0 green · 1 a blocking step failed · 2 coverage is short of ci.yml · 3 precondition failed
 
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
 CI=.github/workflows/ci.yml
 LOG_DIR="${GATE_LOG_DIR:-$(mktemp -d)}"
+RESULT_FILE="$LOG_DIR/result.txt"
+
+# Stable result marker capture: write the final status line to $LOG_DIR/result.txt
+# so backgrounded runs can be inspected without scraping live terminal output. The one
+# outcome with no marker is an unwritable LOG_DIR — by definition nothing can be written
+# there; that failure reports itself on stderr instead.
+_on_term() {
+  echo "GATE INTERRUPTED — killed by SIGTERM before completing all steps" > "$RESULT_FILE"
+  exit 143
+}
+trap _on_term TERM
+
+_on_int() {
+  echo "GATE INTERRUPTED — killed by SIGINT before completing all steps" > "$RESULT_FILE"
+  exit 130
+}
+trap _on_int INT
+
+_on_exit() {
+  local rc=$?
+  if [ ! -f "$RESULT_FILE" ]; then
+    if [ "$rc" -ne 0 ]; then
+      echo "GATE INTERRUPTED — exited with code $rc before completing all steps" > "$RESULT_FILE"
+    fi
+  fi
+}
+trap _on_exit EXIT
 
 # Every step redirects into LOG_DIR. If it does not exist or is not writable, the
 # redirect fails before the command runs and *every* step reports failure — which
@@ -46,6 +85,12 @@ if ! : > "$LOG_DIR/.gate-writable" 2>/dev/null; then
 fi
 rm -f "$LOG_DIR/.gate-writable"
 
+# A reused GATE_LOG_DIR (the documented /tmp/gate-run) can still hold the PREVIOUS
+# run's verdict. A run killed with an untrappable signal never overwrites it, so the
+# documented `cat $LOG_DIR/result.txt` would report that older run's GATE GREEN as
+# this run's outcome. Clear it: while a run is in flight the marker is simply absent.
+rm -f "$RESULT_FILE"
+
 # Same class of precondition. A checkout synced without the dev extra has no ruff, no
 # mypy and no pytest, so those steps fail with "No module named ..." and the run reads
 # as a broken codebase rather than an unprovisioned environment. This bites hardest in
@@ -58,6 +103,7 @@ if [ -n "$missing_tools" ]; then
   echo "gate.sh: the dev toolchain is not installed in this environment:$missing_tools" >&2
   echo "  run: uv sync --locked --extra dev" >&2
   echo "  (a fresh git worktree does not inherit the parent checkout's .venv)" >&2
+  echo "GATE PRECONDITION FAILED — dev toolchain not installed:$missing_tools" > "$RESULT_FILE"
   exit 3
 fi
 
@@ -163,7 +209,7 @@ step "Engineering-journal ordering lint" uv run python scripts/lint_journal_orde
 step "Run mypy" uv run python -m mypy plugins/ scripts/ tests/ --ignore-missing-imports
 # CI ends this step with `|| true`, so bandit findings never block a merge there.
 advisory "Run bandit security scan" \
-  uv run python -m bandit -r plugins/ scripts/ tests/ -ll -f json -o "$LOG_DIR/bandit.json"
+  uv run python -m bandit -r plugins/ scripts/ tests/ tools/ -ll -f json -o "$LOG_DIR/bandit.json"
 advisory "Report security findings" \
   bash -c 'f="$0/bandit.json"; [ -f "$f" ] && python3 -c "import json,sys;d=json.load(open(sys.argv[1]));print(\"bandit results:\",len(d[\"results\"]))" "$f"' "$LOG_DIR"
 
@@ -201,6 +247,7 @@ if [ -n "$missing" ]; then
   echo "GATE INCOMPLETE — ci.yml has pre-merge steps this gate does not cover:"
   printf '%s\n' "$missing" | sed 's/^/  - /'
   echo "NOT a pass. Cover them above, then re-run."
+  echo "GATE INCOMPLETE — ci.yml has pre-merge steps this gate does not cover" > "$RESULT_FILE"
   exit 2
 fi
 echo "coverage:       every pre-merge step in $CI is covered"
@@ -208,7 +255,9 @@ if [ "$failed" -ne 0 ]; then
   echo
   echo "GATE RED — ${failed} blocking step(s) failed:"
   printf '  - %s\n' "${FAILED_NAMES[@]}"
+  echo "GATE RED — ${failed} blocking step(s) failed: ${FAILED_NAMES[*]}" > "$RESULT_FILE"
   exit 1
 fi
 echo "GATE GREEN — ${ran} steps ran, 0 blocking failures, 0 uncovered."
 echo "logs: $LOG_DIR"
+echo "GATE GREEN — ${ran} steps ran, 0 blocking failures, 0 uncovered." > "$RESULT_FILE"

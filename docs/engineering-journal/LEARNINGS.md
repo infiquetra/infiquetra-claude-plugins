@@ -19,6 +19,572 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-08-24
+
+### A dedup-key test that changes the OLD discriminator too proves the key's format, never its behavior  {#dedup-key-test-varies-old-discriminator-598}
+
+**Context.** Leaf #598 item 1: the strand-halt ledger dedup key `repost:<scope>` was eternal, so a
+second genuine strand on the same scope never appended a second durable record. The fix added a
+generation component (`repost:<scope>:r<spec_revision>`). The shipped regression test stranded
+`deploy1` at revision 1 and `deploy2` at revision 2, then asserted two ledger records existed.
+
+**Evidence.** PR #806 at `885d3d31`, `tests/test_outcome_intent.py::test_strand_halt_dedup_key_generation_lifecycle`.
+Reproduction: revert `plugins/saga/scripts/outcome_intent.py:554` to `f"repost:{scope}"`, delete the
+test's two `["key"] ==` assertions, and the test still passes — `assert len(both) == 2` is satisfied
+by the pre-fix code.
+
+**Mechanism.** The test varied the scope AND the revision together. Scope was already the old key's
+discriminator, so `repost:deploy1` and `repost:deploy2` were distinct keys before the fix too. The
+record-count assertion — the one that states the actual behavior — was therefore true either way;
+only the key-string assertions could fail, and a string assertion pins a format, not an outcome.
+
+**Fix.** Rewrote the test to strand ONE scope twice across two generations: strand `deploy` at
+revision 1, clear the andon, commit a campaign-scoped repost (campaign-scoped fields never strand,
+so the leaf stays in flight) to reach revision 2, then strand `deploy` again. `assert len(both) == 2`
+now fails `1 == 2` against the pre-fix key with every key-string assertion removed.
+
+**Validation.** Red against the reverted key, green against the shipped fix; the two sibling pins
+(`test_live_set_intent_does_not_carry_frontier_approval_forward`, the converted
+`test_tightening_repost_never_retroactively_imposes_checks`) were separately mutation-checked and
+both go red on their own seams.
+
+**Generalizable rule.** When a fix ADDS a component to a composite key, the regression test must hold
+every pre-existing component of that key CONSTANT and vary only the new one. Varying both leaves the
+old discriminator doing the work, and the test passes on the unfixed code with its format assertions
+stripped — which is the only part a later refactor is likely to relax.
+
+**Refs.** Leaf #598 items 1 and 5; `{#one-transition-one-validator-433}`.
+
+### An exception hierarchy that nests opposite to its names sends every documented `except` clause past the error  {#inverted-exception-hierarchy-review-consensus-784}
+
+**Context.** Leaf #784 asked for docstrings on `plugins/saga/scripts/review_consensus.py` so a
+session driving the review-consensus state machine directly could succeed from the documentation
+alone. The first pass wrote thorough Google-style docstrings and named `ReviewConsensusError` in
+every `Raises:` block — the obvious reading, since the module is the consensus kernel and that class
+carries the module's own name.
+
+**Evidence.** PR #804, review commit on branch `review/784`. The module defines
+`ReviewScoringError(ValueError)` at `plugins/saga/scripts/review_consensus.py:140`,
+`ContradictoryReviewEvidenceError(ReviewScoringError)` at :144, `ReviewConsensusError(ReviewScoringError)`
+at :148, and `UnsupportedReviewResultSchemaError(ReviewConsensusError)` at :152. Reproduction:
+`ReviewCycleState(["not-a-real-lens"])` raises `ReviewScoringError("unknown scoring lens")`, and
+`record_cycle` with a finding naming a dimension its lens does not define raises
+`ReviewScoringError("finding 'F1' names unknown dimension ...")` out of the `score_lens_review`
+re-score at :884. Neither is caught by `except ReviewConsensusError`.
+
+**Mechanism.** `ReviewConsensusError` is a *subclass* of `ReviewScoringError`, not its parent. The
+names invert the nesting: "consensus" sounds like the broad module-level category and "scoring"
+like a narrow specialization, so a documentation author reaches for the wrong one and a reader
+copies the wrong one into their handler. The two classes that a direct-drive caller is most likely
+to hit first — unknown lens at construction, unknown dimension at reconciliation — both live on the
+branch that `ReviewConsensusError` does not cover.
+
+**Fix.** Docstrings now name the class each failure actually raises, and the module docstring carries
+an "Exception Hierarchy (read before writing an `except` clause)" section stating that
+`ReviewScoringError` is the root of every error class the module defines and that catching it covers
+the whole module. `tests/test_review_consensus_docs.py::test_documented_exception_hierarchy_matches_the_real_one`
+pins the nesting with `issubclass` assertions plus a live `ReviewCycleState(["not-a-real-lens"])`
+drive, so a future rename or re-parent fails the suite instead of silently restaling the prose.
+
+**What surprised.** A docstring review is not a prose review. Three of the five defects in the
+first pass — a `Raises:` naming a class that cannot catch the error, an "Optional" label on a
+required-with-no-default dataclass field, and a `session_outcome` input list seeded with a value
+that only ever appears as a *return* status — read as fluent, well-organized documentation and are
+invisible without executing the claim against the module.
+
+**Generalizable rule.** Verify a docstring the way you verify code: run each documented claim.
+Construct the object with the argument the doc calls optional, pass the value the doc lists as
+accepted, and touch the attribute the doc names. Then pin the claim with a test that asserts the
+*fact* (`dataclasses.fields(...).default is MISSING`, `issubclass(...)`, `hasattr(...)`) rather than
+the prose, because a substring assertion re-passes the moment someone rewords the sentence around it.
+
+**Refs.** Issue #784; PR #804; the U11 section and KTD5 of
+`docs/plans/2026-08-24-defects-claude-plugins-run-plan.md`; the Saga Code Review contract in #787.
+
+
+### A detector that scores a string's presence can be satisfied by a string that crosses nothing  {#inert-string-is-not-a-boundary-crossing}
+
+**Context.** `scripts/lint_test_shape.py` flags a test module that uses a fake but never exercises the
+real code behind it. Its production signal was, among other things, "any string literal containing
+`plugins/`". Leaf #588 carried that as a known evasion — a module docstring mentioning `plugins/`
+counted as real coverage — and asked for AST-level import and call analysis so inert strings stop
+counting. Reviewing the fix at frozen revision `6ff49e2d` found the evasion narrowed rather than closed.
+
+**Evidence.** PR #803. The delivered fix removed `visit_Constant`, which closed the docstring shape,
+and added `visit_Assign` / `visit_BinOp` to keep detecting the repo's real
+`SCRIPTS = ROOT / "plugins" / "saga" / "scripts"` idiom. But `visit_Assign` scored any assignment whose
+value subtree merely *contained* a matching substring, so a four-line fake-only module — one inert
+assignment, one `class FakeStore` — still reported clean:
+
+```python
+NOTE = "we deliberately avoid plugins/saga here"
+class FakeStore: ...
+```
+
+`uv run python scripts/lint_test_shape.py <that file>` returned "OK — no fake-only suites" against the
+frozen revision, and "VIOLATION" against the repair.
+
+**Mechanism.** The requirement said "inert strings"; the implementation read it as "docstrings",
+because docstrings were the example the issue happened to name. A docstring is only the most visible
+member of the class — every bare string constant is inert, and moving one into an assignment was
+enough to restore the evasion. The naive tightening (require a path-shaped expression) breaks a real
+case: `tests/test_lint_test_shape.py` pins the repo's `SCRIPTS = 'plugins/saga/scripts'` followed by
+`spec_from_file_location('m', SCRIPTS)`, where the string genuinely does lead to real code. The
+resolution is to split what the assignment does into two jobs that had been fused: it **binds** the
+name as a candidate target either way, but only **scores** as production when the value actually
+constructs a path. The inert string then stays inert, while the loader call that consumes it is still
+caught — at the call, which is where the boundary is really crossed.
+
+**Fix.** Commit on PR #803. `_is_path_expression` gates the score; `_bind_and_note_assignment` keeps
+the binding unconditional. Two fixture-pinned tests hold both directions — the inert assignment must
+stay a violation, and the bare-string-plus-loader idiom must stay production. The same review pass
+removed the dead `_IMPORTLIB_LOADERS` constant the refactor stranded and the unused
+`_FakeWorktreeStore` alias, and re-synchronized three documentation surfaces that had gone on
+describing the pre-#588 behavior: both script module docstrings (which `argparse` serves as `--help`)
+and `docs/testing/golden-fixtures.md`, which still called the now-behavioral fake-to-golden pairing
+"conceptual".
+
+**Validation.** `uv run python scripts/lint_test_shape.py tests plugins --prod-module server` reports
+259 modules and zero violations before and after the tightening, so nothing in the committed suite
+depended on an inert string for its only production signal. Twelve tests in
+`tests/test_lint_test_shape.py` green; the leaf's own selector
+(`-k 'fake_fixtures or test_shape or wiring_canary or worktree_liveness'`) green.
+
+**What surprised.** The exemplar in a requirement quietly becomes the specification. "Inert strings
+(docstrings mentioning `plugins/`, fake-loading `import_module`)" names a class and then two members,
+and the fix closed exactly the two members. Both an implementer and a reviewer can read that as done.
+
+**Generalizable rule.** When an acceptance criterion names a class of input and then gives examples,
+build the counterexample that is in the class but not in the examples before calling it closed. And
+for any detector, keep *recording what a name refers to* separate from *scoring it as evidence* —
+fusing them is what forces the choice between a false negative and a broken real case.
+
+**Refs.** Leaf #588; the lint originates in #458. Companion doc: `docs/testing/golden-fixtures.md`.
+
+### OpenCode variant ladder is an interactive live picker, not a flag or a static guess  {#opencode-variants-picker-live-resolution}
+
+**Context.** OpenCode does not take reasoning effort or model variant as a command-line flag during interactive session launch. Its effort ladder (`Default`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) is exposed exclusively through the interactive `/variants` picker inside the TUI. When a Team Mimir deployment run requested "maximum available" variant, Orchestrate's guidance previously claimed the picker could not be automated from unattended tabs, prompting the coordinator to explore unsupported headless `opencode run` and `AgentConfig.variant` workarounds.
+
+**Evidence.** Issue #772. `plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py:drive_opencode_variant_selection`, `resolve_opencode_variant`, `verify_unit_preflight`. In live testing on Muse models, the top variant was `xhigh`, not a literal `max`.
+
+**Mechanism.** OpenCode's variant choices are model-dependent and determined dynamically at session startup. Guessing a literal `max` token or trying to pass `--variant` on interactive launch fails because the interactive CLI only accepts `-m <provider/model>`. The only reliable path is driving the interactive `/variants` picker inside the Herdr session post-launch, reading the live offered options, resolving exact or maximum available requests against the live choices, awaiting task readiness, and verifying the state before task submission.
+
+Driving a picker has two traps that look like verification but are not. A pane read returns the session's whole recent output, so parsing it the instant `/variants` is sent can take the boot banner for the option list — which refuses a perfectly available exact variant, or types one of the banner's own words into the session. And typing a label into a picker is a *request*: a picker that closes on the value it already held leaves the session at a variant nobody asked for, so the selection has to be read back out of the pane before any task is submitted.
+
+**Fix.** Implemented `drive_opencode_variant_selection`, `confirm_opencode_variant_selected` and `verify_unit_preflight` in `orchestrate.py` (orchestrate 1.20.5). For OpenCode units, Orchestrate sends `/variants`, polls the pane until the parse yields options the variant ladder recognises, selects the requested exact variant or the highest offered option (`xhigh` on Muse), reads the selection back out of the pane, and only then submits the task. Preflight holds the working directory and workspace against `herdr agent list` and closes the run-owned tab on a mismatch. Corrected documentation across `commands/orchestrate.md`, `SKILL.md`, and `VENDOR_NOTES["opencode"]`.
+
+**Validation.** 89 unit and integration tests in `tests/test_orchestrate_task_dispatch.py` and `tests/test_orchestrate_launch_and_land.py`, including the Team Mimir regression proving `xhigh` is selected over `max` when `xhigh` is the top option offered, loud preflight failure on unavailable variants, unreadable pickers, a selection the session never reports, a pre-picker banner offered as the option list, and a workspace mismatch; plus non-OpenCode vendor isolation and receipts that distinguish a confirmed property from a requested one.
+
+**Generalizable rule.** When a tool exposes configuration only through an interactive TUI picker, drive and parse the live picker rather than guessing flags or static configuration values — and read the result back, because sending a selection is not the same as making one.
+
+**Second rule, from the repair.** A verification step must be written against the fields its source actually publishes. `herdr agent list` reports `cwd`, `workspace_id` and `interactive_ready` and reports no model; a check written against a `model` or `workspace` key is dead code that never fires, and a receipt stamped `verified: true` beside it records a check that never happened. Where a property cannot be confirmed, say which ones were and which were not rather than flattening both into one boolean.
+### Eager resource resolution ahead of an authorization gate rewrites the caller's exit-code contract  {#gate-before-resolve-exit-code-contract}
+
+**Context.** Leaf #652: since #620 the two certificate-gated board-sync command-line entry points
+resolved mission-control's install root *before* evaluating the reversibility certificate. A gated
+operation — one the certificate deliberately withholds pending operator confirmation — needs no
+writer at all, so the resolved root was unused work. In an environment where mission-control is
+unresolvable (a consumer repo with no install, or the stale-fleet-core case #620 itself guards for)
+the operation aborted at resolution with exit 1 instead of returning `gated` with exit 0.
+
+**Evidence.** Pull request 802, commit `6c3588f0` plus its review repair.
+`plugins/saga/scripts/board_progression.py:540-560` and
+`plugins/saga/scripts/reconcile_controller.py:414-441` — both `main` functions now evaluate
+`reversibility_certificate.authorize_write` first and resolve only on `AUTHORIZED`. The gate
+itself already short-circuited before any writer use, at `board_progression.py:191-194` and
+`reconcile_controller.py:203-209`. The downstream consumer that made this visible is
+`plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py:1808`, which converts any non-zero
+exit into `{"status": "failed"}` and discards the printed record — so the gate verdict was not
+merely mis-numbered, it was erased. `plugins/saga/skills/work/SKILL.md:255` states the contract the
+regression broke: "Read `written`/`skipped` as success; `halt`/`gated` falls back to the
+operator-prompted path."
+
+**Mechanism.** The exit code is the contract surface, not the printed record. Placing an acquisition
+that can fail *ahead* of the decision that determines whether the acquisition is needed makes the
+environment's health, rather than the policy verdict, decide the exit status. Every consumer keying
+on exit status then reads an expected policy outcome as an infrastructure failure. Nothing in the
+gate logic changed for this to happen — only the order of two statements.
+
+**Fix.** Both entry points bind a stand-in writer, evaluate the certificate, and resolve
+mission-control only inside the `AUTHORIZED` branch — one call site and one exit-code mapping per
+command, rather than a duplicated gated branch. The stand-in is
+`board_progression._gated_writer`, which **raises**: it is unreachable while the entry point's
+verdict and the library's agree (both call the same pure registry lookup at
+`reversibility_certificate.py:292-324`), and a writer that instead returned `None` on an impossible
+divergence would be read as a committed board write, would record the idempotency key, and would
+suppress the real write on every later tick. Raising turns that into a retryable `failed` record
+with no key.
+
+**Validation.** `tests/test_board_progression.py` and `tests/test_reconcile_controller.py` pin four
+cases per the leaf's acceptance criteria: a gated operation with the resolver stubbed to raise
+returns `gated` / exit 0 and leaves the ledger empty; an authorized operation with the same stub
+still exits 1 with the resolution error on standard error.
+
+**Generalizable rule.** Evaluate the gate before acquiring what only the passing branch needs — and
+when a short-circuited dependency still has to be passed as an argument, pass one that raises. A
+stand-in that silently succeeds converts an impossible divergence into a silent, sticky no-op; a
+stand-in that raises converts it into a loud, retryable failure.
+
+**Refs.** Leaf issue 652; the orchestration parent, issue 787; the plugin-resolution work this
+followed, issue 620.
+### Dropping an unparseable argument from a static command scan moves every argument after it  {#ownership-lanes-token-position-and-scope-blind-names}
+
+**Context.** `scripts/check_ownership_lanes.py` is the CI gate that stops one plugin lane from reaching into another's `gh` write surface. Issue #583 hardened it three ways: attribute wrapper-shaped calls (`_run_gh(["issue", "create", ...])`), reserve ProjectV2 GraphQL mutations to the board owner, and allow benign read verbs across lanes. Reviewing that hardening found that two of the three new rules were defeated by ordinary code shapes, one of them a step *backwards* from the behavior it replaced.
+
+**Evidence.** PR #800, review of frozen revision `0e712fad`. Running both revisions of the detector over the same source: `subprocess.run(["gh", "api", "--jq", jq_expr, "projects/42/items"])` from the saga lane returned `('projects/', 'mission-control')` on `origin/main` and `None` on `0e712fad`. A module binding `query` to a `updateProjectV2ItemFieldValue` document in one function and to a read query in another reported `mutation_found=None` for **both** call sites, the board write included.
+
+**Mechanism.** Two separate causes, both about a lossy representation rather than a wrong rule.
+
+1. `find_gh_invocations` built its token tuple by *filtering out* elements it could not resolve to a static string. That was harmless while `_reserved_path_crossed` scanned every token, because position did not matter. The #583 change made position matter: `_api_endpoint` now walks the argument list skipping each value-taking flag *and the token after it*, so it can tell an endpoint from `-f title=projects/...`. Once a non-literal flag value is dropped rather than placeheld, that skip consumes the endpoint instead — the reserved `projects/` surface, the one thing the manifest reserves, stopped being seen. A false-positive fix bought with a false negative on the gate's core job.
+2. `_collect_string_variables` mapped each name to one value with last-write-wins, across the whole module and with no notion of scope. Two functions that both use a variable called `query` therefore collapse to a single binding, and whichever the walk reaches last wins. A read query written after a mutation query hides the mutation completely.
+
+**Fix.** Commit on PR #800. Unresolvable elements are placeheld with `UNRESOLVED_TOKEN` and kept in position, so the positional helpers see the real argv shape; `_collect_string_variables` keeps every binding per name, `_string_token` takes the first for positional text, and the ProjectV2 scan reads all of them through a new non-positional `alt_tokens` view. `_extract_verb` also learned the combined `["gh issue view", "42"]` shape, which had no verb at all and so never qualified for the read allowance the same change advertised. `marketplace/ownership_lanes.json` — the lint's human-facing contract — still described the retired verb-insensitive behavior and listed the now-closed blind spots as open, citing #583; it now describes what ships.
+
+**Validation.** Six new tests in `tests/test_check_ownership_lanes.py` pin each repair; all six fail against `0e712fad` and pass against the repair, so they are behavioral rather than restatements. Suite 33/33 green, `python3 scripts/check_ownership_lanes.py` exits 0 against the real tree.
+
+**What surprised.** The scope-blind name map cannot be made both quiet and correct, so the repair chooses loud: a lane that binds a ProjectV2 mutation string at all now has every `gh api graphql` call in that module flagged, not just the one that uses the binding. For a policy gate that is the right direction — holding the mutation text is itself the thing the lane forbids — but it is a deliberate false-positive trade recorded in the docstring, not an accident.
+
+**Generalizable rule.** The moment a scanner starts reasoning about *where* an argument sits, dropping the arguments it cannot parse becomes a silent correctness bug: use a placeholder, never a filter. And a detector that resolves names without scopes must keep every binding, because picking one is picking a winner in the attacker's favor.
+
+**Refs.** Issue #583; the ownership-lanes gate originates in #431 (PR #580). Companion contract doc: `marketplace/ownership_lanes.json`.
+
+### A halt reason can only explain a CLI flag the decision function never sees  {#unavailable-reason-rides-the-available-set}
+
+**Context.** Leaf #657 asked that an operator who passes `outcome.py advance --workflow-available`
+without `--host-capable` get an explanation naming the second flag, rather than an availability halt
+that reads as a host fault. Amending the CLI help was the easy half. The hard half was the receipt:
+the operator who is hurt by this is the one running unattended, and what they read afterwards is the
+halt or degrade reason, not the help text.
+
+**Evidence.** Pull request 799. The two functions that compose the reason string —
+`plugins/saga/scripts/outcome_dispatcher.py` `dispatch` (`:184`) and `degrade_decision` (`:390`) —
+take only `req`/`backend` and a `Sequence[str]` of available backends. Neither has ever received
+`host_capable` or `workflow_available`; those live on the argparse namespace consumed at
+`plugins/saga/scripts/outcome.py:2570` and are converted to a backend set by `resolve_available`
+before any decision function runs. Pinned at the pre-fix revision, the degrade reason read
+`cc-workflows-ultracode unavailable; autonomous + away -> degraded to team-execution (R23)` — a
+sentence with nowhere to put the flag.
+
+**Mechanism.** The flags are erased by design. `resolve_available` is the deliberate narrowing point
+(KTD9 — the coordinator cannot self-probe host capability, so availability is a runtime *input*, and
+everything downstream reasons about a set, not about how the set was derived). That narrowing is
+correct and worth keeping, which means the *only* place an explanation can survive is on the value
+that crosses the seam. Hence `AvailableBackends`, a `tuple[str, ...]` subclass carrying an
+`unavailable_reasons` mapping: every existing consumer keeps full sequence and equality semantics
+(`avail == ("inline", "team-execution", "manual")` still holds), while the three reason-composing
+sites read the explanation through `getattr(available, "unavailable_reasons", {})` and fall back to
+their original wording when handed a plain tuple.
+
+**Fix.** `resolve_available` attaches the coupling reason when `workflow_available and not
+host_capable`; `dispatch`, `degrade_decision`, and `captured_degrade_decision` prefer it over their
+generic phrasing; `effective_available` carries the mapping across the captured ∩ runtime
+intersection so the #373 posture path keeps it. The conservative default is untouched — with neither
+flag only `ALWAYS_AVAILABLE` resolves, and `cc-workflows-ultracode` still requires both flags.
+
+**Validation.** Four tests fail at the pre-fix revision and pass after: the `resolve_available`
+combination and the `dispatch` halt receipt (`tests/test_outcome_dispatcher.py`), the
+`degrade_policy: "halt"` advance regression, and the default-policy degrade receipt
+(`tests/test_outcome_backends.py`). 142 tests green across the three touched suites.
+
+**What surprised.** The degrade path, not the halt path, is the one that needed this most. Under the
+default policy the tick *succeeds* — one rung down, no halt, no page — so the pre-fix operator saw a
+green run that never touched the external backend. The leaf's own reproduction only exposed the
+coupling because every probe node carried `degrade_policy: "halt"`.
+
+**Generalizable rule.** When a diagnostic message must name an input that an earlier layer
+deliberately discarded, do not re-thread the input through the call chain — attach the explanation to
+the value that already crosses the seam, as a transparent subtype whose consumers need no change.
+Re-threading spreads the coupling; a carrier keeps it at the one place that knows.
+
+**Refs.** Leaf #657 under objective `defects-claude-plugins`; run plan
+`docs/plans/2026-08-24-defects-claude-plugins-run-plan.md` section U9;
+`{#lease-ttl-honest-without-a-reader}` for the sibling case of a payload nobody reads.
+
+### The launcher was already right; nothing made anyone use it  {#launch-seam-is-enforcement-not-implementation}
+
+**Context.** Nine Team Mimir worker launches in one run each stole the operator's UI focus.
+Orchestrate's `agent_argv` had emitted `--no-focus --current --herdr --herdr-control-only` the whole
+time and was never wrong. The coordinator simply did not call it: at the Work expansion boundary it
+made nine worktrees by hand and invoked the `agents` wrapper itself, where the wrapper's ordinary
+interactive default is `--focus`.
+
+**Evidence.** Issue #773, PR #798. `plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py`
+`agent_argv` (the flag prefix, unchanged by the fix) against the observed direct calls quoted in the
+issue, which carried `--workspace`, `--task` and `--cwd` and none of the four background flags. A
+read-only launcher dry run reproduces both halves: the direct shape resolves to
+`agent-herdr prepare ... --focus`, Orchestrate's shape to `agent-herdr prepare ... --no-focus`.
+orchestrate 1.20.3.
+
+**Mechanism.** The defect lived one level above the code. A correct central adapter only holds if
+every path reaches it, and nothing in the plugin made the expansion boundary a path: the run record
+is written by this script for actions this script performed, so a unit created outside it does not
+exist to `go`, cannot be given `agent_argv`, and cannot be reaped. Every guarantee the adapter
+offers is conditional on being called, and that condition was documented rather than enforced.
+
+**Fix.** Three edges on machinery that already existed, no new moving parts (orchestrate 1.20.4):
+regression tests that lock the complete four-flag prefix *and its position ahead of the vendor
+token* for every vendor in the permission and flag registries; a post-plan-expansion test proving
+units added by `expand` still launch through `go`; the existing `discover_unrecorded` results
+surfaced from `status` as well as `check`, so a bypass is visible on every poll; and both operator
+surfaces stating the prohibition outright. Deliberately rejected: a new `doctor` command and a
+second detector — the run plan's S3 repair (findings F7/F10) had already removed them, because
+`discover_unrecorded`, `cmd_check` and `cmd_adopt` cover the detection and the repair between them.
+
+**Validation.** 376 orchestrate tests green at PR #798. The reviewed revision also had to be walked
+back in two places found in code review: `worktree_on_branch` had been switched to a silent
+`check=False`, which suppresses the pre-`land` "run branch is checked out at ..." warning and lets
+`adopt` rebuild a unit with no worktree, and neither `status` nor `discover_unrecorded` calls it —
+only `run_branches` does, where the softening is genuinely load-bearing (`status` in a directory
+that is no longer a repository otherwise exits non-zero). Both surfaces had also claimed that
+"worktrees or sessions" outside the record are flagged, when the detector reads only branches in the
+`orch/<run-id>-<unit>` series.
+
+**What surprised.** The fix touches twelve lines of product code and three hundred lines of test.
+That ratio is the finding, not an accident of it: when implementation is already correct, the whole
+repair is the enforcement, and enforcement is mostly assertions.
+
+**Generalizable rule.** When a correct helper produces a wrong outcome, do not re-examine the helper
+— find the caller that never used it, and ask what made skipping it possible. And when you soften a
+subprocess from raising to returning, check every caller of the helper you softened: a guard that
+warns before a mutation reads a silent failure as "nothing to warn about".
+
+**Refs.** LEARNINGS [`{#idleness-is-not-completion}`](#idleness-is-not-completion); DECISIONS
+[`{#defects-run-plan-ktds-787}`](DECISIONS.md#defects-run-plan-ktds-787); plan
+`docs/plans/2026-08-24-defects-claude-plugins-run-plan.md` section U3.
+
+### A file-scoped pagination lint went blind on the very file it was installed to guard, and the query-scoped rewrite reintroduced the blindness one layer down  {#pagination-lint-scope-blindness-584}
+
+**Context.** #424 shipped `paginate_or_raise` plus `check_pagination.py` and recorded (see
+`{#board-pagination-truncation-confirmed-live-424}`) that the lint "lints future call sites". #584 R1
+then found `QUERY_GET_PROJECT_FIELDS` sitting unpaginated at `fields(first: 30)` for weeks inside
+`plugins/mission-control/scripts/sdlc_manager.py` -- a file the lint scanned on every CI run.
+
+**Evidence.** The pre-#584 rule was `if GRAPHQL_FIRST_RE.search(text) and "hasNextPage" not in text`
+(`plugins/mission-control/scripts/check_pagination.py:115` at `2d811cab`) -- whole-file, so one
+compliant query anywhere in the file cleared every other query in it. Running the post-#584
+query-scoped checker against `git show origin/main:.../sdlc_manager.py` reports the violation at
+`sdlc_manager.py:936`, which is the exact line #584 R1 named; the pre-#584 checker reports zero on
+the same bytes.
+
+**Mechanism.** The guard's scope was the file, but the unit of the defect is the query. Any file
+large enough to hold a second, compliant query -- which is every real client of a GraphQL API --
+buys permanent immunity for its non-compliant ones. The guard did not fail; it passed, loudly and
+truthfully, about a question nobody wanted answered.
+
+**Fix.** Query-scoped extraction over Python string literals and Markdown fences, with
+`# pagination-lint: allow (<reason>)` for the two connections whose bound is genuinely unreachable
+(#584, PR #796). `QUERY_GET_PROJECT_FIELDS` and `board_census.fetch_project_fields_census` now
+route through `paginate_or_raise`.
+
+**What surprised.** The rewrite reintroduced the same class one layer down, and Saga Code Review
+caught it before merge. Pairing triple quotes with the alternation `(?:"""|''')` lets an opening
+`"""` close on a `'''` occurring inside it, desynchronizing every literal after it; the rewrite then
+ran the whole-file fallback only when extraction returned *nothing*, so a desynchronized parse --
+which returns garbage blocks, not nothing -- silently switched the GraphQL guard off for the entire
+file. A stray `'''` in one docstring was enough, and a file the old lint flagged became clean. Fixed
+by backreferencing the delimiter (`("""|''')(.*?)\1`) and by running the whole-file check on any
+`first:` occurrence the extractor could not place inside a block, pinned by
+`plugins/mission-control/tests/test_check_pagination.py::TestGraphqlGuardNeverFailsOpen`.
+
+**Generalizable rule.** Scope a guard to the unit of the defect, never to the container the defect
+happens to live in -- and when you narrow a guard's scope, keep the old broad check as the
+fallback for whatever the new parser cannot read. A narrowed guard must be a strict superset of the
+one it replaces, and the way to prove that is to run the new guard against the bytes the old one
+flagged.
+
+**Refs.** #584, PR #796; `{#board-pagination-truncation-confirmed-live-424}`;
+`plugins/mission-control/scripts/check_pagination.py`,
+`plugins/mission-control/scripts/sdlc_manager.py`,
+`plugins/mission-control/scripts/board_census.py`.
+
+---
+### A stable result marker is a false-green machine unless the run clears it first  {#gate-result-marker-staleness-and-trap-deferral}
+
+**Context.** `scripts/gate.sh` gained a stable result marker (`$LOG_DIR/result.txt`) so a backgrounded 24-step gate run — which reliably outlives the Bash tool's 600-second foreground timeout — can report its outcome without scraping a live terminal (#782). `CLAUDE.md` documents the invocation with a fixed, reused `GATE_LOG_DIR=/tmp/gate-run`, and tells the operator to read the outcome with `cat /tmp/gate-run/result.txt`.
+
+**Evidence.** PR #797, review of frozen revision `2a7246a0`. Reproduction: seed `result.txt` with a previous run's `GATE GREEN`, start a fresh gate into the same `GATE_LOG_DIR`, `kill -9` it, then `cat result.txt` — it printed `GATE GREEN — 24 steps ran, 0 blocking failures, 0 uncovered.` for a run that never reached step 3. Separately, a stand-in script trapping `TERM` around an eight-second child measured **7.71 seconds** between the signal and the handler running; signalling the process group instead measured **0.00 seconds**.
+
+**Mechanism.** Two independent causes, both about *when* a marker is written rather than *whether* it is.
+
+1. The marker was only ever written on a terminal verdict or by a trap. A signal that cannot be trapped (`SIGKILL`, OOM, reboot) skips both, so the file keeps holding the *previous* run's verdict — and the reused log directory is what the documentation recommends. An in-flight run has the same shape: the marker present on disk describes an older run.
+2. bash defers a trap handler until the foreground command it is `wait`ing on returns. Sending `SIGTERM` to `gate.sh` alone therefore does nothing visible until the running step (`uv run pytest`, `git fetch origin main`) finishes. The harness kill that motivated #782 produced its `exit 143` promptly only because it killed the whole process group, so the child died first.
+
+**Fix.** `rm -f "$RESULT_FILE"` immediately after the log-directory precondition, so absence means "still running or killed outright" and never "green"; `CLAUDE.md` states that reading. The dev-toolchain precondition now writes `GATE PRECONDITION FAILED — dev toolchain not installed: …` instead of leaving the generic exit-trap text to call a precondition failure an interruption. `tests/test_gate_invocation.py` starts the gate with `start_new_session=True` and signals via `os.killpg`, with a `try/finally` group kill — previously a `proc.wait(timeout=5)` that would expire whenever the signal landed inside a real step, erroring the test *and* orphaning a full 24-step gate inside CI.
+
+**Validation.** All four reproductions re-run against the repaired script: the seeded `GATE GREEN` no longer survives a `kill -9` (marker absent, as intended); the precondition marker names the missing tools; `tests/test_gate_invocation.py` passes 4/4 in 0.23 s; `bash -n scripts/gate.sh` clean.
+
+**What surprised.** The marker made the failure mode *worse* than no marker at all. Before it existed, an operator had to read the log and could see the run was truncated. After it existed, a confident one-line `GATE GREEN` was sitting in the documented location, attributable to the wrong run.
+
+**Generalizable rule.** A status file that is only written at the end encodes the last run that *finished*, not the run you are asking about. Clear or stamp it at the start, so a missing or in-progress marker is unmistakable — and never let a durable "green" outlive the run that earned it.
+
+**Refs.** Issue #782, PR #797, run #787. Related: the gate's own warning that "a shortfall in coverage reports green" (`CLAUDE.md`, Gate Coverage Contract).
+
+### A lease TTL nobody reads is still worth deriving, because the payload is the only surviving record  {#lease-ttl-honest-without-a-reader}
+
+**Context.** #694 asked for the workflow execution lease to outlive the run it guards. By the time
+the unit ran, #677/U4 had deleted the fleet lease broker, so the question changed shape: with no
+enforcer left, is a wrong TTL still a defect? The plan (`docs/plans/2026-08-24-defects-claude-plugins-run-plan.md`,
+section U8) required a consumer sweep as the unit's first step precisely so the answer would rest on
+evidence rather than on the shape of the original card.
+
+**Evidence.** Pull request 795, commit `af773879`. The sweep, re-run at that revision, covers both
+halves the plan named and both come back empty:
+
+- *Teardown and release results.* `plugins/saga/scripts/workflow_emitter.py:141-160` — `renew` and
+  `release` each validate the contract and `return ()` unconditionally since #677/U4. The `/work`
+  skill invokes both (`plugins/saga/skills/work/SKILL.md:421` and `:429`) and consumes neither
+  return value; the surrounding prose already documents them as reporting an empty result.
+- *Readers of `execution_ttl_seconds` itself.* A repository-wide grep finds the producer
+  (`plugins/saga/scripts/execution_spec.py:3682`), the closed-key set and positivity check in the
+  emitter (`workflow_emitter.py:34` and `:95`), tests, and prose. Nothing treats the value as a
+  hold duration, and no saga reference document or skill states a TTL number at all.
+
+**Mechanism.** Zero readers is an argument about enforcement, not about truthfulness. The emitted
+`workflow_lease_reservation.v1` payload is now the *only* durable statement of what the run intended
+to hold, and `.saga/workflow-lease-*.json` files persist after the run — the artifact
+`{#workflow-lease-ttl-outlives-no-poll-contract}` reconstructed the #686 incident from. A payload
+that records `300` for a 32-minute run does not fail an assertion; it misinforms the next
+investigation, which is the failure mode that incident actually suffered.
+
+**Fix.** Shape (a): `execution_ttl_seconds` is derived at emit time as
+`max(900, 300 × multiplicity_aware_unit_count)` (`execution_spec.py:3669`), replacing the literal.
+The 900-second floor is leaf #694's 10-minute acceptance criterion plus a named five-minute margin,
+so a one-unit spec still clears the criterion. `claim_ttl_seconds` is unchanged.
+The leaf's third acceptance criterion — that teardown distinguish "released held leases" from
+"nothing to release" — is **dropped explicitly** on the first sweep result above: with no broker and
+no consumer, there is no distinguishable result left to pin.
+
+**Validation.** 619 tests green across `test_saga_execution_spec.py`, `test_saga_workflow_emitter.py`,
+`test_saga_plugin.py`, `test_workflow_emitter.py`, and `test_concurrency_conformance.py`. Mutation
+proof runs both ways: reverting to the literal `300` **and** weakening the floor to
+`max(300, 300 × count)` each fail `test_workflow_lease_held_past_ten_minute_mark` at
+`assert 300 >= 600`. Emission stays deterministic — the TTL is a pure function of the spec, pinned by
+the `first == replay` assertion at `tests/test_saga_workflow_emitter.py:79`.
+
+**What surprised.** The sweep's empty result was pre-registered as an argument for the *opposite*
+fix. DECISIONS `{#defects-run-plan-ktds-787}` forecast that zero consumers would make retiring the
+payload "the truthful fix". Running the sweep inverted that reading rather than confirming it: the
+value's audience turned out to be a human reading a persisted artifact after the fact, and a grep
+for consumers cannot see that audience because it never appears as a caller.
+
+**Generalizable rule.** Before retiring a field because nothing reads it, ask who reads the
+*artifact* — persisted payloads have human readers that no consumer sweep can find. A record kept
+honest is cheaper than a record explained away later.
+
+**Refs.** LEARNINGS `{#workflow-lease-ttl-outlives-no-poll-contract}` (the #686 incident this
+closes), DECISIONS `{#defects-run-plan-ktds-787}` and
+`{#lease-ttl-payload-kept-after-zero-consumer-sweep}`; issue #694; pull request 795.
+### Process idleness is not task completion: settlement must verify branch evidence  {#idleness-is-not-completion}
+
+**Context.** Orchestrate's `settle` previously inferred `done` from Herdr pane idleness across two
+samples, and `failed` from session absence. In three real incidents across Team Mimir runs, this
+produced wrong outcomes in both directions: a stale `done` predating a supplemental prompt was
+accepted as finished, a stuck unit with a SIGTTIN-suspended background child was classified as done
+six times, and a finished unit whose commits had already landed was marked `failed` when its Herdr
+session was closed during operator cleanup.
+
+**Evidence.** Issue #780. Transcripts
+`~/.claude/projects/-Users-jefcox-workspace-infiquetra-team-mimir/6990cc3c-4d53-46ee-a714-6bfa04b91418.jsonl`
+line 1894 and `b31ec85e-82d5-4a00-aa18-e82cc22b2284.jsonl` lines 6569, 6678 (2026-08-23).
+`plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py:2526`. orchestrate 1.20.3.
+
+**Mechanism.** Herdr pane idleness only indicates that the foreground shell or process tree is
+waiting for input (which occurs between turns while an agent thinks, or when a child process is
+suspended), not that the task produced any completed work. Conversely, session absence only means
+the interactive process terminated, not that its work failed — work committed to git or merged
+survives the session. Inferring task success or failure from process presence conflates container
+lifecycle with artifact truth.
+
+**Fix.** Gate settlement on repository truth via `produced_anything` (mirroring `cmd_check`). An
+idle session with no commits on its branch stays `running` (unsettled); a closed/gone session whose
+branch contains commits settles `done` (never `failed`); and a session gone without commits yields a
+distinct `orphaned` state (`orphaned`).
+
+**Second-order trap found in review of this same change.** An evidence gate has a domain, and
+applying it outside that domain re-creates the defect it was built to remove. `produced_anything`
+reads a *branch*, and it answers `False` for two units that did nothing wrong: one with no branch
+of its own (the review controller carries `merge: false` and delivers its result through
+`review-result`), and one whose run branch does not resolve, where the count is unknown rather than
+zero. Gating both on commits wedged the review controller at `running` for the life of the run —
+no commit can ever appear on a branch a unit does not have, and `land` returns the controller to
+`running` on every resubmission — and wrote the note "session disappeared without commits" onto a
+unit whose commits the code had not looked at. `go` refuses outright on an unresolvable run branch
+and `adopt`/`clean` warn that branch-dependent checks are unavailable; settle now draws the same
+distinction instead of collapsing it.
+
+**Generalizable rule.** Task outcome must be read from produced artifacts, not process lifecycle.
+An idle process is not a successful task, and a terminated process is not a failed one; always gate
+lifecycle settlement on output evidence rather than container or pane state — and gate only the
+subjects the evidence probe can actually read, because "I could not check" and "there is nothing"
+are different answers, and a probe that returns the second for the first is the original defect
+wearing the fix's clothes.
+### A non-negative contract has to be enforced at every entry chokepoint, not just the date one  {#retry-after-negative-clamp}
+
+**Context.** `parse_retry_after` in `fleet_commons.retry_backoff` was designed to reduce both RFC 7231 `Retry-After` formats (delta-seconds and HTTP-date) to a non-negative delay in seconds. While the HTTP-date path clamped past dates to `0.0` ("retry now, never a negative delay"), the delta-seconds path returned negative values unchanged for negative header values (e.g. `-5`, `-120`). Callers presenting delay advice in typed 429 exceptions then displayed confusing negative wait times to operators.
+
+**Evidence.** Issue #770. `plugins/fleet-core/scripts/fleet_commons/retry_backoff.py:60`. `python3 -c "from fleet_commons import retry_backoff as rb; print(rb.parse_retry_after('-5'))"` returned `-5.0`.
+
+**Mechanism.** `_usable_delay` checked `math.isfinite(seconds)` to reject `inf`/`nan`/`1e400`, but omitted the `max(0.0, seconds)` floor present in the sibling HTTP-date parsing path (`retry_backoff.py:110`). Because `_retry_delay` already ignored non-positive values for sleep computation, the negative values only manifested in user-facing error messages and advice strings.
+
+**Fix.** Clamped finite values in `_usable_delay` to `max(0.0, seconds)` so both parsing paths unconditionally produce non-negative delays or `None`. Bumped `fleet-core` to `0.25.3`.
+
+**Validation.** Parametrised unit tests in `tests/test_retry_backoff.py` verify `-5`, `-0.5`, `-120` (both string and numeric) return `0.0`, postcondition invariants hold across all input types, and the full test suite passes.
+
+**Generalizable rule.** When a primitive promises an invariant (e.g. "never negative"), enforce it at the shared return chokepoint rather than relying on callers or sibling branches to normalize it independently.
+
+### Prepared-draft revision appended instead of replacing due to unstripped front matter in source artifact (#785)  {#prepared-draft-revision-frontmatter-doubling}
+
+**Context.** Prepared issue drafts stored under `docs/sdlc-issue-drafts/` can undergo revision rounds via `issue prepare --from <draft>` before final approval and creation. In live runs, revised drafts (such as the specimen for issue #770) accumulated multiple `---` front-matter blocks and duplicated titles and body sections on disk, and the contamination leaked into created GitHub issue bodies.
+
+**Evidence.** `plugins/mission-control/scripts/sdlc_manager.py:4121` (the strip call added to `_source_to_issue_body_unstamped`, defined at `:4111`), `:3926` (the strip call added to `_render_draft_markdown`, defined at `:3902`), `:4186` (`_read_prepared_issue`), `:4351` (the first blocking check added to `_readiness_for_prepared_issue`, defined at `:4347`), `:4680` (the strip call added to `_issue_body_for_github`, defined at `:4679`), the new helper `_strip_frontmatter_and_title` at `:3878`, and live issue bodies #770, #772, and #773 filed on 2026-08-23.
+
+**Mechanism.** `_source_to_issue_body_unstamped` accepted raw source text and passed it directly to template assembly without stripping pre-existing YAML front-matter blocks or top-level `# ` titles. When `_render_draft_markdown` formatted the draft, it prepended another YAML front-matter block and `# Title`, doubling the front matter and titles. Furthermore, `_parse_draft_frontmatter` only strips the first `--- ... ---` block on read (unchanged by this fix), so the second front-matter block became part of `issue.body`. `_readiness_for_prepared_issue` lacked a check for multi-fence or duplicate headers, allowing the contaminated draft to pass readiness, and `_issue_body_for_github` published the contaminated `issue.body` directly to GitHub.
+
+**Fix.** Implemented `_strip_frontmatter_and_title` to clean all leading YAML front-matter blocks and H1 titles from source artifacts and existing drafts before assembling bodies, added multi-fence and duplicate section blocking checks to `_readiness_for_prepared_issue`, and ensured `_issue_body_for_github` and `_render_draft_markdown` defensively strip front matter before emission. mission-control 2.12.1.
+
+**Validation.** Added `plugins/mission-control/tests/test_sdlc_draft_revision.py` verifying that revising a draft twice yields exactly two `---` fences and a single body, that revision replaces content instead of appending, that doubled drafts fail readiness with a multi-fence blocking gap, and that created issue bodies contain zero front-matter fences and no duplicate sections. Five of its six tests fail against the parent commit, one of them with the reference specimen's exact four-fence shape. The created-body strip reaches leading contamination only — the live #770/#772/#773 leak shape — and readiness is what stops a mid-body block; the suite pins both halves so the division of labour is not assumed.
+
+**Generalizable rule.** Draft compilers that wrap input text in document metadata must always strip existing front matter and document titles at the intake boundary so successive revision passes remain idempotent single documents.
+### A readiness flag is the sender's claim, so delivery has to be read off the receiver  {#readiness-is-not-delivery}
+
+**Context.** Orchestrate dispatched a unit, herdr reported the session `interactive_ready`,
+`herdr agent prompt` exited 0 -- and the brief was gone. The vendor CLI was still showing a modal
+(Claude's folder-trust prompt into a fresh worktree, Antigravity's "Verifying your account" gate on
+concurrent same-account launches) and the modal ate the keystrokes. Four occurrences in one live
+session; the working tell became "watch the token counter move", not the readiness flag and not the
+prompt command's exit status.
+
+**Evidence.** Issue #779. Transcript
+`~/.claude/projects/-Users-jefcox-workspace-infiquetra-team-mimir/b31ec85e-82d5-4a00-aa18-e82cc22b2284.jsonl`
+lines 4921, 4947, 6016, 6457, 7560 (2026-08-23). The gap was already acknowledged in the code it
+lived in, at `plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py:1368`, and dispatch
+still gated on `row.get("interactive_ready")` alone. orchestrate 1.20.2.
+
+**Mechanism.** Three separate signals all sit on the sending side of the boundary and none of them
+crosses it. `interactive_ready` is herdr's belief about a process it launched. `herdr agent prompt`
+returning 0 means the keystrokes were handed over, not consumed. A tab existing means a tab exists.
+The receiver is a vendor CLI whose modal owns stdin, and it acknowledges nothing. So every
+sender-side signal reports success on precisely the run where the work was lost -- and the loss is
+silent, because a session that was never given work looks exactly like a session still thinking
+about the work it was given.
+
+**Fix.** Dispatch now reads the receiver: `took_the_task` watches for the session to leave idle
+after the send, and only then is the unit recorded RUNNING. Unaccepted, it resends at most twice
+and only while the session has still never left idle -- which is the swallow case, so the resend
+cannot double-task a session already working -- and otherwise records the named state
+`prompt_undelivered`. The point of the named state is that no later phase reads it as work:
+`settle` sweeps RUNNING units only, so the old silent path (idle read as a finished turn, marked
+done, discovered empty a phase later at `land`) is closed by construction.
+
+**Generalizable rule.** Never accept the sender's word for delivery. A readiness flag, a zero exit
+code, and a created handle are all claims made on this side of the boundary; confirmation is a
+state change observed on the other side. When the receiver cannot acknowledge, the honest recording
+is a named unconfirmed state, not the optimistic one -- an optimistic default turns a delivery
+failure into a phantom success, which costs a phase to discover instead of a second.
+
+**Refs.** DECISIONS `{#defects-run-plan-ktds-787}`; plan
+`docs/plans/2026-08-24-defects-claude-plugins-run-plan.md` section U1.
+
 ## 2026-08-22
 
 ### I fixed a positional bug with a slightly wider positional window  {#credential-span-window-vs-walk}
@@ -3345,7 +3911,16 @@ duration of the work it protects, not the expected one. And when a teardown call
 collection, treat that as an unanswered question rather than a success — prove where the resources
 went before calling it clean.
 
-**Refs.** [[verdict-contract-has-three-prompt-surfaces]], `plugins/saga/skills/work/SKILL.md` §1.5,
+**Resolved 2026-08-24.** Shape (a) shipped as issue #694 / pull request 795 (commit `af773879`):
+`execution_ttl_seconds` is derived at emit time rather than fixed at 300. Shape (b) — the in-run
+lease keeper — was overtaken by #677/U4, which deleted the broker entirely; there is no longer
+anything to renew. See LEARNINGS [[lease-ttl-honest-without-a-reader]] for the consumer sweep that
+settled the choice.
+
+**Refs.** [[verdict-contract-has-three-prompt-surfaces]],
+[[lease-ttl-honest-without-a-reader]],
+DECISIONS `{#lease-ttl-payload-kept-after-zero-consumer-sweep}`,
+`plugins/saga/skills/work/SKILL.md` §1.5,
 `plugins/saga/scripts/workflow_emitter.py:191-206`.
 
 ### A verdict contract had FOUR prompt surfaces; the plan enumerated two  {#verdict-contract-has-three-prompt-surfaces}
@@ -5175,7 +5750,18 @@ effective posture in force). Any second writer to the same state — even a "fir
 looks like initialization — re-opens the decision unless it routes through the same validator.
 **Fix.** Once any dispatch record exists (either phase), the attach computes deltas against the
 default-gated effective envelope through the SAME classifier and rejects monotonic loosenings;
-every accepted attach writes a `set-intent` trail entry. **Generalizable rule.** Enumerate every
+every accepted attach writes a `set-intent` trail entry.
+
+**Approval carry-forward asymmetry (#598 item 2).** While monotonic delta validation is unified
+across both verbs, frontier approval carry-forward diverges intentionally: a live pure-tightening
+`repost` carries existing frontier approval forward (`carried-forward:tightening-repost:r<old>`),
+whereas a live pure-tightening `set-intent` first-attach bumps `spec_revision` without carrying
+approval forward. This asymmetry is conservative (requires an extra manual re-approval, never skips
+one) and matches `SKILL.md`'s contract ("re-approve before the next dispatch") because a first-attach
+establishes the initial explicit envelope rather than amending an already-attested one. Pinned by
+`tests/test_outcome_intent.py::test_live_set_intent_does_not_carry_frontier_approval_forward`.
+
+**Generalizable rule.** Enumerate every
 writer to a guarded state and route them through one validator keyed on the transition, not the
 verb — "initialization" writers included; if a rule matters, ask "which OTHER verb can produce
 this state?" before shipping it.

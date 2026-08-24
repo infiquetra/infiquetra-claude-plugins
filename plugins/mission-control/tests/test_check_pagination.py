@@ -99,6 +99,37 @@ class TestGraphqlFirstWithoutHasNextPage:
         )
         assert check_pagination.check_file(script) == []
 
+    def test_unpaginated_query_inside_file_with_paginated_query_fails(self, tmp_path):
+        """Query-scoped check flags an unpaginated query even if another query
+        in the same file checks hasNextPage (#584, R2)."""
+        script = tmp_path / "mixed_queries.py"
+        script.write_text(
+            'QUERY_PAGINATED = """\n'
+            "query($org: String!, $number: Int!, $cursor: String) {\n"
+            "  organization(login: $org) {\n"
+            "    projectV2(number: $number) {\n"
+            "      items(first: 100, after: $cursor) {\n"
+            "        pageInfo { hasNextPage endCursor }\n"
+            "        nodes { id }\n"
+            "      }\n"
+            "    }\n"
+            "  }\n"
+            '}\n"""\n\n'
+            'QUERY_UNPAGINATED = """\n'
+            "query($org: String!, $number: Int!) {\n"
+            "  organization(login: $org) {\n"
+            "    projectV2(number: $number) {\n"
+            "      fields(first: 30) {\n"
+            "        nodes { id }\n"
+            "      }\n"
+            "    }\n"
+            "  }\n"
+            '}\n"""\n'
+        )
+        violations = check_pagination.check_file(script)
+        assert violations
+        assert any("mixed_queries.py:14" in v and "hasNextPage" in v for v in violations)
+
 
 class TestRunLint:
     def test_run_lint_aggregates_across_files(self, tmp_path):
@@ -113,3 +144,46 @@ class TestRunLint:
         """Regression guard: the real mission-control scripts/skills/commands/
         agents tree must not regress to an unguarded call site."""
         assert check_pagination.run_lint() == []
+
+
+class TestGraphqlGuardNeverFailsOpen:
+    """The query-scoped rewrite (#584 R2) must never be WEAKER than the
+    whole-file check it replaced: an extractor that cannot parse a literal
+    shape falls back, it does not go quiet."""
+
+    def test_stray_triple_single_quote_does_not_blind_the_file(self, tmp_path):
+        """A module docstring containing ``'''`` must not desynchronize literal
+        pairing and silently switch the GraphQL guard off for the whole file."""
+        script = tmp_path / "mixed_quote_styles.py"
+        script.write_text(
+            '"""Module docstring mentioning \'\'\' inline."""\n'
+            "\n"
+            'QUERY = """\n'
+            "query($org: String!) {\n"
+            "  organization(login: $org) {\n"
+            "    projectV2(number: 1) { fields(first: 30) { nodes { id } } }\n"
+            "  }\n"
+            "}\n"
+            '"""\n'
+        )
+        violations = check_pagination.check_file(script)
+        assert violations
+        assert any("hasNextPage" in v for v in violations)
+
+    def test_unpaginated_query_in_untagged_fence_beside_paginated_fence_fails(self, tmp_path):
+        """A doc whose ``graphql`` fence paginates must not launder an
+        unpaginated query sitting in a differently-tagged fence."""
+        doc = tmp_path / "mixed_fences.md"
+        doc.write_text(
+            "# Queries\n\n"
+            "```graphql\n"
+            "query($c: String) { items(first: 10, after: $c) "
+            "{ pageInfo { hasNextPage } nodes { id } } }\n"
+            "```\n\n"
+            "```json\n"
+            '{"query": "query { projectV2 { fields(first: 30) { nodes { id } } } }"}\n'
+            "```\n"
+        )
+        violations = check_pagination.check_file(doc)
+        assert violations
+        assert any("hasNextPage" in v for v in violations)

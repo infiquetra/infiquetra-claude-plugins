@@ -20,8 +20,8 @@ def test_sdlc_manager_metadata_and_marketplace_entry_match() -> None:
 
     assert plugin_json["name"] == "mission-control"
     assert (
-        plugin_json["version"] == "2.12.0"
-    )  # retire the hermes-task / hermes-not-actionable dispatch markers
+        plugin_json["version"] == "2.12.1"
+    )  # prepared-issue draft revision replacement semantics and multi-fence readiness validation (#785)
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/mission-control"
     assert "CAMPPS" in plugin_json["description"]

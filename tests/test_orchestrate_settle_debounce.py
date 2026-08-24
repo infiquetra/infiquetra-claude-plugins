@@ -67,6 +67,8 @@ def repo(tmp_path: Path) -> Path:
         _git(r, "checkout", "-b", f"orch/r1-{unit}", "orch/r1")
         _commit(r, f"{unit}.txt")
         _git(r, "checkout", "main")
+    for unit in ("delta", "epsilon"):
+        _git(r, "branch", f"orch/r1-{unit}", "orch/r1")
     return r
 
 
@@ -203,24 +205,42 @@ class TestIdleMustPersistAcrossTwoReadings:
         assert "alpha" in out
         assert "still moving" in out
 
-    def test_gone_in_both_readings_is_failed(
+    def test_gone_in_both_readings_without_commits_is_orphaned(
         self,
         orchestrate: ModuleType,
         repo: Path,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """Absence in one reading may be a herdr hiccup; absence in both is a dead session."""
+        """Absence in one reading may be a herdr hiccup; absence in both without commits is orphaned."""
+        _write_run(repo, [_unit("delta")])
+        _patch_settle(orchestrate, monkeypatch, [[], []])
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False)) == 0
+        unit = _read_units(repo)["delta"]
+        assert unit["status"] == "orphaned"
+        assert unit["note"] == "session disappeared without commits"
+        out = capsys.readouterr().out
+        assert "session gone -> orphaned" in out
+
+    def test_gone_in_both_readings_with_commits_is_done(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A closed session whose branch carries commits settles done, not failed."""
         _write_run(repo, [_unit("alpha")])
         _patch_settle(orchestrate, monkeypatch, [[], []])
         monkeypatch.chdir(repo)
 
         assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False)) == 0
         unit = _read_units(repo)["alpha"]
-        assert unit["status"] == "failed"
-        assert unit["note"] == "session disappeared"
+        assert unit["status"] == "done"
         out = capsys.readouterr().out
-        assert "session gone -> failed" in out
+        assert "session gone with commits -> done" in out
 
     def test_gone_in_only_one_reading_is_not_failed(
         self,
@@ -229,13 +249,13 @@ class TestIdleMustPersistAcrossTwoReadings:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """The flip to failed needs both readings to agree, exactly like the flip to done."""
-        _write_run(repo, [_unit("alpha")])
-        _patch_settle(orchestrate, monkeypatch, [[_agent("alpha", "idle")], []])
+        """The flip to orphaned needs both readings to agree, exactly like the flip to done."""
+        _write_run(repo, [_unit("delta")])
+        _patch_settle(orchestrate, monkeypatch, [[_agent("delta", "idle")], []])
         monkeypatch.chdir(repo)
 
         orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False))
-        assert _read_units(repo)["alpha"]["status"] == "running"
+        assert _read_units(repo)["delta"]["status"] == "running"
 
     def test_a_mixed_run_gets_one_fate_per_unit(
         self,
@@ -245,12 +265,12 @@ class TestIdleMustPersistAcrossTwoReadings:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """Three units, one settle pass, all three outcomes decided per unit rather than per run."""
-        _write_run(repo, [_unit("alpha"), _unit("beta"), _unit("gamma")])
+        _write_run(repo, [_unit("alpha"), _unit("beta"), _unit("delta")])
         _patch_settle(
             orchestrate,
             monkeypatch,
             [
-                [_agent("alpha", "idle"), _agent("beta", "idle")],  # gamma absent -> gone
+                [_agent("alpha", "idle"), _agent("beta", "idle")],  # delta absent -> gone
                 [_agent("alpha", "idle"), _agent("beta", "working")],
             ],
         )
@@ -260,7 +280,7 @@ class TestIdleMustPersistAcrossTwoReadings:
         units = _read_units(repo)
         assert units["alpha"]["status"] == "done"
         assert units["beta"]["status"] == "running"
-        assert units["gamma"]["status"] == "failed"
+        assert units["delta"]["status"] == "orphaned"
 
 
 class TestOnceKeepsTheSingleSample:
@@ -282,19 +302,19 @@ class TestOnceKeepsTheSingleSample:
         assert fake.calls == 1
         assert slept == [], "--once must not wait between readings"
 
-    def test_gone_is_failed_on_a_single_reading(
+    def test_gone_without_commits_is_orphaned_on_a_single_reading(
         self,
         orchestrate: ModuleType,
         repo: Path,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        _write_run(repo, [_unit("alpha")])
+        _write_run(repo, [_unit("delta")])
         fake, slept = _patch_settle(orchestrate, monkeypatch, [[]])
         monkeypatch.chdir(repo)
 
         assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=True)) == 0
-        assert _read_units(repo)["alpha"]["status"] == "failed"
+        assert _read_units(repo)["delta"]["status"] == "orphaned"
         assert fake.calls == 1
         assert slept == []
 

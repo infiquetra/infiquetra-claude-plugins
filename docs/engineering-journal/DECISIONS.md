@@ -1,6 +1,53 @@
 # Decisions — Infiquetra Claude Plugins
 ## 2026-08-24
 
+### The zero-consumer sweep fired and the lease payload stays anyway  {#lease-ttl-payload-kept-after-zero-consumer-sweep}
+
+**Decision.** The consumer sweep that DECISIONS `{#defects-run-plan-ktds-787}` made a precondition
+for #694 has now run, and it found **zero consumers** — of teardown and release return values, and
+of `execution_ttl_seconds` itself (evidence in LEARNINGS
+`{#lease-ttl-honest-without-a-reader}`). That is the condition the earlier entry's "revisit when"
+clause named as making shape (b) — retiring the TTL semantics from the emitted payload — "the
+truthful fix". **Shape (b) is nonetheless rejected and the payload is kept**, with
+`execution_ttl_seconds` derived from run scale (shape (a)) as shipped in pull request 795.
+
+**Rationale.** The forecast and the instruction disagreed, and the instruction is both later and
+more specific. Plan section U8, as repaired in S3 against doc-review finding F4, pins the fix to
+`max(900, 300 × multiplicity-aware unit count)` and treats dropping the leaf's 10-minute criterion
+as a permission the unit *may* exercise on a zero-reader sweep, not an obligation. The unit declined
+that permission and satisfied the criterion instead, which is the more conservative of the two
+readings: leaf #694's acceptance criteria are met as written rather than negotiated away.
+
+The substantive reason the forecast was wrong is recorded in the LEARNINGS entry: a consumer sweep
+enumerates *callers*, and the payload's real audience is a person reading a persisted
+`.saga/workflow-lease-*.json` artifact after a run — exactly how the #686 incident was
+reconstructed. Zero callers therefore does not establish zero readers, so "nothing consumes it"
+never became an argument for recording a number known to be wrong.
+
+**Rejected alternatives.**
+
+- *Shape (b) — retire `execution_ttl_seconds` from the payload and from `workflow_emitter`
+  validation.* Rejected on the reader argument above, and separately on cost: it is a schema change
+  to a closed contract (`workflow_lease_reservation.v1`), a larger diff, and it deletes the only
+  surviving record of intended run scale. Shape (a) is one computed value replacing one literal.
+- *Dropping leaf #694's 10-minute acceptance criterion under U8's zero-reader permission.* Rejected.
+  The permission exists so a unit is not forced to invent a consumer to test against; here the
+  criterion is satisfiable directly from the emitted value, so exercising the permission would trade
+  a met criterion for a recorded excuse.
+- *Rebuilding a renewal path or a background lease keeper.* Rejected already in
+  `{#defects-run-plan-ktds-787}` and unchanged by the sweep — the broker is deleted and nothing
+  renews.
+
+**Revisit when.** A consumer of `execution_ttl_seconds` appears — a scheduler, a sweeper, or a
+successor to the retired broker that treats it as an enforceable hold. At that point the value stops
+being a record and becomes a control input, the 300-seconds-per-invocation constant needs
+calibration against measured run durations rather than a pinned estimate, and an upper bound on the
+derived value becomes worth having.
+
+**Refs.** DECISIONS `{#defects-run-plan-ktds-787}` (the clause this discharges), LEARNINGS
+`{#lease-ttl-honest-without-a-reader}` and `{#workflow-lease-ttl-outlives-no-poll-contract}`;
+issue #694; pull request 795.
+
 ### defects-claude-plugins run plan: fix-shape decisions for the 20-leaf #787 run {#defects-run-plan-ktds-787}
 
 **Decision.** The implementation plan for the #787 unattended run

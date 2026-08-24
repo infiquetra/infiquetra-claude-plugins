@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.139.5] - 2026-08-24
+
+### Added
+
+- **Document review_consensus.py state-machine API and calling conventions.** Added complete
+  docstrings to public state entry points (`ReviewCycleState.record_cycle`, `ReviewFinding`,
+  `evaluate_review_readiness`, `ReviewCycleState`), defining required and optional parameters, valid
+  lifecycle call order, and return types. Added an end-to-end worked example (record cycle → evaluate
+  readiness) in the module docstring and documented the private internals boundary. (#784)
+
 ## [0.139.4] - 2026-08-24
 
 ### Fixed

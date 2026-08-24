@@ -1,5 +1,72 @@
 #!/usr/bin/env python3
-"""Score Code Review lenses from the canonical roster and keep other gates separate."""
+"""Score Code Review lenses from the canonical roster and keep other gates separate.
+
+Private Internals:
+    All functions, classes, and module attributes prefixed with a leading underscore
+    (`_`) or omitted from `__all__` are private implementation details and subject to
+    internal change without notice. External consumers and direct-drive sessions
+    should rely strictly on the public symbols exported in `__all__`.
+
+Public Entry Points and State Machine Overview:
+    1. Scoring Individual Lenses:
+       - `score_lens_review(lens_id, applicable_dimensions, ...)`: Validates rubric
+         dimension scores against the canonical roster policy and returns a `LensScore`.
+    2. Review Cycle State Machine:
+       - `ReviewCycleState(selected_lenses=...)`: Instantiates the 3-cycle controller.
+       - `ReviewFinding(...)`: Defines structured findings with severity, owner, and actionability.
+       - `ReviewCycleState.record_cycle(revision, lens_scores, ...)`: Records a review
+         round, reconciles findings, updates failing lenses, and determines outcome.
+    3. Gate Readiness Evaluation:
+       - `evaluate_review_readiness(lens_scores, independent_gates=...)`: Combines lens
+         scores with independent non-scoring gate results into a composite readiness decision.
+
+Worked Example (Direct State-Machine Drive):
+    >>> import review_consensus as rc
+    >>>
+    >>> # 1. Score the required lenses against the canonical rubric policy
+    >>> policy = rc.DEFAULT_SCORING_POLICY
+    >>> correctness_dims = dict.fromkeys(policy.dimensions_for("correctness"), 9.5)
+    >>> correctness_score = rc.score_lens_review("correctness", correctness_dims)
+    >>>
+    >>> # 2. Initialize the cycle state machine with selected lenses
+    >>> state = rc.ReviewCycleState(["correctness"])
+    >>> assert state.next_lenses == ("correctness",)
+    >>>
+    >>> # 3. Construct any structured review findings
+    >>> finding = rc.ReviewFinding(
+    ...     finding_id="F01",
+    ...     lens_id="correctness",
+    ...     dimension_id=policy.dimensions_for("correctness")[0],
+    ...     title="Documented boundary check",
+    ...     severity="P2",
+    ...     file="plugins/saga/scripts/review_consensus.py",
+    ...     line=1,
+    ...     why_it_matters="Ensures callers understand parameter contracts.",
+    ...     autofix_class="safe_auto",
+    ...     owner="review-fixer",
+    ...     requires_verification=True,
+    ...     confidence=100,
+    ...     evidence=("plugins/saga/scripts/review_consensus.py:1",),
+    ... )
+    >>>
+    >>> # 4. Record the cycle for the reviewed revision
+    >>> result = state.record_cycle(
+    ...     revision="a1b2c3d4e5f6",
+    ...     lens_scores={"correctness": correctness_score},
+    ...     findings=[finding],
+    ... )
+    >>> assert result.outcome == "accepted"
+    >>>
+    >>> # 5. Evaluate overall review readiness with independent verification gates
+    >>> gate = rc.IndependentGateResult(gate_id="unit-tests", passed=True)
+    >>> readiness = rc.evaluate_review_readiness(
+    ...     lens_scores=[item.score for item in result.lens_results],
+    ...     independent_gates=[gate],
+    ... )
+    >>> assert readiness.can_proceed is True
+    >>> assert readiness.review_accepted is True
+    >>> assert readiness.independent_gates_passed is True
+"""
 
 from __future__ import annotations
 
@@ -202,7 +269,30 @@ def _plain_dataclass(value: object) -> dict[str, Any]:
 
 @dataclass(frozen=True)
 class ReviewFinding:
-    """One finding with the routing metadata serialized for downstream callers."""
+    """A structured Code Review finding with routing metadata.
+
+    Attributes:
+        finding_id: Unique string identifier for the finding (e.g. 'F01'). Must be non-empty.
+        lens_id: Identifier of the reporting review lens (e.g. 'correctness', 'security').
+        dimension_id: Optional dimension within the lens rubric (e.g.
+            'boundary-types-serialization-numeric-time'). Required when reconciling with scoring
+            evidence in a review cycle.
+        title: Short summary describing the defect or concern.
+        severity: Priority level ('P0', 'P1', 'P2', or 'P3').
+        file: Relative path to the primary file containing the issue.
+        line: 1-indexed line number in `file` (integer >= 1).
+        why_it_matters: Explanation of the impact, risk, or rationale.
+        autofix_class: Actionability classification ('safe_auto', 'gated_auto', 'manual',
+            or 'advisory').
+        owner: Responsible party ('review-fixer', 'downstream-resolver', 'human', or 'release').
+        requires_verification: Whether remediation requires automated verification.
+        confidence: Confidence score anchor (must be one of 0, 25, 50, 75, 100).
+        evidence: Non-empty sequence of evidence citations (e.g. file:line references).
+        pre_existing: Whether the issue was present prior to the reviewed revision (default: False).
+        suggested_fix: Optional proposed remediation text.
+        touched_paths: Sequence of all affected file paths (defaults to `(file,)` if omitted).
+        status: Finding lifecycle status ('active', 'dismissed', or 'resolved'; default: 'active').
+    """
 
     finding_id: str
     lens_id: str
@@ -1125,7 +1215,13 @@ def consolidate_fix_requests(findings: Iterable[ReviewFinding]) -> tuple[FixRequ
 
 
 class ReviewCycleState:
-    """Three-cycle controller layered additively over the U5 scorer."""
+    """Three-cycle review consensus state machine controller.
+
+    Manages the multi-round review lifecycle across up to `MAX_REVIEW_CYCLES` (3),
+    tracking attempted lenses, failing lenses, consolidated fix requests, delta checks,
+    and cumulative review outcomes ('accepted', 'repairs_requested',
+    'cycle_cap_best_available', or 'review_incomplete').
+    """
 
     def __init__(
         self,
@@ -1134,6 +1230,17 @@ class ReviewCycleState:
         evidence_ledger: Mapping[str, str] | None = None,
         policy: ReviewScoringPolicy | None = None,
     ) -> None:
+        """Initialize review cycle state for a set of selected lenses.
+
+        Args:
+            selected_lenses: Iterable of lens identifiers (e.g. 'correctness', 'security')
+                to run and track across cycles. Must contain at least one valid lens from the policy.
+            evidence_ledger: Optional initial mapping of evidence keys to values.
+            policy: Optional custom `ReviewScoringPolicy` (defaults to `DEFAULT_SCORING_POLICY`).
+
+        Raises:
+            ReviewConsensusError: If `selected_lenses` is empty or contains unknown/duplicate lenses.
+        """
         self._policy = policy or DEFAULT_SCORING_POLICY
         self._selected_lenses = _review_text_tuple(selected_lenses, label="selected_lenses")
         if not self._selected_lenses:
@@ -1184,6 +1291,45 @@ class ReviewCycleState:
         resolved_fix_ids: Iterable[str] = (),
         evidence_ledger: Mapping[str, str] | None = None,
     ) -> ReviewResult:
+        """Record one review cycle iteration for the current active lenses.
+
+        Advances the review state machine by evaluating provided lens scores,
+        reconciling typed findings, validating any required delta checks for
+        retained lenses, and computing the current or terminal review outcome.
+
+        Call Order and Lifecycle:
+            1. Initialize `ReviewCycleState(selected_lenses=...)`.
+            2. Cycle 1 expects scores for all `selected_lenses` (`state.next_lenses`).
+            3. If all lenses meet policy acceptance criteria (overall minimum and dimension
+               floors), the outcome is 'accepted'.
+            4. If any lens fails, outcome is 'repairs_requested'. In the subsequent cycle,
+               `state.next_lenses` contains only the failing lenses.
+            5. Subsequent cycles (up to `MAX_REVIEW_CYCLES` = 3) must provide scores for
+               `state.next_lenses`. If the candidate cycle would be terminal, `delta_checks`
+               must be supplied for previously accepted retained lenses.
+            6. Reaching `MAX_REVIEW_CYCLES` with failing lenses results in
+               'cycle_cap_best_available'.
+
+        Args:
+            revision: Git commit SHA or revision identifier evaluated in this cycle.
+            lens_scores: Mapping of lens_id to `LensScore` for each lens in `state.next_lenses`.
+            findings: Optional sequence of `ReviewFinding` objects discovered during this cycle.
+            delta_checks: Optional sequence of `DeltaCheckResult` objects verifying retained lenses
+                against the new revision when reaching a terminal candidate state.
+            external_review: Optional `ExternalAdvisoryReview` holding non-scoring advisory evidence.
+            resolved_fix_ids: Optional sequence of fix IDs that were resolved in this revision.
+            evidence_ledger: Optional mapping of additional evidence key-value pairs.
+
+        Returns:
+            ReviewResult: The updated immutable review result reflecting the cumulative state,
+            including `outcome` ('accepted', 'repairs_requested', or 'cycle_cap_best_available'),
+            `lens_results`, `findings`, `fix_requests`, and `residual_summary`.
+
+        Raises:
+            ReviewConsensusError: If the state is already terminal, if `lens_scores` does not
+            match `next_lenses`, if findings contradict scoring, or if delta-checks are missing
+            or invalid.
+        """
         if self._terminal_outcome is not None or self.cycle_count >= MAX_REVIEW_CYCLES:
             raise ReviewConsensusError("review is terminal; no further cycle is allowed")
         revision = _review_text(revision, label="reviewed revision")
@@ -1299,6 +1445,19 @@ class ReviewCycleState:
         *,
         collector: Callable[[dict[str, Any]], Mapping[str, Any]] | None = None,
     ) -> RunnerDeliveryResolution:
+        """Process an asynchronous runner delivery payload.
+
+        Args:
+            delivery: Mapping containing 'session_outcome' ('ready', 'pending', 'ran',
+                'ran-empty', 'died', 'not-started') and optional 'reason' or 'handle'.
+            collector: Optional callback to collect pending runner results.
+
+        Returns:
+            RunnerDeliveryResolution indicating delivery status ('ready', 'pending', or 'incomplete').
+
+        Raises:
+            ReviewConsensusError: If 'session_outcome' is unknown.
+        """
         outcome = delivery.get("session_outcome")
         if outcome == "pending":
             if collector is None:
@@ -1318,6 +1477,17 @@ class ReviewCycleState:
         raise ReviewConsensusError("unknown runner session_outcome")
 
     def mark_review_incomplete(self, reason: str) -> ReviewResult:
+        """Mark the review as terminally incomplete with a specified failure reason.
+
+        Args:
+            reason: Non-empty description explaining why the review could not complete.
+
+        Returns:
+            ReviewResult: Terminal review result with outcome 'review_incomplete'.
+
+        Raises:
+            ReviewConsensusError: If the review already reached a terminal outcome.
+        """
         if self._terminal_outcome is not None:
             raise ReviewConsensusError("review already has a terminal outcome")
         self._review_incomplete_reason = _review_text(reason, label="review incomplete reason")
@@ -1325,6 +1495,14 @@ class ReviewCycleState:
         return self.result()
 
     def result(self) -> ReviewResult:
+        """Compute and return the current or terminal immutable ReviewResult.
+
+        Returns:
+            ReviewResult: The current aggregated review result reflecting all recorded cycles.
+
+        Raises:
+            ReviewConsensusError: If no cycle has been recorded and no outcome has been set.
+        """
         if self._terminal_outcome is None:
             if not self._cycle_history:
                 raise ReviewConsensusError("review has no result yet")
@@ -1370,6 +1548,7 @@ class ReviewCycleState:
         )
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize review cycle state to a JSON-compatible dictionary."""
         current_outcome = (
             self._terminal_outcome
             if self._terminal_outcome is not None
@@ -1392,10 +1571,23 @@ class ReviewCycleState:
         }
 
     def to_json(self) -> str:
+        """Serialize review cycle state to a canonical JSON string."""
         return json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> ReviewCycleState:
+        """Instantiate a ReviewCycleState from a serialized dictionary payload.
+
+        Args:
+            payload: Mapping adhering to the review_cycle_state.v1 schema.
+
+        Returns:
+            ReviewCycleState instance restored to the serialized point in the lifecycle.
+
+        Raises:
+            UnsupportedReviewResultSchemaError: If schema version does not match.
+            ReviewConsensusError: If the payload contains contradictory or invalid state.
+        """
         schema = payload.get("schema")
         if schema != REVIEW_CYCLE_STATE_SCHEMA:
             raise UnsupportedReviewResultSchemaError(
@@ -1466,6 +1658,17 @@ class ReviewCycleState:
 
     @classmethod
     def from_json(cls, payload: str) -> ReviewCycleState:
+        """Instantiate a ReviewCycleState from a serialized JSON string.
+
+        Args:
+            payload: JSON string adhering to the review_cycle_state.v1 schema.
+
+        Returns:
+            ReviewCycleState instance.
+
+        Raises:
+            ReviewConsensusError: If JSON decoding fails or state is invalid.
+        """
         try:
             decoded = json.loads(payload)
         except json.JSONDecodeError as exc:
@@ -1707,7 +1910,39 @@ def evaluate_review_readiness(
     lens_scores: Iterable[LensScore],
     independent_gates: Iterable[IndependentGateResult] = (),
 ) -> ReviewReadiness:
-    """Combine lens acceptance with non-scoring gates without changing either result."""
+    """Combine lens acceptance with non-scoring gates without changing either result.
+
+    Evaluates whether a change is ready to proceed by combining the scoring outcomes
+    of review lenses with independent binary gate results (e.g. CI checks, test suites,
+    linter runs). Both all review lenses and all independent gates must pass for
+    `can_proceed` to be True.
+
+    Call Order:
+        Typically invoked after scoring review lenses (via `score_lens_review` or
+        from `ReviewResult.lens_scores` / `LensReviewResult.score`) and collecting results
+        for independent non-scoring verification gates.
+
+    Args:
+        lens_scores: Non-empty iterable of unique `LensScore` objects to evaluate.
+        independent_gates: Optional iterable of unique `IndependentGateResult` objects
+            representing non-scoring verification gates.
+
+    Returns:
+        ReviewReadiness: An immutable readiness object containing:
+            - `can_proceed`: True if `review_accepted` and `independent_gates_passed` are both True.
+            - `review_accepted`: True if all provided `LensScore` instances are accepted.
+            - `independent_gates_passed`: True if all provided `IndependentGateResult`
+              instances passed.
+            - `failing_lenses`: Tuple of lens IDs that failed scoring acceptance.
+            - `failed_independent_gates`: Tuple of gate IDs that did not pass.
+            - `lens_scores`: Tuple of the evaluated `LensScore` instances.
+            - `independent_gates`: Tuple of the evaluated `IndependentGateResult` instances.
+
+    Raises:
+        ReviewScoringError: If `lens_scores` is empty, contains non-LensScore items,
+            or contains duplicate lens IDs; or if `independent_gates` contains invalid
+            gate values or duplicate gate IDs.
+    """
     scores = tuple(lens_scores)
     if not scores:
         raise ReviewScoringError("review readiness requires at least one lens score")

@@ -53,10 +53,16 @@ blank-line record separator a fake must honour.
 ## Worked example (v1)
 
 `tests/fixtures/golden/worktree_list_porcelain.golden.txt` — a normalized capture of real
-`git worktree list --porcelain` output, consumed conceptually by the worktree-liveness fake
-(`FakeWT` / `tests/fakes_registry._FakeWorktreeStore`). `tests/test_check_fake_fixtures.py` proves a
-mutated or deleted golden is flagged, and that the committed golden is byte-identical to a fresh real
-capture.
+`git worktree list --porcelain` output, consumed by the worktree-liveness fake
+(`FakeWT` / `tests/fakes_registry.FakeWT`). Since #588 that consumption is **behavioral, not
+declarative**: `scripts/check_fake_fixtures.py` looks the fake up in its `_CONSUMERS` table and runs
+`FakeWT.load_porcelain()` against the golden's bytes, so a manifest row naming a fake nobody consumes
+(`unpaired`) or a golden the paired fake can no longer parse (`consumer_failure`) is drift in its own
+right — alongside the `deleted` and `mutated` hash checks.
+
+`tests/test_check_fake_fixtures.py` proves all four: a mutated or deleted golden is flagged, an
+unpaired fake and a consumer failure each turn the check red, the registered `FakeWT` really does
+read the committed golden, and the committed golden is byte-identical to a fresh real capture.
 
 ## Scope
 

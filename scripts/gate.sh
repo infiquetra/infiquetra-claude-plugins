@@ -209,7 +209,7 @@ step "Engineering-journal ordering lint" uv run python scripts/lint_journal_orde
 step "Run mypy" uv run python -m mypy plugins/ scripts/ tests/ --ignore-missing-imports
 # CI ends this step with `|| true`, so bandit findings never block a merge there.
 advisory "Run bandit security scan" \
-  uv run python -m bandit -r plugins/ scripts/ tests/ -ll -f json -o "$LOG_DIR/bandit.json"
+  uv run python -m bandit -r plugins/ scripts/ tests/ tools/ -ll -f json -o "$LOG_DIR/bandit.json"
 advisory "Report security findings" \
   bash -c 'f="$0/bandit.json"; [ -f "$f" ] && python3 -c "import json,sys;d=json.load(open(sys.argv[1]));print(\"bandit results:\",len(d[\"results\"]))" "$f"' "$LOG_DIR"
 

@@ -7,6 +7,16 @@ Private Internals:
     internal change without notice. External consumers and direct-drive sessions
     should rely strictly on the public symbols exported in `__all__`.
 
+Exception Hierarchy (read before writing an `except` clause):
+    `ReviewScoringError(ValueError)` is the root of every error class this module defines.
+    `ContradictoryReviewEvidenceError` and `ReviewConsensusError` each subclass
+    `ReviewScoringError`, and `UnsupportedReviewResultSchemaError` subclasses
+    `ReviewConsensusError`. The nesting runs the opposite way from what the names
+    suggest: `ReviewConsensusError` does NOT catch `ReviewScoringError` or
+    `ContradictoryReviewEvidenceError`. Catch `ReviewScoringError` to cover the
+    whole module; catch a narrower class only when that specific failure is meant
+    to be handled differently.
+
 Public Entry Points and State Machine Overview:
     1. Scoring Individual Lenses:
        - `score_lens_review(lens_id, applicable_dimensions, ...)`: Validates rubric
@@ -274,9 +284,11 @@ class ReviewFinding:
     Attributes:
         finding_id: Unique string identifier for the finding (e.g. 'F01'). Must be non-empty.
         lens_id: Identifier of the reporting review lens (e.g. 'correctness', 'security').
-        dimension_id: Optional dimension within the lens rubric (e.g.
-            'boundary-types-serialization-numeric-time'). Required when reconciling with scoring
-            evidence in a review cycle.
+        dimension_id: Dimension within the lens rubric (e.g.
+            'boundary-types-serialization-numeric-time'). This argument has no default and must
+            always be passed - pass `None` explicitly for a finding that names no dimension.
+            `ReviewCycleState.record_cycle` rejects a `None` dimension_id, so any finding routed
+            through a review cycle must name a real dimension of its lens.
         title: Short summary describing the defect or concern.
         severity: Priority level ('P0', 'P1', 'P2', or 'P3').
         file: Relative path to the primary file containing the issue.
@@ -1239,7 +1251,10 @@ class ReviewCycleState:
             policy: Optional custom `ReviewScoringPolicy` (defaults to `DEFAULT_SCORING_POLICY`).
 
         Raises:
-            ReviewConsensusError: If `selected_lenses` is empty or contains unknown/duplicate lenses.
+            ReviewConsensusError: If `selected_lenses` is empty or contains duplicates.
+            ReviewScoringError: If `selected_lenses` names a lens the policy does not define.
+                This is NOT a `ReviewConsensusError` - see the module docstring's exception
+                hierarchy note before writing an `except` clause around this constructor.
         """
         self._policy = policy or DEFAULT_SCORING_POLICY
         self._selected_lenses = _review_text_tuple(selected_lenses, label="selected_lenses")
@@ -1300,8 +1315,10 @@ class ReviewCycleState:
         Call Order and Lifecycle:
             1. Initialize `ReviewCycleState(selected_lenses=...)`.
             2. Cycle 1 expects scores for all `selected_lenses` (`state.next_lenses`).
-            3. If all lenses meet policy acceptance criteria (overall minimum and dimension
-               floors), the outcome is 'accepted'.
+            3. If every attempted lens meets policy acceptance criteria (overall minimum and
+               dimension floors) and no supplied delta-check failed, the outcome is 'accepted'.
+               A failing `DeltaCheckResult` returns its retained lens to the failing set, so a
+               cycle whose `lens_scores` all pass can still come back 'repairs_requested'.
             4. If any lens fails, outcome is 'repairs_requested'. In the subsequent cycle,
                `state.next_lenses` contains only the failing lenses.
             5. Subsequent cycles (up to `MAX_REVIEW_CYCLES` = 3) must provide scores for
@@ -1327,8 +1344,17 @@ class ReviewCycleState:
 
         Raises:
             ReviewConsensusError: If the state is already terminal, if `lens_scores` does not
-            match `next_lenses`, if findings contradict scoring, or if delta-checks are missing
-            or invalid.
+                match `next_lenses`, if a typed finding names an unattempted lens or a `None`
+                dimension, if a finding contradicts the scoring evidence already recorded for it,
+                or if delta-checks are missing, duplicated, or bound to the wrong revision.
+            ReviewScoringError: If reconciling the typed findings re-scores a lens into an
+                invalid state - for example a finding naming a dimension its lens does not
+                define. `ContradictoryReviewEvidenceError` (also a `ReviewScoringError`) is
+                raised when an unresolved critical finding - a P0 that is active, not
+                `pre_existing`, and not `advisory` - contradicts the score it is attached to, by
+                naming a dimension recorded as non-applicable or by sitting on a dimension that
+                scored at or above the floor. Neither class is a `ReviewConsensusError`; see the
+                module docstring's exception hierarchy note.
         """
         if self._terminal_outcome is not None or self.cycle_count >= MAX_REVIEW_CYCLES:
             raise ReviewConsensusError("review is terminal; no further cycle is allowed")
@@ -1448,15 +1474,19 @@ class ReviewCycleState:
         """Process an asynchronous runner delivery payload.
 
         Args:
-            delivery: Mapping containing 'session_outcome' ('ready', 'pending', 'ran',
-                'ran-empty', 'died', 'not-started') and optional 'reason' or 'handle'.
+            delivery: Mapping whose 'session_outcome' is one of 'pending', 'ran', 'ran-empty',
+                'died', or 'not-started', plus an optional 'reason' or 'handle'. Any other value
+                is rejected - in particular 'ready' is a `RunnerDeliveryResolution.status` value,
+                never an accepted input.
             collector: Optional callback to collect pending runner results.
 
         Returns:
-            RunnerDeliveryResolution indicating delivery status ('ready', 'pending', or 'incomplete').
+            RunnerDeliveryResolution whose status is 'ready', 'pending', or 'incomplete'. Note the
+            status vocabulary differs from the input vocabulary above: 'ran' maps to 'ready', and
+            'ran-empty' / 'died' / 'not-started' map to 'incomplete' via `mark_review_incomplete`.
 
         Raises:
-            ReviewConsensusError: If 'session_outcome' is unknown.
+            ReviewConsensusError: If 'session_outcome' is missing or unknown.
         """
         outcome = delivery.get("session_outcome")
         if outcome == "pending":
@@ -1918,9 +1948,11 @@ def evaluate_review_readiness(
     `can_proceed` to be True.
 
     Call Order:
-        Typically invoked after scoring review lenses (via `score_lens_review` or
-        from `ReviewResult.lens_scores` / `LensReviewResult.score`) and collecting results
-        for independent non-scoring verification gates.
+        Typically invoked after scoring review lenses - directly via `score_lens_review`, or
+        from a recorded cycle as `[item.score for item in ReviewResult.lens_results]`
+        (`ReviewResult` carries `lens_results`, a tuple of `LensReviewResult`; it has no
+        `lens_scores` attribute) - and after collecting results for the independent
+        non-scoring verification gates.
 
     Args:
         lens_scores: Non-empty iterable of unique `LensScore` objects to evaluate.

@@ -10,6 +10,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = ROOT / "plugins" / "saga" / "scripts"
 MODULE_PATH = SCRIPTS_DIR / "review_consensus.py"
@@ -153,3 +155,84 @@ def test_acceptance_criteria_python_one_liner() -> None:
     ]
     proc = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True, check=False)
     assert proc.returncode == 0, f"Command failed: {proc.stderr}"
+
+
+def test_documented_exception_hierarchy_matches_the_real_one() -> None:
+    """The module docstring's exception-hierarchy note must match the actual class nesting.
+
+    The nesting is the reverse of what the names suggest: ReviewConsensusError subclasses
+    ReviewScoringError, so `except ReviewConsensusError` does NOT catch a ReviewScoringError.
+    A docstring that names the wrong class sends a direct-drive caller's except clause past
+    the error it meant to handle.
+    """
+    assert issubclass(CONSENSUS.ReviewConsensusError, CONSENSUS.ReviewScoringError)
+    assert issubclass(CONSENSUS.ContradictoryReviewEvidenceError, CONSENSUS.ReviewScoringError)
+    assert issubclass(CONSENSUS.UnsupportedReviewResultSchemaError, CONSENSUS.ReviewConsensusError)
+    assert not issubclass(CONSENSUS.ReviewScoringError, CONSENSUS.ReviewConsensusError)
+
+    module_doc = CONSENSUS.__doc__
+    assert module_doc is not None
+    assert "Exception Hierarchy" in module_doc
+    assert "ReviewScoringError" in module_doc
+
+    # An unknown lens escapes ReviewConsensusError, exactly as the constructor docstring says.
+    init_doc = CONSENSUS.ReviewCycleState.__init__.__doc__
+    assert init_doc is not None
+    assert "ReviewScoringError" in init_doc
+    with pytest.raises(CONSENSUS.ReviewScoringError) as unknown_lens:
+        CONSENSUS.ReviewCycleState(["not-a-real-lens"])
+    assert not isinstance(unknown_lens.value, CONSENSUS.ReviewConsensusError)
+
+
+def test_dimension_id_is_documented_as_a_required_argument() -> None:
+    """`ReviewFinding.dimension_id` has no default; the docstring must not read as omittable."""
+    import dataclasses
+
+    field = next(f for f in dataclasses.fields(CONSENSUS.ReviewFinding) if f.name == "dimension_id")
+    assert field.default is dataclasses.MISSING
+    assert field.default_factory is dataclasses.MISSING
+
+    finding_doc = CONSENSUS.ReviewFinding.__doc__
+    assert finding_doc is not None
+    dimension_line = next(
+        line for line in finding_doc.splitlines() if line.strip().startswith("dimension_id:")
+    )
+    assert "Optional" not in dimension_line
+    assert "no default" in finding_doc
+
+
+def test_runner_delivery_input_vocabulary_excludes_return_statuses() -> None:
+    """'ready' is a RunnerDeliveryResolution status, never an accepted session_outcome input."""
+    state = CONSENSUS.ReviewCycleState(["correctness"])
+    for accepted in ("ran-empty", "died", "not-started"):
+        fresh = CONSENSUS.ReviewCycleState(["correctness"])
+        assert fresh.handle_runner_delivery({"session_outcome": accepted}).status == "incomplete"
+    assert state.handle_runner_delivery({"session_outcome": "ran"}).status == "ready"
+    with pytest.raises(CONSENSUS.ReviewConsensusError):
+        state.handle_runner_delivery({"session_outcome": "ready"})
+
+    delivery_doc = CONSENSUS.ReviewCycleState.handle_runner_delivery.__doc__
+    assert delivery_doc is not None
+    assert "never an accepted input" in delivery_doc
+
+
+def test_readiness_docstring_names_the_attribute_that_exists() -> None:
+    """`ReviewResult` carries `lens_results`, not `lens_scores`; the docstring must say so."""
+    assert "lens_results" in CONSENSUS.ReviewResult.__dataclass_fields__
+    assert "lens_scores" not in CONSENSUS.ReviewResult.__dataclass_fields__
+    assert not hasattr(CONSENSUS.ReviewResult, "lens_scores")
+
+    readiness_doc = CONSENSUS.evaluate_review_readiness.__doc__
+    assert readiness_doc is not None
+    assert "ReviewResult.lens_results" in readiness_doc
+    collapsed = " ".join(readiness_doc.split())
+    assert "it has no `lens_scores` attribute" in collapsed
+
+
+def test_record_cycle_docstring_covers_the_delta_check_path_to_repairs() -> None:
+    """A failing delta-check can force 'repairs_requested' even when every lens score passes."""
+    record_cycle_doc = CONSENSUS.ReviewCycleState.record_cycle.__doc__
+    assert record_cycle_doc is not None
+    assert "DeltaCheckResult" in record_cycle_doc
+    assert "repairs_requested" in record_cycle_doc
+    assert "ReviewScoringError" in record_cycle_doc

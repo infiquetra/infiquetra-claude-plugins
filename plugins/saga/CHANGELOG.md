@@ -9,6 +9,15 @@
   `evaluate_review_readiness`, `ReviewCycleState`), defining required and optional parameters, valid
   lifecycle call order, and return types. Added an end-to-end worked example (record cycle → evaluate
   readiness) in the module docstring and documented the private internals boundary. (#784)
+- **Document the inverted exception hierarchy.** The module docstring now states that
+  `ReviewScoringError` is the root of every error class the module defines and that
+  `ReviewConsensusError` subclasses it, so `except ReviewConsensusError` does not catch a
+  `ReviewScoringError` or a `ContradictoryReviewEvidenceError`. `ReviewCycleState.__init__` and
+  `record_cycle` now name the class each failure actually raises. (#784)
+- **Guard the documented claims against the code.** `tests/test_review_consensus_docs.py` now pins
+  the exception hierarchy, the required-argument status of `ReviewFinding.dimension_id`, the
+  `handle_runner_delivery` input vocabulary (`ready` is a return status, never an input), and the
+  fact that `ReviewResult` exposes `lens_results` rather than `lens_scores`. (#784)
 
 ## [0.139.4] - 2026-08-24
 

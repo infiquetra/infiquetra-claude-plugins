@@ -21,6 +21,53 @@
 
 ## 2026-08-24
 
+### An exception hierarchy that nests opposite to its names sends every documented `except` clause past the error  {#inverted-exception-hierarchy-review-consensus-784}
+
+**Context.** Leaf #784 asked for docstrings on `plugins/saga/scripts/review_consensus.py` so a
+session driving the review-consensus state machine directly could succeed from the documentation
+alone. The first pass wrote thorough Google-style docstrings and named `ReviewConsensusError` in
+every `Raises:` block — the obvious reading, since the module is the consensus kernel and that class
+carries the module's own name.
+
+**Evidence.** PR #804, review commit on branch `review/784`. The module defines
+`ReviewScoringError(ValueError)` at `plugins/saga/scripts/review_consensus.py:140`,
+`ContradictoryReviewEvidenceError(ReviewScoringError)` at :144, `ReviewConsensusError(ReviewScoringError)`
+at :148, and `UnsupportedReviewResultSchemaError(ReviewConsensusError)` at :152. Reproduction:
+`ReviewCycleState(["not-a-real-lens"])` raises `ReviewScoringError("unknown scoring lens")`, and
+`record_cycle` with a finding naming a dimension its lens does not define raises
+`ReviewScoringError("finding 'F1' names unknown dimension ...")` out of the `score_lens_review`
+re-score at :884. Neither is caught by `except ReviewConsensusError`.
+
+**Mechanism.** `ReviewConsensusError` is a *subclass* of `ReviewScoringError`, not its parent. The
+names invert the nesting: "consensus" sounds like the broad module-level category and "scoring"
+like a narrow specialization, so a documentation author reaches for the wrong one and a reader
+copies the wrong one into their handler. The two classes that a direct-drive caller is most likely
+to hit first — unknown lens at construction, unknown dimension at reconciliation — both live on the
+branch that `ReviewConsensusError` does not cover.
+
+**Fix.** Docstrings now name the class each failure actually raises, and the module docstring carries
+an "Exception Hierarchy (read before writing an `except` clause)" section stating that
+`ReviewScoringError` is the root of every error class the module defines and that catching it covers
+the whole module. `tests/test_review_consensus_docs.py::test_documented_exception_hierarchy_matches_the_real_one`
+pins the nesting with `issubclass` assertions plus a live `ReviewCycleState(["not-a-real-lens"])`
+drive, so a future rename or re-parent fails the suite instead of silently restaling the prose.
+
+**What surprised.** A docstring review is not a prose review. Three of the five defects in the
+first pass — a `Raises:` naming a class that cannot catch the error, an "Optional" label on a
+required-with-no-default dataclass field, and a `session_outcome` input list seeded with a value
+that only ever appears as a *return* status — read as fluent, well-organized documentation and are
+invisible without executing the claim against the module.
+
+**Generalizable rule.** Verify a docstring the way you verify code: run each documented claim.
+Construct the object with the argument the doc calls optional, pass the value the doc lists as
+accepted, and touch the attribute the doc names. Then pin the claim with a test that asserts the
+*fact* (`dataclasses.fields(...).default is MISSING`, `issubclass(...)`, `hasattr(...)`) rather than
+the prose, because a substring assertion re-passes the moment someone rewords the sentence around it.
+
+**Refs.** Issue #784; PR #804; the U11 section and KTD5 of
+`docs/plans/2026-08-24-defects-claude-plugins-run-plan.md`; the Saga Code Review contract in #787.
+
+
 ### Eager resource resolution ahead of an authorization gate rewrites the caller's exit-code contract  {#gate-before-resolve-exit-code-contract}
 
 **Context.** Leaf #652: since #620 the two certificate-gated board-sync command-line entry points

@@ -68,6 +68,82 @@ the prose, because a substring assertion re-passes the moment someone rewords th
 `docs/plans/2026-08-24-defects-claude-plugins-run-plan.md`; the Saga Code Review contract in #787.
 
 
+### A detector that scores a string's presence can be satisfied by a string that crosses nothing  {#inert-string-is-not-a-boundary-crossing}
+
+**Context.** `scripts/lint_test_shape.py` flags a test module that uses a fake but never exercises the
+real code behind it. Its production signal was, among other things, "any string literal containing
+`plugins/`". Leaf #588 carried that as a known evasion — a module docstring mentioning `plugins/`
+counted as real coverage — and asked for AST-level import and call analysis so inert strings stop
+counting. Reviewing the fix at frozen revision `6ff49e2d` found the evasion narrowed rather than closed.
+
+**Evidence.** PR #803. The delivered fix removed `visit_Constant`, which closed the docstring shape,
+and added `visit_Assign` / `visit_BinOp` to keep detecting the repo's real
+`SCRIPTS = ROOT / "plugins" / "saga" / "scripts"` idiom. But `visit_Assign` scored any assignment whose
+value subtree merely *contained* a matching substring, so a four-line fake-only module — one inert
+assignment, one `class FakeStore` — still reported clean:
+
+```python
+NOTE = "we deliberately avoid plugins/saga here"
+class FakeStore: ...
+```
+
+`uv run python scripts/lint_test_shape.py <that file>` returned "OK — no fake-only suites" against the
+frozen revision, and "VIOLATION" against the repair.
+
+**Mechanism.** The requirement said "inert strings"; the implementation read it as "docstrings",
+because docstrings were the example the issue happened to name. A docstring is only the most visible
+member of the class — every bare string constant is inert, and moving one into an assignment was
+enough to restore the evasion. The naive tightening (require a path-shaped expression) breaks a real
+case: `tests/test_lint_test_shape.py` pins the repo's `SCRIPTS = 'plugins/saga/scripts'` followed by
+`spec_from_file_location('m', SCRIPTS)`, where the string genuinely does lead to real code. The
+resolution is to split what the assignment does into two jobs that had been fused: it **binds** the
+name as a candidate target either way, but only **scores** as production when the value actually
+constructs a path. The inert string then stays inert, while the loader call that consumes it is still
+caught — at the call, which is where the boundary is really crossed.
+
+**Fix.** Commit on PR #803. `_is_path_expression` gates the score; `_bind_and_note_assignment` keeps
+the binding unconditional. Two fixture-pinned tests hold both directions — the inert assignment must
+stay a violation, and the bare-string-plus-loader idiom must stay production. The same review pass
+removed the dead `_IMPORTLIB_LOADERS` constant the refactor stranded and the unused
+`_FakeWorktreeStore` alias, and re-synchronized three documentation surfaces that had gone on
+describing the pre-#588 behavior: both script module docstrings (which `argparse` serves as `--help`)
+and `docs/testing/golden-fixtures.md`, which still called the now-behavioral fake-to-golden pairing
+"conceptual".
+
+**Validation.** `uv run python scripts/lint_test_shape.py tests plugins --prod-module server` reports
+259 modules and zero violations before and after the tightening, so nothing in the committed suite
+depended on an inert string for its only production signal. Twelve tests in
+`tests/test_lint_test_shape.py` green; the leaf's own selector
+(`-k 'fake_fixtures or test_shape or wiring_canary or worktree_liveness'`) green.
+
+**What surprised.** The exemplar in a requirement quietly becomes the specification. "Inert strings
+(docstrings mentioning `plugins/`, fake-loading `import_module`)" names a class and then two members,
+and the fix closed exactly the two members. Both an implementer and a reviewer can read that as done.
+
+**Generalizable rule.** When an acceptance criterion names a class of input and then gives examples,
+build the counterexample that is in the class but not in the examples before calling it closed. And
+for any detector, keep *recording what a name refers to* separate from *scoring it as evidence* —
+fusing them is what forces the choice between a false negative and a broken real case.
+
+**Refs.** Leaf #588; the lint originates in #458. Companion doc: `docs/testing/golden-fixtures.md`.
+
+### OpenCode variant ladder is an interactive live picker, not a flag or a static guess  {#opencode-variants-picker-live-resolution}
+
+**Context.** OpenCode does not take reasoning effort or model variant as a command-line flag during interactive session launch. Its effort ladder (`Default`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) is exposed exclusively through the interactive `/variants` picker inside the TUI. When a Team Mimir deployment run requested "maximum available" variant, Orchestrate's guidance previously claimed the picker could not be automated from unattended tabs, prompting the coordinator to explore unsupported headless `opencode run` and `AgentConfig.variant` workarounds.
+
+**Evidence.** Issue #772. `plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py:drive_opencode_variant_selection`, `resolve_opencode_variant`, `verify_unit_preflight`. In live testing on Muse models, the top variant was `xhigh`, not a literal `max`.
+
+**Mechanism.** OpenCode's variant choices are model-dependent and determined dynamically at session startup. Guessing a literal `max` token or trying to pass `--variant` on interactive launch fails because the interactive CLI only accepts `-m <provider/model>`. The only reliable path is driving the interactive `/variants` picker inside the Herdr session post-launch, reading the live offered options, resolving exact or maximum available requests against the live choices, awaiting task readiness, and verifying the state before task submission.
+
+Driving a picker has two traps that look like verification but are not. A pane read returns the session's whole recent output, so parsing it the instant `/variants` is sent can take the boot banner for the option list — which refuses a perfectly available exact variant, or types one of the banner's own words into the session. And typing a label into a picker is a *request*: a picker that closes on the value it already held leaves the session at a variant nobody asked for, so the selection has to be read back out of the pane before any task is submitted.
+
+**Fix.** Implemented `drive_opencode_variant_selection`, `confirm_opencode_variant_selected` and `verify_unit_preflight` in `orchestrate.py` (orchestrate 1.20.5). For OpenCode units, Orchestrate sends `/variants`, polls the pane until the parse yields options the variant ladder recognises, selects the requested exact variant or the highest offered option (`xhigh` on Muse), reads the selection back out of the pane, and only then submits the task. Preflight holds the working directory and workspace against `herdr agent list` and closes the run-owned tab on a mismatch. Corrected documentation across `commands/orchestrate.md`, `SKILL.md`, and `VENDOR_NOTES["opencode"]`.
+
+**Validation.** 89 unit and integration tests in `tests/test_orchestrate_task_dispatch.py` and `tests/test_orchestrate_launch_and_land.py`, including the Team Mimir regression proving `xhigh` is selected over `max` when `xhigh` is the top option offered, loud preflight failure on unavailable variants, unreadable pickers, a selection the session never reports, a pre-picker banner offered as the option list, and a workspace mismatch; plus non-OpenCode vendor isolation and receipts that distinguish a confirmed property from a requested one.
+
+**Generalizable rule.** When a tool exposes configuration only through an interactive TUI picker, drive and parse the live picker rather than guessing flags or static configuration values — and read the result back, because sending a selection is not the same as making one.
+
+**Second rule, from the repair.** A verification step must be written against the fields its source actually publishes. `herdr agent list` reports `cwd`, `workspace_id` and `interactive_ready` and reports no model; a check written against a `model` or `workspace` key is dead code that never fires, and a receipt stamped `verified: true` beside it records a check that never happened. Where a property cannot be confirmed, say which ones were and which were not rather than flattening both into one boolean.
 ### Eager resource resolution ahead of an authorization gate rewrites the caller's exit-code contract  {#gate-before-resolve-exit-code-contract}
 
 **Context.** Leaf #652: since #620 the two certificate-gated board-sync command-line entry points

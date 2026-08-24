@@ -1,15 +1,21 @@
-"""Tests for the write-ownership lane lint (issue #431).
+"""Tests for the write-ownership lane lint (issue #431, hardened in #583).
 
-Covers the clean-pass case against the real saga / mission-control / deploy directories
-(AC2 / AC5), the seeded cross-lane-violation gate (AC3, via a throwaway fixture — never a
-live edit to plugins/deploy/), the reserved ``gh api projects/`` board-surface guard, loud
-failure on a malformed/missing manifest, and a drift guard that the lint stays wired into
-the marketplace CI job (AC4).
+Covers:
+- Clean-pass case against the real saga / mission-control / deploy directories (AC2 / AC5)
+- Seeded cross-lane-violation gates (AC3 / R1)
+- Wrapper-shaped invocations (_run_gh, _gh, list concatenation) (R1)
+- GraphQL ProjectV2 mutation policing for non-owners (R2)
+- Read-verb allowance for sensitive subcommands (e.g. gh issue view) (R3)
+- Endpoint-position-only evaluation for reserved API paths (R4)
+- Missing declared lane directory loud failure (R4)
+- CI drift guard asserting the actual step invocation in ci.yml (AC4 / R4)
+- Manifest error handling and validation
 """
 
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -29,6 +35,9 @@ REAL_PLUGINS_ROOT = REPO_ROOT / "plugins"
 
 
 def _write_plugin_script(root: Path, plugin: str, relpath: str, body: str) -> Path:
+    """Helper to write a plugin script and ensure all declared lane dirs exist."""
+    for lane in ("saga", "mission-control", "deploy"):
+        (root / lane).mkdir(parents=True, exist_ok=True)
     path = root / plugin / relpath
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(body)
@@ -112,6 +121,208 @@ def test_seeded_violation_reserved_api_path(tmp_path: Path, manifest: dict[str, 
     assert "projects/" in violations[0].call
 
 
+# --------------------------------------------------------------------------- R1
+
+
+def test_r1_wrapper_run_gh_flagged_from_non_owner(
+    tmp_path: Path, manifest: dict[str, object]
+) -> None:
+    """R1: a deploy script calling _run_gh(["issue", "create", ...]) is flagged."""
+    _write_plugin_script(
+        tmp_path,
+        "deploy",
+        "scripts/deploy_issue_wrapper.py",
+        'def _run_gh(args):\n    pass\n_run_gh(["issue", "create", "--title", "bypass"])\n',
+    )
+    violations = col.run_check(manifest, tmp_path)
+    assert len(violations) == 1
+    assert violations[0].plugin == "deploy"
+    assert violations[0].call == "gh issue"
+    assert violations[0].crossed_into == "mission-control"
+
+
+def test_r1_wrapper_binop_concatenation_flagged(
+    tmp_path: Path, manifest: dict[str, object]
+) -> None:
+    """R1: a deploy script building cmd = ["gh"] + ["issue", "create"] is flagged."""
+    _write_plugin_script(
+        tmp_path,
+        "deploy",
+        "scripts/deploy_concat.py",
+        "import subprocess\n"
+        'cmd = ["gh"] + ["issue", "create", "--title", "bypass"]\n'
+        "subprocess.run(cmd)\n",
+    )
+    violations = col.run_check(manifest, tmp_path)
+    assert len(violations) == 1
+    assert violations[0].plugin == "deploy"
+    assert violations[0].call == "gh issue"
+
+
+def test_r1_find_gh_invocations_wrapper_shapes() -> None:
+    """R1: find_gh_invocations recognizes _run_gh, _run_gh_json, _gh, and list additions."""
+    source = (
+        'def _run_gh(args): subprocess.run(["gh", *args])\n'
+        'def _gh(args): cmd = ["gh"] + args\n'
+        '_run_gh(["issue", "create", "--title", "test"])\n'
+        '_run_gh_json(["pr", "view", "1", "--json", "state"])\n'
+        '_gh(["api", "graphql", "-f", "query=..."])\n'
+        'concat_cmd = ["gh"] + ["issue", "delete", "123"]\n'
+    )
+    invs = col.find_gh_invocations(source)
+    # The definitions have subcommand=None, call sites have literal subcommands
+    named_invs = [inv for inv in invs if inv.subcommand is not None]
+    subcommands = [inv.subcommand for inv in named_invs]
+    assert "issue" in subcommands
+    assert "pr" in subcommands
+    assert "api" in subcommands
+
+
+# --------------------------------------------------------------------------- R2
+
+
+def test_r2_graphql_project_v2_mutation_flagged_for_non_owner(
+    tmp_path: Path, manifest: dict[str, object]
+) -> None:
+    """R2: a gh api graphql literal containing updateProjectV2ItemFieldValue is flagged."""
+    _write_plugin_script(
+        tmp_path,
+        "saga",
+        "scripts/rogue_graphql_mutation.py",
+        "import subprocess\n"
+        "query = 'mutation { updateProjectV2ItemFieldValue(input: {}) { clientMutationId } }'\n"
+        'subprocess.run(["gh", "api", "graphql", "-f", f"query={query}"])\n',
+    )
+    violations = col.run_check(manifest, tmp_path)
+    assert len(violations) == 1
+    v = violations[0]
+    assert v.plugin == "saga"
+    assert "graphql" in v.call
+    assert "updateProjectV2ItemFieldValue" in v.call
+    assert v.crossed_into == "mission-control"
+
+
+def test_r2_graphql_project_v2_mutation_allowed_for_owner(
+    tmp_path: Path, manifest: dict[str, object]
+) -> None:
+    """R2: mission-control can execute ProjectV2 mutations via gh api graphql."""
+    _write_plugin_script(
+        tmp_path,
+        "mission-control",
+        "scripts/board_mutation.py",
+        "import subprocess\n"
+        "query = 'mutation { updateProjectV2ItemFieldValue(input: {}) { clientMutationId } }'\n"
+        'subprocess.run(["gh", "api", "graphql", "-f", f"query={query}"])\n',
+    )
+    violations = col.run_check(manifest, tmp_path)
+    assert violations == []
+
+
+def test_r2_graphql_read_query_allowed_for_all_lanes(
+    tmp_path: Path, manifest: dict[str, object]
+) -> None:
+    """R2: GraphQL read queries (no ProjectV2 mutations) are allowed in saga/deploy."""
+    _write_plugin_script(
+        tmp_path,
+        "saga",
+        "scripts/read_subissues.py",
+        "import subprocess\n"
+        'query = \'query { repository(owner: "o", name: "r") { issue(number: 1) { id } } }\'\n'
+        'subprocess.run(["gh", "api", "graphql", "-f", f"query={query}"])\n',
+    )
+    violations = col.run_check(manifest, tmp_path)
+    assert violations == []
+
+
+# --------------------------------------------------------------------------- R3
+
+
+def test_r3_direct_literal_issue_view_allowed_for_saga(
+    tmp_path: Path, manifest: dict[str, object]
+) -> None:
+    """R3: direct-literal `gh issue view` (read verb) from saga does not fail the lint."""
+    _write_plugin_script(
+        tmp_path,
+        "saga",
+        "scripts/view_issue.py",
+        'import subprocess\nsubprocess.run(["gh", "issue", "view", "42", "--json", "state"])\n',
+    )
+    violations = col.run_check(manifest, tmp_path)
+    assert violations == []
+
+
+def test_r3_read_verbs_allowance_for_sensitive_subcommands(
+    tmp_path: Path, manifest: dict[str, object]
+) -> None:
+    """R3: read verbs (view, list, status, diff, checks) pass; mutation verbs fail."""
+    _write_plugin_script(
+        tmp_path,
+        "saga",
+        "scripts/read_verbs.py",
+        "import subprocess\n"
+        'subprocess.run(["gh", "issue", "list", "--state", "open"])\n'
+        'subprocess.run(["gh", "issue", "status"])\n'
+        'subprocess.run(["gh", "label", "list"])\n',
+    )
+    assert col.run_check(manifest, tmp_path) == []
+
+    # But a mutation verb fails:
+    _write_plugin_script(
+        tmp_path,
+        "saga",
+        "scripts/mutation_verb.py",
+        'import subprocess\nsubprocess.run(["gh", "issue", "close", "42"])\n',
+    )
+    violations = col.run_check(manifest, tmp_path)
+    assert len(violations) == 1
+    assert violations[0].call == "gh issue"
+
+
+# --------------------------------------------------------------------------- R4
+
+
+def test_r4_lint_wired_into_ci_actual_step() -> None:
+    """R4: the CI drift guard asserts the actual step invocation (not just a substring)."""
+    ci = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    pattern = r"run:\s+uv run python scripts/check_ownership_lanes\.py\s+--verbose"
+    assert re.search(pattern, ci) is not None, "CI must invoke check_ownership_lanes.py --verbose"
+
+
+def test_r4_missing_lane_directory_fails_loud(tmp_path: Path, manifest: dict[str, object]) -> None:
+    """R4: a declared lane whose directory is missing raises ManifestError."""
+    # Create empty tmp_path with no lane subdirectories
+    with pytest.raises(col.ManifestError, match="declared lane '.*' directory not found"):
+        col.run_check(manifest, tmp_path)
+
+
+def test_r4_reserved_path_endpoint_position_only(
+    tmp_path: Path, manifest: dict[str, object]
+) -> None:
+    """R4: _reserved_path_crossed checks endpoint position only, avoiding flag false-positives."""
+    # Flag containing projects/ string should NOT trigger reserved path violation
+    _write_plugin_script(
+        tmp_path,
+        "saga",
+        "scripts/issue_with_flag.py",
+        "import subprocess\n"
+        'subprocess.run(["gh", "api", "-f", "title=projects/123", "repos/infiquetra/repo/issues"])\n',
+    )
+    violations = col.run_check(manifest, tmp_path)
+    assert violations == []
+
+    # Actual endpoint starting with projects/ DOES trigger violation
+    _write_plugin_script(
+        tmp_path,
+        "saga",
+        "scripts/actual_reserved.py",
+        "import subprocess\n"
+        'subprocess.run(["gh", "api", "--method", "PATCH", "projects/42/items"])\n',
+    )
+    violations = col.run_check(manifest, tmp_path)
+    assert len(violations) == 1
+    assert "projects/" in violations[0].call
+
+
 # --------------------------------------------------------------- detection unit
 
 
@@ -184,12 +395,3 @@ def test_manifest_missing_key_fails_loud(tmp_path: Path) -> None:
 def test_main_returns_2_on_bad_manifest(tmp_path: Path) -> None:
     rc = col.main(["--manifest", str(tmp_path / "missing.json")])
     assert rc == 2
-
-
-# --------------------------------------------------------------------------- AC4
-
-
-def test_lint_wired_into_ci() -> None:
-    """AC4: the marketplace validate job still invokes the lint (drift guard)."""
-    ci = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text()
-    assert "check_ownership_lanes.py" in ci

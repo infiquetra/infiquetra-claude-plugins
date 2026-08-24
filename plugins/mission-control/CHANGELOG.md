@@ -8,6 +8,8 @@
 - Made `check_pagination.py` query-scoped so unpaginated `first:` query literals inside files that paginate elsewhere are flagged (R2).
 - Updated `check_issue_contract_parity.py` to explicitly print `SKIPPED live parity leg: <reason>` on the default (no `--live`) path instead of silently omitting the leg (R3 residual).
 - Verified R4 fail-loud behavior is satisfied by existing #609 test suite.
+- Made the query-scoped GraphQL guard fail safe rather than fail open: the literal extractor now backreferences its triple-quote delimiter (a stray `'''` previously desynchronized every literal after it) and any `first:` it cannot place inside a query block still gets the original whole-file check, so the narrowed guard is never weaker than the file-scoped one it replaces.
+- Recorded a reason on each `# pagination-lint: allow` suppression, matching the convention the helper's own suppression already used.
 
 ## [2.12.1] - 2026-08-24
 

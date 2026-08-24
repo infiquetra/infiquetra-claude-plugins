@@ -206,7 +206,7 @@ both `id` and `name`. Use the `id` values in `QUERY_SET_FIELD_VALUE`.
 **Constant**: `QUERY_GET_ITEM_LABELS`
 
 ```graphql
-# pagination-lint: allow
+# pagination-lint: allow (a single issue/PR never carries >30 labels)
 query($org: String!, $repo: String!, $number: Int!) {
   repository(owner: $org, name: $repo) {
     issueOrPullRequest(number: $number) {

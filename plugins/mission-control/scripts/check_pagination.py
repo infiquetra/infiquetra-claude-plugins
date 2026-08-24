@@ -85,27 +85,38 @@ def iter_files(roots: list[Path]) -> list[Path]:
     return ordered
 
 
-def _extract_graphql_queries(path: Path, text: str) -> list[tuple[int, str]]:
-    """Extract individual GraphQL query literals / code blocks with their 1-based start line."""
-    queries: list[tuple[int, str]] = []
+def _extract_graphql_queries(path: Path, text: str) -> list[tuple[int, str, int, int]]:
+    """Extract individual GraphQL query literals / fenced code blocks.
+
+    Each entry is `(1-based start line, block text, block start offset, block
+    end offset)`. The offsets let `check_file` tell which `first:` occurrences
+    the extractor actually placed inside a query, so an occurrence it could not
+    parse falls back to the whole-file check instead of going unchecked."""
+    queries: list[tuple[int, str, int, int]] = []
 
     if path.suffix == ".md":
-        for match in re.finditer(r"```(?:graphql|bash|python)?\s*\n(.*?)\n```", text, re.DOTALL):
-            block = match.group(1)
+        # Any fence language, not a whitelist: an unpaginated query pasted into
+        # a `json`/`text`/untagged fence is the same defect as one in a
+        # `graphql` fence, and a whitelist also lets the regex mis-window from
+        # a *closing* fence when it skips an untagged opener.
+        for match in re.finditer(r"```[^\n`]*\n(.*?)\n```", text, re.DOTALL):
             lineno = text[: match.start()].count("\n") + 1
-            queries.append((lineno, block))
+            queries.append((lineno, match.group(1), match.start(1), match.end(1)))
         return queries
 
-    for match in re.finditer(r'(?:"""|\'\'\')(.*?)(?:"""|\'\'\')', text, re.DOTALL):
-        block = match.group(1)
+    # The delimiter must match itself (backreference), not merely be *a* triple
+    # quote: an alternation lets an opening triple-double-quote close on a
+    # triple-single-quote occurring inside it, which desynchronizes every
+    # literal after it in the file.
+    for match in re.finditer(r'("""|\'\'\')(.*?)\1', text, re.DOTALL):
         lineno = text[: match.start()].count("\n") + 1
-        queries.append((lineno, block))
+        queries.append((lineno, match.group(2), match.start(2), match.end(2)))
 
     for match in re.finditer(r'(?<!\\)(["\'])(.*?)(?<!\\)\1', text):
         block = match.group(2)
         if "\n" not in block and GRAPHQL_FIRST_RE.search(block):
             lineno = text[: match.start()].count("\n") + 1
-            queries.append((lineno, block))
+            queries.append((lineno, block, match.start(2), match.end(2)))
 
     return queries
 
@@ -138,25 +149,31 @@ def check_file(path: Path) -> list[str]:
             )
 
     extracted_queries = _extract_graphql_queries(path, text)
-    if extracted_queries:
-        for q_lineno, query_text in extracted_queries:
-            if SUPPRESS_MARKER in query_text:
-                continue
-            if GRAPHQL_FIRST_RE.search(query_text) and "hasNextPage" not in query_text:
-                violations.append(
-                    f"{path}:{q_lineno}: GraphQL query sets a page-size arg (`first:`) "
-                    f"without checking `hasNextPage` -- the query cannot detect truncation"
-                )
-    else:
-        if (
-            GRAPHQL_FIRST_RE.search(text)
-            and "hasNextPage" not in text
-            and SUPPRESS_MARKER not in text
-        ):
+    for q_lineno, query_text, _start, _end in extracted_queries:
+        if SUPPRESS_MARKER in query_text:
+            continue
+        if GRAPHQL_FIRST_RE.search(query_text) and "hasNextPage" not in query_text:
             violations.append(
-                f"{path}: GraphQL query sets a page-size arg (`first:`) without "
-                f"checking `hasNextPage` -- the query cannot detect truncation"
+                f"{path}:{q_lineno}: GraphQL query sets a page-size arg (`first:`) "
+                f"without checking `hasNextPage` -- the query cannot detect truncation"
             )
+
+    # Fail safe, never fail open. A `first:` the extractor could not place inside
+    # any query block still gets the original whole-file check, so an unparsed
+    # literal shape can never silently switch the GraphQL guard off for the rest
+    # of the file -- the exact blindness the query-scoped rewrite exists to end.
+    spans = [(start, end) for _, _, start, end in extracted_queries]
+    uncovered = [
+        match
+        for match in GRAPHQL_FIRST_RE.finditer(text)
+        if not any(start <= match.start() and match.end() <= end for start, end in spans)
+    ]
+    if uncovered and "hasNextPage" not in text and SUPPRESS_MARKER not in text:
+        lineno = text[: uncovered[0].start()].count("\n") + 1
+        violations.append(
+            f"{path}:{lineno}: GraphQL query sets a page-size arg (`first:`) without "
+            f"checking `hasNextPage` -- the query cannot detect truncation"
+        )
 
     return violations
 

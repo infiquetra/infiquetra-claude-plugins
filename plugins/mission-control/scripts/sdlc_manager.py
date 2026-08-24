@@ -960,7 +960,8 @@ query($org: String!, $number: Int!, $cursor: String) {
 """
 
 QUERY_GET_ITEM_LABELS = """
-# pagination-lint: allow
+# pagination-lint: allow (a single issue/PR never carries >30 labels; a cursor
+# loop here would cost a round trip per read for a bound that cannot be reached)
 query($org: String!, $repo: String!, $number: Int!) {
   repository(owner: $org, name: $repo) {
     issueOrPullRequest(number: $number) {
@@ -973,7 +974,8 @@ query($org: String!, $repo: String!, $number: Int!) {
 """
 
 QUERY_GET_MIMIR_OBJECTIVE_FIELDS = """
-# pagination-lint: allow
+# pagination-lint: allow (a single issue sits on a handful of projects, never
+# >100, and each carries far fewer than 100 field values)
 query($org: String!, $repo: String!, $number: Int!) {
   repository(owner: $org, name: $repo) {
     issue(number: $number) {

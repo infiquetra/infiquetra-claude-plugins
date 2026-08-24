@@ -21,6 +21,53 @@
 
 ## 2026-08-24
 
+### A file-scoped pagination lint went blind on the very file it was installed to guard, and the query-scoped rewrite reintroduced the blindness one layer down  {#pagination-lint-scope-blindness-584}
+
+**Context.** #424 shipped `paginate_or_raise` plus `check_pagination.py` and recorded (see
+`{#board-pagination-truncation-confirmed-live-424}`) that the lint "lints future call sites". #584 R1
+then found `QUERY_GET_PROJECT_FIELDS` sitting unpaginated at `fields(first: 30)` for weeks inside
+`plugins/mission-control/scripts/sdlc_manager.py` -- a file the lint scanned on every CI run.
+
+**Evidence.** The pre-#584 rule was `if GRAPHQL_FIRST_RE.search(text) and "hasNextPage" not in text`
+(`plugins/mission-control/scripts/check_pagination.py:115` at `2d811cab`) -- whole-file, so one
+compliant query anywhere in the file cleared every other query in it. Running the post-#584
+query-scoped checker against `git show origin/main:.../sdlc_manager.py` reports the violation at
+`sdlc_manager.py:936`, which is the exact line #584 R1 named; the pre-#584 checker reports zero on
+the same bytes.
+
+**Mechanism.** The guard's scope was the file, but the unit of the defect is the query. Any file
+large enough to hold a second, compliant query -- which is every real client of a GraphQL API --
+buys permanent immunity for its non-compliant ones. The guard did not fail; it passed, loudly and
+truthfully, about a question nobody wanted answered.
+
+**Fix.** Query-scoped extraction over Python string literals and Markdown fences, with
+`# pagination-lint: allow (<reason>)` for the two connections whose bound is genuinely unreachable
+(#584, PR #796). `QUERY_GET_PROJECT_FIELDS` and `board_census.fetch_project_fields_census` now
+route through `paginate_or_raise`.
+
+**What surprised.** The rewrite reintroduced the same class one layer down, and Saga Code Review
+caught it before merge. Pairing triple quotes with the alternation `(?:"""|''')` lets an opening
+`"""` close on a `'''` occurring inside it, desynchronizing every literal after it; the rewrite then
+ran the whole-file fallback only when extraction returned *nothing*, so a desynchronized parse --
+which returns garbage blocks, not nothing -- silently switched the GraphQL guard off for the entire
+file. A stray `'''` in one docstring was enough, and a file the old lint flagged became clean. Fixed
+by backreferencing the delimiter (`("""|''')(.*?)\1`) and by running the whole-file check on any
+`first:` occurrence the extractor could not place inside a block, pinned by
+`plugins/mission-control/tests/test_check_pagination.py::TestGraphqlGuardNeverFailsOpen`.
+
+**Generalizable rule.** Scope a guard to the unit of the defect, never to the container the defect
+happens to live in -- and when you narrow a guard's scope, keep the old broad check as the
+fallback for whatever the new parser cannot read. A narrowed guard must be a strict superset of the
+one it replaces, and the way to prove that is to run the new guard against the bytes the old one
+flagged.
+
+**Refs.** #584, PR #796; `{#board-pagination-truncation-confirmed-live-424}`;
+`plugins/mission-control/scripts/check_pagination.py`,
+`plugins/mission-control/scripts/sdlc_manager.py`,
+`plugins/mission-control/scripts/board_census.py`.
+
+---
+
 ### Prepared-draft revision appended instead of replacing due to unstripped front matter in source artifact (#785)  {#prepared-draft-revision-frontmatter-doubling}
 
 **Context.** Prepared issue drafts stored under `docs/sdlc-issue-drafts/` can undergo revision rounds via `issue prepare --from <draft>` before final approval and creation. In live runs, revised drafts (such as the specimen for issue #770) accumulated multiple `---` front-matter blocks and duplicated titles and body sections on disk, and the contamination leaked into created GitHub issue bodies.

@@ -19,6 +19,119 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-08-24
+
+### Process idleness is not task completion: settlement must verify branch evidence  {#idleness-is-not-completion}
+
+**Context.** Orchestrate's `settle` previously inferred `done` from Herdr pane idleness across two
+samples, and `failed` from session absence. In three real incidents across Team Mimir runs, this
+produced wrong outcomes in both directions: a stale `done` predating a supplemental prompt was
+accepted as finished, a stuck unit with a SIGTTIN-suspended background child was classified as done
+six times, and a finished unit whose commits had already landed was marked `failed` when its Herdr
+session was closed during operator cleanup.
+
+**Evidence.** Issue #780. Transcripts
+`~/.claude/projects/-Users-jefcox-workspace-infiquetra-team-mimir/6990cc3c-4d53-46ee-a714-6bfa04b91418.jsonl`
+line 1894 and `b31ec85e-82d5-4a00-aa18-e82cc22b2284.jsonl` lines 6569, 6678 (2026-08-23).
+`plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py:2526`. orchestrate 1.20.3.
+
+**Mechanism.** Herdr pane idleness only indicates that the foreground shell or process tree is
+waiting for input (which occurs between turns while an agent thinks, or when a child process is
+suspended), not that the task produced any completed work. Conversely, session absence only means
+the interactive process terminated, not that its work failed — work committed to git or merged
+survives the session. Inferring task success or failure from process presence conflates container
+lifecycle with artifact truth.
+
+**Fix.** Gate settlement on repository truth via `produced_anything` (mirroring `cmd_check`). An
+idle session with no commits on its branch stays `running` (unsettled); a closed/gone session whose
+branch contains commits settles `done` (never `failed`); and a session gone without commits yields a
+distinct `orphaned` state (`orphaned`).
+
+**Second-order trap found in review of this same change.** An evidence gate has a domain, and
+applying it outside that domain re-creates the defect it was built to remove. `produced_anything`
+reads a *branch*, and it answers `False` for two units that did nothing wrong: one with no branch
+of its own (the review controller carries `merge: false` and delivers its result through
+`review-result`), and one whose run branch does not resolve, where the count is unknown rather than
+zero. Gating both on commits wedged the review controller at `running` for the life of the run —
+no commit can ever appear on a branch a unit does not have, and `land` returns the controller to
+`running` on every resubmission — and wrote the note "session disappeared without commits" onto a
+unit whose commits the code had not looked at. `go` refuses outright on an unresolvable run branch
+and `adopt`/`clean` warn that branch-dependent checks are unavailable; settle now draws the same
+distinction instead of collapsing it.
+
+**Generalizable rule.** Task outcome must be read from produced artifacts, not process lifecycle.
+An idle process is not a successful task, and a terminated process is not a failed one; always gate
+lifecycle settlement on output evidence rather than container or pane state — and gate only the
+subjects the evidence probe can actually read, because "I could not check" and "there is nothing"
+are different answers, and a probe that returns the second for the first is the original defect
+wearing the fix's clothes.
+### A non-negative contract has to be enforced at every entry chokepoint, not just the date one  {#retry-after-negative-clamp}
+
+**Context.** `parse_retry_after` in `fleet_commons.retry_backoff` was designed to reduce both RFC 7231 `Retry-After` formats (delta-seconds and HTTP-date) to a non-negative delay in seconds. While the HTTP-date path clamped past dates to `0.0` ("retry now, never a negative delay"), the delta-seconds path returned negative values unchanged for negative header values (e.g. `-5`, `-120`). Callers presenting delay advice in typed 429 exceptions then displayed confusing negative wait times to operators.
+
+**Evidence.** Issue #770. `plugins/fleet-core/scripts/fleet_commons/retry_backoff.py:60`. `python3 -c "from fleet_commons import retry_backoff as rb; print(rb.parse_retry_after('-5'))"` returned `-5.0`.
+
+**Mechanism.** `_usable_delay` checked `math.isfinite(seconds)` to reject `inf`/`nan`/`1e400`, but omitted the `max(0.0, seconds)` floor present in the sibling HTTP-date parsing path (`retry_backoff.py:110`). Because `_retry_delay` already ignored non-positive values for sleep computation, the negative values only manifested in user-facing error messages and advice strings.
+
+**Fix.** Clamped finite values in `_usable_delay` to `max(0.0, seconds)` so both parsing paths unconditionally produce non-negative delays or `None`. Bumped `fleet-core` to `0.25.3`.
+
+**Validation.** Parametrised unit tests in `tests/test_retry_backoff.py` verify `-5`, `-0.5`, `-120` (both string and numeric) return `0.0`, postcondition invariants hold across all input types, and the full test suite passes.
+
+**Generalizable rule.** When a primitive promises an invariant (e.g. "never negative"), enforce it at the shared return chokepoint rather than relying on callers or sibling branches to normalize it independently.
+
+### Prepared-draft revision appended instead of replacing due to unstripped front matter in source artifact (#785)  {#prepared-draft-revision-frontmatter-doubling}
+
+**Context.** Prepared issue drafts stored under `docs/sdlc-issue-drafts/` can undergo revision rounds via `issue prepare --from <draft>` before final approval and creation. In live runs, revised drafts (such as the specimen for issue #770) accumulated multiple `---` front-matter blocks and duplicated titles and body sections on disk, and the contamination leaked into created GitHub issue bodies.
+
+**Evidence.** `plugins/mission-control/scripts/sdlc_manager.py:4121` (the strip call added to `_source_to_issue_body_unstamped`, defined at `:4111`), `:3926` (the strip call added to `_render_draft_markdown`, defined at `:3902`), `:4186` (`_read_prepared_issue`), `:4351` (the first blocking check added to `_readiness_for_prepared_issue`, defined at `:4347`), `:4680` (the strip call added to `_issue_body_for_github`, defined at `:4679`), the new helper `_strip_frontmatter_and_title` at `:3878`, and live issue bodies #770, #772, and #773 filed on 2026-08-23.
+
+**Mechanism.** `_source_to_issue_body_unstamped` accepted raw source text and passed it directly to template assembly without stripping pre-existing YAML front-matter blocks or top-level `# ` titles. When `_render_draft_markdown` formatted the draft, it prepended another YAML front-matter block and `# Title`, doubling the front matter and titles. Furthermore, `_parse_draft_frontmatter` only strips the first `--- ... ---` block on read (unchanged by this fix), so the second front-matter block became part of `issue.body`. `_readiness_for_prepared_issue` lacked a check for multi-fence or duplicate headers, allowing the contaminated draft to pass readiness, and `_issue_body_for_github` published the contaminated `issue.body` directly to GitHub.
+
+**Fix.** Implemented `_strip_frontmatter_and_title` to clean all leading YAML front-matter blocks and H1 titles from source artifacts and existing drafts before assembling bodies, added multi-fence and duplicate section blocking checks to `_readiness_for_prepared_issue`, and ensured `_issue_body_for_github` and `_render_draft_markdown` defensively strip front matter before emission. mission-control 2.12.1.
+
+**Validation.** Added `plugins/mission-control/tests/test_sdlc_draft_revision.py` verifying that revising a draft twice yields exactly two `---` fences and a single body, that revision replaces content instead of appending, that doubled drafts fail readiness with a multi-fence blocking gap, and that created issue bodies contain zero front-matter fences and no duplicate sections. Five of its six tests fail against the parent commit, one of them with the reference specimen's exact four-fence shape. The created-body strip reaches leading contamination only — the live #770/#772/#773 leak shape — and readiness is what stops a mid-body block; the suite pins both halves so the division of labour is not assumed.
+
+**Generalizable rule.** Draft compilers that wrap input text in document metadata must always strip existing front matter and document titles at the intake boundary so successive revision passes remain idempotent single documents.
+### A readiness flag is the sender's claim, so delivery has to be read off the receiver  {#readiness-is-not-delivery}
+
+**Context.** Orchestrate dispatched a unit, herdr reported the session `interactive_ready`,
+`herdr agent prompt` exited 0 -- and the brief was gone. The vendor CLI was still showing a modal
+(Claude's folder-trust prompt into a fresh worktree, Antigravity's "Verifying your account" gate on
+concurrent same-account launches) and the modal ate the keystrokes. Four occurrences in one live
+session; the working tell became "watch the token counter move", not the readiness flag and not the
+prompt command's exit status.
+
+**Evidence.** Issue #779. Transcript
+`~/.claude/projects/-Users-jefcox-workspace-infiquetra-team-mimir/b31ec85e-82d5-4a00-aa18-e82cc22b2284.jsonl`
+lines 4921, 4947, 6016, 6457, 7560 (2026-08-23). The gap was already acknowledged in the code it
+lived in, at `plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py:1368`, and dispatch
+still gated on `row.get("interactive_ready")` alone. orchestrate 1.20.2.
+
+**Mechanism.** Three separate signals all sit on the sending side of the boundary and none of them
+crosses it. `interactive_ready` is herdr's belief about a process it launched. `herdr agent prompt`
+returning 0 means the keystrokes were handed over, not consumed. A tab existing means a tab exists.
+The receiver is a vendor CLI whose modal owns stdin, and it acknowledges nothing. So every
+sender-side signal reports success on precisely the run where the work was lost -- and the loss is
+silent, because a session that was never given work looks exactly like a session still thinking
+about the work it was given.
+
+**Fix.** Dispatch now reads the receiver: `took_the_task` watches for the session to leave idle
+after the send, and only then is the unit recorded RUNNING. Unaccepted, it resends at most twice
+and only while the session has still never left idle -- which is the swallow case, so the resend
+cannot double-task a session already working -- and otherwise records the named state
+`prompt_undelivered`. The point of the named state is that no later phase reads it as work:
+`settle` sweeps RUNNING units only, so the old silent path (idle read as a finished turn, marked
+done, discovered empty a phase later at `land`) is closed by construction.
+
+**Generalizable rule.** Never accept the sender's word for delivery. A readiness flag, a zero exit
+code, and a created handle are all claims made on this side of the boundary; confirmation is a
+state change observed on the other side. When the receiver cannot acknowledge, the honest recording
+is a named unconfirmed state, not the optimistic one -- an optimistic default turns a delivery
+failure into a phantom success, which costs a phase to discover instead of a second.
+
+**Refs.** DECISIONS `{#defects-run-plan-ktds-787}`; plan
+`docs/plans/2026-08-24-defects-claude-plugins-run-plan.md` section U1.
+
 ## 2026-08-22
 
 ### I fixed a positional bug with a slightly wider positional window  {#credential-span-window-vs-walk}

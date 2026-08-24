@@ -130,12 +130,17 @@ tail -5 /tmp/gate.log
 cat /tmp/gate-run/result.txt
 ```
 
+The marker is cleared when a run starts, so while the gate is in flight `result.txt` does not exist
+yet — absence means "still running or killed outright", never "green".
+
 ### Safe Re-entry Rule (Duplicate-Run Protection)
 
 If a previous gate run timed out (e.g. killed at 600s with exit 143), was interrupted, or is suspected to be already running:
 
 1. **Check if already running**: `pgrep -fl "scripts/gate.sh"`
-2. **Terminate stale processes**: If an orphaned or stale background gate is running, kill it: `pkill -f "scripts/gate.sh"`
+2. **Terminate the stale process**: kill the pid step 1 named — `kill <pid>`. Avoid
+   `pkill -f "scripts/gate.sh"` unless you mean it: it kills every gate on the machine, including
+   live gate runs in your other worktrees.
 3. **Clean state & re-enter**: Ensure the log directory is clean or specify a new `GATE_LOG_DIR=/tmp/gate-run`, then restart the backgrounded gate run.
 
 Exit codes: `0` green · `1` a blocking step failed · `2` coverage is short of `ci.yml` · `3` precondition failed (missing dev dependencies or unwritable log directory).

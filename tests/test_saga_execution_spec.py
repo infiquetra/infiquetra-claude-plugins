@@ -1880,7 +1880,10 @@ def test_n3_panels_preserve_exact_compatibility(reported_count: int, refute_coun
     #
     # The policy change for odd n >= 5 introduces zero behavioral drift for n=3.
     if refute_count > reported_count:
-        return  # Impossible state: cannot have more refuters than reporting verifiers
+        # Impossible state: a panel cannot have more refuters than reporting verifiers.
+        # SKIP rather than `return` -- a bare return reports these six cells as PASSED
+        # without asserting anything, which reads as coverage the sweep never had.
+        pytest.skip("impossible: refuters cannot exceed reporting verifiers")
 
     n = 3
     floor = 2
@@ -2017,6 +2020,55 @@ def test_missing_refuter_path_is_loud() -> None:
         in log_clean[0]
     )
     assert "UNDER-STRENGTH" not in log_clean[0]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+@pytest.mark.parametrize("n", [5, 7, 9])
+def test_unanimous_panels_are_excluded_from_missing_aware_tightening(
+    n: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # GUARD PIN for the `pass_rule == "majority"` condition on the #692 missing-aware gate.
+    #
+    # The gate compares `refute_count + missing` against the MAJORITY floor `n // 2 + 1`. That
+    # floor is meaningless for a `unanimous` panel, which refutes only when ALL reporting
+    # verifiers refute: refuting survivors plus every missing verifier can clear the majority
+    # floor while still falling far short of `n`, so applying the gate there would halt panels
+    # that full strength would have upheld.
+    #
+    # This pin exists because the guard was otherwise untested -- deleting
+    # `if panel.pass_rule == "majority":` from the throw block leaves the entire suite green
+    # while flipping, for example, an `n=5` unanimous panel with 3 reporters and 2 refuters from
+    # a clean pass to `verifier-under-strength ... (potential-flip-on-missing)`.
+    monkeypatch.setattr(ES, "VERIFY_N_CAP", max(7, n))
+    floor = n // 2 + 1
+
+    # Sweep exactly the discriminating cells: quorum cleared, survivors uphold under `unanimous`
+    # (refuters `r < k`), yet `r + missing` reaches the majority floor. These are the only cells
+    # whose verdict the guard changes.
+    cells = [(k, r) for k in range(floor, n + 1) for r in range(k) if r + (n - k) >= floor]
+    # A sweep that selected nothing would pass vacuously and pin nothing.
+    assert cells, f"n={n}: no discriminating cells -- this pin would be vacuous"
+
+    for k, r in cells:
+        verdict_js = (
+            f"__vcall <= {r} ? "
+            '{refuted_deliverable: ["FAIL"], advisory_corrections: [], upheld: [], verifier_identity: "saga:readonly-verifier", fallback_depth: 0, examined_sha: "deadbeef"} : '
+            f"(__vcall <= {k} ? "
+            '{refuted_deliverable: [], advisory_corrections: [], upheld: ["fine"], verifier_identity: "saga:readonly-verifier", fallback_depth: 0, examined_sha: "deadbeef"} : '
+            "null)"
+        )
+        proc = _run_harness(
+            [_verify_unit("a", verify={"n": n, "pass_rule": "unanimous"})],
+            verdict_js=verdict_js,
+            tail=_CAPTURE_THROW,
+        )
+        assert proc.returncode == 0, proc.stderr
+        payload = json.loads(proc.stdout.strip())
+        assert payload["ok"] is True, (
+            f"n={n}, k={k}, r={r}: unanimous panel must uphold; the majority-only "
+            f"missing-aware gate leaked into a unanimous panel: {payload}"
+        )
+        assert "potential-flip-on-missing" not in json.dumps(payload)
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")

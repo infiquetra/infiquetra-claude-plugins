@@ -268,7 +268,7 @@ Under #692 (Option 3: missing-aware tightening), majority panels also halt as `v
 if `refute_count < threshold` (survivors uphold) but `refute_count + missing >= floor` (`potential-flip-on-missing`),
 preventing dropped refuters at odd `n >= 5` from turning a full-strength halt into a pass while provably
 preserving fault tolerance across all 37 committed `n=3` panels.
-The floor only *annotates* when refuted — a refutation over reporters still throws (or retries, for
+Past those two halts the floor only *annotates* — a refutation over reporters still throws (or retries, for
 `iterate_to_consensus`) regardless of under-strength (KTD10); suppressing a refutation because the
 quorum ran small would reintroduce the exact uphold-bias this recompute exists to remove.
 

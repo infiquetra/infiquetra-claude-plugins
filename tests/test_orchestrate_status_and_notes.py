@@ -314,7 +314,7 @@ def test_status_sizes_columns_collapses_tasks_and_shows_git_and_notes(
     assert alpha[note_start:] == orchestrate.status_cell(orchestrate.DELIVERY_WARNING)
 
 
-def test_settle_still_finishes_a_warned_zero_commit_unit_after_two_idle_readings(
+def test_settle_leaves_a_warned_zero_commit_unit_running_after_two_idle_readings(
     orchestrate: ModuleType,
     repo: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -329,5 +329,24 @@ def test_settle_still_finishes_a_warned_zero_commit_unit_after_two_idle_readings
     assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False)) == 0
 
     saved = _read_unit(repo, "alpha")
-    assert saved["status"] == "done"
+    assert saved["status"] == "running"
     assert saved["note"] == orchestrate.DELIVERY_WARNING
+
+
+def test_settle_finishes_a_warned_unit_with_commits_and_clears_warning(
+    orchestrate: ModuleType,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _make_unit_branch(repo, "alpha", commit=True)
+    _write_run(repo, [_unit("alpha", note=orchestrate.DELIVERY_WARNING)])
+    readings = iter([_agents(("alpha", "idle")), _agents(("alpha", "idle"))])
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr(orchestrate, "live_agents", lambda: next(readings))
+    monkeypatch.setattr(orchestrate.time, "sleep", lambda _seconds: None)
+
+    assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False)) == 0
+
+    saved = _read_unit(repo, "alpha")
+    assert saved["status"] == "done"
+    assert saved["note"] == ""

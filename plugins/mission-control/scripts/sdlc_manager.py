@@ -72,6 +72,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -3874,6 +3875,30 @@ def _strip_draft_h1(body: str) -> tuple[str | None, str]:
     return None, body
 
 
+def _strip_frontmatter_and_title(text: str) -> tuple[dict[str, str], str]:
+    """Strip all leading YAML front-matter blocks and H1 titles from text."""
+    current = text.strip()
+    merged_metadata: dict[str, str] = {}
+    while current.startswith("---\n"):
+        metadata, remaining = _parse_draft_frontmatter(current)
+        if not metadata and remaining == current:
+            break
+        merged_metadata.update(metadata)
+        current = remaining.strip()
+    while True:
+        title, remaining = _strip_draft_h1(current)
+        if title is None:
+            break
+        if "title" not in merged_metadata:
+            merged_metadata["title"] = title
+        current = remaining.strip()
+    if "\n\n## Created Issue\n" in current:
+        current = current.split("\n\n## Created Issue\n", 1)[0].rstrip()
+    elif current.startswith("## Created Issue\n"):
+        current = ""
+    return merged_metadata, current.strip()
+
+
 def _render_draft_markdown(issue: PreparedIssue, approval_state: str | None = None) -> str:
     labels = ", ".join(issue.labels)
     frontmatter = [
@@ -3898,7 +3923,8 @@ def _render_draft_markdown(issue: PreparedIssue, approval_state: str | None = No
     if approval_state:
         frontmatter.append(f"approval_state: {approval_state}")
     frontmatter.append("---")
-    return "\n".join(frontmatter) + f"\n\n# {issue.title}\n\n{issue.body.rstrip()}\n"
+    _, clean_body = _strip_frontmatter_and_title(issue.body)
+    return "\n".join(frontmatter) + f"\n\n# {issue.title}\n\n{clean_body.rstrip()}\n"
 
 
 def _suggested_next_action(handoff_maturity: str) -> str:
@@ -4092,7 +4118,8 @@ def _source_to_issue_body_unstamped(
     handoff_maturity: str | None = None,
     source_artifact: SourceArtifact | None = None,
 ) -> str:
-    stripped = source.strip()
+    _, clean_source = _strip_frontmatter_and_title(source)
+    stripped = clean_source.strip()
     if "### " in stripped:
         if "### Handoff maturity" in stripped:
             return stripped
@@ -4283,9 +4310,68 @@ def issue_render_intent_envelope(
     return block
 
 
+def _unfenced_lines(text: str) -> list[str]:
+    """Return lines that occur outside of fenced code blocks (``` or ~~~)."""
+    in_fence = False
+    result: list[str] = []
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith(("```", "~~~")):
+            in_fence = not in_fence
+            continue
+        if not in_fence:
+            result.append(line)
+    return result
+
+
+def _extract_unfenced_headers(body: str) -> list[tuple[int, str]]:
+    """Extract (level, header_text) for markdown headers outside code fences."""
+    in_fence = False
+    headers: list[tuple[int, str]] = []
+    for line in body.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith(("```", "~~~")):
+            in_fence = not in_fence
+            continue
+        if not in_fence:
+            m3 = re.match(r"^###\s+(.+?)\s*$", line)
+            if m3:
+                headers.append((3, m3.group(1).strip()))
+                continue
+            m2 = re.match(r"^##\s+(.+?)\s*$", line)
+            if m2:
+                headers.append((2, m2.group(1).strip()))
+    return headers
+
+
 def _readiness_for_prepared_issue(issue: PreparedIssue) -> PreparedReadiness:
     blocking: list[str] = []
     warnings: list[str] = []
+
+    if issue.draft_path and Path(issue.draft_path).is_file():
+        draft_text = Path(issue.draft_path).read_text(encoding="utf-8")
+        unfenced_draft_lines = _unfenced_lines(draft_text)
+        fence_count = sum(1 for line in unfenced_draft_lines if line.strip() == "---")
+        if fence_count > 2:
+            blocking.append(
+                f"Prepared draft has multi-fence front matter ({fence_count} '---' fences found; expected 2)"
+            )
+
+    unfenced_body_lines = _unfenced_lines(issue.body)
+    if any(line.strip() == "---" for line in unfenced_body_lines):
+        blocking.append("Prepared issue body contains multi-fence front-matter fences ('---')")
+
+    headers = _extract_unfenced_headers(issue.body)
+    h3_headers = [h for level, h in headers if level == 3]
+    h3_counts = Counter(h3_headers)
+    duplicate_h3 = [h for h, count in h3_counts.items() if count > 1]
+    if duplicate_h3:
+        blocking.append(f"Duplicate H3 sections found in body: {duplicate_h3}")
+
+    h2_headers = {h for level, h in headers if level == 2}
+    duplicated_levels = sorted(h2_headers & set(h3_headers))
+    if duplicated_levels:
+        blocking.append(f"Duplicated section pairs between H2 and H3 headers: {duplicated_levels}")
 
     envelope_error = _intent_envelope_readiness_error(issue.body)
     if envelope_error:
@@ -4591,7 +4677,8 @@ def _open_mapping_pr(repo: str, project_name: str) -> str:
 
 
 def _issue_body_for_github(issue: PreparedIssue) -> str:
-    return issue.body.strip() + "\n"
+    _, clean_body = _strip_frontmatter_and_title(issue.body)
+    return clean_body.strip() + "\n"
 
 
 def _create_github_issue(issue: PreparedIssue) -> tuple[str, int]:

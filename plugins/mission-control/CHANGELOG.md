@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.12.1] - 2026-08-24
+
+### Fixed - prepared-issue draft revision replacement semantics and multi-fence readiness validation (#785)
+
+- Fixed `sdlc_manager.py` draft preparation write paths to strip existing YAML front matter and top-level H1 titles from source text and prior drafts, ensuring draft revision replaces prior content instead of accumulating duplicate front-matter blocks and titles.
+- Added readiness validation blocking check that flags multi-fence drafts (fences > 2) and duplicated section headers (`### ` duplicates and `## `/`### ` duplicate section pairs) before creation.
+- Defensively stripped front-matter fences and H1 titles from `_issue_body_for_github` to guarantee created GitHub issue bodies are clean.
+
 ## [2.12.0] - 2026-08-16
 
 ### Changed - retire the `hermes-task` / `hermes-not-actionable` dispatch markers

@@ -395,3 +395,119 @@ def test_manifest_missing_key_fails_loud(tmp_path: Path) -> None:
 def test_main_returns_2_on_bad_manifest(tmp_path: Path) -> None:
     rc = col.main(["--manifest", str(tmp_path / "missing.json")])
     assert rc == 2
+
+
+# ------------------------------------------------- review repairs (#583 cycle 1)
+
+
+def test_unresolvable_flag_value_does_not_swallow_reserved_endpoint(
+    tmp_path: Path, manifest: dict[str, object]
+) -> None:
+    """A non-literal flag value must not shift the endpoint into the flag's value slot.
+
+    `_api_endpoint` skips a value-taking flag and its argument. When that argument is a bare
+    name it has no static string, so dropping it made the skip consume the endpoint itself and
+    `gh api --jq <expr> projects/42/items` passed the gate clean. Positions are placeheld now.
+    """
+    _write_plugin_script(
+        tmp_path,
+        "saga",
+        "scripts/rogue_board_via_flag.py",
+        "import subprocess\n"
+        "def go(jq_expr, header):\n"
+        '    subprocess.run(["gh", "api", "--jq", jq_expr, "projects/42/items"])\n'
+        '    subprocess.run(["gh", "api", "-H", header, "projects/42/items"])\n',
+    )
+    violations = col.run_check(manifest, tmp_path)
+    assert len(violations) == 2
+    assert all(v.crossed_into == "mission-control" for v in violations)
+    assert all("projects/" in v.call for v in violations)
+
+
+def test_unresolved_token_is_placeheld_not_dropped() -> None:
+    """Element positions survive an unresolvable argument."""
+    invs = col.find_gh_invocations('run(["gh", "api", "--jq", jq, "projects/42/items"])\n')
+    assert len(invs) == 1
+    assert invs[0].tokens == (
+        "gh",
+        "api",
+        "--jq",
+        col.UNRESOLVED_TOKEN,
+        "projects/42/items",
+    )
+    assert col._api_endpoint(invs[0].tokens) == "projects/42/items"
+
+
+def test_rebound_variable_cannot_mask_a_project_v2_mutation(
+    tmp_path: Path, manifest: dict[str, object]
+) -> None:
+    """A later same-named binding must not hide an earlier ProjectV2 mutation query.
+
+    `_collect_string_variables` is scope-blind, so two functions each assigning `query` used to
+    collapse to one binding — a read query bound after a mutation query hid the mutation and the
+    board write passed clean. Every binding is kept, and the gate fails closed.
+    """
+    _write_plugin_script(
+        tmp_path,
+        "saga",
+        "scripts/rogue_rebound_query.py",
+        "import subprocess\n"
+        "def write_board():\n"
+        "    query = 'mutation { updateProjectV2ItemFieldValue(input: $i) { id } }'\n"
+        '    subprocess.run(["gh", "api", "graphql", "-f", f"query={query}"])\n'
+        "def read_board():\n"
+        '    query = \'query { repository(owner: \\"o\\", name: \\"r\\") { id } }\'\n'
+        '    subprocess.run(["gh", "api", "graphql", "-f", f"query={query}"])\n',
+    )
+    violations = col.run_check(manifest, tmp_path)
+    assert violations, "the ProjectV2 mutation must be attributed to the saga lane"
+    assert all("updateProjectV2ItemFieldValue" in v.call for v in violations)
+    assert all(v.crossed_into == "mission-control" for v in violations)
+
+
+def test_collect_string_variables_keeps_every_binding() -> None:
+    """A name bound twice carries both values, in source order."""
+    var_map = col._collect_string_variables(
+        __import__("ast").parse("q = 'first'\ndef f():\n    q = 'second'\n")
+    )
+    assert var_map["q"] == ("first", "second")
+
+
+def test_combined_token_read_verb_is_allowed(tmp_path: Path, manifest: dict[str, object]) -> None:
+    """`["gh issue view", ...]` must get the read-verb allowance like the split form does."""
+    _write_plugin_script(
+        tmp_path,
+        "saga",
+        "scripts/combined_read.py",
+        'import subprocess\nsubprocess.run(["gh issue view", "42", "--json", "state"])\n',
+    )
+    assert col.run_check(manifest, tmp_path) == []
+
+
+def test_combined_token_mutation_verb_still_flagged(
+    tmp_path: Path, manifest: dict[str, object]
+) -> None:
+    """The combined form must not become an escape hatch for mutations."""
+    _write_plugin_script(
+        tmp_path,
+        "deploy",
+        "scripts/combined_write.py",
+        'import subprocess\nsubprocess.run(["gh issue create", "--title", "bypass"])\n',
+    )
+    violations = col.run_check(manifest, tmp_path)
+    assert len(violations) == 1
+    assert violations[0].call == "gh issue"
+
+
+def test_extract_verb_reads_combined_subcommand_and_verb() -> None:
+    assert col._extract_verb(("gh issue view", "42"), "issue") == "view"
+    assert col._extract_verb(("gh issue create", "--title"), "issue") == "create"
+    assert col._extract_verb(("gh", "issue", "view", "42"), "issue") == "view"
+
+
+def test_manifest_doc_matches_shipped_verb_awareness() -> None:
+    """The manifest is the lint's human-facing contract; it must not describe retired behavior."""
+    doc = " ".join(json.loads(REAL_MANIFEST.read_text())["_doc"])
+    assert "VERB-AWARE" in doc
+    assert "not yet policed" not in doc
+    assert "the lint does not attribute" not in doc

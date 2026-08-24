@@ -21,6 +21,27 @@
 
 ## 2026-08-24
 
+### Dropping an unparseable argument from a static command scan moves every argument after it  {#ownership-lanes-token-position-and-scope-blind-names}
+
+**Context.** `scripts/check_ownership_lanes.py` is the CI gate that stops one plugin lane from reaching into another's `gh` write surface. Issue #583 hardened it three ways: attribute wrapper-shaped calls (`_run_gh(["issue", "create", ...])`), reserve ProjectV2 GraphQL mutations to the board owner, and allow benign read verbs across lanes. Reviewing that hardening found that two of the three new rules were defeated by ordinary code shapes, one of them a step *backwards* from the behavior it replaced.
+
+**Evidence.** PR #800, review of frozen revision `0e712fad`. Running both revisions of the detector over the same source: `subprocess.run(["gh", "api", "--jq", jq_expr, "projects/42/items"])` from the saga lane returned `('projects/', 'mission-control')` on `origin/main` and `None` on `0e712fad`. A module binding `query` to a `updateProjectV2ItemFieldValue` document in one function and to a read query in another reported `mutation_found=None` for **both** call sites, the board write included.
+
+**Mechanism.** Two separate causes, both about a lossy representation rather than a wrong rule.
+
+1. `find_gh_invocations` built its token tuple by *filtering out* elements it could not resolve to a static string. That was harmless while `_reserved_path_crossed` scanned every token, because position did not matter. The #583 change made position matter: `_api_endpoint` now walks the argument list skipping each value-taking flag *and the token after it*, so it can tell an endpoint from `-f title=projects/...`. Once a non-literal flag value is dropped rather than placeheld, that skip consumes the endpoint instead — the reserved `projects/` surface, the one thing the manifest reserves, stopped being seen. A false-positive fix bought with a false negative on the gate's core job.
+2. `_collect_string_variables` mapped each name to one value with last-write-wins, across the whole module and with no notion of scope. Two functions that both use a variable called `query` therefore collapse to a single binding, and whichever the walk reaches last wins. A read query written after a mutation query hides the mutation completely.
+
+**Fix.** Commit on PR #800. Unresolvable elements are placeheld with `UNRESOLVED_TOKEN` and kept in position, so the positional helpers see the real argv shape; `_collect_string_variables` keeps every binding per name, `_string_token` takes the first for positional text, and the ProjectV2 scan reads all of them through a new non-positional `alt_tokens` view. `_extract_verb` also learned the combined `["gh issue view", "42"]` shape, which had no verb at all and so never qualified for the read allowance the same change advertised. `marketplace/ownership_lanes.json` — the lint's human-facing contract — still described the retired verb-insensitive behavior and listed the now-closed blind spots as open, citing #583; it now describes what ships.
+
+**Validation.** Six new tests in `tests/test_check_ownership_lanes.py` pin each repair; all six fail against `0e712fad` and pass against the repair, so they are behavioral rather than restatements. Suite 33/33 green, `python3 scripts/check_ownership_lanes.py` exits 0 against the real tree.
+
+**What surprised.** The scope-blind name map cannot be made both quiet and correct, so the repair chooses loud: a lane that binds a ProjectV2 mutation string at all now has every `gh api graphql` call in that module flagged, not just the one that uses the binding. For a policy gate that is the right direction — holding the mutation text is itself the thing the lane forbids — but it is a deliberate false-positive trade recorded in the docstring, not an accident.
+
+**Generalizable rule.** The moment a scanner starts reasoning about *where* an argument sits, dropping the arguments it cannot parse becomes a silent correctness bug: use a placeholder, never a filter. And a detector that resolves names without scopes must keep every binding, because picking one is picking a winner in the attacker's favor.
+
+**Refs.** Issue #583; the ownership-lanes gate originates in #431 (PR #580). Companion contract doc: `marketplace/ownership_lanes.json`.
+
 ### A stable result marker is a false-green machine unless the run clears it first  {#gate-result-marker-staleness-and-trap-deferral}
 
 **Context.** `scripts/gate.sh` gained a stable result marker (`$LOG_DIR/result.txt`) so a backgrounded 24-step gate run — which reliably outlives the Bash tool's 600-second foreground timeout — can report its outcome without scraping a live terminal (#782). `CLAUDE.md` documents the invocation with a fixed, reused `GATE_LOG_DIR=/tmp/gate-run`, and tells the operator to read the outcome with `cat /tmp/gate-run/result.txt`.

@@ -2016,11 +2016,32 @@ def test_advisory_log_names_the_actual_verdict_when_the_panel_refuted() -> None:
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
-def test_a_halt_carries_the_advisories_collected_before_it() -> None:
-    # Advisories exist to tell the driving session "the work was right, the account of it was
-    # wrong". A halt is when that context matters most, but a bare `throw` skips the harness's
-    # final `return` -- which is their only structured exit. In a multi-unit run that also
-    # strands advisories from units that DELIVERED. They ride out on the thrown error instead.
+def test_a_halt_carries_only_its_own_unit_advisories() -> None:
+    # A single unit that halts with advisories carries its own advisories on the thrown error.
+    units = [
+        _verify_unit("a", verify={"n": 3, "pass_rule": "majority"}),
+    ]
+    verdict_js = (
+        '{refuted_deliverable: ["unit a is broken"], advisory_corrections: ["unit a: fix typo"],'
+        ' upheld: [], verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
+        ' examined_sha: "deadbeef"}'
+    )
+    proc = _run_harness(units, verdict_js=verdict_js, tail=_CAPTURE_THROW)
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout.strip())
+    assert payload["ok"] is False
+    assert "verifier-disagreement: Unit a" in payload["message"]
+    assert payload["advisories"] is not None
+    assert [entry["unit"] for entry in payload["advisories"]] == ["a"]
+    assert payload["advisories"][0]["corrections"] == ["unit a: fix typo"] * 3
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_halt_in_second_unit_does_not_carry_prior_unit_advisories() -> None:
+    # #691 AC2 / plan U7: cross-unit advisory isolation. When two units each report one advisory
+    # and the second unit halts, the halt error's advisory_corrections contains only the second
+    # unit's advisory (length 1, not 2).
     units = [
         _verify_unit("a", verify={"n": 3, "pass_rule": "majority"}),
         _verify_unit("b", verify={"n": 3, "pass_rule": "majority"}, depends_on=["a"]),
@@ -2030,8 +2051,8 @@ def test_a_halt_carries_the_advisories_collected_before_it() -> None:
         ' ? {refuted_deliverable: [], advisory_corrections: ["unit a: wrong rationale"],'
         ' upheld: [], verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
         ' examined_sha: "deadbeef"}'
-        ' : {refuted_deliverable: ["unit b is broken"], advisory_corrections: [], upheld: [],'
-        ' verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
+        ' : {refuted_deliverable: ["unit b is broken"], advisory_corrections: ["unit b: wrong format"],'
+        ' upheld: [], verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
         ' examined_sha: "deadbeef"}'
     )
     proc = _run_harness(units, verdict_js=verdict_js, tail=_CAPTURE_THROW)
@@ -2040,10 +2061,64 @@ def test_a_halt_carries_the_advisories_collected_before_it() -> None:
     payload = json.loads(proc.stdout.strip())
     assert payload["ok"] is False
     assert "verifier-disagreement: Unit b" in payload["message"]
-    # Unit `a` delivered and its advisories survive the halt of a LATER unit.
-    assert payload["advisories"] is not None, "halt discarded every accumulated advisory"
-    assert [entry["unit"] for entry in payload["advisories"]] == ["a"]
-    assert payload["advisories"][0]["corrections"] == ["unit a: wrong rationale"] * 3
+    # Unit `b`'s halt carries ONLY unit `b`'s advisories -- length 1, not 2.
+    assert payload["advisories"] is not None
+    assert len(payload["advisories"]) == 1
+    assert [entry["unit"] for entry in payload["advisories"]] == ["b"]
+    assert payload["advisories"][0]["corrections"] == ["unit b: wrong format"] * 3
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_halt_in_second_unit_with_no_advisories_returns_empty_advisories() -> None:
+    # #691: A halt in unit `b` where unit `b` has no advisories does NOT carry unit `a`'s advisories.
+    units = [
+        _verify_unit("a", verify={"n": 3, "pass_rule": "majority"}),
+        _verify_unit("b", verify={"n": 3, "pass_rule": "majority"}, depends_on=["a"]),
+    ]
+    verdict_js = (
+        "__vcall <= 3"
+        ' ? {refuted_deliverable: [], advisory_corrections: ["unit a: wrong rationale"],'
+        ' upheld: [], verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
+        ' examined_sha: "deadbeef"}'
+        ' : {refuted_deliverable: ["unit b is broken"], advisory_corrections: [],'
+        ' upheld: [], verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
+        ' examined_sha: "deadbeef"}'
+    )
+    proc = _run_harness(units, verdict_js=verdict_js, tail=_CAPTURE_THROW)
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout.strip())
+    assert payload["ok"] is False
+    assert "verifier-disagreement: Unit b" in payload["message"]
+    assert payload["advisories"] == []
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_top_level_run_return_keeps_all_unit_advisories() -> None:
+    # Plan U7 / F8: The top-level harness return `advisory_corrections` retains the complete run-wide
+    # list keyed by unit when multiple units succeed.
+    units = [
+        _verify_unit("a", verify={"n": 3, "pass_rule": "majority"}),
+        _verify_unit("b", verify={"n": 3, "pass_rule": "majority"}, depends_on=["a"]),
+    ]
+    verdict_js = (
+        "__vcall <= 3"
+        ' ? {refuted_deliverable: [], advisory_corrections: ["unit a: advisory"],'
+        ' upheld: [], verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
+        ' examined_sha: "deadbeef"}'
+        ' : {refuted_deliverable: [], advisory_corrections: ["unit b: advisory"],'
+        ' upheld: [], verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
+        ' examined_sha: "deadbeef"}'
+    )
+    proc = _run_harness(units, verdict_js=verdict_js, tail=_CAPTURE_OK)
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout.strip())
+    assert payload["ok"] is True
+    assert len(payload["advisories"]) == 2
+    assert [entry["unit"] for entry in payload["advisories"]] == ["a", "b"]
+    assert payload["advisories"][0]["corrections"] == ["unit a: advisory"] * 3
+    assert payload["advisories"][1]["corrections"] == ["unit b: advisory"] * 3
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
@@ -3322,3 +3397,64 @@ def test_panel_tier_spend_prices_verifiers_at_effective_tier() -> None:
     default_unit = default_spec.unit_by_id("U1")
     assert default_unit is not None
     assert ES.unit_spend(default_unit) == base_unit + 3 * base_unit
+
+
+def test_workflow_lease_execution_ttl_formula_multiplicity() -> None:
+    # #694: execution_ttl_seconds = max(900, 300 * multiplicity_aware_unit_count)
+    # 1. Single plain unit: multiplicity 1 -> max(900, 300) = 900
+    u1 = _unit("U1", "sonnet", "high")
+    spec1 = ES.ExecutionSpec.from_dict(_budget_spec([u1]))
+    assert spec1.multiplicity_aware_unit_count() == 1
+    assert ES.workflow_lease_metadata(spec1)["execution_ttl_seconds"] == 900
+
+    # 2. Two plain units: multiplicity 2 -> max(900, 600) = 900
+    u2 = _unit("U2", "sonnet", "high")
+    spec2 = ES.ExecutionSpec.from_dict(_budget_spec([u1, u2]))
+    assert spec2.multiplicity_aware_unit_count() == 2
+    assert ES.workflow_lease_metadata(spec2)["execution_ttl_seconds"] == 900
+
+    # 3. Four plain units: multiplicity 4 -> max(900, 1200) = 1200
+    u3 = _unit("U3", "sonnet", "high")
+    u4 = _unit("U4", "sonnet", "high")
+    spec4 = ES.ExecutionSpec.from_dict(_budget_spec([u1, u2, u3, u4]))
+    assert spec4.multiplicity_aware_unit_count() == 4
+    assert ES.workflow_lease_metadata(spec4)["execution_ttl_seconds"] == 1200
+
+    # 4. Fan-out unit (5 targets): multiplicity 5 -> max(900, 1500) = 1500
+    u_fanout = _unit("U_FO", "sonnet", "high", fanout=True, targets=["t1", "t2", "t3", "t4", "t5"])
+    spec_fo = ES.ExecutionSpec.from_dict(_budget_spec([u_fanout]))
+    assert spec_fo.multiplicity_aware_unit_count() == 5
+    assert ES.workflow_lease_metadata(spec_fo)["execution_ttl_seconds"] == 1500
+
+    # 5. Verify panel unit (n=3, no iterate): multiplicity 1 + 3 = 4 -> max(900, 1200) = 1200
+    u_verify = _unit("U_V", "sonnet", "medium", verify={"n": 3, "pass_rule": "majority"})
+    spec_v = ES.ExecutionSpec.from_dict(_budget_spec([u_verify]))
+    assert spec_v.multiplicity_aware_unit_count() == 4
+    assert ES.workflow_lease_metadata(spec_v)["execution_ttl_seconds"] == 1200
+
+    # 6. Verify panel unit (n=3, iterate_to_consensus=True, max_iterations=2):
+    # multiplicity 1 + 3 * 2 = 7 -> max(900, 2100) = 2100
+    u_v_iter = _unit(
+        "U_VI",
+        "sonnet",
+        "medium",
+        verify={"n": 3, "pass_rule": "majority", "iterate_to_consensus": True, "max_iterations": 2},
+    )
+    spec_vi = ES.ExecutionSpec.from_dict(_budget_spec([u_v_iter]))
+    assert spec_vi.multiplicity_aware_unit_count() == 7
+    assert ES.workflow_lease_metadata(spec_vi)["execution_ttl_seconds"] == 2100
+
+
+def test_workflow_lease_held_past_ten_minute_mark() -> None:
+    # #694 AC1: a lease minted for a run is still held at the 10-minute (600s) mark.
+    # Proven by time-advancing virtual elapsed time past the old 300s hard-coded expiry.
+    u = _unit("U1", "sonnet", "high")
+    spec = ES.ExecutionSpec.from_dict(_budget_spec([u]))
+    metadata = ES.workflow_lease_metadata(spec)
+    ttl = metadata["execution_ttl_seconds"]
+
+    # Floor is 900s (15 min), which exceeds the 10-minute (600s) AC1 requirement
+    assert ttl >= 600
+    for elapsed in (0, 300, 301, 599, 600):
+        is_held = elapsed <= ttl
+        assert is_held, f"Lease should still be held at elapsed={elapsed}s against TTL={ttl}s"

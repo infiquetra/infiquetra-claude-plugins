@@ -35,7 +35,7 @@ python3 "$S" roster                                # agents this machine can lau
 python3 "$S" start --plan .orchestrate/plan.json   # record the run
 python3 "$S" go                                    # launch every eligible unit
 python3 "$S" status                                # the table, with live herdr state
-python3 "$S" settle                                # idle sessions become done
+python3 "$S" settle                                # sessions with branch evidence become done
 python3 "$S" expand --plan .orchestrate/next.json  # append units a finished phase named
 python3 "$S" review-result --file <result.json>     # persist the typed result and route repairs
 python3 "$S" land                                  # merge finished unit branches onto the run branch
@@ -48,6 +48,13 @@ project.
 
 `go` launches only units whose ordering edges are all satisfied — every name in `after` and
 `serialize` done — so calling `settle` then `go` again is what releases the next wave.
+
+**Prompt delivery is confirmed before a unit is marked running.** After sending the initial
+task prompt, Orchestrate waits for an acceptance signal (`took_the_task` observing the session
+leave idle). If the prompt was swallowed (for example by a vendor startup dialog while Herdr
+reported `interactive_ready`), Orchestrate retries delivery up to 2 times while the session
+remains continuously idle. If still unaccepted, the unit is recorded in the named failure state
+`prompt_undelivered` with a warning note, rather than being left silently running.
 
 **A unit with dependencies branches from the last one it names**, at launch time rather than up
 front — so a `/work` unit opens on top of its `/plan` unit's actual output.
@@ -65,6 +72,19 @@ decided by the plan, which does not exist when the operator approves the first t
 starts with only what can launch now, and `expand` appends the rest once the operator has approved
 them — same run, so `after` still reaches back and one `collect` covers everything. `expand` refuses
 a duplicate name or a dependency that is in no run.
+
+**Single launch seam and no-focus invariant.** Every run unit, including units added at a later
+phase boundary, must be persisted through `start` or `expand` before any worktree or session is
+created, and must launch only through `go` via the central `agent_argv` path. Never create worktrees
+manually or invoke `agents` directly for a run unit. Direct wrapper calls bypass Orchestrate's
+background launch flags (`--no-focus --current --herdr --herdr-control-only`) and steal operator UI
+focus. Unsupported post-launch setup (such as interactive OpenCode variant selection) is a
+controlled post-launch step, not a license to bypass `expand` or `go`. A branch in the run's
+`orch/<run-id>-<unit>` series with no row in the table is flagged as unrecorded drift by `status` and
+`check`, requiring explicit adoption with `adopt --yes` or run-owned cleanup rather than being
+silently treated as valid expansion. That detection reads branches and nothing else: a hand-made
+worktree or session named outside that series is invisible to both commands, which is the second
+reason never to make one.
 
 **Saga's external-engine offer is answered before dispatch.** A `/doc-review` or `/code-review`
 session with no stored preference stops and asks the operator, in a tab nobody is watching. The
@@ -180,6 +200,20 @@ idle between turns, so `wait` confirms across consecutive observations the same 
 Subscriptions are keyed by pane, which is why a unit records its `pane_id` at launch; if the socket
 is unreachable it falls back to one `herdr agent wait` per unit, under the same confirmation rule.
 
+**Evidence-based settlement.** `orchestrate.py settle` marks running units `done` only when there
+is completion evidence on the unit branch (`produced_anything`). A session that is merely idle
+without commits stays running — idle is also what an agent looks like between turns, thinking. A
+session closed or gone after committing its work settles `done` (never `failed` for committed work),
+while a session gone without commits yields a distinct `orphaned` state.
+
+The gate is a reading of a branch, so it covers only units that have one. A unit with no branch of
+its own — the review controller, `merge: false`, whose output arrives through `review-result` — is
+not commit-gated and settles on the confirmed reading alone; gating it would wedge the review loop
+at `running` forever, because no commit can ever appear on a branch it does not have. When the run
+branch itself does not resolve the commit count is unknown rather than zero: such a unit stays
+`running` and says so, and a gone session is recorded `orphaned` with a note that the commits could
+not be checked — the same "branch-dependent checks are unavailable" line `adopt` and `clean` print.
+
 `go` refuses to launch a unit whose `after` dependency committed nothing. A dependent unit opens
 on its dependency's branch, so an empty branch means the thing it is supposed to work on does not
 exist — and a session given nothing writes something plausible about nothing rather than failing.
@@ -188,9 +222,10 @@ waiting on it never needed its output — only for it to be out of the way.
 
 ## What this deliberately does not do
 
-It does not verify that a session "really" finished, count tokens, enforce a spend ceiling, reserve
-concurrency slots, run a voting panel, or keep a durable register with locks. If a unit went wrong,
-you have its worktree, its branch, and its tab — look at them.
+Evidence-based settlement checks completion evidence on the branch (`produced_anything`), but
+deliberately does not count tokens, enforce a spend ceiling, reserve concurrency slots, run a
+voting panel, or keep a durable register with locks. If a unit went wrong, you have its worktree,
+its branch, and its tab — look at them.
 
 An earlier implementation did all of those things, in 14,875 lines of production code and about
 15,700 lines of tests. It is preserved on `origin` at `archive/orchestrate-full-implementation` if a

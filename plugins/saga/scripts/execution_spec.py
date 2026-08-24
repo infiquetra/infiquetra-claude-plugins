@@ -591,7 +591,8 @@ _JS_GATE_HELPER = r"""function __gate(result, opts) {
 
   if (opts.expectsOutput && isEmptyOrAbsent(result)) {
     throw __halt(
-      `missing-output: Unit ${unitId} expected structured output but received none or empty.`
+      `missing-output: Unit ${unitId} expected structured output but received none or empty.`,
+      unitId
     );
   }
 
@@ -614,7 +615,8 @@ _JS_GATE_HELPER = r"""function __gate(result, opts) {
         JSON.parse(s);
       } catch (e) {
         throw __halt(
-          `malformed-output: Unit ${unitId} output is a structurally truncated JSON: ${e.message}`
+          `malformed-output: Unit ${unitId} output is a structurally truncated JSON: ${e.message}`,
+          unitId
         );
       }
     }
@@ -647,7 +649,8 @@ _JS_GATE_HELPER = r"""function __gate(result, opts) {
       const shortfall = targetCount - producedCount;
       throw __halt(
         `missing-output: Unit ${unitId} produced fewer items than expected. ` +
-        `Expected ${targetCount}, produced ${producedCount}. Shortfall: ${shortfall}.`
+        `Expected ${targetCount}, produced ${producedCount}. Shortfall: ${shortfall}.`,
+        unitId
       );
     }
   }
@@ -657,7 +660,8 @@ _JS_GATE_HELPER = r"""function __gate(result, opts) {
     if (parsed === null || parsed === undefined || typeof parsed !== 'object' || Array.isArray(parsed)) {
       throw __halt(
         `missing-output: Unit ${unitId} result is not a structured dictionary. ` +
-        `Missing required keys: ${opts.returns.join(', ')}.`
+        `Missing required keys: ${opts.returns.join(', ')}.`,
+        unitId
       );
     }
     const missing = opts.returns.filter(
@@ -665,7 +669,8 @@ _JS_GATE_HELPER = r"""function __gate(result, opts) {
     );
     if (missing.length > 0) {
       throw __halt(
-        `missing-output: Unit ${unitId} output is missing required keys: ${missing.join(', ')}.`
+        `missing-output: Unit ${unitId} output is missing required keys: ${missing.join(', ')}.`,
+        unitId
       );
     }
   }
@@ -778,9 +783,19 @@ function __renderAdvisory(a) {
   if (tail >= 0xd800 && tail <= 0xdbff) t = t.slice(0, -1)
   return t
 }
-function __halt(message) {
+// #691: attach the HALTING unit's advisories, not the run-wide accumulator -- a driver that
+// reads this off a halt would otherwise act on advice about units that already settled. Two
+// callers, two contracts: pass a REAL unit id for a unit-scoped throw, or omit it entirely for
+// the run-level pull-cord batch, which names every unit that pulled a cord and so must stay
+// run-wide. Do NOT "complete" this by threading a unit id into that batched throw -- it would
+// silently drop every cord-pulling unit's advisories but one, and no test covers it. Omitted is
+// the only supported way to ask for the whole list: any truthy non-unit string (`__gate`'s
+// `opts.unitId || "unknown"` default) filters to an empty array instead of falling back.
+function __halt(message, unitId) {
   var e = new Error(message)
-  e.advisory_corrections = __advisories
+  e.advisory_corrections = unitId
+    ? __advisories.filter(function(a) { return a.unit === unitId })
+    : __advisories
   return e
 }
 function __logAdvisory(unitId, reported, refuted) {
@@ -1634,6 +1649,19 @@ def unit_spend(unit: Unit) -> int:
     return total
 
 
+def unit_multiplicity(unit: Unit) -> int:
+    """Multiplicity-aware agent invocation count for one unit (#694).
+
+    Accounts for fan-out targets and verifier panels (including consensus iteration rounds)
+    mirroring the call structure in ``unit_spend``.
+    """
+    calls = len(unit.targets) if (unit.fanout and unit.targets) else 1
+    if unit.verify is not None:
+        iterations = unit.verify.max_iterations if unit.verify.iterate_to_consensus else 1
+        calls += unit.verify.n * iterations
+    return calls
+
+
 @dataclass
 class SpendEnvelope:
     """Run-scoped spend accumulator (#366 U3) -- 'ask once, at the crossing'.
@@ -1711,6 +1739,10 @@ class ExecutionSpec:
     def spec_spend(self) -> int:
         """The multiplicity-aware summed ordinal spend across every unit (#366 KTD8)."""
         return sum(unit_spend(u) for u in self.units)
+
+    def multiplicity_aware_unit_count(self) -> int:
+        """The multiplicity-aware summed unit count across every unit (#694)."""
+        return sum(unit_multiplicity(u) for u in self.units)
 
     def validate(
         self,
@@ -2988,14 +3020,14 @@ def _emit_panel_reconciliation(
     lines.append(
         f"{indent}  throw __halt(`verifier-under-strength: Unit {unit.unit_id} reported "
         f"${{{reported_var}.length}}/{n} verifiers (quorum floor {floor}; "
-        f"missing #${{{missing_idx_var}.join(', #')}})${{{fallback_marker_var}}}`)"
+        f"missing #${{{missing_idx_var}.join(', #')}})${{{fallback_marker_var}}}`, {_js_string(unit.unit_id)})"
     )
     lines.append(f"{indent}}}")
 
     throw_line = (
         f"throw __halt(`verifier-disagreement: Unit {unit.unit_id} refuted by "
         f"${{{refute_count_var}}}/${{{reported_var}.length}} reporting verifiers "
-        f"(${{{missing_idx_var}.length}} missing)${{{fallback_marker_var}}}{throw_suffix}`)"
+        f"(${{{missing_idx_var}.length}} missing)${{{fallback_marker_var}}}{throw_suffix}`, {_js_string(unit.unit_id)})"
     )
     if direct_throw:
         if open_refuted_block:
@@ -3634,6 +3666,7 @@ def workflow_lease_metadata(
     batch_id = (
         None if invocation_digest is None else f"workflow:{spec_digest[:24]}:{invocation_digest}"
     )
+    execution_ttl = max(900, 300 * spec.multiplicity_aware_unit_count())
     return {
         "schema": "workflow_lease_reservation.v1",
         "batch_id": batch_id,
@@ -3646,7 +3679,7 @@ def workflow_lease_metadata(
         "policy_sha256": limits.policy_sha256(),
         "mutation": mutation,
         "claim_ttl_seconds": 30,
-        "execution_ttl_seconds": 300,
+        "execution_ttl_seconds": execution_ttl,
         "slots": [f"slot-{index:03d}" for index in range(1, width + 1)],
         "workload_unit_ids": [unit.unit_id for unit in spec.units],
         "requires_prelaunch_reservation": True,

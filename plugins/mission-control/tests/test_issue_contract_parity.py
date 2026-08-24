@@ -370,3 +370,20 @@ def test_main_live_flag_skips_not_passes_on_unavailable(monkeypatch, capsys) -> 
 
     assert exit_code == 0
     assert "SKIPPED" in captured.out
+
+
+def test_main_default_path_prints_explicit_skipped_line(monkeypatch, capsys) -> None:
+    """`main()` on the default (no --live) path prints an explicit SKIPPED line
+    so no invocation is ever silently absent (#584, R3-residual)."""
+    mod = _load_parity()
+    monkeypatch.setattr(sys, "argv", ["check_issue_contract_parity.py"])
+
+    exit_code = mod.main()
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert (
+        "issue-contract consumer parity check passed: vendored artifacts are in sync"
+        in captured.out
+    )
+    assert "SKIPPED live parity leg: " in captured.out

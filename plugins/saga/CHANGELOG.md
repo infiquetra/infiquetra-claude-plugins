@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.139.7] - 2026-08-24
+
+### Fixed
+
+- **Missing-aware quorum tightening at odd panel sizes (Option 3).** Verify panels under `pass_rule: majority`
+  at odd `n >= 5` now detect when dropped verifiers could have produced a majority refutation at full strength
+  (`refute_count < threshold` on survivors, but `refute_count + missing >= floor`). When this ambiguous
+  condition is met, the panel halts fail-closed with `verifier-under-strength: Unit <id> reported k/n verifiers (potential-flip-on-missing)`
+  rather than silently passing. Provably preserves 100% compatibility across all 37 committed `n=3` verify
+  blocks across 16 execution spec files. (#692)
+
 ## [0.139.6] - 2026-08-24
 
 ### Fixed

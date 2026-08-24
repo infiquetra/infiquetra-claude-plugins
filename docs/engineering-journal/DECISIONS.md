@@ -1,6 +1,77 @@
 # Decisions — Infiquetra Claude Plugins
 ## 2026-08-24
 
+### Verify panel quorum policy at odd panel sizes — Missing-Aware Tightening (#692) {#verify-panel-odd-n-quorum-policy-692}
+
+**APPROVED by operator 2026-08-24 — Option 3, the missing-aware tightening policy** (with 37 committed `n=3` verify blocks across 16 execution spec files confirmed via grep).
+
+**Date:** 2026-08-24 · **Issue:** #692 · **Origin:** Run orch-2026-08-24-787 (orchestration run 787, unit b7-692, plan section U13)
+
+**Context and Problem Statement.** In the `saga` plugin (`plugins/saga/scripts/execution_spec.py`), verify panels run `n` parallel skeptic verifiers to check a unit's output. Issue #686 previously fixed the even-`n` case where an emit-time quorum floor of `ceil(n/2)` failed open when exactly half the panel went missing. That fix established the quorum floor formula as `floor = n // 2 + 1` (a strict majority of declared verifiers `n`).
+
+At runtime, the majority threshold is recomputed over the surviving reporting verifiers `k` as `threshold = Math.max(1, Math.ceil(k / 2))`. At odd panel sizes of `n >= 5`, a panel can lose verifiers, still clear the `n // 2 + 1` quorum floor, and reach a passing verdict when full strength would have halted.
+
+For example, consider a 5-verifier panel (`n = 5`, quorum floor 3):
+- Suppose 2 verifiers encounter runtime failures (timeouts, crashes, or schema-invalid responses) and are dropped (`k = 3` survivors).
+- If both missing verifiers would have refuted the deliverable, and among the 3 survivors 1 refutes and 2 uphold:
+  - Quorum check: `k = 3 >= floor (3)` -> Quorum is cleared.
+  - Survivor majority threshold: `Math.ceil(3 / 2) = 2`.
+  - Refutation count: `1`. Since `1 < 2`, the panel **passes** the unit.
+  - Full-strength comparison: At full strength with all 5 verifiers reporting, the total refutations would have been `1 + 2 = 3`. Since `3 >= Math.ceil(5 / 2) = 3`, full strength would have **halted** the unit.
+
+This issue is classified as P3 (priority 3, low) and has never been observed to fire in production. Because changing quorum rules can alter how existing panels behave, issue #692 was designated as an explicit operator decision gate before any code is modified. On 2026-08-24, the operator explicitly approved Option 3 (Missing-Aware Tightening).
+
+**Policy Options and Record of Alternatives.**
+
+1. **Option 1: Status Quo (Floor-Only / Majority Over Survivors)**
+   - *Mechanism:* Keep `floor = n // 2 + 1` and runtime threshold `Math.ceil(k / 2)` unchanged.
+   - *Impact on the 37 committed `n=3` panels:* Zero impact. All 37 committed `n=3` panels across 16 execution spec files continue to tolerate 1 missing verifier (2 of 3 reporting).
+   - *Impact on future odd `n >= 5` panels:* At `n = 5` with 2 missing verifiers, a 1-refute / 2-uphold split will pass even though a 3/5 refutation was possible at full strength.
+   - *Tradeoff:* Simplest option, zero code churn, zero operational disruption, but leaves the theoretical odd-`n` fail-open edge case in place.
+
+2. **Option 2: Strict Full-Strength (Zero Missing Verifiers Tolerated)**
+   - *Mechanism:* Require all `n` verifiers to report (`floor = n`), halting with `verifier-under-strength` if any verifier is missing.
+   - *Impact on the 37 committed `n=3` panels:* **Breaking change across all 37 committed `n=3` panels.** Any transient single-verifier timeout, API glitch, or formatting error would immediately abort the workflow.
+   - *Impact on future odd `n >= 5` panels:* Completely eliminates false passes from missing verifiers, but makes all panels fragile.
+   - *Tradeoff:* Rejected as disproportionate. It destroys the fault tolerance and redundancy benefits of running multi-verifier panels in a developer-tool suite.
+
+3. **Option 3: Missing-Aware Tightening / Scaled Quorum ("Pessimistic Missing Refuter" Gate) — APPROVED**
+   - *Mechanism:* When evaluating a panel under the majority pass rule, check whether the missing verifiers could have changed the outcome. Specifically: if `refute_count < threshold_survivors` (survivors say pass), but `refute_count + missing >= threshold_full` (where `threshold_full = n // 2 + 1`), the verdict is ambiguous because missing verifiers could have produced a majority refutation. In that case, halt with `verifier-under-strength: Unit <id> reported k/n verifiers (potential-flip-on-missing)`.
+   - *Impact on the 37 committed `n=3` panels:* **Zero impact (provably identical behavior).**
+     - For `n = 3`, `threshold_full = 2`.
+     - When `k = 2` (`missing = 1`):
+       - If `refute_count = 1`: `refute_count (1) >= Math.ceil(2/2) = 1` -> Halts immediately under survivor threshold.
+       - If `refute_count = 0`: `refute_count + missing = 0 + 1 = 1 < 2` -> Unambiguously passes (even if the missing verifier had refuted, 1 of 3 is not a majority).
+     - The ambiguous condition (`refute_count < threshold_survivors` AND `refute_count + missing >= threshold_full`) is mathematically unreachable at `n = 3`.
+     - All 37 committed `n=3` panels across 16 execution spec files retain 100% of their existing single-missing-verifier tolerance.
+   - *Impact on future odd `n >= 5` panels:* At `n = 5` with `k = 3` (`missing = 2`), if `refute_count = 1`, it halts because `1 + 2 = 3 >= 3`. If `refute_count = 0`, it cleanly passes because `0 + 2 = 2 < 3`.
+   - *Tradeoff:* Mathematically exact, eliminates false passes at `n >= 5`, and preserves existing tolerance across all 37 committed `n=3` panels. Requires a small, targeted addition to `execution_spec.py::_emit_panel_reconciliation`.
+
+4. **Option 4: Degrade Loudly When Refuters Are Missing (Observable Warning)**
+   - *Mechanism:* When `k >= floor` and the panel passes on survivors, but `refute_count + missing >= threshold_full`, do not halt execution; emit a prominent warning log (e.g., `log('WARNING: verify panel over ... passed on survivor quorum, but N missing verifiers could have produced a majority refutation')`) and record an advisory entry.
+   - *Impact on the 37 committed `n=3` panels:* Zero impact. Warning never triggers at `n = 3`.
+   - *Impact on future odd `n >= 5` panels:* Workflows never halt unexpectedly, but operators gain visibility if the edge case ever occurs.
+   - *Tradeoff:* Zero risk of spurious halts, zero disruption to existing panels, but permits a theoretically compromised unit to pass without halting.
+
+5. **Option 5: Per-Panel Opt-In Strictness**
+   - *Mechanism:* Add a configuration field to verify panel declarations (e.g., `quorum_policy: "strict" | "majority-survivors" | "missing-aware"`), defaulting to standard survivor majority.
+   - *Impact on the 37 committed `n=3` panels:* Zero impact on existing panels.
+   - *Impact on future odd `n >= 5` panels:* Panel authors can select strictness per unit based on risk.
+   - *Tradeoff:* Adds schema surface area and authoring cognitive overhead for a P3 edge case.
+
+**Decision and Rationale.**
+- **Option 3 (Missing-Aware Tightening)** is approved and implemented. It is mathematically complete, fail-closed against missing refuters at `n >= 5`, and provably preserves 100% of the existing behavior and fault tolerance for all 37 committed `n=3` panels across 16 execution spec files.
+
+**Rejected Alternatives.**
+- *Option 1 (Status Quo):* Rejected because leaving the theoretical odd-`n >= 5` fail-open edge case in place is unnecessary when Option 3 provides a closed, mathematically complete solution with zero impact on existing panels.
+- *Option 2 (Strict Full-Strength):* Rejected because breaking single-verifier fault tolerance across all 37 committed `n=3` panels is unacceptably fragile for developer-tool operations.
+- *Option 4 (Degrade Loudly):* Rejected in favor of fail-closed halting via Option 3, preventing potentially compromised units from silently proceeding at odd `n >= 5`.
+- *Option 5 (Per-Panel Opt-In):* Rejected as unnecessary configuration complexity when Option 3 solves the mathematical boundary automatically without requiring manual per-panel configuration.
+
+**Revisit when.** A production workflow requires distinct per-panel quorum semantics, or new evidence emerges regarding verifier failure rates at large panel sizes (`n >= 11`).
+
+
+
 ### The zero-consumer sweep fired and the lease payload stays anyway  {#lease-ttl-payload-kept-after-zero-consumer-sweep}
 
 **Decision.** The consumer sweep that DECISIONS `{#defects-run-plan-ktds-787}` made a precondition

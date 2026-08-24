@@ -21,6 +21,37 @@
 
 ## 2026-08-24
 
+### A `pass_rule`-narrowing guard is load-bearing correctness, and a green suite does not pin it  {#pass-rule-exclusion-guard-needs-its-own-pin-692}
+
+**Context.** Leaf #692 (Option 3, missing-aware quorum tightening) added a fail-closed gate to the
+emitted verify-panel harness: when survivors uphold but `refute_count + missing >= floor`, the panel
+halts as `potential-flip-on-missing`. The gate is emitted only under
+`if panel.pass_rule == "majority":`, because `floor` is the majority quantity `n // 2 + 1` and a
+`unanimous` panel refutes only when every reporting verifier refutes.
+
+**Evidence.** PR #807 at `50d03070`, `plugins/saga/scripts/execution_spec.py:3034`. Reproduction:
+replace that condition with `if True:` and the whole suite stays green — `uv run pytest -q -k
+execution_spec` reported 475 passed with the guard deleted. Running the emitted harness directly for
+an `n=5` `unanimous` panel with 3 reporters and 2 refuters shows the real damage: `ok=True` with the
+guard, `verifier-under-strength: Unit a reported 3/5 verifiers (potential-flip-on-missing)` without
+it. The pin added in review is
+`tests/test_saga_execution_spec.py::test_unanimous_panels_are_excluded_from_missing_aware_tightening`.
+
+**Mechanism.** Every scenario sweep written for #692 declared `pass_rule: "majority"`, because that
+is the rule the feature is about. The pre-existing sweeps that do cover both pass rules stop at
+`n <= 4`, and the exclusion is unreachable below `n = 5`. So the guard sat in the intersection of two
+coverage sets and belonged to neither: the feature's own tests never varied the excluded axis, and
+the tests that vary that axis never reached the sizes where the gate can fire. Suite-green therefore
+carried no information about the guard at all.
+
+**Generalizable rule.** When a change is emitted under a condition that narrows it to one variant of
+an enumerated axis (`pass_rule`, mode, backend, platform), write the pin on the EXCLUDED variant at a
+size or state where the change could actually fire — and confirm it by deleting the condition and
+watching that one test, and only that test, go red.
+
+**Refs.** LEARNINGS `{#dedup-key-test-varies-old-discriminator-598}` (the sibling failure: a test that
+varies the wrong axis proves a format, not a behavior), DECISIONS `{#verify-panel-odd-n-quorum-policy-692}`.
+
 ### A test that resolves a real tool passes on the machine that has it and nowhere else  {#hermetic-launcher-resolution-in-tests}
 
 **Context.** Issue #781, PR #805. `tests/test_orchestrate_account.py::TestAccountSchemaAndLifecycle::test_start_loads_plan_account` and `::test_expand_updates_run_account` were green on the workstation and red on the CI runner with `SystemExit: no 'agents' on PATH`.

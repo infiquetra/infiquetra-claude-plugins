@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import math
 import re
 import shutil
 import subprocess
@@ -1855,6 +1856,219 @@ def test_even_n_panel_cannot_reach_a_verdict_on_half_strength(n: int) -> None:
     assert payload["ok"] is False, "half-strength even-n panel must not reach a verdict"
     assert "verifier-under-strength" in payload["message"]
     assert f"quorum floor {n // 2 + 1}" in payload["message"]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+@pytest.mark.parametrize("reported_count", [0, 1, 2, 3])
+@pytest.mark.parametrize("refute_count", [0, 1, 2, 3])
+def test_n3_panels_preserve_exact_compatibility(reported_count: int, refute_count: int) -> None:
+    # EXPLICIT n=3 COMPATIBILITY PIN (#692):
+    # The Option 3 missing-aware tightening policy (approved 2026-08-24) provably preserves 100%
+    # of the existing behavior and single-missing-verifier fault tolerance across all 37 committed
+    # n=3 panels (in 16 execution spec files across the repository).
+    #
+    # At n=3:
+    # - floor = 3 // 2 + 1 = 2
+    # - If reported < 2 (0 or 1 verifiers): halts with verifier-under-strength (quorum floor 2)
+    # - If reported == 2 (1 missing):
+    #   - refute = 0: Math.ceil(2/2) = 1 threshold; 0 refutes < 1; 0 + 1 (missing) = 1 < 2 (floor).
+    #     The ambiguous condition (0 < 1 AND 0 + 1 >= 2) is false, so it unambiguously PASSES.
+    #   - refute >= 1: 1 >= 1 threshold; refutes with verifier-disagreement.
+    # - If reported == 3 (0 missing):
+    #   - refute in {0, 1}: Math.ceil(3/2) = 2 threshold; passes.
+    #   - refute >= 2: refutes with verifier-disagreement.
+    #
+    # The policy change for odd n >= 5 introduces zero behavioral drift for n=3.
+    if refute_count > reported_count:
+        # Impossible state: a panel cannot have more refuters than reporting verifiers.
+        # SKIP rather than `return` -- a bare return reports these six cells as PASSED
+        # without asserting anything, which reads as coverage the sweep never had.
+        pytest.skip("impossible: refuters cannot exceed reporting verifiers")
+
+    n = 3
+    floor = 2
+    k = reported_count
+    r = refute_count
+
+    verdict_js = (
+        f"__vcall <= {r} ? "
+        '{refuted_deliverable: ["FAIL"], advisory_corrections: [], upheld: [], verifier_identity: "saga:readonly-verifier", fallback_depth: 0, examined_sha: "deadbeef"} : '
+        f"(__vcall <= {k} ? "
+        '{refuted_deliverable: [], advisory_corrections: [], upheld: ["fine"], verifier_identity: "saga:readonly-verifier", fallback_depth: 0, examined_sha: "deadbeef"} : '
+        "null)"
+    )
+    proc = _run_harness(
+        [_verify_unit("a", verify={"n": n, "pass_rule": "majority"})],
+        verdict_js=verdict_js,
+        tail=_CAPTURE_THROW,
+    )
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout.strip())
+
+    if k < floor:
+        assert payload["ok"] is False
+        assert "verifier-under-strength" in payload["message"]
+        assert f"quorum floor {floor}" in payload["message"]
+    elif r >= math.ceil(k / 2):
+        assert payload["ok"] is False
+        assert "verifier-disagreement" in payload["message"]
+    else:
+        assert payload["ok"] is True
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+@pytest.mark.parametrize("n", [5, 7, 9])
+def test_odd_n_missing_aware_tightening_sweep(n: int, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Sweep all valid (survivor_count, refute_count) combinations for odd n in {5, 7, 9}.
+    # Verifies Option 3 semantics:
+    # 1. k < floor: halts under baked quorum floor (k/n < n // 2 + 1)
+    # 2. r >= ceil(k/2): refutes via majority over survivors (verifier-disagreement)
+    # 3. r < ceil(k/2) but r + (n - k) >= floor: halts with verifier-under-strength (potential-flip-on-missing)
+    # 4. Otherwise: cleanly passes (ok == True)
+    monkeypatch.setattr(ES, "VERIFY_N_CAP", max(7, n))
+    floor = n // 2 + 1
+
+    for k in range(n + 1):
+        for r in range(k + 1):
+            verdict_js = (
+                f"__vcall <= {r} ? "
+                '{refuted_deliverable: ["FAIL"], advisory_corrections: [], upheld: [], verifier_identity: "saga:readonly-verifier", fallback_depth: 0, examined_sha: "deadbeef"} : '
+                f"(__vcall <= {k} ? "
+                '{refuted_deliverable: [], advisory_corrections: [], upheld: ["fine"], verifier_identity: "saga:readonly-verifier", fallback_depth: 0, examined_sha: "deadbeef"} : '
+                "null)"
+            )
+            proc = _run_harness(
+                [_verify_unit("a", verify={"n": n, "pass_rule": "majority"})],
+                verdict_js=verdict_js,
+                tail=_CAPTURE_THROW,
+            )
+            assert proc.returncode == 0, proc.stderr
+            payload = json.loads(proc.stdout.strip())
+
+            missing = n - k
+            survivor_threshold = max(1, math.ceil(k / 2)) if k > 0 else 1
+
+            if k < floor:
+                assert payload["ok"] is False, f"n={n}, k={k}, r={r} expected floor halt"
+                assert "verifier-under-strength" in payload["message"]
+                assert f"quorum floor {floor}" in payload["message"]
+            elif r >= survivor_threshold:
+                assert payload["ok"] is False, f"n={n}, k={k}, r={r} expected disagreement halt"
+                assert "verifier-disagreement" in payload["message"]
+            elif r + missing >= floor:
+                assert payload["ok"] is False, f"n={n}, k={k}, r={r} expected potential-flip halt"
+                assert "verifier-under-strength" in payload["message"]
+                assert "potential-flip-on-missing" in payload["message"]
+            else:
+                assert payload["ok"] is True, f"n={n}, k={k}, r={r} expected pass: {payload}"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_missing_refuter_path_is_loud() -> None:
+    # #692: the missing-refuter path is loud:
+    # When potential-flip-on-missing triggers (e.g. n=5, 2 missing, 1 refutes out of 3 survivors),
+    # the log records " — UNDER-STRENGTH (potential-flip-on-missing)" and the halt names the condition.
+    # When clean pass occurs (e.g. n=5, 2 missing, 0 refutes out of 3 survivors), the missing
+    # verifier annotation is logged without UNDER-STRENGTH and the harness completes.
+    #
+    # Case A: n=5, k=3, r=1 -> potential-flip-on-missing
+    verdict_js_flip = (
+        "__vcall === 1 ? "
+        '{refuted_deliverable: ["FAIL"], advisory_corrections: [], upheld: [], verifier_identity: "saga:readonly-verifier", fallback_depth: 0, examined_sha: "deadbeef"} : '
+        "(__vcall <= 3 ? "
+        '{refuted_deliverable: [], advisory_corrections: [], upheld: ["fine"], verifier_identity: "saga:readonly-verifier", fallback_depth: 0, examined_sha: "deadbeef"} : '
+        "null)"
+    )
+    proc_flip = _run_harness(
+        [_verify_unit("a", verify={"n": 5, "pass_rule": "majority"})],
+        verdict_js=verdict_js_flip,
+        tail=_CAPTURE_THROW,
+    )
+    assert proc_flip.returncode == 0, proc_flip.stderr
+    payload_flip = json.loads(proc_flip.stdout.strip())
+    assert payload_flip["ok"] is False
+    assert (
+        "verifier-under-strength: Unit a reported 3/5 verifiers (potential-flip-on-missing)"
+        in payload_flip["message"]
+    )
+    log_flip = [line for line in payload_flip["logged"] if "verify panel over a" in line]
+    assert len(log_flip) == 1
+    assert (
+        "2/5 verifier(s) missing (runtime-failure: #4, #5); verdict computed over 3/5"
+        in log_flip[0]
+    )
+    assert "— UNDER-STRENGTH (potential-flip-on-missing)" in log_flip[0]
+
+    # Case B: n=5, k=3, r=0 -> clean pass (0 + 2 = 2 < 3)
+    verdict_js_clean = (
+        "__vcall <= 3 ? "
+        '{refuted_deliverable: [], advisory_corrections: [], upheld: ["fine"], verifier_identity: "saga:readonly-verifier", fallback_depth: 0, examined_sha: "deadbeef"} : '
+        "null"
+    )
+    proc_clean = _run_harness(
+        [_verify_unit("a", verify={"n": 5, "pass_rule": "majority"})],
+        verdict_js=verdict_js_clean,
+        tail=_CAPTURE_THROW,
+    )
+    assert proc_clean.returncode == 0, proc_clean.stderr
+    payload_clean = json.loads(proc_clean.stdout.strip())
+    assert payload_clean["ok"] is True
+    log_clean = [line for line in payload_clean["logged"] if "verify panel over a" in line]
+    assert len(log_clean) == 1
+    assert (
+        "2/5 verifier(s) missing (runtime-failure: #4, #5); verdict computed over 3/5"
+        in log_clean[0]
+    )
+    assert "UNDER-STRENGTH" not in log_clean[0]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+@pytest.mark.parametrize("n", [5, 7, 9])
+def test_unanimous_panels_are_excluded_from_missing_aware_tightening(
+    n: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # GUARD PIN for the `pass_rule == "majority"` condition on the #692 missing-aware gate.
+    #
+    # The gate compares `refute_count + missing` against the MAJORITY floor `n // 2 + 1`. That
+    # floor is meaningless for a `unanimous` panel, which refutes only when ALL reporting
+    # verifiers refute: refuting survivors plus every missing verifier can clear the majority
+    # floor while still falling far short of `n`, so applying the gate there would halt panels
+    # that full strength would have upheld.
+    #
+    # This pin exists because the guard was otherwise untested -- deleting
+    # `if panel.pass_rule == "majority":` from the throw block leaves the entire suite green
+    # while flipping, for example, an `n=5` unanimous panel with 3 reporters and 2 refuters from
+    # a clean pass to `verifier-under-strength ... (potential-flip-on-missing)`.
+    monkeypatch.setattr(ES, "VERIFY_N_CAP", max(7, n))
+    floor = n // 2 + 1
+
+    # Sweep exactly the discriminating cells: quorum cleared, survivors uphold under `unanimous`
+    # (refuters `r < k`), yet `r + missing` reaches the majority floor. These are the only cells
+    # whose verdict the guard changes.
+    cells = [(k, r) for k in range(floor, n + 1) for r in range(k) if r + (n - k) >= floor]
+    # A sweep that selected nothing would pass vacuously and pin nothing.
+    assert cells, f"n={n}: no discriminating cells -- this pin would be vacuous"
+
+    for k, r in cells:
+        verdict_js = (
+            f"__vcall <= {r} ? "
+            '{refuted_deliverable: ["FAIL"], advisory_corrections: [], upheld: [], verifier_identity: "saga:readonly-verifier", fallback_depth: 0, examined_sha: "deadbeef"} : '
+            f"(__vcall <= {k} ? "
+            '{refuted_deliverable: [], advisory_corrections: [], upheld: ["fine"], verifier_identity: "saga:readonly-verifier", fallback_depth: 0, examined_sha: "deadbeef"} : '
+            "null)"
+        )
+        proc = _run_harness(
+            [_verify_unit("a", verify={"n": n, "pass_rule": "unanimous"})],
+            verdict_js=verdict_js,
+            tail=_CAPTURE_THROW,
+        )
+        assert proc.returncode == 0, proc.stderr
+        payload = json.loads(proc.stdout.strip())
+        assert payload["ok"] is True, (
+            f"n={n}, k={k}, r={r}: unanimous panel must uphold; the majority-only "
+            f"missing-aware gate leaked into a unanimous panel: {payload}"
+        )
+        assert "potential-flip-on-missing" not in json.dumps(payload)
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")

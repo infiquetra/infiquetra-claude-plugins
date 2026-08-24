@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.139.6] - 2026-08-24
+
+### Fixed
+
+- **Scope strand-halt dedup key with generation component.** `outcome_intent.repost` now scopes the
+  `{"phase": "halt", "kind": "repost"}` dedup key passed to `outcome_store.append_ledger_once` with
+  the spec revision (`repost:<scope>:r<revision>`). Repeat strand attempts under the same revision
+  deduplicate without growing the ledger, while a subsequent genuine strand event on the same scope
+  after the first resolves appends a new durable ledger record. (#598 item 1)
+- **Document and pin set-intent vs repost approval carry-forward asymmetry.** Documented the intentional
+  divergence beside the one-transition-one-validator pattern in `LEARNINGS.md` (`{#one-transition-one-validator-433}`):
+  pure-tightening `repost` carries frontier approval forward (`carried-forward:tightening-repost:r<old>`),
+  while pure-tightening `set-intent` first-attach bumps `spec_revision` and requires manual re-approval
+  before dispatch per `SKILL.md`. Pinned with `test_live_set_intent_does_not_carry_frontier_approval_forward`. (#598 item 2)
+- **Drive live set-intent in tightening repost retroactive check test.** Converted
+  `test_tightening_repost_never_retroactively_imposes_checks` to drive `M.set_intent` on a live campaign
+  via a temporary intent envelope file instead of hand-crafting the attach mutation. (#598 item 5)
+- **Record deferrals and revisit hooks.** Deferred item 3 (O(ledger) tick costs) pending measured tick latency;
+  retained item 4 (save_spec check-write race) as a documented revisit hook for lost repost evidence or #449 token-checked writes. (#598 items 3, 4)
+
 ## [0.139.5] - 2026-08-24
 
 ### Added

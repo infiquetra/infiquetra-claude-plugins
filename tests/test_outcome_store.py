@@ -359,3 +359,24 @@ def test_cli_ledger(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert rc == 0
     out = json.loads(capsys.readouterr().out)
     assert out["records"][0]["key"] == "k1"
+
+
+def test_append_ledger_once_dedup_and_generation_keys(tmp_path: Path) -> None:
+    # #598 item 1 pin: append_ledger_once dedups identical (phase, key) tuples, while
+    # distinct generation/revision keys on the same scope append new durable records.
+    store = _store(tmp_path)
+    rec1 = {"phase": "halt", "kind": "repost", "key": "repost:deploy:r1", "subplot_id": "deploy"}
+    assert M.append_ledger_once(store, rec1) is True
+    # Repeating the exact same (phase, key) returns False and does not duplicate in ledger.
+    assert M.append_ledger_once(store, rec1) is False
+    assert len(M.read_ledger(store)) == 1
+
+    # Appending a record with a new generation/revision in key returns True and appends.
+    rec2 = {"phase": "halt", "kind": "repost", "key": "repost:deploy:r2", "subplot_id": "deploy"}
+    assert M.append_ledger_once(store, rec2) is True
+    assert len(M.read_ledger(store)) == 2
+
+    # Appending with a different scope/phase returns True.
+    rec3 = {"phase": "halt", "kind": "repost", "key": "repost:build:r2", "subplot_id": "build"}
+    assert M.append_ledger_once(store, rec3) is True
+    assert len(M.read_ledger(store)) == 3

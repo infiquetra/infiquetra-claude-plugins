@@ -21,6 +21,40 @@
 
 ## 2026-08-24
 
+### A dedup-key test that changes the OLD discriminator too proves the key's format, never its behavior  {#dedup-key-test-varies-old-discriminator-598}
+
+**Context.** Leaf #598 item 1: the strand-halt ledger dedup key `repost:<scope>` was eternal, so a
+second genuine strand on the same scope never appended a second durable record. The fix added a
+generation component (`repost:<scope>:r<spec_revision>`). The shipped regression test stranded
+`deploy1` at revision 1 and `deploy2` at revision 2, then asserted two ledger records existed.
+
+**Evidence.** PR #806 at `885d3d31`, `tests/test_outcome_intent.py::test_strand_halt_dedup_key_generation_lifecycle`.
+Reproduction: revert `plugins/saga/scripts/outcome_intent.py:554` to `f"repost:{scope}"`, delete the
+test's two `["key"] ==` assertions, and the test still passes — `assert len(both) == 2` is satisfied
+by the pre-fix code.
+
+**Mechanism.** The test varied the scope AND the revision together. Scope was already the old key's
+discriminator, so `repost:deploy1` and `repost:deploy2` were distinct keys before the fix too. The
+record-count assertion — the one that states the actual behavior — was therefore true either way;
+only the key-string assertions could fail, and a string assertion pins a format, not an outcome.
+
+**Fix.** Rewrote the test to strand ONE scope twice across two generations: strand `deploy` at
+revision 1, clear the andon, commit a campaign-scoped repost (campaign-scoped fields never strand,
+so the leaf stays in flight) to reach revision 2, then strand `deploy` again. `assert len(both) == 2`
+now fails `1 == 2` against the pre-fix key with every key-string assertion removed.
+
+**Validation.** Red against the reverted key, green against the shipped fix; the two sibling pins
+(`test_live_set_intent_does_not_carry_frontier_approval_forward`, the converted
+`test_tightening_repost_never_retroactively_imposes_checks`) were separately mutation-checked and
+both go red on their own seams.
+
+**Generalizable rule.** When a fix ADDS a component to a composite key, the regression test must hold
+every pre-existing component of that key CONSTANT and vary only the new one. Varying both leaves the
+old discriminator doing the work, and the test passes on the unfixed code with its format assertions
+stripped — which is the only part a later refactor is likely to relax.
+
+**Refs.** Leaf #598 items 1 and 5; `{#one-transition-one-validator-433}`.
+
 ### An exception hierarchy that nests opposite to its names sends every documented `except` clause past the error  {#inverted-exception-hierarchy-review-consensus-784}
 
 **Context.** Leaf #784 asked for docstrings on `plugins/saga/scripts/review_consensus.py` so a
@@ -5716,7 +5750,18 @@ effective posture in force). Any second writer to the same state — even a "fir
 looks like initialization — re-opens the decision unless it routes through the same validator.
 **Fix.** Once any dispatch record exists (either phase), the attach computes deltas against the
 default-gated effective envelope through the SAME classifier and rejects monotonic loosenings;
-every accepted attach writes a `set-intent` trail entry. **Generalizable rule.** Enumerate every
+every accepted attach writes a `set-intent` trail entry.
+
+**Approval carry-forward asymmetry (#598 item 2).** While monotonic delta validation is unified
+across both verbs, frontier approval carry-forward diverges intentionally: a live pure-tightening
+`repost` carries existing frontier approval forward (`carried-forward:tightening-repost:r<old>`),
+whereas a live pure-tightening `set-intent` first-attach bumps `spec_revision` without carrying
+approval forward. This asymmetry is conservative (requires an extra manual re-approval, never skips
+one) and matches `SKILL.md`'s contract ("re-approve before the next dispatch") because a first-attach
+establishes the initial explicit envelope rather than amending an already-attested one. Pinned by
+`tests/test_outcome_intent.py::test_live_set_intent_does_not_carry_frontier_approval_forward`.
+
+**Generalizable rule.** Enumerate every
 writer to a guarded state and route them through one validator keyed on the transition, not the
 verb — "initialization" writers included; if a rule matters, ask "which OTHER verb can produce
 this state?" before shipping it.

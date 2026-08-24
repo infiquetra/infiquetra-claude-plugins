@@ -284,6 +284,7 @@ SAGA_SYNTAX: dict[str, str] = {
 }
 
 PENDING, RUNNING, DONE, FAILED = "pending", "running", "done", "failed"
+PROMPT_UNDELIVERED = "prompt_undelivered"
 
 REVIEW_CONTROLLER_ROLE = "review-controller"
 WORK_FIX_ROLES = frozenset({"review-fixer", "downstream-resolver"})
@@ -1367,10 +1368,13 @@ def agent_argv(unit: Unit, default_workspace: str | None = None) -> list[str]:
 # The wrapper returns when the tab exists, which is earlier than the agent being able to read
 # anything, and sending into that gap does not fail: `herdr agent prompt` reports success, the agent
 # finishes booting, and the prompt is gone. Observed three times across two vendors on one live run,
-# always the same tell -- a unit idle immediately after launch, having consumed nothing. `settle`
-# reads that idle as done and only `land` notices, a phase later, that it committed nothing.
+# always the same tell -- a unit idle immediately after launch, having consumed nothing. That idle
+# used to be recorded as RUNNING, which `settle` then read as done and only `land` noticed, a phase
+# later, that it had committed nothing. A send whose acceptance is never observed is now recorded
+# as PROMPT_UNDELIVERED instead, which no phase reads as work.
 LAUNCH_SETTLE_SECONDS = 30.0
 DELIVERY_CHECK_SECONDS = 15.0
+DELIVERY_RESENDS = 2
 DELIVERY_WARNING = (
     "SENT BUT NEVER STARTED: idle after being given its task. Check the tab before "
     "trusting this unit -- it may have been prompted while still booting."
@@ -1420,9 +1424,7 @@ def took_the_task(unit: Unit, seconds: float = DELIVERY_CHECK_SECONDS) -> bool:
     """Did the session actually take the task? One that did stops being idle.
 
     Not a guarantee -- an agent that answers instantly is idle again quickly. It is a check on the
-    failure that has actually happened, which is a session that never started at all. Reported
-    rather than repaired: a resend risks giving a unit its task twice, and a unit that quietly did
-    nothing is worth a line in `status` more than it is worth a guess.
+    failure that has actually happened, which is a session that never started at all.
     """
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
@@ -1446,8 +1448,24 @@ def launch(unit: Unit, backend: str = "inline", *, review_elsewhere: bool = Fals
         unit.note = "launched, but the wrapper's JSON could not be read"
     await_ready(unit)
     send(unit, pane_id, backend, review_elsewhere=review_elsewhere)
-    unit.status = RUNNING
-    if not took_the_task(unit):
+    accepted = took_the_task(unit)
+    if not accepted:
+        # Resend only into a session that has still never left idle. A resend risks giving a unit
+        # its task twice, and the one reading that rules that out is a session which has not
+        # started anything: a swallowed prompt leaves it exactly there. Anything else -- working,
+        # blocked, or gone -- means it took something, so the send stands and the loop stops.
+        for _ in range(DELIVERY_RESENDS):
+            row = agent_row(unit)
+            if row is None or row.get("agent_status") != "idle":
+                break
+            send(unit, pane_id, backend, review_elsewhere=review_elsewhere)
+            accepted = took_the_task(unit)
+            if accepted:
+                break
+    if accepted:
+        unit.status = RUNNING
+    else:
+        unit.status = PROMPT_UNDELIVERED
         append_unit_note(unit, DELIVERY_WARNING)
 
 

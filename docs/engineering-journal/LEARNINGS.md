@@ -19,6 +19,22 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-08-24
+
+### Prepared-draft revision appended instead of replacing due to unstripped front matter in source artifact (#785)  {#prepared-draft-revision-frontmatter-doubling}
+
+**Context.** Prepared issue drafts stored under `docs/sdlc-issue-drafts/` can undergo revision rounds via `issue prepare --from <draft>` before final approval and creation. In live runs, revised drafts (such as the specimen for issue #770) accumulated multiple `---` front-matter blocks and duplicated titles and body sections on disk, and the contamination leaked into created GitHub issue bodies.
+
+**Evidence.** `plugins/mission-control/scripts/sdlc_manager.py:4124` (`_source_to_issue_body_unstamped`), `:3897` (`_render_draft_markdown`), `:4194` (`_read_prepared_issue`), `:4353` (`_readiness_for_prepared_issue`), `:4682` (`_issue_body_for_github`), and live issue bodies #770, #772, and #773 filed on 2026-08-23.
+
+**Mechanism.** `_source_to_issue_body_unstamped` accepted raw source text and passed it directly to template assembly without stripping pre-existing YAML front-matter blocks or top-level `# ` titles. When `_render_draft_markdown` formatted the draft, it prepended another YAML front-matter block and `# Title`, doubling the front matter and titles. Furthermore, `_parse_draft_frontmatter` only stripped the first `--- ... ---` block on read, so the second front-matter block became part of `issue.body`. `_readiness_for_prepared_issue` lacked a check for multi-fence or duplicate headers, allowing the contaminated draft to pass readiness, and `_issue_body_for_github` published the contaminated `issue.body` directly to GitHub.
+
+**Fix.** Implemented `_strip_frontmatter_and_title` to clean all leading YAML front-matter blocks and H1 titles from source artifacts and existing drafts before assembling bodies, added multi-fence and duplicate section blocking checks to `_readiness_for_prepared_issue`, and ensured `_issue_body_for_github` and `_render_draft_markdown` defensively strip front matter before emission. mission-control 2.12.1.
+
+**Validation.** Added `plugins/mission-control/tests/test_sdlc_draft_revision.py` verifying that revising a draft twice yields exactly two `---` fences and a single body, that revision replaces content instead of appending, that doubled drafts fail readiness with a multi-fence blocking gap, and that created issue bodies contain zero front-matter fences and no duplicate sections.
+
+**Generalizable rule.** Draft compilers that wrap input text in document metadata must always strip existing front matter and document titles at the intake boundary so successive revision passes remain idempotent single documents.
+
 ## 2026-08-22
 
 ### I fixed a positional bug with a slightly wider positional window  {#credential-span-window-vs-walk}

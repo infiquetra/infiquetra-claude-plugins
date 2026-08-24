@@ -285,6 +285,7 @@ SAGA_SYNTAX: dict[str, str] = {
 
 PENDING, RUNNING, DONE, FAILED = "pending", "running", "done", "failed"
 PROMPT_UNDELIVERED = "prompt_undelivered"
+ORPHANED = "orphaned"
 
 REVIEW_CONTROLLER_ROLE = "review-controller"
 WORK_FIX_ROLES = frozenset({"review-fixer", "downstream-resolver"})
@@ -2524,13 +2525,29 @@ def settle_reading(units: list[Unit]) -> dict[str, str]:
 
 
 def cmd_settle(args: argparse.Namespace) -> int:
-    """Mark running units done when their session goes idle. No inference beyond that.
+    """Mark running units done when their session has completed and produced evidence.
 
     Idle is read twice, ``interval`` seconds apart, and only counts when both readings agree: an
     agent is also idle *between* turns -- it finishes a tool call, returns to the prompt, thinks,
     and continues. One instantaneous sample once marked a unit done in that gap; it had two commits
     at the time and finished with ten. ``--once`` restores the single sample for a caller that
     wants it.
+
+    Settlement mirrors the evidence model in ``cmd_check``, gating completion on the existing
+    ``produced_anything`` helper:
+    - A session that is idle or done settles ``done`` only when its branch has commits. An idle
+      session without commits stays ``running``.
+    - A session that is gone settles ``done`` if its branch has commits (e.g. session closed after
+      finishing work), or ``orphaned`` if it disappeared without committing anything.
+
+    The gate is a *branch* reading, so it is applied only where a branch can be read. A unit with
+    no branch of its own -- the review controller, which carries ``merge: False`` and delivers its
+    result through ``review-result`` -- is not commit-gated and settles on the confirmed reading
+    alone; gating it would leave the review loop unable to finish, because it has no branch on
+    which a commit could ever appear. An unresolvable run branch makes the count unknown rather
+    than zero: such a unit stays ``running`` and is told so, and a gone session is recorded
+    ``orphaned`` with a note that says the commits could not be checked rather than one asserting
+    there were none.
     """
     r = Run.load()
     running = [u for u in r.units if u.status == RUNNING]
@@ -2540,21 +2557,44 @@ def cmd_settle(args: argparse.Namespace) -> int:
         time.sleep(args.interval)
         second = settle_reading(running)
     for unit in running:
-        if (
-            has_delivery_warning(unit)
-            and r.unresolvable_branch is None
-            and produced_anything(unit, r)
-        ):
+        # The gate reads branch truth, so it applies only where there is a branch to read and a
+        # resolvable run branch to count from. A unit with no branch of its own was never
+        # commit-gated -- the review controller is that shape, declared `merge: False` with its
+        # output delivered through `review-result` -- and an unresolvable run branch makes the
+        # count unknown rather than zero. `reapable` refuses a branchless unit and `adopt` warns
+        # that an unresolvable branch makes commit checks unavailable; neither reads as evidence
+        # of nothing, and settling on either would put the record back to guessing.
+        commit_gated = bool(unit.branch)
+        countable = commit_gated and r.unresolvable_branch is None
+        has_evidence = countable and produced_anything(unit, r)
+        if has_delivery_warning(unit) and has_evidence:
             clear_delivery_warning(unit)
         a, b = first[unit.name], second[unit.name]
         if a in {"idle", "done"} and b in {"idle", "done"}:
-            unit.status = DONE
             shown = a if args.once else f"{a} then {b}"
-            print(f"  {unit.name}: {shown} -> done")
+            if has_evidence:
+                unit.status = DONE
+                print(f"  {unit.name}: {shown} -> done")
+            elif not commit_gated:
+                unit.status = DONE
+                print(f"  {unit.name}: {shown} -> done (no branch of its own to check)")
+            elif not countable:
+                print(f"  {unit.name}: {shown} -> unsettled (run branch does not resolve)")
+            else:
+                print(f"  {unit.name}: {shown} -> still moving (no commits)")
         elif a == "gone" and b == "gone":
-            unit.status = FAILED
-            unit.note = "session disappeared"
-            print(f"  {unit.name}: session gone -> failed")
+            if has_evidence:
+                unit.status = DONE
+                print(f"  {unit.name}: session gone with commits -> done")
+            else:
+                unit.status = ORPHANED
+                append_unit_note(
+                    unit,
+                    "session disappeared without commits"
+                    if countable
+                    else "session disappeared; commits could not be checked",
+                )
+                print(f"  {unit.name}: session gone -> orphaned")
         elif a in {"idle", "done"}:
             print(f"  {unit.name}: {a} then {b} -> still moving")
     r.save()

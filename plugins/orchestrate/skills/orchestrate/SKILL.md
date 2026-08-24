@@ -230,12 +230,54 @@ opencode. A bare `/plan` is a command nowhere and arrives as prose.
 
 ## Waiting, and empty dependencies
 
-`orchestrate.py wait` subscribes to herdr's event socket and blocks until one of the running units
-settles — nothing is polled for the wake, but a single `idle` is not a settlement. An agent is also
-idle between turns, so `wait` confirms across consecutive observations the same way `settle` does
-(`--interval`, `--confirmations`, `--once`). `blocked` returns on the first sighting and is named.
-Subscriptions are keyed by pane, which is why a unit records its `pane_id` at launch; if the socket
-is unreachable it falls back to one `herdr agent wait` per unit, under the same confirmation rule.
+**Three supported waiting shapes.** When an agent session needs to wait for work in flight, use the
+supported mechanism for the specific waiting shape. Follow the explicit rule: **never chained sleep**
+polling (for example, `sleep 25 && gh pr checks` or `sleep 45 && herdr agent read`). The execution
+guard intercepts and rejects chained sleep commands immediately, costing a turn per occurrence. Use
+the supported pattern instead:
+
+1. **Sibling Herdr agent output or unit settlement:** For whole-unit settlement waits across an
+   orchestration run, cross-reference and use `orchestrate.py wait`. For observing a specific sibling
+   Herdr session or pane output, use Herdr's native `herdr agent wait` or `herdr pane wait-output`.
+
+   ```bash
+   # Wait for any running unit in the orchestration to settle
+   python3 "$S" wait
+
+   # Or wait for a specific sibling Herdr session to settle
+   herdr agent wait worker-session-name
+
+   # Or wait for a pane to match a specific output pattern
+   herdr pane wait-output "$PANE_ID" --match "UNIT-DONE"
+   ```
+
+2. **Pull request checks and external asynchronous state:** Use a Monitor-style bounded `until` loop
+   with a single test condition per iteration, checking the external command directly.
+
+   ```bash
+   # Poll pull request checks until completion (single bounded until-loop)
+   until gh pr checks "$PR_NUMBER" --required | grep -qv "pending"; do
+     sleep 15
+   done
+   ```
+
+3. **A command the session itself started:** Run the command in the background with output redirected
+   to a file, and wait on the background process identifier or monitor the output.
+
+   ```bash
+   # Run a test suite or gate script in the background and wait on its completion
+   bash scripts/gate.sh > /tmp/gate.log 2>&1 &
+   GATE_PID=$!
+   wait "$GATE_PID"
+   ```
+
+**Settlement waits with `orchestrate.py wait`.** `orchestrate.py wait` subscribes to herdr's event socket
+and blocks until one of the running units settles — nothing is polled for the wake, but a single `idle`
+is not a settlement. An agent is also idle between turns, so `wait` confirms across consecutive
+observations the same way `settle` does (`--interval`, `--confirmations`, `--once`). `blocked` returns on
+the first sighting and is named. Subscriptions are keyed by pane, which is why a unit records its `pane_id`
+at launch; if the socket is unreachable it falls back to one `herdr agent wait` per unit, under the same
+confirmation rule.
 
 **Evidence-based settlement.** `orchestrate.py settle` marks running units `done` only when there
 is completion evidence on the unit branch (`produced_anything`). A session that is merely idle

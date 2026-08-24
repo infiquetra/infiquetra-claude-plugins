@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.20.7] - 2026-08-24
+
+### Changed
+
+- **Waiting patterns and execution guard guidance.** Pre-teach supported waiting mechanisms across
+  three common waiting shapes in `SKILL.md` (`## Waiting, and empty dependencies`) to prevent
+  guard-blocked sleep polling attempts. Documents: (1) sibling Herdr agent output and unit settlement
+  via `orchestrate.py wait`, `herdr agent wait`, and `herdr pane wait-output`; (2) pull request checks
+  and external asynchronous state via Monitor-style bounded `until` loops; and (3) session-started
+  commands via background execution with log redirection and process identifier waiting. Includes
+  copy-pasteable examples for each shape and an explicit "never chained sleep" rule.
+
 ## [1.20.6] - 2026-08-24
 
 ### Fixed

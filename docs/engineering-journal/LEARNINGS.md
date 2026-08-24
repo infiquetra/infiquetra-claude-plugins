@@ -42,6 +42,156 @@
 
 **Refs.** Issue #583; the ownership-lanes gate originates in #431 (PR #580). Companion contract doc: `marketplace/ownership_lanes.json`.
 
+### A halt reason can only explain a CLI flag the decision function never sees  {#unavailable-reason-rides-the-available-set}
+
+**Context.** Leaf #657 asked that an operator who passes `outcome.py advance --workflow-available`
+without `--host-capable` get an explanation naming the second flag, rather than an availability halt
+that reads as a host fault. Amending the CLI help was the easy half. The hard half was the receipt:
+the operator who is hurt by this is the one running unattended, and what they read afterwards is the
+halt or degrade reason, not the help text.
+
+**Evidence.** Pull request 799. The two functions that compose the reason string —
+`plugins/saga/scripts/outcome_dispatcher.py` `dispatch` (`:184`) and `degrade_decision` (`:390`) —
+take only `req`/`backend` and a `Sequence[str]` of available backends. Neither has ever received
+`host_capable` or `workflow_available`; those live on the argparse namespace consumed at
+`plugins/saga/scripts/outcome.py:2570` and are converted to a backend set by `resolve_available`
+before any decision function runs. Pinned at the pre-fix revision, the degrade reason read
+`cc-workflows-ultracode unavailable; autonomous + away -> degraded to team-execution (R23)` — a
+sentence with nowhere to put the flag.
+
+**Mechanism.** The flags are erased by design. `resolve_available` is the deliberate narrowing point
+(KTD9 — the coordinator cannot self-probe host capability, so availability is a runtime *input*, and
+everything downstream reasons about a set, not about how the set was derived). That narrowing is
+correct and worth keeping, which means the *only* place an explanation can survive is on the value
+that crosses the seam. Hence `AvailableBackends`, a `tuple[str, ...]` subclass carrying an
+`unavailable_reasons` mapping: every existing consumer keeps full sequence and equality semantics
+(`avail == ("inline", "team-execution", "manual")` still holds), while the three reason-composing
+sites read the explanation through `getattr(available, "unavailable_reasons", {})` and fall back to
+their original wording when handed a plain tuple.
+
+**Fix.** `resolve_available` attaches the coupling reason when `workflow_available and not
+host_capable`; `dispatch`, `degrade_decision`, and `captured_degrade_decision` prefer it over their
+generic phrasing; `effective_available` carries the mapping across the captured ∩ runtime
+intersection so the #373 posture path keeps it. The conservative default is untouched — with neither
+flag only `ALWAYS_AVAILABLE` resolves, and `cc-workflows-ultracode` still requires both flags.
+
+**Validation.** Four tests fail at the pre-fix revision and pass after: the `resolve_available`
+combination and the `dispatch` halt receipt (`tests/test_outcome_dispatcher.py`), the
+`degrade_policy: "halt"` advance regression, and the default-policy degrade receipt
+(`tests/test_outcome_backends.py`). 142 tests green across the three touched suites.
+
+**What surprised.** The degrade path, not the halt path, is the one that needed this most. Under the
+default policy the tick *succeeds* — one rung down, no halt, no page — so the pre-fix operator saw a
+green run that never touched the external backend. The leaf's own reproduction only exposed the
+coupling because every probe node carried `degrade_policy: "halt"`.
+
+**Generalizable rule.** When a diagnostic message must name an input that an earlier layer
+deliberately discarded, do not re-thread the input through the call chain — attach the explanation to
+the value that already crosses the seam, as a transparent subtype whose consumers need no change.
+Re-threading spreads the coupling; a carrier keeps it at the one place that knows.
+
+**Refs.** Leaf #657 under objective `defects-claude-plugins`; run plan
+`docs/plans/2026-08-24-defects-claude-plugins-run-plan.md` section U9;
+`{#lease-ttl-honest-without-a-reader}` for the sibling case of a payload nobody reads.
+
+### The launcher was already right; nothing made anyone use it  {#launch-seam-is-enforcement-not-implementation}
+
+**Context.** Nine Team Mimir worker launches in one run each stole the operator's UI focus.
+Orchestrate's `agent_argv` had emitted `--no-focus --current --herdr --herdr-control-only` the whole
+time and was never wrong. The coordinator simply did not call it: at the Work expansion boundary it
+made nine worktrees by hand and invoked the `agents` wrapper itself, where the wrapper's ordinary
+interactive default is `--focus`.
+
+**Evidence.** Issue #773, PR #798. `plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py`
+`agent_argv` (the flag prefix, unchanged by the fix) against the observed direct calls quoted in the
+issue, which carried `--workspace`, `--task` and `--cwd` and none of the four background flags. A
+read-only launcher dry run reproduces both halves: the direct shape resolves to
+`agent-herdr prepare ... --focus`, Orchestrate's shape to `agent-herdr prepare ... --no-focus`.
+orchestrate 1.20.3.
+
+**Mechanism.** The defect lived one level above the code. A correct central adapter only holds if
+every path reaches it, and nothing in the plugin made the expansion boundary a path: the run record
+is written by this script for actions this script performed, so a unit created outside it does not
+exist to `go`, cannot be given `agent_argv`, and cannot be reaped. Every guarantee the adapter
+offers is conditional on being called, and that condition was documented rather than enforced.
+
+**Fix.** Three edges on machinery that already existed, no new moving parts (orchestrate 1.20.4):
+regression tests that lock the complete four-flag prefix *and its position ahead of the vendor
+token* for every vendor in the permission and flag registries; a post-plan-expansion test proving
+units added by `expand` still launch through `go`; the existing `discover_unrecorded` results
+surfaced from `status` as well as `check`, so a bypass is visible on every poll; and both operator
+surfaces stating the prohibition outright. Deliberately rejected: a new `doctor` command and a
+second detector — the run plan's S3 repair (findings F7/F10) had already removed them, because
+`discover_unrecorded`, `cmd_check` and `cmd_adopt` cover the detection and the repair between them.
+
+**Validation.** 376 orchestrate tests green at PR #798. The reviewed revision also had to be walked
+back in two places found in code review: `worktree_on_branch` had been switched to a silent
+`check=False`, which suppresses the pre-`land` "run branch is checked out at ..." warning and lets
+`adopt` rebuild a unit with no worktree, and neither `status` nor `discover_unrecorded` calls it —
+only `run_branches` does, where the softening is genuinely load-bearing (`status` in a directory
+that is no longer a repository otherwise exits non-zero). Both surfaces had also claimed that
+"worktrees or sessions" outside the record are flagged, when the detector reads only branches in the
+`orch/<run-id>-<unit>` series.
+
+**What surprised.** The fix touches twelve lines of product code and three hundred lines of test.
+That ratio is the finding, not an accident of it: when implementation is already correct, the whole
+repair is the enforcement, and enforcement is mostly assertions.
+
+**Generalizable rule.** When a correct helper produces a wrong outcome, do not re-examine the helper
+— find the caller that never used it, and ask what made skipping it possible. And when you soften a
+subprocess from raising to returning, check every caller of the helper you softened: a guard that
+warns before a mutation reads a silent failure as "nothing to warn about".
+
+**Refs.** LEARNINGS [`{#idleness-is-not-completion}`](#idleness-is-not-completion); DECISIONS
+[`{#defects-run-plan-ktds-787}`](DECISIONS.md#defects-run-plan-ktds-787); plan
+`docs/plans/2026-08-24-defects-claude-plugins-run-plan.md` section U3.
+
+### A file-scoped pagination lint went blind on the very file it was installed to guard, and the query-scoped rewrite reintroduced the blindness one layer down  {#pagination-lint-scope-blindness-584}
+
+**Context.** #424 shipped `paginate_or_raise` plus `check_pagination.py` and recorded (see
+`{#board-pagination-truncation-confirmed-live-424}`) that the lint "lints future call sites". #584 R1
+then found `QUERY_GET_PROJECT_FIELDS` sitting unpaginated at `fields(first: 30)` for weeks inside
+`plugins/mission-control/scripts/sdlc_manager.py` -- a file the lint scanned on every CI run.
+
+**Evidence.** The pre-#584 rule was `if GRAPHQL_FIRST_RE.search(text) and "hasNextPage" not in text`
+(`plugins/mission-control/scripts/check_pagination.py:115` at `2d811cab`) -- whole-file, so one
+compliant query anywhere in the file cleared every other query in it. Running the post-#584
+query-scoped checker against `git show origin/main:.../sdlc_manager.py` reports the violation at
+`sdlc_manager.py:936`, which is the exact line #584 R1 named; the pre-#584 checker reports zero on
+the same bytes.
+
+**Mechanism.** The guard's scope was the file, but the unit of the defect is the query. Any file
+large enough to hold a second, compliant query -- which is every real client of a GraphQL API --
+buys permanent immunity for its non-compliant ones. The guard did not fail; it passed, loudly and
+truthfully, about a question nobody wanted answered.
+
+**Fix.** Query-scoped extraction over Python string literals and Markdown fences, with
+`# pagination-lint: allow (<reason>)` for the two connections whose bound is genuinely unreachable
+(#584, PR #796). `QUERY_GET_PROJECT_FIELDS` and `board_census.fetch_project_fields_census` now
+route through `paginate_or_raise`.
+
+**What surprised.** The rewrite reintroduced the same class one layer down, and Saga Code Review
+caught it before merge. Pairing triple quotes with the alternation `(?:"""|''')` lets an opening
+`"""` close on a `'''` occurring inside it, desynchronizing every literal after it; the rewrite then
+ran the whole-file fallback only when extraction returned *nothing*, so a desynchronized parse --
+which returns garbage blocks, not nothing -- silently switched the GraphQL guard off for the entire
+file. A stray `'''` in one docstring was enough, and a file the old lint flagged became clean. Fixed
+by backreferencing the delimiter (`("""|''')(.*?)\1`) and by running the whole-file check on any
+`first:` occurrence the extractor could not place inside a block, pinned by
+`plugins/mission-control/tests/test_check_pagination.py::TestGraphqlGuardNeverFailsOpen`.
+
+**Generalizable rule.** Scope a guard to the unit of the defect, never to the container the defect
+happens to live in -- and when you narrow a guard's scope, keep the old broad check as the
+fallback for whatever the new parser cannot read. A narrowed guard must be a strict superset of the
+one it replaces, and the way to prove that is to run the new guard against the bytes the old one
+flagged.
+
+**Refs.** #584, PR #796; `{#board-pagination-truncation-confirmed-live-424}`;
+`plugins/mission-control/scripts/check_pagination.py`,
+`plugins/mission-control/scripts/sdlc_manager.py`,
+`plugins/mission-control/scripts/board_census.py`.
+
+---
 ### A stable result marker is a false-green machine unless the run clears it first  {#gate-result-marker-staleness-and-trap-deferral}
 
 **Context.** `scripts/gate.sh` gained a stable result marker (`$LOG_DIR/result.txt`) so a backgrounded 24-step gate run — which reliably outlives the Bash tool's 600-second foreground timeout — can report its outcome without scraping a live terminal (#782). `CLAUDE.md` documents the invocation with a fixed, reused `GATE_LOG_DIR=/tmp/gate-run`, and tells the operator to read the outcome with `cat /tmp/gate-run/result.txt`.

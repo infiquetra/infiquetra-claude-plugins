@@ -20,7 +20,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -422,3 +422,348 @@ class TestRunWorkspaceIsInheritedAtLaunch:
         monkeypatch.setattr(orchestrate, "launch", fake_launch)
         assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
         assert seen == ["child-9"]
+
+
+def _git_branch_exists(repo: Path, branch: str) -> bool:
+    res = subprocess.run(["git", "rev-parse", "--verify", branch], cwd=repo, capture_output=True)
+    return res.returncode == 0
+
+
+@pytest.mark.usefixtures("launcher_on_path")
+class TestBackgroundNoFocusLaunchFlags:
+    """The central agent_argv path must always lock the background no-focus invariant."""
+
+    EXPECTED_FLAGS = ("--no-focus", "--current", "--herdr", "--herdr-control-only")
+
+    @pytest.mark.parametrize(
+        "vendor",
+        ["claude", "codex", "grok", "muse", "agy", "qwen", "opencode"],
+    )
+    def test_complete_background_flags_emitted_before_vendor_token(
+        self, orchestrate: ModuleType, vendor: str
+    ) -> None:
+        unit = orchestrate.Unit(name="worker", vendor=vendor, task="do work")
+        argv = orchestrate.agent_argv(unit)
+        vendor_idx = argv.index(vendor)
+        for flag in self.EXPECTED_FLAGS:
+            assert flag in argv, f"flag {flag!r} missing from agent_argv for vendor {vendor!r}"
+            assert argv.index(flag) < vendor_idx, (
+                f"flag {flag!r} emitted after vendor token {vendor!r}"
+            )
+
+    def test_background_flag_ordering_and_completeness(self, orchestrate: ModuleType) -> None:
+        unit = orchestrate.Unit(
+            name="worker",
+            vendor="claude",
+            task="do work",
+            worktree="/tmp/wt-worker",
+            workspace="ws-1",
+            model="opus",
+            effort="high",
+            launch_args=["--company-account"],
+        )
+        argv = orchestrate.agent_argv(unit)
+        launcher_bin = orchestrate.launcher()
+        expected_prefix = [
+            launcher_bin,
+            "--no-focus",
+            "--current",
+            "--herdr",
+            "--herdr-control-only",
+            "--task",
+            "worker",
+            "--cwd",
+            "/tmp/wt-worker",
+            "--workspace",
+            "ws-1",
+            "claude",
+        ]
+        assert argv[: len(expected_prefix)] == expected_prefix
+        assert "--company-account" in argv
+        assert argv.index("--company-account") > argv.index("claude")
+
+
+@pytest.mark.usefixtures("launcher_on_path")
+class TestExpansionAndCentralLauncher:
+    """Expansion units must be persisted before creation and launched via central launcher."""
+
+    def test_post_plan_expansion_persists_before_launch_and_uses_central_launcher(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.chdir(repo)
+        plan_file = repo / "initial-plan.json"
+        plan_file.write_text(
+            json.dumps(
+                {
+                    "run_id": "r1",
+                    "source": "expansion test",
+                    "workspace": "issue-773",
+                    "units": [{"name": "planner", "vendor": "claude", "task": "plan"}],
+                }
+            )
+        )
+        assert orchestrate.cmd_start(argparse.Namespace(plan=str(plan_file), base=None)) == 0
+
+        # Expand with new units at later phase boundary
+        expand_file = repo / "expand-plan.json"
+        expand_file.write_text(
+            json.dumps(
+                {
+                    "units": [
+                        {
+                            "name": "builder-1",
+                            "vendor": "claude",
+                            "task": "build 1",
+                            "after": ["planner"],
+                        },
+                        {
+                            "name": "builder-2",
+                            "vendor": "grok",
+                            "task": "build 2",
+                            "after": ["planner"],
+                        },
+                    ]
+                }
+            )
+        )
+        assert orchestrate.cmd_expand(argparse.Namespace(plan=str(expand_file))) == 0
+
+        # Assert persisted before any worktree or session is created
+        run_data = json.loads((repo / ".orchestrate" / "run.json").read_text())
+        unit_names = [u["name"] for u in run_data["units"]]
+        assert unit_names == ["planner", "builder-1", "builder-2"]
+        for u in run_data["units"]:
+            if u["name"] in ("builder-1", "builder-2"):
+                assert u["status"] == "pending"
+                assert u.get("worktree") in (None, "")
+                assert u.get("tab_id") in (None, "")
+
+        # Create branch and commit for planner so 'after' dependency is satisfied
+        _commit_file = repo / "planner.txt"
+        _commit_file.write_text("plan doc\n")
+        subprocess.run(
+            ["git", "checkout", "-b", "orch/r1-planner", "orch/r1"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(["git", "add", "planner.txt"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "plan commit"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(["git", "checkout", "main"], cwd=repo, check=True, capture_output=True)
+
+        # Mark planner done in run.json
+        r = orchestrate.Run.load()
+        r.units[0].status = "done"
+        r.units[0].branch = "orch/r1-planner"
+        r.save()
+
+        # Track launches via cmd_go
+        launched_argvs: list[list[str]] = []
+        original_run = orchestrate.run
+
+        def intercept_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            if cmd and cmd[0] == orchestrate.launcher():
+                launched_argvs.append(cmd)
+                unit_name = cmd[cmd.index("--task") + 1]
+                return subprocess.CompletedProcess(
+                    cmd,
+                    returncode=0,
+                    stdout=json.dumps(
+                        {
+                            "tab_id": f"tab-{unit_name}",
+                            "pane_id": f"pane-{unit_name}",
+                            "agent_name": unit_name,
+                        }
+                    )
+                    + "\n",
+                    stderr="",
+                )
+            return cast(subprocess.CompletedProcess[str], original_run(cmd, **kwargs))
+
+        monkeypatch.setattr(orchestrate, "run", intercept_run)
+        monkeypatch.setattr(orchestrate, "await_ready", lambda _unit: True)
+        monkeypatch.setattr(orchestrate, "send", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(orchestrate, "took_the_task", lambda _unit: True)
+
+        assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
+
+        # Verify that both expanded units launched through central launcher with no-focus flags
+        assert len(launched_argvs) == 2
+        for argv in launched_argvs:
+            assert "--no-focus" in argv
+            assert "--current" in argv
+            assert "--herdr" in argv
+            assert "--herdr-control-only" in argv
+
+        # Verify run record completeness
+        updated_run = orchestrate.Run.load()
+        for u in updated_run.units[1:]:
+            assert u.status == "running"
+            assert u.tab_id == f"tab-{u.name}"
+            assert u.pane_id == f"pane-{u.name}"
+            assert u.agent_name == u.name
+            assert u.branch == f"orch/r1-{u.name}"
+            assert u.worktree is not None and Path(u.worktree).exists()
+            assert u.workspace == "issue-773"
+
+
+@pytest.mark.usefixtures("launcher_on_path")
+class TestNoFocusInvariantIntegration:
+    """Integration test: operator focused pane is preserved before and after run-owned launches."""
+
+    def test_operator_focused_pane_preserved_across_multiple_launches(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.chdir(repo)
+        # Create run with 3 pending units
+        _write_run(
+            repo,
+            [
+                _unit("unit1", status="pending", branch=None),
+                _unit("unit2", status="pending", branch=None),
+                _unit("unit3", status="pending", branch=None),
+            ],
+        )
+
+        focused_pane = "pane-operator-main"
+        original_run = orchestrate.run
+
+        # Mock herdr / launcher interaction:
+        # A launcher with --no-focus preserves the operator's active focused pane.
+        # Without --no-focus it would switch focus to the new pane.
+        def mocked_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            nonlocal focused_pane
+            if cmd and cmd[0] == orchestrate.launcher():
+                unit_name = cmd[cmd.index("--task") + 1]
+                new_pane = f"pane-{unit_name}"
+                if "--no-focus" not in cmd:
+                    focused_pane = new_pane
+                return subprocess.CompletedProcess(
+                    cmd,
+                    returncode=0,
+                    stdout=json.dumps(
+                        {
+                            "tab_id": f"tab-{unit_name}",
+                            "pane_id": new_pane,
+                            "agent_name": unit_name,
+                        }
+                    )
+                    + "\n",
+                    stderr="",
+                )
+            return cast(subprocess.CompletedProcess[str], original_run(cmd, **kwargs))
+
+        monkeypatch.setattr(orchestrate, "run", mocked_run)
+        monkeypatch.setattr(orchestrate, "await_ready", lambda _unit: True)
+        monkeypatch.setattr(orchestrate, "send", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(orchestrate, "took_the_task", lambda _unit: True)
+
+        pane_before = focused_pane
+        assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
+        pane_after = focused_pane
+
+        assert pane_before == "pane-operator-main"
+        assert pane_after == "pane-operator-main"
+
+        # Verify run record contains every created worktree, branch, workspace, tab, pane, agent
+        r = orchestrate.Run.load()
+        for u in r.units:
+            assert u.status == "running"
+            assert u.worktree is not None and Path(u.worktree).exists()
+            assert u.branch == f"orch/r1-{u.name}"
+            assert u.tab_id == f"tab-{u.name}"
+            assert u.pane_id == f"pane-{u.name}"
+            assert u.agent_name == u.name
+
+
+class TestScopedCleanup:
+    """Cleanup remains limited to run-owned resources and never removes foreign resources."""
+
+    def test_cleanup_only_touches_run_owned_resources(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.chdir(repo)
+        # Land run-owned alpha unit
+        _git(repo, "checkout", "orch/r1")
+        _git(repo, "merge", "--no-ff", "--no-edit", "orch/r1-alpha")
+        _git(repo, "checkout", "main")
+
+        wt_alpha = repo / ".orchestrate" / "wt-alpha"
+        wt_alpha.mkdir(parents=True, exist_ok=True)
+        _git(repo, "worktree", "add", "--detach", str(wt_alpha), "orch/r1-alpha")
+
+        # Create foreign/unrelated worktree, branch, and tab
+        foreign_wt = repo / "foreign-worktree"
+        foreign_wt.mkdir(parents=True, exist_ok=True)
+        _git(repo, "branch", "foreign-feature", "main")
+        _git(repo, "worktree", "add", "--detach", str(foreign_wt), "foreign-feature")
+
+        _write_run(
+            repo,
+            [
+                _unit(
+                    "alpha",
+                    status="done",
+                    branch="orch/r1-alpha",
+                    worktree=str(wt_alpha),
+                    tab_id="tab-run-alpha",
+                ),
+            ],
+        )
+
+        closed_tabs: list[str] = []
+        original_run = orchestrate.run
+
+        def track_tab_close(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            if cmd[:3] == ["herdr", "tab", "close"]:
+                closed_tabs.append(cmd[3])
+                return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+            return cast(subprocess.CompletedProcess[str], original_run(cmd, **kwargs))
+
+        monkeypatch.setattr(orchestrate, "run", track_tab_close)
+
+        assert orchestrate.cmd_clean(argparse.Namespace(merged=True, branches=True, all=False)) == 0
+
+        # Verify run-owned alpha tab and worktree were closed
+        assert "tab-run-alpha" in closed_tabs
+        assert not wt_alpha.exists()
+        assert not _git_branch_exists(repo, "orch/r1-alpha")
+
+        # Verify foreign resources were NOT touched
+        assert foreign_wt.exists()
+        assert _git_branch_exists(repo, "foreign-feature")
+
+
+class TestStatusSurfacesUnrecordedDrift:
+    """Status reports unrecorded unit branches matching the run prefix."""
+
+    def test_status_reports_unrecorded_unit_branches(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _write_run(repo, [_unit("alpha")])
+        _git(repo, "branch", "orch/r1-untracked", "orch/r1")
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_status(argparse.Namespace()) == 0
+        output = capsys.readouterr().out
+        assert (
+            "UNRECORDED untracked -- branch orch/r1-untracked is not a unit in this run" in output
+        )

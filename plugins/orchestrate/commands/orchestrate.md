@@ -324,11 +324,12 @@ python3 "$S" collect                               # the run branch -> your tree
 python3 "$S" clean --merged --branches             # close what has landed
 ```
 
-**`check` before you `collect`.** The run file is written only by this script, and only for actions
-this script performed — so a session started by hand leaves a branch nothing will ever land or reap,
-and nothing notices. `check` compares the record against git and herdr and names every disagreement:
-a branch with no unit, a unit marked done that committed nothing, a unit marked done whose work is
-not on the run branch, a session that vanished, a session still working. It writes nothing, and
+**`check` before you `collect` (and `status` for live drift).** The run file is written only by this
+script, and only for actions this script performed — so a session started by hand leaves a branch
+nothing will ever land or reap, and nothing notices. `check` compares the record against git and
+herdr and names every disagreement: a branch with no unit, a unit marked done that committed nothing,
+a unit marked done whose work is not on the run branch, a session that vanished, a session still
+working. `status` also reports unrecorded unit branches on every poll. They write nothing, and `check`
 exits non-zero when it finds something.
 
 ```bash
@@ -359,7 +360,7 @@ changelogs; do **not** use it for source, where keeping both sides of a conflict
 that compiles and means something nobody wrote.
 
 **`clean --merged` belongs after every `land`, not once at the end.** A phase's sessions are
-finished the moment their work is on the run branch; leaving them open for the rest of the run is how
+finished the moment their work is on the run branch, and leaving them open for the rest of the run is how
 a workspace ends up with a dozen idle tabs nobody can tell apart. `--merged` only ever closes a unit
 whose work survived, so it is safe to run unattended — a unit that landed nothing keeps its tab and
 its worktree, because those are the evidence.
@@ -396,6 +397,19 @@ python3 "$S" go
 
 `expand` refuses a name already in the run and a dependency that is in no run, so a bad table fails
 before anything launches.
+
+**Never create worktrees manually or invoke `agents` directly for a run unit.** Every unit — whether
+in the initial plan or added at a later phase boundary — must be persisted through `start` or `expand`
+before any worktree or session is created, and must launch only through `go` via the central
+`agent_argv` path. Bypassing `expand` or `go` by calling `agents` directly breaks run-record tracking,
+omits background launch flags (`--no-focus --current --herdr --herdr-control-only`), and steals
+operator focus. Unsupported post-launch setup (such as interactive OpenCode variant selection) is a
+controlled post-launch step performed inside the launched session; it does not authorize bypassing
+`expand` or `go`. A branch in the run's `orch/<run-id>-<unit>` series with no row in the table is
+flagged as unrecorded drift by `status` and `check`, requiring explicit adoption with `adopt --yes`
+or run-owned cleanup rather than being silently treated as valid expansion. That detection reads
+branches and nothing else: a hand-made worktree or session named outside that series is invisible to
+both commands, which is the second reason never to make one.
 
 When the expansion includes Work and Code Review, make ownership executable in the rows themselves:
 

@@ -49,6 +49,13 @@ project.
 `go` launches only units whose ordering edges are all satisfied — every name in `after` and
 `serialize` done — so calling `settle` then `go` again is what releases the next wave.
 
+**Prompt delivery is confirmed before a unit is marked running.** After sending the initial
+task prompt, Orchestrate waits for an acceptance signal (`took_the_task` observing the session
+leave idle). If the prompt was swallowed (for example by a vendor startup dialog while Herdr
+reported `interactive_ready`), Orchestrate retries delivery up to 2 times while the session
+remains continuously idle. If still unaccepted, the unit is recorded in the named failure state
+`prompt_undelivered` with a warning note, rather than being left silently running.
+
 **A unit with dependencies branches from the last one it names**, at launch time rather than up
 front — so a `/work` unit opens on top of its `/plan` unit's actual output.
 

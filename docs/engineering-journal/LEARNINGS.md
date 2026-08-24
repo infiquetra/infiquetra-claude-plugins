@@ -76,6 +76,50 @@ honest is cheaper than a record explained away later.
 **Refs.** LEARNINGS `{#workflow-lease-ttl-outlives-no-poll-contract}` (the #686 incident this
 closes), DECISIONS `{#defects-run-plan-ktds-787}` and
 `{#lease-ttl-payload-kept-after-zero-consumer-sweep}`; issue #694; pull request 795.
+### Process idleness is not task completion: settlement must verify branch evidence  {#idleness-is-not-completion}
+
+**Context.** Orchestrate's `settle` previously inferred `done` from Herdr pane idleness across two
+samples, and `failed` from session absence. In three real incidents across Team Mimir runs, this
+produced wrong outcomes in both directions: a stale `done` predating a supplemental prompt was
+accepted as finished, a stuck unit with a SIGTTIN-suspended background child was classified as done
+six times, and a finished unit whose commits had already landed was marked `failed` when its Herdr
+session was closed during operator cleanup.
+
+**Evidence.** Issue #780. Transcripts
+`~/.claude/projects/-Users-jefcox-workspace-infiquetra-team-mimir/6990cc3c-4d53-46ee-a714-6bfa04b91418.jsonl`
+line 1894 and `b31ec85e-82d5-4a00-aa18-e82cc22b2284.jsonl` lines 6569, 6678 (2026-08-23).
+`plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py:2526`. orchestrate 1.20.3.
+
+**Mechanism.** Herdr pane idleness only indicates that the foreground shell or process tree is
+waiting for input (which occurs between turns while an agent thinks, or when a child process is
+suspended), not that the task produced any completed work. Conversely, session absence only means
+the interactive process terminated, not that its work failed — work committed to git or merged
+survives the session. Inferring task success or failure from process presence conflates container
+lifecycle with artifact truth.
+
+**Fix.** Gate settlement on repository truth via `produced_anything` (mirroring `cmd_check`). An
+idle session with no commits on its branch stays `running` (unsettled); a closed/gone session whose
+branch contains commits settles `done` (never `failed`); and a session gone without commits yields a
+distinct `orphaned` state (`orphaned`).
+
+**Second-order trap found in review of this same change.** An evidence gate has a domain, and
+applying it outside that domain re-creates the defect it was built to remove. `produced_anything`
+reads a *branch*, and it answers `False` for two units that did nothing wrong: one with no branch
+of its own (the review controller carries `merge: false` and delivers its result through
+`review-result`), and one whose run branch does not resolve, where the count is unknown rather than
+zero. Gating both on commits wedged the review controller at `running` for the life of the run —
+no commit can ever appear on a branch a unit does not have, and `land` returns the controller to
+`running` on every resubmission — and wrote the note "session disappeared without commits" onto a
+unit whose commits the code had not looked at. `go` refuses outright on an unresolvable run branch
+and `adopt`/`clean` warn that branch-dependent checks are unavailable; settle now draws the same
+distinction instead of collapsing it.
+
+**Generalizable rule.** Task outcome must be read from produced artifacts, not process lifecycle.
+An idle process is not a successful task, and a terminated process is not a failed one; always gate
+lifecycle settlement on output evidence rather than container or pane state — and gate only the
+subjects the evidence probe can actually read, because "I could not check" and "there is nothing"
+are different answers, and a probe that returns the second for the first is the original defect
+wearing the fix's clothes.
 ### A non-negative contract has to be enforced at every entry chokepoint, not just the date one  {#retry-after-negative-clamp}
 
 **Context.** `parse_retry_after` in `fleet_commons.retry_backoff` was designed to reduce both RFC 7231 `Retry-After` formats (delta-seconds and HTTP-date) to a non-negative delay in seconds. While the HTTP-date path clamped past dates to `0.0` ("retry now, never a negative delay"), the delta-seconds path returned negative values unchanged for negative header values (e.g. `-5`, `-120`). Callers presenting delay advice in typed 429 exceptions then displayed confusing negative wait times to operators.

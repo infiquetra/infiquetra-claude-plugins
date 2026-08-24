@@ -38,6 +38,78 @@ Driving a picker has two traps that look like verification but are not. A pane r
 **Generalizable rule.** When a tool exposes configuration only through an interactive TUI picker, drive and parse the live picker rather than guessing flags or static configuration values — and read the result back, because sending a selection is not the same as making one.
 
 **Second rule, from the repair.** A verification step must be written against the fields its source actually publishes. `herdr agent list` reports `cwd`, `workspace_id` and `interactive_ready` and reports no model; a check written against a `model` or `workspace` key is dead code that never fires, and a receipt stamped `verified: true` beside it records a check that never happened. Where a property cannot be confirmed, say which ones were and which were not rather than flattening both into one boolean.
+### Dropping an unparseable argument from a static command scan moves every argument after it  {#ownership-lanes-token-position-and-scope-blind-names}
+
+**Context.** `scripts/check_ownership_lanes.py` is the CI gate that stops one plugin lane from reaching into another's `gh` write surface. Issue #583 hardened it three ways: attribute wrapper-shaped calls (`_run_gh(["issue", "create", ...])`), reserve ProjectV2 GraphQL mutations to the board owner, and allow benign read verbs across lanes. Reviewing that hardening found that two of the three new rules were defeated by ordinary code shapes, one of them a step *backwards* from the behavior it replaced.
+
+**Evidence.** PR #800, review of frozen revision `0e712fad`. Running both revisions of the detector over the same source: `subprocess.run(["gh", "api", "--jq", jq_expr, "projects/42/items"])` from the saga lane returned `('projects/', 'mission-control')` on `origin/main` and `None` on `0e712fad`. A module binding `query` to a `updateProjectV2ItemFieldValue` document in one function and to a read query in another reported `mutation_found=None` for **both** call sites, the board write included.
+
+**Mechanism.** Two separate causes, both about a lossy representation rather than a wrong rule.
+
+1. `find_gh_invocations` built its token tuple by *filtering out* elements it could not resolve to a static string. That was harmless while `_reserved_path_crossed` scanned every token, because position did not matter. The #583 change made position matter: `_api_endpoint` now walks the argument list skipping each value-taking flag *and the token after it*, so it can tell an endpoint from `-f title=projects/...`. Once a non-literal flag value is dropped rather than placeheld, that skip consumes the endpoint instead — the reserved `projects/` surface, the one thing the manifest reserves, stopped being seen. A false-positive fix bought with a false negative on the gate's core job.
+2. `_collect_string_variables` mapped each name to one value with last-write-wins, across the whole module and with no notion of scope. Two functions that both use a variable called `query` therefore collapse to a single binding, and whichever the walk reaches last wins. A read query written after a mutation query hides the mutation completely.
+
+**Fix.** Commit on PR #800. Unresolvable elements are placeheld with `UNRESOLVED_TOKEN` and kept in position, so the positional helpers see the real argv shape; `_collect_string_variables` keeps every binding per name, `_string_token` takes the first for positional text, and the ProjectV2 scan reads all of them through a new non-positional `alt_tokens` view. `_extract_verb` also learned the combined `["gh issue view", "42"]` shape, which had no verb at all and so never qualified for the read allowance the same change advertised. `marketplace/ownership_lanes.json` — the lint's human-facing contract — still described the retired verb-insensitive behavior and listed the now-closed blind spots as open, citing #583; it now describes what ships.
+
+**Validation.** Six new tests in `tests/test_check_ownership_lanes.py` pin each repair; all six fail against `0e712fad` and pass against the repair, so they are behavioral rather than restatements. Suite 33/33 green, `python3 scripts/check_ownership_lanes.py` exits 0 against the real tree.
+
+**What surprised.** The scope-blind name map cannot be made both quiet and correct, so the repair chooses loud: a lane that binds a ProjectV2 mutation string at all now has every `gh api graphql` call in that module flagged, not just the one that uses the binding. For a policy gate that is the right direction — holding the mutation text is itself the thing the lane forbids — but it is a deliberate false-positive trade recorded in the docstring, not an accident.
+
+**Generalizable rule.** The moment a scanner starts reasoning about *where* an argument sits, dropping the arguments it cannot parse becomes a silent correctness bug: use a placeholder, never a filter. And a detector that resolves names without scopes must keep every binding, because picking one is picking a winner in the attacker's favor.
+
+**Refs.** Issue #583; the ownership-lanes gate originates in #431 (PR #580). Companion contract doc: `marketplace/ownership_lanes.json`.
+
+### A halt reason can only explain a CLI flag the decision function never sees  {#unavailable-reason-rides-the-available-set}
+
+**Context.** Leaf #657 asked that an operator who passes `outcome.py advance --workflow-available`
+without `--host-capable` get an explanation naming the second flag, rather than an availability halt
+that reads as a host fault. Amending the CLI help was the easy half. The hard half was the receipt:
+the operator who is hurt by this is the one running unattended, and what they read afterwards is the
+halt or degrade reason, not the help text.
+
+**Evidence.** Pull request 799. The two functions that compose the reason string —
+`plugins/saga/scripts/outcome_dispatcher.py` `dispatch` (`:184`) and `degrade_decision` (`:390`) —
+take only `req`/`backend` and a `Sequence[str]` of available backends. Neither has ever received
+`host_capable` or `workflow_available`; those live on the argparse namespace consumed at
+`plugins/saga/scripts/outcome.py:2570` and are converted to a backend set by `resolve_available`
+before any decision function runs. Pinned at the pre-fix revision, the degrade reason read
+`cc-workflows-ultracode unavailable; autonomous + away -> degraded to team-execution (R23)` — a
+sentence with nowhere to put the flag.
+
+**Mechanism.** The flags are erased by design. `resolve_available` is the deliberate narrowing point
+(KTD9 — the coordinator cannot self-probe host capability, so availability is a runtime *input*, and
+everything downstream reasons about a set, not about how the set was derived). That narrowing is
+correct and worth keeping, which means the *only* place an explanation can survive is on the value
+that crosses the seam. Hence `AvailableBackends`, a `tuple[str, ...]` subclass carrying an
+`unavailable_reasons` mapping: every existing consumer keeps full sequence and equality semantics
+(`avail == ("inline", "team-execution", "manual")` still holds), while the three reason-composing
+sites read the explanation through `getattr(available, "unavailable_reasons", {})` and fall back to
+their original wording when handed a plain tuple.
+
+**Fix.** `resolve_available` attaches the coupling reason when `workflow_available and not
+host_capable`; `dispatch`, `degrade_decision`, and `captured_degrade_decision` prefer it over their
+generic phrasing; `effective_available` carries the mapping across the captured ∩ runtime
+intersection so the #373 posture path keeps it. The conservative default is untouched — with neither
+flag only `ALWAYS_AVAILABLE` resolves, and `cc-workflows-ultracode` still requires both flags.
+
+**Validation.** Four tests fail at the pre-fix revision and pass after: the `resolve_available`
+combination and the `dispatch` halt receipt (`tests/test_outcome_dispatcher.py`), the
+`degrade_policy: "halt"` advance regression, and the default-policy degrade receipt
+(`tests/test_outcome_backends.py`). 142 tests green across the three touched suites.
+
+**What surprised.** The degrade path, not the halt path, is the one that needed this most. Under the
+default policy the tick *succeeds* — one rung down, no halt, no page — so the pre-fix operator saw a
+green run that never touched the external backend. The leaf's own reproduction only exposed the
+coupling because every probe node carried `degrade_policy: "halt"`.
+
+**Generalizable rule.** When a diagnostic message must name an input that an earlier layer
+deliberately discarded, do not re-thread the input through the call chain — attach the explanation to
+the value that already crosses the seam, as a transparent subtype whose consumers need no change.
+Re-threading spreads the coupling; a carrier keeps it at the one place that knows.
+
+**Refs.** Leaf #657 under objective `defects-claude-plugins`; run plan
+`docs/plans/2026-08-24-defects-claude-plugins-run-plan.md` section U9;
+`{#lease-ttl-honest-without-a-reader}` for the sibling case of a payload nobody reads.
 
 ### The launcher was already right; nothing made anyone use it  {#launch-seam-is-enforcement-not-implementation}
 

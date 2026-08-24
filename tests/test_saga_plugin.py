@@ -46,8 +46,8 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
 
     assert plugin_json["name"] == "saga"
     assert (
-        plugin_json["version"] == "0.139.2"
-    )  # #694: workflow lease execution TTL derived from run scale
+        plugin_json["version"] == "0.139.3"
+    )  # #657: --workflow-available flag coupling documentation and explanatory halts
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]

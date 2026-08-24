@@ -164,12 +164,16 @@ def dispatch(req: Any, *, available: Sequence[str] = DEFAULT_AVAILABLE) -> dict[
             f"backend {backend!r} is not in the executor menu {outcome_spec.NODE_BACKENDS}"
         )
     if backend not in tuple(available):
+        unavail = (
+            getattr(available, "unavailable_reasons", {}).get(backend)
+            or f"backend {backend!r} is not available yet"
+        )
         receipt = HaltReceipt(
             outcome_id=str(req.outcome_id),
             subplot_id=str(req.subplot_id),
             backend=backend,
             reason=(
-                f"backend {backend!r} is not available yet (runnable backends: "
+                f"{unavail} (runnable backends: "
                 f"{tuple(available)}) — HALT and page rather than silently substitute a lesser "
                 f"backend (the full menu + degrade decision land in U9)"
             ),
@@ -283,22 +287,47 @@ def team_execution_artifact(execution_spec_obj: Any) -> str:
 # ---------------------------------------------------------------------------
 
 
+class AvailableBackends(tuple[str, ...]):
+    """The resolved runnable backend set, optionally carrying unavailable backend reasons."""
+
+    unavailable_reasons: dict[str, str]
+
+    def __new__(
+        cls,
+        backends: Sequence[str],
+        unavailable_reasons: dict[str, str] | None = None,
+    ) -> AvailableBackends:
+        obj = super().__new__(cls, backends)
+        obj.unavailable_reasons = dict(unavailable_reasons or {})
+        return obj
+
+
 def resolve_available(
     *, host_capable: bool = False, workflow_available: bool = False
-) -> tuple[str, ...]:
+) -> AvailableBackends:
     """The runnable backend set for this host (R6), ordered by the spec's ``NODE_BACKENDS`` vocabulary.
 
     ``ALWAYS_AVAILABLE`` (inline / team-execution / manual) is unconditional. ``host_capable`` enables
     the forked-context backends (``fork`` / ``subagent`` / ``goal``); ``workflow_available`` additionally
-    enables ``cc-workflows-ultracode``. The conservative default (both False) is the always-available
-    floor — the coordinator never claims a host-dependent backend it cannot verify.
+    enables ``cc-workflows-ultracode`` — and ONLY together with ``host_capable``, which is why a lone
+    ``workflow_available`` returns the floor carrying the explanatory ``unavailable_reasons`` entry
+    instead. The conservative default (both False) is the always-available floor — the coordinator
+    never claims a host-dependent backend it cannot verify.
     """
     avail = set(ALWAYS_AVAILABLE)
     if host_capable:
         avail |= {"fork", "subagent", "goal"}
     if host_capable and workflow_available:
         avail.add("cc-workflows-ultracode")
-    return tuple(b for b in outcome_spec.NODE_BACKENDS if b in avail)
+    unavail_reasons: dict[str, str] = {}
+    if workflow_available and not host_capable:
+        unavail_reasons["cc-workflows-ultracode"] = (
+            "cc-workflows-ultracode unavailable: --workflow-available requires --host-capable"
+        )
+    return AvailableBackends(
+        tuple(b for b in outcome_spec.NODE_BACKENDS if b in avail),
+        unavailable_reasons=unavail_reasons,
+    )
 
 
 def scoped_repose_option(outcome_id: str, subplot_id: str) -> dict[str, Any]:
@@ -385,17 +414,20 @@ def degrade_decision(
     avail = set(available)
     if backend in avail:
         return ("dispatch", backend, "")
+    unavail_prefix = (
+        getattr(available, "unavailable_reasons", {}).get(backend) or f"{backend} unavailable"
+    )
     if attending:
         return (
             "halt",
             backend,
-            f"{backend} unavailable and the operator is attending -> HALT + page (R23)",
+            f"{unavail_prefix} and the operator is attending -> HALT + page (R23)",
         )
     if guarantee_bearing:
         return (
             "halt",
             backend,
-            f"{backend} unavailable but the leaf is guarantee-bearing -> HALT even when away (R23)",
+            f"{unavail_prefix} but the leaf is guarantee-bearing -> HALT even when away (R23)",
         )
     import reversibility_certificate  # lazy, mirrors lifecycle_state idiom; certificate is the authority (R10, R11)
 
@@ -404,7 +436,7 @@ def degrade_decision(
         return (
             "halt",
             backend,
-            f"{backend} unavailable after a side effect -> HALT, never re-run on a lesser backend (R23)",
+            f"{unavail_prefix} after a side effect -> HALT, never re-run on a lesser backend (R23)",
         )
     if backend in DEGRADE_LADDER:
         below = DEGRADE_LADDER[DEGRADE_LADDER.index(backend) + 1 :]
@@ -413,12 +445,12 @@ def degrade_decision(
                 return (
                     "degrade",
                     lower,
-                    f"{backend} unavailable; autonomous + away -> degraded to {lower} (R23)",
+                    f"{unavail_prefix}; autonomous + away -> degraded to {lower} (R23)",
                 )
     return (
         "halt",
         backend,
-        f"{backend} unavailable and no lower rung is available -> HALT (no silent substitution, R5)",
+        f"{unavail_prefix} and no lower rung is available -> HALT (no silent substitution, R5)",
     )
 
 
@@ -448,7 +480,7 @@ def captured_posture(intent: Any) -> Any | None:
 
 def effective_available(
     backends_permitted: Sequence[str] | None, available: Sequence[str] | None
-) -> tuple[str, ...] | None:
+) -> AvailableBackends | None:
     """The run's effective backend menu: captured-permitted ∩ runtime-available (#373 AC1).
 
     The captured half is the run-start authorization (what the operator permitted, once); the
@@ -457,16 +489,22 @@ def effective_available(
     intersection can only NARROW: a captured backend the host cannot run is not effective, and
     a host-available backend the envelope did not permit is not effective. ``None``/``None``
     means no availability decision exists at all (the legacy direct-dispatch path). Ordered by
-    the spec's ``NODE_BACKENDS`` vocabulary for deterministic receipts.
+    the spec's ``NODE_BACKENDS`` vocabulary for deterministic receipts. Any ``unavailable_reasons``
+    the runtime half carries survives the intersection, so a captured-posture halt explains an
+    unavailable backend in the same words a direct dispatch would.
     """
     if backends_permitted is None and available is None:
         return None
+    unavail_reasons = dict(getattr(available, "unavailable_reasons", {}))
     if backends_permitted is None:
-        return tuple(b for b in outcome_spec.NODE_BACKENDS if b in set(available or ()))
+        backends = tuple(b for b in outcome_spec.NODE_BACKENDS if b in set(available or ()))
+        return AvailableBackends(backends, unavailable_reasons=unavail_reasons)
     if available is None:
-        return tuple(b for b in outcome_spec.NODE_BACKENDS if b in set(backends_permitted))
+        backends = tuple(b for b in outcome_spec.NODE_BACKENDS if b in set(backends_permitted))
+        return AvailableBackends(backends, unavailable_reasons=unavail_reasons)
     both = set(backends_permitted) & set(available)
-    return tuple(b for b in outcome_spec.NODE_BACKENDS if b in both)
+    backends = tuple(b for b in outcome_spec.NODE_BACKENDS if b in both)
+    return AvailableBackends(backends, unavailable_reasons=unavail_reasons)
 
 
 def captured_degrade_decision(
@@ -504,10 +542,14 @@ def captured_degrade_decision(
     if backend in avail:
         return ("dispatch", backend, "")
     if degrade_policy != intent_envelope.INTENT_DEGRADE_ONE_RUNG:
+        unavail_prefix = (
+            getattr(effective, "unavailable_reasons", {}).get(backend)
+            or f"{backend} is not in the run's effective backend menu {tuple(effective)}"
+        )
         return (
             "halt",
             backend,
-            f"{backend} is not in the run's effective backend menu {tuple(effective)} and the "
+            f"{unavail_prefix} and the "
             f"captured run-start posture permits no degrade (degrade_policy="
             f"{degrade_policy or 'not captured'}) -> HALT by default (#373, R5/R23)",
         )
@@ -517,6 +559,10 @@ def captured_degrade_decision(
     else:
         one_rung = set()  # off-ladder backends have no defined lower rung -> HALT below
     restricted = tuple(b for b in effective if b in one_rung)
+    if hasattr(effective, "unavailable_reasons"):
+        restricted = AvailableBackends(
+            restricted, unavailable_reasons=effective.unavailable_reasons
+        )
     return degrade_decision(
         backend,
         available=restricted,

@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.139.1] - 2026-08-24
+
+### Fixed
+
+- **Advisory accumulator no longer bleeds across units on halt.** In multi-unit workflow execution
+  harnesses, `__halt` attaches only the failing unit's advisory corrections to `error.advisory_corrections`
+  (filtering by the halting unit ID). This prevents earlier units' advisories from being misattributed
+  to subsequent failing units while preserving the full run-wide list in the top-level return value. (#691)
+
 ## [0.139.0] - 2026-08-20
 
 ### Added

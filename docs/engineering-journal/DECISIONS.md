@@ -1,4 +1,33 @@
 # Decisions — Infiquetra Claude Plugins
+## 2026-08-24
+
+### defects-claude-plugins run plan: fix-shape decisions for the 20-leaf #787 run {#defects-run-plan-ktds-787}
+
+**Decision.** The implementation plan for the #787 unattended run
+(`docs/plans/2026-08-24-defects-claude-plugins-run-plan.md`) locks eleven fix-shape decisions
+(KTD1–KTD11 in the plan). The load-bearing ones: #691's advisory bleed is fixed by **attach-time
+filtering on the existing per-entry `unit` tag**, not an accumulator reset (a boundary reset races
+under concurrent wave execution; entries are already keyed correctly at `execution_spec.py:812`).
+#694 keeps the lease payload and **derives `execution_ttl_seconds` from run scale** rather than
+retiring the TTL semantics (smaller diff; the emit-time contract surface survives #677, and the
+unit verifies post-broker consumers before dropping the teardown criterion). #657 combines the
+leaf's fix shapes 2+3 — help text plus an explicit halt reason — and rejects implying
+`--host-capable` (would weaken the conservative-default contract `resolve_available` pins). #652
+is fixed by **gate-before-resolve** (lazy mission-control root resolution), not by mapping
+resolution errors to `gated` after the fact. #584's R3 residual lands **inside the parity script**
+(self-reported SKIP-with-reason) so #588 stays the sole `ci.yml` writer. #692's DECISIONS draft is
+**parked as an issue comment**, never merged pre-sign-off — the journal records decisions taken,
+not decisions pending.
+
+**Rejected alternatives.** Per-unit accumulator maps and boundary resets (#691); a rebuilt renewal
+subsystem or polling loop (#694 — the broker is deleted; nothing renews); argparse hard-errors or
+flag implication (#657); post-hoc error reclassification (#652); a lane-D write to `ci.yml`
+(#584); a pre-decision DECISIONS merge (#692).
+
+**Revisit when.** #694: if the run's consumer sweep finds the emitted lease payload has zero
+consumers, shape (b) — retiring the payload — becomes the truthful fix and warrants its own entry.
+#692: the parked draft supersedes this note once the operator signs a policy.
+
 ## 2026-08-22
 
 ### Removing a baked-in default is a MAJOR bump, however wrong the default was {#removed-default-is-breaking}

@@ -304,6 +304,83 @@ def test_cli_gated_op_prints_gated_exit_zero(tmp_path: Path, capsys: Any) -> Non
     assert rc == 0
 
 
+def test_cli_gated_op_unresolvable_mission_control_still_gated_exit_zero(
+    tmp_path: Path, capsys: Any, monkeypatch: Any
+) -> None:
+    """#652: a gated op evaluates the certificate BEFORE resolving mission-control, returning
+    {"status":"gated"} and exiting 0 even when mission-control cannot be resolved."""
+
+    def boom() -> tuple[Path, int]:
+        raise RuntimeError("plugin-resolution: could not resolve a 'mission-control' root")
+
+    monkeypatch.setattr(BP, "resolve_mission_control_root", boom)
+    rc = BP.main(
+        [
+            "write",
+            "--op",
+            # A REGISTERED, ALWAYS_OPERATOR op — the certificate deliberately withholding the write,
+            # which is the case #652 describes. (An unenumerated op also GATEs, via default-deny,
+            # but through a different branch of ``authorize_write``.)
+            "parent-issue-close",
+            "--repo",
+            "infiquetra/x",
+            "--number",
+            "42",
+            "--ledger-dir",
+            str(tmp_path),
+        ]
+    )
+    out = json.loads(capsys.readouterr().out)
+    assert out["status"] == "gated"
+    assert out["verdict"] == "GATE"
+    assert rc == 0
+    # The gated path writes NO ledger entry, so a later tick in a healthy environment still
+    # performs the real write rather than colliding with a poisoned idempotency key.
+    assert not list(tmp_path.glob("*.json"))
+
+
+def test_gated_writer_raises_rather_than_silently_succeeding() -> None:
+    """#652: the stand-in writer the CLI passes on a gated op must never look like a success.
+
+    It is unreachable while the CLI's verdict and ``authorize_and_write``'s agree (both call the
+    same pure ``reversibility_certificate.authorize_write``). If they ever diverged, a writer that
+    returned ``None`` would be read as a committed board write, record the idempotency key, and
+    suppress the real write forever; raising makes that a retryable ``failed`` record instead.
+    """
+    with pytest.raises(AssertionError, match="verdicts diverged"):
+        BP._gated_writer(op_kind="parent-issue-close", repo="infiquetra/x", number=42, payload={})
+
+
+def test_cli_authorized_op_unresolvable_mission_control_exits_nonzero(
+    tmp_path: Path, capsys: Any, monkeypatch: Any
+) -> None:
+    """#652: an authorized op in an unresolvable environment fails loud with exit 1 and stderr error."""
+
+    def boom() -> tuple[Path, int]:
+        raise RuntimeError("plugin-resolution: could not resolve a 'mission-control' root")
+
+    monkeypatch.setattr(BP, "resolve_mission_control_root", boom)
+    rc = BP.main(
+        [
+            "write",
+            "--op",
+            "set-field-status",
+            "--repo",
+            "infiquetra/x",
+            "--number",
+            "42",
+            "--target-state",
+            "Done",
+            "--ledger-dir",
+            str(tmp_path),
+        ]
+    )
+    assert rc == 1
+    err = json.loads(capsys.readouterr().err.strip())
+    assert err["ok"] is False
+    assert "could not resolve" in err["error"]
+
+
 def test_cli_authorized_op_written(tmp_path: Path, capsys: Any, monkeypatch: Any) -> None:
     """CLI: an authorized op prints {"status":"written"} — concrete writer patched (no live gh)."""
     calls: list[tuple[str, str, int]] = []

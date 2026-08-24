@@ -442,9 +442,7 @@ def test_cli_reconcile_emits_record_json(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The CLI /work and /loop invoke drives a real reconcile_op, printing the record JSON and
-    exiting 0 on a healthy gate. Post-#620 the CLI resolves mission-control BEFORE the gate, so the
-    resolver is pinned here rather than left to ride the monorepo walk-up (which would pass only by
-    accident and mask the resolve-failure branch)."""
+    exiting 0 on a healthy gate."""
     import sys
 
     monkeypatch.setattr(
@@ -454,7 +452,7 @@ def test_cli_reconcile_emits_record_json(
         [
             "reconcile",
             "--op",
-            "parent-issue-close",  # GATE → reconcile_op withholds the write; still resolves first
+            "parent-issue-close",  # GATE → reconcile_op withholds the write
             "--repo",
             "infiquetra/saga",
             "--number",
@@ -469,11 +467,44 @@ def test_cli_reconcile_emits_record_json(
     assert printed["status"] == "gated" and printed["halt"] is True
 
 
+def test_cli_reconcile_gated_op_unresolvable_mission_control_still_gated_exit_zero(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#652: a gated op evaluates the certificate BEFORE resolving mission-control, returning
+    {"status":"gated"} and exiting 0 even when mission-control cannot be resolved."""
+    import sys
+
+    def boom() -> tuple[Path, int]:
+        raise RuntimeError("plugin-resolution: could not resolve a 'mission-control' root")
+
+    monkeypatch.setattr(sys.modules["board_progression"], "resolve_mission_control_root", boom)
+    ledger = _ledger(tmp_path)
+    rc = RC.main(
+        [
+            "reconcile",
+            "--op",
+            "parent-issue-close",
+            "--repo",
+            "infiquetra/saga",
+            "--number",
+            "450",
+            "--ledger-dir",
+            str(ledger),
+            "--no-drift-check",
+        ]
+    )
+    assert rc == 0
+    printed = json.loads(capsys.readouterr().out.strip())
+    assert printed["status"] == "gated" and printed["halt"] is True
+    # No ledger entry on a gated op, so a later tick in a healthy environment still writes.
+    assert not list(ledger.glob("*.json"))
+
+
 def test_cli_reconcile_unresolvable_mission_control_exits_nonzero(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """#620: when mission-control cannot be resolved (a consumer repo with a stale/absent install),
-    the reconcile CLI fails loud — one error JSON on stderr and a non-zero exit — rather than
+    """#620/#652: when mission-control cannot be resolved (a consumer repo with a stale/absent install),
+    an authorized op fails loud — one error JSON on stderr and a non-zero exit — rather than
     crashing on an uncaught exception or silently proceeding with a bad path."""
     import sys
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.139.4] - 2026-08-24
+
+### Fixed
+
+- **Evaluate certificate gate before resolving mission-control in board-sync CLIs.** The `write`
+  (`board_progression.py`) and `reconcile` (`reconcile_controller.py`) CLIs now evaluate the
+  reversibility certificate before resolving the mission-control plugin root. Gated operations
+  withholding autonomous writes return `status=gated` / exit 0 even in environments where mission-control
+  is unresolvable, while non-gated operations in an unresolvable environment still fail loud (exit 1). (#652)
+
 ## [0.139.3] - 2026-08-24
 
 ### Fixed

@@ -413,6 +413,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "reconcile":
         bp = _bp()
+        cert = _cert()
         repo_root = Path(args.repo_root).resolve() if args.repo_root else _repo_root_default()
         ledger_dir = (
             Path(args.ledger_dir).resolve()
@@ -420,15 +421,23 @@ def main(argv: list[str] | None = None) -> int:
             else bp._default_ledger_dir(repo_root)  # noqa: SLF001
         )
         payload = json.loads(args.payload) if args.payload else None
-        try:
-            mission_control_root, _rung = bp.resolve_mission_control_root()
-        except RuntimeError as exc:
-            print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
-            return 1
-        writer = bp.default_board_writer(
-            mission_control_root=mission_control_root, project=args.project
-        )
-        reader = None if args.no_drift_check else default_live_reader(project=args.project)
+        # #652: the certificate decides BEFORE mission-control is resolved. A gated op reads
+        # nothing and writes nothing, so an unresolvable install must not turn an expected GATE
+        # verdict (exit 0) into a resolution error (exit 1) for the callers that key on the exit
+        # status. ``bp._gated_writer`` raises if it is ever reached, so a verdict divergence would
+        # be a loud failed record rather than a silent no-op write.
+        writer: Callable[..., None] = bp._gated_writer  # noqa: SLF001
+        reader: Callable[[str, str, int], str] | None = None
+        if cert.authorize_write(args.op) == cert.AUTHORIZED:
+            try:
+                mission_control_root, _rung = bp.resolve_mission_control_root()
+            except RuntimeError as exc:
+                print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
+                return 1
+            writer = bp.default_board_writer(
+                mission_control_root=mission_control_root, project=args.project
+            )
+            reader = None if args.no_drift_check else default_live_reader(project=args.project)
         record = reconcile_op(
             args.op,
             args.repo,

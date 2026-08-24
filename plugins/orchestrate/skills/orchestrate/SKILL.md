@@ -112,8 +112,8 @@ Operator-owned requests prevent that resubmission.
 
 One file, `.orchestrate/run.json`: run id, source, base commit, the verbatim review result and routing
 state, and per unit its name, vendor, model, effort, task, role, owned paths, outstanding fix requests,
-dependencies, worktree, branch, tab, Herdr agent name, and status. If session state is wrong,
-`herdr agent list` is the real truth.
+dependencies, worktree, branch, tab, Herdr agent name, status, `variant`, and `launch_receipt`. If
+session state is wrong, `herdr agent list` is the real truth.
 
 `start` adds `.orchestrate/` to the driven repository's local `.git/info/exclude`, preserving every
 existing rule and never duplicating its own. The run record and task material therefore stay local
@@ -163,17 +163,33 @@ with `ORCHESTRATE_AGENT_LAUNCHER`. Model and effort flags are per vendor:
 | muse | `--model` | `--reasoning-effort` |
 | agy | `--model` | `--effort` |
 | qwen | `-m` | via `setup` |
-| opencode | `-m` (as `provider/model`) | via `setup` |
+| opencode | `-m` (as `provider/model`) | via `/variants` picker |
 
 **Favourites.** `~/.config/orchestrate/models.json` maps a vendor to the models the operator
 actually uses, most-preferred first — `{"opencode": ["deepseek/deepseek-v4-pro"], "codex": [...]}`.
 `roster --models` shows them above the vendor's full list. Absent or unreadable, nothing changes; it
 is a convenience, never a constraint, and a model not listed is still perfectly usable.
 
-**Every vendor can be given a tier.** Where the command line has no flag, the unit's `setup` list
-carries slash commands sent into the session before its task — `["/effort high"]` — so the session
-is at the requested tier before it is given work. `roster --probe` compares this table against each
-tool's own help and reports drift; run it after an agent updates.
+**Every vendor can be given a tier.** Where the command line has no flag, tier is established before
+task submission: for OpenCode, Orchestrate drives the interactive `/variants` picker inside the
+Herdr session and verifies the effective variant; for vendors supporting slash commands, the unit's
+`setup` list carries slash commands sent into the session — `["/effort high"]` — before work starts.
+`roster --probe` compares this table against each tool's own help and reports drift; run it after an
+agent updates.
+
+An OpenCode unit names the variant it wants in its own `variant` field, falling back to `effort`
+when it has none. An exact name must appear in the live picker or the launch stops; `max`,
+`maximum`, `maximum available`, `max available` and `highest` all mean *the highest the picker
+actually offered*, which on Muse is `xhigh` rather than a literal `max`.
+
+**A launch receipt records what was checked, not what was asked for.** Each unit's `launch_receipt`
+carries the provider, model, variant, working directory, worktree, workspace, pane and readiness it
+launched with, plus `confirmed_against_herdr` and `requested_only` naming which of those were held
+against `herdr agent list` and which were not. `herdr agent list` publishes `cwd`, `workspace_id`
+and `interactive_ready` per session and **publishes no model at all**, so a model is always
+`requested_only` — the receipt says so rather than implying a check nothing could perform. A
+working directory or workspace that disagrees with the plan closes that run-owned tab and fails the
+unit before its task is submitted.
 
 An agent not listed launches with no model flags. **qwen does not report interactive readiness**, so
 `herdr agent prompt` refuses it; the script falls back to typing into its pane, which is what an

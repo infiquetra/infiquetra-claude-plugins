@@ -80,6 +80,72 @@ fusing them is what forces the choice between a false negative and a broken real
 
 **Refs.** Leaf #588; the lint originates in #458. Companion doc: `docs/testing/golden-fixtures.md`.
 
+### OpenCode variant ladder is an interactive live picker, not a flag or a static guess  {#opencode-variants-picker-live-resolution}
+
+**Context.** OpenCode does not take reasoning effort or model variant as a command-line flag during interactive session launch. Its effort ladder (`Default`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) is exposed exclusively through the interactive `/variants` picker inside the TUI. When a Team Mimir deployment run requested "maximum available" variant, Orchestrate's guidance previously claimed the picker could not be automated from unattended tabs, prompting the coordinator to explore unsupported headless `opencode run` and `AgentConfig.variant` workarounds.
+
+**Evidence.** Issue #772. `plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py:drive_opencode_variant_selection`, `resolve_opencode_variant`, `verify_unit_preflight`. In live testing on Muse models, the top variant was `xhigh`, not a literal `max`.
+
+**Mechanism.** OpenCode's variant choices are model-dependent and determined dynamically at session startup. Guessing a literal `max` token or trying to pass `--variant` on interactive launch fails because the interactive CLI only accepts `-m <provider/model>`. The only reliable path is driving the interactive `/variants` picker inside the Herdr session post-launch, reading the live offered options, resolving exact or maximum available requests against the live choices, awaiting task readiness, and verifying the state before task submission.
+
+Driving a picker has two traps that look like verification but are not. A pane read returns the session's whole recent output, so parsing it the instant `/variants` is sent can take the boot banner for the option list — which refuses a perfectly available exact variant, or types one of the banner's own words into the session. And typing a label into a picker is a *request*: a picker that closes on the value it already held leaves the session at a variant nobody asked for, so the selection has to be read back out of the pane before any task is submitted.
+
+**Fix.** Implemented `drive_opencode_variant_selection`, `confirm_opencode_variant_selected` and `verify_unit_preflight` in `orchestrate.py` (orchestrate 1.20.5). For OpenCode units, Orchestrate sends `/variants`, polls the pane until the parse yields options the variant ladder recognises, selects the requested exact variant or the highest offered option (`xhigh` on Muse), reads the selection back out of the pane, and only then submits the task. Preflight holds the working directory and workspace against `herdr agent list` and closes the run-owned tab on a mismatch. Corrected documentation across `commands/orchestrate.md`, `SKILL.md`, and `VENDOR_NOTES["opencode"]`.
+
+**Validation.** 89 unit and integration tests in `tests/test_orchestrate_task_dispatch.py` and `tests/test_orchestrate_launch_and_land.py`, including the Team Mimir regression proving `xhigh` is selected over `max` when `xhigh` is the top option offered, loud preflight failure on unavailable variants, unreadable pickers, a selection the session never reports, a pre-picker banner offered as the option list, and a workspace mismatch; plus non-OpenCode vendor isolation and receipts that distinguish a confirmed property from a requested one.
+
+**Generalizable rule.** When a tool exposes configuration only through an interactive TUI picker, drive and parse the live picker rather than guessing flags or static configuration values — and read the result back, because sending a selection is not the same as making one.
+
+**Second rule, from the repair.** A verification step must be written against the fields its source actually publishes. `herdr agent list` reports `cwd`, `workspace_id` and `interactive_ready` and reports no model; a check written against a `model` or `workspace` key is dead code that never fires, and a receipt stamped `verified: true` beside it records a check that never happened. Where a property cannot be confirmed, say which ones were and which were not rather than flattening both into one boolean.
+### Eager resource resolution ahead of an authorization gate rewrites the caller's exit-code contract  {#gate-before-resolve-exit-code-contract}
+
+**Context.** Leaf #652: since #620 the two certificate-gated board-sync command-line entry points
+resolved mission-control's install root *before* evaluating the reversibility certificate. A gated
+operation — one the certificate deliberately withholds pending operator confirmation — needs no
+writer at all, so the resolved root was unused work. In an environment where mission-control is
+unresolvable (a consumer repo with no install, or the stale-fleet-core case #620 itself guards for)
+the operation aborted at resolution with exit 1 instead of returning `gated` with exit 0.
+
+**Evidence.** Pull request 802, commit `6c3588f0` plus its review repair.
+`plugins/saga/scripts/board_progression.py:540-560` and
+`plugins/saga/scripts/reconcile_controller.py:414-441` — both `main` functions now evaluate
+`reversibility_certificate.authorize_write` first and resolve only on `AUTHORIZED`. The gate
+itself already short-circuited before any writer use, at `board_progression.py:191-194` and
+`reconcile_controller.py:203-209`. The downstream consumer that made this visible is
+`plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py:1808`, which converts any non-zero
+exit into `{"status": "failed"}` and discards the printed record — so the gate verdict was not
+merely mis-numbered, it was erased. `plugins/saga/skills/work/SKILL.md:255` states the contract the
+regression broke: "Read `written`/`skipped` as success; `halt`/`gated` falls back to the
+operator-prompted path."
+
+**Mechanism.** The exit code is the contract surface, not the printed record. Placing an acquisition
+that can fail *ahead* of the decision that determines whether the acquisition is needed makes the
+environment's health, rather than the policy verdict, decide the exit status. Every consumer keying
+on exit status then reads an expected policy outcome as an infrastructure failure. Nothing in the
+gate logic changed for this to happen — only the order of two statements.
+
+**Fix.** Both entry points bind a stand-in writer, evaluate the certificate, and resolve
+mission-control only inside the `AUTHORIZED` branch — one call site and one exit-code mapping per
+command, rather than a duplicated gated branch. The stand-in is
+`board_progression._gated_writer`, which **raises**: it is unreachable while the entry point's
+verdict and the library's agree (both call the same pure registry lookup at
+`reversibility_certificate.py:292-324`), and a writer that instead returned `None` on an impossible
+divergence would be read as a committed board write, would record the idempotency key, and would
+suppress the real write on every later tick. Raising turns that into a retryable `failed` record
+with no key.
+
+**Validation.** `tests/test_board_progression.py` and `tests/test_reconcile_controller.py` pin four
+cases per the leaf's acceptance criteria: a gated operation with the resolver stubbed to raise
+returns `gated` / exit 0 and leaves the ledger empty; an authorized operation with the same stub
+still exits 1 with the resolution error on standard error.
+
+**Generalizable rule.** Evaluate the gate before acquiring what only the passing branch needs — and
+when a short-circuited dependency still has to be passed as an argument, pass one that raises. A
+stand-in that silently succeeds converts an impossible divergence into a silent, sticky no-op; a
+stand-in that raises converts it into a loud, retryable failure.
+
+**Refs.** Leaf issue 652; the orchestration parent, issue 787; the plugin-resolution work this
+followed, issue 620.
 ### Dropping an unparseable argument from a static command scan moves every argument after it  {#ownership-lanes-token-position-and-scope-blind-names}
 
 **Context.** `scripts/check_ownership_lanes.py` is the CI gate that stops one plugin lane from reaching into another's `gh` write surface. Issue #583 hardened it three ways: attribute wrapper-shaped calls (`_run_gh(["issue", "create", ...])`), reserve ProjectV2 GraphQL mutations to the board owner, and allow benign read verbs across lanes. Reviewing that hardening found that two of the three new rules were defeated by ordinary code shapes, one of them a step *backwards* from the behavior it replaced.

@@ -285,6 +285,7 @@ SAGA_SYNTAX: dict[str, str] = {
 
 PENDING, RUNNING, DONE, FAILED = "pending", "running", "done", "failed"
 PROMPT_UNDELIVERED = "prompt_undelivered"
+ORPHANED = "orphaned"
 
 REVIEW_CONTROLLER_ROLE = "review-controller"
 WORK_FIX_ROLES = frozenset({"review-fixer", "downstream-resolver"})
@@ -2524,13 +2525,20 @@ def settle_reading(units: list[Unit]) -> dict[str, str]:
 
 
 def cmd_settle(args: argparse.Namespace) -> int:
-    """Mark running units done when their session goes idle. No inference beyond that.
+    """Mark running units done when their session has completed and produced evidence.
 
     Idle is read twice, ``interval`` seconds apart, and only counts when both readings agree: an
     agent is also idle *between* turns -- it finishes a tool call, returns to the prompt, thinks,
     and continues. One instantaneous sample once marked a unit done in that gap; it had two commits
     at the time and finished with ten. ``--once`` restores the single sample for a caller that
     wants it.
+
+    Settlement mirrors the evidence model in ``cmd_check`` (lines 3653-3680), gating completion on
+    the existing ``produced_anything`` helper (line 1128):
+    - A session that is idle or done settles ``done`` only when its branch has commits. An idle
+      session without commits stays ``running``.
+    - A session that is gone settles ``done`` if its branch has commits (e.g. session closed after
+      finishing work), or ``orphaned`` if it disappeared without committing anything.
     """
     r = Run.load()
     running = [u for u in r.units if u.status == RUNNING]
@@ -2540,21 +2548,25 @@ def cmd_settle(args: argparse.Namespace) -> int:
         time.sleep(args.interval)
         second = settle_reading(running)
     for unit in running:
-        if (
-            has_delivery_warning(unit)
-            and r.unresolvable_branch is None
-            and produced_anything(unit, r)
-        ):
+        has_evidence = r.unresolvable_branch is None and produced_anything(unit, r)
+        if has_delivery_warning(unit) and has_evidence:
             clear_delivery_warning(unit)
         a, b = first[unit.name], second[unit.name]
         if a in {"idle", "done"} and b in {"idle", "done"}:
-            unit.status = DONE
             shown = a if args.once else f"{a} then {b}"
-            print(f"  {unit.name}: {shown} -> done")
+            if has_evidence:
+                unit.status = DONE
+                print(f"  {unit.name}: {shown} -> done")
+            else:
+                print(f"  {unit.name}: {shown} -> still moving (no commits)")
         elif a == "gone" and b == "gone":
-            unit.status = FAILED
-            unit.note = "session disappeared"
-            print(f"  {unit.name}: session gone -> failed")
+            if has_evidence:
+                unit.status = DONE
+                print(f"  {unit.name}: session gone with commits -> done")
+            else:
+                unit.status = ORPHANED
+                append_unit_note(unit, "session disappeared without commits")
+                print(f"  {unit.name}: session gone -> orphaned")
         elif a in {"idle", "done"}:
             print(f"  {unit.name}: {a} then {b} -> still moving")
     r.save()

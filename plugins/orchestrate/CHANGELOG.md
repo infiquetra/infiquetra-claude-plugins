@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.20.3] - 2026-08-24
+
+### Fixed
+
+- **Settlement requires branch completion evidence instead of pane idleness.** `orchestrate.py settle`
+  now gates completion on `produced_anything`. A session that is merely idle without commits on its
+  branch stays running, preventing stale `done` states or stuck/suspended processes from falsely
+  settling done. A closed Herdr session with commits on its branch settles `done` (never `failed`),
+  while a session gone without commits transitions to the distinct `orphaned` state.
+
 ## [1.20.2] - 2026-08-24
 
 ### Fixed

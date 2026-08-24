@@ -21,6 +21,36 @@
 
 ## 2026-08-24
 
+### Process idleness is not task completion: settlement must verify branch evidence  {#idleness-is-not-completion}
+
+**Context.** Orchestrate's `settle` previously inferred `done` from Herdr pane idleness across two
+samples, and `failed` from session absence. In three real incidents across Team Mimir runs, this
+produced wrong outcomes in both directions: a stale `done` predating a supplemental prompt was
+accepted as finished, a stuck unit with a SIGTTIN-suspended background child was classified as done
+six times, and a finished unit whose commits had already landed was marked `failed` when its Herdr
+session was closed during operator cleanup.
+
+**Evidence.** Issue #780. Transcripts
+`~/.claude/projects/-Users-jefcox-workspace-infiquetra-team-mimir/6990cc3c-4d53-46ee-a714-6bfa04b91418.jsonl`
+line 1894 and `b31ec85e-82d5-4a00-aa18-e82cc22b2284.jsonl` lines 6569, 6678 (2026-08-23).
+`plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py:2526`. orchestrate 1.20.3.
+
+**Mechanism.** Herdr pane idleness only indicates that the foreground shell or process tree is
+waiting for input (which occurs between turns while an agent thinks, or when a child process is
+suspended), not that the task produced any completed work. Conversely, session absence only means
+the interactive process terminated, not that its work failed — work committed to git or merged
+survives the session. Inferring task success or failure from process presence conflates container
+lifecycle with artifact truth.
+
+**Fix.** Gate settlement on repository truth via `produced_anything` (mirroring `cmd_check`). An
+idle session with no commits on its branch stays `running` (unsettled); a closed/gone session whose
+branch contains commits settles `done` (never `failed`); and a session gone without commits yields a
+distinct `orphaned` state (`orphaned`).
+
+**Generalizable rule.** Task outcome must be read from produced artifacts, not process lifecycle.
+An idle process is not a successful task, and a terminated process is not a failed one; always gate
+lifecycle settlement on output evidence rather than container or pane state.
+
 ### A readiness flag is the sender's claim, so delivery has to be read off the receiver  {#readiness-is-not-delivery}
 
 **Context.** Orchestrate dispatched a unit, herdr reported the session `interactive_ready`,

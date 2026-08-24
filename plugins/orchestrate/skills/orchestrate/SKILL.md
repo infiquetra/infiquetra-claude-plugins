@@ -187,6 +187,12 @@ idle between turns, so `wait` confirms across consecutive observations the same 
 Subscriptions are keyed by pane, which is why a unit records its `pane_id` at launch; if the socket
 is unreachable it falls back to one `herdr agent wait` per unit, under the same confirmation rule.
 
+**Evidence-based settlement.** `orchestrate.py settle` marks running units `done` only when there
+is completion evidence on the unit branch (`produced_anything`). A session that is merely idle
+without commits stays running — idle is also what an agent looks like between turns, thinking. A
+session closed or gone after committing its work settles `done` (never `failed` for committed work),
+while a session gone without commits yields a distinct `orphaned` state.
+
 `go` refuses to launch a unit whose `after` dependency committed nothing. A dependent unit opens
 on its dependency's branch, so an empty branch means the thing it is supposed to work on does not
 exist — and a session given nothing writes something plausible about nothing rather than failing.
@@ -195,9 +201,10 @@ waiting on it never needed its output — only for it to be out of the way.
 
 ## What this deliberately does not do
 
-It does not verify that a session "really" finished, count tokens, enforce a spend ceiling, reserve
-concurrency slots, run a voting panel, or keep a durable register with locks. If a unit went wrong,
-you have its worktree, its branch, and its tab — look at them.
+Evidence-based settlement checks completion evidence on the branch (`produced_anything`), but
+deliberately does not count tokens, enforce a spend ceiling, reserve concurrency slots, run a
+voting panel, or keep a durable register with locks. If a unit went wrong, you have its worktree,
+its branch, and its tab — look at them.
 
 An earlier implementation did all of those things, in 14,875 lines of production code and about
 15,700 lines of tests. It is preserved on `origin` at `archive/orchestrate-full-implementation` if a

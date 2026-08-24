@@ -227,9 +227,6 @@ class FakeWT:
         )
 
 
-_FakeWorktreeStore = FakeWT
-
-
 def build_fake_worktree_ops() -> Any:
     """Build a ``WorktreeOps`` instance backed by the in-use FakeWT fake."""
     return FakeWT().ops()

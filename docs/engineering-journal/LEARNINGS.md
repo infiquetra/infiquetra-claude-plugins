@@ -21,6 +21,65 @@
 
 ## 2026-08-24
 
+### A detector that scores a string's presence can be satisfied by a string that crosses nothing  {#inert-string-is-not-a-boundary-crossing}
+
+**Context.** `scripts/lint_test_shape.py` flags a test module that uses a fake but never exercises the
+real code behind it. Its production signal was, among other things, "any string literal containing
+`plugins/`". Leaf #588 carried that as a known evasion — a module docstring mentioning `plugins/`
+counted as real coverage — and asked for AST-level import and call analysis so inert strings stop
+counting. Reviewing the fix at frozen revision `6ff49e2d` found the evasion narrowed rather than closed.
+
+**Evidence.** PR #803. The delivered fix removed `visit_Constant`, which closed the docstring shape,
+and added `visit_Assign` / `visit_BinOp` to keep detecting the repo's real
+`SCRIPTS = ROOT / "plugins" / "saga" / "scripts"` idiom. But `visit_Assign` scored any assignment whose
+value subtree merely *contained* a matching substring, so a four-line fake-only module — one inert
+assignment, one `class FakeStore` — still reported clean:
+
+```python
+NOTE = "we deliberately avoid plugins/saga here"
+class FakeStore: ...
+```
+
+`uv run python scripts/lint_test_shape.py <that file>` returned "OK — no fake-only suites" against the
+frozen revision, and "VIOLATION" against the repair.
+
+**Mechanism.** The requirement said "inert strings"; the implementation read it as "docstrings",
+because docstrings were the example the issue happened to name. A docstring is only the most visible
+member of the class — every bare string constant is inert, and moving one into an assignment was
+enough to restore the evasion. The naive tightening (require a path-shaped expression) breaks a real
+case: `tests/test_lint_test_shape.py` pins the repo's `SCRIPTS = 'plugins/saga/scripts'` followed by
+`spec_from_file_location('m', SCRIPTS)`, where the string genuinely does lead to real code. The
+resolution is to split what the assignment does into two jobs that had been fused: it **binds** the
+name as a candidate target either way, but only **scores** as production when the value actually
+constructs a path. The inert string then stays inert, while the loader call that consumes it is still
+caught — at the call, which is where the boundary is really crossed.
+
+**Fix.** Commit on PR #803. `_is_path_expression` gates the score; `_bind_and_note_assignment` keeps
+the binding unconditional. Two fixture-pinned tests hold both directions — the inert assignment must
+stay a violation, and the bare-string-plus-loader idiom must stay production. The same review pass
+removed the dead `_IMPORTLIB_LOADERS` constant the refactor stranded and the unused
+`_FakeWorktreeStore` alias, and re-synchronized three documentation surfaces that had gone on
+describing the pre-#588 behavior: both script module docstrings (which `argparse` serves as `--help`)
+and `docs/testing/golden-fixtures.md`, which still called the now-behavioral fake-to-golden pairing
+"conceptual".
+
+**Validation.** `uv run python scripts/lint_test_shape.py tests plugins --prod-module server` reports
+259 modules and zero violations before and after the tightening, so nothing in the committed suite
+depended on an inert string for its only production signal. Twelve tests in
+`tests/test_lint_test_shape.py` green; the leaf's own selector
+(`-k 'fake_fixtures or test_shape or wiring_canary or worktree_liveness'`) green.
+
+**What surprised.** The exemplar in a requirement quietly becomes the specification. "Inert strings
+(docstrings mentioning `plugins/`, fake-loading `import_module`)" names a class and then two members,
+and the fix closed exactly the two members. Both an implementer and a reviewer can read that as done.
+
+**Generalizable rule.** When an acceptance criterion names a class of input and then gives examples,
+build the counterexample that is in the class but not in the examples before calling it closed. And
+for any detector, keep *recording what a name refers to* separate from *scoring it as evidence* —
+fusing them is what forces the choice between a false negative and a broken real case.
+
+**Refs.** Leaf #588; the lint originates in #458. Companion doc: `docs/testing/golden-fixtures.md`.
+
 ### Dropping an unparseable argument from a static command scan moves every argument after it  {#ownership-lanes-token-position-and-scope-blind-names}
 
 **Context.** `scripts/check_ownership_lanes.py` is the CI gate that stops one plugin lane from reaching into another's `gh` write surface. Issue #583 hardened it three ways: attribute wrapper-shaped calls (`_run_gh(["issue", "create", ...])`), reserve ProjectV2 GraphQL mutations to the board owner, and allow benign read verbs across lanes. Reviewing that hardening found that two of the three new rules were defeated by ordinary code shapes, one of them a step *backwards* from the behavior it replaced.

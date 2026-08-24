@@ -7,15 +7,28 @@ emits. The hazard (``docs/engineering-journal/LEARNINGS.md`` ``{#fake-adapter-hi
 queried path, so every test passed while the real adapter (realpath-canonicalized) diverged.
 
 This checker pins each fake's fixture data to a **golden artifact derived from the real producer**
-and flags **drift** — a golden that was deleted or mutated away from its pinned SHA256. The manifest
-(``tests/fixtures/golden/manifest.json``) records, per golden: the fake that consumes it, the real
-producer that generates it, the file path, and its pinned hash.
+and flags **drift**. The manifest (``tests/fixtures/golden/manifest.json``) records, per golden: the
+fake that consumes it, the real producer that generates it, the file path, and its pinned hash.
+
+Since #588 the fake↔golden pairing is **behavioral, not declarative**: the named fake is looked up
+in ``_CONSUMERS`` and actually run against the golden's bytes. A manifest row naming a fake nobody
+consumes, or a golden the paired fake can no longer parse, is drift in its own right — which is what
+makes the pairing half of this check non-vacuous.
+
+Four drift kinds, all reported by ``--check``:
+
+* ``deleted`` — the golden file named by the manifest is gone.
+* ``mutated`` — the golden's SHA256 no longer matches its pinned hash.
+* ``unpaired`` — no registered consumer exists for the manifest row's ``fake``, so nothing would
+  notice if the golden drifted.
+* ``consumer_failure`` — the registered fake raised while consuming the golden, so the fixture and
+  the fake it backs have diverged.
 
 Modes:
 
-* ``--check`` (default) — recompute each golden's SHA256, flag a missing (deleted) or mismatched
-  (mutated) golden. Strict exit non-zero on drift unless ``--advisory`` (report, exit 0). CI runs it
-  advisory per the facet's advisory rollout.
+* ``--check`` (default) — run all four checks above. Strict exit non-zero on drift unless
+  ``--advisory`` (report, exit 0). CI and ``scripts/gate.sh`` both run it advisory per the facet's
+  advisory rollout.
 * ``--regenerate`` — re-derive each golden from its real producer and rewrite the manifest hash. Run
   this deliberately when the real producer's output legitimately changes.
 """

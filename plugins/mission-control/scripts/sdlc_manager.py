@@ -3849,21 +3849,18 @@ def _resolve_prepare_source(
 
 
 def _parse_draft_frontmatter(text: str) -> tuple[dict[str, str], str]:
-    if not text.startswith("---\n") and not text.startswith("---\r\n"):
+    if not text.startswith("---\n"):
         return {}, text
     end = text.find("\n---\n", 4)
     if end == -1:
-        if text.endswith("\n---"):
-            end = len(text) - 4
-        else:
-            return {}, text
+        return {}, text
     metadata: dict[str, str] = {}
     for line in text[4:end].splitlines():
         if ":" not in line:
             continue
         key, value = line.split(":", 1)
         metadata[key.strip()] = value.strip()
-    return metadata, text[end + 5 :].lstrip() if end + 5 <= len(text) else ""
+    return metadata, text[end + 5 :].lstrip()
 
 
 def _strip_draft_h1(body: str) -> tuple[str | None, str]:
@@ -3882,7 +3879,7 @@ def _strip_frontmatter_and_title(text: str) -> tuple[dict[str, str], str]:
     """Strip all leading YAML front-matter blocks and H1 titles from text."""
     current = text.strip()
     merged_metadata: dict[str, str] = {}
-    while current.startswith("---\n") or current.startswith("---\r\n") or current == "---":
+    while current.startswith("---\n"):
         metadata, remaining = _parse_draft_frontmatter(current)
         if not metadata and remaining == current:
             break

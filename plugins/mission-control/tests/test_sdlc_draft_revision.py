@@ -6,6 +6,8 @@ Covers #785 / U19:
   3. Readiness evaluation of a deliberately doubled draft reports a blocking gap naming the multi-fence shape.
   4. Created issue body contains zero '---' front-matter fences and no duplicated section pairs.
   5. Duplicate H3 sections and H2/H3 duplicate section pairs are blocked by readiness.
+  6. A body carrying the live leak shape is stripped before it reaches GitHub; mid-body
+     contamination is stopped by readiness instead.
 """
 
 # ruff: noqa: E402,I001
@@ -333,6 +335,63 @@ def test_created_issue_body_contains_zero_fences_and_no_duplicate_sections(tmp_p
     body_passed_to_gh = gh_call_args[body_idx]
     assert re.search(r"(?m)^---$", body_passed_to_gh) is None
     assert "### Objective" in body_passed_to_gh
+
+
+def test_created_body_strip_cleans_a_contaminated_body() -> None:
+    """The #770/#772/#773 leak shape: a body carrying a leading front-matter block.
+
+    `_issue_body_for_github` must publish neither the embedded fences nor the
+    embedded H1. Mid-body contamination is out of the stripper's reach by design
+    (it strips leading blocks only) and is caught by readiness instead — asserted
+    here so the division of labour is pinned rather than assumed.
+    """
+    leading_contamination = (
+        "---\ntitle: Leaked Draft\nrepo: hermes-claude-code-router\n---\n\n"
+        "# Leaked Draft\n\n" + OLYMPUS_BODY
+    )
+    issue = sdlc_manager.PreparedIssue(
+        title="Leak shape",
+        repo="hermes-claude-code-router",
+        issue_type="capability",
+        team="campps",
+        project="campps",
+        status="Idea",
+        labels=["capability", "needs-plan"],
+        risk="medium",
+        mode=None,
+        body=leading_contamination,
+        handoff_maturity="requirements-ready",
+    )
+    created_body = sdlc_manager._issue_body_for_github(issue)
+    assert re.search(r"(?m)^---$", created_body) is None
+    assert "# Leaked Draft" not in created_body
+    assert "### Objective" in created_body
+
+    h3_matches = re.findall(r"(?m)^###\s+(.+?)$", created_body)
+    assert len(h3_matches) == len(set(h3_matches))
+
+    # Mid-body contamination survives the leading-only strip, so readiness is the
+    # gate that stops it reaching GitHub.
+    mid_contamination = (
+        OLYMPUS_BODY + "\n---\ntitle: Leaked Draft\n---\n\n# Leaked Draft\n\n### Objective\nDup.\n"
+    )
+    mid_issue = sdlc_manager.PreparedIssue(
+        title="Mid leak shape",
+        repo="hermes-claude-code-router",
+        issue_type="capability",
+        team="campps",
+        project="campps",
+        status="Idea",
+        labels=["capability", "needs-plan"],
+        risk="medium",
+        mode=None,
+        body=mid_contamination,
+        handoff_maturity="requirements-ready",
+    )
+    assert re.search(r"(?m)^---$", sdlc_manager._issue_body_for_github(mid_issue)) is not None
+    mid_readiness = sdlc_manager._readiness_for_prepared_issue(mid_issue)
+    assert mid_readiness.passed is False
+    assert any("multi-fence" in gap for gap in mid_readiness.blocking_gaps)
 
 
 def test_readiness_blocks_duplicate_h3_and_h2_h3_section_pairs(tmp_path: Path) -> None:

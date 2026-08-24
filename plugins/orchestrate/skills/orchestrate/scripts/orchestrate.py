@@ -1579,11 +1579,20 @@ def live_agents(*, timeout: float = 20) -> list[dict[str, Any]]:
 def run_branches(run_id: str) -> list[str]:
     """Every local unit branch of this run, exactly as git records them.
 
-    The list is the discovery source for ``check`` and ``adopt``: a unit branch that exists without
-    a row in the table is work the record lost track of. The run branch itself is excluded by the
-    pattern -- it carries no unit-name suffix, so it can never be mistaken for one.
+    The list is the discovery source for ``check``, ``adopt`` and ``status``: a unit branch that
+    exists without a row in the table is work the record lost track of. The run branch itself is
+    excluded by the pattern -- it carries no unit-name suffix, so it can never be mistaken for one.
+
+    ``check=False`` because ``status`` is a display command and reads this on every poll: a run
+    record left behind in a directory that is no longer a repository made a read-only command exit
+    non-zero on a git error it has no way to act on. ``check`` reaches ``repo_root`` first, so it
+    still fails loudly when git itself cannot answer.
     """
-    proc = run(["git", "branch", "--list", f"orch/{run_id}-*", "--format=%(refname:short)"])
+    proc = run(
+        ["git", "branch", "--list", f"orch/{run_id}-*", "--format=%(refname:short)"], check=False
+    )
+    if proc.returncode != 0:
+        return []
     return [b.strip() for b in proc.stdout.splitlines() if b.strip()]
 
 
@@ -2491,6 +2500,8 @@ def cmd_status(args: argparse.Namespace) -> int:
     print("-" * (sum(widths) + len(widths) - 1))
     for row in rows:
         print(format_row(row))
+    for name, branch in discover_unrecorded(r):
+        print(f"UNRECORDED {name} -- branch {branch} is not a unit in this run")
     if r.review_outcome:
         outstanding_work = any(unit.fix_requests for unit in r.units)
         if r.review_resubmit_pending and outstanding_work and r.operator_fix_requests:

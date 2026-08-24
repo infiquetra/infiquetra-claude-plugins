@@ -34,6 +34,16 @@ ORDERING_RULE = (
 )
 
 
+# The single launch seam and background no-focus invariant contract across both surfaces.
+SINGLE_LAUNCH_SEAM_RULE = (
+    "Never create worktrees manually or invoke `agents` directly",
+    "`--no-focus --current --herdr --herdr-control-only`",
+    "controlled post-launch step",
+    "unrecorded drift",
+    "`adopt --yes`",
+)
+
+
 def _read(relative_path: str) -> str:
     return (PLUGIN_ROOT / relative_path).read_text(encoding="utf-8")
 
@@ -67,6 +77,14 @@ def test_skill_teaches_both_ordering_edges() -> None:
     _assert_all_present(_read(SKILL_PATH), ORDERING_RULE, SKILL_PATH)
 
 
+def test_command_teaches_single_launch_seam_and_no_focus_invariant() -> None:
+    _assert_all_present(_read(COMMAND_PATH), SINGLE_LAUNCH_SEAM_RULE, COMMAND_PATH)
+
+
+def test_skill_teaches_single_launch_seam_and_no_focus_invariant() -> None:
+    _assert_all_present(_read(SKILL_PATH), SINGLE_LAUNCH_SEAM_RULE, SKILL_PATH)
+
+
 def test_json_contract_shows_a_unit_authoring_serialize() -> None:
     plans = _run_plan_examples(_read(COMMAND_PATH))
     assert plans, "the command file lost its run-plan JSON example"
@@ -92,3 +110,11 @@ def test_no_surface_claims_after_is_the_only_ordering() -> None:
         assert "only ordering" not in collapsed, (
             f"{relative_path} still claims `after` is the only ordering"
         )
+
+
+def test_no_surface_authorizes_direct_wrapper_or_manual_worktree_bypass() -> None:
+    for relative_path in SURFACES:
+        collapsed = _collapse(_read(relative_path))
+        assert "not a license to bypass `expand` or `go`" in collapsed or (
+            "does not authorize bypassing `expand` or `go`" in collapsed
+        ), f"{relative_path} does not clearly prohibit bypassing expand or go"

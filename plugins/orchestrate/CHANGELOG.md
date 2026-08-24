@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.20.6] - 2026-08-24
+
+### Fixed
+
+- **Company-account propagation and post-launch verification.** Orchestrate now propagates the
+  operator's account selection through the central launch seam and verifies it after launch.
+  Plan- and unit-level `account` fields (`company` or `personal`) are added to the run schema;
+  selecting `company` emits `--company-account` after the vendor token for Claude units, ensuring
+  the wrapper swaps configuration directories (`~/.claude-company`) before the agent starts.
+  Before any task is submitted, preflight reads the account back off the session: its statusline
+  first — the wrapper exports `CLAUDE_ACCOUNT_LABEL` into the pane and the statusline renders it as
+  `jefcox [company]` — falling back to which transcript root (`~/.claude-company/projects` vs
+  `~/.claude/projects`) holds the session on a machine that does not print it. A worker on the wrong
+  account, an account value other than `company` or `personal`, and an account that cannot be read at
+  all within `ACCOUNT_SETTLE_SECONDS` all close the run-owned session and mark the unit failed with
+  the distinct named state `account_mismatch` (`ACCOUNT_MISMATCH`). The transcript alone is not
+  enough at that moment: Claude writes `projects/<slug>/<id>.jsonl` when the first prompt arrives,
+  which is after preflight runs. A unit that names no account is not checked and is unaffected.
+
 ## [1.20.5] - 2026-08-24
 
 ### Fixed

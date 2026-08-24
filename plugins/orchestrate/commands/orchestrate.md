@@ -316,7 +316,7 @@ python3 "$S" roster                                # what this machine can launc
 python3 "$S" start --plan .orchestrate/plan.json   # run branch, then a branch per unit
 python3 "$S" go                                    # launch everything eligible
 python3 "$S" wait                                  # block until one settles (herdr events)
-python3 "$S" settle                                # idle sessions become done
+python3 "$S" settle                                # sessions with branch evidence become done
 python3 "$S" land                                  # finished units -> the run branch
 python3 "$S" go                                    # the next phase, now able to see their work
 python3 "$S" review-result --file <result.json>     # persist the controller result and route repairs

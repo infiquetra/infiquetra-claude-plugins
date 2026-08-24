@@ -1,6 +1,6 @@
 {
   "name": "saga",
-  "version": "0.139.1",
+  "version": "0.139.2",
   "description": "Infiquetra lifecycle plugin: /outcome DAG orchestration with cross-runtime discovery/handoff, liveness facts, /pulse telemetry, trust-gated engine onboarding, and /fleet-doctor cross-source auditing.",
   "author": {
     "name": "Infiquetra",

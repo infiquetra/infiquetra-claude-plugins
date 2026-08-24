@@ -42,6 +42,105 @@
 
 **Refs.** Issue #782, PR #797, run #787. Related: the gate's own warning that "a shortfall in coverage reports green" (`CLAUDE.md`, Gate Coverage Contract).
 
+### A lease TTL nobody reads is still worth deriving, because the payload is the only surviving record  {#lease-ttl-honest-without-a-reader}
+
+**Context.** #694 asked for the workflow execution lease to outlive the run it guards. By the time
+the unit ran, #677/U4 had deleted the fleet lease broker, so the question changed shape: with no
+enforcer left, is a wrong TTL still a defect? The plan (`docs/plans/2026-08-24-defects-claude-plugins-run-plan.md`,
+section U8) required a consumer sweep as the unit's first step precisely so the answer would rest on
+evidence rather than on the shape of the original card.
+
+**Evidence.** Pull request 795, commit `af773879`. The sweep, re-run at that revision, covers both
+halves the plan named and both come back empty:
+
+- *Teardown and release results.* `plugins/saga/scripts/workflow_emitter.py:141-160` — `renew` and
+  `release` each validate the contract and `return ()` unconditionally since #677/U4. The `/work`
+  skill invokes both (`plugins/saga/skills/work/SKILL.md:421` and `:429`) and consumes neither
+  return value; the surrounding prose already documents them as reporting an empty result.
+- *Readers of `execution_ttl_seconds` itself.* A repository-wide grep finds the producer
+  (`plugins/saga/scripts/execution_spec.py:3682`), the closed-key set and positivity check in the
+  emitter (`workflow_emitter.py:34` and `:95`), tests, and prose. Nothing treats the value as a
+  hold duration, and no saga reference document or skill states a TTL number at all.
+
+**Mechanism.** Zero readers is an argument about enforcement, not about truthfulness. The emitted
+`workflow_lease_reservation.v1` payload is now the *only* durable statement of what the run intended
+to hold, and `.saga/workflow-lease-*.json` files persist after the run — the artifact
+`{#workflow-lease-ttl-outlives-no-poll-contract}` reconstructed the #686 incident from. A payload
+that records `300` for a 32-minute run does not fail an assertion; it misinforms the next
+investigation, which is the failure mode that incident actually suffered.
+
+**Fix.** Shape (a): `execution_ttl_seconds` is derived at emit time as
+`max(900, 300 × multiplicity_aware_unit_count)` (`execution_spec.py:3669`), replacing the literal.
+The 900-second floor is leaf #694's 10-minute acceptance criterion plus a named five-minute margin,
+so a one-unit spec still clears the criterion. `claim_ttl_seconds` is unchanged.
+The leaf's third acceptance criterion — that teardown distinguish "released held leases" from
+"nothing to release" — is **dropped explicitly** on the first sweep result above: with no broker and
+no consumer, there is no distinguishable result left to pin.
+
+**Validation.** 619 tests green across `test_saga_execution_spec.py`, `test_saga_workflow_emitter.py`,
+`test_saga_plugin.py`, `test_workflow_emitter.py`, and `test_concurrency_conformance.py`. Mutation
+proof runs both ways: reverting to the literal `300` **and** weakening the floor to
+`max(300, 300 × count)` each fail `test_workflow_lease_held_past_ten_minute_mark` at
+`assert 300 >= 600`. Emission stays deterministic — the TTL is a pure function of the spec, pinned by
+the `first == replay` assertion at `tests/test_saga_workflow_emitter.py:79`.
+
+**What surprised.** The sweep's empty result was pre-registered as an argument for the *opposite*
+fix. DECISIONS `{#defects-run-plan-ktds-787}` forecast that zero consumers would make retiring the
+payload "the truthful fix". Running the sweep inverted that reading rather than confirming it: the
+value's audience turned out to be a human reading a persisted artifact after the fact, and a grep
+for consumers cannot see that audience because it never appears as a caller.
+
+**Generalizable rule.** Before retiring a field because nothing reads it, ask who reads the
+*artifact* — persisted payloads have human readers that no consumer sweep can find. A record kept
+honest is cheaper than a record explained away later.
+
+**Refs.** LEARNINGS `{#workflow-lease-ttl-outlives-no-poll-contract}` (the #686 incident this
+closes), DECISIONS `{#defects-run-plan-ktds-787}` and
+`{#lease-ttl-payload-kept-after-zero-consumer-sweep}`; issue #694; pull request 795.
+### Process idleness is not task completion: settlement must verify branch evidence  {#idleness-is-not-completion}
+
+**Context.** Orchestrate's `settle` previously inferred `done` from Herdr pane idleness across two
+samples, and `failed` from session absence. In three real incidents across Team Mimir runs, this
+produced wrong outcomes in both directions: a stale `done` predating a supplemental prompt was
+accepted as finished, a stuck unit with a SIGTTIN-suspended background child was classified as done
+six times, and a finished unit whose commits had already landed was marked `failed` when its Herdr
+session was closed during operator cleanup.
+
+**Evidence.** Issue #780. Transcripts
+`~/.claude/projects/-Users-jefcox-workspace-infiquetra-team-mimir/6990cc3c-4d53-46ee-a714-6bfa04b91418.jsonl`
+line 1894 and `b31ec85e-82d5-4a00-aa18-e82cc22b2284.jsonl` lines 6569, 6678 (2026-08-23).
+`plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py:2526`. orchestrate 1.20.3.
+
+**Mechanism.** Herdr pane idleness only indicates that the foreground shell or process tree is
+waiting for input (which occurs between turns while an agent thinks, or when a child process is
+suspended), not that the task produced any completed work. Conversely, session absence only means
+the interactive process terminated, not that its work failed — work committed to git or merged
+survives the session. Inferring task success or failure from process presence conflates container
+lifecycle with artifact truth.
+
+**Fix.** Gate settlement on repository truth via `produced_anything` (mirroring `cmd_check`). An
+idle session with no commits on its branch stays `running` (unsettled); a closed/gone session whose
+branch contains commits settles `done` (never `failed`); and a session gone without commits yields a
+distinct `orphaned` state (`orphaned`).
+
+**Second-order trap found in review of this same change.** An evidence gate has a domain, and
+applying it outside that domain re-creates the defect it was built to remove. `produced_anything`
+reads a *branch*, and it answers `False` for two units that did nothing wrong: one with no branch
+of its own (the review controller carries `merge: false` and delivers its result through
+`review-result`), and one whose run branch does not resolve, where the count is unknown rather than
+zero. Gating both on commits wedged the review controller at `running` for the life of the run —
+no commit can ever appear on a branch a unit does not have, and `land` returns the controller to
+`running` on every resubmission — and wrote the note "session disappeared without commits" onto a
+unit whose commits the code had not looked at. `go` refuses outright on an unresolvable run branch
+and `adopt`/`clean` warn that branch-dependent checks are unavailable; settle now draws the same
+distinction instead of collapsing it.
+
+**Generalizable rule.** Task outcome must be read from produced artifacts, not process lifecycle.
+An idle process is not a successful task, and a terminated process is not a failed one; always gate
+lifecycle settlement on output evidence rather than container or pane state — and gate only the
+subjects the evidence probe can actually read, because "I could not check" and "there is nothing"
+are different answers, and a probe that returns the second for the first is the original defect
+wearing the fix's clothes.
 ### A non-negative contract has to be enforced at every entry chokepoint, not just the date one  {#retry-after-negative-clamp}
 
 **Context.** `parse_retry_after` in `fleet_commons.retry_backoff` was designed to reduce both RFC 7231 `Retry-After` formats (delta-seconds and HTTP-date) to a non-negative delay in seconds. While the HTTP-date path clamped past dates to `0.0` ("retry now, never a negative delay"), the delta-seconds path returned negative values unchanged for negative header values (e.g. `-5`, `-120`). Callers presenting delay advice in typed 429 exceptions then displayed confusing negative wait times to operators.
@@ -3435,7 +3534,16 @@ duration of the work it protects, not the expected one. And when a teardown call
 collection, treat that as an unanswered question rather than a success — prove where the resources
 went before calling it clean.
 
-**Refs.** [[verdict-contract-has-three-prompt-surfaces]], `plugins/saga/skills/work/SKILL.md` §1.5,
+**Resolved 2026-08-24.** Shape (a) shipped as issue #694 / pull request 795 (commit `af773879`):
+`execution_ttl_seconds` is derived at emit time rather than fixed at 300. Shape (b) — the in-run
+lease keeper — was overtaken by #677/U4, which deleted the broker entirely; there is no longer
+anything to renew. See LEARNINGS [[lease-ttl-honest-without-a-reader]] for the consumer sweep that
+settled the choice.
+
+**Refs.** [[verdict-contract-has-three-prompt-surfaces]],
+[[lease-ttl-honest-without-a-reader]],
+DECISIONS `{#lease-ttl-payload-kept-after-zero-consumer-sweep}`,
+`plugins/saga/skills/work/SKILL.md` §1.5,
 `plugins/saga/scripts/workflow_emitter.py:191-206`.
 
 ### A verdict contract had FOUR prompt surfaces; the plan enumerated two  {#verdict-contract-has-three-prompt-surfaces}

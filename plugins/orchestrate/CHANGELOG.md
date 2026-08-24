@@ -1,5 +1,37 @@
 # Changelog
 
+## [1.20.7] - 2026-08-24
+
+### Changed
+
+- **Waiting patterns and execution guard guidance.** Pre-teach supported waiting mechanisms across
+  three common waiting shapes in `SKILL.md` (`## Waiting, and empty dependencies`) to prevent
+  guard-blocked sleep polling attempts. Documents: (1) sibling Herdr agent output and unit settlement
+  via `orchestrate.py wait`, `herdr agent wait`, and `herdr pane wait-output`; (2) pull request checks
+  and external asynchronous state via `gh pr checks --watch` run detached under `Monitor` or
+  `run_in_background`; and (3) session-started commands via `run_in_background` with log redirection
+  and a completion notification, never a foreground `wait "$PID"`. Includes copy-pasteable examples
+  for each shape and an explicit "never chained sleep in a foreground turn" rule.
+
+## [1.20.6] - 2026-08-24
+
+### Fixed
+
+- **Company-account propagation and post-launch verification.** Orchestrate now propagates the
+  operator's account selection through the central launch seam and verifies it after launch.
+  Plan- and unit-level `account` fields (`company` or `personal`) are added to the run schema;
+  selecting `company` emits `--company-account` after the vendor token for Claude units, ensuring
+  the wrapper swaps configuration directories (`~/.claude-company`) before the agent starts.
+  Before any task is submitted, preflight reads the account back off the session: its statusline
+  first — the wrapper exports `CLAUDE_ACCOUNT_LABEL` into the pane and the statusline renders it as
+  `jefcox [company]` — falling back to which transcript root (`~/.claude-company/projects` vs
+  `~/.claude/projects`) holds the session on a machine that does not print it. A worker on the wrong
+  account, an account value other than `company` or `personal`, and an account that cannot be read at
+  all within `ACCOUNT_SETTLE_SECONDS` all close the run-owned session and mark the unit failed with
+  the distinct named state `account_mismatch` (`ACCOUNT_MISMATCH`). The transcript alone is not
+  enough at that moment: Claude writes `projects/<slug>/<id>.jsonl` when the first prompt arrives,
+  which is after preflight runs. A unit that names no account is not checked and is unaffected.
+
 ## [1.20.5] - 2026-08-24
 
 ### Fixed

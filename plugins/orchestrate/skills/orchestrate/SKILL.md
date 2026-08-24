@@ -111,7 +111,7 @@ Operator-owned requests prevent that resubmission.
 ## State
 
 One file, `.orchestrate/run.json`: run id, source, base commit, the verbatim review result and routing
-state, and per unit its name, vendor, model, effort, task, role, owned paths, outstanding fix requests,
+state, and per unit its name, vendor, model, effort, account, task, role, owned paths, outstanding fix requests,
 dependencies, worktree, branch, tab, Herdr agent name, status, `variant`, and `launch_receipt`. If
 session state is wrong, `herdr agent list` is the real truth.
 
@@ -145,6 +145,27 @@ The agent wrapper's `--workspace` takes a **name**, not an ID: handed an ID it c
 workspace called that rather than joining the one you meant. Do not pass it through `launch_args` —
 that position is after the vendor token, and a live run that did so lost the session into the
 caller's workspace.
+
+## Accounts
+
+An explicit operator account selection survives into every worker launch and is verified post-launch.
+The run's `account` field (`company` or `personal`) is the default every unit inherits; a unit may set
+its own `account` and that wins. There is no other precedence.
+
+For Claude units, selecting `company` emits `--company-account` after the vendor token, directing the
+wrapper to swap configuration directories (`~/.claude-company`) before launching. The field is Claude-only
+today: other vendors ignore it, and a vendor-specific account flag goes in that unit's `launch_args`.
+
+**Post-launch account verification.** Before the task is submitted, Orchestrate reads the session's own
+statusline off the pane, which reports the account the wrapper put the session on (`jefcox [company]`
+against a plain `jefcox`). Where a machine does not print that, it falls back to which transcript root
+(`~/.claude-company/projects` vs `~/.claude/projects`) holds the session. If the account read back is not
+the one the plan asked for — or if no account can be read at all within `ACCOUNT_SETTLE_SECONDS` —
+Orchestrate closes the run-owned session and marks the unit launch failed with the named state
+`account_mismatch`, never allowing a unit to silently run under the wrong account. A plan naming an
+account value other than `company` or `personal` fails the same way rather than quietly launching
+under whatever the environment defaults to. A unit that sets no `account` is not checked and keeps
+today's behaviour.
 
 ## Agents
 
@@ -183,7 +204,7 @@ when it has none. An exact name must appear in the live picker or the launch sto
 actually offered*, which on Muse is `xhigh` rather than a literal `max`.
 
 **A launch receipt records what was checked, not what was asked for.** Each unit's `launch_receipt`
-carries the provider, model, variant, working directory, worktree, workspace, pane and readiness it
+carries the provider, model, variant, account, working directory, worktree, workspace, pane and readiness it
 launched with, plus `confirmed_against_herdr` and `requested_only` naming which of those were held
 against `herdr agent list` and which were not. `herdr agent list` publishes `cwd`, `workspace_id`
 and `interactive_ready` per session and **publishes no model at all**, so a model is always
@@ -209,12 +230,66 @@ opencode. A bare `/plan` is a command nowhere and arrives as prose.
 
 ## Waiting, and empty dependencies
 
-`orchestrate.py wait` subscribes to herdr's event socket and blocks until one of the running units
-settles — nothing is polled for the wake, but a single `idle` is not a settlement. An agent is also
-idle between turns, so `wait` confirms across consecutive observations the same way `settle` does
-(`--interval`, `--confirmations`, `--once`). `blocked` returns on the first sighting and is named.
-Subscriptions are keyed by pane, which is why a unit records its `pane_id` at launch; if the socket
-is unreachable it falls back to one `herdr agent wait` per unit, under the same confirmation rule.
+**Three supported waiting shapes.** When an agent session needs to wait for work in flight, use the
+supported mechanism for the specific waiting shape. Follow the explicit rule: **never chained sleep**
+polling in a foreground turn (for example, `sleep 25 && gh pr checks` or `sleep 45 && herdr agent
+read`). The execution guard intercepts and rejects chained sleep commands immediately, costing a
+turn per occurrence, and its own remedy is to wait through a mechanism that blocks somewhere other
+than the turn — a native wait, a Monitor, or a backgrounded run whose completion notifies the
+session. Use the supported pattern instead:
+
+1. **Sibling Herdr agent output or unit settlement:** For whole-unit settlement waits across an
+   orchestration run, use `orchestrate.py wait` (described below). For a specific sibling Herdr
+   session or pane, use Herdr's native `herdr agent wait` or `herdr pane wait-output`. Both wait
+   indefinitely without `--timeout`, so pass one. `herdr agent wait` returns on a single `idle`,
+   which an agent also shows between turns — for settlement rather than a pause, prefer
+   `orchestrate.py wait`, which confirms the reading before it believes it.
+
+   ```bash
+   # Wait for any running unit in the orchestration to settle
+   python3 "$S" wait
+
+   # Or wait for a specific sibling Herdr session to settle
+   herdr agent wait worker-session-name --timeout 600000
+
+   # Or wait for a pane to match a specific output pattern
+   herdr pane wait-output "$PANE_ID" --match "UNIT-DONE" --timeout 600000
+   ```
+
+2. **Pull request checks and external asynchronous state:** `gh pr checks` waits natively with
+   `--watch`, so no poll loop is written at all. Run it detached — a `Monitor`, or a Bash call with
+   `run_in_background` — and let its completion notify the session. Read the exit status, never the
+   output text: without `--watch`, `gh pr checks` exits `0` when every check passed, `1` when one
+   failed and `8` while any is still pending, whereas grepping the table for `pending` reports
+   success the moment a single check passes.
+
+   ```bash
+   # Detached; blocks inside gh until every required check finishes. Exit 0 all passed, 1 a failure.
+   gh pr checks "$PR_NUMBER" --required --watch --fail-fast
+   ```
+
+3. **A command the session itself started:** Start it detached with `run_in_background` and let the
+   completion notification wake the session; read its result from the log or result marker
+   afterwards. Never `wait "$PID"` — that blocks the turn for the command's whole duration, which is
+   the foreground wait backgrounding was meant to avoid, and a long gate run then dies on the tool
+   timeout instead of finishing.
+
+   ```bash
+   # Started with run_in_background; the session is notified when it exits.
+   GATE_LOG_DIR=/tmp/gate-run bash scripts/gate.sh > /tmp/gate.log 2>&1
+
+   # Afterwards, read the outcome rather than re-running it
+   cat /tmp/gate-run/result.txt
+   ```
+
+**Settlement waits with `orchestrate.py wait`.** `orchestrate.py wait` subscribes to herdr's event socket
+and blocks until one of the running units settles — nothing is polled for the wake, but a single `idle`
+is not a settlement. An agent is also idle between turns, so `wait` confirms across consecutive
+observations the same way `settle` does (`--interval`, plus `--confirmations` on `wait` and `--once`
+on `settle`). `blocked` returns on
+the first sighting and is named. Subscriptions are keyed by pane, which is why a unit records its `pane_id`
+at launch; if the socket is unreachable it falls back to one `herdr agent wait` per unit, under the same
+confirmation rule.
 
 **Evidence-based settlement.** `orchestrate.py settle` marks running units `done` only when there
 is completion evidence on the unit branch (`produced_anything`). A session that is merely idle

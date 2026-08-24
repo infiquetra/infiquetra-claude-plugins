@@ -52,6 +52,35 @@ watching that one test, and only that test, go red.
 **Refs.** LEARNINGS `{#dedup-key-test-varies-old-discriminator-598}` (the sibling failure: a test that
 varies the wrong axis proves a format, not a behavior), DECISIONS `{#verify-panel-odd-n-quorum-policy-692}`.
 
+### A test that resolves a real tool passes on the machine that has it and nowhere else  {#hermetic-launcher-resolution-in-tests}
+
+**Context.** Issue #781, PR #805. `tests/test_orchestrate_account.py::TestAccountSchemaAndLifecycle::test_start_loads_plan_account` and `::test_expand_updates_run_account` were green on the workstation and red on the CI runner with `SystemExit: no 'agents' on PATH`.
+
+**Evidence.** `cmd_start` and `cmd_expand` call `assert_vendors_available` -> `roster()` -> `launcher()`, and `launcher()` raises when `shutil.which` cannot resolve the wrapper. The module already had a `launcher_on_path` fixture pointing `ORCHESTRATE_AGENT_LAUNCHER` at a stub, but only four of its five test classes used it; the lifecycle class did not, and passed anyway because `/Users/jefcox/.local/bin/agents` exists here. Reproduced locally by stripping that one directory from `PATH`: exactly those two tests fail, the other 28 pass.
+
+**Mechanism.** The absent fixture was invisible precisely because the machine supplied what it should have supplied. A test whose setup is completed by the developer's environment reports the environment, not the code, and the report is only wrong somewhere else. The same family as #792, where a help-text assertion passes at the author's terminal width and fails in a narrow pane.
+
+**Fix.** Applied `launcher_on_path` to the lifecycle class, and gave its stub a real `Tools:` block -- a stub that printed nothing would leave `roster()` empty and `assert_vendors_available` returns without checking on an empty roster, so the test would have passed for the wrong reason. Added a `pane_reads_nothing` fixture so the transcript-probe tests stop reaching whatever `herdr` the machine has. Proven three ways: `PATH` intact, the wrapper directory stripped from `PATH` (both `agents` and `herdr` absent), and that plus `USER`/`LOGNAME` unset -- 30 passed in each.
+
+**Generalizable rule.** When a module-level fixture exists to substitute for an installed tool, every class in that module needs it, not the ones that were observed failing -- and prove it by running with the tool removed from the environment, because the machine that wrote the test is the one machine that cannot detect its absence. A substitute must also answer the questions the real tool answers; one that answers nothing can trip a "cannot check" escape hatch and turn a skipped check into a green test.
+
+**Refs.** Issue #781, PR #805, issue #792 (same family, still open); {#orchestrate-account-evidence-timing}.
+
+### A launch-time account check has to read the statusline, because the transcript is not written yet  {#orchestrate-account-evidence-timing}
+
+**Context.** Issue #781: four Orchestrate workers launched from a company-account coordinator on 2026-08-23 all came up on the personal account — wrong billing and rate-limit pool, a different plugin tree, transcripts under the wrong identity, and invisible until someone checked where the transcripts landed. The fix adds a plan-level `account` field, emits `--company-account` for Claude units, and verifies the account before the task is submitted.
+
+**Evidence.** The first version of that verification probed the transcript roots (`~/.claude/projects` vs `~/.claude-company/projects`) for a `*.jsonl` belonging to the unit's worktree. It never fires. `launch()` calls `verify_unit_preflight` before `send()`, and Claude creates `projects/<slug>/<session-id>.jsonl` when the **first prompt arrives**, not at startup: in this repo's own review worktree the project directory `~/.claude-company/projects/-Users-jefcox-workspace-infiquetra-rev-781/` was born at 09:49:47 and its transcript at 09:50:14, 26.8 seconds later; the same ordering held for `rev-780` (+3s), `rev-779` (+45s) and eight of twelve sampled sessions (+10–30s), and `-Users-jefcox-workspace-infiquetra-infiquetra-claude-plugins/b6ef4122-dd5a-46b9-9301-573a7e720a66/` is a session directory with no transcript at all. So both roots are empty at preflight, the check returns "cannot tell", `account` lands in `requested_only`, the receipt still reads `verified: true`, and the task goes to a worker whose account was never established — the 2026-08-23 failure, reproduced unflagged.
+
+**Mechanism.** The evidence a launch-time check needs must exist at launch time. A transcript is a record of work; it cannot predate the work. What does exist the moment the session is interactive is the session's own statusline: `~/.local/bin/agent-herdr` runs `export CLAUDE_CONFIG_DIR=… CLAUDE_ACCOUNT_LABEL=company` in the pane before starting the tool (`_configure_claude_company_account`), and `~/.claude/statusline-command.sh:778-780` renders that as ` [company]` beside the user. Read off a live pane: `jefcox [company]:/infiquetra/rev-781 (review/781)`.
+
+**Fix.** `pane_account_label()` reads the account off the pane's visible rows through the existing `herdr pane read` seam, `transcript_account()` keeps the root probe as the fallback for a machine that does not print it, and `observed_account()` spends `ACCOUNT_SETTLE_SECONDS` before giving up. An account that reads back wrong, an account value the script does not know, and an account that cannot be read at all are all `account_mismatch`: the session is closed and no task is submitted.
+
+**Validation.** `tests/test_orchestrate_account.py` — 29 tests, including the 2026-08-23 incident at the moment preflight actually runs (personal statusline, no transcript on either root), an unreadable account treated as a stop rather than a pass, and a stale transcript under the other root losing to the live statusline.
+
+**Generalizable rule.** Before writing a check, ask when its evidence comes into existence relative to when the check runs. A probe for evidence that arrives later does not fail — it returns "unknown", which is indistinguishable from "fine" unless you make unknown a stop. Extends {#opencode-variants-picker-live-resolution}: that entry's rule was to write a check against fields the source actually publishes; this one is to write it against evidence the source has published *yet*.
+
+**Refs.** Issue #781, PR #805; {#opencode-variants-picker-live-resolution}.
 ### A dedup-key test that changes the OLD discriminator too proves the key's format, never its behavior  {#dedup-key-test-varies-old-discriminator-598}
 
 **Context.** Leaf #598 item 1: the strand-halt ledger dedup key `repost:<scope>` was eternal, so a

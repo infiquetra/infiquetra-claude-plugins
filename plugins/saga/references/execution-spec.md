@@ -167,6 +167,13 @@ advisories from earlier units do not bleed into a later unit's halt). The harnes
 `advisory_corrections` return value retains the full run-wide list keyed by unit. A caller handling
 a failed run should read unit advisories from the thrown error.
 
+That filter is a deliberate trade, not an oversight. Because a halt skips the top-level return,
+advisories from units that already delivered are **unreachable on a halting run** — the thrown error
+carries the halting unit's and nothing else. Correct attribution was judged worth more than a
+run-wide record the consumer had to re-key by hand; the run-wide list still survives every run that
+completes. The one emitted `throw` that omits the unit id is the run-level pull-cord batch, which
+names every unit that pulled a cord and so stays run-wide by design.
+
 ### Runtime ladder climbing (#364): `escalate_on_signal` + `pull_cord`
 
 A unit may set `"escalate_on_signal": true` (requires a verify panel — the refute is the signal).

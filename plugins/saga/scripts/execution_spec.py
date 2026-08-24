@@ -783,6 +783,14 @@ function __renderAdvisory(a) {
   if (tail >= 0xd800 && tail <= 0xdbff) t = t.slice(0, -1)
   return t
 }
+// #691: attach the HALTING unit's advisories, not the run-wide accumulator -- a driver that
+// reads this off a halt would otherwise act on advice about units that already settled. Two
+// callers, two contracts: pass a REAL unit id for a unit-scoped throw, or omit it entirely for
+// the run-level pull-cord batch, which names every unit that pulled a cord and so must stay
+// run-wide. Do NOT "complete" this by threading a unit id into that batched throw -- it would
+// silently drop every cord-pulling unit's advisories but one, and no test covers it. Omitted is
+// the only supported way to ask for the whole list: any truthy non-unit string (`__gate`'s
+// `opts.unitId || "unknown"` default) filters to an empty array instead of falling back.
 function __halt(message, unitId) {
   var e = new Error(message)
   e.advisory_corrections = unitId

@@ -21,6 +21,27 @@
 
 ## 2026-08-24
 
+### A stable result marker is a false-green machine unless the run clears it first  {#gate-result-marker-staleness-and-trap-deferral}
+
+**Context.** `scripts/gate.sh` gained a stable result marker (`$LOG_DIR/result.txt`) so a backgrounded 24-step gate run — which reliably outlives the Bash tool's 600-second foreground timeout — can report its outcome without scraping a live terminal (#782). `CLAUDE.md` documents the invocation with a fixed, reused `GATE_LOG_DIR=/tmp/gate-run`, and tells the operator to read the outcome with `cat /tmp/gate-run/result.txt`.
+
+**Evidence.** PR #797, review of frozen revision `2a7246a0`. Reproduction: seed `result.txt` with a previous run's `GATE GREEN`, start a fresh gate into the same `GATE_LOG_DIR`, `kill -9` it, then `cat result.txt` — it printed `GATE GREEN — 24 steps ran, 0 blocking failures, 0 uncovered.` for a run that never reached step 3. Separately, a stand-in script trapping `TERM` around an eight-second child measured **7.71 seconds** between the signal and the handler running; signalling the process group instead measured **0.00 seconds**.
+
+**Mechanism.** Two independent causes, both about *when* a marker is written rather than *whether* it is.
+
+1. The marker was only ever written on a terminal verdict or by a trap. A signal that cannot be trapped (`SIGKILL`, OOM, reboot) skips both, so the file keeps holding the *previous* run's verdict — and the reused log directory is what the documentation recommends. An in-flight run has the same shape: the marker present on disk describes an older run.
+2. bash defers a trap handler until the foreground command it is `wait`ing on returns. Sending `SIGTERM` to `gate.sh` alone therefore does nothing visible until the running step (`uv run pytest`, `git fetch origin main`) finishes. The harness kill that motivated #782 produced its `exit 143` promptly only because it killed the whole process group, so the child died first.
+
+**Fix.** `rm -f "$RESULT_FILE"` immediately after the log-directory precondition, so absence means "still running or killed outright" and never "green"; `CLAUDE.md` states that reading. The dev-toolchain precondition now writes `GATE PRECONDITION FAILED — dev toolchain not installed: …` instead of leaving the generic exit-trap text to call a precondition failure an interruption. `tests/test_gate_invocation.py` starts the gate with `start_new_session=True` and signals via `os.killpg`, with a `try/finally` group kill — previously a `proc.wait(timeout=5)` that would expire whenever the signal landed inside a real step, erroring the test *and* orphaning a full 24-step gate inside CI.
+
+**Validation.** All four reproductions re-run against the repaired script: the seeded `GATE GREEN` no longer survives a `kill -9` (marker absent, as intended); the precondition marker names the missing tools; `tests/test_gate_invocation.py` passes 4/4 in 0.23 s; `bash -n scripts/gate.sh` clean.
+
+**What surprised.** The marker made the failure mode *worse* than no marker at all. Before it existed, an operator had to read the log and could see the run was truncated. After it existed, a confident one-line `GATE GREEN` was sitting in the documented location, attributable to the wrong run.
+
+**Generalizable rule.** A status file that is only written at the end encodes the last run that *finished*, not the run you are asking about. Clear or stamp it at the start, so a missing or in-progress marker is unmistakable — and never let a durable "green" outlive the run that earned it.
+
+**Refs.** Issue #782, PR #797, run #787. Related: the gate's own warning that "a shortfall in coverage reports green" (`CLAUDE.md`, Gate Coverage Contract).
+
 ### A lease TTL nobody reads is still worth deriving, because the payload is the only surviving record  {#lease-ttl-honest-without-a-reader}
 
 **Context.** #694 asked for the workflow execution lease to outlive the run it guards. By the time

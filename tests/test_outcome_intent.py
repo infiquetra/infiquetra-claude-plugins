@@ -737,6 +737,65 @@ def test_live_set_intent_attach_passes_monotonic_validation(repo: Path, tmp_path
     assert fresh.decision_trail[-1]["live"] is False
 
 
+def test_live_set_intent_does_not_carry_frontier_approval_forward(
+    repo: Path, tmp_path: Path
+) -> None:
+    # Asymmetry pin beside {#one-transition-one-validator-433} / #598 item 2:
+    # A live pure-tightening `repost` carries existing frontier approval forward with explicit
+    # provenance ("carried-forward:tightening-repost:r<old>"), but a live `set_intent` first-attach
+    # bumps spec_revision WITHOUT carrying approval forward. This asymmetry is conservative
+    # (requires one manual re-approval, never skips one) and matches SKILL.md ("re-approve before
+    # the next dispatch").
+    _start(
+        repo,
+        "camp",
+        [
+            {"subplot_id": "a", "title": "A", "kind": "code"},
+            {"subplot_id": "b", "title": "B", "kind": "code", "depends_on": ["a"]},
+        ],
+    )
+    store = _store(repo, "camp")
+    DEC.approve_frontier(store, M.load_spec(repo, "camp"))
+    assert DEC.frontier_approved(store, 1) is True
+
+    # Dispatch 'a' — campaign becomes live.
+    gate_factory = lambda s, st: DEC.make_dispatch_gate(st, s)  # noqa: E731
+    assert M.advance(repo, "camp", dispatcher=_auto, gate_factory=gate_factory).dispatched == ["a"]
+
+    # Now attach a pure-tightening envelope to the live campaign.
+    tightening_env = tmp_path / "tightening.json"
+    tightening_env.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "run_mode": "attended",
+                "ceremony_gates": {"reviews_required": "gate"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    spec = M.set_intent(repo, "camp", tightening_env)
+    assert spec.spec_revision == 2
+    # The new revision is NOT approved — frontier approval was not carried forward.
+    assert DEC.frontier_approved(store, 2) is False
+
+    # Simulate 'a' completing so 'b' becomes ready.
+    STORE.write_completion_event(
+        store, STORE.CompletionEvent(subplot_id="a", state="done", idempotency_key="k:a")
+    )
+    ORCH.harvest(spec, store=store, repo_root=repo)
+
+    # Advance gates 'b' because revision 2 is unapproved.
+    held = M.advance(repo, "camp", dispatcher=_auto, gate_factory=gate_factory)
+    assert held.dispatched == [] and "b" in held.gated
+
+    # Once operator re-approves revision 2, 'b' dispatches.
+    DEC.approve_frontier(store, M.load_spec(repo, "camp"))
+    assert DEC.frontier_approved(store, 2) is True
+    released = M.advance(repo, "camp", dispatcher=_auto, gate_factory=gate_factory)
+    assert released.dispatched == ["b"]
+
+
 def test_mid_dispatch_intent_record_counts_as_live(repo: Path, tmp_path: Path) -> None:
     # A bare intent-phase dispatch record (the mid-dispatch window) already makes the
     # campaign LIVE for the attach rule — fail closed, same as the strand check.
@@ -951,11 +1010,108 @@ def test_repeated_stranded_repost_appends_once(repo: Path) -> None:
         if r.get("phase") == "halt" and r.get("kind") == "repost"
     ]
     assert len(strand_records) == 1
+    assert strand_records[0]["key"] == "repost:deploy:r1"
     # Control: the dedup discriminates by scope — a strand halt for a DIFFERENT leaf appends.
     AE.raise_strand_halt(env, scope="other-leaf", reason="different strand")
     envelope2 = AE.load(env)
     assert envelope2 is not None
     assert len([d for d in envelope2.directives if d.directive == "andon_halt"]) == 2
+
+
+def test_strand_halt_dedup_key_generation_lifecycle(repo: Path) -> None:
+    # #598 item 1: the strand-halt dedup key carries a lifecycle/generation component
+    # (repost:<scope>:r<revision>) so a second genuine strand event on the same campaign
+    # after the first resolves appends a new durable ledger record.
+    _start(
+        repo,
+        "camp",
+        [
+            {"subplot_id": "deploy1", "title": "Deploy 1", "kind": "code", "destructive": True},
+            {
+                "subplot_id": "deploy2",
+                "title": "Deploy 2",
+                "kind": "code",
+                "destructive": True,
+                "depends_on": ["deploy1"],
+            },
+        ],
+    )
+    store = _store(repo, "camp")
+    env = _env_path(repo)
+    assert M.advance(repo, "camp", dispatcher=_auto).dispatched == ["deploy1"]
+
+    # First strand at revision 1: attempt tightening repost while deploy1 is in flight.
+    spec = M.load_spec(repo, "camp")
+    assert spec.spec_revision == 1
+    with pytest.raises(OI.RepostStrandedError):
+        OI.repost(
+            spec,
+            store,
+            changes={"sandbox": "read-only-verify"},
+            scope="deploy1",
+            reason="tighten sandbox wave 1",
+            envelope_path=env,
+        )
+    # Repeated attempt at same revision dedups.
+    with pytest.raises(OI.RepostStrandedError):
+        OI.repost(
+            spec,
+            store,
+            changes={"sandbox": "read-only-verify"},
+            scope="deploy1",
+            reason="tighten sandbox wave 1 repeat",
+            envelope_path=env,
+        )
+    strand_records_r1 = [
+        r
+        for r in STORE.read_ledger(store)
+        if r.get("phase") == "halt" and r.get("kind") == "repost"
+    ]
+    assert len(strand_records_r1) == 1
+    assert strand_records_r1[0]["key"] == "repost:deploy1:r1"
+
+    # Resolve first strand: clear the andon directive and complete deploy1.
+    AE.clear(env)
+    STORE.write_completion_event(
+        store, STORE.CompletionEvent(subplot_id="deploy1", state="done", idempotency_key="k:dep:1")
+    )
+    ORCH.harvest(spec, store=store, repo_root=repo)
+
+    # Now the flight is done, apply a valid posture repost to advance the campaign revision.
+    spec2 = M.load_spec(repo, "camp")
+    OI.repost(
+        spec2,
+        store,
+        changes={"run_mode": "unattended"},
+        reason="switch to unattended mode",
+        envelope_path=env,
+    )
+    M.save_spec(repo, spec2)
+    spec_r2 = M.load_spec(repo, "camp")
+    assert spec_r2.spec_revision == 2
+
+    # Dispatch second wave: deploy2 is now in flight under revision 2.
+    assert M.advance(repo, "camp", dispatcher=_auto).dispatched == ["deploy2"]
+
+    # Second strand event at revision 2 on deploy2:
+    with pytest.raises(OI.RepostStrandedError):
+        OI.repost(
+            spec_r2,
+            store,
+            changes={"sandbox": "read-only-verify"},
+            scope="deploy2",
+            reason="tighten sandbox wave 2",
+            envelope_path=env,
+        )
+
+    # Durable ledger has TWO distinct records, one per generation/revision!
+    all_strand_records = [
+        r
+        for r in STORE.read_ledger(store)
+        if r.get("phase") == "halt" and r.get("kind") == "repost"
+    ]
+    assert len(all_strand_records) == 2
+    assert [r["key"] for r in all_strand_records] == ["repost:deploy1:r1", "repost:deploy2:r2"]
 
 
 # ---------------------------------------------------------------------------
@@ -1136,10 +1292,11 @@ def test_reviews_required_overlap_gates_in_flight_completion(repo: Path) -> None
     ) == ["b"]
 
 
-def test_tightening_repost_never_retroactively_imposes_checks(repo: Path) -> None:
+def test_tightening_repost_never_retroactively_imposes_checks(repo: Path, tmp_path: Path) -> None:
     # The mirror-image control: a leaf dispatched under NO committed envelope ("intent": null
     # captured at dispatch) is not retroactively gated by a later live attach/tightening —
     # dispatch-time posture cuts both ways.
+    # #598 item 5: drives M.set_intent on the live campaign rather than hand-crafting the attach.
     M.start(
         repo,
         "camp",
@@ -1158,15 +1315,18 @@ def test_tightening_repost_never_retroactively_imposes_checks(repo: Path) -> Non
     assert M.advance(repo, "camp", dispatcher=_auto).dispatched == ["a"]  # envelope-less era
 
     # An all-gated envelope attaches mid-run (tightening — passes the live monotonic rule).
-    spec = M.load_spec(repo, "camp")
-    spec.intent = {
-        "schema_version": 1,
-        "run_mode": "attended",
-        "ceremony_gates": {"reviews_required": "gate"},
-    }
-    spec.bump_revision(reason="test: attach gated envelope mid-run")
-    spec.intent_revision = spec.spec_revision
-    M.save_spec(repo, spec)
+    intent_file = tmp_path / "gated_intent.json"
+    intent_file.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "run_mode": "attended",
+                "ceremony_gates": {"reviews_required": "gate"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    M.set_intent(repo, "camp", intent_file)
 
     runner = _gh_runner(pr_state={"1": "MERGED"}, head_ref_oid={"1": _SHA_A})
     # a completes under its dispatch-era (no-envelope) posture: no implied checks.

@@ -5716,7 +5716,18 @@ effective posture in force). Any second writer to the same state — even a "fir
 looks like initialization — re-opens the decision unless it routes through the same validator.
 **Fix.** Once any dispatch record exists (either phase), the attach computes deltas against the
 default-gated effective envelope through the SAME classifier and rejects monotonic loosenings;
-every accepted attach writes a `set-intent` trail entry. **Generalizable rule.** Enumerate every
+every accepted attach writes a `set-intent` trail entry.
+
+**Approval carry-forward asymmetry (#598 item 2).** While monotonic delta validation is unified
+across both verbs, frontier approval carry-forward diverges intentionally: a live pure-tightening
+`repost` carries existing frontier approval forward (`carried-forward:tightening-repost:r<old>`),
+whereas a live pure-tightening `set-intent` first-attach bumps `spec_revision` without carrying
+approval forward. This asymmetry is conservative (requires an extra manual re-approval, never skips
+one) and matches `SKILL.md`'s contract ("re-approve before the next dispatch") because a first-attach
+establishes the initial explicit envelope rather than amending an already-attested one. Pinned by
+`tests/test_outcome_intent.py::test_live_set_intent_does_not_carry_frontier_approval_forward`.
+
+**Generalizable rule.** Enumerate every
 writer to a guarded state and route them through one validator keyed on the transition, not the
 verb — "initialization" writers included; if a rule matters, ask "which OTHER verb can produce
 this state?" before shipping it.

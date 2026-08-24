@@ -253,6 +253,28 @@ def test_past_http_date_means_retry_now_never_a_negative_delay() -> None:
     assert 1.0 <= delays[0] <= 2.0
 
 
+@pytest.mark.parametrize(
+    ("header", "expected"),
+    [
+        ("-5", 0.0),
+        ("-0.5", 0.0),
+        ("-120", 0.0),
+        (-5, 0.0),
+        (-0.5, 0.0),
+        (-120, 0.0),
+    ],
+)
+def test_negative_delta_seconds_means_retry_now_never_a_negative_delay(
+    header: Any, expected: float
+) -> None:
+    # A negative delta-seconds header yields 0.0 — retry now, never a negative delay (#770).
+    # Matches the HTTP-date path's past-date contract.
+    assert RB.parse_retry_after(header, now=_now) == expected
+    delays = _delays_for(header, base_delay=2.0)
+    assert len(delays) == 1
+    assert 1.0 <= delays[0] <= 2.0
+
+
 def test_unparseable_retry_after_falls_back_to_computed_backoff() -> None:
     assert RB.parse_retry_after("next Tuesday-ish", now=_now) is None
     delays = _delays_for("next Tuesday-ish", base_delay=2.0)
@@ -327,6 +349,12 @@ def test_every_reduced_hint_survives_being_turned_into_whole_seconds() -> None:
         "nan",
         "1e400",
         "-inf",
+        "-5",
+        "-0.5",
+        "-120",
+        -5,
+        -0.5,
+        -120,
         "0",
         FUTURE_DATE,
         PAST_DATE,
@@ -337,6 +365,8 @@ def test_every_reduced_hint_survives_being_turned_into_whole_seconds() -> None:
     for header in headers:
         hint = RB.parse_retry_after(header, now=_now)
         if hint is not None:
+            assert math.isfinite(hint)
+            assert hint >= 0.0
             math.ceil(hint)  # must not raise, for any header a server can send
 
 

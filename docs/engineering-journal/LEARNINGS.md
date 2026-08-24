@@ -19,6 +19,75 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-08-24
+
+### A non-negative contract has to be enforced at every entry chokepoint, not just the date one  {#retry-after-negative-clamp}
+
+**Context.** `parse_retry_after` in `fleet_commons.retry_backoff` was designed to reduce both RFC 7231 `Retry-After` formats (delta-seconds and HTTP-date) to a non-negative delay in seconds. While the HTTP-date path clamped past dates to `0.0` ("retry now, never a negative delay"), the delta-seconds path returned negative values unchanged for negative header values (e.g. `-5`, `-120`). Callers presenting delay advice in typed 429 exceptions then displayed confusing negative wait times to operators.
+
+**Evidence.** Issue #770. `plugins/fleet-core/scripts/fleet_commons/retry_backoff.py:60`. `python3 -c "from fleet_commons import retry_backoff as rb; print(rb.parse_retry_after('-5'))"` returned `-5.0`.
+
+**Mechanism.** `_usable_delay` checked `math.isfinite(seconds)` to reject `inf`/`nan`/`1e400`, but omitted the `max(0.0, seconds)` floor present in the sibling HTTP-date parsing path (`retry_backoff.py:110`). Because `_retry_delay` already ignored non-positive values for sleep computation, the negative values only manifested in user-facing error messages and advice strings.
+
+**Fix.** Clamped finite values in `_usable_delay` to `max(0.0, seconds)` so both parsing paths unconditionally produce non-negative delays or `None`. Bumped `fleet-core` to `0.25.3`.
+
+**Validation.** Parametrised unit tests in `tests/test_retry_backoff.py` verify `-5`, `-0.5`, `-120` (both string and numeric) return `0.0`, postcondition invariants hold across all input types, and the full test suite passes.
+
+**Generalizable rule.** When a primitive promises an invariant (e.g. "never negative"), enforce it at the shared return chokepoint rather than relying on callers or sibling branches to normalize it independently.
+
+### Prepared-draft revision appended instead of replacing due to unstripped front matter in source artifact (#785)  {#prepared-draft-revision-frontmatter-doubling}
+
+**Context.** Prepared issue drafts stored under `docs/sdlc-issue-drafts/` can undergo revision rounds via `issue prepare --from <draft>` before final approval and creation. In live runs, revised drafts (such as the specimen for issue #770) accumulated multiple `---` front-matter blocks and duplicated titles and body sections on disk, and the contamination leaked into created GitHub issue bodies.
+
+**Evidence.** `plugins/mission-control/scripts/sdlc_manager.py:4121` (the strip call added to `_source_to_issue_body_unstamped`, defined at `:4111`), `:3926` (the strip call added to `_render_draft_markdown`, defined at `:3902`), `:4186` (`_read_prepared_issue`), `:4351` (the first blocking check added to `_readiness_for_prepared_issue`, defined at `:4347`), `:4680` (the strip call added to `_issue_body_for_github`, defined at `:4679`), the new helper `_strip_frontmatter_and_title` at `:3878`, and live issue bodies #770, #772, and #773 filed on 2026-08-23.
+
+**Mechanism.** `_source_to_issue_body_unstamped` accepted raw source text and passed it directly to template assembly without stripping pre-existing YAML front-matter blocks or top-level `# ` titles. When `_render_draft_markdown` formatted the draft, it prepended another YAML front-matter block and `# Title`, doubling the front matter and titles. Furthermore, `_parse_draft_frontmatter` only strips the first `--- ... ---` block on read (unchanged by this fix), so the second front-matter block became part of `issue.body`. `_readiness_for_prepared_issue` lacked a check for multi-fence or duplicate headers, allowing the contaminated draft to pass readiness, and `_issue_body_for_github` published the contaminated `issue.body` directly to GitHub.
+
+**Fix.** Implemented `_strip_frontmatter_and_title` to clean all leading YAML front-matter blocks and H1 titles from source artifacts and existing drafts before assembling bodies, added multi-fence and duplicate section blocking checks to `_readiness_for_prepared_issue`, and ensured `_issue_body_for_github` and `_render_draft_markdown` defensively strip front matter before emission. mission-control 2.12.1.
+
+**Validation.** Added `plugins/mission-control/tests/test_sdlc_draft_revision.py` verifying that revising a draft twice yields exactly two `---` fences and a single body, that revision replaces content instead of appending, that doubled drafts fail readiness with a multi-fence blocking gap, and that created issue bodies contain zero front-matter fences and no duplicate sections. Five of its six tests fail against the parent commit, one of them with the reference specimen's exact four-fence shape. The created-body strip reaches leading contamination only — the live #770/#772/#773 leak shape — and readiness is what stops a mid-body block; the suite pins both halves so the division of labour is not assumed.
+
+**Generalizable rule.** Draft compilers that wrap input text in document metadata must always strip existing front matter and document titles at the intake boundary so successive revision passes remain idempotent single documents.
+### A readiness flag is the sender's claim, so delivery has to be read off the receiver  {#readiness-is-not-delivery}
+
+**Context.** Orchestrate dispatched a unit, herdr reported the session `interactive_ready`,
+`herdr agent prompt` exited 0 -- and the brief was gone. The vendor CLI was still showing a modal
+(Claude's folder-trust prompt into a fresh worktree, Antigravity's "Verifying your account" gate on
+concurrent same-account launches) and the modal ate the keystrokes. Four occurrences in one live
+session; the working tell became "watch the token counter move", not the readiness flag and not the
+prompt command's exit status.
+
+**Evidence.** Issue #779. Transcript
+`~/.claude/projects/-Users-jefcox-workspace-infiquetra-team-mimir/b31ec85e-82d5-4a00-aa18-e82cc22b2284.jsonl`
+lines 4921, 4947, 6016, 6457, 7560 (2026-08-23). The gap was already acknowledged in the code it
+lived in, at `plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py:1368`, and dispatch
+still gated on `row.get("interactive_ready")` alone. orchestrate 1.20.2.
+
+**Mechanism.** Three separate signals all sit on the sending side of the boundary and none of them
+crosses it. `interactive_ready` is herdr's belief about a process it launched. `herdr agent prompt`
+returning 0 means the keystrokes were handed over, not consumed. A tab existing means a tab exists.
+The receiver is a vendor CLI whose modal owns stdin, and it acknowledges nothing. So every
+sender-side signal reports success on precisely the run where the work was lost -- and the loss is
+silent, because a session that was never given work looks exactly like a session still thinking
+about the work it was given.
+
+**Fix.** Dispatch now reads the receiver: `took_the_task` watches for the session to leave idle
+after the send, and only then is the unit recorded RUNNING. Unaccepted, it resends at most twice
+and only while the session has still never left idle -- which is the swallow case, so the resend
+cannot double-task a session already working -- and otherwise records the named state
+`prompt_undelivered`. The point of the named state is that no later phase reads it as work:
+`settle` sweeps RUNNING units only, so the old silent path (idle read as a finished turn, marked
+done, discovered empty a phase later at `land`) is closed by construction.
+
+**Generalizable rule.** Never accept the sender's word for delivery. A readiness flag, a zero exit
+code, and a created handle are all claims made on this side of the boundary; confirmation is a
+state change observed on the other side. When the receiver cannot acknowledge, the honest recording
+is a named unconfirmed state, not the optimistic one -- an optimistic default turns a delivery
+failure into a phantom success, which costs a phase to discover instead of a second.
+
+**Refs.** DECISIONS `{#defects-run-plan-ktds-787}`; plan
+`docs/plans/2026-08-24-defects-claude-plugins-run-plan.md` section U1.
+
 ## 2026-08-22
 
 ### I fixed a positional bug with a slightly wider positional window  {#credential-span-window-vs-walk}

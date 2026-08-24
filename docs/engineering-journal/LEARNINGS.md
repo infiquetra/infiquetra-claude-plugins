@@ -73,6 +73,128 @@ warns before a mutation reads a silent failure as "nothing to warn about".
 [`{#defects-run-plan-ktds-787}`](DECISIONS.md#defects-run-plan-ktds-787); plan
 `docs/plans/2026-08-24-defects-claude-plugins-run-plan.md` section U3.
 
+### A file-scoped pagination lint went blind on the very file it was installed to guard, and the query-scoped rewrite reintroduced the blindness one layer down  {#pagination-lint-scope-blindness-584}
+
+**Context.** #424 shipped `paginate_or_raise` plus `check_pagination.py` and recorded (see
+`{#board-pagination-truncation-confirmed-live-424}`) that the lint "lints future call sites". #584 R1
+then found `QUERY_GET_PROJECT_FIELDS` sitting unpaginated at `fields(first: 30)` for weeks inside
+`plugins/mission-control/scripts/sdlc_manager.py` -- a file the lint scanned on every CI run.
+
+**Evidence.** The pre-#584 rule was `if GRAPHQL_FIRST_RE.search(text) and "hasNextPage" not in text`
+(`plugins/mission-control/scripts/check_pagination.py:115` at `2d811cab`) -- whole-file, so one
+compliant query anywhere in the file cleared every other query in it. Running the post-#584
+query-scoped checker against `git show origin/main:.../sdlc_manager.py` reports the violation at
+`sdlc_manager.py:936`, which is the exact line #584 R1 named; the pre-#584 checker reports zero on
+the same bytes.
+
+**Mechanism.** The guard's scope was the file, but the unit of the defect is the query. Any file
+large enough to hold a second, compliant query -- which is every real client of a GraphQL API --
+buys permanent immunity for its non-compliant ones. The guard did not fail; it passed, loudly and
+truthfully, about a question nobody wanted answered.
+
+**Fix.** Query-scoped extraction over Python string literals and Markdown fences, with
+`# pagination-lint: allow (<reason>)` for the two connections whose bound is genuinely unreachable
+(#584, PR #796). `QUERY_GET_PROJECT_FIELDS` and `board_census.fetch_project_fields_census` now
+route through `paginate_or_raise`.
+
+**What surprised.** The rewrite reintroduced the same class one layer down, and Saga Code Review
+caught it before merge. Pairing triple quotes with the alternation `(?:"""|''')` lets an opening
+`"""` close on a `'''` occurring inside it, desynchronizing every literal after it; the rewrite then
+ran the whole-file fallback only when extraction returned *nothing*, so a desynchronized parse --
+which returns garbage blocks, not nothing -- silently switched the GraphQL guard off for the entire
+file. A stray `'''` in one docstring was enough, and a file the old lint flagged became clean. Fixed
+by backreferencing the delimiter (`("""|''')(.*?)\1`) and by running the whole-file check on any
+`first:` occurrence the extractor could not place inside a block, pinned by
+`plugins/mission-control/tests/test_check_pagination.py::TestGraphqlGuardNeverFailsOpen`.
+
+**Generalizable rule.** Scope a guard to the unit of the defect, never to the container the defect
+happens to live in -- and when you narrow a guard's scope, keep the old broad check as the
+fallback for whatever the new parser cannot read. A narrowed guard must be a strict superset of the
+one it replaces, and the way to prove that is to run the new guard against the bytes the old one
+flagged.
+
+**Refs.** #584, PR #796; `{#board-pagination-truncation-confirmed-live-424}`;
+`plugins/mission-control/scripts/check_pagination.py`,
+`plugins/mission-control/scripts/sdlc_manager.py`,
+`plugins/mission-control/scripts/board_census.py`.
+
+---
+### A stable result marker is a false-green machine unless the run clears it first  {#gate-result-marker-staleness-and-trap-deferral}
+
+**Context.** `scripts/gate.sh` gained a stable result marker (`$LOG_DIR/result.txt`) so a backgrounded 24-step gate run — which reliably outlives the Bash tool's 600-second foreground timeout — can report its outcome without scraping a live terminal (#782). `CLAUDE.md` documents the invocation with a fixed, reused `GATE_LOG_DIR=/tmp/gate-run`, and tells the operator to read the outcome with `cat /tmp/gate-run/result.txt`.
+
+**Evidence.** PR #797, review of frozen revision `2a7246a0`. Reproduction: seed `result.txt` with a previous run's `GATE GREEN`, start a fresh gate into the same `GATE_LOG_DIR`, `kill -9` it, then `cat result.txt` — it printed `GATE GREEN — 24 steps ran, 0 blocking failures, 0 uncovered.` for a run that never reached step 3. Separately, a stand-in script trapping `TERM` around an eight-second child measured **7.71 seconds** between the signal and the handler running; signalling the process group instead measured **0.00 seconds**.
+
+**Mechanism.** Two independent causes, both about *when* a marker is written rather than *whether* it is.
+
+1. The marker was only ever written on a terminal verdict or by a trap. A signal that cannot be trapped (`SIGKILL`, OOM, reboot) skips both, so the file keeps holding the *previous* run's verdict — and the reused log directory is what the documentation recommends. An in-flight run has the same shape: the marker present on disk describes an older run.
+2. bash defers a trap handler until the foreground command it is `wait`ing on returns. Sending `SIGTERM` to `gate.sh` alone therefore does nothing visible until the running step (`uv run pytest`, `git fetch origin main`) finishes. The harness kill that motivated #782 produced its `exit 143` promptly only because it killed the whole process group, so the child died first.
+
+**Fix.** `rm -f "$RESULT_FILE"` immediately after the log-directory precondition, so absence means "still running or killed outright" and never "green"; `CLAUDE.md` states that reading. The dev-toolchain precondition now writes `GATE PRECONDITION FAILED — dev toolchain not installed: …` instead of leaving the generic exit-trap text to call a precondition failure an interruption. `tests/test_gate_invocation.py` starts the gate with `start_new_session=True` and signals via `os.killpg`, with a `try/finally` group kill — previously a `proc.wait(timeout=5)` that would expire whenever the signal landed inside a real step, erroring the test *and* orphaning a full 24-step gate inside CI.
+
+**Validation.** All four reproductions re-run against the repaired script: the seeded `GATE GREEN` no longer survives a `kill -9` (marker absent, as intended); the precondition marker names the missing tools; `tests/test_gate_invocation.py` passes 4/4 in 0.23 s; `bash -n scripts/gate.sh` clean.
+
+**What surprised.** The marker made the failure mode *worse* than no marker at all. Before it existed, an operator had to read the log and could see the run was truncated. After it existed, a confident one-line `GATE GREEN` was sitting in the documented location, attributable to the wrong run.
+
+**Generalizable rule.** A status file that is only written at the end encodes the last run that *finished*, not the run you are asking about. Clear or stamp it at the start, so a missing or in-progress marker is unmistakable — and never let a durable "green" outlive the run that earned it.
+
+**Refs.** Issue #782, PR #797, run #787. Related: the gate's own warning that "a shortfall in coverage reports green" (`CLAUDE.md`, Gate Coverage Contract).
+
+### A lease TTL nobody reads is still worth deriving, because the payload is the only surviving record  {#lease-ttl-honest-without-a-reader}
+
+**Context.** #694 asked for the workflow execution lease to outlive the run it guards. By the time
+the unit ran, #677/U4 had deleted the fleet lease broker, so the question changed shape: with no
+enforcer left, is a wrong TTL still a defect? The plan (`docs/plans/2026-08-24-defects-claude-plugins-run-plan.md`,
+section U8) required a consumer sweep as the unit's first step precisely so the answer would rest on
+evidence rather than on the shape of the original card.
+
+**Evidence.** Pull request 795, commit `af773879`. The sweep, re-run at that revision, covers both
+halves the plan named and both come back empty:
+
+- *Teardown and release results.* `plugins/saga/scripts/workflow_emitter.py:141-160` — `renew` and
+  `release` each validate the contract and `return ()` unconditionally since #677/U4. The `/work`
+  skill invokes both (`plugins/saga/skills/work/SKILL.md:421` and `:429`) and consumes neither
+  return value; the surrounding prose already documents them as reporting an empty result.
+- *Readers of `execution_ttl_seconds` itself.* A repository-wide grep finds the producer
+  (`plugins/saga/scripts/execution_spec.py:3682`), the closed-key set and positivity check in the
+  emitter (`workflow_emitter.py:34` and `:95`), tests, and prose. Nothing treats the value as a
+  hold duration, and no saga reference document or skill states a TTL number at all.
+
+**Mechanism.** Zero readers is an argument about enforcement, not about truthfulness. The emitted
+`workflow_lease_reservation.v1` payload is now the *only* durable statement of what the run intended
+to hold, and `.saga/workflow-lease-*.json` files persist after the run — the artifact
+`{#workflow-lease-ttl-outlives-no-poll-contract}` reconstructed the #686 incident from. A payload
+that records `300` for a 32-minute run does not fail an assertion; it misinforms the next
+investigation, which is the failure mode that incident actually suffered.
+
+**Fix.** Shape (a): `execution_ttl_seconds` is derived at emit time as
+`max(900, 300 × multiplicity_aware_unit_count)` (`execution_spec.py:3669`), replacing the literal.
+The 900-second floor is leaf #694's 10-minute acceptance criterion plus a named five-minute margin,
+so a one-unit spec still clears the criterion. `claim_ttl_seconds` is unchanged.
+The leaf's third acceptance criterion — that teardown distinguish "released held leases" from
+"nothing to release" — is **dropped explicitly** on the first sweep result above: with no broker and
+no consumer, there is no distinguishable result left to pin.
+
+**Validation.** 619 tests green across `test_saga_execution_spec.py`, `test_saga_workflow_emitter.py`,
+`test_saga_plugin.py`, `test_workflow_emitter.py`, and `test_concurrency_conformance.py`. Mutation
+proof runs both ways: reverting to the literal `300` **and** weakening the floor to
+`max(300, 300 × count)` each fail `test_workflow_lease_held_past_ten_minute_mark` at
+`assert 300 >= 600`. Emission stays deterministic — the TTL is a pure function of the spec, pinned by
+the `first == replay` assertion at `tests/test_saga_workflow_emitter.py:79`.
+
+**What surprised.** The sweep's empty result was pre-registered as an argument for the *opposite*
+fix. DECISIONS `{#defects-run-plan-ktds-787}` forecast that zero consumers would make retiring the
+payload "the truthful fix". Running the sweep inverted that reading rather than confirming it: the
+value's audience turned out to be a human reading a persisted artifact after the fact, and a grep
+for consumers cannot see that audience because it never appears as a caller.
+
+**Generalizable rule.** Before retiring a field because nothing reads it, ask who reads the
+*artifact* — persisted payloads have human readers that no consumer sweep can find. A record kept
+honest is cheaper than a record explained away later.
+
+**Refs.** LEARNINGS `{#workflow-lease-ttl-outlives-no-poll-contract}` (the #686 incident this
+closes), DECISIONS `{#defects-run-plan-ktds-787}` and
+`{#lease-ttl-payload-kept-after-zero-consumer-sweep}`; issue #694; pull request 795.
 ### Process idleness is not task completion: settlement must verify branch evidence  {#idleness-is-not-completion}
 
 **Context.** Orchestrate's `settle` previously inferred `done` from Herdr pane idleness across two
@@ -3510,7 +3632,16 @@ duration of the work it protects, not the expected one. And when a teardown call
 collection, treat that as an unanswered question rather than a success — prove where the resources
 went before calling it clean.
 
-**Refs.** [[verdict-contract-has-three-prompt-surfaces]], `plugins/saga/skills/work/SKILL.md` §1.5,
+**Resolved 2026-08-24.** Shape (a) shipped as issue #694 / pull request 795 (commit `af773879`):
+`execution_ttl_seconds` is derived at emit time rather than fixed at 300. Shape (b) — the in-run
+lease keeper — was overtaken by #677/U4, which deleted the broker entirely; there is no longer
+anything to renew. See LEARNINGS [[lease-ttl-honest-without-a-reader]] for the consumer sweep that
+settled the choice.
+
+**Refs.** [[verdict-contract-has-three-prompt-surfaces]],
+[[lease-ttl-honest-without-a-reader]],
+DECISIONS `{#lease-ttl-payload-kept-after-zero-consumer-sweep}`,
+`plugins/saga/skills/work/SKILL.md` §1.5,
 `plugins/saga/scripts/workflow_emitter.py:191-206`.
 
 ### A verdict contract had FOUR prompt surfaces; the plan enumerated two  {#verdict-contract-has-three-prompt-surfaces}

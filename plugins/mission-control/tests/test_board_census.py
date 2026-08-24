@@ -60,6 +60,61 @@ class TestFetchProjectFieldsCensus:
         status_field = next(f for f in census["fields"] if f["name"] == "Status")
         assert [o["name"] for o in status_field["options"]] == ["Active", "Done"]
 
+    def test_over_thirty_fields_returns_full_census_not_truncated(self, monkeypatch):
+        """A >30-field board across two mocked pages returns the FULL field
+        shape in the census, not truncated at the first page (#584, R1)."""
+        page_size = 30
+        total_fields = 45
+
+        def fake_graphql(query, variables):
+            cursor = variables.get("cursor")
+            start = 0 if cursor is None else int(cursor)
+            end = min(start + page_size, total_fields)
+            has_next = end < total_fields
+            return {
+                "organization": {
+                    "projectV2": {
+                        "id": "PVT_test",
+                        "title": "Test Project",
+                        "fields": {
+                            "nodes": [
+                                {"id": f"field_{i}", "name": f"Field_{i:02d}", "dataType": "TEXT"}
+                                for i in range(start, end)
+                            ],
+                            "pageInfo": {
+                                "hasNextPage": has_next,
+                                "endCursor": str(end) if has_next else None,
+                            },
+                        },
+                    }
+                }
+            }
+
+        monkeypatch.setattr(board_census, "_graphql", fake_graphql)
+        census = board_census.fetch_project_fields_census(3)
+        assert len(census["fields"]) == total_fields
+        assert census["fields"][0]["name"] == "Field_00"
+        assert census["fields"][-1]["name"] == "Field_44"
+
+    def test_runaway_fields_pagination_raises_instead_of_truncating(self, monkeypatch):
+        def fake_graphql(query, variables):
+            return {
+                "organization": {
+                    "projectV2": {
+                        "id": "PVT_test",
+                        "title": "Test Project",
+                        "fields": {
+                            "nodes": [{"id": "x", "name": "X", "dataType": "TEXT"}] * 30,
+                            "pageInfo": {"hasNextPage": True, "endCursor": "always-more"},
+                        },
+                    }
+                }
+            }
+
+        monkeypatch.setattr(board_census, "_graphql", fake_graphql)
+        with pytest.raises(sdlc_manager.PaginationExhaustedError):
+            board_census.fetch_project_fields_census(3, max_pages=2)
+
 
 class TestCountProjectItems:
     def test_over_200_items_returns_full_count_not_truncated(self, monkeypatch):

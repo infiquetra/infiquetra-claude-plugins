@@ -318,7 +318,10 @@ def test_cli_gated_op_unresolvable_mission_control_still_gated_exit_zero(
         [
             "write",
             "--op",
-            "merge-pr",
+            # A REGISTERED, ALWAYS_OPERATOR op — the certificate deliberately withholding the write,
+            # which is the case #652 describes. (An unenumerated op also GATEs, via default-deny,
+            # but through a different branch of ``authorize_write``.)
+            "parent-issue-close",
             "--repo",
             "infiquetra/x",
             "--number",
@@ -331,6 +334,21 @@ def test_cli_gated_op_unresolvable_mission_control_still_gated_exit_zero(
     assert out["status"] == "gated"
     assert out["verdict"] == "GATE"
     assert rc == 0
+    # The gated path writes NO ledger entry, so a later tick in a healthy environment still
+    # performs the real write rather than colliding with a poisoned idempotency key.
+    assert not list(tmp_path.glob("*.json"))
+
+
+def test_gated_writer_raises_rather_than_silently_succeeding() -> None:
+    """#652: the stand-in writer the CLI passes on a gated op must never look like a success.
+
+    It is unreachable while the CLI's verdict and ``authorize_and_write``'s agree (both call the
+    same pure ``reversibility_certificate.authorize_write``). If they ever diverged, a writer that
+    returned ``None`` would be read as a committed board write, record the idempotency key, and
+    suppress the real write forever; raising makes that a retryable ``failed`` record instead.
+    """
+    with pytest.raises(AssertionError, match="verdicts diverged"):
+        BP._gated_writer(op_kind="parent-issue-close", repo="infiquetra/x", number=42, payload={})
 
 
 def test_cli_authorized_op_unresolvable_mission_control_exits_nonzero(

@@ -478,6 +478,7 @@ def test_cli_reconcile_gated_op_unresolvable_mission_control_still_gated_exit_ze
         raise RuntimeError("plugin-resolution: could not resolve a 'mission-control' root")
 
     monkeypatch.setattr(sys.modules["board_progression"], "resolve_mission_control_root", boom)
+    ledger = _ledger(tmp_path)
     rc = RC.main(
         [
             "reconcile",
@@ -488,13 +489,15 @@ def test_cli_reconcile_gated_op_unresolvable_mission_control_still_gated_exit_ze
             "--number",
             "450",
             "--ledger-dir",
-            str(_ledger(tmp_path)),
+            str(ledger),
             "--no-drift-check",
         ]
     )
     assert rc == 0
     printed = json.loads(capsys.readouterr().out.strip())
     assert printed["status"] == "gated" and printed["halt"] is True
+    # No ledger entry on a gated op, so a later tick in a healthy environment still writes.
+    assert not list(ledger.glob("*.json"))
 
 
 def test_cli_reconcile_unresolvable_mission_control_exits_nonzero(

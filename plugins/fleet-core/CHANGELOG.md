@@ -5,6 +5,17 @@ All notable changes to the fleet-core plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.3] - 2026-08-24
+
+### Fixed
+
+- **A negative `Retry-After` delta-seconds header now clamps to `0.0` (issue #770).**
+  `parse_retry_after` in `fleet_commons.retry_backoff` returned negative float values for
+  negative delta-seconds headers, contradicting its documented contract ("never a negative
+  delay"). The HTTP-date path already clamped past dates to `0.0`; finite delta-seconds
+  values are now clamped to `max(0.0, seconds)` at `_usable_delay`, ensuring callers that
+  present rate-limit delay advice to operators never display negative wait times.
+
 ## [0.25.2] - 2026-08-22
 
 ### Fixed

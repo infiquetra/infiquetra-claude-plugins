@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write-ownership lane lint (issue #431).
+"""Write-ownership lane lint (issue #431, hardened in #583).
 
 Statically scans each plugin declared in ``marketplace/ownership_lanes.json`` for direct
 ``gh`` invocations that cross into another plugin's owned write-mutation surface, and exits
@@ -18,20 +18,47 @@ through review.
 Detection model
 ---------------
 The scan is AST-based, not a text grep, so docstrings, comments, and error-message strings
-that merely *mention* ``gh pr view`` are never mistaken for real calls. For every list/tuple
-literal whose first element is the string ``"gh"`` (or ``"gh <sub>"`` combined), the second
-token is read as the subcommand. Dynamically built command lists (e.g. ``["gh"] + args``)
-have no literal subcommand and are skipped — they cannot be statically attributed to a lane.
+that merely *mention* ``gh pr view`` are never mistaken for real calls.
 
-Two checks run per detected invocation:
+The detector attributes:
+1. Command list/tuple literals whose first element is ``"gh"`` (or ``"gh <sub>"`` combined).
+2. List concatenation onto ``["gh"]`` (e.g. ``["gh"] + ["issue", "create"]``).
+3. List literals passed to known wrapper helpers (e.g. ``_run_gh(["issue", "create", ...])``,
+   ``_run_gh_json(...)``, ``_gh(...)``).
 
-1. **Subcommand lane.** If the subcommand is in ``sensitive_subcommands`` and is not in the
-   invoking plugin's ``allowed_gh_subcommands``, that is a cross-lane violation.
-2. **Reserved ``gh api`` path.** ``gh api`` is a catch-all every GitHub-touching plugin uses,
-   so subcommand-level allow-listing alone is toothless for it. Any ``gh api`` invocation
-   whose argument list contains a literal path token starting with a prefix in
-   ``reserved_api_paths`` (e.g. ``projects/`` → mission-control) is a violation unless the
-   invoking plugin is that prefix's declared owner.
+Known skips (out of AST scope):
+- Dynamically built command lists with no literal subcommand (e.g. ``["gh"] + args`` or
+  ``_run_gh(args)``) cannot be statically attributed and are skipped.
+- Shell-string invocations (e.g. ``subprocess.run("gh issue create ...", shell=True)``) are
+  out of AST list-literal scope and skipped (no live exposure in the repo).
+- GraphQL queries piped on stdin rather than passed as arguments (the repo's own board-write
+  idiom: ``["api", "graphql", "--input", "-"]`` with the document in ``input_data`` — see
+  ``plugins/mission-control/scripts/sdlc_manager.py``) carry no mutation string in the argument
+  list, so check 3 below cannot see them. Reaching them needs the call-graph the AST scan
+  deliberately does not build.
+
+Checks run per detected invocation:
+
+1. **Subcommand lane & verb-aware policing.** If the subcommand is in ``sensitive_subcommands``
+   and is not in the invoking plugin's ``allowed_gh_subcommands``:
+   - Benign read verbs (``view``, ``list``, ``status``, ``diff``, ``checks``, ``download``,
+     ``get``, ``watch``) are permitted across lanes and not flagged.
+   - Mutation verbs (``create``, ``edit``, ``delete``, ``close``, ``reopen``, ``merge``, etc.)
+     or unverified verbs are flagged as cross-lane violations.
+2. **Reserved ``gh api`` endpoint path.** Any ``gh api`` invocation whose endpoint positional
+   argument starts with a prefix in ``reserved_api_paths`` (e.g. ``projects/`` → mission-control)
+   is a violation unless the invoking plugin is that prefix's declared owner. Flag arguments
+   (e.g. ``-f title=projects/...``) are skipped so only the actual endpoint is evaluated.
+3. **GraphQL ProjectV2 mutations.** Any ``gh api graphql`` invocation containing ProjectV2
+   mutation strings (e.g. ``updateProjectV2ItemFieldValue``, ``addProjectV2ItemById``,
+   ``archiveProjectV2Item``) is reserved to the board owner (mission-control) and flagged if
+   called from another lane. Because name resolution is scope-blind, a module outside the board
+   lane that binds a ProjectV2 mutation to a variable has every ``gh api graphql`` call in it
+   flagged, not only the one that uses that binding. That is the intended direction: holding the
+   mutation text at all is the thing the lane forbids, so the gate fails closed and reports it.
+
+Note on ``gh api``: the token after the subcommand is an endpoint, not a verb, so the read-verb
+allowance in check 1 does not meaningfully apply to it. ``gh api`` is policed by checks 2 and 3.
 
 Extending coverage
 -------------------
@@ -58,6 +85,67 @@ DEFAULT_PLUGINS_ROOT = REPO_ROOT / "plugins"
 # example command lists, and vendored/generated artifacts are not hand-authored plugin code.
 EXCLUDED_DIR_SEGMENTS = frozenset({"tests", "generated", "__pycache__"})
 
+# Stand-in for a command element that is not a static string (a bare name, a call, an
+# unresolvable f-string). It is kept IN PLACE rather than dropped so that positional reasoning
+# — `_api_endpoint`'s flag/value skipping above all — stays aligned with the real argv. Dropping
+# it silently shifted a reserved endpoint into a preceding flag's value slot (#583 review).
+UNRESOLVED_TOKEN = "\x00unresolved"
+
+# Read-only verbs permitted across lanes for sensitive subcommands (#583 R3)
+READ_VERBS = frozenset(
+    {
+        "view",
+        "list",
+        "status",
+        "diff",
+        "checks",
+        "download",
+        "get",
+        "watch",
+    }
+)
+
+# ProjectV2 GraphQL mutation operation names reserved to board owner (#583 R2)
+# Ordered longest first so specific mutations match before shorter prefixes (e.g. updateProjectV2)
+PROJECT_V2_MUTATIONS: tuple[str, ...] = tuple(
+    sorted(
+        [
+            "updateProjectV2ItemFieldValue",
+            "addProjectV2ItemById",
+            "archiveProjectV2Item",
+            "unarchiveProjectV2Item",
+            "deleteProjectV2Item",
+            "updateProjectV2ItemPosition",
+            "createProjectV2",
+            "updateProjectV2",
+            "deleteProjectV2",
+            "copyProjectV2",
+            "createProjectV2Field",
+            "updateProjectV2Field",
+            "deleteProjectV2Field",
+            "createProjectV2StatusUpdate",
+            "updateProjectV2StatusUpdate",
+            "deleteProjectV2StatusUpdate",
+        ],
+        key=len,
+        reverse=True,
+    )
+)
+
+# Known wrapper helper names that prepend "gh" to their argument list (#583 R1)
+KNOWN_WRAPPER_NAMES = frozenset(
+    {
+        "_run_gh",
+        "_run_gh_json",
+        "_gh",
+        "run_gh",
+        "run_gh_json",
+        "_gh_json",
+        "gh_cli",
+        "_gh_cli",
+    }
+)
+
 
 class ManifestError(Exception):
     """The ownership-lanes manifest is missing or malformed. Fail loud, never silent-pass."""
@@ -69,7 +157,10 @@ class GhInvocation:
 
     lineno: int
     subcommand: str | None
-    tokens: tuple[str, ...]  # literal string tokens (incl. f-string leading prefixes)
+    tokens: tuple[str, ...]  # positional tokens; UNRESOLVED_TOKEN where not a static string
+    # Every string literal bound anywhere to a name this invocation references. Order-free and
+    # non-positional: read only by the substring scans, never by the positional helpers (#583).
+    alt_tokens: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -126,29 +217,123 @@ def load_manifest(path: Path) -> dict[str, Any]:
     return data
 
 
-def _string_token(node: ast.expr) -> str | None:
-    """Best-effort literal string for a list element.
+def _collect_string_variables(tree: ast.AST) -> dict[str, tuple[str, ...]]:
+    """Map each name to *every* distinct string literal bound to it anywhere in the module.
 
-    A plain string constant yields its value; an f-string yields its leading constant prefix
-    (so ``f"projects/{pid}/items"`` still exposes the ``projects/`` reserved prefix). Anything
-    else (a bare name, a call) yields None — it cannot be statically attributed.
+    Deliberately scope-blind: building real scopes would mean the dataflow analysis this lint
+    rejects as disproportionate. The consequence is that a name rebound in two functions has two
+    bindings, so keeping only one silently picks a winner — and a module that assigns
+    ``query`` to a ProjectV2 mutation in one function and to a read query in another then hides
+    the mutation from check 3. All bindings are kept: `_string_token` takes the first for
+    positional text, and the mutation scan reads all of them (#583 review).
+    """
+
+    var_map: dict[str, list[str]] = {}
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        ):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    bound = var_map.setdefault(target.id, [])
+                    if node.value.value not in bound:
+                        bound.append(node.value.value)
+    return {name: tuple(values) for name, values in var_map.items()}
+
+
+def _string_token(node: ast.expr, var_map: dict[str, tuple[str, ...]] | None = None) -> str | None:
+    """Best-effort literal string for a list element or argument.
+
+    A plain string constant yields its value; an f-string yields its formatted/joined text
+    (resolving simple string variables in var_map when present) or its leading constant prefix.
+    A name with several bindings resolves to its first — see `_referenced_name_values` for the
+    view that keeps the rest.
     """
 
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
-    if isinstance(node, ast.JoinedStr) and node.values and isinstance(node.values[0], ast.Constant):
-        lead = node.values[0].value
-        if isinstance(lead, str):
-            return lead
+    if isinstance(node, ast.Name) and var_map and node.id in var_map:
+        return var_map[node.id][0]
+    if isinstance(node, ast.JoinedStr):
+        if var_map:
+            parts: list[str] = []
+            for v in node.values:
+                if isinstance(v, ast.Constant) and isinstance(v.value, str):
+                    parts.append(v.value)
+                elif (
+                    isinstance(v, ast.FormattedValue)
+                    and isinstance(v.value, ast.Name)
+                    and v.value.id in var_map
+                ):
+                    parts.append(var_map[v.value.id][0])
+            if parts:
+                return "".join(parts)
+        if node.values and isinstance(node.values[0], ast.Constant):
+            lead = node.values[0].value
+            if isinstance(lead, str):
+                return lead
+    return None
+
+
+def _referenced_name_values(node: ast.expr, var_map: dict[str, tuple[str, ...]]) -> tuple[str, ...]:
+    """Every string literal bound to any name this element references, directly or in an f-string.
+
+    Non-positional by construction, so only the substring scans may read it.
+    """
+
+    values: list[str] = []
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Name):
+            values.extend(var_map.get(sub.id, ()))
+    return tuple(values)
+
+
+def _element_tokens(
+    elts: list[ast.expr], var_map: dict[str, tuple[str, ...]]
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Positional tokens (placeheld where unresolvable) plus the non-positional binding view."""
+
+    tokens: list[str] = []
+    for elt in elts:
+        token = _string_token(elt, var_map)
+        tokens.append(UNRESOLVED_TOKEN if token is None else token)
+    alts = tuple(v for elt in elts for v in _referenced_name_values(elt, var_map))
+    return tuple(tokens), alts
+
+
+def _is_gh_wrapper_call(node: ast.Call) -> bool:
+    """Check if a Call node is invoking a known `gh` CLI wrapper function."""
+    if isinstance(node.func, ast.Name):
+        name = node.func.id
+    elif isinstance(node.func, ast.Attribute):
+        name = node.func.attr
+    else:
+        return False
+
+    if name in KNOWN_WRAPPER_NAMES:
+        return True
+    return name.startswith(("_run_gh", "run_gh")) or name.endswith(("_gh", "_gh_json"))
+
+
+def _extract_wrapper_arg_list(node: ast.Call) -> ast.List | ast.Tuple | None:
+    """Extract list/tuple argument from a wrapper function call."""
+    if node.args and isinstance(node.args[0], (ast.List, ast.Tuple)):
+        return node.args[0]
+    for kw in node.keywords:
+        if kw.arg in ("args", "cmd") and isinstance(kw.value, (ast.List, ast.Tuple)):
+            return kw.value
     return None
 
 
 def find_gh_invocations(source: str) -> list[GhInvocation]:
     """Return every ``gh`` command-list literal in a Python source string.
 
-    Matches list/tuple literals whose first element is the string ``"gh"`` (or ``"gh <sub>"``
-    combined into one token). Returns the subcommand (None when built dynamically) plus all
-    literal string tokens for the reserved-path check.
+    Matches:
+    - List/tuple literals whose first element is ``"gh"`` (or ``"gh <sub>"`` combined).
+    - List concatenation onto ``["gh"]`` (e.g. ``["gh"] + ["issue", "create"]``).
+    - Calls to known wrapper helpers passing list literals (e.g. ``_run_gh(["issue", "view"])``).
     """
 
     try:
@@ -156,22 +341,68 @@ def find_gh_invocations(source: str) -> list[GhInvocation]:
     except SyntaxError:
         return []
 
+    var_map = _collect_string_variables(tree)
     invocations: list[GhInvocation] = []
     for node in ast.walk(tree):
-        if not isinstance(node, (ast.List, ast.Tuple)) or not node.elts:
-            continue
-        first = _string_token(node.elts[0])
-        if first is None or (first != "gh" and not first.startswith("gh ")):
-            continue
+        # Shape 1: Direct list/tuple literal starting with "gh" or "gh <sub>"
+        if isinstance(node, (ast.List, ast.Tuple)) and node.elts:
+            first = _string_token(node.elts[0], var_map)
+            if first is not None and (first == "gh" or first.startswith("gh ")):
+                tokens, alts = _element_tokens(node.elts, var_map)
+                if first == "gh":
+                    second = _string_token(node.elts[1], var_map) if len(node.elts) > 1 else None
+                    subcommand = second
+                else:
+                    parts = first.split()
+                    subcommand = parts[1] if len(parts) > 1 else None
+                invocations.append(GhInvocation(node.lineno, subcommand, tokens, alts))
+                continue
 
-        tokens = tuple(t for t in (_string_token(e) for e in node.elts) if t is not None)
-        if first == "gh":
-            second = _string_token(node.elts[1]) if len(node.elts) > 1 else None
-            subcommand = second
-        else:
-            parts = first.split()
-            subcommand = parts[1] if len(parts) > 1 else None
-        invocations.append(GhInvocation(node.lineno, subcommand, tokens))
+        # Shape 2: BinOp addition with ["gh"] (e.g. ["gh"] + ["sub", ...])
+        # Note: ["gh"] + args is already captured by Shape 1 on the left list ["gh"] as subcommand=None.
+        if (
+            isinstance(node, ast.BinOp)
+            and isinstance(node.op, ast.Add)
+            and isinstance(node.left, (ast.List, ast.Tuple))
+            and node.left.elts
+        ):
+            first = _string_token(node.left.elts[0], var_map)
+            if first == "gh":
+                if len(node.left.elts) == 1:
+                    if isinstance(node.right, (ast.List, ast.Tuple)) and node.right.elts:
+                        right_first = _string_token(node.right.elts[0], var_map)
+                        if right_first is not None:
+                            subcommand = right_first
+                            right_tokens, alts = _element_tokens(node.right.elts, var_map)
+                            invocations.append(
+                                GhInvocation(node.lineno, subcommand, ("gh",) + right_tokens, alts)
+                            )
+                else:
+                    second = _string_token(node.left.elts[1], var_map)
+                    if isinstance(node.right, (ast.List, ast.Tuple)) and node.right.elts:
+                        left_tokens, left_alts = _element_tokens(node.left.elts, var_map)
+                        right_tokens, right_alts = _element_tokens(node.right.elts, var_map)
+                        invocations.append(
+                            GhInvocation(
+                                node.lineno,
+                                second,
+                                left_tokens + right_tokens,
+                                left_alts + right_alts,
+                            )
+                        )
+                continue
+
+        # Shape 3: Wrapper helper calls: _run_gh(["sub", "verb", ...])
+        if isinstance(node, ast.Call) and _is_gh_wrapper_call(node):
+            arg_list = _extract_wrapper_arg_list(node)
+            if arg_list is not None and arg_list.elts:
+                first = _string_token(arg_list.elts[0], var_map)
+                if first is not None and first != "gh" and not first.startswith("gh "):
+                    arg_tokens, alts = _element_tokens(arg_list.elts, var_map)
+                    invocations.append(GhInvocation(node.lineno, first, ("gh",) + arg_tokens, alts))
+                elif first is None:
+                    invocations.append(GhInvocation(node.lineno, None, ("gh",)))
+
     return invocations
 
 
@@ -184,6 +415,108 @@ def _iter_plugin_py_files(plugin_dir: Path) -> list[Path]:
             continue
         files.append(path)
     return files
+
+
+def _extract_verb(tokens: tuple[str, ...], subcommand: str) -> str | None:
+    """Extract the verb token following the subcommand, skipping flags.
+
+    For example:
+    - ("gh", "issue", "view", "123") -> "view"
+    - ("gh", "issue", "--repo", "org/repo", "create") -> "create"
+    - ("gh", "issue", "create") -> "create"
+    - ("gh issue view", "123") -> "view"   (subcommand and verb share one token)
+    - ("gh", "issue") -> None
+    """
+
+    sub_idx = -1
+    for idx, token in enumerate(tokens):
+        words = token.split()
+        if subcommand not in words:
+            continue
+        pos = words.index(subcommand)
+        if pos < len(words) - 1:
+            # Combined token, e.g. "gh issue view": the verb rides the same string, so the
+            # read-verb allowance has to read it there or every combined read is flagged.
+            return words[pos + 1].lower()
+        sub_idx = idx
+        break
+    if sub_idx == -1:
+        return None
+
+    idx = sub_idx + 1
+    while idx < len(tokens):
+        token = tokens[idx]
+        if token.startswith("-"):
+            if token in (
+                "-R",
+                "--repo",
+                "-a",
+                "--app",
+                "--json",
+                "-q",
+                "--jq",
+                "-t",
+                "--template",
+            ):
+                idx += 2
+                continue
+            idx += 1
+            continue
+        return token.lower()
+    return None
+
+
+def _api_endpoint(tokens: tuple[str, ...]) -> str | None:
+    """Extract the target API endpoint path from a ``gh api`` invocation's tokens.
+
+    Skips flags and their arguments (e.g. ``--method PATCH``, ``-f key=val``) to find
+    the positional endpoint argument, preventing false positives on flag values.
+    """
+
+    start_idx = 0
+    for idx, token in enumerate(tokens):
+        if token == "api" or token.endswith(" api"):  # nosec B105
+            start_idx = idx + 1
+            break
+
+    idx = start_idx
+    while idx < len(tokens):
+        token = tokens[idx]
+        if token.startswith("-"):
+            if token in (
+                "-X",
+                "--method",
+                "-F",
+                "-f",
+                "--field",
+                "--raw-field",
+                "-H",
+                "--header",
+                "-q",
+                "--jq",
+                "-t",
+                "--template",
+                "--input",
+                "-p",
+                "--preview",
+                "--cache",
+            ):
+                idx += 2
+                continue
+            idx += 1
+            continue
+        return token
+    return None
+
+
+def _find_project_v2_mutation(tokens: tuple[str, ...]) -> str | None:
+    """Return the name of a ProjectV2 GraphQL mutation if present in the tokens."""
+
+    for token in tokens:
+        for mutation in PROJECT_V2_MUTATIONS:
+            if mutation in token:
+                return mutation
+    return None
 
 
 def scan_plugin(
@@ -199,6 +532,11 @@ def scan_plugin(
 
     allowed = set(lane.get("allowed_gh_subcommands", []))
     violations: list[Violation] = []
+    # The GraphQL board surface has no manifest key of its own: it is owned by whoever owns the
+    # REST `projects/` prefix, and falls back to the repo's declared board owner if that prefix is
+    # ever dropped. Keep the two in step when the manifest changes.
+    board_owner = reserved_api_paths.get("projects/", "mission-control")
+
     for path in _iter_plugin_py_files(plugin_dir):
         try:
             source = path.read_text()
@@ -208,20 +546,43 @@ def scan_plugin(
             sub = inv.subcommand
             if sub is None:
                 continue  # dynamically built command; not statically attributable
+
             if sub in sensitive and sub not in allowed:
-                owner = _owner_of_subcommand(sub, plugin, lanes)
-                violations.append(
-                    Violation(
-                        file=path,
-                        lineno=inv.lineno,
-                        plugin=plugin,
-                        call=f"gh {sub}",
-                        crossed_into=owner,
-                        reason=f"`{sub}` is not in {plugin}'s ownership lane",
+                verb = _extract_verb(inv.tokens, sub)
+                if verb is not None and verb in READ_VERBS:
+                    # Benign read verb (e.g. gh issue view) permitted across lanes (#583 R3)
+                    pass
+                else:
+                    owner = _owner_of_subcommand(sub, plugin, lanes)
+                    violations.append(
+                        Violation(
+                            file=path,
+                            lineno=inv.lineno,
+                            plugin=plugin,
+                            call=f"gh {sub}",
+                            crossed_into=owner,
+                            reason=f"`{sub}` is not in {plugin}'s ownership lane",
+                        )
                     )
-                )
-                continue
+                    continue
+
             if sub == "api":
+                # Check for ProjectV2 GraphQL mutations from non-board-owners (#583 R2)
+                mutation = _find_project_v2_mutation(inv.tokens + inv.alt_tokens)
+                if mutation is not None and plugin != board_owner:
+                    violations.append(
+                        Violation(
+                            file=path,
+                            lineno=inv.lineno,
+                            plugin=plugin,
+                            call=f"gh api graphql ({mutation})",
+                            crossed_into=board_owner,
+                            reason=f"`{mutation}` GraphQL mutation is reserved to {board_owner}",
+                        )
+                    )
+                    continue
+
+                # Check for reserved REST api endpoint paths (#583 R4)
                 crossed = _reserved_path_crossed(inv.tokens, plugin, reserved_api_paths)
                 if crossed is not None:
                     prefix, owner = crossed
@@ -254,15 +615,20 @@ def _reserved_path_crossed(
 ) -> tuple[str, str] | None:
     """Return (prefix, owner) if a ``gh api`` invocation reaches a reserved path it can't own."""
 
-    for token in tokens:
-        for prefix, owner in reserved_api_paths.items():
-            if token.startswith(prefix) and owner != invoking:
-                return prefix, owner
+    endpoint = _api_endpoint(tokens)
+    if endpoint is None:
+        return None
+    for prefix, owner in reserved_api_paths.items():
+        if endpoint.startswith(prefix) and owner != invoking:
+            return prefix, owner
     return None
 
 
 def run_check(manifest: dict[str, Any], plugins_root: Path) -> list[Violation]:
-    """Scan every plugin declared in the manifest and return all violations found."""
+    """Scan every plugin declared in the manifest and return all violations found.
+
+    Raises ManifestError if any declared plugin directory is missing (#583 R4).
+    """
 
     sensitive = set(manifest["sensitive_subcommands"])
     reserved_api_paths = dict(manifest["reserved_api_paths"])
@@ -271,7 +637,9 @@ def run_check(manifest: dict[str, Any], plugins_root: Path) -> list[Violation]:
     for plugin, lane in lanes.items():
         plugin_dir = plugins_root / plugin
         if not plugin_dir.is_dir():
-            continue
+            raise ManifestError(
+                f"declared lane '{plugin}' directory not found under {plugins_root}"
+            )
         violations.extend(
             scan_plugin(
                 plugin,
@@ -308,15 +676,14 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         manifest = load_manifest(args.manifest)
+        if args.verbose:
+            scanned = ", ".join(sorted(manifest["lanes"]))
+            print(f"ownership-lanes: scanning declared plugins: {scanned}")
+        violations = run_check(manifest, args.plugins_root)
     except ManifestError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
-    if args.verbose:
-        scanned = ", ".join(sorted(manifest["lanes"]))
-        print(f"ownership-lanes: scanning declared plugins: {scanned}")
-
-    violations = run_check(manifest, args.plugins_root)
     if violations:
         for violation in violations:
             print(violation.render(args.plugins_root), file=sys.stderr)

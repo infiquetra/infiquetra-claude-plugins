@@ -1,5 +1,63 @@
 # Changelog
 
+## [0.139.5] - 2026-08-24
+
+### Added
+
+- **Document review_consensus.py state-machine API and calling conventions.** Added complete
+  docstrings to public state entry points (`ReviewCycleState.record_cycle`, `ReviewFinding`,
+  `evaluate_review_readiness`, `ReviewCycleState`), defining required and optional parameters, valid
+  lifecycle call order, and return types. Added an end-to-end worked example (record cycle → evaluate
+  readiness) in the module docstring and documented the private internals boundary. (#784)
+- **Document the inverted exception hierarchy.** The module docstring now states that
+  `ReviewScoringError` is the root of every error class the module defines and that
+  `ReviewConsensusError` subclasses it, so `except ReviewConsensusError` does not catch a
+  `ReviewScoringError` or a `ContradictoryReviewEvidenceError`. `ReviewCycleState.__init__` and
+  `record_cycle` now name the class each failure actually raises. (#784)
+- **Guard the documented claims against the code.** `tests/test_review_consensus_docs.py` now pins
+  the exception hierarchy, the required-argument status of `ReviewFinding.dimension_id`, the
+  `handle_runner_delivery` input vocabulary (`ready` is a return status, never an input), and the
+  fact that `ReviewResult` exposes `lens_results` rather than `lens_scores`. (#784)
+
+## [0.139.4] - 2026-08-24
+
+### Fixed
+
+- **Evaluate certificate gate before resolving mission-control in board-sync CLIs.** The `write`
+  (`board_progression.py`) and `reconcile` (`reconcile_controller.py`) CLIs now evaluate the
+  reversibility certificate before resolving the mission-control plugin root. Gated operations
+  withholding autonomous writes return `status=gated` / exit 0 even in environments where mission-control
+  is unresolvable, while non-gated operations in an unresolvable environment still fail loud (exit 1). (#652)
+
+## [0.139.3] - 2026-08-24
+
+### Fixed
+
+- **Document `--workflow-available` dependency on `--host-capable` and explain halt reasons.**
+  The `outcome.py advance` CLI help for `--workflow-available` now explicitly states that it requires
+  `--host-capable`. When `--workflow-available` is passed without `--host-capable`, `resolve_available`
+  attaches an explanation to `cc-workflows-ultracode` so that any resulting unavailability halt or degrade
+  receipt clearly indicates `--workflow-available requires --host-capable` rather than presenting an
+  unexplained host failure. (#657)
+
+## [0.139.2] - 2026-08-24
+
+### Fixed
+
+- **Derive workflow lease execution TTL from multiplicity-aware run scale.** In workflow lease
+  reservation metadata, `execution_ttl_seconds` is now derived from the spec's multiplicity-aware unit
+  count (`max(900, 300 × multiplicity_aware_unit_count)`), replacing the fixed 300-second literal.
+  This ensures the recorded lease reservation outlives long workflow runs. (#694)
+
+## [0.139.1] - 2026-08-24
+
+### Fixed
+
+- **Advisory accumulator no longer bleeds across units on halt.** In multi-unit workflow execution
+  harnesses, `__halt` attaches only the failing unit's advisory corrections to `error.advisory_corrections`
+  (filtering by the halting unit ID). This prevents earlier units' advisories from being misattributed
+  to subsequent failing units while preserving the full run-wide list in the top-level return value. (#691)
+
 ## [0.139.0] - 2026-08-20
 
 ### Added

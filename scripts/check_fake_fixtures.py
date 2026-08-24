@@ -7,15 +7,28 @@ emits. The hazard (``docs/engineering-journal/LEARNINGS.md`` ``{#fake-adapter-hi
 queried path, so every test passed while the real adapter (realpath-canonicalized) diverged.
 
 This checker pins each fake's fixture data to a **golden artifact derived from the real producer**
-and flags **drift** — a golden that was deleted or mutated away from its pinned SHA256. The manifest
-(``tests/fixtures/golden/manifest.json``) records, per golden: the fake that consumes it, the real
-producer that generates it, the file path, and its pinned hash.
+and flags **drift**. The manifest (``tests/fixtures/golden/manifest.json``) records, per golden: the
+fake that consumes it, the real producer that generates it, the file path, and its pinned hash.
+
+Since #588 the fake↔golden pairing is **behavioral, not declarative**: the named fake is looked up
+in ``_CONSUMERS`` and actually run against the golden's bytes. A manifest row naming a fake nobody
+consumes, or a golden the paired fake can no longer parse, is drift in its own right — which is what
+makes the pairing half of this check non-vacuous.
+
+Four drift kinds, all reported by ``--check``:
+
+* ``deleted`` — the golden file named by the manifest is gone.
+* ``mutated`` — the golden's SHA256 no longer matches its pinned hash.
+* ``unpaired`` — no registered consumer exists for the manifest row's ``fake``, so nothing would
+  notice if the golden drifted.
+* ``consumer_failure`` — the registered fake raised while consuming the golden, so the fixture and
+  the fake it backs have diverged.
 
 Modes:
 
-* ``--check`` (default) — recompute each golden's SHA256, flag a missing (deleted) or mismatched
-  (mutated) golden. Strict exit non-zero on drift unless ``--advisory`` (report, exit 0). CI runs it
-  advisory per the facet's advisory rollout.
+* ``--check`` (default) — run all four checks above. Strict exit non-zero on drift unless
+  ``--advisory`` (report, exit 0). CI and ``scripts/gate.sh`` both run it advisory per the facet's
+  advisory rollout.
 * ``--regenerate`` — re-derive each golden from its real producer and rewrite the manifest hash. Run
   this deliberately when the real producer's output legitimately changes.
 """
@@ -28,7 +41,9 @@ import json
 import os
 import re
 import subprocess  # nosec B404 — git CLI only, fixed argv, no shell
+import sys
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -97,6 +112,36 @@ _PRODUCERS = {
 
 
 # ---------------------------------------------------------------------------
+# Fake consumers: behavioral pairing (#588)
+# ---------------------------------------------------------------------------
+
+
+def consume_worktree_porcelain(golden_content: str) -> None:
+    """Consume git worktree porcelain golden fixture data into FakeWT (#588)."""
+    tests_dir = REPO_ROOT / "tests"
+    if str(tests_dir) not in sys.path:
+        sys.path.insert(0, str(tests_dir))
+    import fakes_registry
+
+    fake = fakes_registry.FakeWT(seed_porcelain=golden_content, root="/test_root")
+    ops = fake.ops()
+    paths = ops.list_paths()
+    expected_repo = "/test_root/repo"
+    expected_feature = "/test_root/wt-feature"
+    if expected_repo not in paths or expected_feature not in paths:
+        raise ValueError(f"FakeWT failed to parse expected worktree paths from golden, got {paths}")
+    if not ops.exists(expected_repo) or not ops.exists(expected_feature):
+        raise ValueError("FakeWT ops.exists failed for golden paths")
+    if ops.exists("/test_root/absent_path"):
+        raise ValueError("FakeWT ops.exists returned True for non-existent path")
+
+
+_CONSUMERS: dict[str, Callable[[str], None]] = {
+    "worktree-liveness-oracle": consume_worktree_porcelain,
+}
+
+
+# ---------------------------------------------------------------------------
 # Manifest load / check / regenerate
 # ---------------------------------------------------------------------------
 
@@ -107,7 +152,7 @@ def load_manifest(manifest_path: Path) -> dict[str, Any]:
 
 
 def check_goldens(manifest_path: Path) -> list[Drift]:
-    """Return every drifted golden (empty == all goldens present and matching their pinned hash)."""
+    """Return every drifted golden (deleted, mutated, unpaired, or consumer failure)."""
     manifest = load_manifest(manifest_path)
     drifts: list[Drift] = []
     for entry in manifest.get("goldens", []):
@@ -120,6 +165,27 @@ def check_goldens(manifest_path: Path) -> list[Drift]:
         actual = sha256_of(golden)
         if actual != entry["sha256"]:
             drifts.append(Drift(rel, "mutated", f"sha256 {actual} != pinned {entry['sha256']}"))
+            continue
+
+        # Behavioral pairing check (#588). The manifest's `fake` field is free text whose FIRST
+        # whitespace-delimited token is the consumer key -- a hand-edit that leaves it blank or
+        # whitespace must report `unpaired`, not raise out of the checker.
+        fake_id = str(entry.get("fake", "") or "")
+        tokens = fake_id.split()
+        base_id = tokens[0] if tokens else ""
+        consumer = _CONSUMERS.get(fake_id) or (_CONSUMERS.get(base_id) if base_id else None)
+        if not consumer:
+            drifts.append(
+                Drift(rel, "unpaired", f"no registered consumer consumes fake {fake_id!r}")
+            )
+            continue
+        try:
+            content = golden.read_text(encoding="utf-8")
+            consumer(content)
+        except Exception as exc:
+            drifts.append(
+                Drift(rel, "consumer_failure", f"registered fake failed to consume golden: {exc}")
+            )
     return drifts
 
 

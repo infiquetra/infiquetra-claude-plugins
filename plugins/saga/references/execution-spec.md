@@ -160,10 +160,19 @@ non-gating bucket.
 Because emitted harnesses returned `undefined` before this change, the new return value is additive
 for any consumer that does not destructure it.
 
-A harness that HALTS never reaches this return, so accumulated advisories would otherwise be lost —
-including advisories from units that already delivered. Every emitted `throw` therefore goes through
-`__halt`, which attaches the accumulator to the thrown error as `err.advisory_corrections`. A caller
-handling a failed run should read it from there.
+A harness that HALTS never reaches this return, so accumulated advisories for the failing unit
+would otherwise be lost. Every emitted `throw` therefore goes through `__halt`, which attaches the
+halting unit's advisories to the thrown error as `err.advisory_corrections` (filtered by unit ID, so
+advisories from earlier units do not bleed into a later unit's halt). The harness's top-level
+`advisory_corrections` return value retains the full run-wide list keyed by unit. A caller handling
+a failed run should read unit advisories from the thrown error.
+
+That filter is a deliberate trade, not an oversight. Because a halt skips the top-level return,
+advisories from units that already delivered are **unreachable on a halting run** — the thrown error
+carries the halting unit's and nothing else. Correct attribution was judged worth more than a
+run-wide record the consumer had to re-key by hand; the run-wide list still survives every run that
+completes. The one emitted `throw` that omits the unit id is the run-level pull-cord batch, which
+names every unit that pulled a cord and so stays run-wide by design.
 
 ### Runtime ladder climbing (#364): `escalate_on_signal` + `pull_cord`
 

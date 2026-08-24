@@ -199,6 +199,10 @@ def main() -> int:
             print(f"SKIPPED live parity leg: {live_skip_reason}")
         else:
             print("live parity leg passed: schema-declared Status options resolve live")
+    else:
+        print(
+            "SKIPPED live parity leg: not requested (pass --live to run live GitHub Projects reconciliation)"
+        )
     return 0
 
 

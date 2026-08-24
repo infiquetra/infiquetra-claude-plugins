@@ -85,6 +85,7 @@ def test_exact_maximum_wave_width_and_stable_identity() -> None:
     assert first["aggregate_limit"] == 7
     assert first["slots"] == ["slot-001", "slot-002", "slot-003", "slot-004"]
     assert first["workload_unit_ids"] == ["U1", "U2"]
+    assert first["execution_ttl_seconds"] == 1800  # #694: max(900, 300 * 6)
     assert first["batch_id"] != later["batch_id"]
     # The policy-digest equality pin retired with broker admission (#677/U4): it asserted the
     # metadata against the broker-era AdmissionLimits; the closed-shape test below still

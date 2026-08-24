@@ -1,5 +1,46 @@
 # Changelog
 
+## [1.20.4] - 2026-08-24
+
+### Fixed
+
+- **Single launch seam and no-focus background invariant.** Every run unit, including units added at
+  a later phase boundary via `expand`, is persisted before creation and launched strictly through
+  `go` and the central `agent_argv()` path. Regression tests lock the complete background launch
+  flag set (`--no-focus --current --herdr --herdr-control-only`) ahead of the vendor token across all
+  supported vendors, and verify that operator focused pane is preserved across multi-unit launches.
+  Coordinator instructions explicitly prohibit manual worktree creation or direct `agents` wrapper
+  invocations, and treat unsupported post-launch setup as a controlled post-launch step rather than
+  an expansion bypass. `status` now surfaces unrecorded unit branches discovered via
+  `discover_unrecorded`, ensuring coordinator-created drift is visible and requires explicit adoption
+  (`adopt --yes`) or run-owned cleanup.
+
+## [1.20.3] - 2026-08-24
+
+### Fixed
+
+- **Settlement requires branch completion evidence instead of pane idleness.** `orchestrate.py settle`
+  now gates completion on `produced_anything`. A session that is merely idle without commits on its
+  branch stays running, preventing stale `done` states or stuck/suspended processes from falsely
+  settling done. A closed Herdr session with commits on its branch settles `done` (never `failed`),
+  while a session gone without commits transitions to the distinct `orphaned` state.
+  The gate is a reading of a branch and is applied only where one can be read: a unit with no
+  branch of its own (the review controller, `merge: false`) is not commit-gated, and an
+  unresolvable run branch leaves the count unknown rather than zero — that unit stays running and
+  is told why, and a gone session's note says the commits could not be checked rather than
+  asserting there were none.
+
+## [1.20.2] - 2026-08-24
+
+### Fixed
+
+- **Dispatch confirms prompt delivery before marking units running.** Orchestrate now checks
+  acceptance via `took_the_task` after dispatching a unit's initial prompt. If the prompt is swallowed
+  while Herdr reports `interactive_ready` (e.g. by vendor startup or trust dialogs), Orchestrate
+  retries delivery up to 2 times while the session remains continuously idle. If still unaccepted, the
+  unit transitions to the named failure state `prompt_undelivered` with `DELIVERY_WARNING`, rather than
+  being left silently running.
+
 ## [1.20.1] - 2026-08-21
 
 ### Fixed

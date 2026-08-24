@@ -83,7 +83,7 @@
     {
       "name": "saga",
       "source": "./plugins/saga",
-      "version": "0.139.0",
+      "version": "0.139.4",
       "description": "Infiquetra lifecycle plugin: /outcome DAG orchestration with cross-runtime discovery/handoff, liveness facts, /pulse telemetry, trust-gated engine onboarding, and /fleet-doctor cross-source auditing.",
       "author": {
         "name": "Infiquetra",
@@ -133,7 +133,7 @@
     {
       "name": "mission-control",
       "source": "./plugins/mission-control",
-      "version": "2.12.0",
+      "version": "2.12.2",
       "description": "SDLC management for Operations, Asgard, and CAMPPS: prepared issue drafts, live schema sync, board schemas, labels, project fields, metrics, and card validation.",
       "author": {
         "name": "Infiquetra",
@@ -200,7 +200,7 @@
     {
       "name": "fleet-core",
       "source": "./plugins/fleet-core",
-      "version": "0.25.2",
+      "version": "0.25.3",
       "description": "Fleet-commons library: shared primitives, liveness decisions, execution-class routing, bridge receipts, attestations, and the delegation audit store. Scripts-only - no skills, commands, or agents.",
       "author": {
         "name": "Infiquetra",
@@ -280,7 +280,7 @@
     {
       "name": "orchestrate",
       "source": "./plugins/orchestrate",
-      "version": "1.20.1",
+      "version": "1.20.4",
       "description": "Run one piece of work across several herdr agent sessions, one git worktree per unit.",
       "author": {
         "name": "Infiquetra",

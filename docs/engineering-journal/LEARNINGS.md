@@ -73,6 +73,124 @@ Re-threading spreads the coupling; a carrier keeps it at the one place that know
 `docs/plans/2026-08-24-defects-claude-plugins-run-plan.md` section U9;
 `{#lease-ttl-honest-without-a-reader}` for the sibling case of a payload nobody reads.
 
+### The launcher was already right; nothing made anyone use it  {#launch-seam-is-enforcement-not-implementation}
+
+**Context.** Nine Team Mimir worker launches in one run each stole the operator's UI focus.
+Orchestrate's `agent_argv` had emitted `--no-focus --current --herdr --herdr-control-only` the whole
+time and was never wrong. The coordinator simply did not call it: at the Work expansion boundary it
+made nine worktrees by hand and invoked the `agents` wrapper itself, where the wrapper's ordinary
+interactive default is `--focus`.
+
+**Evidence.** Issue #773, PR #798. `plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py`
+`agent_argv` (the flag prefix, unchanged by the fix) against the observed direct calls quoted in the
+issue, which carried `--workspace`, `--task` and `--cwd` and none of the four background flags. A
+read-only launcher dry run reproduces both halves: the direct shape resolves to
+`agent-herdr prepare ... --focus`, Orchestrate's shape to `agent-herdr prepare ... --no-focus`.
+orchestrate 1.20.3.
+
+**Mechanism.** The defect lived one level above the code. A correct central adapter only holds if
+every path reaches it, and nothing in the plugin made the expansion boundary a path: the run record
+is written by this script for actions this script performed, so a unit created outside it does not
+exist to `go`, cannot be given `agent_argv`, and cannot be reaped. Every guarantee the adapter
+offers is conditional on being called, and that condition was documented rather than enforced.
+
+**Fix.** Three edges on machinery that already existed, no new moving parts (orchestrate 1.20.4):
+regression tests that lock the complete four-flag prefix *and its position ahead of the vendor
+token* for every vendor in the permission and flag registries; a post-plan-expansion test proving
+units added by `expand` still launch through `go`; the existing `discover_unrecorded` results
+surfaced from `status` as well as `check`, so a bypass is visible on every poll; and both operator
+surfaces stating the prohibition outright. Deliberately rejected: a new `doctor` command and a
+second detector — the run plan's S3 repair (findings F7/F10) had already removed them, because
+`discover_unrecorded`, `cmd_check` and `cmd_adopt` cover the detection and the repair between them.
+
+**Validation.** 376 orchestrate tests green at PR #798. The reviewed revision also had to be walked
+back in two places found in code review: `worktree_on_branch` had been switched to a silent
+`check=False`, which suppresses the pre-`land` "run branch is checked out at ..." warning and lets
+`adopt` rebuild a unit with no worktree, and neither `status` nor `discover_unrecorded` calls it —
+only `run_branches` does, where the softening is genuinely load-bearing (`status` in a directory
+that is no longer a repository otherwise exits non-zero). Both surfaces had also claimed that
+"worktrees or sessions" outside the record are flagged, when the detector reads only branches in the
+`orch/<run-id>-<unit>` series.
+
+**What surprised.** The fix touches twelve lines of product code and three hundred lines of test.
+That ratio is the finding, not an accident of it: when implementation is already correct, the whole
+repair is the enforcement, and enforcement is mostly assertions.
+
+**Generalizable rule.** When a correct helper produces a wrong outcome, do not re-examine the helper
+— find the caller that never used it, and ask what made skipping it possible. And when you soften a
+subprocess from raising to returning, check every caller of the helper you softened: a guard that
+warns before a mutation reads a silent failure as "nothing to warn about".
+
+**Refs.** LEARNINGS [`{#idleness-is-not-completion}`](#idleness-is-not-completion); DECISIONS
+[`{#defects-run-plan-ktds-787}`](DECISIONS.md#defects-run-plan-ktds-787); plan
+`docs/plans/2026-08-24-defects-claude-plugins-run-plan.md` section U3.
+
+### A file-scoped pagination lint went blind on the very file it was installed to guard, and the query-scoped rewrite reintroduced the blindness one layer down  {#pagination-lint-scope-blindness-584}
+
+**Context.** #424 shipped `paginate_or_raise` plus `check_pagination.py` and recorded (see
+`{#board-pagination-truncation-confirmed-live-424}`) that the lint "lints future call sites". #584 R1
+then found `QUERY_GET_PROJECT_FIELDS` sitting unpaginated at `fields(first: 30)` for weeks inside
+`plugins/mission-control/scripts/sdlc_manager.py` -- a file the lint scanned on every CI run.
+
+**Evidence.** The pre-#584 rule was `if GRAPHQL_FIRST_RE.search(text) and "hasNextPage" not in text`
+(`plugins/mission-control/scripts/check_pagination.py:115` at `2d811cab`) -- whole-file, so one
+compliant query anywhere in the file cleared every other query in it. Running the post-#584
+query-scoped checker against `git show origin/main:.../sdlc_manager.py` reports the violation at
+`sdlc_manager.py:936`, which is the exact line #584 R1 named; the pre-#584 checker reports zero on
+the same bytes.
+
+**Mechanism.** The guard's scope was the file, but the unit of the defect is the query. Any file
+large enough to hold a second, compliant query -- which is every real client of a GraphQL API --
+buys permanent immunity for its non-compliant ones. The guard did not fail; it passed, loudly and
+truthfully, about a question nobody wanted answered.
+
+**Fix.** Query-scoped extraction over Python string literals and Markdown fences, with
+`# pagination-lint: allow (<reason>)` for the two connections whose bound is genuinely unreachable
+(#584, PR #796). `QUERY_GET_PROJECT_FIELDS` and `board_census.fetch_project_fields_census` now
+route through `paginate_or_raise`.
+
+**What surprised.** The rewrite reintroduced the same class one layer down, and Saga Code Review
+caught it before merge. Pairing triple quotes with the alternation `(?:"""|''')` lets an opening
+`"""` close on a `'''` occurring inside it, desynchronizing every literal after it; the rewrite then
+ran the whole-file fallback only when extraction returned *nothing*, so a desynchronized parse --
+which returns garbage blocks, not nothing -- silently switched the GraphQL guard off for the entire
+file. A stray `'''` in one docstring was enough, and a file the old lint flagged became clean. Fixed
+by backreferencing the delimiter (`("""|''')(.*?)\1`) and by running the whole-file check on any
+`first:` occurrence the extractor could not place inside a block, pinned by
+`plugins/mission-control/tests/test_check_pagination.py::TestGraphqlGuardNeverFailsOpen`.
+
+**Generalizable rule.** Scope a guard to the unit of the defect, never to the container the defect
+happens to live in -- and when you narrow a guard's scope, keep the old broad check as the
+fallback for whatever the new parser cannot read. A narrowed guard must be a strict superset of the
+one it replaces, and the way to prove that is to run the new guard against the bytes the old one
+flagged.
+
+**Refs.** #584, PR #796; `{#board-pagination-truncation-confirmed-live-424}`;
+`plugins/mission-control/scripts/check_pagination.py`,
+`plugins/mission-control/scripts/sdlc_manager.py`,
+`plugins/mission-control/scripts/board_census.py`.
+
+---
+### A stable result marker is a false-green machine unless the run clears it first  {#gate-result-marker-staleness-and-trap-deferral}
+
+**Context.** `scripts/gate.sh` gained a stable result marker (`$LOG_DIR/result.txt`) so a backgrounded 24-step gate run — which reliably outlives the Bash tool's 600-second foreground timeout — can report its outcome without scraping a live terminal (#782). `CLAUDE.md` documents the invocation with a fixed, reused `GATE_LOG_DIR=/tmp/gate-run`, and tells the operator to read the outcome with `cat /tmp/gate-run/result.txt`.
+
+**Evidence.** PR #797, review of frozen revision `2a7246a0`. Reproduction: seed `result.txt` with a previous run's `GATE GREEN`, start a fresh gate into the same `GATE_LOG_DIR`, `kill -9` it, then `cat result.txt` — it printed `GATE GREEN — 24 steps ran, 0 blocking failures, 0 uncovered.` for a run that never reached step 3. Separately, a stand-in script trapping `TERM` around an eight-second child measured **7.71 seconds** between the signal and the handler running; signalling the process group instead measured **0.00 seconds**.
+
+**Mechanism.** Two independent causes, both about *when* a marker is written rather than *whether* it is.
+
+1. The marker was only ever written on a terminal verdict or by a trap. A signal that cannot be trapped (`SIGKILL`, OOM, reboot) skips both, so the file keeps holding the *previous* run's verdict — and the reused log directory is what the documentation recommends. An in-flight run has the same shape: the marker present on disk describes an older run.
+2. bash defers a trap handler until the foreground command it is `wait`ing on returns. Sending `SIGTERM` to `gate.sh` alone therefore does nothing visible until the running step (`uv run pytest`, `git fetch origin main`) finishes. The harness kill that motivated #782 produced its `exit 143` promptly only because it killed the whole process group, so the child died first.
+
+**Fix.** `rm -f "$RESULT_FILE"` immediately after the log-directory precondition, so absence means "still running or killed outright" and never "green"; `CLAUDE.md` states that reading. The dev-toolchain precondition now writes `GATE PRECONDITION FAILED — dev toolchain not installed: …` instead of leaving the generic exit-trap text to call a precondition failure an interruption. `tests/test_gate_invocation.py` starts the gate with `start_new_session=True` and signals via `os.killpg`, with a `try/finally` group kill — previously a `proc.wait(timeout=5)` that would expire whenever the signal landed inside a real step, erroring the test *and* orphaning a full 24-step gate inside CI.
+
+**Validation.** All four reproductions re-run against the repaired script: the seeded `GATE GREEN` no longer survives a `kill -9` (marker absent, as intended); the precondition marker names the missing tools; `tests/test_gate_invocation.py` passes 4/4 in 0.23 s; `bash -n scripts/gate.sh` clean.
+
+**What surprised.** The marker made the failure mode *worse* than no marker at all. Before it existed, an operator had to read the log and could see the run was truncated. After it existed, a confident one-line `GATE GREEN` was sitting in the documented location, attributable to the wrong run.
+
+**Generalizable rule.** A status file that is only written at the end encodes the last run that *finished*, not the run you are asking about. Clear or stamp it at the start, so a missing or in-progress marker is unmistakable — and never let a durable "green" outlive the run that earned it.
+
+**Refs.** Issue #782, PR #797, run #787. Related: the gate's own warning that "a shortfall in coverage reports green" (`CLAUDE.md`, Gate Coverage Contract).
 
 ### A lease TTL nobody reads is still worth deriving, because the payload is the only surviving record  {#lease-ttl-honest-without-a-reader}
 

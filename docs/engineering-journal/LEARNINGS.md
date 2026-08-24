@@ -21,6 +21,20 @@
 
 ## 2026-08-24
 
+### A non-negative contract has to be enforced at every entry chokepoint, not just the date one  {#retry-after-negative-clamp}
+
+**Context.** `parse_retry_after` in `fleet_commons.retry_backoff` was designed to reduce both RFC 7231 `Retry-After` formats (delta-seconds and HTTP-date) to a non-negative delay in seconds. While the HTTP-date path clamped past dates to `0.0` ("retry now, never a negative delay"), the delta-seconds path returned negative values unchanged for negative header values (e.g. `-5`, `-120`). Callers presenting delay advice in typed 429 exceptions then displayed confusing negative wait times to operators.
+
+**Evidence.** Issue #770. `plugins/fleet-core/scripts/fleet_commons/retry_backoff.py:60`. `python3 -c "from fleet_commons import retry_backoff as rb; print(rb.parse_retry_after('-5'))"` returned `-5.0`.
+
+**Mechanism.** `_usable_delay` checked `math.isfinite(seconds)` to reject `inf`/`nan`/`1e400`, but omitted the `max(0.0, seconds)` floor present in the sibling HTTP-date parsing path (`retry_backoff.py:110`). Because `_retry_delay` already ignored non-positive values for sleep computation, the negative values only manifested in user-facing error messages and advice strings.
+
+**Fix.** Clamped finite values in `_usable_delay` to `max(0.0, seconds)` so both parsing paths unconditionally produce non-negative delays or `None`. Bumped `fleet-core` to `0.25.3`.
+
+**Validation.** Parametrised unit tests in `tests/test_retry_backoff.py` verify `-5`, `-0.5`, `-120` (both string and numeric) return `0.0`, postcondition invariants hold across all input types, and the full test suite passes.
+
+**Generalizable rule.** When a primitive promises an invariant (e.g. "never negative"), enforce it at the shared return chokepoint rather than relying on callers or sibling branches to normalize it independently.
+
 ### A readiness flag is the sender's claim, so delivery has to be read off the receiver  {#readiness-is-not-delivery}
 
 **Context.** Orchestrate dispatched a unit, herdr reported the session `interactive_ready`,

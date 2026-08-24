@@ -57,7 +57,7 @@ def _usable_delay(seconds: float) -> float | None:
     value is exactly the "no usable hint" case this function already documents, so
     it answers ``None`` and the caller falls back to computed backoff.
     """
-    return seconds if math.isfinite(seconds) else None
+    return max(0.0, seconds) if math.isfinite(seconds) else None
 
 
 def parse_retry_after(

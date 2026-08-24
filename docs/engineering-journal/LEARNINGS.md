@@ -21,6 +21,62 @@
 
 ## 2026-08-24
 
+### A lease TTL nobody reads is still worth deriving, because the payload is the only surviving record  {#lease-ttl-honest-without-a-reader}
+
+**Context.** #694 asked for the workflow execution lease to outlive the run it guards. By the time
+the unit ran, #677/U4 had deleted the fleet lease broker, so the question changed shape: with no
+enforcer left, is a wrong TTL still a defect? The plan (`docs/plans/2026-08-24-defects-claude-plugins-run-plan.md`,
+section U8) required a consumer sweep as the unit's first step precisely so the answer would rest on
+evidence rather than on the shape of the original card.
+
+**Evidence.** Pull request 795, commit `af773879`. The sweep, re-run at that revision, covers both
+halves the plan named and both come back empty:
+
+- *Teardown and release results.* `plugins/saga/scripts/workflow_emitter.py:141-160` — `renew` and
+  `release` each validate the contract and `return ()` unconditionally since #677/U4. The `/work`
+  skill invokes both (`plugins/saga/skills/work/SKILL.md:421` and `:429`) and consumes neither
+  return value; the surrounding prose already documents them as reporting an empty result.
+- *Readers of `execution_ttl_seconds` itself.* A repository-wide grep finds the producer
+  (`plugins/saga/scripts/execution_spec.py:3682`), the closed-key set and positivity check in the
+  emitter (`workflow_emitter.py:34` and `:95`), tests, and prose. Nothing treats the value as a
+  hold duration, and no saga reference document or skill states a TTL number at all.
+
+**Mechanism.** Zero readers is an argument about enforcement, not about truthfulness. The emitted
+`workflow_lease_reservation.v1` payload is now the *only* durable statement of what the run intended
+to hold, and `.saga/workflow-lease-*.json` files persist after the run — the artifact
+`{#workflow-lease-ttl-outlives-no-poll-contract}` reconstructed the #686 incident from. A payload
+that records `300` for a 32-minute run does not fail an assertion; it misinforms the next
+investigation, which is the failure mode that incident actually suffered.
+
+**Fix.** Shape (a): `execution_ttl_seconds` is derived at emit time as
+`max(900, 300 × multiplicity_aware_unit_count)` (`execution_spec.py:3669`), replacing the literal.
+The 900-second floor is leaf #694's 10-minute acceptance criterion plus a named five-minute margin,
+so a one-unit spec still clears the criterion. `claim_ttl_seconds` is unchanged.
+The leaf's third acceptance criterion — that teardown distinguish "released held leases" from
+"nothing to release" — is **dropped explicitly** on the first sweep result above: with no broker and
+no consumer, there is no distinguishable result left to pin.
+
+**Validation.** 619 tests green across `test_saga_execution_spec.py`, `test_saga_workflow_emitter.py`,
+`test_saga_plugin.py`, `test_workflow_emitter.py`, and `test_concurrency_conformance.py`. Mutation
+proof runs both ways: reverting to the literal `300` **and** weakening the floor to
+`max(300, 300 × count)` each fail `test_workflow_lease_held_past_ten_minute_mark` at
+`assert 300 >= 600`. Emission stays deterministic — the TTL is a pure function of the spec, pinned by
+the `first == replay` assertion at `tests/test_saga_workflow_emitter.py:79`.
+
+**What surprised.** The sweep's empty result was pre-registered as an argument for the *opposite*
+fix. DECISIONS `{#defects-run-plan-ktds-787}` forecast that zero consumers would make retiring the
+payload "the truthful fix". Running the sweep inverted that reading rather than confirming it: the
+value's audience turned out to be a human reading a persisted artifact after the fact, and a grep
+for consumers cannot see that audience because it never appears as a caller.
+
+**Generalizable rule.** Before retiring a field because nothing reads it, ask who reads the
+*artifact* — persisted payloads have human readers that no consumer sweep can find. A record kept
+honest is cheaper than a record explained away later.
+
+**Refs.** LEARNINGS `{#workflow-lease-ttl-outlives-no-poll-contract}` (the #686 incident this
+closes), DECISIONS `{#defects-run-plan-ktds-787}` and
+`{#lease-ttl-payload-kept-after-zero-consumer-sweep}`; issue #694; pull request 795.
+
 ### A readiness flag is the sender's claim, so delivery has to be read off the receiver  {#readiness-is-not-delivery}
 
 **Context.** Orchestrate dispatched a unit, herdr reported the session `interactive_ready`,
@@ -3387,7 +3443,16 @@ duration of the work it protects, not the expected one. And when a teardown call
 collection, treat that as an unanswered question rather than a success — prove where the resources
 went before calling it clean.
 
-**Refs.** [[verdict-contract-has-three-prompt-surfaces]], `plugins/saga/skills/work/SKILL.md` §1.5,
+**Resolved 2026-08-24.** Shape (a) shipped as issue #694 / pull request 795 (commit `af773879`):
+`execution_ttl_seconds` is derived at emit time rather than fixed at 300. Shape (b) — the in-run
+lease keeper — was overtaken by #677/U4, which deleted the broker entirely; there is no longer
+anything to renew. See LEARNINGS [[lease-ttl-honest-without-a-reader]] for the consumer sweep that
+settled the choice.
+
+**Refs.** [[verdict-contract-has-three-prompt-surfaces]],
+[[lease-ttl-honest-without-a-reader]],
+DECISIONS `{#lease-ttl-payload-kept-after-zero-consumer-sweep}`,
+`plugins/saga/skills/work/SKILL.md` §1.5,
 `plugins/saga/scripts/workflow_emitter.py:191-206`.
 
 ### A verdict contract had FOUR prompt surfaces; the plan enumerated two  {#verdict-contract-has-three-prompt-surfaces}

@@ -73,6 +73,16 @@ starts with only what can launch now, and `expand` appends the rest once the ope
 them — same run, so `after` still reaches back and one `collect` covers everything. `expand` refuses
 a duplicate name or a dependency that is in no run.
 
+**Single launch seam and no-focus invariant.** Every run unit, including units added at a later
+phase boundary, must be persisted through `start` or `expand` before any worktree or session is
+created, and must launch only through `go` via the central `agent_argv` path. Never create worktrees
+manually or invoke `agents` directly for a run unit. Direct wrapper calls bypass Orchestrate's
+background launch flags (`--no-focus --current --herdr --herdr-control-only`) and steal operator UI
+focus. Unsupported post-launch setup (such as interactive OpenCode variant selection) is a
+controlled post-launch step, not a license to bypass `expand` or `go`. Worktrees or sessions created
+outside the run record are flagged as unrecorded drift by `status` and `check`, requiring explicit
+adoption with `adopt --yes` or run-owned cleanup rather than being silently treated as valid expansion.
+
 **Saga's external-engine offer is answered before dispatch.** A `/doc-review` or `/code-review`
 session with no stored preference stops and asks the operator, in a tab nobody is watching. The
 plan's `engine_prefs` block is written to `<worktree>/.saga/engine-prefs.json` at worktree creation,

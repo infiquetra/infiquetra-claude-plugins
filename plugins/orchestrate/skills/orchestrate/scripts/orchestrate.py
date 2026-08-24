@@ -1583,13 +1583,19 @@ def run_branches(run_id: str) -> list[str]:
     a row in the table is work the record lost track of. The run branch itself is excluded by the
     pattern -- it carries no unit-name suffix, so it can never be mistaken for one.
     """
-    proc = run(["git", "branch", "--list", f"orch/{run_id}-*", "--format=%(refname:short)"])
+    proc = run(
+        ["git", "branch", "--list", f"orch/{run_id}-*", "--format=%(refname:short)"], check=False
+    )
+    if proc.returncode != 0:
+        return []
     return [b.strip() for b in proc.stdout.splitlines() if b.strip()]
 
 
 def worktree_on_branch(branch: str) -> str | None:
     """The path of the worktree checked out on this branch, if any."""
-    proc = run(["git", "worktree", "list", "--porcelain"])
+    proc = run(["git", "worktree", "list", "--porcelain"], check=False)
+    if proc.returncode != 0:
+        return None
     wanted = branch if branch.startswith("refs/") else f"refs/heads/{branch}"
     path: str | None = None
     for line in proc.stdout.splitlines():
@@ -2491,6 +2497,8 @@ def cmd_status(args: argparse.Namespace) -> int:
     print("-" * (sum(widths) + len(widths) - 1))
     for row in rows:
         print(format_row(row))
+    for name, branch in discover_unrecorded(r):
+        print(f"UNRECORDED {name} -- branch {branch} is not a unit in this run")
     if r.review_outcome:
         outstanding_work = any(unit.fix_requests for unit in r.units)
         if r.review_resubmit_pending and outstanding_work and r.operator_fix_requests:

@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.20.4] - 2026-08-24
+
+### Fixed
+
+- **Single launch seam and no-focus background invariant.** Every run unit, including units added at
+  a later phase boundary via `expand`, is persisted before creation and launched strictly through
+  `go` and the central `agent_argv()` path. Regression tests lock the complete background launch
+  flag set (`--no-focus --current --herdr --herdr-control-only`) ahead of the vendor token across all
+  supported vendors, and verify that operator focused pane is preserved across multi-unit launches.
+  Coordinator instructions explicitly prohibit manual worktree creation or direct `agents` wrapper
+  invocations, and treat unsupported post-launch setup as a controlled post-launch step rather than
+  an expansion bypass. `status` now surfaces unrecorded unit branches discovered via
+  `discover_unrecorded`, ensuring coordinator-created drift is visible and requires explicit adoption
+  (`adopt --yes`) or run-owned cleanup.
+
 ## [1.20.3] - 2026-08-24
 
 ### Fixed

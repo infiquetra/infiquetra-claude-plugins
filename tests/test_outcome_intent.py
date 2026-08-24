@@ -1020,27 +1020,21 @@ def test_repeated_stranded_repost_appends_once(repo: Path) -> None:
 
 def test_strand_halt_dedup_key_generation_lifecycle(repo: Path) -> None:
     # #598 item 1: the strand-halt dedup key carries a lifecycle/generation component
-    # (repost:<scope>:r<revision>) so a second genuine strand event on the same campaign
-    # after the first resolves appends a new durable ledger record.
+    # (repost:<scope>:r<revision>), so a second genuine strand event ON THE SAME SCOPE, after
+    # the first one is resolved, appends a NEW durable ledger record instead of being
+    # deduplicated away forever. The same-scope path is the one the defect described: the old
+    # `repost:<scope>` key discriminated different scopes already, so only a repeat strand on
+    # ONE scope proves the generation component does work.
     _start(
         repo,
         "camp",
-        [
-            {"subplot_id": "deploy1", "title": "Deploy 1", "kind": "code", "destructive": True},
-            {
-                "subplot_id": "deploy2",
-                "title": "Deploy 2",
-                "kind": "code",
-                "destructive": True,
-                "depends_on": ["deploy1"],
-            },
-        ],
+        [{"subplot_id": "deploy", "title": "Deploy", "kind": "code", "destructive": True}],
     )
     store = _store(repo, "camp")
     env = _env_path(repo)
-    assert M.advance(repo, "camp", dispatcher=_auto).dispatched == ["deploy1"]
+    assert M.advance(repo, "camp", dispatcher=_auto).dispatched == ["deploy"]
 
-    # First strand at revision 1: attempt tightening repost while deploy1 is in flight.
+    # Generation 1: a scoped tightening strands against the in-flight destructive leaf.
     spec = M.load_spec(repo, "camp")
     assert spec.spec_revision == 1
     with pytest.raises(OI.RepostStrandedError):
@@ -1048,70 +1042,62 @@ def test_strand_halt_dedup_key_generation_lifecycle(repo: Path) -> None:
             spec,
             store,
             changes={"sandbox": "read-only-verify"},
-            scope="deploy1",
-            reason="tighten sandbox wave 1",
+            scope="deploy",
+            reason="tighten sandbox, attempt 1",
             envelope_path=env,
         )
-    # Repeated attempt at same revision dedups.
+    # A repeat attempt in the SAME generation still dedups — the append-once discipline holds.
     with pytest.raises(OI.RepostStrandedError):
         OI.repost(
             spec,
             store,
             changes={"sandbox": "read-only-verify"},
-            scope="deploy1",
-            reason="tighten sandbox wave 1 repeat",
+            scope="deploy",
+            reason="tighten sandbox, attempt 1 repeated",
             envelope_path=env,
         )
-    strand_records_r1 = [
+    gen1 = [
         r
         for r in STORE.read_ledger(store)
         if r.get("phase") == "halt" and r.get("kind") == "repost"
     ]
-    assert len(strand_records_r1) == 1
-    assert strand_records_r1[0]["key"] == "repost:deploy1:r1"
+    assert len(gen1) == 1
+    assert gen1[0]["key"] == "repost:deploy:r1"
 
-    # Resolve first strand: clear the andon directive and complete deploy1.
+    # Resolve the strand: the operator clears the andon and renegotiates campaign-scoped
+    # posture instead. Campaign-scoped fields never strand, so this repost commits and bumps
+    # the revision while 'deploy' is still in flight — the campaign advances a generation.
     AE.clear(env)
-    STORE.write_completion_event(
-        store, STORE.CompletionEvent(subplot_id="deploy1", state="done", idempotency_key="k:dep:1")
-    )
-    ORCH.harvest(spec, store=store, repo_root=repo)
-
-    # Now the flight is done, apply a valid posture repost to advance the campaign revision.
-    spec2 = M.load_spec(repo, "camp")
     OI.repost(
-        spec2,
+        spec,
         store,
         changes={"run_mode": "unattended"},
-        reason="switch to unattended mode",
+        reason="renegotiate campaign posture instead of the scoped tightening",
         envelope_path=env,
     )
-    M.save_spec(repo, spec2)
+    M.save_spec(repo, spec)
     spec_r2 = M.load_spec(repo, "camp")
     assert spec_r2.spec_revision == 2
 
-    # Dispatch second wave: deploy2 is now in flight under revision 2.
-    assert M.advance(repo, "camp", dispatcher=_auto).dispatched == ["deploy2"]
-
-    # Second strand event at revision 2 on deploy2:
+    # Generation 2: a genuinely distinct strand event, SAME scope, new revision.
     with pytest.raises(OI.RepostStrandedError):
         OI.repost(
             spec_r2,
             store,
             changes={"sandbox": "read-only-verify"},
-            scope="deploy2",
-            reason="tighten sandbox wave 2",
+            scope="deploy",
+            reason="tighten sandbox, attempt 2 after the first strand was resolved",
             envelope_path=env,
         )
 
-    # Durable ledger has TWO distinct records, one per generation/revision!
-    all_strand_records = [
+    # The durable audit trail now carries BOTH strand events on the one scope.
+    both = [
         r
         for r in STORE.read_ledger(store)
         if r.get("phase") == "halt" and r.get("kind") == "repost"
     ]
-    assert len(all_strand_records) == 2
-    assert [r["key"] for r in all_strand_records] == ["repost:deploy1:r1", "repost:deploy2:r2"]
+    assert len(both) == 2
+    assert [r["key"] for r in both] == ["repost:deploy:r1", "repost:deploy:r2"]
 
 
 # ---------------------------------------------------------------------------

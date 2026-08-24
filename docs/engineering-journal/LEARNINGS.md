@@ -21,6 +21,20 @@
 
 ## 2026-08-24
 
+### A test that resolves a real tool passes on the machine that has it and nowhere else  {#hermetic-launcher-resolution-in-tests}
+
+**Context.** Issue #781, PR #805. `tests/test_orchestrate_account.py::TestAccountSchemaAndLifecycle::test_start_loads_plan_account` and `::test_expand_updates_run_account` were green on the workstation and red on the CI runner with `SystemExit: no 'agents' on PATH`.
+
+**Evidence.** `cmd_start` and `cmd_expand` call `assert_vendors_available` -> `roster()` -> `launcher()`, and `launcher()` raises when `shutil.which` cannot resolve the wrapper. The module already had a `launcher_on_path` fixture pointing `ORCHESTRATE_AGENT_LAUNCHER` at a stub, but only four of its five test classes used it; the lifecycle class did not, and passed anyway because `/Users/jefcox/.local/bin/agents` exists here. Reproduced locally by stripping that one directory from `PATH`: exactly those two tests fail, the other 28 pass.
+
+**Mechanism.** The absent fixture was invisible precisely because the machine supplied what it should have supplied. A test whose setup is completed by the developer's environment reports the environment, not the code, and the report is only wrong somewhere else. The same family as #792, where a help-text assertion passes at the author's terminal width and fails in a narrow pane.
+
+**Fix.** Applied `launcher_on_path` to the lifecycle class, and gave its stub a real `Tools:` block -- a stub that printed nothing would leave `roster()` empty and `assert_vendors_available` returns without checking on an empty roster, so the test would have passed for the wrong reason. Added a `pane_reads_nothing` fixture so the transcript-probe tests stop reaching whatever `herdr` the machine has. Proven three ways: `PATH` intact, the wrapper directory stripped from `PATH` (both `agents` and `herdr` absent), and that plus `USER`/`LOGNAME` unset -- 30 passed in each.
+
+**Generalizable rule.** When a module-level fixture exists to substitute for an installed tool, every class in that module needs it, not the ones that were observed failing -- and prove it by running with the tool removed from the environment, because the machine that wrote the test is the one machine that cannot detect its absence. A substitute must also answer the questions the real tool answers; one that answers nothing can trip a "cannot check" escape hatch and turn a skipped check into a green test.
+
+**Refs.** Issue #781, PR #805, issue #792 (same family, still open); {#orchestrate-account-evidence-timing}.
+
 ### A launch-time account check has to read the statusline, because the transcript is not written yet  {#orchestrate-account-evidence-timing}
 
 **Context.** Issue #781: four Orchestrate workers launched from a company-account coordinator on 2026-08-23 all came up on the personal account — wrong billing and rate-limit pool, a different plugin tree, transcripts under the wrong identity, and invisible until someone checked where the transcripts landed. The fix adds a plan-level `account` field, emits `--company-account` for Claude units, and verifies the account before the task is submitted.

@@ -45,10 +45,45 @@ def orchestrate() -> ModuleType:
 
 @pytest.fixture
 def launcher_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A stub wrapper the module resolves instead of the machine's real one.
+
+    `launcher()` refuses to go on when it cannot resolve the wrapper, so any command that reaches
+    it dies on a runner that has no `agents` installed. Pointing `ORCHESTRATE_AGENT_LAUNCHER` at a
+    stub the test wrote makes the resolution succeed identically with and without a real wrapper
+    on PATH, which is the whole point: these tests are about account plumbing, not about what this
+    machine happens to have installed.
+
+    The stub answers `--help` in the wrapper's own shape because `assert_vendors_available` reads
+    the `Tools:` block at `start` and `expand`. A stub that printed nothing would leave the roster
+    empty and that check would return without checking anything -- passing for the wrong reason.
+    """
     launcher = tmp_path / "agents"
-    launcher.write_text("#!/bin/sh\n")
+    launcher.write_text(
+        "#!/bin/sh\n"
+        "cat <<'HELP'\n"
+        "Usage: agents [options] <tool>\n"
+        "\n"
+        "Tools:\n"
+        "  claude    Claude Code\n"
+        "  codex     Codex CLI\n"
+        "  grok      Grok CLI\n"
+        "  opencode  OpenCode\n"
+        "  qwen      Qwen CLI\n"
+        "HELP\n"
+    )
     launcher.chmod(0o755)
     monkeypatch.setenv("ORCHESTRATE_AGENT_LAUNCHER", str(launcher))
+
+
+@pytest.fixture
+def pane_reads_nothing(monkeypatch: pytest.MonkeyPatch, orchestrate: ModuleType) -> None:
+    """No statusline to read, so the account falls through to the transcript-root probe.
+
+    Without this the pane read reaches whatever `herdr` the machine has, which answers one way on
+    a workstation and another on a runner. The tests that plant a transcript are about that probe,
+    so the statusline is made to say nothing rather than left to the environment.
+    """
+    monkeypatch.setattr(orchestrate, "pane_account_label", lambda pane_id: None)
 
 
 @pytest.fixture
@@ -192,6 +227,7 @@ class TestAccountArgvEmission:
         assert argv.index("--company-account") > argv.index("claude")
 
 
+@pytest.mark.usefixtures("launcher_on_path")
 class TestAccountSchemaAndLifecycle:
     """Plan schema serialization, start, expand, and replacement preserve account."""
 
@@ -267,7 +303,7 @@ class TestAccountSchemaAndLifecycle:
         assert reloaded.units[1].account == "personal"
 
 
-@pytest.mark.usefixtures("launcher_on_path")
+@pytest.mark.usefixtures("launcher_on_path", "pane_reads_nothing")
 class TestPostLaunchAccountVerification:
     """Post-launch verification validates transcript root; mismatch marks named failure."""
 
@@ -437,7 +473,7 @@ class TestPostLaunchAccountVerification:
         assert unit.status == orchestrate.ACCOUNT_MISMATCH
 
 
-@pytest.mark.usefixtures("launcher_on_path")
+@pytest.mark.usefixtures("launcher_on_path", "pane_reads_nothing")
 class TestCmdGoAccountIntegration:
     """`orchestrate go` emits `--company-account` for claude units under selection and stops on mismatch."""
 

@@ -2016,11 +2016,32 @@ def test_advisory_log_names_the_actual_verdict_when_the_panel_refuted() -> None:
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
-def test_a_halt_carries_the_advisories_collected_before_it() -> None:
-    # Advisories exist to tell the driving session "the work was right, the account of it was
-    # wrong". A halt is when that context matters most, but a bare `throw` skips the harness's
-    # final `return` -- which is their only structured exit. In a multi-unit run that also
-    # strands advisories from units that DELIVERED. They ride out on the thrown error instead.
+def test_a_halt_carries_only_its_own_unit_advisories() -> None:
+    # A single unit that halts with advisories carries its own advisories on the thrown error.
+    units = [
+        _verify_unit("a", verify={"n": 3, "pass_rule": "majority"}),
+    ]
+    verdict_js = (
+        '{refuted_deliverable: ["unit a is broken"], advisory_corrections: ["unit a: fix typo"],'
+        ' upheld: [], verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
+        ' examined_sha: "deadbeef"}'
+    )
+    proc = _run_harness(units, verdict_js=verdict_js, tail=_CAPTURE_THROW)
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout.strip())
+    assert payload["ok"] is False
+    assert "verifier-disagreement: Unit a" in payload["message"]
+    assert payload["advisories"] is not None
+    assert [entry["unit"] for entry in payload["advisories"]] == ["a"]
+    assert payload["advisories"][0]["corrections"] == ["unit a: fix typo"] * 3
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_halt_in_second_unit_does_not_carry_prior_unit_advisories() -> None:
+    # #691 AC2 / plan U7: cross-unit advisory isolation. When two units each report one advisory
+    # and the second unit halts, the halt error's advisory_corrections contains only the second
+    # unit's advisory (length 1, not 2).
     units = [
         _verify_unit("a", verify={"n": 3, "pass_rule": "majority"}),
         _verify_unit("b", verify={"n": 3, "pass_rule": "majority"}, depends_on=["a"]),
@@ -2030,8 +2051,8 @@ def test_a_halt_carries_the_advisories_collected_before_it() -> None:
         ' ? {refuted_deliverable: [], advisory_corrections: ["unit a: wrong rationale"],'
         ' upheld: [], verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
         ' examined_sha: "deadbeef"}'
-        ' : {refuted_deliverable: ["unit b is broken"], advisory_corrections: [], upheld: [],'
-        ' verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
+        ' : {refuted_deliverable: ["unit b is broken"], advisory_corrections: ["unit b: wrong format"],'
+        ' upheld: [], verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
         ' examined_sha: "deadbeef"}'
     )
     proc = _run_harness(units, verdict_js=verdict_js, tail=_CAPTURE_THROW)
@@ -2040,10 +2061,64 @@ def test_a_halt_carries_the_advisories_collected_before_it() -> None:
     payload = json.loads(proc.stdout.strip())
     assert payload["ok"] is False
     assert "verifier-disagreement: Unit b" in payload["message"]
-    # Unit `a` delivered and its advisories survive the halt of a LATER unit.
-    assert payload["advisories"] is not None, "halt discarded every accumulated advisory"
-    assert [entry["unit"] for entry in payload["advisories"]] == ["a"]
-    assert payload["advisories"][0]["corrections"] == ["unit a: wrong rationale"] * 3
+    # Unit `b`'s halt carries ONLY unit `b`'s advisories -- length 1, not 2.
+    assert payload["advisories"] is not None
+    assert len(payload["advisories"]) == 1
+    assert [entry["unit"] for entry in payload["advisories"]] == ["b"]
+    assert payload["advisories"][0]["corrections"] == ["unit b: wrong format"] * 3
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_halt_in_second_unit_with_no_advisories_returns_empty_advisories() -> None:
+    # #691: A halt in unit `b` where unit `b` has no advisories does NOT carry unit `a`'s advisories.
+    units = [
+        _verify_unit("a", verify={"n": 3, "pass_rule": "majority"}),
+        _verify_unit("b", verify={"n": 3, "pass_rule": "majority"}, depends_on=["a"]),
+    ]
+    verdict_js = (
+        "__vcall <= 3"
+        ' ? {refuted_deliverable: [], advisory_corrections: ["unit a: wrong rationale"],'
+        ' upheld: [], verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
+        ' examined_sha: "deadbeef"}'
+        ' : {refuted_deliverable: ["unit b is broken"], advisory_corrections: [],'
+        ' upheld: [], verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
+        ' examined_sha: "deadbeef"}'
+    )
+    proc = _run_harness(units, verdict_js=verdict_js, tail=_CAPTURE_THROW)
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout.strip())
+    assert payload["ok"] is False
+    assert "verifier-disagreement: Unit b" in payload["message"]
+    assert payload["advisories"] == []
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_top_level_run_return_keeps_all_unit_advisories() -> None:
+    # Plan U7 / F8: The top-level harness return `advisory_corrections` retains the complete run-wide
+    # list keyed by unit when multiple units succeed.
+    units = [
+        _verify_unit("a", verify={"n": 3, "pass_rule": "majority"}),
+        _verify_unit("b", verify={"n": 3, "pass_rule": "majority"}, depends_on=["a"]),
+    ]
+    verdict_js = (
+        "__vcall <= 3"
+        ' ? {refuted_deliverable: [], advisory_corrections: ["unit a: advisory"],'
+        ' upheld: [], verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
+        ' examined_sha: "deadbeef"}'
+        ' : {refuted_deliverable: [], advisory_corrections: ["unit b: advisory"],'
+        ' upheld: [], verifier_identity: "saga:readonly-verifier", fallback_depth: 0,'
+        ' examined_sha: "deadbeef"}'
+    )
+    proc = _run_harness(units, verdict_js=verdict_js, tail=_CAPTURE_OK)
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout.strip())
+    assert payload["ok"] is True
+    assert len(payload["advisories"]) == 2
+    assert [entry["unit"] for entry in payload["advisories"]] == ["a", "b"]
+    assert payload["advisories"][0]["corrections"] == ["unit a: advisory"] * 3
+    assert payload["advisories"][1]["corrections"] == ["unit b: advisory"] * 3
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")

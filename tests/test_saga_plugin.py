@@ -45,9 +45,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert (
-        plugin_json["version"] == "0.139.0"
-    )  # Code Review owns the canonical review-consensus contract
+    assert plugin_json["version"] == "0.139.1"  # #691: advisory accumulator cross-unit bleed fix
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]

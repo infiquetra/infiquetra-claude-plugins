@@ -167,10 +167,13 @@ def check_goldens(manifest_path: Path) -> list[Drift]:
             drifts.append(Drift(rel, "mutated", f"sha256 {actual} != pinned {entry['sha256']}"))
             continue
 
-        # Behavioral pairing check (#588)
-        fake_id = entry.get("fake", "")
-        base_id = fake_id.split()[0] if fake_id else ""
-        consumer = _CONSUMERS.get(fake_id) or _CONSUMERS.get(base_id)
+        # Behavioral pairing check (#588). The manifest's `fake` field is free text whose FIRST
+        # whitespace-delimited token is the consumer key -- a hand-edit that leaves it blank or
+        # whitespace must report `unpaired`, not raise out of the checker.
+        fake_id = str(entry.get("fake", "") or "")
+        tokens = fake_id.split()
+        base_id = tokens[0] if tokens else ""
+        consumer = _CONSUMERS.get(fake_id) or (_CONSUMERS.get(base_id) if base_id else None)
         if not consumer:
             drifts.append(
                 Drift(rel, "unpaired", f"no registered consumer consumes fake {fake_id!r}")

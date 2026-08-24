@@ -123,6 +123,21 @@ def test_unpaired_fake_is_flagged_as_drift(checker: ModuleType, tmp_path: Path) 
     assert checker.main(["--manifest", str(manifest)]) == 1
 
 
+def test_blank_fake_field_reports_unpaired_rather_than_raising(
+    checker: ModuleType, tmp_path: Path
+) -> None:
+    """A blank or whitespace-only ``fake`` field is drift, not a traceback (#588 review).
+
+    The field is hand-maintained, and its first whitespace-delimited token is the consumer key, so
+    an empty edit must still produce the ``unpaired`` diagnostic the checker exists to print.
+    """
+    for blank in ("", "   "):
+        manifest = _seed_golden(tmp_path / f"blank{len(blank)}", fake_name=blank)
+        drifts = checker.check_goldens(manifest)
+        assert len(drifts) == 1, blank
+        assert drifts[0].kind == "unpaired", blank
+
+
 def test_consumer_failure_is_flagged_as_drift(checker: ModuleType, tmp_path: Path) -> None:
     """A golden whose format breaks the registered fake's consumer is flagged as drift (#588)."""
     # Golden with invalid grammar for the consumer (missing expected paths)

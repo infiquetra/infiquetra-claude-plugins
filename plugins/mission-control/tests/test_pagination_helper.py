@@ -161,3 +161,71 @@ class TestGetProjectItemsUsesSharedHelper:
         project_id, items = sdlc_manager.get_project_items(1)
         assert project_id == "PVT_test"
         assert len(items) == 250
+
+
+class TestGetProjectFieldsUsesSharedHelper:
+    def test_get_project_fields_raises_on_runaway_pagination(self, monkeypatch):
+        """`get_project_fields` must route through `paginate_or_raise` -- a
+        GraphQL response that always claims `hasNextPage: True` raises
+        instead of silently truncating (#584, R1)."""
+
+        def fake_graphql(query, variables):
+            return {
+                "organization": {
+                    "projectV2": {
+                        "id": "PVT_test",
+                        "fields": {
+                            "nodes": [
+                                {"id": f"field-{i}", "name": f"Field {i}"} for i in range(30)
+                            ],
+                            "pageInfo": {"hasNextPage": True, "endCursor": "always-more"},
+                        },
+                    }
+                }
+            }
+
+        monkeypatch.setattr(sdlc_manager, "_graphql", fake_graphql)
+        original_paginate = sdlc_manager.paginate_or_raise
+        monkeypatch.setattr(
+            sdlc_manager,
+            "paginate_or_raise",
+            lambda fetch_page, **kwargs: original_paginate(fetch_page, max_pages=2),
+        )
+        with pytest.raises(sdlc_manager.PaginationExhaustedError):
+            sdlc_manager.get_project_fields(1)
+
+    def test_get_project_fields_paginates_past_thirty_fields(self, monkeypatch):
+        """A >30-field board across two mocked pages returns the FULL field
+        count, not truncated at the first page (#584, R1)."""
+        page_1 = {
+            "organization": {
+                "projectV2": {
+                    "id": "PVT_test",
+                    "fields": {
+                        "nodes": [{"id": f"field-{i}", "name": f"Field {i}"} for i in range(30)],
+                        "pageInfo": {"hasNextPage": True, "endCursor": "cursor-1"},
+                    },
+                }
+            }
+        }
+        page_2 = {
+            "organization": {
+                "projectV2": {
+                    "id": "PVT_test",
+                    "fields": {
+                        "nodes": [
+                            {"id": f"field-{i}", "name": f"Field {i}"} for i in range(30, 45)
+                        ],
+                        "pageInfo": {"hasNextPage": False, "endCursor": None},
+                    },
+                }
+            }
+        }
+
+        def fake_graphql(query, variables):
+            return page_2 if variables.get("cursor") == "cursor-1" else page_1
+
+        monkeypatch.setattr(sdlc_manager, "_graphql", fake_graphql)
+        project_id, fields = sdlc_manager.get_project_fields(1)
+        assert project_id == "PVT_test"
+        assert len(fields) == 45

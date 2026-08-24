@@ -260,11 +260,15 @@ actually reported rather than the declared `n`:
 | `unanimous` | `max(1, k)` |
 
 The `max(1, …)` guard makes an all-missing panel (`k = 0`) deterministically **not refuted**, rather
-than vacuously refuted (`0 >= ⌈0/2⌉ = 0` would otherwise hold). A quorum floor of `⌈n/2⌉` of the
+than vacuously refuted (`0 >= ⌈0/2⌉ = 0` would otherwise hold). A quorum floor of `n // 2 + 1` of the
 **declared** `n` is baked as a literal at emit time (KTD9) — distinct from the `n=3` authoring
 default above; when the reporting count `k` falls under it, the emitted script logs which verifiers
 were missing (by index) and the `k/n` the verdict was computed over, with an UNDER-STRENGTH marker.
-The floor only *annotates* — a refutation over reporters still throws (or retries, for
+Under #692 (Option 3: missing-aware tightening), majority panels also halt as `verifier-under-strength`
+if `refute_count < threshold` (survivors uphold) but `refute_count + missing >= floor` (`potential-flip-on-missing`),
+preventing dropped refuters at odd `n >= 5` from turning a full-strength halt into a pass while provably
+preserving fault tolerance across all 37 committed `n=3` panels.
+The floor only *annotates* when refuted — a refutation over reporters still throws (or retries, for
 `iterate_to_consensus`) regardless of under-strength (KTD10); suppressing a refutation because the
 quorum ran small would reintroduce the exact uphold-bias this recompute exists to remove.
 

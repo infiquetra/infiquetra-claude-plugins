@@ -3011,10 +3011,18 @@ def _emit_panel_reconciliation(
         f'(runtime-failure: #${{{missing_idx_var}.join(", #")}}); '
         f"verdict computed over ${{{reported_var}.length}}/{n}` +"
     )
-    lines.append(
-        f"{indent}      ({reported_var}.length < {floor} ? "
-        f'" — UNDER-STRENGTH (quorum floor {floor})" : ""))'
-    )
+    if panel.pass_rule == "majority":
+        lines.append(
+            f"{indent}      ({reported_var}.length < {floor} ? "
+            f'" — UNDER-STRENGTH (quorum floor {floor})" : '
+            f"(!{refuted_var} && {refute_count_var} + {missing_idx_var}.length >= {floor} ? "
+            f'" — UNDER-STRENGTH (potential-flip-on-missing)" : "")))'
+        )
+    else:
+        lines.append(
+            f"{indent}      ({reported_var}.length < {floor} ? "
+            f'" — UNDER-STRENGTH (quorum floor {floor})" : ""))'
+        )
     lines.append(f"{indent}}}")
     lines.append(f"{indent}if ({reported_var}.length < {floor}) {{")
     lines.append(
@@ -3023,6 +3031,19 @@ def _emit_panel_reconciliation(
         f"missing #${{{missing_idx_var}.join(', #')}})${{{fallback_marker_var}}}`, {_js_string(unit.unit_id)})"
     )
     lines.append(f"{indent}}}")
+    if panel.pass_rule == "majority":
+        # #692: Option 3 missing-aware tightening at odd n (pessimistic missing refuter gate).
+        # When survivors uphold (!refuted) but refuting survivors + missing verifiers >= floor,
+        # missing verifiers could have produced a full-strength majority refutation.
+        lines.append(
+            f"{indent}if (!{refuted_var} && {refute_count_var} + {missing_idx_var}.length >= {floor}) {{"
+        )
+        lines.append(
+            f"{indent}  throw __halt(`verifier-under-strength: Unit {unit.unit_id} reported "
+            f"${{{reported_var}.length}}/{n} verifiers (potential-flip-on-missing)"
+            f"${{{fallback_marker_var}}}`, {_js_string(unit.unit_id)})"
+        )
+        lines.append(f"{indent}}}")
 
     throw_line = (
         f"throw __halt(`verifier-disagreement: Unit {unit.unit_id} refuted by "

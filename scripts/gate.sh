@@ -23,16 +23,51 @@
 # job is to predict CI. Never mark a step advisory to make the gate pass.
 #
 # USAGE
-#   scripts/gate.sh                 # run everything
+#   # Supported long-run background invocation:
+#   GATE_LOG_DIR=/tmp/gate-run bash scripts/gate.sh > /tmp/gate.log 2>&1 &
+#   # Foreground inner-loop invocation:
+#   scripts/gate.sh
 #   GATE_LOG_DIR=/tmp/g scripts/gate.sh
 #
-# Exit: 0 green · 1 a blocking step failed · 2 coverage is short of ci.yml
+# RESULT CAPTURE & SAFE RE-ENTRY
+#   - Stable result marker: writes $LOG_DIR/result.txt on completion or interruption.
+#   - Safe re-entry rule: if a prior gate run timed out, was killed, or is already running:
+#       1. Check for running gate processes: pgrep -fl "scripts/gate.sh"
+#       2. Terminate any stale / duplicate background process: pkill -f "scripts/gate.sh"
+#       3. Clean up or set a fresh GATE_LOG_DIR and re-run.
+#
+# Exit: 0 green · 1 a blocking step failed · 2 coverage is short of ci.yml · 3 precondition failed
 
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
 CI=.github/workflows/ci.yml
 LOG_DIR="${GATE_LOG_DIR:-$(mktemp -d)}"
+RESULT_FILE="$LOG_DIR/result.txt"
+
+# Stable result marker capture: write the final status line to $LOG_DIR/result.txt
+# so backgrounded runs can be inspected without scraping live terminal output.
+_on_term() {
+  echo "GATE INTERRUPTED — killed by SIGTERM before completing all steps" > "$RESULT_FILE"
+  exit 143
+}
+trap _on_term TERM
+
+_on_int() {
+  echo "GATE INTERRUPTED — killed by SIGINT before completing all steps" > "$RESULT_FILE"
+  exit 130
+}
+trap _on_int INT
+
+_on_exit() {
+  local rc=$?
+  if [ ! -f "$RESULT_FILE" ]; then
+    if [ "$rc" -ne 0 ]; then
+      echo "GATE INTERRUPTED — exited with code $rc before completing all steps" > "$RESULT_FILE"
+    fi
+  fi
+}
+trap _on_exit EXIT
 
 # Every step redirects into LOG_DIR. If it does not exist or is not writable, the
 # redirect fails before the command runs and *every* step reports failure — which
@@ -201,6 +236,7 @@ if [ -n "$missing" ]; then
   echo "GATE INCOMPLETE — ci.yml has pre-merge steps this gate does not cover:"
   printf '%s\n' "$missing" | sed 's/^/  - /'
   echo "NOT a pass. Cover them above, then re-run."
+  echo "GATE INCOMPLETE — ci.yml has pre-merge steps this gate does not cover" > "$RESULT_FILE"
   exit 2
 fi
 echo "coverage:       every pre-merge step in $CI is covered"
@@ -208,7 +244,9 @@ if [ "$failed" -ne 0 ]; then
   echo
   echo "GATE RED — ${failed} blocking step(s) failed:"
   printf '  - %s\n' "${FAILED_NAMES[@]}"
+  echo "GATE RED — ${failed} blocking step(s) failed: ${FAILED_NAMES[*]}" > "$RESULT_FILE"
   exit 1
 fi
 echo "GATE GREEN — ${ran} steps ran, 0 blocking failures, 0 uncovered."
 echo "logs: $LOG_DIR"
+echo "GATE GREEN — ${ran} steps ran, 0 blocking failures, 0 uncovered." > "$RESULT_FILE"

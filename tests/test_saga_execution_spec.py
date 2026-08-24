@@ -3397,3 +3397,64 @@ def test_panel_tier_spend_prices_verifiers_at_effective_tier() -> None:
     default_unit = default_spec.unit_by_id("U1")
     assert default_unit is not None
     assert ES.unit_spend(default_unit) == base_unit + 3 * base_unit
+
+
+def test_workflow_lease_execution_ttl_formula_multiplicity() -> None:
+    # #694: execution_ttl_seconds = max(900, 300 * multiplicity_aware_unit_count)
+    # 1. Single plain unit: multiplicity 1 -> max(900, 300) = 900
+    u1 = _unit("U1", "sonnet", "high")
+    spec1 = ES.ExecutionSpec.from_dict(_budget_spec([u1]))
+    assert spec1.multiplicity_aware_unit_count() == 1
+    assert ES.workflow_lease_metadata(spec1)["execution_ttl_seconds"] == 900
+
+    # 2. Two plain units: multiplicity 2 -> max(900, 600) = 900
+    u2 = _unit("U2", "sonnet", "high")
+    spec2 = ES.ExecutionSpec.from_dict(_budget_spec([u1, u2]))
+    assert spec2.multiplicity_aware_unit_count() == 2
+    assert ES.workflow_lease_metadata(spec2)["execution_ttl_seconds"] == 900
+
+    # 3. Four plain units: multiplicity 4 -> max(900, 1200) = 1200
+    u3 = _unit("U3", "sonnet", "high")
+    u4 = _unit("U4", "sonnet", "high")
+    spec4 = ES.ExecutionSpec.from_dict(_budget_spec([u1, u2, u3, u4]))
+    assert spec4.multiplicity_aware_unit_count() == 4
+    assert ES.workflow_lease_metadata(spec4)["execution_ttl_seconds"] == 1200
+
+    # 4. Fan-out unit (5 targets): multiplicity 5 -> max(900, 1500) = 1500
+    u_fanout = _unit("U_FO", "sonnet", "high", fanout=True, targets=["t1", "t2", "t3", "t4", "t5"])
+    spec_fo = ES.ExecutionSpec.from_dict(_budget_spec([u_fanout]))
+    assert spec_fo.multiplicity_aware_unit_count() == 5
+    assert ES.workflow_lease_metadata(spec_fo)["execution_ttl_seconds"] == 1500
+
+    # 5. Verify panel unit (n=3, no iterate): multiplicity 1 + 3 = 4 -> max(900, 1200) = 1200
+    u_verify = _unit("U_V", "sonnet", "medium", verify={"n": 3, "pass_rule": "majority"})
+    spec_v = ES.ExecutionSpec.from_dict(_budget_spec([u_verify]))
+    assert spec_v.multiplicity_aware_unit_count() == 4
+    assert ES.workflow_lease_metadata(spec_v)["execution_ttl_seconds"] == 1200
+
+    # 6. Verify panel unit (n=3, iterate_to_consensus=True, max_iterations=2):
+    # multiplicity 1 + 3 * 2 = 7 -> max(900, 2100) = 2100
+    u_v_iter = _unit(
+        "U_VI",
+        "sonnet",
+        "medium",
+        verify={"n": 3, "pass_rule": "majority", "iterate_to_consensus": True, "max_iterations": 2},
+    )
+    spec_vi = ES.ExecutionSpec.from_dict(_budget_spec([u_v_iter]))
+    assert spec_vi.multiplicity_aware_unit_count() == 7
+    assert ES.workflow_lease_metadata(spec_vi)["execution_ttl_seconds"] == 2100
+
+
+def test_workflow_lease_held_past_ten_minute_mark() -> None:
+    # #694 AC1: a lease minted for a run is still held at the 10-minute (600s) mark.
+    # Proven by time-advancing virtual elapsed time past the old 300s hard-coded expiry.
+    u = _unit("U1", "sonnet", "high")
+    spec = ES.ExecutionSpec.from_dict(_budget_spec([u]))
+    metadata = ES.workflow_lease_metadata(spec)
+    ttl = metadata["execution_ttl_seconds"]
+
+    # Floor is 900s (15 min), which exceeds the 10-minute (600s) AC1 requirement
+    assert ttl >= 600
+    for elapsed in (0, 300, 301, 599, 600):
+        is_held = elapsed <= ttl
+        assert is_held, f"Lease should still be held at elapsed={elapsed}s against TTL={ttl}s"

@@ -116,8 +116,36 @@ plugin-name/
 **Before pushing, run the whole gate — not a subset:**
 
 ```bash
-scripts/gate.sh
+# Supported long-run background invocation:
+GATE_LOG_DIR=/tmp/gate-run bash scripts/gate.sh > /tmp/gate.log 2>&1 &
 ```
+
+The full 24-step gate is expected to exceed common foreground tool timeouts (such as the default 10-minute / 600-second limit). Background the run and inspect progress or completion via the log file or the stable result marker:
+
+```bash
+# Poll progress
+tail -5 /tmp/gate.log
+
+# Read final status once complete (or interrupted)
+cat /tmp/gate-run/result.txt
+```
+
+The marker is cleared when a run starts, so while the gate is in flight `result.txt` does not exist
+yet — absence means "still running or killed outright", never "green".
+
+### Safe Re-entry Rule (Duplicate-Run Protection)
+
+If a previous gate run timed out (e.g. killed at 600s with exit 143), was interrupted, or is suspected to be already running:
+
+1. **Check if already running**: `pgrep -fl "scripts/gate.sh"`
+2. **Terminate the stale process**: kill the pid step 1 named — `kill <pid>`. Avoid
+   `pkill -f "scripts/gate.sh"` unless you mean it: it kills every gate on the machine, including
+   live gate runs in your other worktrees.
+3. **Clean state & re-enter**: Ensure the log directory is clean or specify a new `GATE_LOG_DIR=/tmp/gate-run`, then restart the backgrounded gate run.
+
+Exit codes: `0` green · `1` a blocking step failed · `2` coverage is short of `ci.yml` · `3` precondition failed (missing dev dependencies or unwritable log directory).
+
+### Gate Coverage Contract
 
 CI runs **twenty-four** substantive pre-merge steps across six jobs. This file used to
 document four of them, and the gap was patched one command at a time as each drift was
@@ -131,8 +159,6 @@ reports green.
 do not weaken it. In particular, never mark a step advisory to make the gate pass —
 advisory status is reserved for steps CI itself does not block on (a trailing
 `|| true`, or a live-gated check the runner cannot perform).
-
-Exit codes: `0` green · `1` a blocking step failed · `2` coverage is short of `ci.yml`.
 
 Individual commands, for a fast inner loop only — **a clean run of these is not a
 green gate**:

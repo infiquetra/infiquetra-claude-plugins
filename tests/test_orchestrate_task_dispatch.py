@@ -388,3 +388,89 @@ class TestTheRosterBriefsEveryVendor:
         orchestrate.cmd_roster(argparse.Namespace(models=False, probe=False, limit=12))
 
         assert "--safe-mode" in capsys.readouterr().out
+
+
+class TestOpenCodeVariantResolution:
+    """Variant selection and resolution from live OpenCode /variants picker choices."""
+
+    def test_team_mimir_regression_selects_xhigh_never_guesses_max(
+        self, orchestrate: ModuleType
+    ) -> None:
+        """Team Mimir regression: Muse picker with xhigh as top option selects xhigh for 'max'."""
+        options = ["Default", "minimal", "low", "medium", "high", "xhigh"]
+        # When max / maximum available is requested, resolve the highest actually offered
+        for req in ("max", "maximum", "maximum available", "highest", None):
+            selected = orchestrate.resolve_opencode_variant(req, options)
+            assert selected == "xhigh", f"expected 'xhigh' for request {req!r}, got {selected!r}"
+
+    def test_picker_offering_max_selects_max(self, orchestrate: ModuleType) -> None:
+        options = ["Default", "low", "medium", "high", "max"]
+        assert orchestrate.resolve_opencode_variant("max", options) == "max"
+        assert orchestrate.resolve_opencode_variant("maximum available", options) == "max"
+
+    def test_exact_variant_selection_matches_and_preserves_offered_casing(
+        self, orchestrate: ModuleType
+    ) -> None:
+        options = ["Default", "minimal", "low", "medium", "High", "xhigh"]
+        assert orchestrate.resolve_opencode_variant("high", options) == "High"
+        assert orchestrate.resolve_opencode_variant("minimal", options) == "minimal"
+        assert orchestrate.resolve_opencode_variant("default", options) == "Default"
+
+    def test_unavailable_exact_variant_fails_loudly_with_choices(
+        self, orchestrate: ModuleType
+    ) -> None:
+        options = ["Default", "minimal", "low", "medium", "high", "xhigh"]
+        with pytest.raises(SystemExit) as exc_info:
+            orchestrate.resolve_opencode_variant("ultra", options)
+        msg = str(exc_info.value)
+        assert "ultra" in msg
+        assert "not available in live picker options" in msg
+
+    def test_empty_picker_options_fails_loudly(self, orchestrate: ModuleType) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            orchestrate.resolve_opencode_variant("max", [])
+        assert "no variant choices presented" in str(exc_info.value)
+
+
+class TestOpenCodePickerParsing:
+    """Parsing terminal output from OpenCode's /variants picker."""
+
+    def test_parses_bulleted_menu_options(self, orchestrate: ModuleType) -> None:
+        text = "Select a variant:\n> Default\n  minimal\n  low\n  medium\n  high\n  xhigh\n"
+        assert orchestrate.parse_opencode_variants(text) == [
+            "Default",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+        ]
+
+    def test_parses_numbered_options_with_ansi_escape_codes(self, orchestrate: ModuleType) -> None:
+        text = (
+            "\x1b[1mVariants:\x1b[0m\n"
+            "1. Default\n"
+            "2. minimal\n"
+            "3. low\n"
+            "4. medium\n"
+            "5. high\n"
+            "6. xhigh\n"
+        )
+        assert orchestrate.parse_opencode_variants(text) == [
+            "Default",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+        ]
+
+    def test_parses_bracketed_menu_items(self, orchestrate: ModuleType) -> None:
+        text = "Choose variant:\n[x] Default\n[ ] low\n[ ] medium\n[ ] high\n[ ] max\n"
+        assert orchestrate.parse_opencode_variants(text) == [
+            "Default",
+            "low",
+            "medium",
+            "high",
+            "max",
+        ]

@@ -95,11 +95,11 @@ VENDOR_NOTES: dict[str, str] = {
         "auto; the ladder is `--approval-mode untrusted|on-request|never`."
     ),
     "opencode": (
-        "effort is a variant -- Default, high, max -- chosen through `/variants`, which opens a "
-        "picker rather than taking an argument. A picker cannot be answered from a `setup` line in "
-        "an unwatched tab, so a dispatched unit runs at whatever variant was last selected. Offer "
-        "it on its model and leave the variant to the operator. Its model wants `provider/model`; a "
-        "bare name is rejected at startup."
+        "effort is a variant -- Default, minimal, low, medium, high, xhigh, max -- chosen "
+        "through `/variants`. Orchestrate drives the interactive picker post-launch inside the "
+        "Herdr session, resolves exact or maximum available variants from the live picker choices, "
+        "verifies the effective model and variant before task submission, and records the verified "
+        "state. Its model wants `provider/model`; a bare name is rejected at startup."
     ),
     "agy": (
         "its saga plugin is a symlink into the operator's own checkout under the Gemini config "
@@ -284,6 +284,8 @@ SAGA_SYNTAX: dict[str, str] = {
 }
 
 PENDING, RUNNING, DONE, FAILED = "pending", "running", "done", "failed"
+PROMPT_UNDELIVERED = "prompt_undelivered"
+ORPHANED = "orphaned"
 
 REVIEW_CONTROLLER_ROLE = "review-controller"
 WORK_FIX_ROLES = frozenset({"review-fixer", "downstream-resolver"})
@@ -405,6 +407,10 @@ class Unit:
     ``name`` -- which is the plan's identity and the dependency key, and never changes."""
     status: str = PENDING
     note: str = ""
+    variant: str | None = None
+    """Effective model variant (e.g. for OpenCode), verified before task submission."""
+    launch_receipt: dict[str, Any] = field(default_factory=dict)
+    """Verified launch state: provider, model, variant, cwd, worktree, workspace, pane."""
 
 
 @dataclass
@@ -1367,10 +1373,13 @@ def agent_argv(unit: Unit, default_workspace: str | None = None) -> list[str]:
 # The wrapper returns when the tab exists, which is earlier than the agent being able to read
 # anything, and sending into that gap does not fail: `herdr agent prompt` reports success, the agent
 # finishes booting, and the prompt is gone. Observed three times across two vendors on one live run,
-# always the same tell -- a unit idle immediately after launch, having consumed nothing. `settle`
-# reads that idle as done and only `land` notices, a phase later, that it committed nothing.
+# always the same tell -- a unit idle immediately after launch, having consumed nothing. That idle
+# used to be recorded as RUNNING, which `settle` then read as done and only `land` noticed, a phase
+# later, that it had committed nothing. A send whose acceptance is never observed is now recorded
+# as PROMPT_UNDELIVERED instead, which no phase reads as work.
 LAUNCH_SETTLE_SECONDS = 30.0
 DELIVERY_CHECK_SECONDS = 15.0
+DELIVERY_RESENDS = 2
 DELIVERY_WARNING = (
     "SENT BUT NEVER STARTED: idle after being given its task. Check the tab before "
     "trusting this unit -- it may have been prompted while still booting."
@@ -1420,9 +1429,7 @@ def took_the_task(unit: Unit, seconds: float = DELIVERY_CHECK_SECONDS) -> bool:
     """Did the session actually take the task? One that did stops being idle.
 
     Not a guarantee -- an agent that answers instantly is idle again quickly. It is a check on the
-    failure that has actually happened, which is a session that never started at all. Reported
-    rather than repaired: a resend risks giving a unit its task twice, and a unit that quietly did
-    nothing is worth a line in `status` more than it is worth a guess.
+    failure that has actually happened, which is a session that never started at all.
     """
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
@@ -1431,6 +1438,283 @@ def took_the_task(unit: Unit, seconds: float = DELIVERY_CHECK_SECONDS) -> bool:
             return True
         time.sleep(1.0)
     return False
+
+
+OPENCODE_VARIANT_RANKS: dict[str, int] = {
+    "default": 0,
+    "minimal": 1,
+    "low": 2,
+    "medium": 3,
+    "high": 4,
+    "xhigh": 5,
+    "max": 6,
+    "maximum": 6,
+}
+OPENCODE_MAX_VARIANTS = {"max", "maximum", "maximum available", "max available", "highest"}
+
+
+def strip_ansi(text: str) -> str:
+    """Terminal output with its colour and cursor escapes removed."""
+    return re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", text)
+
+
+def parse_opencode_variants(text: str) -> list[str]:
+    """Extract variant choices presented in OpenCode's interactive /variants picker.
+
+    Handles ANSI escape codes, menu formatting (> Option, 1. Option, * Option), and token lists.
+    """
+    clean = strip_ansi(text)
+    options: list[str] = []
+    ignored = {"select", "choose", "variant", "variants", "options", "option", "model", "effort"}
+    for line in clean.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # Menu lines: > Option, - Option, * Option, 1. Option, 1) Option, [ ] Option
+        m = re.match(r"^(?:[>*\-•#]\s*|\d+[\.\)]\s*|\[[\s*xX]?\]\s*)([A-Za-z0-9_\-]+)", line)
+        if m:
+            token = m.group(1).strip()
+            if (
+                token
+                and token.lower() not in ignored
+                and not any(token.lower() == o.lower() for o in options)
+            ):
+                options.append(token)
+            continue
+        # Token matches for common variant names
+        for word in re.findall(
+            r"\b(?:Default|minimal|low|medium|high|xhigh|max|maximum)\b", line, re.IGNORECASE
+        ):
+            if not any(word.lower() == o.lower() for o in options):
+                options.append(word)
+    return options
+
+
+def resolve_opencode_variant(requested: str | None, available_options: Sequence[str]) -> str:
+    """Select the requested exact variant or highest actually offered variant."""
+    if not available_options:
+        raise SystemExit("no variant choices presented in OpenCode live picker")
+
+    if requested is None or requested.strip().lower() in OPENCODE_MAX_VARIANTS:
+        # Highest actually offered variant from presented choices
+        return max(
+            available_options,
+            key=lambda opt: (
+                OPENCODE_VARIANT_RANKS.get(opt.lower(), 0),
+                available_options.index(opt),
+            ),
+        )
+
+    req_clean = requested.strip().lower()
+    for opt in available_options:
+        if opt.strip().lower() == req_clean:
+            return opt
+
+    raise SystemExit(
+        f"requested variant {requested!r} is not available in live picker options: {list(available_options)}"
+    )
+
+
+def read_pane(pane_id: str, lines: int = 120) -> str:
+    """This pane's recent output, falling back to what is on screen when there is no scrollback."""
+    proc = run(
+        ["herdr", "pane", "read", pane_id, "--source", "recent-unwrapped", "--lines", str(lines)],
+        check=False,
+    )
+    if proc.returncode == 0 and proc.stdout.strip():
+        return proc.stdout
+    proc = run(["herdr", "pane", "read", pane_id, "--source", "visible"], check=False)
+    return proc.stdout if proc.returncode == 0 else ""
+
+
+def confirm_opencode_variant_selected(unit: Unit, pane_id: str, selected: str) -> None:
+    """Read the pane back and require the chosen variant to be reflected in it.
+
+    Typing a label into a picker is a request, not an outcome. A picker that closed on the value it
+    already held leaves the session at a variant nobody asked for, and submitting work into it is
+    exactly the silent substitution this unit's stop conditions forbid. The echo the interface
+    leaves behind is the only evidence of the selection available from outside it, so a selection
+    that cannot be found there is a loud stop rather than an assumption.
+    """
+    clean = strip_ansi(read_pane(pane_id, lines=40))
+    if not re.search(rf"\b{re.escape(selected)}\b", clean, re.IGNORECASE):
+        raise SystemExit(
+            f"{unit.name}: variant {selected!r} was sent to the picker but the session does not "
+            "report it; refusing to submit the task at an unverified variant"
+        )
+
+
+def drive_opencode_variant_selection(
+    unit: Unit, pane_id: str, *, timeout: float = 10.0
+) -> tuple[str, bool]:
+    """Drive OpenCode's `/variants` picker in Herdr and verify the selection took.
+
+    Returns the variant now in force and whether the session reported itself ready afterwards.
+
+    A pane holds the session's whole recent output, not only its picker, so a parse that finds
+    nothing the variant ladder recognises is read as "the picker has not drawn yet" and polled
+    again rather than taken as the option list. Accepting a boot banner as the choices either
+    refuses a perfectly available exact variant or types one of the banner's own words into the
+    session; only once the window closes is an unrecognised set accepted, and an empty one stops.
+    """
+    # Open the picker
+    run(["herdr", "pane", "run", pane_id, "/variants"])
+
+    # Read the live picker options from the pane
+    deadline = time.monotonic() + timeout
+    available_options: list[str] = []
+    while time.monotonic() < deadline:
+        parsed = parse_opencode_variants(read_pane(pane_id))
+        if parsed:
+            available_options = parsed
+            if any(option.lower() in OPENCODE_VARIANT_RANKS for option in parsed):
+                break
+        time.sleep(0.5)
+
+    if not available_options:
+        raise SystemExit(f"{unit.name}: unable to read live picker options from OpenCode /variants")
+
+    # Select requested exact variant or highest offered
+    requested = unit.variant or unit.effort
+    selected = resolve_opencode_variant(requested, available_options)
+
+    # Send selected variant into the pane
+    run(["herdr", "pane", "run", pane_id, selected])
+
+    # Wait until session returns to task-ready, then confirm the picker actually moved
+    ready = await_ready(unit)
+    confirm_opencode_variant_selected(unit, pane_id, selected)
+
+    unit.variant = selected
+    append_unit_note(unit, f"variant {selected} verified")
+    return selected, ready
+
+
+def close_run_session(unit: Unit) -> None:
+    """Close only the tab this run opened, leaving every session it did not create alone."""
+    if unit.tab_id:
+        run(["herdr", "tab", "close", unit.tab_id], check=False)
+
+
+def same_directory(reported: str, expected: str) -> bool:
+    """Whether two paths name the same directory, deciding on the literal strings if they cannot.
+
+    ``resolve`` reads the filesystem and can fail on a path that has since gone. A comparison that
+    could not be made must not read as a match, so an unusable path falls back to the strings
+    rather than the check being skipped.
+    """
+    try:
+        return Path(reported).resolve() == Path(expected).resolve()
+    except OSError:
+        return reported == expected
+
+
+def workspace_id_for_name(name: str | None) -> str | None:
+    """The id herdr gave the workspace with this label, or None when no workspace carries it.
+
+    The wrapper's ``--workspace`` takes a name and ``herdr agent list`` reports only a
+    ``workspace_id``, so the two are joined through the workspace list rather than compared
+    directly -- a name held against an id never matches, which reads as a mismatch that is not one.
+    """
+    if not name:
+        return None
+    proc = run(["herdr", "workspace", "list"], check=False)
+    try:
+        workspaces = json.loads(proc.stdout)["result"]["workspaces"]
+    except (ValueError, KeyError, TypeError):
+        return None
+    for workspace in workspaces:
+        if isinstance(workspace, dict) and workspace.get("label") == name:
+            found = workspace.get("workspace_id")
+            return str(found) if found else None
+    return None
+
+
+def verify_unit_preflight(
+    unit: Unit, pane_id: str | None, *, ready: bool | None = None
+) -> dict[str, Any]:
+    """Verify the session against herdr before the task is submitted, and record what was checked.
+
+    Only what herdr publishes can be checked. A row in ``herdr agent list`` carries ``cwd``,
+    ``workspace_id`` and ``interactive_ready``; it carries no model at all, and its workspace is an
+    id where the plan holds a name. So the receipt separates what was confirmed against herdr from
+    what is only the request the unit was launched with. A single ``verified: true`` covering both
+    would be a claim this script is not in a position to make, and a run record that says a model
+    was verified when nothing could read it is worse than one that says it was not.
+    """
+    if not pane_id:
+        raise SystemExit(f"{unit.name}: session was not assigned a valid pane_id")
+
+    confirmed: list[str] = ["pane"]
+    unconfirmed: list[str] = ["model"]  # herdr does not report the agent's model
+    row = agent_row(unit)
+
+    if row is None:
+        unconfirmed.extend(["working_directory", "readiness"])
+        if unit.workspace:
+            unconfirmed.append("workspace")
+        observed_ready = bool(ready)
+    else:
+        reported_cwd = row.get("cwd") or row.get("foreground_cwd")
+        if reported_cwd and unit.worktree:
+            if not same_directory(reported_cwd, unit.worktree):
+                close_run_session(unit)
+                raise SystemExit(
+                    f"{unit.name}: working directory {reported_cwd!r} differs from unit "
+                    f"worktree {unit.worktree!r}"
+                )
+            confirmed.append("working_directory")
+        else:
+            unconfirmed.append("working_directory")
+
+        expected_workspace = workspace_id_for_name(unit.workspace)
+        reported_workspace = row.get("workspace_id")
+        if expected_workspace and reported_workspace:
+            if reported_workspace != expected_workspace:
+                close_run_session(unit)
+                raise SystemExit(
+                    f"{unit.name}: session workspace {reported_workspace!r} does not match "
+                    f"requested workspace {unit.workspace!r} ({expected_workspace})"
+                )
+            confirmed.append("workspace")
+        elif unit.workspace:
+            unconfirmed.append("workspace")
+
+        observed_ready = bool(row.get("interactive_ready")) if ready is None else bool(ready)
+        confirmed.append("readiness")
+
+    effective_provider = (
+        unit.model.split("/")[0] if (unit.model and "/" in unit.model) else unit.vendor
+    )
+    effective_variant = unit.variant or unit.effort
+    if unit.vendor == "opencode" and not effective_variant:
+        effective_variant = "Default"
+    # An OpenCode variant is the one tier value that was read back out of the session holding it.
+    if unit.vendor == "opencode" and unit.variant:
+        confirmed.append("variant")
+    else:
+        unconfirmed.append("variant")
+
+    receipt: dict[str, Any] = {
+        "unit_name": unit.name,
+        "vendor": unit.vendor,
+        "provider": effective_provider,
+        "model": unit.model,
+        "variant": effective_variant,
+        "working_directory": unit.worktree,
+        "worktree": unit.worktree,
+        "workspace": unit.workspace,
+        "pane": pane_id,
+        "tab_id": unit.tab_id,
+        "readiness": observed_ready,
+        "confirmed_against_herdr": confirmed,
+        "requested_only": unconfirmed,
+        # True by construction: every check that can fail raises above this point, so it reads
+        # "preflight passed", and ``confirmed_against_herdr`` is what that passing actually covered.
+        "verified": True,
+    }
+    unit.launch_receipt = receipt
+    return receipt
 
 
 def launch(unit: Unit, backend: str = "inline", *, review_elsewhere: bool = False) -> None:
@@ -1444,10 +1728,36 @@ def launch(unit: Unit, backend: str = "inline", *, review_elsewhere: bool = Fals
         unit.pane_id = pane_id
     except (ValueError, IndexError):
         unit.note = "launched, but the wrapper's JSON could not be read"
-    await_ready(unit)
+        raise SystemExit(
+            f"{unit.name}: launched, but the wrapper's JSON could not be read"
+        ) from None
+    if not pane_id:
+        raise SystemExit(f"{unit.name}: launcher did not return a pane_id")
+
+    ready = await_ready(unit)
+    if unit.vendor == "opencode":
+        _, ready = drive_opencode_variant_selection(unit, pane_id)
+    verify_unit_preflight(unit, pane_id, ready=ready)
+
     send(unit, pane_id, backend, review_elsewhere=review_elsewhere)
-    unit.status = RUNNING
-    if not took_the_task(unit):
+    accepted = took_the_task(unit)
+    if not accepted:
+        # Resend only into a session that has still never left idle. A resend risks giving a unit
+        # its task twice, and the one reading that rules that out is a session which has not
+        # started anything: a swallowed prompt leaves it exactly there. Anything else -- working,
+        # blocked, or gone -- means it took something, so the send stands and the loop stops.
+        for _ in range(DELIVERY_RESENDS):
+            row = agent_row(unit)
+            if row is None or row.get("agent_status") != "idle":
+                break
+            send(unit, pane_id, backend, review_elsewhere=review_elsewhere)
+            accepted = took_the_task(unit)
+            if accepted:
+                break
+    if accepted:
+        unit.status = RUNNING
+    else:
+        unit.status = PROMPT_UNDELIVERED
         append_unit_note(unit, DELIVERY_WARNING)
 
 
@@ -1560,11 +1870,20 @@ def live_agents(*, timeout: float = 20) -> list[dict[str, Any]]:
 def run_branches(run_id: str) -> list[str]:
     """Every local unit branch of this run, exactly as git records them.
 
-    The list is the discovery source for ``check`` and ``adopt``: a unit branch that exists without
-    a row in the table is work the record lost track of. The run branch itself is excluded by the
-    pattern -- it carries no unit-name suffix, so it can never be mistaken for one.
+    The list is the discovery source for ``check``, ``adopt`` and ``status``: a unit branch that
+    exists without a row in the table is work the record lost track of. The run branch itself is
+    excluded by the pattern -- it carries no unit-name suffix, so it can never be mistaken for one.
+
+    ``check=False`` because ``status`` is a display command and reads this on every poll: a run
+    record left behind in a directory that is no longer a repository made a read-only command exit
+    non-zero on a git error it has no way to act on. ``check`` reaches ``repo_root`` first, so it
+    still fails loudly when git itself cannot answer.
     """
-    proc = run(["git", "branch", "--list", f"orch/{run_id}-*", "--format=%(refname:short)"])
+    proc = run(
+        ["git", "branch", "--list", f"orch/{run_id}-*", "--format=%(refname:short)"], check=False
+    )
+    if proc.returncode != 0:
+        return []
     return [b.strip() for b in proc.stdout.splitlines() if b.strip()]
 
 
@@ -2472,6 +2791,8 @@ def cmd_status(args: argparse.Namespace) -> int:
     print("-" * (sum(widths) + len(widths) - 1))
     for row in rows:
         print(format_row(row))
+    for name, branch in discover_unrecorded(r):
+        print(f"UNRECORDED {name} -- branch {branch} is not a unit in this run")
     if r.review_outcome:
         outstanding_work = any(unit.fix_requests for unit in r.units)
         if r.review_resubmit_pending and outstanding_work and r.operator_fix_requests:
@@ -2506,13 +2827,29 @@ def settle_reading(units: list[Unit]) -> dict[str, str]:
 
 
 def cmd_settle(args: argparse.Namespace) -> int:
-    """Mark running units done when their session goes idle. No inference beyond that.
+    """Mark running units done when their session has completed and produced evidence.
 
     Idle is read twice, ``interval`` seconds apart, and only counts when both readings agree: an
     agent is also idle *between* turns -- it finishes a tool call, returns to the prompt, thinks,
     and continues. One instantaneous sample once marked a unit done in that gap; it had two commits
     at the time and finished with ten. ``--once`` restores the single sample for a caller that
     wants it.
+
+    Settlement mirrors the evidence model in ``cmd_check``, gating completion on the existing
+    ``produced_anything`` helper:
+    - A session that is idle or done settles ``done`` only when its branch has commits. An idle
+      session without commits stays ``running``.
+    - A session that is gone settles ``done`` if its branch has commits (e.g. session closed after
+      finishing work), or ``orphaned`` if it disappeared without committing anything.
+
+    The gate is a *branch* reading, so it is applied only where a branch can be read. A unit with
+    no branch of its own -- the review controller, which carries ``merge: False`` and delivers its
+    result through ``review-result`` -- is not commit-gated and settles on the confirmed reading
+    alone; gating it would leave the review loop unable to finish, because it has no branch on
+    which a commit could ever appear. An unresolvable run branch makes the count unknown rather
+    than zero: such a unit stays ``running`` and is told so, and a gone session is recorded
+    ``orphaned`` with a note that says the commits could not be checked rather than one asserting
+    there were none.
     """
     r = Run.load()
     running = [u for u in r.units if u.status == RUNNING]
@@ -2522,21 +2859,44 @@ def cmd_settle(args: argparse.Namespace) -> int:
         time.sleep(args.interval)
         second = settle_reading(running)
     for unit in running:
-        if (
-            has_delivery_warning(unit)
-            and r.unresolvable_branch is None
-            and produced_anything(unit, r)
-        ):
+        # The gate reads branch truth, so it applies only where there is a branch to read and a
+        # resolvable run branch to count from. A unit with no branch of its own was never
+        # commit-gated -- the review controller is that shape, declared `merge: False` with its
+        # output delivered through `review-result` -- and an unresolvable run branch makes the
+        # count unknown rather than zero. `reapable` refuses a branchless unit and `adopt` warns
+        # that an unresolvable branch makes commit checks unavailable; neither reads as evidence
+        # of nothing, and settling on either would put the record back to guessing.
+        commit_gated = bool(unit.branch)
+        countable = commit_gated and r.unresolvable_branch is None
+        has_evidence = countable and produced_anything(unit, r)
+        if has_delivery_warning(unit) and has_evidence:
             clear_delivery_warning(unit)
         a, b = first[unit.name], second[unit.name]
         if a in {"idle", "done"} and b in {"idle", "done"}:
-            unit.status = DONE
             shown = a if args.once else f"{a} then {b}"
-            print(f"  {unit.name}: {shown} -> done")
+            if has_evidence:
+                unit.status = DONE
+                print(f"  {unit.name}: {shown} -> done")
+            elif not commit_gated:
+                unit.status = DONE
+                print(f"  {unit.name}: {shown} -> done (no branch of its own to check)")
+            elif not countable:
+                print(f"  {unit.name}: {shown} -> unsettled (run branch does not resolve)")
+            else:
+                print(f"  {unit.name}: {shown} -> still moving (no commits)")
         elif a == "gone" and b == "gone":
-            unit.status = FAILED
-            unit.note = "session disappeared"
-            print(f"  {unit.name}: session gone -> failed")
+            if has_evidence:
+                unit.status = DONE
+                print(f"  {unit.name}: session gone with commits -> done")
+            else:
+                unit.status = ORPHANED
+                append_unit_note(
+                    unit,
+                    "session disappeared without commits"
+                    if countable
+                    else "session disappeared; commits could not be checked",
+                )
+                print(f"  {unit.name}: session gone -> orphaned")
         elif a in {"idle", "done"}:
             print(f"  {unit.name}: {a} then {b} -> still moving")
     r.save()

@@ -88,11 +88,11 @@ order — not a checklist, and stop as soon as the answers determine the table:
    **Most vendors can be given a model and an effort.** Where the command line has no flag for it,
    the unit's `setup` carries a slash command instead.
 
-   **opencode is the exception, and say so rather than implying a tier you cannot deliver.** Its
-   effort is a *variant* — Default, high, max — chosen through `/variants`, which opens a picker
-   rather than taking an argument. A picker cannot be answered by a `setup` line in a tab nobody is
-   watching, so a dispatched opencode unit runs at whatever variant its last interactive session
-   left selected. Offer opencode on its model, and tell the operator the variant is theirs to set.
+    **opencode tier control uses an interactive picker.** Its effort is a *variant* — Default,
+    minimal, low, medium, high, xhigh, max — chosen through `/variants`. Orchestrate drives the
+    picker post-launch inside the Herdr session, selects the requested exact variant or the highest
+    actually offered variant from the live choices when maximum available is requested, waits until the
+    session is task-ready, and verifies the effective model and variant before task submission.
 
    **Offer the operator's own favourites first.** `python3 "$S" roster --models` prints them from
    `~/.config/orchestrate/models.json` when that file exists — the handful they actually use, in

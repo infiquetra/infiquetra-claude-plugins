@@ -21,6 +21,20 @@
 
 ## 2026-08-24
 
+### OpenCode variant ladder is an interactive live picker, not a flag or a static guess  {#opencode-variants-picker-live-resolution}
+
+**Context.** OpenCode does not take reasoning effort or model variant as a command-line flag during interactive session launch. Its effort ladder (`Default`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) is exposed exclusively through the interactive `/variants` picker inside the TUI. When a Team Mimir deployment run requested "maximum available" variant, Orchestrate's guidance previously claimed the picker could not be automated from unattended tabs, prompting the coordinator to explore unsupported headless `opencode run` and `AgentConfig.variant` workarounds.
+
+**Evidence.** Issue #772. `plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py:drive_opencode_variant_selection`, `resolve_opencode_variant`, `verify_unit_preflight`. In live testing on Muse models, the top variant was `xhigh`, not a literal `max`.
+
+**Mechanism.** OpenCode's variant choices are model-dependent and determined dynamically at session startup. Guessing a literal `max` token or trying to pass `--variant` on interactive launch fails because the interactive CLI only accepts `-m <provider/model>`. The only reliable path is driving the interactive `/variants` picker inside the Herdr session post-launch, reading the live offered options, resolving exact or maximum available requests against the live choices, awaiting task readiness, and verifying the state before task submission.
+
+**Fix.** Implemented `drive_opencode_variant_selection` and `verify_unit_preflight` in `orchestrate.py` (orchestrate 1.20.5). For OpenCode units, Orchestrate sends `/variants`, parses the live picker options from the pane buffer, selects the requested exact variant or highest offered option (e.g. selecting `xhigh` on Muse), verifies the effective provider, model, variant, working directory, and pane before submitting the task, and records the verified state in `launch_receipt`. Corrected documentation across `commands/orchestrate.md`, `SKILL.md`, and `VENDOR_NOTES["opencode"]`.
+
+**Validation.** 84 unit and integration tests in `tests/test_orchestrate_task_dispatch.py` and `tests/test_orchestrate_launch_and_land.py`, including the Team Mimir regression proving `xhigh` is selected over `max` when `xhigh` is the top option offered, loud preflight failure on unavailable variants or unreadable pickers, and non-OpenCode vendor isolation.
+
+**Generalizable rule.** When a tool exposes configuration only through an interactive TUI picker, drive and parse the live picker rather than guessing flags or static configuration values.
+
 ### The launcher was already right; nothing made anyone use it  {#launch-seam-is-enforcement-not-implementation}
 
 **Context.** Nine Team Mimir worker launches in one run each stole the operator's UI focus.

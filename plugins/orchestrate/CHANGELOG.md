@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.20.5] - 2026-08-24
+
+### Fixed
+
+- **OpenCode variant recipe through interactive Herdr picker.** Orchestrate supplies and enforces
+  the complete launch recipe for OpenCode units: creates a named visible Herdr session through the
+  `agents` wrapper via the single launch seam, drives `/variants` inside the session post-launch,
+  reads live picker choices, selects the requested exact variant or highest actually offered variant
+  when maximum available is requested (resolving `xhigh` for Muse rather than guessing `max`), and
+  waits until the session is task-ready. Preflight checks verify effective provider, model, variant,
+  working directory, worktree, unit name, workspace, pane, and readiness before submitting work,
+  persisting the verified state in `launch_receipt` and failing loudly if selection or verification
+  fails. Prose in `commands/orchestrate.md`, `SKILL.md`, and `VENDOR_NOTES["opencode"]` updated to
+  document the enforced per-agent recipe.
+
 ## [1.20.4] - 2026-08-24
 
 ### Fixed

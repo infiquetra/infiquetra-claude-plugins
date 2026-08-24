@@ -95,11 +95,11 @@ VENDOR_NOTES: dict[str, str] = {
         "auto; the ladder is `--approval-mode untrusted|on-request|never`."
     ),
     "opencode": (
-        "effort is a variant -- Default, high, max -- chosen through `/variants`, which opens a "
-        "picker rather than taking an argument. A picker cannot be answered from a `setup` line in "
-        "an unwatched tab, so a dispatched unit runs at whatever variant was last selected. Offer "
-        "it on its model and leave the variant to the operator. Its model wants `provider/model`; a "
-        "bare name is rejected at startup."
+        "effort is a variant -- Default, minimal, low, medium, high, xhigh, max -- chosen "
+        "through `/variants`. Orchestrate drives the interactive picker post-launch inside the "
+        "Herdr session, resolves exact or maximum available variants from the live picker choices, "
+        "verifies the effective model and variant before task submission, and records the verified "
+        "state. Its model wants `provider/model`; a bare name is rejected at startup."
     ),
     "agy": (
         "its saga plugin is a symlink into the operator's own checkout under the Gemini config "
@@ -407,6 +407,10 @@ class Unit:
     ``name`` -- which is the plan's identity and the dependency key, and never changes."""
     status: str = PENDING
     note: str = ""
+    variant: str | None = None
+    """Effective model variant (e.g. for OpenCode), verified before task submission."""
+    launch_receipt: dict[str, Any] = field(default_factory=dict)
+    """Verified launch state: provider, model, variant, cwd, worktree, workspace, pane."""
 
 
 @dataclass
@@ -1436,6 +1440,181 @@ def took_the_task(unit: Unit, seconds: float = DELIVERY_CHECK_SECONDS) -> bool:
     return False
 
 
+OPENCODE_VARIANT_RANKS: dict[str, int] = {
+    "default": 0,
+    "minimal": 1,
+    "low": 2,
+    "medium": 3,
+    "high": 4,
+    "xhigh": 5,
+    "max": 6,
+    "maximum": 6,
+}
+OPENCODE_MAX_VARIANTS = {"max", "maximum", "maximum available", "max available", "highest"}
+
+
+def parse_opencode_variants(text: str) -> list[str]:
+    """Extract variant choices presented in OpenCode's interactive /variants picker.
+
+    Handles ANSI escape codes, menu formatting (> Option, 1. Option, * Option), and token lists.
+    """
+    clean = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", text)
+    options: list[str] = []
+    ignored = {"select", "choose", "variant", "variants", "options", "option", "model", "effort"}
+    for line in clean.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # Menu lines: > Option, - Option, * Option, 1. Option, 1) Option, [ ] Option
+        m = re.match(r"^(?:[>*\-•#]\s*|\d+[\.\)]\s*|\[[\s*xX]?\]\s*)([A-Za-z0-9_\-]+)", line)
+        if m:
+            token = m.group(1).strip()
+            if (
+                token
+                and token.lower() not in ignored
+                and not any(token.lower() == o.lower() for o in options)
+            ):
+                options.append(token)
+            continue
+        # Token matches for common variant names
+        for word in re.findall(
+            r"\b(?:Default|minimal|low|medium|high|xhigh|max|maximum)\b", line, re.IGNORECASE
+        ):
+            if not any(word.lower() == o.lower() for o in options):
+                options.append(word)
+    return options
+
+
+def resolve_opencode_variant(requested: str | None, available_options: Sequence[str]) -> str:
+    """Select the requested exact variant or highest actually offered variant."""
+    if not available_options:
+        raise SystemExit("no variant choices presented in OpenCode live picker")
+
+    if requested is None or requested.strip().lower() in OPENCODE_MAX_VARIANTS:
+        # Highest actually offered variant from presented choices
+        return max(
+            available_options,
+            key=lambda opt: (
+                OPENCODE_VARIANT_RANKS.get(opt.lower(), 0),
+                available_options.index(opt),
+            ),
+        )
+
+    req_clean = requested.strip().lower()
+    for opt in available_options:
+        if opt.strip().lower() == req_clean:
+            return opt
+
+    raise SystemExit(
+        f"requested variant {requested!r} is not available in live picker options: {list(available_options)}"
+    )
+
+
+def drive_opencode_variant_selection(unit: Unit, pane_id: str, *, timeout: float = 10.0) -> str:
+    """Drive OpenCode's interactive /variants picker in Herdr and verify selection."""
+    # Open the picker
+    run(["herdr", "pane", "run", pane_id, "/variants"])
+
+    # Read the live picker options from the pane
+    deadline = time.monotonic() + timeout
+    available_options: list[str] = []
+    while time.monotonic() < deadline:
+        proc = run(
+            ["herdr", "pane", "read", pane_id, "--source", "recent-unwrapped", "--lines", "120"],
+            check=False,
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            available_options = parse_opencode_variants(proc.stdout)
+            if available_options:
+                break
+        time.sleep(0.5)
+
+    if not available_options:
+        proc_vis = run(["herdr", "pane", "read", pane_id, "--source", "visible"], check=False)
+        if proc_vis.returncode == 0 and proc_vis.stdout.strip():
+            available_options = parse_opencode_variants(proc_vis.stdout)
+
+    if not available_options:
+        raise SystemExit(f"{unit.name}: unable to read live picker options from OpenCode /variants")
+
+    # Select requested exact variant or highest offered
+    requested = unit.variant or unit.effort
+    selected = resolve_opencode_variant(requested, available_options)
+
+    # Send selected variant into the pane
+    run(["herdr", "pane", "run", pane_id, selected])
+
+    # Wait until session returns to task-ready
+    await_ready(unit)
+
+    unit.variant = selected
+    append_unit_note(unit, f"variant {selected} verified")
+    return selected
+
+
+def verify_unit_preflight(unit: Unit, pane_id: str | None) -> dict[str, Any]:
+    """Verify session, working directory, model, variant, and readiness before task submission."""
+    if not pane_id:
+        raise SystemExit(f"{unit.name}: session was not assigned a valid pane_id")
+
+    row = agent_row(unit)
+    if row is not None:
+        # Verify working directory if reported by Herdr
+        reported_cwd = row.get("cwd") or row.get("foreground_cwd")
+        if reported_cwd and unit.worktree:
+            try:
+                if Path(reported_cwd).resolve() != Path(unit.worktree).resolve():
+                    if unit.tab_id:
+                        run(["herdr", "tab", "close", unit.tab_id], check=False)
+                    raise SystemExit(
+                        f"{unit.name}: working directory {reported_cwd!r} differs from unit worktree {unit.worktree!r}"
+                    )
+            except OSError:
+                pass
+
+        # Verify workspace if reported by Herdr
+        reported_workspace = row.get("workspace") or row.get("workspace_name")
+        if reported_workspace and unit.workspace and reported_workspace != unit.workspace:
+            if unit.tab_id:
+                run(["herdr", "tab", "close", unit.tab_id], check=False)
+            raise SystemExit(
+                f"{unit.name}: session workspace {reported_workspace!r} does not match requested workspace {unit.workspace!r}"
+            )
+
+        # Verify model if reported by Herdr
+        reported_model = row.get("model") or row.get("agent_model")
+        if reported_model and unit.model and reported_model != unit.model:
+            if unit.tab_id:
+                run(["herdr", "tab", "close", unit.tab_id], check=False)
+            raise SystemExit(
+                f"{unit.name}: session model {reported_model!r} does not match requested model {unit.model!r}"
+            )
+
+    effective_provider = (
+        unit.model.split("/")[0] if (unit.model and "/" in unit.model) else unit.vendor
+    )
+    effective_variant = unit.variant or unit.effort
+    if unit.vendor == "opencode" and not effective_variant:
+        effective_variant = "Default"
+
+    receipt: dict[str, Any] = {
+        "unit_name": unit.name,
+        "vendor": unit.vendor,
+        "provider": effective_provider,
+        "model": unit.model,
+        "variant": effective_variant,
+        "working_directory": unit.worktree,
+        "worktree": unit.worktree,
+        "workspace": unit.workspace,
+        "pane": pane_id,
+        "tab_id": unit.tab_id,
+        "readiness": True,
+        "verified": True,
+    }
+    unit.launch_receipt = receipt
+    return receipt
+
+
 def launch(unit: Unit, backend: str = "inline", *, review_elsewhere: bool = False) -> None:
     proc = run(agent_argv(unit))
     pane_id = None
@@ -1447,7 +1626,17 @@ def launch(unit: Unit, backend: str = "inline", *, review_elsewhere: bool = Fals
         unit.pane_id = pane_id
     except (ValueError, IndexError):
         unit.note = "launched, but the wrapper's JSON could not be read"
+        raise SystemExit(
+            f"{unit.name}: launched, but the wrapper's JSON could not be read"
+        ) from None
+    if not pane_id:
+        raise SystemExit(f"{unit.name}: launcher did not return a pane_id")
+
     await_ready(unit)
+    if unit.vendor == "opencode":
+        drive_opencode_variant_selection(unit, pane_id)
+    verify_unit_preflight(unit, pane_id)
+
     send(unit, pane_id, backend, review_elsewhere=review_elsewhere)
     accepted = took_the_task(unit)
     if not accepted:

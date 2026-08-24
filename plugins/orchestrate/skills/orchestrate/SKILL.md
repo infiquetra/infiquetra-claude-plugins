@@ -163,17 +163,19 @@ with `ORCHESTRATE_AGENT_LAUNCHER`. Model and effort flags are per vendor:
 | muse | `--model` | `--reasoning-effort` |
 | agy | `--model` | `--effort` |
 | qwen | `-m` | via `setup` |
-| opencode | `-m` (as `provider/model`) | via `setup` |
+| opencode | `-m` (as `provider/model`) | via `/variants` picker |
 
 **Favourites.** `~/.config/orchestrate/models.json` maps a vendor to the models the operator
 actually uses, most-preferred first — `{"opencode": ["deepseek/deepseek-v4-pro"], "codex": [...]}`.
 `roster --models` shows them above the vendor's full list. Absent or unreadable, nothing changes; it
 is a convenience, never a constraint, and a model not listed is still perfectly usable.
 
-**Every vendor can be given a tier.** Where the command line has no flag, the unit's `setup` list
-carries slash commands sent into the session before its task — `["/effort high"]` — so the session
-is at the requested tier before it is given work. `roster --probe` compares this table against each
-tool's own help and reports drift; run it after an agent updates.
+**Every vendor can be given a tier.** Where the command line has no flag, tier is established before
+task submission: for OpenCode, Orchestrate drives the interactive `/variants` picker inside the
+Herdr session and verifies the effective variant; for vendors supporting slash commands, the unit's
+`setup` list carries slash commands sent into the session — `["/effort high"]` — before work starts.
+`roster --probe` compares this table against each tool's own help and reports drift; run it after an
+agent updates.
 
 An agent not listed launches with no model flags. **qwen does not report interactive readiness**, so
 `herdr agent prompt` refuses it; the script falls back to typing into its pane, which is what an

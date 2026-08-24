@@ -767,3 +767,377 @@ class TestStatusSurfacesUnrecordedDrift:
         assert (
             "UNRECORDED untracked -- branch orch/r1-untracked is not a unit in this run" in output
         )
+
+
+@pytest.mark.usefixtures("launcher_on_path")
+class TestOpenCodeLaunchAndVariantRecipe:
+    """OpenCode launch recipe, interactive /variants picker driving, and preflight verification."""
+
+    def test_opencode_launches_through_agents_and_drives_variants_recipe(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Complete OpenCode recipe: agents launch, /variants driven, xhigh selected for max, verified receipt."""
+        monkeypatch.chdir(repo)
+        _write_run(
+            repo,
+            [
+                _unit(
+                    "mimir-builder",
+                    vendor="opencode",
+                    model="opencode/muse-spark-1.2-contributor-free",
+                    effort="max",
+                    task="/work build feature",
+                    status="pending",
+                    branch=None,
+                )
+            ],
+        )
+
+        executed_cmds: list[list[str]] = []
+        sent_prompts: list[str] = []
+        original_run = orchestrate.run
+
+        def mocked_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            executed_cmds.append(cmd)
+            if cmd and cmd[0] == orchestrate.launcher():
+                return subprocess.CompletedProcess(
+                    cmd,
+                    returncode=0,
+                    stdout=json.dumps(
+                        {
+                            "tab_id": "tab-mimir",
+                            "pane_id": "pane-mimir",
+                            "agent_name": "mimir-builder",
+                        }
+                    )
+                    + "\n",
+                    stderr="",
+                )
+            if cmd[:4] == ["herdr", "pane", "read", "pane-mimir"]:
+                # Live picker output offering up to xhigh (Team Mimir scenario)
+                picker_output = (
+                    "Select a variant:\n> Default\n  minimal\n  low\n  medium\n  high\n  xhigh\n"
+                )
+                return subprocess.CompletedProcess(
+                    cmd, returncode=0, stdout=picker_output, stderr=""
+                )
+            if cmd[:3] == ["herdr", "pane", "run"]:
+                return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+            if cmd[:3] == ["herdr", "agent", "prompt"]:
+                sent_prompts.append(cmd[4] if len(cmd) > 4 else "")
+                return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+            return cast(subprocess.CompletedProcess[str], original_run(cmd, **kwargs))
+
+        monkeypatch.setattr(orchestrate, "run", mocked_run)
+        monkeypatch.setattr(orchestrate, "await_ready", lambda _unit: True)
+        monkeypatch.setattr(orchestrate, "took_the_task", lambda _unit: True)
+
+        assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
+
+        # Verify launch command passed through central launcher with model
+        launcher_calls = [c for c in executed_cmds if c and c[0] == orchestrate.launcher()]
+        assert len(launcher_calls) == 1
+        launcher_argv = launcher_calls[0]
+        assert "--no-focus" in launcher_argv
+        assert "opencode" in launcher_argv
+        assert "-m" in launcher_argv
+        assert "opencode/muse-spark-1.2-contributor-free" in launcher_argv
+
+        # Verify /variants was opened
+        variant_open_calls = [
+            c
+            for c in executed_cmds
+            if c[:4] == ["herdr", "pane", "run", "pane-mimir"] and c[4] == "/variants"
+        ]
+        assert len(variant_open_calls) == 1
+
+        # Verify xhigh was selected (Team Mimir resolution for 'max' request)
+        variant_select_calls = [
+            c
+            for c in executed_cmds
+            if c[:4] == ["herdr", "pane", "run", "pane-mimir"] and c[4] == "xhigh"
+        ]
+        assert len(variant_select_calls) == 1
+
+        # Verify task was submitted
+        assert any("build feature" in p for p in sent_prompts)
+
+        # Verify unit state and receipt
+        r = orchestrate.Run.load()
+        unit = r.units[0]
+        assert unit.status == "running"
+        assert unit.variant == "xhigh"
+        assert unit.launch_receipt["vendor"] == "opencode"
+        assert unit.launch_receipt["provider"] == "opencode"
+        assert unit.launch_receipt["model"] == "opencode/muse-spark-1.2-contributor-free"
+        assert unit.launch_receipt["variant"] == "xhigh"
+        assert unit.launch_receipt["pane"] == "pane-mimir"
+        assert unit.launch_receipt["verified"] is True
+        assert "variant xhigh verified" in unit.note
+
+    def test_non_opencode_vendor_does_not_send_variants(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Non-OpenCode vendors retain native controls and never receive /variants."""
+        monkeypatch.chdir(repo)
+        _write_run(
+            repo,
+            [
+                _unit(
+                    "claude-worker",
+                    vendor="claude",
+                    model="opus",
+                    effort="high",
+                    task="do work",
+                    status="pending",
+                    branch=None,
+                )
+            ],
+        )
+
+        executed_cmds: list[list[str]] = []
+        original_run = orchestrate.run
+
+        def mocked_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            executed_cmds.append(cmd)
+            if cmd and cmd[0] == orchestrate.launcher():
+                return subprocess.CompletedProcess(
+                    cmd,
+                    returncode=0,
+                    stdout=json.dumps(
+                        {
+                            "tab_id": "tab-claude",
+                            "pane_id": "pane-claude",
+                            "agent_name": "claude-worker",
+                        }
+                    )
+                    + "\n",
+                    stderr="",
+                )
+            if cmd[:3] == ["herdr", "agent", "prompt"]:
+                return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+            return cast(subprocess.CompletedProcess[str], original_run(cmd, **kwargs))
+
+        monkeypatch.setattr(orchestrate, "run", mocked_run)
+        monkeypatch.setattr(orchestrate, "await_ready", lambda _unit: True)
+        monkeypatch.setattr(orchestrate, "took_the_task", lambda _unit: True)
+
+        assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
+
+        # Verify no /variants commands were sent
+        for cmd in executed_cmds:
+            assert "/variants" not in cmd
+
+        # Verify launch receipt recorded
+        r = orchestrate.Run.load()
+        unit = r.units[0]
+        assert unit.status == "running"
+        assert unit.launch_receipt["vendor"] == "claude"
+        assert unit.launch_receipt["model"] == "opus"
+        assert unit.launch_receipt["variant"] == "high"
+
+    def test_opencode_picker_failure_fails_loudly_before_task_submission(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Picker read failure marks unit failed and never submits the task."""
+        monkeypatch.chdir(repo)
+        _write_run(
+            repo,
+            [
+                _unit(
+                    "mimir-builder",
+                    vendor="opencode",
+                    model="opencode/muse-spark-1.2-contributor-free",
+                    effort="max",
+                    task="do work",
+                    status="pending",
+                    branch=None,
+                )
+            ],
+        )
+
+        sent_prompts: list[str] = []
+        original_run = orchestrate.run
+
+        def mocked_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            if cmd and cmd[0] == orchestrate.launcher():
+                return subprocess.CompletedProcess(
+                    cmd,
+                    returncode=0,
+                    stdout=json.dumps(
+                        {
+                            "tab_id": "tab-mimir",
+                            "pane_id": "pane-mimir",
+                            "agent_name": "mimir-builder",
+                        }
+                    )
+                    + "\n",
+                    stderr="",
+                )
+            if cmd[:4] == ["herdr", "pane", "read", "pane-mimir"]:
+                # Empty output simulates picker failure
+                return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+            if cmd[:3] == ["herdr", "pane", "run"]:
+                return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+            if cmd[:3] == ["herdr", "agent", "prompt"]:
+                sent_prompts.append(cmd[4] if len(cmd) > 4 else "")
+                return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+            return cast(subprocess.CompletedProcess[str], original_run(cmd, **kwargs))
+
+        monkeypatch.setattr(orchestrate, "run", mocked_run)
+        monkeypatch.setattr(orchestrate, "await_ready", lambda _unit: True)
+
+        assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
+
+        # Verify task was NOT sent
+        assert sent_prompts == []
+
+        # Verify unit marked failed with clear note
+        r = orchestrate.Run.load()
+        unit = r.units[0]
+        assert unit.status == "failed"
+        assert "unable to read live picker options" in unit.note
+
+    def test_opencode_unavailable_variant_fails_loudly_before_task_submission(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Requesting an unavailable exact variant stops before task submission."""
+        monkeypatch.chdir(repo)
+        _write_run(
+            repo,
+            [
+                _unit(
+                    "mimir-builder",
+                    vendor="opencode",
+                    model="opencode/muse-spark-1.2-contributor-free",
+                    effort="ultra",
+                    task="do work",
+                    status="pending",
+                    branch=None,
+                )
+            ],
+        )
+
+        sent_prompts: list[str] = []
+        original_run = orchestrate.run
+
+        def mocked_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            if cmd and cmd[0] == orchestrate.launcher():
+                return subprocess.CompletedProcess(
+                    cmd,
+                    returncode=0,
+                    stdout=json.dumps(
+                        {
+                            "tab_id": "tab-mimir",
+                            "pane_id": "pane-mimir",
+                            "agent_name": "mimir-builder",
+                        }
+                    )
+                    + "\n",
+                    stderr="",
+                )
+            if cmd[:4] == ["herdr", "pane", "read", "pane-mimir"]:
+                picker_output = "> Default\n  minimal\n  low\n  medium\n  high\n  xhigh\n"
+                return subprocess.CompletedProcess(
+                    cmd, returncode=0, stdout=picker_output, stderr=""
+                )
+            if cmd[:3] == ["herdr", "pane", "run"]:
+                return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+            if cmd[:3] == ["herdr", "agent", "prompt"]:
+                sent_prompts.append(cmd[4] if len(cmd) > 4 else "")
+                return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+            return cast(subprocess.CompletedProcess[str], original_run(cmd, **kwargs))
+
+        monkeypatch.setattr(orchestrate, "run", mocked_run)
+        monkeypatch.setattr(orchestrate, "await_ready", lambda _unit: True)
+
+        assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
+
+        # Verify task was NOT sent
+        assert sent_prompts == []
+
+        # Verify unit marked failed
+        r = orchestrate.Run.load()
+        unit = r.units[0]
+        assert unit.status == "failed"
+        assert "ultra" in unit.note
+        assert "not available in live picker options" in unit.note
+
+    def test_mismatched_working_directory_stops_before_task_submission(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Working directory mismatch closes run session and fails loudly before task submission."""
+        monkeypatch.chdir(repo)
+        _write_run(
+            repo,
+            [
+                _unit(
+                    "worker",
+                    vendor="claude",
+                    task="do work",
+                    status="pending",
+                    branch=None,
+                )
+            ],
+        )
+
+        closed_tabs: list[str] = []
+        sent_prompts: list[str] = []
+        original_run = orchestrate.run
+
+        def mocked_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            if cmd and cmd[0] == orchestrate.launcher():
+                return subprocess.CompletedProcess(
+                    cmd,
+                    returncode=0,
+                    stdout=json.dumps(
+                        {
+                            "tab_id": "tab-bad-cwd",
+                            "pane_id": "pane-bad-cwd",
+                            "agent_name": "worker",
+                        }
+                    )
+                    + "\n",
+                    stderr="",
+                )
+            if cmd[:3] == ["herdr", "tab", "close"]:
+                closed_tabs.append(cmd[3])
+                return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+            if cmd[:3] == ["herdr", "agent", "prompt"]:
+                sent_prompts.append(cmd[4] if len(cmd) > 4 else "")
+                return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+            return cast(subprocess.CompletedProcess[str], original_run(cmd, **kwargs))
+
+        monkeypatch.setattr(orchestrate, "run", mocked_run)
+        monkeypatch.setattr(orchestrate, "await_ready", lambda _unit: True)
+        monkeypatch.setattr(
+            orchestrate,
+            "live_agents",
+            lambda: [{"pane_id": "pane-bad-cwd", "cwd": "/wrong/worktree/dir"}],
+        )
+
+        assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
+
+        # Session closed and task never sent
+        assert "tab-bad-cwd" in closed_tabs
+        assert sent_prompts == []
+
+        r = orchestrate.Run.load()
+        unit = r.units[0]
+        assert unit.status == "failed"
+        assert "differs from unit worktree" in unit.note

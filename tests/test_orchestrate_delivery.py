@@ -60,6 +60,11 @@ def _completed_launch_process(
     )
 
 
+def _idle_agent(name: str) -> dict[str, str]:
+    """A live session sitting at its prompt -- the reading settle must not mistake for finished."""
+    return {"name": name, "agent_status": "idle"}
+
+
 @pytest.mark.usefixtures("launcher_on_path")
 class TestDispatchDeliveryConfirmation:
     def test_ready_pane_that_swallows_prompt_is_marked_prompt_undelivered_after_two_resends(
@@ -127,6 +132,39 @@ class TestDispatchDeliveryConfirmation:
         assert unit.status == orchestrate.PROMPT_UNDELIVERED
         # Only the initial send occurred, 0 resends because session is not idle
         assert len(send_calls) == 1
+
+    def test_resend_is_skipped_once_the_session_has_started_working(
+        self, orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The case the guard exists for: a session already working must never be tasked twice.
+
+        ``took_the_task`` samples once a second, so a session that accepted the prompt and began
+        work between two samples can still be reported unaccepted. Resending then would hand the
+        unit its task a second time, which is the exact harm the idle guard prevents.
+        """
+        unit = orchestrate.Unit(name="worker", vendor="claude", task="/plan #123")
+        send_calls: list[tuple[Any, ...]] = []
+
+        monkeypatch.setattr(
+            orchestrate, "run", lambda *_args, **_kwargs: _completed_launch_process()
+        )
+        monkeypatch.setattr(orchestrate, "await_ready", lambda _unit: True)
+        monkeypatch.setattr(
+            orchestrate,
+            "send",
+            lambda u, p, b="inline", **kw: send_calls.append((u, p, b, kw)),
+        )
+        monkeypatch.setattr(
+            orchestrate,
+            "agent_row",
+            lambda _unit, _agents=None: {"pane_id": "pane-1", "agent_status": "working"},
+        )
+        monkeypatch.setattr(orchestrate, "took_the_task", lambda _unit: False)
+
+        orchestrate.launch(unit)
+
+        assert len(send_calls) == 1
+        assert unit.status == orchestrate.PROMPT_UNDELIVERED
 
     def test_resend_is_skipped_when_pane_is_missing(
         self, orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch
@@ -245,3 +283,51 @@ class TestStatusCommandShowsNamedDeliveryFailureState:
         assert len(lines) == 1
         assert "prompt_undelivered" in lines[0]
         assert "running" not in lines[0].split()
+
+
+class TestSettleNeverSweepsAnUndeliveredUnit:
+    """The silent-success path the named state closes.
+
+    Before the named state, an undelivered unit sat in RUNNING and idle, which ``settle`` read as
+    a finished turn and marked done -- so the run reported success and only ``land`` discovered,
+    a phase later, that the branch was empty. ``settle`` reads RUNNING units only, and this pins
+    that: the next unit in this lane rewrites settlement, and nothing else stops it from taking an
+    undelivered unit back into the sweep.
+    """
+
+    def test_settle_leaves_a_prompt_undelivered_unit_alone(
+        self,
+        orchestrate: ModuleType,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        unit = orchestrate.Unit(
+            name="alpha",
+            vendor="claude",
+            task="do something",
+            status=orchestrate.PROMPT_UNDELIVERED,
+            note=orchestrate.DELIVERY_WARNING,
+        )
+        run_record = orchestrate.Run(
+            run_id="test-run",
+            source="issue 779",
+            base="0" * 40,
+            units=[unit],
+        )
+        monkeypatch.setattr(orchestrate.Run, "load", lambda: run_record)
+        # An undelivered unit's session is alive and idle -- exactly the reading that used to be
+        # taken for a finished turn.
+        monkeypatch.setattr(
+            orchestrate, "live_agents", lambda *_args, **_kwargs: [_idle_agent("alpha")]
+        )
+        monkeypatch.setattr(orchestrate.time, "sleep", lambda _seconds: None)
+
+        rc = orchestrate.cmd_settle(argparse.Namespace(once=False, interval=0))
+
+        assert rc == 0
+        assert unit.status == orchestrate.PROMPT_UNDELIVERED
+        assert unit.status != orchestrate.DONE
+        assert orchestrate.DELIVERY_WARNING in unit.note
+        assert "alpha" not in capsys.readouterr().out

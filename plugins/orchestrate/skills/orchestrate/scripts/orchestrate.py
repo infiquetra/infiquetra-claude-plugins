@@ -1368,8 +1368,10 @@ def agent_argv(unit: Unit, default_workspace: str | None = None) -> list[str]:
 # The wrapper returns when the tab exists, which is earlier than the agent being able to read
 # anything, and sending into that gap does not fail: `herdr agent prompt` reports success, the agent
 # finishes booting, and the prompt is gone. Observed three times across two vendors on one live run,
-# always the same tell -- a unit idle immediately after launch, having consumed nothing. `settle`
-# reads that idle as done and only `land` notices, a phase later, that it committed nothing.
+# always the same tell -- a unit idle immediately after launch, having consumed nothing. That idle
+# used to be recorded as RUNNING, which `settle` then read as done and only `land` noticed, a phase
+# later, that it had committed nothing. A send whose acceptance is never observed is now recorded
+# as PROMPT_UNDELIVERED instead, which no phase reads as work.
 LAUNCH_SETTLE_SECONDS = 30.0
 DELIVERY_CHECK_SECONDS = 15.0
 DELIVERY_RESENDS = 2
@@ -1448,6 +1450,10 @@ def launch(unit: Unit, backend: str = "inline", *, review_elsewhere: bool = Fals
     send(unit, pane_id, backend, review_elsewhere=review_elsewhere)
     accepted = took_the_task(unit)
     if not accepted:
+        # Resend only into a session that has still never left idle. A resend risks giving a unit
+        # its task twice, and the one reading that rules that out is a session which has not
+        # started anything: a swallowed prompt leaves it exactly there. Anything else -- working,
+        # blocked, or gone -- means it took something, so the send stands and the loop stops.
         for _ in range(DELIVERY_RESENDS):
             row = agent_row(unit)
             if row is None or row.get("agent_status") != "idle":

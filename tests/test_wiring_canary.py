@@ -182,6 +182,16 @@ def test_no_mutation_leaks_to_working_tree() -> None:
 
     We compare ``git status --porcelain`` before and after rather than asserting emptiness, so the
     test is robust to unrelated in-progress edits in the working copy.
+
+    Cross-surface coupling note (#588, S3 F11):
+    This test executes the live registry entry ``agent-registration-drift`` from
+    ``tools/canary_registry.json`` against the repository. That canary entry targets the saga agent
+    file ``plugins/saga/agents/readonly-verifier.md`` and mutates its literal frontmatter anchor
+    ``name: readonly-verifier`` (expecting the mutation to be caught without modifying the working tree).
+    If ``plugins/saga/agents/readonly-verifier.md`` or its frontmatter anchor ``name: readonly-verifier``
+    is renamed or relocated, this test and the canary entry must be updated in lockstep.
+    Both ends of this coupling are documented here to make the rename hazard explicit without
+    cross-lane writes to lane B's saga agent surface.
     """
 
     def _status() -> str:

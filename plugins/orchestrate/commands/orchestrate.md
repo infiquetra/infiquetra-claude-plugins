@@ -295,6 +295,11 @@ cannot be expressed any other way. Orchestrate does not check these against a li
 wrapper releases on its own schedule, and it already rejects by name what it does not accept. Write
 what the operator asked for; let the launcher answer.
 
+**`account`** selects the account identity (`company` or `personal`). When set to `company` (at the plan
+or unit level), Claude units emit `--company-account` after the vendor token and Orchestrate verifies
+post-launch that worker transcripts land in `~/.claude-company/projects/`, failing loudly on mismatch
+(`account_mismatch`).
+
 **`merge`** defaults to `true`, and `false` means "this branch is to be read, not merged." Set it on
 competing-plan rows: several planners writing their own version of the same document cannot be
 merged by git without a conflict at best, and a silently interleaved plan at worst. `land` then

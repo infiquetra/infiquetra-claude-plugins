@@ -111,7 +111,7 @@ Operator-owned requests prevent that resubmission.
 ## State
 
 One file, `.orchestrate/run.json`: run id, source, base commit, the verbatim review result and routing
-state, and per unit its name, vendor, model, effort, task, role, owned paths, outstanding fix requests,
+state, and per unit its name, vendor, model, effort, account, task, role, owned paths, outstanding fix requests,
 dependencies, worktree, branch, tab, Herdr agent name, status, `variant`, and `launch_receipt`. If
 session state is wrong, `herdr agent list` is the real truth.
 
@@ -145,6 +145,22 @@ The agent wrapper's `--workspace` takes a **name**, not an ID: handed an ID it c
 workspace called that rather than joining the one you meant. Do not pass it through `launch_args` —
 that position is after the vendor token, and a live run that did so lost the session into the
 caller's workspace.
+
+## Accounts
+
+An explicit operator account selection survives into every worker launch and is verified post-launch.
+The run's `account` field (`company` or `personal`) is the default every unit inherits; a unit may set
+its own `account` and that wins. There is no other precedence.
+
+For Claude units, selecting `company` emits `--company-account` after the vendor token, directing the
+wrapper to swap configuration directories (`~/.claude-company`) before launching. Non-Claude vendors
+preserve account selections via passthrough.
+
+**Post-launch account verification.** After launch, Orchestrate probes the worker's transcript root
+(`~/.claude-company/projects` vs `~/.claude/projects`). If an account mismatch is detected (such as a
+worker launched under a company-account plan whose transcript lands under the personal root),
+Orchestrate immediately closes the run-owned session and marks the unit launch failed with the named
+state `account_mismatch` — never allowing a unit to silently run under the personal account.
 
 ## Agents
 
@@ -183,7 +199,7 @@ when it has none. An exact name must appear in the live picker or the launch sto
 actually offered*, which on Muse is `xhigh` rather than a literal `max`.
 
 **A launch receipt records what was checked, not what was asked for.** Each unit's `launch_receipt`
-carries the provider, model, variant, working directory, worktree, workspace, pane and readiness it
+carries the provider, model, variant, account, working directory, worktree, workspace, pane and readiness it
 launched with, plus `confirmed_against_herdr` and `requested_only` naming which of those were held
 against `herdr agent list` and which were not. `herdr agent list` publishes `cwd`, `workspace_id`
 and `interactive_ready` per session and **publishes no model at all**, so a model is always

@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.20.6] - 2026-08-24
+
+### Fixed
+
+- **Company-account propagation and post-launch verification.** Orchestrate now propagates the
+  operator's account selection through the central launch seam and verifies it after launch.
+  Plan- and unit-level `account` fields (`company` or `personal`) are added to the run schema;
+  selecting `company` emits `--company-account` after the vendor token for Claude units, ensuring
+  the wrapper swaps configuration directories (`~/.claude-company`) before the agent starts.
+  Post-launch preflight probes the worker's transcript root (`~/.claude-company/projects` vs
+  `~/.claude/projects`); if a worker launched under a company-account selection creates its
+  transcript under the personal root (or vice versa), Orchestrate closes the run-owned session and
+  marks the unit failed with the distinct named state `account_mismatch` (`ACCOUNT_MISMATCH`) before
+  any task is submitted.
+
 ## [1.20.5] - 2026-08-24
 
 ### Fixed

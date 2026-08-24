@@ -285,6 +285,7 @@ SAGA_SYNTAX: dict[str, str] = {
 
 PENDING, RUNNING, DONE, FAILED = "pending", "running", "done", "failed"
 PROMPT_UNDELIVERED = "prompt_undelivered"
+ACCOUNT_MISMATCH = "account_mismatch"
 ORPHANED = "orphaned"
 
 REVIEW_CONTROLLER_ROLE = "review-controller"
@@ -294,6 +295,10 @@ REVIEW_RESULT_SCHEMA = "review_result.v1"
 REVIEW_OUTCOMES = frozenset(
     {"accepted", "repairs_requested", "cycle_cap_best_available", "review_incomplete"}
 )
+
+
+class AccountMismatchError(SystemExit):
+    """A worker launched under an account that does not match the requested plan account."""
 
 
 @dataclass
@@ -313,6 +318,13 @@ class Unit:
     has no such key, which ``load`` still accepts; nothing is migrated at read time."""
     model: str | None = None
     effort: str | None = None
+    account: str | None = None
+    """Account selection for this unit (e.g. "company" or "personal").
+
+    When set to "company", claude units emit ``--company-account`` in their launch arguments.
+    Absent, the run's default account is used if present; absent both, no account flag is emitted,
+    defaulting to the environment.
+    """
     permission: str = "auto"
     """How freely this unit may act: ``auto`` (get on with it) or ``bypass`` (ask nothing).
 
@@ -466,6 +478,8 @@ class Run:
 
     Absent means today's behaviour: sessions land in the caller's workspace. A unit with its own
     ``workspace`` wins; there is no other precedence."""
+    account: str | None = None
+    """Default account selection every unit inherits unless it sets its own (e.g. "company")."""
     engine_prefs: dict[str, dict[str, str]] = field(default_factory=dict)
     """Saga's per-stage external-engine answers, decided once in the interview.
 
@@ -512,6 +526,7 @@ class Run:
             issues=raw.get("issues", {}),
             status_map=raw.get("status_map", {}),
             workspace=raw.get("workspace") or None,
+            account=raw.get("account") or None,
             review_result=raw.get("review_result"),
             review_outcome=raw.get("review_outcome"),
             review_resubmit_pending=bool(raw.get("review_resubmit_pending", False)),
@@ -569,6 +584,7 @@ class Run:
             "issues": self.issues,
             "status_map": self.status_map,
             "workspace": self.workspace,
+            "account": self.account,
             "review_result": self.review_result,
             "review_outcome": self.review_outcome,
             "review_resubmit_pending": self.review_resubmit_pending,
@@ -908,6 +924,7 @@ def _replacement_worker(
         setup=list(template.setup),
         launch_args=list(template.launch_args),
         workspace=template.workspace,
+        account=template.account,
         merge=True,
         role=str(request["owner"]),
         paths=list(request["touched_paths"]),
@@ -1337,7 +1354,34 @@ def workspace_for(unit: Unit, default: str | None = None) -> str | None:
     return unit.workspace or default
 
 
-def agent_argv(unit: Unit, default_workspace: str | None = None) -> list[str]:
+def is_company_account(account: str | None) -> bool:
+    """Whether an account selection specifies the company account."""
+    if not account:
+        return False
+    return account.lower() in ("company", "company-account", "--company-account")
+
+
+def is_personal_account(account: str | None) -> bool:
+    """Whether an account selection specifies the personal account."""
+    if not account:
+        return False
+    return account.lower() in ("personal", "personal-account", "--personal-account")
+
+
+def account_for(unit: Unit, default: str | None = None) -> str | None:
+    """The account this unit launches under.
+
+    The unit's own field wins; otherwise the run default. Absent both, no account flag is
+    emitted -- inheriting the environment default.
+    """
+    return unit.account or default
+
+
+def agent_argv(
+    unit: Unit,
+    default_workspace: str | None = None,
+    default_account: str | None = None,
+) -> list[str]:
     argv = [
         launcher(),
         "--no-focus",
@@ -1360,6 +1404,13 @@ def agent_argv(unit: Unit, default_workspace: str | None = None) -> list[str]:
         template = flags.get(key)
         if value and template:
             argv.extend(template.format(value=value).split(" "))
+    effective_account = account_for(unit, default_account)
+    if (
+        unit.vendor == "claude"
+        and is_company_account(effective_account)
+        and "--company-account" not in unit.launch_args
+    ):
+        argv.append("--company-account")
     # Last, and verbatim. Arguments after the vendor token reach the vendor, except for the
     # few the wrapper intercepts from that position. A launcher flag that must precede the
     # vendor token cannot be expressed here -- see ``workspace``.
@@ -1630,6 +1681,107 @@ def workspace_id_for_name(name: str | None) -> str | None:
     return None
 
 
+def claude_transcript_roots() -> tuple[Path, Path]:
+    """The personal and company Claude transcript root directories."""
+    personal = Path(
+        os.environ.get("CLAUDE_PERSONAL_PROJECTS", Path.home() / ".claude" / "projects")
+    )
+    company = Path(
+        os.environ.get("CLAUDE_COMPANY_PROJECTS", Path.home() / ".claude-company" / "projects")
+    )
+    return personal, company
+
+
+def claude_project_slug(worktree: str | Path) -> str:
+    """The project directory slug Claude generates for a given worktree path."""
+    resolved = Path(worktree).resolve().as_posix()
+    return re.sub(r"[/\\:]", "-", resolved)
+
+
+def find_claude_transcripts(root: Path, worktree: str | None) -> list[Path]:
+    """Find transcript files (.jsonl) for a given worktree under a Claude projects root."""
+    if not root.is_dir() or not worktree:
+        return []
+    slug = claude_project_slug(worktree)
+    proj_dir = root / slug
+    if proj_dir.is_dir():
+        return list(proj_dir.glob("*.jsonl"))
+    leaf = Path(worktree).name
+    matches = list(root.glob(f"*{leaf}*/*.jsonl"))
+    return matches
+
+
+def check_unit_account(unit: Unit) -> tuple[bool | None, str | None]:
+    """Check whether a launched Claude unit's transcript matches the requested account.
+
+    Returns:
+        (True, None) if transcript was found in the expected root.
+        (False, error_msg) if transcript was found in the wrong root (mismatch).
+        (None, None) if no transcripts exist yet or account check is not applicable.
+    """
+    if unit.vendor != "claude" or not unit.account or not unit.worktree:
+        return None, None
+
+    personal_root, company_root = claude_transcript_roots()
+    personal_files = find_claude_transcripts(personal_root, unit.worktree)
+    company_files = find_claude_transcripts(company_root, unit.worktree)
+
+    if is_company_account(unit.account):
+        if personal_files and not company_files:
+            return (
+                False,
+                f"account mismatch: worker transcript found under personal root ({personal_root}) "
+                f"when company account ({company_root}) was required",
+            )
+        if personal_files and company_files:
+            latest_personal = max(f.stat().st_mtime for f in personal_files)
+            latest_company = max(f.stat().st_mtime for f in company_files)
+            if latest_personal > latest_company:
+                return (
+                    False,
+                    f"account mismatch: worker transcript under personal root ({personal_root}) "
+                    f"is newer than company root ({company_root})",
+                )
+            return True, None
+        if company_files:
+            return True, None
+        return None, None
+
+    if is_personal_account(unit.account):
+        if company_files and not personal_files:
+            return (
+                False,
+                f"account mismatch: worker transcript found under company root ({company_root}) "
+                f"when personal account ({personal_root}) was required",
+            )
+        if company_files and personal_files:
+            latest_company = max(f.stat().st_mtime for f in company_files)
+            latest_personal = max(f.stat().st_mtime for f in personal_files)
+            if latest_company > latest_personal:
+                return (
+                    False,
+                    f"account mismatch: worker transcript under company root ({company_root}) "
+                    f"is newer than personal root ({personal_root})",
+                )
+            return True, None
+        if personal_files:
+            return True, None
+        return None, None
+
+    return None, None
+
+
+def verify_unit_account(unit: Unit) -> bool | None:
+    """Verify the account for a launched unit, closing the session and raising on mismatch."""
+    confirmed, error = check_unit_account(unit)
+    if error:
+        close_run_session(unit)
+        unit.status = ACCOUNT_MISMATCH
+        append_unit_note(unit, error)
+        raise AccountMismatchError(f"{unit.name}: {error}")
+    return confirmed
+
+
 def verify_unit_preflight(
     unit: Unit, pane_id: str | None, *, ready: bool | None = None
 ) -> dict[str, Any]:
@@ -1683,6 +1835,13 @@ def verify_unit_preflight(
         observed_ready = bool(row.get("interactive_ready")) if ready is None else bool(ready)
         confirmed.append("readiness")
 
+    account_confirmed = verify_unit_account(unit)
+    if unit.account:
+        if account_confirmed:
+            confirmed.append("account")
+        else:
+            unconfirmed.append("account")
+
     effective_provider = (
         unit.model.split("/")[0] if (unit.model and "/" in unit.model) else unit.vendor
     )
@@ -1701,6 +1860,7 @@ def verify_unit_preflight(
         "provider": effective_provider,
         "model": unit.model,
         "variant": effective_variant,
+        "account": unit.account,
         "working_directory": unit.worktree,
         "worktree": unit.worktree,
         "workspace": unit.workspace,
@@ -2281,6 +2441,7 @@ def cmd_start(args: argparse.Namespace) -> int:
         issues=plan.get("issues", {}),
         status_map=plan.get("status_map", {}),
         workspace=plan.get("workspace") or None,
+        account=plan.get("account") or None,
     )
     # Before anything is written or any worktree is created: a typo in an ordering edge is a
     # unit that is never eligible, forever, and `start` is the only moment it fails cheaply.
@@ -2586,6 +2747,8 @@ def cmd_expand(args: argparse.Namespace) -> int:
     r.status_map.update(added.get("status_map", {}))
     if "workspace" in added:
         r.workspace = added["workspace"] or None
+    if "account" in added:
+        r.account = added["account"] or None
     r.save()
     print(f"added {len(incoming)}: {', '.join(u.name for u in incoming)}")
     print("`orchestrate.py go` to launch whatever is now eligible.")
@@ -2668,10 +2831,16 @@ def cmd_go(args: argparse.Namespace) -> int:
         make_worktree(unit, r, root)
         if not unit.workspace and r.workspace:
             unit.workspace = r.workspace
+        if not unit.account and r.account:
+            unit.account = r.account
         r.save()  # persist the worktree before the launch, so a failure is not relaunched blind
         print(f"launching {unit.name} ({unit.vendor}) -> {unit.task}")
         try:
             launch(unit, r.backend, review_elsewhere=r.reviews_separately())
+        except AccountMismatchError as exc:
+            unit.status = ACCOUNT_MISMATCH
+            unit.note = str(exc)
+            print(f"  {unit.name} FAILED: {exc}")
         except SystemExit as exc:
             unit.status = FAILED
             unit.note = str(exc)

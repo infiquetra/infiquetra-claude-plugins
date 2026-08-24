@@ -28,7 +28,9 @@ import json
 import os
 import re
 import subprocess  # nosec B404 — git CLI only, fixed argv, no shell
+import sys
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -97,6 +99,36 @@ _PRODUCERS = {
 
 
 # ---------------------------------------------------------------------------
+# Fake consumers: behavioral pairing (#588)
+# ---------------------------------------------------------------------------
+
+
+def consume_worktree_porcelain(golden_content: str) -> None:
+    """Consume git worktree porcelain golden fixture data into FakeWT (#588)."""
+    tests_dir = REPO_ROOT / "tests"
+    if str(tests_dir) not in sys.path:
+        sys.path.insert(0, str(tests_dir))
+    import fakes_registry
+
+    fake = fakes_registry.FakeWT(seed_porcelain=golden_content, root="/test_root")
+    ops = fake.ops()
+    paths = ops.list_paths()
+    expected_repo = "/test_root/repo"
+    expected_feature = "/test_root/wt-feature"
+    if expected_repo not in paths or expected_feature not in paths:
+        raise ValueError(f"FakeWT failed to parse expected worktree paths from golden, got {paths}")
+    if not ops.exists(expected_repo) or not ops.exists(expected_feature):
+        raise ValueError("FakeWT ops.exists failed for golden paths")
+    if ops.exists("/test_root/absent_path"):
+        raise ValueError("FakeWT ops.exists returned True for non-existent path")
+
+
+_CONSUMERS: dict[str, Callable[[str], None]] = {
+    "worktree-liveness-oracle": consume_worktree_porcelain,
+}
+
+
+# ---------------------------------------------------------------------------
 # Manifest load / check / regenerate
 # ---------------------------------------------------------------------------
 
@@ -107,7 +139,7 @@ def load_manifest(manifest_path: Path) -> dict[str, Any]:
 
 
 def check_goldens(manifest_path: Path) -> list[Drift]:
-    """Return every drifted golden (empty == all goldens present and matching their pinned hash)."""
+    """Return every drifted golden (deleted, mutated, unpaired, or consumer failure)."""
     manifest = load_manifest(manifest_path)
     drifts: list[Drift] = []
     for entry in manifest.get("goldens", []):
@@ -120,6 +152,24 @@ def check_goldens(manifest_path: Path) -> list[Drift]:
         actual = sha256_of(golden)
         if actual != entry["sha256"]:
             drifts.append(Drift(rel, "mutated", f"sha256 {actual} != pinned {entry['sha256']}"))
+            continue
+
+        # Behavioral pairing check (#588)
+        fake_id = entry.get("fake", "")
+        base_id = fake_id.split()[0] if fake_id else ""
+        consumer = _CONSUMERS.get(fake_id) or _CONSUMERS.get(base_id)
+        if not consumer:
+            drifts.append(
+                Drift(rel, "unpaired", f"no registered consumer consumes fake {fake_id!r}")
+            )
+            continue
+        try:
+            content = golden.read_text(encoding="utf-8")
+            consumer(content)
+        except Exception as exc:
+            drifts.append(
+                Drift(rel, "consumer_failure", f"registered fake failed to consume golden: {exc}")
+            )
     return drifts
 
 

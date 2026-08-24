@@ -38,7 +38,17 @@ def checker() -> ModuleType:
     return _load_checker()
 
 
-def _seed_golden(tmp_path: Path, content: str = "worktree <ROOT>/repo\nHEAD <SHA>\n") -> Path:
+_DEFAULT_GOLDEN = (
+    "worktree <ROOT>/repo\nHEAD <SHA>\nbranch refs/heads/main\n\n"
+    "worktree <ROOT>/wt-feature\nHEAD <SHA>\nbranch refs/heads/feature\n"
+)
+
+
+def _seed_golden(
+    tmp_path: Path,
+    content: str = _DEFAULT_GOLDEN,
+    fake_name: str = "worktree-liveness-oracle",
+) -> Path:
     """Write an isolated golden + a manifest pinning its real hash; return the manifest path."""
     import hashlib
 
@@ -53,7 +63,7 @@ def _seed_golden(tmp_path: Path, content: str = "worktree <ROOT>/repo\nHEAD <SHA
             {
                 "goldens": [
                     {
-                        "fake": "worktree-liveness-oracle",
+                        "fake": fake_name,
                         "producer": "git worktree list --porcelain",
                         "path": str(golden),  # absolute so the checker resolves it in tmp
                         "sha256": sha,
@@ -101,6 +111,45 @@ def test_golden_drift_strict_exit_nonzero(checker: ModuleType, tmp_path: Path) -
 
     assert checker.main(["--manifest", str(manifest)]) == 1
     assert checker.main(["--manifest", str(manifest), "--advisory"]) == 0
+
+
+def test_unpaired_fake_is_flagged_as_drift(checker: ModuleType, tmp_path: Path) -> None:
+    """Removing or missing the fake↔golden pairing turns the check red (#588)."""
+    manifest = _seed_golden(tmp_path, fake_name="unpaired-nonexistent-fake")
+    drifts = checker.check_goldens(manifest)
+    assert len(drifts) == 1
+    assert drifts[0].kind == "unpaired"
+    assert "no registered consumer" in drifts[0].detail
+    assert checker.main(["--manifest", str(manifest)]) == 1
+
+
+def test_consumer_failure_is_flagged_as_drift(checker: ModuleType, tmp_path: Path) -> None:
+    """A golden whose format breaks the registered fake's consumer is flagged as drift (#588)."""
+    # Golden with invalid grammar for the consumer (missing expected paths)
+    bad_content = "worktree <ROOT>/unrelated_only\n"
+    manifest = _seed_golden(tmp_path, content=bad_content)
+    # The sha256 is correctly pinned to bad_content, but consumer verification fails
+    drifts = checker.check_goldens(manifest)
+    assert len(drifts) == 1
+    assert drifts[0].kind == "consumer_failure"
+    assert "registered fake failed to consume" in drifts[0].detail
+
+
+def test_registered_fake_consumes_golden_fixture() -> None:
+    """The registered FakeWT directly consumes the committed golden fixture (#588)."""
+    if str(ROOT / "tests") not in sys.path:
+        sys.path.insert(0, str(ROOT / "tests"))
+    import fakes_registry
+
+    golden_text = (ROOT / "tests/fixtures/golden/worktree_list_porcelain.golden.txt").read_text(
+        encoding="utf-8"
+    )
+    fake = fakes_registry.FakeWT(seed_porcelain=golden_text, root="/workspace")
+    ops = fake.ops()
+    assert ops.list_paths() == ["/workspace/repo", "/workspace/wt-feature"]
+    assert ops.exists("/workspace/repo") is True
+    assert ops.exists("/workspace/wt-feature") is True
+    assert ops.exists("/workspace/other") is False
 
 
 def test_committed_golden_matches_real_producer(checker: ModuleType) -> None:

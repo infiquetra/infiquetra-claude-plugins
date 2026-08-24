@@ -177,36 +177,62 @@ def verify_registry() -> None:
 _WT = _load("outcome_worktrees")
 
 
-class _FakeWorktreeStore:
-    """In-memory stand-in for the real git-worktree adapter — a contract-faithful fake."""
+class FakeWT:
+    """In-memory stand-in for the real git-worktree adapter — a contract-faithful fake.
 
-    def __init__(self) -> None:
+    Can be seeded from porcelain output (e.g. golden fixture data, #588).
+    """
+
+    def __init__(
+        self,
+        *,
+        exists_override: Any = None,
+        seed_porcelain: str | None = None,
+        root: str = "<ROOT>",
+    ) -> None:
         self.paths: set[str] = set()
+        self.removed: list[str] = []
+        self._exists_override = exists_override
+        if seed_porcelain is not None:
+            self.load_porcelain(seed_porcelain, root=root)
 
-    def add(self, path: str, _branch: str) -> bool:
+    def load_porcelain(self, porcelain_text: str, root: str = "<ROOT>") -> None:
+        """Consume git worktree porcelain output as fixture data (#588)."""
+        for line in porcelain_text.splitlines():
+            if line.startswith("worktree "):
+                raw_path = line[len("worktree ") :].strip()
+                p = raw_path.replace("<ROOT>", root)
+                self.paths.add(p)
+
+    def _add(self, path: str, _branch: str) -> bool:
         self.paths.add(path)
         return True
 
-    def remove(self, path: str) -> bool:
+    def _remove(self, path: str) -> bool:
         self.paths.discard(path)
+        self.removed.append(path)
         return True
 
-    def exists(self, path: str) -> bool:
+    def _exists(self, path: str) -> bool:
+        if self._exists_override is not None:
+            return bool(self._exists_override(path))
         return path in self.paths
 
-    def list_paths(self) -> list[str]:
-        return sorted(self.paths)
+    def ops(self) -> Any:
+        return _WT.WorktreeOps(
+            add=self._add,
+            remove=self._remove,
+            exists=self._exists,
+            list_paths=lambda: sorted(self.paths),
+        )
+
+
+_FakeWorktreeStore = FakeWT
 
 
 def build_fake_worktree_ops() -> Any:
-    """Build a ``WorktreeOps`` instance backed by the in-memory fake store."""
-    store = _FakeWorktreeStore()
-    return _WT.WorktreeOps(
-        add=store.add,
-        remove=store.remove,
-        exists=store.exists,
-        list_paths=store.list_paths,
-    )
+    """Build a ``WorktreeOps`` instance backed by the in-use FakeWT fake."""
+    return FakeWT().ops()
 
 
 REGISTRY: list[Binding] = [
@@ -214,7 +240,7 @@ REGISTRY: list[Binding] = [
         name="worktree-liveness-oracle",
         real=_WT.WorktreeOps,
         fake_factory=build_fake_worktree_ops,
-        note="U7 seam from {#fake-adapter-hides-real-path-mismatch}",
+        note="U7 seam from {#fake-adapter-hides-real-path-mismatch} (in-use FakeWT bound)",
     ),
 ]
 

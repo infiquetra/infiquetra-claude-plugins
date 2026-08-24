@@ -58,16 +58,24 @@ class ShapeReport:
 def _module_is_fake(name: str | None) -> bool:
     if not name:
         return False
+    if name in ("check_fake_fixtures", "lint_test_shape") or "check_fake_fixtures" in name:
+        return False
     return _FAKE_RE.search(name) is not None or "fakes_registry" in name
 
 
 class _ShapeVisitor(ast.NodeVisitor):
-    """Walk a module's AST once, recording fake + production signals with evidence."""
+    """Walk a module's AST once, recording fake + production signals with evidence.
+
+    Uses AST-level import and call analysis (#588) so inert strings (docstrings mentioning
+    'plugins/', fake-loading import_module/spec_from_file_location calls) do not count as
+    production signals.
+    """
 
     def __init__(self, prod_modules: frozenset[str]) -> None:
         self.prod_modules = prod_modules
         self.fake_evidence: list[str] = []
         self.production_evidence: list[str] = []
+        self.prod_vars: set[str] = set()
 
     def _note_fake(self, msg: str) -> None:
         self.fake_evidence.append(msg)
@@ -78,7 +86,7 @@ class _ShapeVisitor(ast.NodeVisitor):
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
             top = alias.name.split(".")[0]
-            if alias.name.startswith("plugins") or top == "plugins":
+            if alias.name.startswith("plugins") or top in ("plugins", "scripts", "tools"):
                 self._note_prod(f"import {alias.name}")
             if top in self.prod_modules or alias.name in self.prod_modules:
                 self._note_prod(f"import {alias.name} (declared production module)")
@@ -89,7 +97,7 @@ class _ShapeVisitor(ast.NodeVisitor):
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         mod = node.module or ""
         top = mod.split(".")[0]
-        if mod.startswith("plugins") or top == "plugins":
+        if mod.startswith("plugins") or top in ("plugins", "scripts", "tools"):
             self._note_prod(f"from {mod} import ...")
         if top in self.prod_modules or mod in self.prod_modules:
             self._note_prod(f"from {mod} import ... (declared production module)")
@@ -107,11 +115,39 @@ class _ShapeVisitor(ast.NodeVisitor):
             self._note_fake(f"class {node.name}")
         self.generic_visit(node)
 
-    def visit_Constant(self, node: ast.Constant) -> None:
-        # The repo loads production by path: SCRIPTS = ROOT / "plugins" / "saga" / "scripts". A
-        # "plugins" path segment (or an embedded "plugins/") is the crossing-into-real signal.
-        if isinstance(node.value, str) and (node.value == "plugins" or "plugins/" in node.value):
-            self._note_prod(f"string literal {node.value!r}")
+    def _contains_real_target(self, node: ast.AST) -> bool:
+        """Check if an AST subtree constructs or contains a path to plugins, scripts, or tools."""
+        for child in ast.walk(node):
+            if isinstance(child, ast.Constant) and isinstance(child.value, str):
+                val = child.value
+                if val in ("plugins", "scripts", "tools") or any(
+                    seg in val
+                    for seg in ("plugins/", "/plugins", "scripts/", "/scripts", "tools/", "/tools")
+                ):
+                    return True
+            if isinstance(child, ast.Name) and child.id in self.prod_vars:
+                return True
+        return False
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        if self._contains_real_target(node.value):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    self.prod_vars.add(target.id)
+            self._note_prod("path assignment targeting production/scripts")
+        self.generic_visit(node)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        if node.value and self._contains_real_target(node.value):
+            if isinstance(node.target, ast.Name):
+                self.prod_vars.add(node.target.id)
+            self._note_prod("annotated path assignment targeting production/scripts")
+        self.generic_visit(node)
+
+    def visit_BinOp(self, node: ast.BinOp) -> None:
+        # Path arithmetic like ROOT / "plugins" / "saga" or ROOT / "scripts"
+        if isinstance(node.op, ast.Div) and self._contains_real_target(node):
+            self._note_prod("path expression targeting production/scripts")
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:
@@ -121,8 +157,49 @@ class _ShapeVisitor(ast.NodeVisitor):
             name = func.attr
         elif isinstance(func, ast.Name):
             name = func.id
-        if name in _IMPORTLIB_LOADERS:
-            self._note_prod(f"importlib loader call {name}(...)")
+
+        if name == "import_module":
+            if node.args:
+                first = node.args[0]
+                if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                    mod_str = first.value
+                    if mod_str.startswith("plugins") or mod_str.split(".")[0] in self.prod_modules:
+                        self._note_prod(f"import_module({mod_str!r})")
+                    elif _module_is_fake(mod_str):
+                        self._note_fake(f"import_module({mod_str!r})")
+                elif isinstance(first, ast.Name) and first.id in self.prod_vars:
+                    self._note_prod(f"import_module({first.id})")
+        elif name in ("spec_from_file_location", "SourceFileLoader"):
+            if len(node.args) >= 2:
+                name_arg = node.args[0]
+                loc_arg = node.args[1]
+                name_str = (
+                    name_arg.value
+                    if isinstance(name_arg, ast.Constant) and isinstance(name_arg.value, str)
+                    else ""
+                )
+                loc_str = (
+                    loc_arg.value
+                    if isinstance(loc_arg, ast.Constant) and isinstance(loc_arg.value, str)
+                    else ""
+                )
+
+                if _module_is_fake(name_str):
+                    self._note_fake(f"importlib loader {name}({name_str!r})")
+                if loc_str and _module_is_fake(loc_str):
+                    self._note_fake(f"importlib loader {name}(..., {loc_str!r})")
+
+                if self._contains_real_target(loc_arg):
+                    if not (_module_is_fake(name_str) or (loc_str and _module_is_fake(loc_str))):
+                        self._note_prod(f"importlib loader {name}(...) loading production path")
+                elif name_str and (name_str.startswith("plugins") or name_str in self.prod_modules):
+                    self._note_prod(f"importlib loader {name}({name_str!r})")
+            elif self._contains_real_target(node):
+                self._note_prod(f"importlib loader {name}(...) targeting production")
+        elif name == "exec_module":
+            # exec_module alone is neutral; spec creation provides the signal
+            pass
+
         self.generic_visit(node)
 
 

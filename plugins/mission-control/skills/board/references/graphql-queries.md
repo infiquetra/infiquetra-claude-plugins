@@ -169,12 +169,13 @@ their IDs. Required before setting field values.
 **Constant**: `QUERY_GET_PROJECT_FIELDS`
 
 ```graphql
-query($org: String!, $number: Int!) {
+query($org: String!, $number: Int!, $cursor: String) {
   organization(login: $org) {
     projectV2(number: $number) {
       id
       title
-      fields(first: 30) {
+      fields(first: 30, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
         nodes {
           ... on ProjectV2Field {
             id name dataType
@@ -205,6 +206,7 @@ both `id` and `name`. Use the `id` values in `QUERY_SET_FIELD_VALUE`.
 **Constant**: `QUERY_GET_ITEM_LABELS`
 
 ```graphql
+# pagination-lint: allow
 query($org: String!, $repo: String!, $number: Int!) {
   repository(owner: $org, name: $repo) {
     issueOrPullRequest(number: $number) {

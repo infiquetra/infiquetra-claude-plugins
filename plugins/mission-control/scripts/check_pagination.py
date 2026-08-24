@@ -17,9 +17,9 @@ Three guarded patterns, one violation kind each:
   2. Bare REST list fetches (``_rest_get(...per_page=...)``) instead of the
      shared ``_rest_list_paginated()`` helper (``sdlc_manager.py``, #424)
      that loops pages until a short page proves the list is exhausted.
-  3. A GraphQL query literal that sets a page-size arg (``first:``) in a
-     file that never checks ``hasNextPage`` anywhere -- such a query has
-     no way to detect that it stopped short of the full list.
+  3. A GraphQL query literal that sets a page-size arg (``first:``) without
+     checking ``hasNextPage`` -- such a query has no way to detect that it
+     stopped short of the full list.
 
 Exit 0 = no unguarded call sites found; exit 1 = at least one violation.
 
@@ -85,6 +85,31 @@ def iter_files(roots: list[Path]) -> list[Path]:
     return ordered
 
 
+def _extract_graphql_queries(path: Path, text: str) -> list[tuple[int, str]]:
+    """Extract individual GraphQL query literals / code blocks with their 1-based start line."""
+    queries: list[tuple[int, str]] = []
+
+    if path.suffix == ".md":
+        for match in re.finditer(r"```(?:graphql|bash|python)?\s*\n(.*?)\n```", text, re.DOTALL):
+            block = match.group(1)
+            lineno = text[: match.start()].count("\n") + 1
+            queries.append((lineno, block))
+        return queries
+
+    for match in re.finditer(r'(?:"""|\'\'\')(.*?)(?:"""|\'\'\')', text, re.DOTALL):
+        block = match.group(1)
+        lineno = text[: match.start()].count("\n") + 1
+        queries.append((lineno, block))
+
+    for match in re.finditer(r'(?<!\\)(["\'])(.*?)(?<!\\)\1', text):
+        block = match.group(2)
+        if "\n" not in block and GRAPHQL_FIRST_RE.search(block):
+            lineno = text[: match.start()].count("\n") + 1
+            queries.append((lineno, block))
+
+    return queries
+
+
 def check_file(path: Path) -> list[str]:
     """Return human-readable violations for one file; empty list = clean."""
     text = path.read_text(encoding="utf-8", errors="replace")
@@ -112,11 +137,26 @@ def check_file(path: Path) -> list[str]:
                 f"`_rest_list_paginated()` (sdlc_manager.py, #424) instead"
             )
 
-    if GRAPHQL_FIRST_RE.search(text) and "hasNextPage" not in text:
-        violations.append(
-            f"{path}: GraphQL query sets a page-size arg (`first:`) but this file "
-            f"never checks `hasNextPage` -- the query cannot detect truncation"
-        )
+    extracted_queries = _extract_graphql_queries(path, text)
+    if extracted_queries:
+        for q_lineno, query_text in extracted_queries:
+            if SUPPRESS_MARKER in query_text:
+                continue
+            if GRAPHQL_FIRST_RE.search(query_text) and "hasNextPage" not in query_text:
+                violations.append(
+                    f"{path}:{q_lineno}: GraphQL query sets a page-size arg (`first:`) "
+                    f"without checking `hasNextPage` -- the query cannot detect truncation"
+                )
+    else:
+        if (
+            GRAPHQL_FIRST_RE.search(text)
+            and "hasNextPage" not in text
+            and SUPPRESS_MARKER not in text
+        ):
+            violations.append(
+                f"{path}: GraphQL query sets a page-size arg (`first:`) without "
+                f"checking `hasNextPage` -- the query cannot detect truncation"
+            )
 
     return violations
 

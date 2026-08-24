@@ -53,13 +53,28 @@ from sdlc_manager import (  # noqa: E402
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / "config" / "board-schema.json"
 
 
-def fetch_project_fields_census(project_number: int) -> dict[str, Any]:
+def fetch_project_fields_census(project_number: int, *, max_pages: int = 200) -> dict[str, Any]:
     """Live field/option shape for one project (id, name, dataType, options).
 
     Deliberately excludes item data — see module docstring."""
-    data = _graphql(QUERY_GET_PROJECT_FIELDS, {"org": ORG, "number": project_number})
-    proj = data.get("organization", {}).get("projectV2") or {}
-    fields = proj.get("fields", {}).get("nodes", [])
+    project_id_box: dict[str, str] = {"id": "", "title": ""}
+
+    def _fetch_page(cursor: str | None) -> tuple[list[dict[str, Any]], str | None]:
+        data = _graphql(
+            QUERY_GET_PROJECT_FIELDS,
+            {"org": ORG, "number": project_number, "cursor": cursor},
+        )
+        proj = data.get("organization", {}).get("projectV2") or {}
+        if not project_id_box["id"]:
+            project_id_box["id"] = proj.get("id", "")
+            project_id_box["title"] = proj.get("title", "")
+
+        fields_data = proj.get("fields", {})
+        page_info = fields_data.get("pageInfo", {})
+        next_cursor = page_info.get("endCursor") if page_info.get("hasNextPage") else None
+        return fields_data.get("nodes", []), next_cursor
+
+    fields = paginate_or_raise(_fetch_page, max_pages=max_pages)
 
     census_fields = []
     for field in fields:
@@ -78,8 +93,8 @@ def fetch_project_fields_census(project_number: int) -> dict[str, Any]:
 
     return {
         "number": project_number,
-        "id": proj.get("id", ""),
-        "title": proj.get("title", ""),
+        "id": project_id_box["id"],
+        "title": project_id_box["title"],
         "fields": census_fields,
     }
 

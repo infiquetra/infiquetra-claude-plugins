@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.12.2] - 2026-08-24
+
+### Fixed - GraphQL project fields pagination, query-scoped pagination lint, and explicit live parity skip (#584)
+
+- Paginated `QUERY_GET_PROJECT_FIELDS` with cursor and `pageInfo` via `paginate_or_raise` in `get_project_fields` and `board_census.py:fetch_project_fields_census`, eliminating silent field truncation on boards with >30 fields (R1).
+- Made `check_pagination.py` query-scoped so unpaginated `first:` query literals inside files that paginate elsewhere are flagged (R2).
+- Updated `check_issue_contract_parity.py` to explicitly print `SKIPPED live parity leg: <reason>` on the default (no `--live`) path instead of silently omitting the leg (R3 residual).
+- Verified R4 fail-loud behavior is satisfied by existing #609 test suite.
+
 ## [2.12.1] - 2026-08-24
 
 ### Fixed - prepared-issue draft revision replacement semantics and multi-fence readiness validation (#785)

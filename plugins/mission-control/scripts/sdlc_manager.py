@@ -934,12 +934,13 @@ query($org: String!, $number: Int!, $cursor: String) {
 """
 
 QUERY_GET_PROJECT_FIELDS = """
-query($org: String!, $number: Int!) {
+query($org: String!, $number: Int!, $cursor: String) {
   organization(login: $org) {
     projectV2(number: $number) {
       id
       title
-      fields(first: 30) {
+      fields(first: 30, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
         nodes {
           ... on ProjectV2Field {
             id name dataType
@@ -959,6 +960,7 @@ query($org: String!, $number: Int!) {
 """
 
 QUERY_GET_ITEM_LABELS = """
+# pagination-lint: allow
 query($org: String!, $repo: String!, $number: Int!) {
   repository(owner: $org, name: $repo) {
     issueOrPullRequest(number: $number) {
@@ -971,6 +973,7 @@ query($org: String!, $repo: String!, $number: Int!) {
 """
 
 QUERY_GET_MIMIR_OBJECTIVE_FIELDS = """
+# pagination-lint: allow
 query($org: String!, $repo: String!, $number: Int!) {
   repository(owner: $org, name: $repo) {
     issue(number: $number) {
@@ -1053,6 +1056,40 @@ def get_project_items(project_number: int) -> tuple[str, list[dict]]:
 
     all_items = paginate_or_raise(_fetch_page)
     return project_id_box["id"], all_items
+
+
+def get_project_fields(
+    project_number: int,
+    *,
+    max_pages: int = 200,
+) -> tuple[str, list[dict[str, Any]]]:
+    """Fetch all fields from a project, returning (project_id, fields).
+
+    Routes through `paginate_or_raise` (#424, #584) so a runaway/misbehaving
+    upstream response raises `PaginationExhaustedError` instead of this
+    function silently returning a partial field list."""
+    project_id_box: dict[str, str] = {"id": ""}
+
+    def _fetch_page(cursor: str | None) -> tuple[list[dict[str, Any]], str | None]:
+        data = _graphql(
+            QUERY_GET_PROJECT_FIELDS,
+            {
+                "org": ORG,
+                "number": project_number,
+                "cursor": cursor,
+            },
+        )
+        proj = data.get("organization", {}).get("projectV2") or {}
+        if not project_id_box["id"]:
+            project_id_box["id"] = proj.get("id", "")
+
+        fields_data = proj.get("fields", {})
+        page_info = fields_data.get("pageInfo", {})
+        next_cursor = page_info.get("endCursor") if page_info.get("hasNextPage") else None
+        return fields_data.get("nodes", []), next_cursor
+
+    all_fields = paginate_or_raise(_fetch_page, max_pages=max_pages)
+    return project_id_box["id"], all_fields
 
 
 def get_item_status(item: dict) -> str:
@@ -1268,13 +1305,7 @@ def board_move(
             continue
 
         # Find Status field ID and option ID via field discovery
-        fields_data = _graphql(QUERY_GET_PROJECT_FIELDS, {"org": ORG, "number": proj["number"]})
-        proj_fields = (
-            fields_data.get("organization", {})
-            .get("projectV2", {})
-            .get("fields", {})
-            .get("nodes", [])
-        )
+        _, proj_fields = get_project_fields(proj["number"])
 
         status_field = None
         status_option_id = None
@@ -1451,8 +1482,7 @@ def board_discover_fields(project_name: str, fmt: str) -> None:
     """Discover all fields and options on a project."""
     config = load_config()
     proj = get_project_config(config, project_name)
-    data = _graphql(QUERY_GET_PROJECT_FIELDS, {"org": ORG, "number": proj["number"]})
-    fields = data.get("organization", {}).get("projectV2", {}).get("fields", {}).get("nodes", [])
+    _, fields = get_project_fields(proj["number"])
 
     if fmt == "json":
         _out({"project": project_name, "fields": fields}, fmt)
@@ -1736,8 +1766,7 @@ def fields_create_option(project_name: str, field_name: str, option_name: str, f
     proj = get_project_config(config, project_name)
 
     # Discover fields
-    data = _graphql(QUERY_GET_PROJECT_FIELDS, {"org": ORG, "number": proj["number"]})
-    fields = data.get("organization", {}).get("projectV2", {}).get("fields", {}).get("nodes", [])
+    _, fields = get_project_fields(proj["number"])
 
     target_field = None
     for f in fields:
@@ -2342,11 +2371,9 @@ def _resolve_project_fields(project_name: str, field_names: list[str]) -> dict[s
     """Look up project fields by name with one live discovery query."""
     config = load_config()
     proj = get_project_config(config, project_name)
-    data = _graphql(QUERY_GET_PROJECT_FIELDS, {"org": ORG, "number": proj["number"]})
-    fields = data.get("organization", {}).get("projectV2", {}).get("fields", {}).get("nodes", [])
+    project_id, fields = get_project_fields(proj["number"])
     requested = {name.lower(): name for name in field_names}
     resolved: dict[str, dict[str, Any]] = {}
-    project_id = data["organization"]["projectV2"]["id"]
     for field in fields:
         requested_name = requested.get(field.get("name", "").lower())
         if requested_name:

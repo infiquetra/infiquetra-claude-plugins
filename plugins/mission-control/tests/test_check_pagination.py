@@ -99,6 +99,37 @@ class TestGraphqlFirstWithoutHasNextPage:
         )
         assert check_pagination.check_file(script) == []
 
+    def test_unpaginated_query_inside_file_with_paginated_query_fails(self, tmp_path):
+        """Query-scoped check flags an unpaginated query even if another query
+        in the same file checks hasNextPage (#584, R2)."""
+        script = tmp_path / "mixed_queries.py"
+        script.write_text(
+            'QUERY_PAGINATED = """\n'
+            "query($org: String!, $number: Int!, $cursor: String) {\n"
+            "  organization(login: $org) {\n"
+            "    projectV2(number: $number) {\n"
+            "      items(first: 100, after: $cursor) {\n"
+            "        pageInfo { hasNextPage endCursor }\n"
+            "        nodes { id }\n"
+            "      }\n"
+            "    }\n"
+            "  }\n"
+            '}\n"""\n\n'
+            'QUERY_UNPAGINATED = """\n'
+            "query($org: String!, $number: Int!) {\n"
+            "  organization(login: $org) {\n"
+            "    projectV2(number: $number) {\n"
+            "      fields(first: 30) {\n"
+            "        nodes { id }\n"
+            "      }\n"
+            "    }\n"
+            "  }\n"
+            '}\n"""\n'
+        )
+        violations = check_pagination.check_file(script)
+        assert violations
+        assert any("mixed_queries.py:14" in v and "hasNextPage" in v for v in violations)
+
 
 class TestRunLint:
     def test_run_lint_aggregates_across_files(self, tmp_path):

@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.139.3] - 2026-08-24
+
+### Fixed
+
+- **Document `--workflow-available` dependency on `--host-capable` and explain halt reasons.**
+  The `outcome.py advance` CLI help for `--workflow-available` now explicitly states that it requires
+  `--host-capable`. When `--workflow-available` is passed without `--host-capable`, `resolve_available`
+  attaches an explanation to `cc-workflows-ultracode` so that any resulting unavailability halt or degrade
+  receipt clearly indicates `--workflow-available requires --host-capable` rather than presenting an
+  unexplained host failure. (#657)
+
 ## [0.139.2] - 2026-08-24
 
 ### Fixed

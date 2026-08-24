@@ -104,6 +104,55 @@ def test_custom_available_set() -> None:
     assert D.dispatch(_req("team-execution"), available=("inline",))["status"] == "halt"
 
 
+def test_resolve_available_workflow_available_requires_host_capable() -> None:
+    # #657 (U9): resolve_available(host_capable=False, workflow_available=True) returns the conservative
+    # floor and carries the coupling explanation so callers get an explanatory halt naming --host-capable.
+    avail = D.resolve_available(host_capable=False, workflow_available=True)
+    assert avail == ("inline", "team-execution", "manual")
+    assert "cc-workflows-ultracode" not in avail
+    assert hasattr(avail, "unavailable_reasons")
+    assert (
+        avail.unavailable_reasons.get("cc-workflows-ultracode")
+        == "cc-workflows-ultracode unavailable: --workflow-available requires --host-capable"
+    )
+
+    # When dispatched, the halt receipt reason names the dependency on --host-capable
+    out = D.dispatch(_req("cc-workflows-ultracode"), available=avail)
+    assert out["status"] == "halt"
+    receipt = out["receipt"]
+    assert (
+        "cc-workflows-ultracode unavailable: --workflow-available requires --host-capable"
+        in receipt["reason"]
+    )
+
+    # When evaluated via degrade_decision, the halt reason also names the dependency
+    action, backend, reason = D.degrade_decision(
+        "cc-workflows-ultracode",
+        available=avail,
+        attending=True,
+        guarantee_bearing=False,
+        had_side_effect=False,
+    )
+    assert action == "halt" and backend == "cc-workflows-ultracode"
+    assert (
+        "cc-workflows-ultracode unavailable: --workflow-available requires --host-capable" in reason
+    )
+
+
+def test_outcome_advance_help_and_resolve_available_coupling_consistency(capsys: Any) -> None:
+    # #657 AC2: CLI advance help text and resolve_available docstring agree on the flag coupling.
+    with pytest.raises(SystemExit):
+        OUTCOME.main(["advance", "--help"])
+    captured = capsys.readouterr().out
+    assert "--workflow-available" in captured
+    assert "--host-capable" in captured
+    assert "requires --host-capable" in captured
+
+    doc = D.resolve_available.__doc__ or ""
+    assert "workflow_available" in doc
+    assert "host_capable" in doc
+
+
 # --------------------------------------------------------------------------- make_dispatcher adapter
 
 

@@ -64,6 +64,14 @@ def test_resolve_available_is_host_conditional() -> None:
     )
     full = D.resolve_available(host_capable=True, workflow_available=True)
     assert "cc-workflows-ultracode" in full
+    # #657 (U9): workflow_available without host_capable resolves to floor and carries coupling explanation
+    workflow_only = D.resolve_available(host_capable=False, workflow_available=True)
+    assert workflow_only == ("inline", "team-execution", "manual")
+    assert "cc-workflows-ultracode" not in workflow_only
+    assert (
+        workflow_only.unavailable_reasons.get("cc-workflows-ultracode")
+        == "cc-workflows-ultracode unavailable: --workflow-available requires --host-capable"
+    )
     # ordered by the spec's NODE_BACKENDS vocabulary (deterministic)
     assert list(full) == [b for b in SPEC.NODE_BACKENDS if b in set(full)]
 
@@ -285,6 +293,43 @@ def test_advance_halts_an_attended_unavailable_leaf(tmp_path: Path) -> None:
         attending=True,  # operator attending -> HALT, never degrade
     )
     assert result.dispatched == [] and len(result.halted) == 1 and result.degraded == []
+
+
+def test_advance_workflow_available_degrade_policy_halt_regression(tmp_path: Path) -> None:
+    # #657: an operator passing --workflow-available without --host-capable on a leaf with
+    # degrade_policy: "halt" receives a loud HALT naming --host-capable, not a silent downgrade.
+    repo = _repo(tmp_path)
+    ENG.start(
+        repo,
+        "o",
+        "ship",
+        nodes=[
+            {
+                "subplot_id": "build",
+                "title": "B",
+                "kind": "code",
+                "backend": "cc-workflows-ultracode",
+                "degrade_policy": "halt",
+            }
+        ],
+    )
+    _approve(repo, "o")
+    avail = D.resolve_available(host_capable=False, workflow_available=True)
+    result = ENG.advance(
+        repo,
+        "o",
+        dispatcher=D.make_dispatcher(available=SPEC.NODE_BACKENDS),
+        available=avail,
+        attending=False,  # away, but degrade_policy: "halt" prevents degrade
+    )
+    assert result.dispatched == []
+    assert len(result.halted) == 1
+    assert result.degraded == []
+    halt = result.halted[0]
+    assert (
+        "cc-workflows-ultracode unavailable: --workflow-available requires --host-capable"
+        in halt["reason"]
+    )
 
 
 def test_repeated_halt_appends_one_ledger_record_not_n(tmp_path: Path) -> None:

@@ -47,9 +47,24 @@ idle session with no commits on its branch stays `running` (unsettled); a closed
 branch contains commits settles `done` (never `failed`); and a session gone without commits yields a
 distinct `orphaned` state (`orphaned`).
 
+**Second-order trap found in review of this same change.** An evidence gate has a domain, and
+applying it outside that domain re-creates the defect it was built to remove. `produced_anything`
+reads a *branch*, and it answers `False` for two units that did nothing wrong: one with no branch
+of its own (the review controller carries `merge: false` and delivers its result through
+`review-result`), and one whose run branch does not resolve, where the count is unknown rather than
+zero. Gating both on commits wedged the review controller at `running` for the life of the run —
+no commit can ever appear on a branch a unit does not have, and `land` returns the controller to
+`running` on every resubmission — and wrote the note "session disappeared without commits" onto a
+unit whose commits the code had not looked at. `go` refuses outright on an unresolvable run branch
+and `adopt`/`clean` warn that branch-dependent checks are unavailable; settle now draws the same
+distinction instead of collapsing it.
+
 **Generalizable rule.** Task outcome must be read from produced artifacts, not process lifecycle.
 An idle process is not a successful task, and a terminated process is not a failed one; always gate
-lifecycle settlement on output evidence rather than container or pane state.
+lifecycle settlement on output evidence rather than container or pane state — and gate only the
+subjects the evidence probe can actually read, because "I could not check" and "there is nothing"
+are different answers, and a probe that returns the second for the first is the original defect
+wearing the fix's clothes.
 
 ### A readiness flag is the sender's claim, so delivery has to be read off the receiver  {#readiness-is-not-delivery}
 

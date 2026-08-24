@@ -336,3 +336,117 @@ class TestLandedWorkSettlement:
         assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False)) == 0
         saved = _read_units(repo)["committed-beta"]
         assert saved["status"] == "done"
+
+
+class TestUnitsWithNoBranchOfTheirOwn:
+    """The gate reads a branch, so a unit without one is not commit-gated.
+
+    The review controller is that shape: `merge: False`, no branch, its result delivered through
+    `review-result` (see tests/test_review_loop_end_to_end.py, which builds exactly this unit).
+    Gating it on commits would wedge the review loop at running forever -- no commit can appear on
+    a branch the unit does not have -- and `land` puts the controller back to running on every
+    resubmission, so the wedge would recur for the life of the run.
+    """
+
+    def test_branchless_controller_settles_done_on_confirmed_idle(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        controller = {
+            "name": "code-review-controller",
+            "vendor": "grok",
+            "task": "/saga:code-review review the run branch",
+            "role": "review-controller",
+            "merge": False,
+            "status": "running",
+        }
+        _write_run(repo, [controller])
+        _patch_settle(
+            orchestrate,
+            monkeypatch,
+            [
+                [_agent("code-review-controller", "idle")],
+                [_agent("code-review-controller", "idle")],
+            ],
+        )
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False)) == 0
+        saved = _read_units(repo)["code-review-controller"]
+        assert saved["status"] == "done"
+        assert "no branch of its own to check" in capsys.readouterr().out
+
+    def test_branchless_controller_gone_is_orphaned_not_failed(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """No branch means no evidence either way, so the honest record is orphaned, not failed."""
+        controller = {
+            "name": "code-review-controller",
+            "vendor": "grok",
+            "task": "/saga:code-review review the run branch",
+            "role": "review-controller",
+            "merge": False,
+            "status": "running",
+        }
+        _write_run(repo, [controller])
+        _patch_settle(orchestrate, monkeypatch, [[], []])
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False)) == 0
+        saved = _read_units(repo)["code-review-controller"]
+        assert saved["status"] == orchestrate.ORPHANED
+        assert saved["status"] != orchestrate.FAILED
+        assert "commits could not be checked" in saved["note"]
+
+
+class TestUnresolvableRunBranchIsUnknownNotZero:
+    """A run branch that does not resolve makes the commit count unknown, never zero.
+
+    `go` refuses outright in this state and `adopt`/`clean` warn that branch-dependent checks are
+    unavailable. Settle must not turn "could not check" into the claim "committed nothing", which
+    is the same false negative that #780 exists to remove.
+    """
+
+    def test_idle_unit_stays_running_and_names_the_unresolvable_branch(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _write_run(repo, [_unit("committed-alpha")], branch="orch/deleted")
+        _patch_settle(
+            orchestrate,
+            monkeypatch,
+            [[_agent("committed-alpha", "idle")], [_agent("committed-alpha", "idle")]],
+        )
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False)) == 0
+        assert _read_units(repo)["committed-alpha"]["status"] == "running"
+        out = capsys.readouterr().out
+        assert "run branch does not resolve" in out
+        assert "no commits" not in out
+
+    def test_gone_unit_note_does_not_claim_it_committed_nothing(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """committed-alpha has commits; the note must not assert the opposite when unreadable."""
+        _write_run(repo, [_unit("committed-alpha")], branch="orch/deleted")
+        _patch_settle(orchestrate, monkeypatch, [[], []])
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_settle(argparse.Namespace(interval=20, once=False)) == 0
+        saved = _read_units(repo)["committed-alpha"]
+        assert saved["status"] == orchestrate.ORPHANED
+        assert saved["note"] == "session disappeared; commits could not be checked"
+        assert "without commits" not in saved["note"]

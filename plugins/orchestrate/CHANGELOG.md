@@ -9,6 +9,11 @@
   branch stays running, preventing stale `done` states or stuck/suspended processes from falsely
   settling done. A closed Herdr session with commits on its branch settles `done` (never `failed`),
   while a session gone without commits transitions to the distinct `orphaned` state.
+  The gate is a reading of a branch and is applied only where one can be read: a unit with no
+  branch of its own (the review controller, `merge: false`) is not commit-gated, and an
+  unresolvable run branch leaves the count unknown rather than zero — that unit stays running and
+  is told why, and a gone session's note says the commits could not be checked rather than
+  asserting there were none.
 
 ## [1.20.2] - 2026-08-24
 

@@ -35,7 +35,7 @@ python3 "$S" roster                                # agents this machine can lau
 python3 "$S" start --plan .orchestrate/plan.json   # record the run
 python3 "$S" go                                    # launch every eligible unit
 python3 "$S" status                                # the table, with live herdr state
-python3 "$S" settle                                # idle sessions become done
+python3 "$S" settle                                # sessions with branch evidence become done
 python3 "$S" expand --plan .orchestrate/next.json  # append units a finished phase named
 python3 "$S" review-result --file <result.json>     # persist the typed result and route repairs
 python3 "$S" land                                  # merge finished unit branches onto the run branch
@@ -192,6 +192,14 @@ is completion evidence on the unit branch (`produced_anything`). A session that 
 without commits stays running — idle is also what an agent looks like between turns, thinking. A
 session closed or gone after committing its work settles `done` (never `failed` for committed work),
 while a session gone without commits yields a distinct `orphaned` state.
+
+The gate is a reading of a branch, so it covers only units that have one. A unit with no branch of
+its own — the review controller, `merge: false`, whose output arrives through `review-result` — is
+not commit-gated and settles on the confirmed reading alone; gating it would wedge the review loop
+at `running` forever, because no commit can ever appear on a branch it does not have. When the run
+branch itself does not resolve the commit count is unknown rather than zero: such a unit stays
+`running` and says so, and a gone session is recorded `orphaned` with a note that the commits could
+not be checked — the same "branch-dependent checks are unavailable" line `adopt` and `clean` print.
 
 `go` refuses to launch a unit whose `after` dependency committed nothing. A dependent unit opens
 on its dependency's branch, so an empty branch means the thing it is supposed to work on does not

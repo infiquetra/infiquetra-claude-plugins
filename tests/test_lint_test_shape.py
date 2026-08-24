@@ -99,6 +99,68 @@ def test_directory_scan_only_collects_test_modules(lint: ModuleType, tmp_path: P
     assert "helper_module.py" not in names
 
 
+def test_inert_docstring_mentioning_plugins_does_not_evade_lint(lint: ModuleType) -> None:
+    """An inert docstring mentioning 'plugins/' does not count as a production signal (#588)."""
+    src = (
+        '"""Test module for fake adapter; see plugins/saga/scripts/outcome.py for context."""\n'
+        "class FakeStore:\n"
+        "    pass\n"
+    )
+    report = lint.analyze_source(src, Path("test_inert.py"), frozenset())
+    assert report.has_fake is True
+    assert report.has_production is False
+    assert report.is_violation is True
+
+
+def test_inert_string_assignment_does_not_evade_lint(lint: ModuleType) -> None:
+    """An inert assignment mentioning a real root is not a production signal (#588).
+
+    The general form of the docstring evasion: a string that names ``plugins/`` without the module
+    ever going near it. Only a path CONSTRUCTION or an import/loader call crosses the boundary.
+    """
+    src = (
+        "NOTE = 'we deliberately avoid plugins/saga and scripts/ here'\n"
+        "class FakeStore:\n"
+        "    pass\n"
+    )
+    report = lint.analyze_source(src, Path("test_inert_assign.py"), frozenset())
+    assert report.has_fake is True
+    assert report.has_production is False
+    assert report.is_violation is True
+
+
+def test_inert_string_still_binds_name_for_a_later_loader_call(lint: ModuleType) -> None:
+    """Binding survives even though the string alone is inert — the loader call is the signal (#588).
+
+    Guards the tightening against over-correction: the repo's
+    ``SCRIPTS = 'plugins/...'`` + ``spec_from_file_location('m', SCRIPTS)`` idiom must still read as
+    production, because that module really does load real code.
+    """
+    src = (
+        "import importlib.util\n"
+        "class FakeX: ...\n"
+        "SCRIPTS = 'plugins/saga/scripts'\n"
+        "spec = importlib.util.spec_from_file_location('m', SCRIPTS)\n"
+    )
+    report = lint.analyze_source(src, Path("test_bound.py"), frozenset())
+    assert report.has_production is True
+    assert report.is_violation is False
+
+
+def test_fake_loader_does_not_evade_lint(lint: ModuleType) -> None:
+    """Loading a fake via spec_from_file_location or import_module does not count as production (#588)."""
+    src = (
+        "import importlib.util\n"
+        "class FakeStore: ...\n"
+        "spec = importlib.util.spec_from_file_location('fake_mod', 'tests/fixtures/fake_mod.py')\n"
+        "mod = importlib.import_module('fake_helper')\n"
+    )
+    report = lint.analyze_source(src, Path("test_fake_loader.py"), frozenset())
+    assert report.has_fake is True
+    assert report.has_production is False
+    assert report.is_violation is True
+
+
 def test_whole_suite_is_clean_with_server_prod_module(lint: ModuleType) -> None:
     """The committed suite has no fake-only ``test_*.py`` modules (the CI invariant this gate holds).
 

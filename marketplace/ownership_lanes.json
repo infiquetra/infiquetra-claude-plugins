@@ -1,23 +1,28 @@
 {
   "schema_version": "1.0",
   "_doc": [
-    "Write-ownership lane manifest (issue #431).",
+    "Write-ownership lane manifest (issue #431, hardened in #583).",
     "Machine-checkable contract for the saga / mission-control / deploy ship-ceremony seam:",
-    "each plugin declares which sensitive `gh` subcommands its checked-in scripts may invoke",
-    "directly. scripts/check_ownership_lanes.py statically scans every declared plugin's",
-    "scripts and fails CI when a script reaches across into another plugin's owned mutation",
-    "surface (e.g. a deploy-lane script calling `gh issue`, which is mission-control's domain).",
+    "each plugin declares which sensitive `gh` subcommands its checked-in scripts may invoke.",
+    "scripts/check_ownership_lanes.py statically scans every declared plugin's scripts and fails",
+    "CI when a script reaches across into another plugin's owned mutation surface (e.g. a",
+    "deploy-lane script calling `gh issue create`, which is mission-control's domain).",
     "This gate covers the WRITE-mutation subset of CLAUDE.md Development Workflow step 6; it does",
     "NOT build the richer positive-ack handoff protocol (out of scope, tracked separately).",
     "Extending it: add the plugin under `lanes` with its allowed_gh_subcommands, or add a path",
     "prefix under `reserved_api_paths` to reserve a `gh api <path>` surface to one owner. Only",
     "subcommands listed in `sensitive_subcommands` are enforced; subcommands outside that list",
-    "(gh repo view, gh auth status, gh search) are never policed. Enforcement of a sensitive",
-    "subcommand is verb-insensitive: a direct-literal `gh issue view` counts as `issue`.",
-    "Known limitations (tracked in #583): wrapper-shaped invocations (a helper that prepends",
-    "'gh', e.g. `_run_gh([\"issue\", ...])`) are not attributed by the lint, and",
-    "`reserved_api_paths` covers REST path prefixes only — ProjectV2 GraphQL mutations via",
-    "`gh api graphql` are not yet policed."
+    "(gh repo view, gh auth status, gh search) are never policed.",
+    "Enforcement is VERB-AWARE (#583): benign read verbs (view, list, status, diff, checks,",
+    "download, get, watch) are permitted across lanes, so a direct-literal `gh issue view` from",
+    "saga is clean while `gh issue create` is not.",
+    "Attribution covers direct `gh` command literals, list concatenation onto [\"gh\"], and",
+    "wrapper helpers that prepend 'gh' (e.g. `_run_gh([\"issue\", \"view\", ...])`). ProjectV2",
+    "GraphQL mutations inside `gh api graphql` argument literals are reserved to the owner of the",
+    "`projects/` prefix below.",
+    "Remaining documented blind spots (see the script docstring): command lists with no literal",
+    "subcommand, shell-string invocations, and GraphQL documents piped on stdin rather than",
+    "passed as arguments."
   ],
   "sensitive_subcommands": [
     "issue",
@@ -38,16 +43,20 @@
   },
   "lanes": {
     "saga": {
-      "allowed_gh_subcommands": ["pr", "api"],
+      "allowed_gh_subcommands": [
+        "pr",
+        "api"
+      ],
       "rationale": [
         "Owns the PR ship-ceremony (create / ready / view / merge / close) and read-only GitHub",
         "queries (`gh api` GET for sub-issue graphql, deploy-strategy probing, board-progress",
         "comment preflights). Board-field WRITES are delegated to mission-control's sdlc_manager.py",
-        "(the board_writer pattern, #279/#344) — saga never mutates `projects/` directly;",
-        "reserved_api_paths backstops the direct REST shape (GraphQL mutations not yet covered,",
-        "#583). Not granted `issue` (issue creation/edit is mission-control's); note saga reads",
-        "issues today via a wrapper (`outcome_github.py` `gh issue view`) the lint does not",
-        "attribute — reconciling that is #583."
+        "(the board_writer pattern, #279/#344) \u2014 saga never mutates `projects/` directly;",
+        "reserved_api_paths backstops the direct REST shape and the ProjectV2 GraphQL mutation names",
+        "are reserved to the same owner (#583). Not granted `issue`: issue creation and edit are",
+        "mission-control's. saga's issue READS \u2014 direct or through the `outcome_github.py` wrapper \u2014",
+        "are attributed by the lint and allowed by the read-verb rule, which is how #583 resolved the",
+        "former contradiction between this lane and those calls."
       ]
     },
     "mission-control": {
@@ -72,10 +81,12 @@
       ]
     },
     "deploy": {
-      "allowed_gh_subcommands": ["api"],
+      "allowed_gh_subcommands": [
+        "api"
+      ],
       "rationale": [
         "Reads deployment + compare state via `gh api` (repos/*/deployments, repos/*/compare).",
-        "Mints tags via git, not gh. Must NOT touch issues, PRs, or board projects — those are",
+        "Mints tags via git, not gh. Must NOT touch issues, PRs, or board projects \u2014 those are",
         "mission-control's (issues/boards) and saga's (PR ceremony) to own."
       ]
     }

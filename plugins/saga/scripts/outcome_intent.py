@@ -545,7 +545,15 @@ def repost(
             store,
             # receipt first: the ledger identity keys (phase/kind/key) must win the merge so
             # the record is queryable as a repost halt (the receipt's own kind is nested-only).
-            {**receipt, "phase": "halt", "kind": "repost", "key": f"repost:{scope}", "at": at},
+            # Scoped with a generation component (spec_revision) so repeat attempts at the same
+            # revision dedup, but a distinct strand event at a future revision appends a new record (#598).
+            {
+                **receipt,
+                "phase": "halt",
+                "kind": "repost",
+                "key": f"repost:{scope}:r{spec.spec_revision}",
+                "at": at,
+            },
         )
         raise RepostStrandedError(receipt)
 

@@ -95,11 +95,11 @@ VENDOR_NOTES: dict[str, str] = {
         "auto; the ladder is `--approval-mode untrusted|on-request|never`."
     ),
     "opencode": (
-        "effort is a variant -- Default, high, max -- chosen through `/variants`, which opens a "
-        "picker rather than taking an argument. A picker cannot be answered from a `setup` line in "
-        "an unwatched tab, so a dispatched unit runs at whatever variant was last selected. Offer "
-        "it on its model and leave the variant to the operator. Its model wants `provider/model`; a "
-        "bare name is rejected at startup."
+        "effort is a variant -- Default, minimal, low, medium, high, xhigh, max -- chosen "
+        "through `/variants`. Orchestrate drives the interactive picker post-launch inside the "
+        "Herdr session, resolves exact or maximum available variants from the live picker choices, "
+        "verifies the effective model and variant before task submission, and records the verified "
+        "state. Its model wants `provider/model`; a bare name is rejected at startup."
     ),
     "agy": (
         "its saga plugin is a symlink into the operator's own checkout under the Gemini config "
@@ -284,6 +284,9 @@ SAGA_SYNTAX: dict[str, str] = {
 }
 
 PENDING, RUNNING, DONE, FAILED = "pending", "running", "done", "failed"
+PROMPT_UNDELIVERED = "prompt_undelivered"
+ACCOUNT_MISMATCH = "account_mismatch"
+ORPHANED = "orphaned"
 
 REVIEW_CONTROLLER_ROLE = "review-controller"
 WORK_FIX_ROLES = frozenset({"review-fixer", "downstream-resolver"})
@@ -292,6 +295,10 @@ REVIEW_RESULT_SCHEMA = "review_result.v1"
 REVIEW_OUTCOMES = frozenset(
     {"accepted", "repairs_requested", "cycle_cap_best_available", "review_incomplete"}
 )
+
+
+class AccountMismatchError(SystemExit):
+    """A worker launched under an account that does not match the requested plan account."""
 
 
 @dataclass
@@ -311,6 +318,13 @@ class Unit:
     has no such key, which ``load`` still accepts; nothing is migrated at read time."""
     model: str | None = None
     effort: str | None = None
+    account: str | None = None
+    """Account selection for this unit (e.g. "company" or "personal").
+
+    When set to "company", claude units emit ``--company-account`` in their launch arguments.
+    Absent, the run's default account is used if present; absent both, no account flag is emitted,
+    defaulting to the environment.
+    """
     permission: str = "auto"
     """How freely this unit may act: ``auto`` (get on with it) or ``bypass`` (ask nothing).
 
@@ -405,6 +419,10 @@ class Unit:
     ``name`` -- which is the plan's identity and the dependency key, and never changes."""
     status: str = PENDING
     note: str = ""
+    variant: str | None = None
+    """Effective model variant (e.g. for OpenCode), verified before task submission."""
+    launch_receipt: dict[str, Any] = field(default_factory=dict)
+    """Verified launch state: provider, model, variant, cwd, worktree, workspace, pane."""
 
 
 @dataclass
@@ -460,6 +478,8 @@ class Run:
 
     Absent means today's behaviour: sessions land in the caller's workspace. A unit with its own
     ``workspace`` wins; there is no other precedence."""
+    account: str | None = None
+    """Default account selection every unit inherits unless it sets its own (e.g. "company")."""
     engine_prefs: dict[str, dict[str, str]] = field(default_factory=dict)
     """Saga's per-stage external-engine answers, decided once in the interview.
 
@@ -506,6 +526,7 @@ class Run:
             issues=raw.get("issues", {}),
             status_map=raw.get("status_map", {}),
             workspace=raw.get("workspace") or None,
+            account=raw.get("account") or None,
             review_result=raw.get("review_result"),
             review_outcome=raw.get("review_outcome"),
             review_resubmit_pending=bool(raw.get("review_resubmit_pending", False)),
@@ -563,6 +584,7 @@ class Run:
             "issues": self.issues,
             "status_map": self.status_map,
             "workspace": self.workspace,
+            "account": self.account,
             "review_result": self.review_result,
             "review_outcome": self.review_outcome,
             "review_resubmit_pending": self.review_resubmit_pending,
@@ -902,6 +924,7 @@ def _replacement_worker(
         setup=list(template.setup),
         launch_args=list(template.launch_args),
         workspace=template.workspace,
+        account=template.account,
         merge=True,
         role=str(request["owner"]),
         paths=list(request["touched_paths"]),
@@ -1331,7 +1354,34 @@ def workspace_for(unit: Unit, default: str | None = None) -> str | None:
     return unit.workspace or default
 
 
-def agent_argv(unit: Unit, default_workspace: str | None = None) -> list[str]:
+def is_company_account(account: str | None) -> bool:
+    """Whether an account selection specifies the company account."""
+    if not account:
+        return False
+    return account.lower() in ("company", "company-account", "--company-account")
+
+
+def is_personal_account(account: str | None) -> bool:
+    """Whether an account selection specifies the personal account."""
+    if not account:
+        return False
+    return account.lower() in ("personal", "personal-account", "--personal-account")
+
+
+def account_for(unit: Unit, default: str | None = None) -> str | None:
+    """The account this unit launches under.
+
+    The unit's own field wins; otherwise the run default. Absent both, no account flag is
+    emitted -- inheriting the environment default.
+    """
+    return unit.account or default
+
+
+def agent_argv(
+    unit: Unit,
+    default_workspace: str | None = None,
+    default_account: str | None = None,
+) -> list[str]:
     argv = [
         launcher(),
         "--no-focus",
@@ -1354,6 +1404,13 @@ def agent_argv(unit: Unit, default_workspace: str | None = None) -> list[str]:
         template = flags.get(key)
         if value and template:
             argv.extend(template.format(value=value).split(" "))
+    effective_account = account_for(unit, default_account)
+    if (
+        unit.vendor == "claude"
+        and is_company_account(effective_account)
+        and "--company-account" not in unit.launch_args
+    ):
+        argv.append("--company-account")
     # Last, and verbatim. Arguments after the vendor token reach the vendor, except for the
     # few the wrapper intercepts from that position. A launcher flag that must precede the
     # vendor token cannot be expressed here -- see ``workspace``.
@@ -1367,10 +1424,19 @@ def agent_argv(unit: Unit, default_workspace: str | None = None) -> list[str]:
 # The wrapper returns when the tab exists, which is earlier than the agent being able to read
 # anything, and sending into that gap does not fail: `herdr agent prompt` reports success, the agent
 # finishes booting, and the prompt is gone. Observed three times across two vendors on one live run,
-# always the same tell -- a unit idle immediately after launch, having consumed nothing. `settle`
-# reads that idle as done and only `land` notices, a phase later, that it committed nothing.
+# always the same tell -- a unit idle immediately after launch, having consumed nothing. That idle
+# used to be recorded as RUNNING, which `settle` then read as done and only `land` noticed, a phase
+# later, that it had committed nothing. A send whose acceptance is never observed is now recorded
+# as PROMPT_UNDELIVERED instead, which no phase reads as work.
 LAUNCH_SETTLE_SECONDS = 30.0
 DELIVERY_CHECK_SECONDS = 15.0
+DELIVERY_RESENDS = 2
+
+# How long to give a new session to say which account it is on. A session that is interactive has
+# painted its statusline, so this is a short grace for the paint rather than a wait for the tool:
+# the other answer, a transcript under one of the two roots, does not arrive until the first prompt
+# does, which is after this check.
+ACCOUNT_SETTLE_SECONDS = 10.0
 DELIVERY_WARNING = (
     "SENT BUT NEVER STARTED: idle after being given its task. Check the tab before "
     "trusting this unit -- it may have been prompted while still booting."
@@ -1420,9 +1486,7 @@ def took_the_task(unit: Unit, seconds: float = DELIVERY_CHECK_SECONDS) -> bool:
     """Did the session actually take the task? One that did stops being idle.
 
     Not a guarantee -- an agent that answers instantly is idle again quickly. It is a check on the
-    failure that has actually happened, which is a session that never started at all. Reported
-    rather than repaired: a resend risks giving a unit its task twice, and a unit that quietly did
-    nothing is worth a line in `status` more than it is worth a guess.
+    failure that has actually happened, which is a session that never started at all.
     """
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
@@ -1431,6 +1495,448 @@ def took_the_task(unit: Unit, seconds: float = DELIVERY_CHECK_SECONDS) -> bool:
             return True
         time.sleep(1.0)
     return False
+
+
+OPENCODE_VARIANT_RANKS: dict[str, int] = {
+    "default": 0,
+    "minimal": 1,
+    "low": 2,
+    "medium": 3,
+    "high": 4,
+    "xhigh": 5,
+    "max": 6,
+    "maximum": 6,
+}
+OPENCODE_MAX_VARIANTS = {"max", "maximum", "maximum available", "max available", "highest"}
+
+
+def strip_ansi(text: str) -> str:
+    """Terminal output with its colour and cursor escapes removed."""
+    return re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", text)
+
+
+def parse_opencode_variants(text: str) -> list[str]:
+    """Extract variant choices presented in OpenCode's interactive /variants picker.
+
+    Handles ANSI escape codes, menu formatting (> Option, 1. Option, * Option), and token lists.
+    """
+    clean = strip_ansi(text)
+    options: list[str] = []
+    ignored = {"select", "choose", "variant", "variants", "options", "option", "model", "effort"}
+    for line in clean.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # Menu lines: > Option, - Option, * Option, 1. Option, 1) Option, [ ] Option
+        m = re.match(r"^(?:[>*\-•#]\s*|\d+[\.\)]\s*|\[[\s*xX]?\]\s*)([A-Za-z0-9_\-]+)", line)
+        if m:
+            token = m.group(1).strip()
+            if (
+                token
+                and token.lower() not in ignored
+                and not any(token.lower() == o.lower() for o in options)
+            ):
+                options.append(token)
+            continue
+        # Token matches for common variant names
+        for word in re.findall(
+            r"\b(?:Default|minimal|low|medium|high|xhigh|max|maximum)\b", line, re.IGNORECASE
+        ):
+            if not any(word.lower() == o.lower() for o in options):
+                options.append(word)
+    return options
+
+
+def resolve_opencode_variant(requested: str | None, available_options: Sequence[str]) -> str:
+    """Select the requested exact variant or highest actually offered variant."""
+    if not available_options:
+        raise SystemExit("no variant choices presented in OpenCode live picker")
+
+    if requested is None or requested.strip().lower() in OPENCODE_MAX_VARIANTS:
+        # Highest actually offered variant from presented choices
+        return max(
+            available_options,
+            key=lambda opt: (
+                OPENCODE_VARIANT_RANKS.get(opt.lower(), 0),
+                available_options.index(opt),
+            ),
+        )
+
+    req_clean = requested.strip().lower()
+    for opt in available_options:
+        if opt.strip().lower() == req_clean:
+            return opt
+
+    raise SystemExit(
+        f"requested variant {requested!r} is not available in live picker options: {list(available_options)}"
+    )
+
+
+def read_pane(pane_id: str, lines: int = 120) -> str:
+    """This pane's recent output, falling back to what is on screen when there is no scrollback."""
+    proc = run(
+        ["herdr", "pane", "read", pane_id, "--source", "recent-unwrapped", "--lines", str(lines)],
+        check=False,
+    )
+    if proc.returncode == 0 and proc.stdout.strip():
+        return proc.stdout
+    proc = run(["herdr", "pane", "read", pane_id, "--source", "visible"], check=False)
+    return proc.stdout if proc.returncode == 0 else ""
+
+
+def confirm_opencode_variant_selected(unit: Unit, pane_id: str, selected: str) -> None:
+    """Read the pane back and require the chosen variant to be reflected in it.
+
+    Typing a label into a picker is a request, not an outcome. A picker that closed on the value it
+    already held leaves the session at a variant nobody asked for, and submitting work into it is
+    exactly the silent substitution this unit's stop conditions forbid. The echo the interface
+    leaves behind is the only evidence of the selection available from outside it, so a selection
+    that cannot be found there is a loud stop rather than an assumption.
+    """
+    clean = strip_ansi(read_pane(pane_id, lines=40))
+    if not re.search(rf"\b{re.escape(selected)}\b", clean, re.IGNORECASE):
+        raise SystemExit(
+            f"{unit.name}: variant {selected!r} was sent to the picker but the session does not "
+            "report it; refusing to submit the task at an unverified variant"
+        )
+
+
+def drive_opencode_variant_selection(
+    unit: Unit, pane_id: str, *, timeout: float = 10.0
+) -> tuple[str, bool]:
+    """Drive OpenCode's `/variants` picker in Herdr and verify the selection took.
+
+    Returns the variant now in force and whether the session reported itself ready afterwards.
+
+    A pane holds the session's whole recent output, not only its picker, so a parse that finds
+    nothing the variant ladder recognises is read as "the picker has not drawn yet" and polled
+    again rather than taken as the option list. Accepting a boot banner as the choices either
+    refuses a perfectly available exact variant or types one of the banner's own words into the
+    session; only once the window closes is an unrecognised set accepted, and an empty one stops.
+    """
+    # Open the picker
+    run(["herdr", "pane", "run", pane_id, "/variants"])
+
+    # Read the live picker options from the pane
+    deadline = time.monotonic() + timeout
+    available_options: list[str] = []
+    while time.monotonic() < deadline:
+        parsed = parse_opencode_variants(read_pane(pane_id))
+        if parsed:
+            available_options = parsed
+            if any(option.lower() in OPENCODE_VARIANT_RANKS for option in parsed):
+                break
+        time.sleep(0.5)
+
+    if not available_options:
+        raise SystemExit(f"{unit.name}: unable to read live picker options from OpenCode /variants")
+
+    # Select requested exact variant or highest offered
+    requested = unit.variant or unit.effort
+    selected = resolve_opencode_variant(requested, available_options)
+
+    # Send selected variant into the pane
+    run(["herdr", "pane", "run", pane_id, selected])
+
+    # Wait until session returns to task-ready, then confirm the picker actually moved
+    ready = await_ready(unit)
+    confirm_opencode_variant_selected(unit, pane_id, selected)
+
+    unit.variant = selected
+    append_unit_note(unit, f"variant {selected} verified")
+    return selected, ready
+
+
+def close_run_session(unit: Unit) -> None:
+    """Close only the tab this run opened, leaving every session it did not create alone."""
+    if unit.tab_id:
+        run(["herdr", "tab", "close", unit.tab_id], check=False)
+
+
+def same_directory(reported: str, expected: str) -> bool:
+    """Whether two paths name the same directory, deciding on the literal strings if they cannot.
+
+    ``resolve`` reads the filesystem and can fail on a path that has since gone. A comparison that
+    could not be made must not read as a match, so an unusable path falls back to the strings
+    rather than the check being skipped.
+    """
+    try:
+        return Path(reported).resolve() == Path(expected).resolve()
+    except OSError:
+        return reported == expected
+
+
+def workspace_id_for_name(name: str | None) -> str | None:
+    """The id herdr gave the workspace with this label, or None when no workspace carries it.
+
+    The wrapper's ``--workspace`` takes a name and ``herdr agent list`` reports only a
+    ``workspace_id``, so the two are joined through the workspace list rather than compared
+    directly -- a name held against an id never matches, which reads as a mismatch that is not one.
+    """
+    if not name:
+        return None
+    proc = run(["herdr", "workspace", "list"], check=False)
+    try:
+        workspaces = json.loads(proc.stdout)["result"]["workspaces"]
+    except (ValueError, KeyError, TypeError):
+        return None
+    for workspace in workspaces:
+        if isinstance(workspace, dict) and workspace.get("label") == name:
+            found = workspace.get("workspace_id")
+            return str(found) if found else None
+    return None
+
+
+def claude_transcript_roots() -> tuple[Path, Path]:
+    """The personal and company Claude transcript root directories."""
+    personal = Path(
+        os.environ.get("CLAUDE_PERSONAL_PROJECTS", Path.home() / ".claude" / "projects")
+    )
+    company = Path(
+        os.environ.get("CLAUDE_COMPANY_PROJECTS", Path.home() / ".claude-company" / "projects")
+    )
+    return personal, company
+
+
+def claude_project_slug(worktree: str | Path) -> str:
+    """The project directory slug Claude generates for a given worktree path.
+
+    Every separator and dot becomes a dash: ``/Users/jefcox/.claude`` is stored as
+    ``-Users-jefcox--claude``, which is where the dot belongs in this class -- a worktree whose
+    name carries one would otherwise be looked for under a directory that does not exist.
+    """
+    resolved = Path(worktree).resolve().as_posix()
+    return re.sub(r"[/\\:.]", "-", resolved)
+
+
+def find_claude_transcripts(root: Path, worktree: str | None) -> list[Path]:
+    """Find transcript files (.jsonl) for a given worktree under a Claude projects root."""
+    if not root.is_dir() or not worktree:
+        return []
+    slug = claude_project_slug(worktree)
+    proj_dir = root / slug
+    if proj_dir.is_dir():
+        return list(proj_dir.glob("*.jsonl"))
+    leaf = Path(worktree).name
+    matches = list(root.glob(f"*{leaf}*/*.jsonl"))
+    return matches
+
+
+def transcript_account(unit: Unit) -> str | None:
+    """Which account's transcript root holds this worker's session, when either one does.
+
+    Both roots can hold a transcript for the same worktree -- a relaunch after a wrong-account
+    launch leaves the earlier one in place -- so the newer file decides. Returns ``None`` while
+    neither root has one, which is the ordinary state at preflight: Claude writes
+    ``projects/<slug>/<id>.jsonl`` when the first prompt arrives, and preflight runs before the
+    task is sent.
+    """
+    personal_root, company_root = claude_transcript_roots()
+    newest: list[tuple[float, str]] = []
+    for label, root in (("personal", personal_root), ("company", company_root)):
+        files = find_claude_transcripts(root, unit.worktree)
+        if files:
+            newest.append((max(f.stat().st_mtime for f in files), label))
+    if not newest:
+        return None
+    return max(newest)[1]
+
+
+def pane_account_label(pane_id: str | None) -> str | None:
+    """The account this session's own statusline reports, or None while it does not say.
+
+    The wrapper exports ``CLAUDE_ACCOUNT_LABEL`` into the pane before the tool starts and the
+    statusline renders it beside the user -- ``jefcox [company]:`` against a plain ``jefcox:`` on
+    the personal account. That row is on screen as soon as the session is interactive, which is
+    exactly where the transcript is not, so it is the evidence a launch-time check can actually
+    read. Only what is on screen now is considered: scrollback carries the task text, and a task
+    that happens to name the operator is not a statusline.
+    """
+    if not pane_id:
+        return None
+    user = os.environ.get("USER") or os.environ.get("LOGNAME") or ""
+    if not user:
+        return None
+    proc = run(["herdr", "pane", "read", pane_id, "--source", "visible"], check=False)
+    if proc.returncode != 0:
+        return None
+    text = strip_ansi(proc.stdout)
+    last = None
+    for match in re.finditer(rf"\b{re.escape(user)}\s*(?:\[(\w+)\])?:", text):
+        last = match
+    if last is None:
+        return None
+    return (last.group(1) or "personal").lower()
+
+
+def observed_account(unit: Unit, pane_id: str | None, seconds: float) -> str | None:
+    """The account the launched session is actually on, waiting briefly for it to say.
+
+    The statusline answers first because it is painted at startup; the transcript root answers
+    for a session whose statusline this machine does not print. Neither is instant, so the window
+    is spent before the question is given up on.
+    """
+    deadline = time.monotonic() + seconds
+    while True:
+        from_pane = pane_account_label(pane_id)
+        if from_pane:
+            return from_pane
+        from_transcript = transcript_account(unit)
+        if from_transcript:
+            return from_transcript
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(1.0)
+
+
+def check_unit_account(
+    unit: Unit, pane_id: str | None = None, seconds: float = ACCOUNT_SETTLE_SECONDS
+) -> tuple[bool | None, str | None]:
+    """Check whether a launched Claude unit is on the account the plan asked for.
+
+    Returns:
+        (True, None) when the session reports the requested account.
+        (False, error_msg) when it reports a different one, when the plan named an account this
+        script does not know, or when no account could be read at all -- an unverified account is
+        a stop, not a pass, because the failure being guarded against is invisible by nature.
+        (None, None) when no account was requested, or the vendor has no account to check.
+    """
+    if unit.vendor != "claude" or not unit.account:
+        return None, None
+
+    if is_company_account(unit.account):
+        requested = "company"
+    elif is_personal_account(unit.account):
+        requested = "personal"
+    else:
+        return (
+            False,
+            f"unknown account selection {unit.account!r}; expected 'company' or 'personal'",
+        )
+
+    observed = observed_account(unit, pane_id, seconds)
+    if observed is None:
+        return (
+            False,
+            f"account unverified: the session reported no account in its statusline and neither "
+            f"transcript root holds its session, so {requested!r} could not be confirmed",
+        )
+    if observed != requested:
+        return (
+            False,
+            f"account mismatch: worker is on the {observed} account when {requested} was required",
+        )
+    return True, None
+
+
+def verify_unit_account(unit: Unit, pane_id: str | None = None) -> bool | None:
+    """Verify the account for a launched unit, closing the session and raising on mismatch."""
+    confirmed, error = check_unit_account(unit, pane_id)
+    if error:
+        close_run_session(unit)
+        unit.status = ACCOUNT_MISMATCH
+        append_unit_note(unit, error)
+        raise AccountMismatchError(f"{unit.name}: {error}")
+    return confirmed
+
+
+def verify_unit_preflight(
+    unit: Unit, pane_id: str | None, *, ready: bool | None = None
+) -> dict[str, Any]:
+    """Verify the session against herdr before the task is submitted, and record what was checked.
+
+    Only what herdr publishes can be checked. A row in ``herdr agent list`` carries ``cwd``,
+    ``workspace_id`` and ``interactive_ready``; it carries no model at all, and its workspace is an
+    id where the plan holds a name. So the receipt separates what was confirmed against herdr from
+    what is only the request the unit was launched with. A single ``verified: true`` covering both
+    would be a claim this script is not in a position to make, and a run record that says a model
+    was verified when nothing could read it is worse than one that says it was not.
+    """
+    if not pane_id:
+        raise SystemExit(f"{unit.name}: session was not assigned a valid pane_id")
+
+    confirmed: list[str] = ["pane"]
+    unconfirmed: list[str] = ["model"]  # herdr does not report the agent's model
+    row = agent_row(unit)
+
+    if row is None:
+        unconfirmed.extend(["working_directory", "readiness"])
+        if unit.workspace:
+            unconfirmed.append("workspace")
+        observed_ready = bool(ready)
+    else:
+        reported_cwd = row.get("cwd") or row.get("foreground_cwd")
+        if reported_cwd and unit.worktree:
+            if not same_directory(reported_cwd, unit.worktree):
+                close_run_session(unit)
+                raise SystemExit(
+                    f"{unit.name}: working directory {reported_cwd!r} differs from unit "
+                    f"worktree {unit.worktree!r}"
+                )
+            confirmed.append("working_directory")
+        else:
+            unconfirmed.append("working_directory")
+
+        expected_workspace = workspace_id_for_name(unit.workspace)
+        reported_workspace = row.get("workspace_id")
+        if expected_workspace and reported_workspace:
+            if reported_workspace != expected_workspace:
+                close_run_session(unit)
+                raise SystemExit(
+                    f"{unit.name}: session workspace {reported_workspace!r} does not match "
+                    f"requested workspace {unit.workspace!r} ({expected_workspace})"
+                )
+            confirmed.append("workspace")
+        elif unit.workspace:
+            unconfirmed.append("workspace")
+
+        observed_ready = bool(row.get("interactive_ready")) if ready is None else bool(ready)
+        confirmed.append("readiness")
+
+    # A Claude unit that names an account either confirms it or raises: an account that could not
+    # be read is the failure this check exists for, wearing the same face as one that was never
+    # checked. Every other vendor has no account to read, so a unit that names one anyway is
+    # recorded as having asked rather than as having been confirmed.
+    account_confirmed = verify_unit_account(unit, pane_id)
+    if unit.account:
+        if account_confirmed:
+            confirmed.append("account")
+        else:
+            unconfirmed.append("account")
+
+    effective_provider = (
+        unit.model.split("/")[0] if (unit.model and "/" in unit.model) else unit.vendor
+    )
+    effective_variant = unit.variant or unit.effort
+    if unit.vendor == "opencode" and not effective_variant:
+        effective_variant = "Default"
+    # An OpenCode variant is the one tier value that was read back out of the session holding it.
+    if unit.vendor == "opencode" and unit.variant:
+        confirmed.append("variant")
+    else:
+        unconfirmed.append("variant")
+
+    receipt: dict[str, Any] = {
+        "unit_name": unit.name,
+        "vendor": unit.vendor,
+        "provider": effective_provider,
+        "model": unit.model,
+        "variant": effective_variant,
+        "account": unit.account,
+        "working_directory": unit.worktree,
+        "worktree": unit.worktree,
+        "workspace": unit.workspace,
+        "pane": pane_id,
+        "tab_id": unit.tab_id,
+        "readiness": observed_ready,
+        "confirmed_against_herdr": confirmed,
+        "requested_only": unconfirmed,
+        # True by construction: every check that can fail raises above this point, so it reads
+        # "preflight passed", and ``confirmed_against_herdr`` is what that passing actually covered.
+        "verified": True,
+    }
+    unit.launch_receipt = receipt
+    return receipt
 
 
 def launch(unit: Unit, backend: str = "inline", *, review_elsewhere: bool = False) -> None:
@@ -1444,10 +1950,36 @@ def launch(unit: Unit, backend: str = "inline", *, review_elsewhere: bool = Fals
         unit.pane_id = pane_id
     except (ValueError, IndexError):
         unit.note = "launched, but the wrapper's JSON could not be read"
-    await_ready(unit)
+        raise SystemExit(
+            f"{unit.name}: launched, but the wrapper's JSON could not be read"
+        ) from None
+    if not pane_id:
+        raise SystemExit(f"{unit.name}: launcher did not return a pane_id")
+
+    ready = await_ready(unit)
+    if unit.vendor == "opencode":
+        _, ready = drive_opencode_variant_selection(unit, pane_id)
+    verify_unit_preflight(unit, pane_id, ready=ready)
+
     send(unit, pane_id, backend, review_elsewhere=review_elsewhere)
-    unit.status = RUNNING
-    if not took_the_task(unit):
+    accepted = took_the_task(unit)
+    if not accepted:
+        # Resend only into a session that has still never left idle. A resend risks giving a unit
+        # its task twice, and the one reading that rules that out is a session which has not
+        # started anything: a swallowed prompt leaves it exactly there. Anything else -- working,
+        # blocked, or gone -- means it took something, so the send stands and the loop stops.
+        for _ in range(DELIVERY_RESENDS):
+            row = agent_row(unit)
+            if row is None or row.get("agent_status") != "idle":
+                break
+            send(unit, pane_id, backend, review_elsewhere=review_elsewhere)
+            accepted = took_the_task(unit)
+            if accepted:
+                break
+    if accepted:
+        unit.status = RUNNING
+    else:
+        unit.status = PROMPT_UNDELIVERED
         append_unit_note(unit, DELIVERY_WARNING)
 
 
@@ -1560,11 +2092,20 @@ def live_agents(*, timeout: float = 20) -> list[dict[str, Any]]:
 def run_branches(run_id: str) -> list[str]:
     """Every local unit branch of this run, exactly as git records them.
 
-    The list is the discovery source for ``check`` and ``adopt``: a unit branch that exists without
-    a row in the table is work the record lost track of. The run branch itself is excluded by the
-    pattern -- it carries no unit-name suffix, so it can never be mistaken for one.
+    The list is the discovery source for ``check``, ``adopt`` and ``status``: a unit branch that
+    exists without a row in the table is work the record lost track of. The run branch itself is
+    excluded by the pattern -- it carries no unit-name suffix, so it can never be mistaken for one.
+
+    ``check=False`` because ``status`` is a display command and reads this on every poll: a run
+    record left behind in a directory that is no longer a repository made a read-only command exit
+    non-zero on a git error it has no way to act on. ``check`` reaches ``repo_root`` first, so it
+    still fails loudly when git itself cannot answer.
     """
-    proc = run(["git", "branch", "--list", f"orch/{run_id}-*", "--format=%(refname:short)"])
+    proc = run(
+        ["git", "branch", "--list", f"orch/{run_id}-*", "--format=%(refname:short)"], check=False
+    )
+    if proc.returncode != 0:
+        return []
     return [b.strip() for b in proc.stdout.splitlines() if b.strip()]
 
 
@@ -1962,6 +2503,7 @@ def cmd_start(args: argparse.Namespace) -> int:
         issues=plan.get("issues", {}),
         status_map=plan.get("status_map", {}),
         workspace=plan.get("workspace") or None,
+        account=plan.get("account") or None,
     )
     # Before anything is written or any worktree is created: a typo in an ordering edge is a
     # unit that is never eligible, forever, and `start` is the only moment it fails cheaply.
@@ -2267,6 +2809,8 @@ def cmd_expand(args: argparse.Namespace) -> int:
     r.status_map.update(added.get("status_map", {}))
     if "workspace" in added:
         r.workspace = added["workspace"] or None
+    if "account" in added:
+        r.account = added["account"] or None
     r.save()
     print(f"added {len(incoming)}: {', '.join(u.name for u in incoming)}")
     print("`orchestrate.py go` to launch whatever is now eligible.")
@@ -2349,10 +2893,16 @@ def cmd_go(args: argparse.Namespace) -> int:
         make_worktree(unit, r, root)
         if not unit.workspace and r.workspace:
             unit.workspace = r.workspace
+        if not unit.account and r.account:
+            unit.account = r.account
         r.save()  # persist the worktree before the launch, so a failure is not relaunched blind
         print(f"launching {unit.name} ({unit.vendor}) -> {unit.task}")
         try:
             launch(unit, r.backend, review_elsewhere=r.reviews_separately())
+        except AccountMismatchError as exc:
+            unit.status = ACCOUNT_MISMATCH
+            unit.note = str(exc)
+            print(f"  {unit.name} FAILED: {exc}")
         except SystemExit as exc:
             unit.status = FAILED
             unit.note = str(exc)
@@ -2472,6 +3022,8 @@ def cmd_status(args: argparse.Namespace) -> int:
     print("-" * (sum(widths) + len(widths) - 1))
     for row in rows:
         print(format_row(row))
+    for name, branch in discover_unrecorded(r):
+        print(f"UNRECORDED {name} -- branch {branch} is not a unit in this run")
     if r.review_outcome:
         outstanding_work = any(unit.fix_requests for unit in r.units)
         if r.review_resubmit_pending and outstanding_work and r.operator_fix_requests:
@@ -2506,13 +3058,29 @@ def settle_reading(units: list[Unit]) -> dict[str, str]:
 
 
 def cmd_settle(args: argparse.Namespace) -> int:
-    """Mark running units done when their session goes idle. No inference beyond that.
+    """Mark running units done when their session has completed and produced evidence.
 
     Idle is read twice, ``interval`` seconds apart, and only counts when both readings agree: an
     agent is also idle *between* turns -- it finishes a tool call, returns to the prompt, thinks,
     and continues. One instantaneous sample once marked a unit done in that gap; it had two commits
     at the time and finished with ten. ``--once`` restores the single sample for a caller that
     wants it.
+
+    Settlement mirrors the evidence model in ``cmd_check``, gating completion on the existing
+    ``produced_anything`` helper:
+    - A session that is idle or done settles ``done`` only when its branch has commits. An idle
+      session without commits stays ``running``.
+    - A session that is gone settles ``done`` if its branch has commits (e.g. session closed after
+      finishing work), or ``orphaned`` if it disappeared without committing anything.
+
+    The gate is a *branch* reading, so it is applied only where a branch can be read. A unit with
+    no branch of its own -- the review controller, which carries ``merge: False`` and delivers its
+    result through ``review-result`` -- is not commit-gated and settles on the confirmed reading
+    alone; gating it would leave the review loop unable to finish, because it has no branch on
+    which a commit could ever appear. An unresolvable run branch makes the count unknown rather
+    than zero: such a unit stays ``running`` and is told so, and a gone session is recorded
+    ``orphaned`` with a note that says the commits could not be checked rather than one asserting
+    there were none.
     """
     r = Run.load()
     running = [u for u in r.units if u.status == RUNNING]
@@ -2522,21 +3090,44 @@ def cmd_settle(args: argparse.Namespace) -> int:
         time.sleep(args.interval)
         second = settle_reading(running)
     for unit in running:
-        if (
-            has_delivery_warning(unit)
-            and r.unresolvable_branch is None
-            and produced_anything(unit, r)
-        ):
+        # The gate reads branch truth, so it applies only where there is a branch to read and a
+        # resolvable run branch to count from. A unit with no branch of its own was never
+        # commit-gated -- the review controller is that shape, declared `merge: False` with its
+        # output delivered through `review-result` -- and an unresolvable run branch makes the
+        # count unknown rather than zero. `reapable` refuses a branchless unit and `adopt` warns
+        # that an unresolvable branch makes commit checks unavailable; neither reads as evidence
+        # of nothing, and settling on either would put the record back to guessing.
+        commit_gated = bool(unit.branch)
+        countable = commit_gated and r.unresolvable_branch is None
+        has_evidence = countable and produced_anything(unit, r)
+        if has_delivery_warning(unit) and has_evidence:
             clear_delivery_warning(unit)
         a, b = first[unit.name], second[unit.name]
         if a in {"idle", "done"} and b in {"idle", "done"}:
-            unit.status = DONE
             shown = a if args.once else f"{a} then {b}"
-            print(f"  {unit.name}: {shown} -> done")
+            if has_evidence:
+                unit.status = DONE
+                print(f"  {unit.name}: {shown} -> done")
+            elif not commit_gated:
+                unit.status = DONE
+                print(f"  {unit.name}: {shown} -> done (no branch of its own to check)")
+            elif not countable:
+                print(f"  {unit.name}: {shown} -> unsettled (run branch does not resolve)")
+            else:
+                print(f"  {unit.name}: {shown} -> still moving (no commits)")
         elif a == "gone" and b == "gone":
-            unit.status = FAILED
-            unit.note = "session disappeared"
-            print(f"  {unit.name}: session gone -> failed")
+            if has_evidence:
+                unit.status = DONE
+                print(f"  {unit.name}: session gone with commits -> done")
+            else:
+                unit.status = ORPHANED
+                append_unit_note(
+                    unit,
+                    "session disappeared without commits"
+                    if countable
+                    else "session disappeared; commits could not be checked",
+                )
+                print(f"  {unit.name}: session gone -> orphaned")
         elif a in {"idle", "done"}:
             print(f"  {unit.name}: {a} then {b} -> still moving")
     r.save()

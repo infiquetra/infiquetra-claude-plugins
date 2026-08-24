@@ -23,6 +23,7 @@ from types import ModuleType, SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from fakes_registry import FakeWT
 
 ROOT = Path(__file__).parent.parent
 SCRIPTS = ROOT / "plugins" / "saga" / "scripts"
@@ -73,37 +74,6 @@ def _dispatched(store: Any, sid: str) -> None:
             "leaf_saga_id": f"leaf-{sid}",
         },
     )
-
-
-class FakeWT:
-    """A fake WorktreeOps backed by an in-memory set of live paths (git is simulated)."""
-
-    def __init__(self, *, exists_override: Any = None) -> None:
-        self.paths: set[str] = set()
-        self.removed: list[str] = []
-        self._exists_override = exists_override
-
-    def _add(self, path: str, _branch: str) -> bool:
-        self.paths.add(path)
-        return True
-
-    def _remove(self, path: str) -> bool:
-        self.paths.discard(path)
-        self.removed.append(path)
-        return True
-
-    def _exists(self, path: str) -> bool:
-        if self._exists_override is not None:
-            return bool(self._exists_override(path))
-        return path in self.paths
-
-    def ops(self) -> Any:
-        return WT.WorktreeOps(
-            add=self._add,
-            remove=self._remove,
-            exists=self._exists,
-            list_paths=lambda: sorted(self.paths),
-        )
 
 
 # --------------------------------------------------------------------------- names / paths

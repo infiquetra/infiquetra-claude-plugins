@@ -37,6 +37,21 @@ def _cert():
     return _m
 
 
+def _gated_writer(**_kwargs: Any) -> None:
+    """Stand-in board writer for a certificate-gated op — must never actually be invoked.
+
+    A gated verdict short-circuits inside :func:`authorize_and_write` before any writer use, which
+    is what lets the CLI skip resolving mission-control on a gated op (#652). Reaching this body
+    would mean the CLI's verdict and the library's disagreed; raise rather than return, because a
+    writer that silently reports success would record the idempotency key and suppress the real
+    write on every future tick. Raising keeps the module's fail-loud contract: the bounded retry
+    turns it into ``{"status":"failed"}`` with no ledger key, so the next tick retries.
+    """
+    raise AssertionError(
+        "board writer invoked on a certificate-gated op — CLI and library verdicts diverged"
+    )
+
+
 # ---------------------------------------------------------------------------
 # mission-control resolution (#620)
 # ---------------------------------------------------------------------------
@@ -529,14 +544,20 @@ def main(argv: list[str] | None = None) -> int:
             Path(args.ledger_dir).resolve() if args.ledger_dir else _default_ledger_dir(repo_root)
         )
         payload = json.loads(args.payload) if args.payload else None
-        try:
-            mission_control_root, _rung = resolve_mission_control_root()
-        except RuntimeError as exc:
-            print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
-            return 1
-        writer = default_board_writer(
-            mission_control_root=mission_control_root, project=args.project
-        )
+        # #652: the certificate decides BEFORE mission-control is resolved. A gated op needs no
+        # writer, so an unresolvable install must not turn an expected GATE verdict (exit 0) into a
+        # resolution error (exit 1) for the callers that key on the exit status.
+        cert = _cert()
+        writer: Callable[..., None] = _gated_writer
+        if cert.authorize_write(args.op) == cert.AUTHORIZED:
+            try:
+                mission_control_root, _rung = resolve_mission_control_root()
+            except RuntimeError as exc:
+                print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
+                return 1
+            writer = default_board_writer(
+                mission_control_root=mission_control_root, project=args.project
+            )
         record = authorize_and_write(
             args.op,
             args.repo,

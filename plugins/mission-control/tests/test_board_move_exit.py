@@ -68,7 +68,7 @@ def test_board_move_success_returns_true() -> None:
     assert mock_graphql.call_args_list == [
         call(
             sdlc_manager.QUERY_GET_PROJECT_FIELDS,
-            {"org": sdlc_manager.ORG, "number": PROJECT["number"]},
+            {"org": sdlc_manager.ORG, "number": PROJECT["number"], "cursor": None},
         ),
         call(
             sdlc_manager.QUERY_SET_FIELD_VALUE,

@@ -193,7 +193,7 @@ def parse_frontmatter_strict(text: str) -> dict[str, Any]:
     try:
         # _StrictLoader subclasses yaml.SafeLoader: construction is exactly safe_load's (no
         # arbitrary-object tags), plus duplicate-key rejection. Never a full/unsafe loader.
-        data = yaml.load(block, Loader=_StrictLoader)  # noqa: S506
+        data = yaml.load(block, Loader=_StrictLoader)  # noqa: S506 # nosec B506
     except yaml.YAMLError as exc:
         raise FrontmatterError(f"frontmatter is not valid YAML: {exc}") from exc
     if data is None:

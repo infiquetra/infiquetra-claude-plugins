@@ -88,11 +88,11 @@ order — not a checklist, and stop as soon as the answers determine the table:
    **Most vendors can be given a model and an effort.** Where the command line has no flag for it,
    the unit's `setup` carries a slash command instead.
 
-   **opencode is the exception, and say so rather than implying a tier you cannot deliver.** Its
-   effort is a *variant* — Default, high, max — chosen through `/variants`, which opens a picker
-   rather than taking an argument. A picker cannot be answered by a `setup` line in a tab nobody is
-   watching, so a dispatched opencode unit runs at whatever variant its last interactive session
-   left selected. Offer opencode on its model, and tell the operator the variant is theirs to set.
+    **opencode tier control uses an interactive picker.** Its effort is a *variant* — Default,
+    minimal, low, medium, high, xhigh, max — chosen through `/variants`. Orchestrate drives the
+    picker post-launch inside the Herdr session, selects the requested exact variant or the highest
+    actually offered variant from the live choices when maximum available is requested, waits until the
+    session is task-ready, and verifies the effective model and variant before task submission.
 
    **Offer the operator's own favourites first.** `python3 "$S" roster --models` prints them from
    `~/.config/orchestrate/models.json` when that file exists — the handful they actually use, in
@@ -295,6 +295,12 @@ cannot be expressed any other way. Orchestrate does not check these against a li
 wrapper releases on its own schedule, and it already rejects by name what it does not accept. Write
 what the operator asked for; let the launcher answer.
 
+**`account`** selects the account identity (`company` or `personal`). When set to `company` (at the plan
+or unit level), Claude units emit `--company-account` after the vendor token. Before submitting the task
+Orchestrate reads the account back off the session — its statusline first, the transcript root
+(`~/.claude-company/projects/` vs `~/.claude/projects/`) as the fallback — and fails the unit loudly
+(`account_mismatch`) on a wrong account, an unreadable one, or an account value it does not know.
+
 **`merge`** defaults to `true`, and `false` means "this branch is to be read, not merged." Set it on
 competing-plan rows: several planners writing their own version of the same document cannot be
 merged by git without a conflict at best, and a silently interleaved plan at worst. `land` then
@@ -316,7 +322,7 @@ python3 "$S" roster                                # what this machine can launc
 python3 "$S" start --plan .orchestrate/plan.json   # run branch, then a branch per unit
 python3 "$S" go                                    # launch everything eligible
 python3 "$S" wait                                  # block until one settles (herdr events)
-python3 "$S" settle                                # idle sessions become done
+python3 "$S" settle                                # sessions with branch evidence become done
 python3 "$S" land                                  # finished units -> the run branch
 python3 "$S" go                                    # the next phase, now able to see their work
 python3 "$S" review-result --file <result.json>     # persist the controller result and route repairs
@@ -324,11 +330,12 @@ python3 "$S" collect                               # the run branch -> your tree
 python3 "$S" clean --merged --branches             # close what has landed
 ```
 
-**`check` before you `collect`.** The run file is written only by this script, and only for actions
-this script performed — so a session started by hand leaves a branch nothing will ever land or reap,
-and nothing notices. `check` compares the record against git and herdr and names every disagreement:
-a branch with no unit, a unit marked done that committed nothing, a unit marked done whose work is
-not on the run branch, a session that vanished, a session still working. It writes nothing, and
+**`check` before you `collect` (and `status` for live drift).** The run file is written only by this
+script, and only for actions this script performed — so a session started by hand leaves a branch
+nothing will ever land or reap, and nothing notices. `check` compares the record against git and
+herdr and names every disagreement: a branch with no unit, a unit marked done that committed nothing,
+a unit marked done whose work is not on the run branch, a session that vanished, a session still
+working. `status` also reports unrecorded unit branches on every poll. They write nothing, and `check`
 exits non-zero when it finds something.
 
 ```bash
@@ -359,7 +366,7 @@ changelogs; do **not** use it for source, where keeping both sides of a conflict
 that compiles and means something nobody wrote.
 
 **`clean --merged` belongs after every `land`, not once at the end.** A phase's sessions are
-finished the moment their work is on the run branch; leaving them open for the rest of the run is how
+finished the moment their work is on the run branch, and leaving them open for the rest of the run is how
 a workspace ends up with a dozen idle tabs nobody can tell apart. `--merged` only ever closes a unit
 whose work survived, so it is safe to run unattended — a unit that landed nothing keeps its tab and
 its worktree, because those are the evidence.
@@ -396,6 +403,19 @@ python3 "$S" go
 
 `expand` refuses a name already in the run and a dependency that is in no run, so a bad table fails
 before anything launches.
+
+**Never create worktrees manually or invoke `agents` directly for a run unit.** Every unit — whether
+in the initial plan or added at a later phase boundary — must be persisted through `start` or `expand`
+before any worktree or session is created, and must launch only through `go` via the central
+`agent_argv` path. Bypassing `expand` or `go` by calling `agents` directly breaks run-record tracking,
+omits background launch flags (`--no-focus --current --herdr --herdr-control-only`), and steals
+operator focus. Unsupported post-launch setup (such as interactive OpenCode variant selection) is a
+controlled post-launch step performed inside the launched session; it does not authorize bypassing
+`expand` or `go`. A branch in the run's `orch/<run-id>-<unit>` series with no row in the table is
+flagged as unrecorded drift by `status` and `check`, requiring explicit adoption with `adopt --yes`
+or run-owned cleanup rather than being silently treated as valid expansion. That detection reads
+branches and nothing else: a hand-made worktree or session named outside that series is invisible to
+both commands, which is the second reason never to make one.
 
 When the expansion includes Work and Code Review, make ownership executable in the rows themselves:
 

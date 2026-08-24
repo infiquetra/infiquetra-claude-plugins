@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.139.2] - 2026-08-24
+
+### Fixed
+
+- **Derive workflow lease execution TTL from multiplicity-aware run scale.** In workflow lease
+  reservation metadata, `execution_ttl_seconds` is now derived from the spec's multiplicity-aware unit
+  count (`max(900, 300 × multiplicity_aware_unit_count)`), replacing the fixed 300-second literal.
+  This ensures the recorded lease reservation outlives long workflow runs. (#694)
+
+## [0.139.1] - 2026-08-24
+
+### Fixed
+
+- **Advisory accumulator no longer bleeds across units on halt.** In multi-unit workflow execution
+  harnesses, `__halt` attaches only the failing unit's advisory corrections to `error.advisory_corrections`
+  (filtering by the halting unit ID). This prevents earlier units' advisories from being misattributed
+  to subsequent failing units while preserving the full run-wide list in the top-level return value. (#691)
+
 ## [0.139.0] - 2026-08-20
 
 ### Added

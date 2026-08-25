@@ -256,9 +256,42 @@ def test_idempotency_key_opkind_enum_and_string_equivalent() -> None:
 
 
 def test_idempotency_key_format() -> None:
-    """Key follows the '{op_kind}:{repo}#{issue_number}:{target_state}' recipe (KTD4)."""
+    """set-field-status key carries the field name in retry identity (#812)."""
     k = RC.idempotency_key("set-field-status", "infiquetra/x", 279, "In-Progress")
-    assert k == "set-field-status:infiquetra/x#279:In-Progress"
+    assert k == "set-field-status:infiquetra/x#279:Status:In-Progress"
+
+
+def test_idempotency_key_includes_explicit_field() -> None:
+    """Passing field=Stage distinguishes retry identity from Status (#812)."""
+    status = RC.idempotency_key(
+        "set-field-status", "infiquetra/x", 279, "In-Progress", field="Status"
+    )
+    stage = RC.idempotency_key(
+        "set-field-status", "infiquetra/x", 279, "In-Progress", field="Stage"
+    )
+    assert status != stage
+    assert ":Status:" in status
+    assert ":Stage:" in stage
+
+
+def test_idempotency_key_non_set_field_omits_field() -> None:
+    """Unrelated op-kinds keep the original four-part recipe (F4: no clamp)."""
+    k = RC.idempotency_key("sub-issue-close", "infiquetra/x", 279, "")
+    assert k == "sub-issue-close:infiquetra/x#279:"
+
+
+def test_authorize_correction_field_allows_status_and_stage_by_name() -> None:
+    """Status and Stage (by name) are AUTHORIZED; no set-field-stage op-kind exists."""
+    assert RC.authorize_correction_field("Status") == RC.AUTHORIZED
+    assert RC.authorize_correction_field("Stage") == RC.AUTHORIZED
+    assert "set-field-stage" not in {ok.value for ok in RC.all_op_kinds()}
+
+
+def test_authorize_correction_field_rejects_other_project_fields() -> None:
+    """Initiative / Objective / unknown fields GATE — field name is authorization."""
+    assert RC.authorize_correction_field("Initiative") == RC.GATE
+    assert RC.authorize_correction_field("Objective") == RC.GATE
+    assert RC.authorize_correction_field("Priority") == RC.GATE
 
 
 # ---------------------------------------------------------------------------

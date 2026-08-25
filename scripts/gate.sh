@@ -107,6 +107,15 @@ if [ -n "$missing_tools" ]; then
   exit 3
 fi
 
+# #405: mermaid.parse() runs in Node. Missing Node is the same class of
+# unprovisioned-environment failure as missing ruff — not a red codebase.
+if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+  echo "gate.sh: node and npm are required for the mermaid syntax check" >&2
+  echo "  install Node.js 22+ (CI uses actions/setup-node node-version 22)" >&2
+  echo "GATE PRECONDITION FAILED — node/npm not installed" > "$RESULT_FILE"
+  exit 3
+fi
+
 ran=0 failed=0 advisory_failed=0
 declare -a FAILED_NAMES=() ADVISORY_NAMES=() COVERED=()
 
@@ -204,6 +213,7 @@ advisory "Golden-fixture drift check (advisory)" \
 step "Gate operator-absence contract lint" \
   uv run python plugins/saga/scripts/lint_gate_absence_contract.py
 step "Engineering-journal ordering lint" uv run python scripts/lint_journal_order.py
+step "Mermaid syntax check" bash -c 'npm ci --prefix scripts/mermaid && uv run python scripts/check_mermaid.py'
 
 # --- type check + security ---------------------------------------------------
 step "Run mypy" uv run python -m mypy plugins/ scripts/ tests/ --ignore-missing-imports

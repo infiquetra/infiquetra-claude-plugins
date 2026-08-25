@@ -673,6 +673,7 @@ def test_cli_numbers_arg_routes_to_bulk_set_field() -> None:
         [1, 2, 3],
         [("Status", "Idea")],
         "text",
+        correction=False,
     )
 
 
@@ -711,6 +712,7 @@ def test_cli_repeated_field_option_pairs_route_to_bulk_set_field() -> None:
         [1, 2],
         [("Status", "Idea"), ("Objective", "defects-claude-plugins")],
         "text",
+        correction=False,
     )
 
 
@@ -740,3 +742,296 @@ def test_cli_rejects_mismatched_repeated_field_option_pairs() -> None:
         pytest.raises(SystemExit),
     ):
         sdlc_manager.main()
+
+
+# --- #812 correction set-field (field-named identity; Status/Stage only) ---
+
+
+def _status_field_response() -> dict:
+    return {
+        "organization": {
+            "projectV2": {
+                "id": "PVT_kwx",
+                "fields": {
+                    "nodes": [
+                        {
+                            "id": "FLD_status",
+                            "name": "Status",
+                            "options": [
+                                {"id": "o_verify", "name": "Verify"},
+                                {"id": "o_active", "name": "Active"},
+                            ],
+                        },
+                        {
+                            "id": "FLD_init",
+                            "name": "Initiative",
+                            "options": [{"id": "o_init", "name": "platform-v1"}],
+                        },
+                    ]
+                },
+            }
+        }
+    }
+
+
+def test_correction_set_field_round_trips_field_in_identity() -> None:
+    """A Status correction carries the field name in operation, authorization, and retry."""
+    with (
+        patch.object(sdlc_manager, "load_config") as mock_load,
+        patch.object(sdlc_manager, "get_project_items") as mock_items,
+        patch.object(sdlc_manager, "_graphql") as mock_gql,
+        patch.object(sdlc_manager, "_out") as mock_out,
+    ):
+        mock_load.return_value = {
+            "project_mappings": {"projects": {"operations": {"number": 3, "name": "Operations"}}},
+        }
+        mock_items.return_value = (
+            "PVT_kwx",
+            [_project_item(42, "PVTI_42", repo="infiquetra-claude-plugins")],
+        )
+        mock_gql.side_effect = [_status_field_response(), {}]
+        sdlc_manager.flow_set_field(
+            "operations",
+            "infiquetra-claude-plugins",
+            42,
+            "Status",
+            "Verify",
+            fmt="json",
+            correction=True,
+        )
+
+    payload = mock_out.call_args.args[0]
+    assert payload["correction"] is True
+    assert payload["field"] == "Status"
+    identity = payload["identity"]
+    assert identity["operation"] == "set-field:Status"
+    assert identity["authorization"] == "correction-field:Status"
+    # Byte-identical to reversibility_certificate.idempotency_key(...) so a mission-control
+    # write and the saga ledger entry that submitted it correlate on one string (#812 repair).
+    assert identity["retry"] == "set-field-status:infiquetra-claude-plugins#42:Status:Verify"
+    mutation_vars = mock_gql.call_args_list[-1].args[1]
+    assert mutation_vars["fieldId"] == "FLD_status"
+
+
+def test_correction_set_field_rejects_non_status_non_stage() -> None:
+    """Initiative is a live operator field but is rejected as a correction submission."""
+    with pytest.raises(RuntimeError, match="rejects field 'Initiative'"):
+        sdlc_manager.flow_set_field(
+            "operations",
+            "infiquetra-claude-plugins",
+            42,
+            "Initiative",
+            "platform-v1",
+            fmt="json",
+            correction=True,
+        )
+
+
+def test_correction_set_field_allows_stage_by_name() -> None:
+    """Stage is authorized by name; live discovery (no such field) is a later failure."""
+    assert sdlc_manager.assert_correction_field("Stage") == "Stage"
+    identity = sdlc_manager.correction_identity(
+        field_name="Stage",
+        repo="x",
+        number=1,
+        option_name="n/a",
+    )
+    assert identity["operation"] == "set-field:Stage"
+    assert identity["authorization"] == "correction-field:Stage"
+    assert "Stage" in identity["retry"]
+
+
+def test_correction_certificate_gate_stays_on_saga_write_path() -> None:
+    """MC does not reimplement the reversibility certificate; it only names the field.
+
+    The certificate still AUTHORIZES ``set-field-status`` in saga; this module
+    has no ``authorize_write``. A correction write still goes through
+    ``_set_project_field_value`` (the existing GraphQL mutation).
+    """
+    assert not hasattr(sdlc_manager, "authorize_write")
+    assert callable(sdlc_manager._set_project_field_value)
+    assert "set-field-stage" not in dir(sdlc_manager)
+
+
+def test_cli_correction_flag_routes_to_flow_set_field() -> None:
+    with (
+        patch.object(
+            sys,
+            "argv",
+            [
+                "sdlc_manager.py",
+                "flow",
+                "set-field",
+                "--project",
+                "operations",
+                "--repo",
+                "infiquetra-claude-plugins",
+                "--number",
+                "42",
+                "--field",
+                "Status",
+                "--option",
+                "Verify",
+                "--correction",
+            ],
+        ),
+        patch.object(sdlc_manager, "flow_set_field") as set_field,
+    ):
+        sdlc_manager.main()
+
+    set_field.assert_called_once_with(
+        "operations",
+        "infiquetra-claude-plugins",
+        42,
+        "Status",
+        "Verify",
+        "text",
+        correction=True,
+    )
+
+
+def test_cli_correction_rejects_objective_before_bulk_write(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch.object(
+            sys,
+            "argv",
+            [
+                "sdlc_manager.py",
+                "flow",
+                "set-field",
+                "--project",
+                "operations",
+                "--repo",
+                "infiquetra-claude-plugins",
+                "--numbers",
+                "1,2",
+                "--field",
+                "Objective",
+                "--option",
+                "defects-claude-plugins",
+                "--correction",
+            ],
+        ),
+        pytest.raises(SystemExit) as exc,
+    ):
+        sdlc_manager.main()
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "rejects field 'Objective'" in err
+
+
+def test_bulk_correction_rejects_non_status_non_stage_in_process() -> None:
+    """The correction restriction lives in the function, not only in ``main()``.
+
+    An in-process caller of the bulk path must not reach a wider field set than the CLI
+    can, and the rejection must land before any project discovery or GraphQL mutation.
+    """
+    with (
+        patch.object(sdlc_manager, "_resolve_project_fields") as resolve,
+        pytest.raises(RuntimeError, match="rejects field 'Objective'"),
+    ):
+        sdlc_manager.flow_set_fields_bulk(
+            "operations",
+            "infiquetra-claude-plugins",
+            [1, 2],
+            [("Status", "Idea"), ("Objective", "defects-claude-plugins")],
+            "json",
+            correction=True,
+        )
+    resolve.assert_not_called()
+
+
+def test_bulk_correction_marks_the_result_and_carries_per_card_identity() -> None:
+    """A bulk correction is distinguishable from an operator write in the output stream."""
+    with (
+        patch.object(sdlc_manager, "_resolve_project_fields") as resolve,
+        patch.object(sdlc_manager, "_resolve_field_option") as resolve_option,
+        patch.object(sdlc_manager, "_project_items_by_number") as items,
+        patch.object(sdlc_manager, "_set_project_field_value"),
+        patch.object(sdlc_manager, "_out") as mock_out,
+    ):
+        resolve.return_value = {"Status": {"id": "FLD_status", "_project_id": "PVT_kwx"}}
+        resolve_option.return_value = {"id": "o_idea", "name": "Idea"}
+        items.return_value = {1: {"id": "PVTI_1"}, 2: {"id": "PVTI_2"}}
+        sdlc_manager.flow_set_fields_bulk(
+            "operations",
+            "infiquetra-claude-plugins",
+            [1, 2],
+            [("Status", "Idea")],
+            "json",
+            correction=True,
+        )
+
+    result = mock_out.call_args.args[0]
+    assert result["correction"] is True
+    assert [row["operation"] for row in result["identity"]] == [
+        "set-field:Status",
+        "set-field:Status",
+    ]
+    assert result["identity"][0]["retry"] == (
+        "set-field-status:infiquetra-claude-plugins#1:Status:Idea"
+    )
+    assert result["identity"][1]["retry"] == (
+        "set-field-status:infiquetra-claude-plugins#2:Status:Idea"
+    )
+
+
+def test_bulk_correction_identity_omits_a_card_that_failed_to_write() -> None:
+    """An identity block claims a write happened; a failed card must not appear in it."""
+
+    def _fail_card_two(_project_id: str, _field: dict, _option: dict, item: dict) -> None:
+        if item["id"] == "PVTI_2":
+            raise RuntimeError("card 2 is not on the project")
+
+    with (
+        patch.object(sdlc_manager, "_resolve_project_fields") as resolve,
+        patch.object(sdlc_manager, "_resolve_field_option") as resolve_option,
+        patch.object(sdlc_manager, "_project_items_by_number") as items,
+        patch.object(sdlc_manager, "_set_project_field_value", side_effect=_fail_card_two),
+        patch.object(sdlc_manager, "_out") as mock_out,
+        pytest.raises(RuntimeError, match="failed for 1 of"),
+    ):
+        resolve.return_value = {"Status": {"id": "FLD_status", "_project_id": "PVT_kwx"}}
+        resolve_option.return_value = {"id": "o_idea", "name": "Idea"}
+        items.return_value = {1: {"id": "PVTI_1"}, 2: {"id": "PVTI_2"}}
+        sdlc_manager.flow_set_fields_bulk(
+            "operations",
+            "infiquetra-claude-plugins",
+            [1, 2],
+            [("Status", "Idea")],
+            "json",
+            correction=True,
+        )
+
+    result = mock_out.call_args.args[0]
+    assert [row["retry"] for row in result["identity"]] == [
+        "set-field-status:infiquetra-claude-plugins#1:Status:Idea"
+    ]
+    assert [row["number"] for row in result["failed"]] == [2]
+
+
+def test_bulk_without_correction_is_unmarked_and_unrestricted() -> None:
+    """CONTROL: the operator bulk path still writes Objective and carries no correction block."""
+    with (
+        patch.object(sdlc_manager, "_resolve_project_fields") as resolve,
+        patch.object(sdlc_manager, "_resolve_field_option") as resolve_option,
+        patch.object(sdlc_manager, "_project_items_by_number") as items,
+        patch.object(sdlc_manager, "_set_project_field_value"),
+        patch.object(sdlc_manager, "_out") as mock_out,
+    ):
+        resolve.return_value = {"Objective": {"id": "FLD_obj", "_project_id": "PVT_kwx"}}
+        resolve_option.return_value = {"id": "o_def", "name": "defects-claude-plugins"}
+        items.return_value = {1: {"id": "PVTI_1"}}
+        sdlc_manager.flow_set_fields_bulk(
+            "operations",
+            "infiquetra-claude-plugins",
+            [1],
+            [("Objective", "defects-claude-plugins")],
+            "json",
+        )
+
+    result = mock_out.call_args.args[0]
+    assert "correction" not in result
+    assert "identity" not in result

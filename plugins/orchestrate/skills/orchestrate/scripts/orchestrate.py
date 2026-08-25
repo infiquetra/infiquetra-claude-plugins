@@ -54,128 +54,11 @@ TASK_SPILL_THRESHOLD = 400
 # status field: one delivery warning stretched a two-unit table to 268 characters per row.
 STATUS_TEXT_WIDTH = 44
 
-# How each agent takes a model and a reasoning effort on its own command line, read from each
-# tool's own `--help`. Anything not listed launches with no tier flags -- see SETUP_HINT for how a
-# unit still sets its tier in that case.
-#
-# Verify with `roster --probe` after an agent updates. This table went stale once: claude and agy
-# both grew an --effort flag, muse arrived with one, and opencode's -m turned out to belong to its
-# `run` subcommand rather than the interactive session orchestrate launches. Every one of those was
-# silent -- the tier was simply not applied.
-VENDOR_FLAGS: dict[str, dict[str, str]] = {
-    "claude": {"model": "--model {value}", "effort": "--effort {value}"},
-    "codex": {"model": "--model {value}", "effort": "-c model_reasoning_effort={value}"},
-    "grok": {"model": "-m {value}", "effort": "--reasoning-effort {value}"},
-    "muse": {"model": "--model {value}", "effort": "--reasoning-effort {value}"},
-    "agy": {"model": "--model {value}", "effort": "--effort {value}"},
-    "qwen": {"model": "-m {value}"},
-    # opencode wants the model as `provider/model`, e.g. `deepseek/deepseek-v4-pro`; a bare name is
-    # rejected at startup with "Invalid model format".
-    "opencode": {"model": "-m {value}"},
-}
+# Vendor flag tables, wrapper resolution, argv assembly, launch, preflight, delivery,
+# and owned cleanup live in the agent-launcher plugin and are ingested below
+# (``_ingest_agent_launcher``). Orchestrate keeps run-scheduling, landing, review
+# policy, and the run ledger.
 
-# Where a tool has no launch flag for something, the session is told after it starts. Every agent
-# here takes slash commands, so tier is always settable -- through the command line where one
-# exists, and through the session where one does not.
-# What is worth knowing about a vendor that no other table has room for.
-#
-# Every one of these was learned by a run going wrong, and each was re-learned at least once because
-# it lived nowhere. `roster` prints them, so the interview reads how a vendor behaves rather than
-# recalling it -- which is the failure this is for: an orchestrator that guesses, plausibly, and is
-# only found out a phase later.
-VENDOR_NOTES: dict[str, str] = {
-    "qwen": (
-        "never reports interactive readiness, so its task is typed into the pane rather than "
-        "prompted, and a task over the typing limit is handed over as a file. `--yolo` is real and "
-        "absent from `--help`. NEVER pass `--safe-mode`: it reads like the opposite of `--yolo` and "
-        "disables every customization, including the extensions saga loads."
-    ),
-    "muse": (
-        "approval and the sandbox are ON by default. `--yolo` disables BOTH and is bypass, not "
-        "auto; the ladder is `--approval-mode untrusted|on-request|never`."
-    ),
-    "opencode": (
-        "effort is a variant -- Default, minimal, low, medium, high, xhigh, max -- chosen "
-        "through `/variants`. Orchestrate drives the interactive picker post-launch inside the "
-        "Herdr session, resolves exact or maximum available variants from the live picker choices, "
-        "verifies the effective model and variant before task submission, and records the verified "
-        "state. Its model wants `provider/model`; a bare name is rejected at startup."
-    ),
-    "agy": (
-        "its saga plugin is a symlink into the operator's own checkout under the Gemini config "
-        "directory, not a fetched cache -- so a search for directories named `saga` finds only the "
-        "saga state and concludes it has none."
-    ),
-    "codex": "saga ships as skills under the `saga` namespace with no command directory, and "
-    "prefixes with `$` rather than `/`.",
-}
-
-SETUP_HINT = "no {what} flag on the command line; set it with a slash command in `setup`"
-
-# Vendors that can be asked which models they have. The rest cannot answer, so their model name
-# comes from the operator rather than from anyone's recollection.
-MODEL_LIST: dict[str, list[str]] = {
-    "grok": ["models"],
-    "agy": ["models"],
-    "opencode": ["models"],
-}
-
-# What each vendor needs in order to actually do work in the worktree it was handed.
-#
-# Without this, every unit runs at its vendor's default -- read-only, or ask-first in a tab nobody
-# is watching. Two competing plans were once produced at xhigh over twelve minutes and both were
-# lost, because neither session could save a file: codex answered "I can't write", claude sat in
-# plan mode. A worktree a unit cannot write to is not isolation, it is theatre.
-#
-# Two levels. ``auto`` is the default and means "get on with the task without asking" -- claude and
-# grok share that exact vocabulary. ``bypass`` is the operator's everyday mode, granted per unit
-# when the work needs it. Either way the worktree is the blast radius: a unit reaches its own tree
-# and nothing else. A vendor with an empty list already behaves that way unflagged.
-# Which flags in ``VENDOR_PERMISSION`` take a value. Anything not named here must stand alone.
-#
-# This exists because a value-less switch followed by a bare permission word does not fail: the word
-# lands in the vendor's positional PROMPT slot. `grok --always-approve auto` sent every unit the word
-# `auto` as its first prompt and its real task only afterwards, and nothing reported it. The rule the
-# table must obey is structural -- a bare enum is only ever a value -- so it is stated here and
-# enforced by tests rather than left to whoever edits the table next.
-PERMISSION_FLAGS_TAKING_A_VALUE = frozenset({"--permission-mode", "--sandbox", "--approval-mode"})
-
-VENDOR_PERMISSION: dict[str, dict[str, list[str]]] = {
-    "claude": {
-        "auto": ["--permission-mode", "auto"],
-        "bypass": ["--permission-mode", "bypassPermissions"],
-    },
-    # `--always-approve` is a value-less switch and grok's usage is `grok [OPTIONS] [PROMPT]`, so
-    # `--always-approve auto` put the bare word `auto` in the PROMPT position: every grok unit spent
-    # its first turn on a permission enum and only got its real task afterwards. Verified against
-    # grok 1.0.5, whose `--permission-mode <MODE>` accepts both of these values.
-    "grok": {
-        "auto": ["--permission-mode", "auto"],
-        "bypass": ["--permission-mode", "bypassPermissions"],
-    },
-    "codex": {
-        "auto": ["--sandbox", "workspace-write"],
-        "bypass": ["--dangerously-bypass-approvals-and-sandbox"],
-    },
-    "agy": {"auto": [], "bypass": ["--dangerously-skip-permissions"]},
-    # opencode has one switch and no ladder, so both modes are the same flag. Recorded as it is
-    # rather than papered over: asking for `auto` here genuinely gets you `bypass`.
-    "opencode": {"auto": ["--auto"], "bypass": ["--auto"]},
-    # muse's own help: approval and the sandbox are ON by default, `--approval-mode` takes
-    # untrusted|on-request|never, and `--yolo` means "disable approval and sandboxing and trust
-    # this workspace". Both modes were once `--yolo`, so asking for the constrained mode handed the
-    # unit full bypass -- a safety claim backwards. `never` is the honest `auto`: it stops asking
-    # without dropping the sandbox.
-    "muse": {"auto": ["--approval-mode", "never"], "bypass": ["--yolo"]},
-    # `--yolo` is absent from `qwen --help` and works anyway -- verified by running it, against a
-    # control showing qwen rejects an unknown flag with "Unknown arguments". Its own warning names
-    # the equivalent: "running headless with --yolo / approval-mode=yolo and no sandbox".
-    #
-    # Do NOT reach for `--safe-mode` here. It reads like the opposite of `--yolo` and is not a
-    # permission flag at all: it disables all customizations -- context files, hooks, extensions --
-    # which is exactly what saga needs loaded.
-    "qwen": {"auto": [], "bypass": ["--yolo"]},
-}
 
 # Where each vendor keeps its saga install, so "does this vendor have saga" is resolved rather than
 # believed. Checked by `saga --check`. A vendor absent here, or whose globs match nothing, cannot
@@ -289,7 +172,10 @@ ACCOUNT_MISMATCH = "account_mismatch"
 ORPHANED = "orphaned"
 
 REVIEW_CONTROLLER_ROLE = "review-controller"
+REVIEWER_SEAT_ROLE = "external-reviewer"
 WORK_FIX_ROLES = frozenset({"review-fixer", "downstream-resolver"})
+_REVIEW_SHAPED = re.compile(r"(?i)\breview\b")
+_RETIRED_TRANSPORT = re.compile(r"engine_session_runner|engine_offer|external_only")
 OPERATOR_FIX_ROLES = frozenset({"human", "release"})
 REVIEW_RESULT_SCHEMA = "review_result.v1"
 REVIEW_OUTCOMES = frozenset(
@@ -297,8 +183,7 @@ REVIEW_OUTCOMES = frozenset(
 )
 
 
-class AccountMismatchError(SystemExit):
-    """A worker launched under an account that does not match the requested plan account."""
+# AccountMismatchError is defined by the ingested agent-launcher module.
 
 
 @dataclass
@@ -377,9 +262,11 @@ class Unit:
     role: str | None = None
     """The unit's review-loop role, when it participates in that loop.
 
-    ``review-controller`` identifies the one top-level Code Review invocation. Work workers use
-    ``review-fixer`` or ``downstream-resolver`` so an opaque result can be routed without treating a
-    unit name as policy. Older run records carry no role and continue to load unchanged."""
+    ``review-controller`` identifies the one top-level Code Review invocation. Additional
+    reviewer seats requested by that controller use ``external-reviewer`` and launch through
+    the same expand/go path as every other unit. Work workers use ``review-fixer`` or
+    ``downstream-resolver`` so an opaque result can be routed without treating a unit name as
+    policy. Older run records carry no role and continue to load unchanged."""
     paths: list[str] = field(default_factory=list)
     """Repository paths this Work worker owns for review-fix routing.
 
@@ -480,14 +367,6 @@ class Run:
     ``workspace`` wins; there is no other precedence."""
     account: str | None = None
     """Default account selection every unit inherits unless it sets its own (e.g. "company")."""
-    engine_prefs: dict[str, dict[str, str]] = field(default_factory=dict)
-    """Saga's per-stage external-engine answers, decided once in the interview.
-
-    Keyed by saga stage (``code-review``, ``doc-review``, ``work``, …), each value carrying
-    ``intent`` and optionally ``model`` and ``effort``. Written into every worktree so a dispatched
-    saga command finds the answer already stored and never stops to ask a question in a tab nobody
-    is watching. See ``write_engine_prefs``.
-    """
     issues: dict[str, str] = field(default_factory=dict)
     """Unit name -> issue reference (``owner/repo#N``) whose board card this run reports to.
 
@@ -522,7 +401,6 @@ class Run:
             backend=raw.get("backend", "inline"),
             branch=raw.get("branch", ""),
             conflict_worktree=raw.get("conflict_worktree") or None,
-            engine_prefs=raw.get("engine_prefs", {}),
             issues=raw.get("issues", {}),
             status_map=raw.get("status_map", {}),
             workspace=raw.get("workspace") or None,
@@ -532,6 +410,7 @@ class Run:
             review_resubmit_pending=bool(raw.get("review_resubmit_pending", False)),
             operator_fix_requests=raw.get("operator_fix_requests", []),
         )
+        # engine_prefs was retired with #776; ignore it on load so older run files still open.
         loaded.resolve_branch_once()
         return loaded
 
@@ -580,7 +459,6 @@ class Run:
             "backend": self.backend,
             "branch": self.branch,
             "conflict_worktree": self.conflict_worktree,
-            "engine_prefs": self.engine_prefs,
             "issues": self.issues,
             "status_map": self.status_map,
             "workspace": self.workspace,
@@ -756,7 +634,7 @@ def plan_units(plan: Mapping[str, Any]) -> list[Unit]:
                 _route_path(path, label=f"unit {unit.name!r} owned path") for path in unit.paths
             ]
         units.append(unit)
-    assert_single_review_controller(units)
+    assert_review_transport(units)
     return units
 
 
@@ -769,6 +647,75 @@ def assert_single_review_controller(units: Sequence[Unit]) -> None:
             f"review phase has {len(controllers)} controller units ({names}); create exactly one "
             "top-level Code Review controller"
         )
+
+
+def is_standalone_review_prompt(unit: Unit) -> bool:
+    """A review-shaped unit that declares no role, i.e. a bespoke review.
+
+    Wording cannot carry this decision. "review this PR" and "do a code review of the
+    branch" are the same request, and no regex that admits the first while refusing the
+    second is worth trusting. The role field this run record already carries is the
+    signal: a reviewer seat, a work-fix worker, and an operator row each say what they
+    are, so anything left over that talks about reviewing is the bespoke review the
+    leaf refuses.
+    """
+    if is_code_review_task(unit.task):
+        return False
+    if unit.role is not None:
+        return False
+    return bool(_REVIEW_SHAPED.search(unit.task))
+
+
+def is_reviewer_seat(unit: Unit) -> bool:
+    return unit.role == REVIEWER_SEAT_ROLE
+
+
+def assert_no_engine_prefs(plan: Mapping[str, Any]) -> None:
+    """The engine-prefs seam is retired; reviewer seats live in the run unit table."""
+    if plan.get("engine_prefs"):
+        raise SystemExit(
+            "plan carries engine_prefs; that seam is retired (#776). Represent reviewer "
+            "seats as named units with role 'review-controller' or 'external-reviewer' "
+            "in the Orchestrate run record, not .saga/engine-prefs.json"
+        )
+
+
+def assert_review_transport(units: Sequence[Unit]) -> None:
+    """Refuse bespoke reviews and unrecorded reviewer launches when Code Review is present.
+
+    Halt. Never fall back to the retired saga external-engine runner.
+    """
+    if not any(is_review_controller(unit) for unit in units):
+        return
+    assert_single_review_controller(units)
+    for unit in units:
+        if is_review_controller(unit):
+            continue
+        if _RETIRED_TRANSPORT.search(unit.task):
+            raise SystemExit(
+                f"unit {unit.name!r} names the retired saga external-engine runner; halt and "
+                f"dispatch reviewer seats through expand/go with role {REVIEWER_SEAT_ROLE!r}"
+            )
+        if is_code_review_task(unit.task) and unit.role not in {
+            *WORK_FIX_ROLES,
+            *OPERATOR_FIX_ROLES,
+        }:
+            raise SystemExit(
+                f"unit {unit.name!r} is a duplicate Code Review; create exactly one "
+                "top-level review-controller and dispatch extra reviewer seats through "
+                f"expand/go with role {REVIEWER_SEAT_ROLE!r}"
+            )
+        if is_reviewer_seat(unit):
+            # The sanctioned transport. A seat's task reads like a review instruction
+            # because reviewing is what the seat is for; refusing it here would leave
+            # the run record with no way to express the reviewer the leaf requires.
+            continue
+        if is_standalone_review_prompt(unit):
+            raise SystemExit(
+                f"unit {unit.name!r} is a plain review prompt; when a Saga Code Review "
+                "phase is present, Orchestrate refuses bespoke reviews. Add a named "
+                f"{REVIEWER_SEAT_ROLE!r} seat through expand/go, or halt"
+            )
 
 
 def _route_path(value: object, *, label: str) -> str:
@@ -1061,25 +1008,44 @@ def resubmit_review_if_ready(
     return True
 
 
-def run(
+def _agent_launcher_script() -> Path | None:
+    """Locate ``plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py``."""
+    override = os.environ.get("AGENT_LAUNCHER_ROOT")
+    if override:
+        candidate = Path(override) / "skills" / "agent-launcher" / "scripts" / "launcher.py"
+        if not candidate.is_file():
+            raise SystemExit(
+                f"AGENT_LAUNCHER_ROOT={override!r} does not contain "
+                "skills/agent-launcher/scripts/launcher.py"
+            )
+        return candidate
+    here = Path(__file__).resolve()
+    repo_candidate = (
+        here.parents[4] / "agent-launcher" / "skills" / "agent-launcher" / "scripts" / "launcher.py"
+    )
+    if repo_candidate.is_file():
+        return repo_candidate
+    plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
+    if plugin_root:
+        root = Path(plugin_root).resolve()
+        for sibling in (root.parent / "agent-launcher", root.parent.parent / "agent-launcher"):
+            direct = sibling / "skills" / "agent-launcher" / "scripts" / "launcher.py"
+            if direct.is_file():
+                return direct
+            matches = sorted(sibling.glob("*/skills/agent-launcher/scripts/launcher.py"))
+            if matches:
+                return matches[-1]
+    return None
+
+
+def _subprocess_run(
     cmd: list[str],
     *,
     check: bool = True,
     capture: bool = True,
     timeout: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """Run a command. Pass ``timeout`` for anything that asks a vendor a question.
-
-    A vendor's own subcommand can reach the network and hang; without a bound that becomes an
-    interview frozen on a question the operator cannot see, which is the failure this plugin keeps
-    having to fix. A timeout is reported as a non-zero result, so callers handle it as "no answer"
-    rather than as a crash.
-
-    ``check=False`` means every failure comes back as a result, and a command that is not installed
-    is a failure like any other. It was not, once: ``subprocess.run`` raises rather than returning
-    when the program does not exist, so a machine without herdr got a traceback out of a read-only
-    command that had already decided herdr was optional.
-    """
+    """Fallback command runner used when the agent-launcher plugin is absent."""
     try:
         proc = subprocess.run(cmd, capture_output=capture, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -1089,13 +1055,59 @@ def run(
     except OSError as exc:
         if check:
             raise SystemExit(f"cannot run {cmd[0]!r}: {exc}") from None
-        # 127 is the shell's own "command not found", so a caller reading returncode sees the
-        # ordinary shape of a failure rather than a special case.
         return subprocess.CompletedProcess(cmd, returncode=127, stdout="", stderr=str(exc))
     if check and proc.returncode != 0:
         err = (proc.stderr or proc.stdout or "").strip()
         raise SystemExit(f"command failed ({proc.returncode}): {' '.join(cmd)}\n{err}")
     return proc
+
+
+def _agent_launcher_required(*_args: Any, **_kwargs: Any) -> Any:
+    raise SystemExit(
+        "agent-launcher plugin not found. Install plugins/agent-launcher or set "
+        "AGENT_LAUNCHER_ROOT. Launch, roster, and go cannot run without it."
+    )
+
+
+def _ingest_agent_launcher() -> bool:
+    """Load the shared launcher into this module's globals.
+
+    Tests monkeypatch ``run``, ``live_agents``, ``launch``, and friends on this
+    module. ``exec`` into ``globals()`` makes those names the ones the extracted
+    functions look up, so the patches still apply. Importing a second module
+    would hide them. A missing plugin must not kill every subcommand at import.
+    """
+    script = _agent_launcher_script()
+    if script is None:
+        return False
+    # launcher.py has a ``__main__`` CLI. When orchestrate.py is the entry point,
+    # ingest would otherwise run that CLI against orchestrate's argv (``wait``,
+    # ``clean``, …) and exit. The flag is this module's globals, not the environment.
+    globals()["_AGENT_LAUNCHER_INGESTING"] = True
+    exec(compile(script.read_text(encoding="utf-8"), str(script), "exec"), globals())
+    return True
+
+
+run = _subprocess_run
+if not _ingest_agent_launcher():
+    launch = _agent_launcher_required
+    agent_argv = _agent_launcher_required
+    launcher = _agent_launcher_required
+    launchable = _agent_launcher_required
+    roster = _agent_launcher_required
+    live_agents = _agent_launcher_required
+    close_run_session = _agent_launcher_required
+    verify_unit_preflight = _agent_launcher_required
+    append_unit_note = _agent_launcher_required
+    say = _agent_launcher_required
+    has_delivery_warning = _agent_launcher_required
+    clear_delivery_warning = _agent_launcher_required
+    models = _agent_launcher_required
+    favourites = _agent_launcher_required
+    VENDOR_FLAGS = {}
+    VENDOR_PERMISSION = {}
+    VENDOR_NOTES = {}
+    AccountMismatchError = SystemExit
 
 
 def repo_root() -> Path:
@@ -1125,27 +1137,6 @@ def ensure_local_run_state_excluded() -> None:
 
 
 # ----------------------------------------------------------------- launching
-
-
-def write_engine_prefs(worktree: Path, prefs: dict[str, dict[str, str]]) -> None:
-    """Answer saga's external-engine offer before the session is even launched.
-
-    A dispatched ``/code-review`` or ``/doc-review`` opens by resolving an engine offer, and with
-    nothing stored it stops and asks the operator -- in a background tab, which means it waits
-    forever. Saga reads a stored answer from ``<repo>/.saga/engine-prefs.json`` and skips the
-    question entirely (``engine_offer.resolve_offer`` returns early, ``prompt_required=False``).
-
-    Written directly rather than by shelling out to saga's ``engine_offer.py remember``, which would
-    mean resolving another plugin's script path across install layouts. The format is small and
-    carries its own version. If saga ever moves past version 1 the stored answer stops being
-    honoured, and the visible symptom is a review unit sitting at ``blocked`` in ``status`` -- which
-    is the first place to look if that ever happens.
-    """
-    if not prefs:
-        return
-    path = worktree / ".saga" / "engine-prefs.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"stages": prefs, "version": 1}, indent=2) + "\n")
 
 
 def produced_anything(dep: Unit, r: Run) -> bool:
@@ -1238,822 +1229,7 @@ def make_worktree(unit: Unit, r: Run, root: Path) -> None:
         unit.branched_from = resolve_ref(branch)
     unit.worktree = str(path)
     unit.branch = branch
-    write_engine_prefs(path, r.engine_prefs)
     print(f"  {unit.name}: {path.name} on {branch} from {base}")
-
-
-def launcher() -> str:
-    """The local wrapper that creates an agent session.
-
-    Called ``agents`` rather than ``agent`` because ``agent`` was taken over by another tool on this
-    machine. That is why this is resolved instead of hardcoded: a stale name does not fail cleanly,
-    it launches somebody else's binary with flags it has never heard of. Checking first turns a
-    confusing wrong-program run into one clear sentence.
-    """
-    name = os.environ.get("ORCHESTRATE_AGENT_LAUNCHER", "agents")
-    if not shutil.which(name):
-        raise SystemExit(
-            f"no {name!r} on PATH -- that is the wrapper that creates agent sessions. "
-            f"If it is called something else here, set ORCHESTRATE_AGENT_LAUNCHER."
-        )
-    return name
-
-
-def launchable() -> list[str]:
-    """Everything the wrapper says it can launch on this machine, asked every time.
-
-    The ``Tools:`` section of the wrapper's own help. Two things this is deliberately not:
-
-    - **Not ``--crews``.** A crew is the operator's saved workspace layout and has nothing to do with
-      orchestration. Offering it drops available agents silently, which is the quiet kind of wrong
-      answer worth spending code on rather than instructions.
-    - **Not a ``PATH`` check.** Several entries are modes of one wrapper rather than binaries of
-      their own, so looking for a file by that name reports them missing when they work fine. The
-      wrapper is the authority on what the wrapper can launch.
-    """
-    out = run([launcher(), "--help"], check=False, timeout=20).stdout
-    names: list[str] = []
-    in_tools = False
-    for line in out.splitlines():
-        if line.startswith("Tools:"):
-            in_tools = True
-            continue
-        if in_tools:
-            if not line.strip():
-                break
-            # a tool line is "  name   description"; continuation lines are indented further
-            if re.match(r"^ {2}\S", line):
-                names.append(line.split()[0])
-    return names
-
-
-def roster() -> list[tuple[str, str]]:
-    """The vendors this run may use: ones orchestrate knows how to drive, that are available here.
-
-    Both halves matter. ``VENDOR_FLAGS`` is what this plugin understands well enough to hand a model
-    and an effort to; the wrapper's tool list is what this particular machine can actually start.
-    Offering anything outside the intersection is a promise orchestrate cannot keep -- a Hermes
-    profile or a provider variant is launchable but is not a vendor this plugin knows how to tier,
-    and a vendor it knows is useless on a machine that does not have it.
-
-    Returns ``(name, flags)``, where ``flags`` says what tier control the command line gives.
-    """
-    here = set(launchable())
-    return [(n, ",".join(f) or "none") for n, f in VENDOR_FLAGS.items() if n in here]
-
-
-FAVOURITES_PATH = Path("~/.config/orchestrate/models.json").expanduser()
-
-
-def favourites(vendor: str) -> list[str]:
-    """The models the operator actually uses for this vendor, in their order of preference.
-
-    Asking a vendor what it has is a fact; deciding which of them matters is a preference, and a
-    preference belongs in a file the operator owns rather than in anyone's guess. opencode fronts
-    164 models across eight providers, so offering four of them is noise -- three rounds running,
-    the suggestions were wrong.
-
-    Absent or unreadable, this returns nothing and the interview falls back to asking. It is a
-    convenience, never a constraint: a model not listed here is still perfectly usable.
-    """
-    try:
-        raw = json.loads(FAVOURITES_PATH.read_text())
-    except (OSError, ValueError):
-        return []
-    got = raw.get(vendor, [])
-    return [str(m) for m in got] if isinstance(got, list) else []
-
-
-def models(name: str) -> list[str]:
-    """Ask one vendor which models it actually has.
-
-    Model names are the last thing in this plugin still taken from memory, and memory is exactly
-    what got the crew list and the flag table wrong. A recalled name that has since been renamed
-    does not fail politely -- the session starts on some default tier and nobody is told.
-
-    Only three vendors can answer today. The rest return nothing, and the operator supplies the
-    name -- which is honest, and better than inventing one.
-    """
-    sub = MODEL_LIST.get(name)
-    if not sub:
-        return []
-    # generous: a cold vendor can take most of a minute to answer, and an inconsistent
-    # answer run-to-run is worse than a slow one for a command the operator invoked
-    got = run([name, *sub], check=False, timeout=60)
-    if got.returncode != 0:
-        return []
-    return [ln.strip() for ln in got.stdout.splitlines() if ln.strip()]
-
-
-def workspace_for(unit: Unit, default: str | None = None) -> str | None:
-    """The workspace name this unit launches into.
-
-    The unit's own field wins; otherwise the run default. Absent both, the wrapper inherits
-    the caller's workspace -- today's behaviour. No other precedence.
-    """
-    return unit.workspace or default
-
-
-def is_company_account(account: str | None) -> bool:
-    """Whether an account selection specifies the company account."""
-    if not account:
-        return False
-    return account.lower() in ("company", "company-account", "--company-account")
-
-
-def is_personal_account(account: str | None) -> bool:
-    """Whether an account selection specifies the personal account."""
-    if not account:
-        return False
-    return account.lower() in ("personal", "personal-account", "--personal-account")
-
-
-def account_for(unit: Unit, default: str | None = None) -> str | None:
-    """The account this unit launches under.
-
-    The unit's own field wins; otherwise the run default. Absent both, no account flag is
-    emitted -- inheriting the environment default.
-    """
-    return unit.account or default
-
-
-def agent_argv(
-    unit: Unit,
-    default_workspace: str | None = None,
-    default_account: str | None = None,
-) -> list[str]:
-    argv = [
-        launcher(),
-        "--no-focus",
-        "--current",
-        "--herdr",
-        "--herdr-control-only",
-        "--task",
-        unit.name,
-        "--cwd",
-        unit.worktree or ".",
-    ]
-    workspace = workspace_for(unit, default_workspace)
-    if workspace:
-        argv.extend(["--workspace", workspace])
-    argv.append(unit.vendor)
-    modes = VENDOR_PERMISSION.get(unit.vendor, {})
-    argv.extend(modes.get(unit.permission, modes.get("auto", [])))
-    flags = VENDOR_FLAGS.get(unit.vendor, {})
-    for key, value in (("model", unit.model), ("effort", unit.effort)):
-        template = flags.get(key)
-        if value and template:
-            argv.extend(template.format(value=value).split(" "))
-    effective_account = account_for(unit, default_account)
-    if (
-        unit.vendor == "claude"
-        and is_company_account(effective_account)
-        and "--company-account" not in unit.launch_args
-    ):
-        argv.append("--company-account")
-    # Last, and verbatim. Arguments after the vendor token reach the vendor, except for the
-    # few the wrapper intercepts from that position. A launcher flag that must precede the
-    # vendor token cannot be expressed here -- see ``workspace``.
-    argv.extend(unit.launch_args)
-    return argv
-
-
-# How long to give a new session to become able to read a prompt, and how long to give it after
-# being sent to show that it took one.
-#
-# The wrapper returns when the tab exists, which is earlier than the agent being able to read
-# anything, and sending into that gap does not fail: `herdr agent prompt` reports success, the agent
-# finishes booting, and the prompt is gone. Observed three times across two vendors on one live run,
-# always the same tell -- a unit idle immediately after launch, having consumed nothing. That idle
-# used to be recorded as RUNNING, which `settle` then read as done and only `land` noticed, a phase
-# later, that it had committed nothing. A send whose acceptance is never observed is now recorded
-# as PROMPT_UNDELIVERED instead, which no phase reads as work.
-LAUNCH_SETTLE_SECONDS = 30.0
-DELIVERY_CHECK_SECONDS = 15.0
-DELIVERY_RESENDS = 2
-
-# How long to give a new session to say which account it is on. A session that is interactive has
-# painted its statusline, so this is a short grace for the paint rather than a wait for the tool:
-# the other answer, a transcript under one of the two roots, does not arrive until the first prompt
-# does, which is after this check.
-ACCOUNT_SETTLE_SECONDS = 10.0
-DELIVERY_WARNING = (
-    "SENT BUT NEVER STARTED: idle after being given its task. Check the tab before "
-    "trusting this unit -- it may have been prompted while still booting."
-)
-
-
-def append_unit_note(unit: Unit, note: str) -> None:
-    """Add one fact without erasing a note recorded by an earlier delivery step."""
-    unit.note = f"{unit.note}; {note}" if unit.note else note
-
-
-def has_delivery_warning(unit: Unit) -> bool:
-    """Whether the unit still carries the exact warning written by ``launch``."""
-    return DELIVERY_WARNING in unit.note.split("; ")
-
-
-def clear_delivery_warning(unit: Unit) -> None:
-    """Remove only the delivery warning, preserving every other semicolon-delimited note."""
-    unit.note = "; ".join(note for note in unit.note.split("; ") if note != DELIVERY_WARNING)
-
-
-def agent_row(unit: Unit, agents: list[dict] | None = None) -> dict | None:
-    """This unit's row in herdr's agent list, matched on the pane it was given."""
-    for a in live_agents() if agents is None else agents:
-        if unit.pane_id and a.get("pane_id") == unit.pane_id:
-            return a
-    return None
-
-
-def await_ready(unit: Unit, seconds: float = LAUNCH_SETTLE_SECONDS) -> bool:
-    """Wait until this session will actually take a prompt. True if it said so.
-
-    Some agents never report readiness at all -- qwen is one, and it is why `say` has a pane
-    fallback. There is nothing to wait for there, so the window is spent and the send goes ahead,
-    which is still later than sending the instant the tab appears.
-    """
-    deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
-        row = agent_row(unit)
-        if row is not None and row.get("interactive_ready"):
-            return True
-        time.sleep(1.0)
-    return False
-
-
-def took_the_task(unit: Unit, seconds: float = DELIVERY_CHECK_SECONDS) -> bool:
-    """Did the session actually take the task? One that did stops being idle.
-
-    Not a guarantee -- an agent that answers instantly is idle again quickly. It is a check on the
-    failure that has actually happened, which is a session that never started at all.
-    """
-    deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
-        row = agent_row(unit)
-        if row is not None and row.get("agent_status") not in (None, "idle", "done", "unknown"):
-            return True
-        time.sleep(1.0)
-    return False
-
-
-OPENCODE_VARIANT_RANKS: dict[str, int] = {
-    "default": 0,
-    "minimal": 1,
-    "low": 2,
-    "medium": 3,
-    "high": 4,
-    "xhigh": 5,
-    "max": 6,
-    "maximum": 6,
-}
-OPENCODE_MAX_VARIANTS = {"max", "maximum", "maximum available", "max available", "highest"}
-
-
-def strip_ansi(text: str) -> str:
-    """Terminal output with its colour and cursor escapes removed."""
-    return re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", text)
-
-
-def parse_opencode_variants(text: str) -> list[str]:
-    """Extract variant choices presented in OpenCode's interactive /variants picker.
-
-    Handles ANSI escape codes, menu formatting (> Option, 1. Option, * Option), and token lists.
-    """
-    clean = strip_ansi(text)
-    options: list[str] = []
-    ignored = {"select", "choose", "variant", "variants", "options", "option", "model", "effort"}
-    for line in clean.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        # Menu lines: > Option, - Option, * Option, 1. Option, 1) Option, [ ] Option
-        m = re.match(r"^(?:[>*\-•#]\s*|\d+[\.\)]\s*|\[[\s*xX]?\]\s*)([A-Za-z0-9_\-]+)", line)
-        if m:
-            token = m.group(1).strip()
-            if (
-                token
-                and token.lower() not in ignored
-                and not any(token.lower() == o.lower() for o in options)
-            ):
-                options.append(token)
-            continue
-        # Token matches for common variant names
-        for word in re.findall(
-            r"\b(?:Default|minimal|low|medium|high|xhigh|max|maximum)\b", line, re.IGNORECASE
-        ):
-            if not any(word.lower() == o.lower() for o in options):
-                options.append(word)
-    return options
-
-
-def resolve_opencode_variant(requested: str | None, available_options: Sequence[str]) -> str:
-    """Select the requested exact variant or highest actually offered variant."""
-    if not available_options:
-        raise SystemExit("no variant choices presented in OpenCode live picker")
-
-    if requested is None or requested.strip().lower() in OPENCODE_MAX_VARIANTS:
-        # Highest actually offered variant from presented choices
-        return max(
-            available_options,
-            key=lambda opt: (
-                OPENCODE_VARIANT_RANKS.get(opt.lower(), 0),
-                available_options.index(opt),
-            ),
-        )
-
-    req_clean = requested.strip().lower()
-    for opt in available_options:
-        if opt.strip().lower() == req_clean:
-            return opt
-
-    raise SystemExit(
-        f"requested variant {requested!r} is not available in live picker options: {list(available_options)}"
-    )
-
-
-def read_pane(pane_id: str, lines: int = 120) -> str:
-    """This pane's recent output, falling back to what is on screen when there is no scrollback."""
-    proc = run(
-        ["herdr", "pane", "read", pane_id, "--source", "recent-unwrapped", "--lines", str(lines)],
-        check=False,
-    )
-    if proc.returncode == 0 and proc.stdout.strip():
-        return proc.stdout
-    proc = run(["herdr", "pane", "read", pane_id, "--source", "visible"], check=False)
-    return proc.stdout if proc.returncode == 0 else ""
-
-
-def confirm_opencode_variant_selected(unit: Unit, pane_id: str, selected: str) -> None:
-    """Read the pane back and require the chosen variant to be reflected in it.
-
-    Typing a label into a picker is a request, not an outcome. A picker that closed on the value it
-    already held leaves the session at a variant nobody asked for, and submitting work into it is
-    exactly the silent substitution this unit's stop conditions forbid. The echo the interface
-    leaves behind is the only evidence of the selection available from outside it, so a selection
-    that cannot be found there is a loud stop rather than an assumption.
-    """
-    clean = strip_ansi(read_pane(pane_id, lines=40))
-    if not re.search(rf"\b{re.escape(selected)}\b", clean, re.IGNORECASE):
-        raise SystemExit(
-            f"{unit.name}: variant {selected!r} was sent to the picker but the session does not "
-            "report it; refusing to submit the task at an unverified variant"
-        )
-
-
-def drive_opencode_variant_selection(
-    unit: Unit, pane_id: str, *, timeout: float = 10.0
-) -> tuple[str, bool]:
-    """Drive OpenCode's `/variants` picker in Herdr and verify the selection took.
-
-    Returns the variant now in force and whether the session reported itself ready afterwards.
-
-    A pane holds the session's whole recent output, not only its picker, so a parse that finds
-    nothing the variant ladder recognises is read as "the picker has not drawn yet" and polled
-    again rather than taken as the option list. Accepting a boot banner as the choices either
-    refuses a perfectly available exact variant or types one of the banner's own words into the
-    session; only once the window closes is an unrecognised set accepted, and an empty one stops.
-    """
-    # Open the picker
-    run(["herdr", "pane", "run", pane_id, "/variants"])
-
-    # Read the live picker options from the pane
-    deadline = time.monotonic() + timeout
-    available_options: list[str] = []
-    while time.monotonic() < deadline:
-        parsed = parse_opencode_variants(read_pane(pane_id))
-        if parsed:
-            available_options = parsed
-            if any(option.lower() in OPENCODE_VARIANT_RANKS for option in parsed):
-                break
-        time.sleep(0.5)
-
-    if not available_options:
-        raise SystemExit(f"{unit.name}: unable to read live picker options from OpenCode /variants")
-
-    # Select requested exact variant or highest offered
-    requested = unit.variant or unit.effort
-    selected = resolve_opencode_variant(requested, available_options)
-
-    # Send selected variant into the pane
-    run(["herdr", "pane", "run", pane_id, selected])
-
-    # Wait until session returns to task-ready, then confirm the picker actually moved
-    ready = await_ready(unit)
-    confirm_opencode_variant_selected(unit, pane_id, selected)
-
-    unit.variant = selected
-    append_unit_note(unit, f"variant {selected} verified")
-    return selected, ready
-
-
-def close_run_session(unit: Unit) -> None:
-    """Close only the tab this run opened, leaving every session it did not create alone."""
-    if unit.tab_id:
-        run(["herdr", "tab", "close", unit.tab_id], check=False)
-
-
-def same_directory(reported: str, expected: str) -> bool:
-    """Whether two paths name the same directory, deciding on the literal strings if they cannot.
-
-    ``resolve`` reads the filesystem and can fail on a path that has since gone. A comparison that
-    could not be made must not read as a match, so an unusable path falls back to the strings
-    rather than the check being skipped.
-    """
-    try:
-        return Path(reported).resolve() == Path(expected).resolve()
-    except OSError:
-        return reported == expected
-
-
-def workspace_id_for_name(name: str | None) -> str | None:
-    """The id herdr gave the workspace with this label, or None when no workspace carries it.
-
-    The wrapper's ``--workspace`` takes a name and ``herdr agent list`` reports only a
-    ``workspace_id``, so the two are joined through the workspace list rather than compared
-    directly -- a name held against an id never matches, which reads as a mismatch that is not one.
-    """
-    if not name:
-        return None
-    proc = run(["herdr", "workspace", "list"], check=False)
-    try:
-        workspaces = json.loads(proc.stdout)["result"]["workspaces"]
-    except (ValueError, KeyError, TypeError):
-        return None
-    for workspace in workspaces:
-        if isinstance(workspace, dict) and workspace.get("label") == name:
-            found = workspace.get("workspace_id")
-            return str(found) if found else None
-    return None
-
-
-def claude_transcript_roots() -> tuple[Path, Path]:
-    """The personal and company Claude transcript root directories."""
-    personal = Path(
-        os.environ.get("CLAUDE_PERSONAL_PROJECTS", Path.home() / ".claude" / "projects")
-    )
-    company = Path(
-        os.environ.get("CLAUDE_COMPANY_PROJECTS", Path.home() / ".claude-company" / "projects")
-    )
-    return personal, company
-
-
-def claude_project_slug(worktree: str | Path) -> str:
-    """The project directory slug Claude generates for a given worktree path.
-
-    Every separator and dot becomes a dash: ``/Users/jefcox/.claude`` is stored as
-    ``-Users-jefcox--claude``, which is where the dot belongs in this class -- a worktree whose
-    name carries one would otherwise be looked for under a directory that does not exist.
-    """
-    resolved = Path(worktree).resolve().as_posix()
-    return re.sub(r"[/\\:.]", "-", resolved)
-
-
-def find_claude_transcripts(root: Path, worktree: str | None) -> list[Path]:
-    """Find transcript files (.jsonl) for a given worktree under a Claude projects root."""
-    if not root.is_dir() or not worktree:
-        return []
-    slug = claude_project_slug(worktree)
-    proj_dir = root / slug
-    if proj_dir.is_dir():
-        return list(proj_dir.glob("*.jsonl"))
-    leaf = Path(worktree).name
-    matches = list(root.glob(f"*{leaf}*/*.jsonl"))
-    return matches
-
-
-def transcript_account(unit: Unit) -> str | None:
-    """Which account's transcript root holds this worker's session, when either one does.
-
-    Both roots can hold a transcript for the same worktree -- a relaunch after a wrong-account
-    launch leaves the earlier one in place -- so the newer file decides. Returns ``None`` while
-    neither root has one, which is the ordinary state at preflight: Claude writes
-    ``projects/<slug>/<id>.jsonl`` when the first prompt arrives, and preflight runs before the
-    task is sent.
-    """
-    personal_root, company_root = claude_transcript_roots()
-    newest: list[tuple[float, str]] = []
-    for label, root in (("personal", personal_root), ("company", company_root)):
-        files = find_claude_transcripts(root, unit.worktree)
-        if files:
-            newest.append((max(f.stat().st_mtime for f in files), label))
-    if not newest:
-        return None
-    return max(newest)[1]
-
-
-def pane_account_label(pane_id: str | None) -> str | None:
-    """The account this session's own statusline reports, or None while it does not say.
-
-    The wrapper exports ``CLAUDE_ACCOUNT_LABEL`` into the pane before the tool starts and the
-    statusline renders it beside the user -- ``jefcox [company]:`` against a plain ``jefcox:`` on
-    the personal account. That row is on screen as soon as the session is interactive, which is
-    exactly where the transcript is not, so it is the evidence a launch-time check can actually
-    read. Only what is on screen now is considered: scrollback carries the task text, and a task
-    that happens to name the operator is not a statusline.
-    """
-    if not pane_id:
-        return None
-    user = os.environ.get("USER") or os.environ.get("LOGNAME") or ""
-    if not user:
-        return None
-    proc = run(["herdr", "pane", "read", pane_id, "--source", "visible"], check=False)
-    if proc.returncode != 0:
-        return None
-    text = strip_ansi(proc.stdout)
-    last = None
-    for match in re.finditer(rf"\b{re.escape(user)}\s*(?:\[(\w+)\])?:", text):
-        last = match
-    if last is None:
-        return None
-    return (last.group(1) or "personal").lower()
-
-
-def observed_account(unit: Unit, pane_id: str | None, seconds: float) -> str | None:
-    """The account the launched session is actually on, waiting briefly for it to say.
-
-    The statusline answers first because it is painted at startup; the transcript root answers
-    for a session whose statusline this machine does not print. Neither is instant, so the window
-    is spent before the question is given up on.
-    """
-    deadline = time.monotonic() + seconds
-    while True:
-        from_pane = pane_account_label(pane_id)
-        if from_pane:
-            return from_pane
-        from_transcript = transcript_account(unit)
-        if from_transcript:
-            return from_transcript
-        if time.monotonic() >= deadline:
-            return None
-        time.sleep(1.0)
-
-
-def check_unit_account(
-    unit: Unit, pane_id: str | None = None, seconds: float = ACCOUNT_SETTLE_SECONDS
-) -> tuple[bool | None, str | None]:
-    """Check whether a launched Claude unit is on the account the plan asked for.
-
-    Returns:
-        (True, None) when the session reports the requested account.
-        (False, error_msg) when it reports a different one, when the plan named an account this
-        script does not know, or when no account could be read at all -- an unverified account is
-        a stop, not a pass, because the failure being guarded against is invisible by nature.
-        (None, None) when no account was requested, or the vendor has no account to check.
-    """
-    if unit.vendor != "claude" or not unit.account:
-        return None, None
-
-    if is_company_account(unit.account):
-        requested = "company"
-    elif is_personal_account(unit.account):
-        requested = "personal"
-    else:
-        return (
-            False,
-            f"unknown account selection {unit.account!r}; expected 'company' or 'personal'",
-        )
-
-    observed = observed_account(unit, pane_id, seconds)
-    if observed is None:
-        return (
-            False,
-            f"account unverified: the session reported no account in its statusline and neither "
-            f"transcript root holds its session, so {requested!r} could not be confirmed",
-        )
-    if observed != requested:
-        return (
-            False,
-            f"account mismatch: worker is on the {observed} account when {requested} was required",
-        )
-    return True, None
-
-
-def verify_unit_account(unit: Unit, pane_id: str | None = None) -> bool | None:
-    """Verify the account for a launched unit, closing the session and raising on mismatch."""
-    confirmed, error = check_unit_account(unit, pane_id)
-    if error:
-        close_run_session(unit)
-        unit.status = ACCOUNT_MISMATCH
-        append_unit_note(unit, error)
-        raise AccountMismatchError(f"{unit.name}: {error}")
-    return confirmed
-
-
-def verify_unit_preflight(
-    unit: Unit, pane_id: str | None, *, ready: bool | None = None
-) -> dict[str, Any]:
-    """Verify the session against herdr before the task is submitted, and record what was checked.
-
-    Only what herdr publishes can be checked. A row in ``herdr agent list`` carries ``cwd``,
-    ``workspace_id`` and ``interactive_ready``; it carries no model at all, and its workspace is an
-    id where the plan holds a name. So the receipt separates what was confirmed against herdr from
-    what is only the request the unit was launched with. A single ``verified: true`` covering both
-    would be a claim this script is not in a position to make, and a run record that says a model
-    was verified when nothing could read it is worse than one that says it was not.
-    """
-    if not pane_id:
-        raise SystemExit(f"{unit.name}: session was not assigned a valid pane_id")
-
-    confirmed: list[str] = ["pane"]
-    unconfirmed: list[str] = ["model"]  # herdr does not report the agent's model
-    row = agent_row(unit)
-
-    if row is None:
-        unconfirmed.extend(["working_directory", "readiness"])
-        if unit.workspace:
-            unconfirmed.append("workspace")
-        observed_ready = bool(ready)
-    else:
-        reported_cwd = row.get("cwd") or row.get("foreground_cwd")
-        if reported_cwd and unit.worktree:
-            if not same_directory(reported_cwd, unit.worktree):
-                close_run_session(unit)
-                raise SystemExit(
-                    f"{unit.name}: working directory {reported_cwd!r} differs from unit "
-                    f"worktree {unit.worktree!r}"
-                )
-            confirmed.append("working_directory")
-        else:
-            unconfirmed.append("working_directory")
-
-        expected_workspace = workspace_id_for_name(unit.workspace)
-        reported_workspace = row.get("workspace_id")
-        if expected_workspace and reported_workspace:
-            if reported_workspace != expected_workspace:
-                close_run_session(unit)
-                raise SystemExit(
-                    f"{unit.name}: session workspace {reported_workspace!r} does not match "
-                    f"requested workspace {unit.workspace!r} ({expected_workspace})"
-                )
-            confirmed.append("workspace")
-        elif unit.workspace:
-            unconfirmed.append("workspace")
-
-        observed_ready = bool(row.get("interactive_ready")) if ready is None else bool(ready)
-        confirmed.append("readiness")
-
-    # A Claude unit that names an account either confirms it or raises: an account that could not
-    # be read is the failure this check exists for, wearing the same face as one that was never
-    # checked. Every other vendor has no account to read, so a unit that names one anyway is
-    # recorded as having asked rather than as having been confirmed.
-    account_confirmed = verify_unit_account(unit, pane_id)
-    if unit.account:
-        if account_confirmed:
-            confirmed.append("account")
-        else:
-            unconfirmed.append("account")
-
-    effective_provider = (
-        unit.model.split("/")[0] if (unit.model and "/" in unit.model) else unit.vendor
-    )
-    effective_variant = unit.variant or unit.effort
-    if unit.vendor == "opencode" and not effective_variant:
-        effective_variant = "Default"
-    # An OpenCode variant is the one tier value that was read back out of the session holding it.
-    if unit.vendor == "opencode" and unit.variant:
-        confirmed.append("variant")
-    else:
-        unconfirmed.append("variant")
-
-    receipt: dict[str, Any] = {
-        "unit_name": unit.name,
-        "vendor": unit.vendor,
-        "provider": effective_provider,
-        "model": unit.model,
-        "variant": effective_variant,
-        "account": unit.account,
-        "working_directory": unit.worktree,
-        "worktree": unit.worktree,
-        "workspace": unit.workspace,
-        "pane": pane_id,
-        "tab_id": unit.tab_id,
-        "readiness": observed_ready,
-        "confirmed_against_herdr": confirmed,
-        "requested_only": unconfirmed,
-        # True by construction: every check that can fail raises above this point, so it reads
-        # "preflight passed", and ``confirmed_against_herdr`` is what that passing actually covered.
-        "verified": True,
-    }
-    unit.launch_receipt = receipt
-    return receipt
-
-
-def launch(unit: Unit, backend: str = "inline", *, review_elsewhere: bool = False) -> None:
-    proc = run(agent_argv(unit))
-    pane_id = None
-    try:
-        info = json.loads(proc.stdout.strip().splitlines()[-1])
-        unit.tab_id = info.get("tab_id")
-        unit.agent_name = info.get("agent_name", unit.name)
-        pane_id = info.get("pane_id")
-        unit.pane_id = pane_id
-    except (ValueError, IndexError):
-        unit.note = "launched, but the wrapper's JSON could not be read"
-        raise SystemExit(
-            f"{unit.name}: launched, but the wrapper's JSON could not be read"
-        ) from None
-    if not pane_id:
-        raise SystemExit(f"{unit.name}: launcher did not return a pane_id")
-
-    ready = await_ready(unit)
-    if unit.vendor == "opencode":
-        _, ready = drive_opencode_variant_selection(unit, pane_id)
-    verify_unit_preflight(unit, pane_id, ready=ready)
-
-    send(unit, pane_id, backend, review_elsewhere=review_elsewhere)
-    accepted = took_the_task(unit)
-    if not accepted:
-        # Resend only into a session that has still never left idle. A resend risks giving a unit
-        # its task twice, and the one reading that rules that out is a session which has not
-        # started anything: a swallowed prompt leaves it exactly there. Anything else -- working,
-        # blocked, or gone -- means it took something, so the send stands and the loop stops.
-        for _ in range(DELIVERY_RESENDS):
-            row = agent_row(unit)
-            if row is None or row.get("agent_status") != "idle":
-                break
-            send(unit, pane_id, backend, review_elsewhere=review_elsewhere)
-            accepted = took_the_task(unit)
-            if accepted:
-                break
-    if accepted:
-        unit.status = RUNNING
-    else:
-        unit.status = PROMPT_UNDELIVERED
-        append_unit_note(unit, DELIVERY_WARNING)
-
-
-# How long a line may be before typing it into a pane stops delivering it as an instruction.
-#
-# Measured against qwen 0.21.13 through `herdr pane run`: 859 characters arrive as typed text, 1660
-# arrive as `[Pasted Content N chars]`. The paste is submitted and the agent knows its size -- it
-# simply does not treat it as the instruction. Its own words, verbatim, to a 6402-character task:
-# "I can see you've pasted some content (6402 characters), but I'm not sure what you'd like me to do
-# with it."
-#
-# That is the whole failure: the unit launches, the keystrokes are delivered, orchestrate records
-# success, and the session sits waiting for an instruction it thinks it has not been given. It goes
-# idle, `settle` marks it done, and only `land` -- a phase later -- reports that it committed
-# nothing. A real task is routinely well past this, so the door this plugin uses for any vendor that
-# will not take `herdr agent prompt` was quietly unusable for real work.
-PANE_TYPING_LIMIT = 800
-
-
-def pane_text(unit: Unit, text: str) -> str:
-    """The line to type, which is the task itself only when the task is short enough to survive.
-
-    Past the limit the task goes to a file and the typed line points at it. The leading saga command
-    stays typed: it is what makes the vendor load the skill, and inside a file it is just prose.
-    """
-    if len(text) <= PANE_TYPING_LIMIT:
-        return text
-    path = (TASK_DIR / f"{unit.name}.md").resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text + "\n")
-    lead = text.split(" ", 1)[0] if re.match(r"^\s*[/$]", text) else ""
-    append_unit_note(unit, f"task handed over as a file, too long to type: {path}")
-    return (
-        f"{lead} Your full task is in {path} -- read that file in full and carry it out exactly. "
-        "It is the complete instruction; nothing else is coming."
-    ).strip()
-
-
-def say(unit: Unit, pane_id: str | None, text: str) -> None:
-    """Put one line into the session.
-
-    ``herdr agent prompt`` is the right door, but it refuses any agent that never reports
-    ``interactive_ready`` -- qwen is one today. For those, type into the pane instead, which is what
-    the operator would do by hand -- but only up to the length a pane will still carry as an
-    instruction rather than as an attachment. See ``pane_text``.
-    """
-    handle = unit.agent_name or unit.name
-    attempt = run(["herdr", "agent", "prompt", handle, text], check=False)
-    if attempt.returncode == 0:
-        return
-    if not pane_id:
-        raise SystemExit(f"{unit.name}: agent prompt refused and no pane to fall back to")
-    typed = pane_text(unit, text)
-    run(["herdr", "pane", "run", pane_id, typed])
-    fallback_note = "prompted through its pane; this agent does not report interactive readiness"
-    if fallback_note not in unit.note.split("; "):
-        append_unit_note(unit, fallback_note)
-
-
-def send(
-    unit: Unit, pane_id: str | None, backend: str = "inline", *, review_elsewhere: bool = False
-) -> None:
-    """Set the session up, then give it its task.
-
-    Setup goes first and separately: a tier has to be in force before the work starts, and a slash
-    command bundled into the same message as the task is just text the agent reads.
-    """
-    for line in unit.setup:
-        say(unit, pane_id, line)
-    say(
-        unit,
-        pane_id,
-        normalize_task(unit.vendor, unit.task, backend, review_elsewhere=review_elsewhere),
-    )
 
 
 def poll(
@@ -2072,21 +1248,6 @@ def poll(
         if a.get("name") == handle:
             return str(a.get("agent_status", "unknown"))
     return "gone"
-
-
-def live_agents(*, timeout: float = 20) -> list[dict[str, Any]]:
-    """The sessions herdr is tracking right now.
-
-    herdr is the truth a run file only mirrors, so it is asked, never remembered. A missing or
-    failing herdr is not an error here: it means there is nothing to match a worktree or a session
-    against, and the caller degrades -- to "no live agent" when adopting, to "gone" when polling.
-    """
-    proc = run(["herdr", "agent", "list"], check=False, timeout=timeout)
-    try:
-        agents = json.loads(proc.stdout)["result"]["agents"]
-    except (ValueError, KeyError):
-        return []
-    return [a for a in agents if isinstance(a, dict)]
 
 
 def run_branches(run_id: str) -> list[str]:
@@ -2489,6 +1650,7 @@ def _report_landing_cleanup_failures(failures: Sequence[tuple[Path, str]]) -> No
 
 def cmd_start(args: argparse.Namespace) -> int:
     plan = json.loads(Path(args.plan).read_text())
+    assert_no_engine_prefs(plan)
     assert_safe_path_component(plan["run_id"], "run id")
     units = plan_units(plan)
     assert_safe_unit_names(units)
@@ -2499,7 +1661,6 @@ def cmd_start(args: argparse.Namespace) -> int:
         base=base,
         units=units,
         backend=plan.get("backend", "inline"),
-        engine_prefs=plan.get("engine_prefs", {}),
         issues=plan.get("issues", {}),
         status_map=plan.get("status_map", {}),
         workspace=plan.get("workspace") or None,
@@ -2789,6 +1950,7 @@ def cmd_expand(args: argparse.Namespace) -> int:
     """
     r = Run.load()
     added = json.loads(Path(args.plan).read_text())
+    assert_no_engine_prefs(added)
     incoming = plan_units(added)
     assert_safe_unit_names(incoming)
 
@@ -2799,12 +1961,11 @@ def cmd_expand(args: argparse.Namespace) -> int:
             raise SystemExit(f"unit {unit.name!r} is already in this run; give the new one a name")
         seen.add(unit.name)
     assert_dependencies_reachable(incoming, existing)
-    assert_single_review_controller([*r.units, *incoming])
+    assert_review_transport([*r.units, *incoming])
 
     assert_vendors_available(incoming)
     assert_saga_reachable(incoming)
     r.units.extend(incoming)
-    r.engine_prefs.update(added.get("engine_prefs", {}))
     r.issues.update(added.get("issues", {}))
     r.status_map.update(added.get("status_map", {}))
     if "workspace" in added:
@@ -2877,6 +2038,7 @@ def cmd_go(args: argparse.Namespace) -> int:
     r = Run.load()
     if r.unresolvable_branch:
         raise SystemExit(f"run branch {r.unresolvable_branch!r} does not resolve; cannot go")
+    assert_review_transport(r.units)
     ready = r.eligible()
     if not ready:
         print("nothing eligible -- either everything is running or dependencies are unmet.")
@@ -4069,7 +3231,7 @@ def reap(
             kept.append(unit.name)
             continue
         if unit.tab_id:
-            run(["herdr", "tab", "close", unit.tab_id], check=False)
+            close_run_session(unit)
         if unit.worktree and Path(unit.worktree).exists():
             run(["git", "worktree", "remove", "--force", unit.worktree], check=False)
         if branches and unit.branch:

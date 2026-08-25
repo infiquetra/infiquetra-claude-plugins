@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.142.1] - 2026-08-25
+
+### Fixed
+
+- **Fail-loud emit-time reject of external-engine units and unhonored agent() opts (#708).**
+  `emit_workflow_script` rejects a spec carrying `engine` / `capability`, or any `agent()`
+  opts key the cc-workflows runtime does not honor (`dispatch`, `engine`, `verifiability`),
+  with a named `SpecError` telling the operator to route that unit through a Herdr/Orchestrate
+  session. Previously the emitter wrote those keys plus an `// external-engine dispatch:`
+  comment; the runtime ignored them and the unit ran as a native Claude subagent. No chaperone
+  dispatch, model/effort bridging, alias translation, or engine lifecycle machinery. The
+  emitter seam is `execution_spec.py` (KTD5: `workflow_emitter.py` is the lease contract).
+
 ## [0.142.0] - 2026-08-25
 
 ### Changed

@@ -383,10 +383,13 @@ def test_low_lane_limit_does_not_serialize_ordinary_units(monkeypatch: pytest.Mo
         ),
     )
 
-    script = M.emit_workflow_script(spec, environment={})
-
-    assert "const [E0, L0] = await parallel([" in script
-    assert "const [E1, L1] = await parallel([" in script
+    chunks = M.concurrency_chunks(spec, spec.units, environment={})
+    assert [[unit.unit_id for unit in chunk] for chunk in chunks] == [
+        ["E0", "L0"],
+        ["E1", "L1"],
+    ]
+    with pytest.raises(M.SpecError, match="external-engine unit"):
+        M.emit_workflow_script(spec, environment={})
 
 
 def test_registry_lane_limit_flows_through_emitter_adapter(
@@ -412,10 +415,13 @@ def test_registry_lane_limit_flows_through_emitter_adapter(
         ]
     )
 
-    script = M.emit_workflow_script(spec, environment={"SAGA_MAX_CONCURRENT": "3"})
-
-    assert "const [E0, L0] = await parallel([" in script
-    assert "const [E1, L1] = await parallel([" in script
+    chunks = M.concurrency_chunks(spec, spec.units, environment={"SAGA_MAX_CONCURRENT": "3"})
+    assert [[unit.unit_id for unit in chunk] for chunk in chunks] == [
+        ["E0", "L0"],
+        ["E1", "L1"],
+    ]
+    with pytest.raises(M.SpecError, match="external-engine unit"):
+        M.emit_workflow_script(spec, environment={"SAGA_MAX_CONCURRENT": "3"})
 
 
 def test_exact_and_capability_selectors_share_selected_registry_lane(
@@ -489,12 +495,10 @@ def test_capability_snapshot_selects_exact_capped_lane_for_admission_and_runtime
     )
 
     chunks = M.concurrency_chunks(spec, spec.units, environment={}, **snapshots)
-    script = M.emit_workflow_script(spec, environment={}, **snapshots)
+    with pytest.raises(M.SpecError, match="external-engine unit"):
+        M.emit_workflow_script(spec, environment={}, **snapshots)
 
     assert all(sum(unit.capability == capability for unit in chunk) <= 1 for chunk in chunks)
-    assert script.count(f'engine: "{selected}"') == 2
-    assert 'capability: "code-generation"' not in script
-    assert script.count(f"capability={capability} resolved_engine={selected}") == 2
 
 
 @pytest.mark.parametrize(
@@ -704,6 +708,16 @@ def test_emit_uses_one_frozen_admission_snapshot_across_every_panel_consumer(
 
     monkeypatch.setattr(M, "_build_emission_routing_context", record_build_context)
     monkeypatch.setattr(M, "resolved_concurrency", record_resolved_concurrency)
+
+    if admission_source != "environment":
+        with pytest.raises(M.SpecError, match="external-engine unit"):
+            M.emit_workflow_script(
+                spec,
+                environment=source_environment,
+                **emit_kwargs,
+            )
+        assert built_contexts == []
+        return
 
     script = M.emit_workflow_script(
         spec,

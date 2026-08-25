@@ -21,6 +21,39 @@
 
 ## 2026-08-25
 
+### Inert agent() opts plus a JS comment is a silent native fallback  {#708-inert-engine-opts-are-a-silent-fallback}
+
+**Context.** Issue #708: the saga execution-spec emitter wrote `dispatch: "external-engine"`,
+`engine:`, and optional `verifiability:` into cc-workflows `agent()` opts, plus an
+`// external-engine dispatch:` JavaScript comment, for units carrying `engine` or
+`capability`. The operator's G3 NARROW ruling (issuecomment-5405419292) kept this as a
+fail-loud validation defect: reject at emit; never silently fall back to native Claude;
+no chaperone, bridging, alias translation, or engine lifecycle in the emitter.
+**Evidence.** `plugins/saga/scripts/execution_spec.py` `_agent_opts` (pre-fix) emitted those
+keys on `route.exact_engine is not None` and omitted `model`/`effort` in that branch; five
+comment sites (`_emit_thunk` twice, `_emit_verify_loop_singleton`, `_emit_verify_panel`
+unattended retry, singleton `emit_workflow_script`) wrote the JS comment. The cc-workflows
+runtime honors `label` / `model` / `effort` / `schema` / `agentType` / `isolation` and ignores
+the rest, so the unit ran as a native Claude subagent. KTD5: the leaf named
+`workflow_emitter.py`, which is the lease contract with zero dispatch code; the seam is
+`execution_spec.py`.
+**Mechanism.** A comment is not a dispatch. An ignored opts key is not a dispatch. Together
+they look like wiring and behave like a silent fallback.
+**Fix.** `emit_workflow_script` rejects any unit with `engine` or `capability` before
+rendering. `_agent_opts` raises naming `dispatch` (and `engine` / `verifiability`) even if
+routing pretends there is no engine. `_external_engine_marker` raises instead of returning a
+comment string. Honored-key allowlist `_reject_unhonored_workflow_agent_opts` is the backstop.
+**Validation.** `uv run pytest tests/test_saga_execution_spec.py -q`; a spec with an engine
+unit or a bare model alias (`engine="opus"`) fails emit with `SpecError` naming the unit and
+Herdr/Orchestrate; `_agent_opts` on an engine unit with `exact_engine=None` still raises
+(no native `model`/`effort` fallback).
+**Generalizable rule.** If the runtime does not honor a key, emitting it is a silent fallback
+— fail at the producer with a named error, do not leave a comment or an ignored field as a
+stand-in for the missing capability.
+**Refs.** Issue #708; DECISIONS `{#cc-workflows-backend-narrow-808}` scenario 3; G3 NARROW
+issuecomment-5405419292.
+
+
 ### Instruction text that names a CLI flag must name the flag's argument TYPE  {#808-flag-argument-type}
 
 **Context.** #808 phase B narrowed the Saga execution-backend offer in instruction text only

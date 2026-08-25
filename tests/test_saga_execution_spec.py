@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
@@ -129,15 +130,99 @@ def _spec_dict(**unit_overrides: object) -> dict[str, object]:
     }
 
 
-def test_engine_unit_validates_and_emits_external_engine_marker() -> None:
+def test_engine_unit_validates_but_emit_rejects_with_named_actionable_error() -> None:
     spec = ES.ExecutionSpec.from_dict(_spec_dict(engine="codex/gpt-5.5-xhigh"))
     spec.validate()
 
-    script = ES.emit_workflow_script(spec)
+    with pytest.raises(ES.SpecError, match="external-engine unit") as excinfo:
+        ES.emit_workflow_script(spec)
 
-    assert "// external-engine dispatch: engine=codex/gpt-5.5-xhigh" in script
-    assert 'dispatch: "external-engine"' in script
-    assert 'engine: "codex/gpt-5.5-xhigh"' in script
+    message = str(excinfo.value)
+    assert "codex/gpt-5.5-xhigh" in message
+    assert "Herdr/Orchestrate" in message
+    assert "#708" in message
+
+
+def test_capability_unit_emit_rejects_with_named_actionable_error() -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(capability="code-generation"))
+    spec.validate()
+
+    with pytest.raises(ES.SpecError, match="external-engine unit") as excinfo:
+        ES.emit_workflow_script(spec, environment={}, **_routing_snapshots())
+
+    message = str(excinfo.value)
+    assert "code-generation" in message
+    assert "Herdr/Orchestrate" in message
+
+
+def test_unhonored_opts_keys_fail_at_emit_naming_the_key() -> None:
+    with pytest.raises(ES.SpecError, match="opts key 'dispatch'") as excinfo:
+        ES._reject_unhonored_workflow_agent_opts(
+            "unit U1",
+            ['dispatch: "external-engine"', 'engine: "codex/gpt-5.5-xhigh"'],
+        )
+    message = str(excinfo.value)
+    assert "dispatch" in message
+    assert "engine" in message
+    assert "Herdr/Orchestrate" in message
+
+
+def test_agent_opts_rejects_engine_route_naming_dispatch() -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(engine="codex/gpt-5.5-xhigh"))
+    route = ES.UnitRouting(
+        prompt="draft",
+        exact_engine="codex/gpt-5.5-xhigh",
+        authored_capability=None,
+        lane_max_concurrent=None,
+    )
+    with pytest.raises(ES.SpecError, match="opts key 'dispatch'") as excinfo:
+        ES._agent_opts(spec.units[0], route)
+    assert "dispatch" in str(excinfo.value)
+    assert "engine" in str(excinfo.value)
+
+
+def test_agent_opts_does_not_silently_fall_back_to_native_model_effort() -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(engine="codex/gpt-5.5-xhigh"))
+    native_looking_route = ES.UnitRouting(
+        prompt="draft",
+        exact_engine=None,
+        authored_capability=None,
+        lane_max_concurrent=None,
+    )
+    with pytest.raises(ES.SpecError, match="opts key 'dispatch'"):
+        ES._agent_opts(spec.units[0], native_looking_route)
+
+
+def test_agent_opts_source_does_not_emit_inert_dispatch_opt() -> None:
+    import inspect
+
+    src = inspect.getsource(ES._agent_opts)
+    assert 'dispatch: "external-engine"' not in src
+    assert "dispatch:" not in src
+
+
+def test_external_engine_marker_raises_instead_of_emitting_a_comment() -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict(engine="codex/gpt-5.5-xhigh"))
+    route = ES.UnitRouting(
+        prompt="draft",
+        exact_engine="codex/gpt-5.5-xhigh",
+        authored_capability=None,
+        lane_max_concurrent=None,
+    )
+    with pytest.raises(ES.SpecError, match="external-engine dispatch is not honored"):
+        ES._external_engine_marker(spec.units[0], route)
+
+
+def test_bare_model_alias_engine_unit_fails_at_emit_via_the_same_reject_path() -> None:
+    spec = ES.ExecutionSpec.from_dict(_spec_dict())
+    aliased = replace(spec.units[0], engine="opus")
+    spec = replace(spec, units=[aliased])
+    with pytest.raises(ES.SpecError, match="external-engine unit") as excinfo:
+        ES.emit_workflow_script(spec)
+    message = str(excinfo.value)
+    assert "opus" in message
+    assert "Herdr/Orchestrate" in message
+    assert "#708" in message
 
 
 def test_workflow_settlement_metadata_contains_each_unit_once() -> None:
@@ -372,8 +457,10 @@ def _fake_resolution(
 def test_capability_emit_requires_explicit_repo_root_without_snapshot_injection() -> None:
     spec = ES.ExecutionSpec.from_dict(_spec_dict(capability="code-generation"))
 
-    with pytest.raises(ES.SpecError, match="requires explicit repo_root"):
+    with pytest.raises(ES.SpecError, match="external-engine unit"):
         ES.emit_workflow_script(spec)
+    with pytest.raises(ES.SpecError, match="requires explicit repo_root"):
+        ES._build_emission_routing_context(spec)
 
 
 def test_capability_workflow_recompile_forwards_explicit_repo_root(
@@ -398,15 +485,20 @@ def test_capability_workflow_recompile_forwards_explicit_repo_root(
 def test_capability_workflow_recompile_requires_explicit_repo_root() -> None:
     spec = ES.ExecutionSpec.from_dict(_spec_dict(capability="code-generation"))
 
-    with pytest.raises(ES.SpecError, match="requires explicit repo_root"):
+    with pytest.raises(ES.SpecError, match="external-engine unit"):
         ES.recompile_for_tier(spec, "cc-workflows-ultracode")
 
 
 def test_capability_snapshot_injection_requires_the_pair() -> None:
     spec = ES.ExecutionSpec.from_dict(_spec_dict(capability="code-generation"))
 
-    with pytest.raises(ES.SpecError, match="must supply both"):
+    with pytest.raises(ES.SpecError, match="external-engine unit"):
         ES.emit_workflow_script(
+            spec,
+            routing_overlay=ES.engine_overlay.EngineOverlay(),
+        )
+    with pytest.raises(ES.SpecError, match="must supply both"):
+        ES._build_emission_routing_context(
             spec,
             routing_overlay=ES.engine_overlay.EngineOverlay(),
         )
@@ -474,17 +566,20 @@ def test_emit_freezes_prompts_routes_loaders_and_memo_across_unattended_retry(
 
     monkeypatch.setattr(ES.engine_resolver, "resolve", fake_resolve)
 
-    script = ES.emit_workflow_script(
-        spec,
-        unattended=True,
-        repo_root=tmp_path,
-        environment={},
-    )
+    with pytest.raises(ES.SpecError, match="external-engine unit"):
+        ES.emit_workflow_script(
+            spec,
+            unattended=True,
+            repo_root=tmp_path,
+            environment={},
+        )
+
+    ES._build_emission_routing_context(spec, repo_root=tmp_path)
 
     assert registry_loads == [ES._engine_registry_path()]
     assert overlay_loads == [tmp_path]
     assert calibration_loads == [tmp_path]
-    assert prompt_calls == ["U1", "U2", "U1"]
+    assert prompt_calls == ["U1", "U2"]
     assert len(resolver_calls) == 2
     assert len({id(call[1]) for call in resolver_calls}) == 1
     assert all(call[2] is overlay and call[3] is calibration for call in resolver_calls)
@@ -495,9 +590,6 @@ def test_emit_freezes_prompts_routes_loaders_and_memo_across_unattended_retry(
         prompt = task_context["context"]
         assert task_context["token_estimate"] == len(prompt.encode("utf-8"))
         assert task_context["unit_id"] in {"U1", "U2"}
-    assert script.count('engine: "codex/gpt-5.6-sol-xhigh"') == 3
-    assert 'capability: "code-generation"' not in script
-    assert script.count("capability=code-generation resolved_engine=codex/gpt-5.6-sol-xhigh") == 3
     assert spec.units[0].to_dict()["capability"] == "code-generation"
     assert "engine" not in spec.units[0].to_dict()
 
@@ -512,9 +604,10 @@ def test_exact_engine_route_never_calls_capability_resolver(
 
     monkeypatch.setattr(ES.engine_resolver, "resolve", unexpected_resolve)
 
-    script = ES.emit_workflow_script(spec, environment={})
-
-    assert 'engine: "codex/gpt-5.5-xhigh"' in script
+    with pytest.raises(ES.SpecError, match="external-engine unit"):
+        ES.emit_workflow_script(spec, environment={})
+    context = ES._build_emission_routing_context(spec)
+    assert context.for_unit(spec.units[0]).exact_engine == "codex/gpt-5.5-xhigh"
 
 
 def test_exact_engine_workflow_recompile_loads_registry_once(
@@ -531,10 +624,9 @@ def test_exact_engine_workflow_recompile_loads_registry_once(
 
     monkeypatch.setattr(registry_class, "load", classmethod(counted_registry_load))
 
-    script = ES.recompile_for_tier(spec, "cc-workflows-ultracode")
-
-    assert loads == [ES._engine_registry_path()]
-    assert 'engine: "codex/gpt-5.5-xhigh"' in script
+    with pytest.raises(ES.SpecError, match="external-engine unit"):
+        ES.recompile_for_tier(spec, "cc-workflows-ultracode")
+    assert loads == []
 
 
 @pytest.mark.parametrize(
@@ -564,8 +656,10 @@ def test_capability_resolution_outputs_fail_closed(
         lambda *_args, **_kwargs: resolution,
     )
 
-    with pytest.raises(ES.SpecError, match=message):
+    with pytest.raises(ES.SpecError, match="external-engine unit"):
         ES.emit_workflow_script(spec, environment={}, **_routing_snapshots())
+    with pytest.raises(ES.SpecError, match=message):
+        ES._build_emission_routing_context(spec, **_routing_snapshots())
 
 
 def test_capability_resolver_exception_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -576,8 +670,10 @@ def test_capability_resolver_exception_fails_closed(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(ES.engine_resolver, "resolve", fail)
 
-    with pytest.raises(ES.SpecError, match="resolution failed: resolver exploded"):
+    with pytest.raises(ES.SpecError, match="external-engine unit"):
         ES.emit_workflow_script(spec, environment={}, **_routing_snapshots())
+    with pytest.raises(ES.SpecError, match="resolution failed: resolver exploded"):
+        ES._build_emission_routing_context(spec, **_routing_snapshots())
 
 
 def test_missing_overlay_loads_as_empty_snapshot(
@@ -598,7 +694,9 @@ def test_missing_overlay_loads_as_empty_snapshot(
 
     monkeypatch.setattr(ES.engine_resolver, "resolve", capture)
 
-    ES.emit_workflow_script(spec, repo_root=tmp_path, environment={})
+    with pytest.raises(ES.SpecError, match="external-engine unit"):
+        ES.emit_workflow_script(spec, repo_root=tmp_path, environment={})
+    ES._build_emission_routing_context(spec, repo_root=tmp_path)
 
     assert len(captured) == 1
     assert captured[0][0] == ES.engine_overlay.EngineOverlay()
@@ -611,8 +709,10 @@ def test_malformed_repository_overlay_fails_closed(tmp_path: Path) -> None:
     overlay_path.write_text("{not-json", encoding="utf-8")
     spec = ES.ExecutionSpec.from_dict(_spec_dict(capability="code-generation"))
 
-    with pytest.raises(ES.SpecError, match="cannot load repository engine overlay"):
+    with pytest.raises(ES.SpecError, match="external-engine unit"):
         ES.emit_workflow_script(spec, repo_root=tmp_path, environment={})
+    with pytest.raises(ES.SpecError, match="cannot load repository engine overlay"):
+        ES._build_emission_routing_context(spec, repo_root=tmp_path)
 
 
 def test_unreadable_repository_overlay_fails_closed(
@@ -628,8 +728,10 @@ def test_unreadable_repository_overlay_fails_closed(
         ),
     )
 
-    with pytest.raises(ES.SpecError, match="cannot load repository engine overlay"):
+    with pytest.raises(ES.SpecError, match="external-engine unit"):
         ES.emit_workflow_script(spec, repo_root=tmp_path, environment={})
+    with pytest.raises(ES.SpecError, match="cannot load repository engine overlay"):
+        ES._build_emission_routing_context(spec, repo_root=tmp_path)
 
 
 def test_repository_calibration_absent_and_empty_are_empty_snapshots(
@@ -1093,18 +1195,27 @@ def test_advisory_panel_rejects_over_cap_role_at_spec_validation(
         ES.AdvisoryPanelRequest("cross-family-review-panel").validate("unit U1")
 
 
-def test_engine_verifiability_round_trips_and_emits_external_engine_option() -> None:
+def test_engine_verifiability_round_trips_and_emit_rejects() -> None:
     spec = ES.ExecutionSpec.from_dict(
         _spec_dict(engine="codex/gpt-5.5-xhigh", verifiability="test-gated")
     )
     spec.validate()
 
     unit_dict = spec.units[0].to_dict()
-    script = ES.emit_workflow_script(spec)
-
     assert unit_dict["verifiability"] == "test-gated"
-    assert "verifiability=test-gated" in script
-    assert 'verifiability: "test-gated"' in script
+    with pytest.raises(ES.SpecError, match="external-engine unit"):
+        ES.emit_workflow_script(spec)
+    with pytest.raises(ES.SpecError, match="verifiability") as excinfo:
+        ES._agent_opts(
+            spec.units[0],
+            ES.UnitRouting(
+                prompt="draft",
+                exact_engine="codex/gpt-5.5-xhigh",
+                authored_capability=None,
+                lane_max_concurrent=None,
+            ),
+        )
+    assert "verifiability" in str(excinfo.value)
 
 
 def test_absent_verifiability_emits_no_key_for_external_engine_unit() -> None:
@@ -2642,13 +2753,9 @@ def test_unit_agent_call_emits_return_schema() -> None:
     assert "schema:" in script.split("const a = await agent(", 1)[1].split("__gate(a", 1)[0]
 
 
-def test_external_engine_unit_emits_return_schema() -> None:
-    script = _emit_units([_verify_unit("ext", capability="code-generation")])
-    assert 'dispatch: "external-engine"' in script
-    assert 'capability: "code-generation"' not in script
-    assert "capability=code-generation resolved_engine=" in script
-    assert 'engine: "codex/gpt-5.6-sol-xhigh"' in script
-    assert _return_schema_fragment() in script
+def test_external_engine_unit_cannot_emit_return_schema() -> None:
+    with pytest.raises(ES.SpecError, match="external-engine unit"):
+        _emit_units([_verify_unit("ext", capability="code-generation")])
 
 
 def test_parallel_thunks_emit_return_schema_for_each_unit() -> None:
@@ -2694,12 +2801,12 @@ def test_every_emitted_agent_schema_has_toplevel_type() -> None:
     # or anyOf at the top level). The first fix added "type" but kept a top-level oneOf, so it
     # still 400ed -- this test now asserts BOTH invariants so the second gate can't slip through.
     # Sweep EVERY schema across all emission sites: plain unit, cheap pull-cord shape,
-    # external-engine dispatch, refute-N verifier panel, and the iterate-to-consensus loop.
+    # refute-N verifier panel, and the iterate-to-consensus loop. External-engine units
+    # are rejected at emit (#708) and are no longer an emission site.
     script = _emit_units(
         [
             _verify_unit("plain"),
             _verify_unit("cheap", tier={"model": "haiku", "effort": "low"}),
-            _verify_unit("ext", capability="code-generation"),
             _verify_unit("panel", verify={"n": 2, "pass_rule": "majority"}),
             _verify_unit(
                 "iter_unit",
@@ -2708,7 +2815,7 @@ def test_every_emitted_agent_schema_has_toplevel_type() -> None:
         ]
     )
     schemas = _extract_agent_schemas(script)
-    # 5 unit schemas + 2 panel verifiers + the iterate loop's verifier call at minimum.
+    # 4 unit schemas + 2 panel verifiers + the iterate loop's verifier call at minimum.
     assert len(schemas) >= 7
     for schema in schemas:
         assert schema.get("type") == "object", f"schema missing top-level type: {schema}"
@@ -3038,7 +3145,6 @@ def test_unattended_model_climb_renders_retry_prompt_for_climbed_tier() -> None:
             _escalate_unit(
                 tier={"model": "haiku", "effort": "high"},
                 returns=["result"],
-                capability="code-generation",
             )
         ]
     )
@@ -3055,8 +3161,6 @@ def test_unattended_model_climb_renders_retry_prompt_for_climbed_tier() -> None:
     assert "RETURN CONTRACT (all tiers)" in retry_call
     assert script.count(_return_schema_fragment()) == 1
     assert script.count(_return_schema_fragment(cheap=True)) == 1
-    assert 'engine: "codex/gpt-5.6-sol-xhigh"' in initial_call
-    assert 'engine: "codex/gpt-5.6-sol-xhigh"' in retry_call
 
 
 def test_escalate_on_signal_top_of_ladder_halts() -> None:  # R3

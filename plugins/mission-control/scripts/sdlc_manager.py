@@ -2361,6 +2361,13 @@ def rollout_update(repo: str, field: str, status: str, fmt: str) -> None:
 #   - link-sub-issue     wrap the native sub-issue API
 #   - verify-label       self-heal missing labels (404 → create; exists → no-op)
 #   - validate-card      run the card_validator schema check on an issue body
+#
+# #812 correction seam: saga submits Stage/Status through ``flow set-field --correction``.
+# The operator CLI without ``--correction`` still sets Initiative / Objective / other
+# live fields. No new operation; field name is part of operation, authorization, and
+# retry identity. Stage is allowed by name only — no Stage field exists on the live
+# boards and no ``set-field-stage`` op-kind is created.
+CORRECTION_FIELDS = frozenset({"Status", "Stage"})
 
 
 def _resolve_project_field(project_name: str, field_name: str) -> dict:
@@ -2413,6 +2420,37 @@ def flow_field_options(project_name: str, field_name: str, fmt: str) -> None:
             print(f"  {o['name']:30s}  (id: {o['id']})")
 
 
+def assert_correction_field(field_name: str) -> str:
+    """Reject a correction set-field that names any field other than Status or Stage."""
+    if field_name not in CORRECTION_FIELDS:
+        raise RuntimeError(
+            f"correction set-field rejects field {field_name!r}; "
+            f"allowed: {sorted(CORRECTION_FIELDS)}"
+        )
+    return field_name
+
+
+def correction_identity(
+    *,
+    field_name: str,
+    repo: str,
+    number: int,
+    option_name: str,
+) -> dict[str, str]:
+    """Field-named operation / authorization / retry identity for a correction write."""
+    field_name = assert_correction_field(field_name)
+    return {
+        "operation": f"set-field:{field_name}",
+        "authorization": f"correction-field:{field_name}",
+        # Byte-identical to saga's ledger key —
+        # ``reversibility_certificate.idempotency_key("set-field-status", repo, number,
+        # option_name, field=field_name)``. The two recipes must move together: a retry
+        # identity that does not match the ledger key cannot correlate a mission-control
+        # write with the saga tick that submitted it, which is the only reason to emit it.
+        "retry": f"set-field-status:{repo}#{number}:{field_name}:{option_name}",
+    }
+
+
 def flow_set_field(
     project_name: str,
     repo: str,
@@ -2420,9 +2458,17 @@ def flow_set_field(
     field_name: str,
     option_name: str,
     fmt: str,
+    *,
+    correction: bool = False,
 ) -> None:
     """Set a single-select field value on a card. Idempotent: re-running
-    with the same option produces the same final state."""
+    with the same option produces the same final state.
+
+    ``correction=True`` is the saga submission seam (#812): only Status (and
+    Stage by name) are accepted; the field name is carried in the result identity.
+    """
+    if correction:
+        field_name = assert_correction_field(field_name)
     field = _resolve_project_field(project_name, field_name)
     project_id = field["_project_id"]
     option = _resolve_field_option(project_name, field_name, field, option_name)
@@ -2436,6 +2482,26 @@ def flow_set_field(
         )
 
     _set_project_field_value(project_id, field, option, target_item)
+    if correction:
+        _out(
+            {
+                "action": "set-field",
+                "field": field_name,
+                "option": option_name,
+                "repo": repo,
+                "number": number,
+                "project": project_name,
+                "correction": True,
+                "identity": correction_identity(
+                    field_name=field_name,
+                    repo=repo,
+                    number=number,
+                    option_name=option_name,
+                ),
+            },
+            fmt,
+        )
+        return
     _out(f"Set {field_name}='{option_name}' on {repo}#{number} ({project_name})", fmt)
 
 
@@ -2509,12 +2575,23 @@ def flow_set_fields_bulk(
     numbers: list[int],
     assignments: list[tuple[str, str]],
     fmt: str,
+    *,
+    correction: bool = False,
 ) -> None:
-    """Set one or more single-select fields across multiple cards in one discovery pass."""
+    """Set one or more single-select fields across multiple cards in one discovery pass.
+
+    ``correction=True`` applies the same #812 restriction the single-card path applies:
+    only Status (and Stage by name) may be written, and the result is marked as a
+    correction carrying the per-assignment identity. Enforcing it HERE rather than only in
+    ``main()`` means an in-process caller cannot reach a wider field set than the CLI can.
+    """
     if not numbers:
         raise RuntimeError("numbers cannot be empty")
     if not assignments:
         raise RuntimeError("field assignments cannot be empty")
+    if correction:
+        for field_name, _option in assignments:
+            assert_correction_field(field_name)
 
     field_names = [field_name for field_name, _ in assignments]
     fields = _resolve_project_fields(project_name, field_names)
@@ -2568,7 +2645,7 @@ def flow_set_fields_bulk(
                 }
             )
 
-    result = {
+    result: dict[str, Any] = {
         "action": "set-field",
         "project": project_name,
         "repo": repo,
@@ -2578,6 +2655,24 @@ def flow_set_fields_bulk(
         "updated": updated,
         "failed": failed,
     }
+    if correction:
+        # A correction reported as an ordinary bulk write is indistinguishable from an
+        # operator Initiative/Objective write in the output stream. Mark it and carry the
+        # same identity block the single-card path emits, once per (card, assignment).
+        result["correction"] = True
+        # Built from ``updated``, not from ``numbers x assignments``: an identity block is a
+        # claim that a write happened under that identity, so a card that landed in ``failed``
+        # must not appear here. Reporting a requested-but-unwritten identity is the same class
+        # of defect as reporting a correction as an ordinary write.
+        result["identity"] = [
+            correction_identity(
+                field_name=row["field"],
+                repo=row["repo"],
+                number=row["number"],
+                option_name=row["option"],
+            )
+            for row in updated
+        ]
     _out(result, fmt)
     if failed:
         raise RuntimeError(
@@ -6064,6 +6159,14 @@ def main() -> None:
         action="append",
         help="Option name, case-insensitive (repeat with --field)",
     )
+    flow_setfield_p.add_argument(
+        "--correction",
+        action="store_true",
+        help=(
+            "Restrict this write to Status/Stage correction fields (saga submission "
+            "seam). Operator writes of Initiative/Objective omit this flag."
+        ),
+    )
 
     flow_options_p = flow_sp.add_parser(
         "field-options",
@@ -6292,10 +6395,17 @@ def main() -> None:
                         args.numbers if args.numbers is not None else [args.number],
                         list(zip(args.field, args.option, strict=True)),
                         fmt,
+                        correction=bool(getattr(args, "correction", False)),
                     )
                 else:
                     flow_set_field(
-                        args.project, args.repo, args.number, args.field[0], args.option[0], fmt
+                        args.project,
+                        args.repo,
+                        args.number,
+                        args.field[0],
+                        args.option[0],
+                        fmt,
+                        correction=bool(getattr(args, "correction", False)),
                     )
             elif args.action == "field-options":
                 flow_field_options(args.project, args.field, fmt)

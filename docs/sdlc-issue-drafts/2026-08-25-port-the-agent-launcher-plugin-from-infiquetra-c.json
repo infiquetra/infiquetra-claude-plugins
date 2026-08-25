@@ -1,0 +1,55 @@
+{
+  "approval_state": "needs_operator_approval",
+  "created_at": "2026-08-25T03:37:43Z",
+  "created_issue_number": 22,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/22",
+  "draft_path": "docs/sdlc-issue-drafts/2026-08-25-port-the-agent-launcher-plugin-from-infiquetra-c.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "mark-draft",
+      "detail": "Record existing infiquetra-agent-plugins issue #22 on draft and sidecar without GitHub mutation"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "infiquetra/infiquetra-agent-plugins#22",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-08-25-port-the-agent-launcher-plugin-from-infiquetra-c.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "# Port the agent-launcher plugin from infiquetra-claude-plugins\n\n### Objective\n\nPort the accepted `agent-launcher` Claude plugin from `infiquetra-claude-plugins` into `infiquetra-agent-plugins` through the established Agent Plugins portability workflow: the same shared single-session launch contract, the supported-client matrix passed, and adapter-specific limitations documented.\n\n### Intent\n\nSplit from infiquetra-claude-plugins#777 by operator ruling G2 on the improve-claude-plugins orchestration contract (infiquetra-claude-plugins#814, 2026-08-24): that orchestration run is limited to the Claude Plugins repository, so the port is tracked here instead of as a closing requirement of #777. The source plugin is built and accepted first in `infiquetra-claude-plugins` under #777's Claude-side acceptance criteria; this port begins only after that acceptance, adapts the shared launch contract rather than copying Claude-specific behavior, and inherits #777's port-relevant stop condition: stop if the accepted plugin behavior cannot be represented without a vendor-specific hidden path.\n\n### Out-of-scope / non-goals\n\n- No Claude-side rework of the accepted plugin \u2014 changes to the source plug",
+    "inferred_maturity": "requirements-ready",
+    "kind": "github-issue",
+    "path": null,
+    "ref": "infiquetra/infiquetra-agent-plugins#22",
+    "title": "Port the agent-launcher plugin from infiquetra-claude-plugins",
+    "url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/22"
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "Port the agent-launcher plugin from infiquetra-claude-plugins",
+  "updated_at": "2026-08-25T04:09:33.819087+00:00"
+}

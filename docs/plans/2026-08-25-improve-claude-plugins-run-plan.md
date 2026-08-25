@@ -18,7 +18,18 @@ decision chain (lane D). Every unit records its smallest viable fix, the reposit
 reuses, any new moving part with the current in-scope failure that requires it, and the larger
 alternative deliberately rejected. Two units (U1 #792, U4 #725) were found already resolved on
 `origin/main` during planning and become verify-and-close units. Execution backend: **inline**
-(operator ruling, #814 decision table — recorded here, not re-decided).
+(recorded from the launch prompt and the Orchestrate driver default — not a ninth
+decision-table row — and consistent with the G1 NARROW ruling).
+
+**S3 repairs (2026-08-25):** all 13 findings of the single broad doc review
+(`docs/reviews/2026-08-25-improve-claude-plugins-run-plan-doc-review.md`, reviewed revision
+`cb09febe`) were validated genuine against the live tree and repaired in this revision: the
+2026-08-25 G1/G3 NARROW rulings are inherited (U10/U11 rewritten — no HALT for a made
+decision, no chaperone dispatch), U7 is Status-only against the live board schema (no Stage
+field exists), each unit brief now carries its leaf's acceptance criteria, verification, and
+stop conditions pasted with any command substitutions disclosed, the mermaid-cli fallback is
+withdrawn, and the lens roster carries the review-validated conditionals. Disposition ledger:
+the S3 comment on issue #814.
 
 ## Problem Frame
 
@@ -72,12 +83,17 @@ verified against `origin/main`, not against a stale working tree.
   every merge, every surviving branch reintegrates `origin/main` and re-resolves
   release-surface versions. CI on main at the final merged commit is verified, not only the
   last PR.
-- **R5.** Gates: G1 — #808 gathers evidence, drafts the DECISIONS entry with
-  keep/narrow/replace/retire options, then HALTs with a durable park record; resume only on a
-  recorded operator ruling; without a ruling the run completes with #808 and #708 parked and
-  9/11 closed is a successful outcome. G2 — resolved 2026-08-24 (single-repository split; the
-  Agent Plugins port is infiquetra-agent-plugins#22, outside this run). G3 — if the G1 ruling
-  removes the emitter's engine-dispatch surface, #708's disposition returns to the operator.
+- **R5.** Gates — G1 and G3 were operator-resolved on 2026-08-25 and are inherited here
+  (F2/F1 repairs). **G1 = NARROW** (#808, issuecomment-5405414716): Claude Code Workflows
+  remain only explicitly invoked task-local mechanisms inside Herdr-managed sessions — not
+  Saga's default or automatic backend and not a generic interchangeable execution backend;
+  U10 still gathers the required evidence, then validates and implements this ruling instead
+  of re-presenting the four-way choice, and HALTs only if evidence proves the narrowed shape
+  internally contradictory or impossible. **G3 = NARROW** (#708, issuecomment-5405419292):
+  fail-loud emit-time rejection only — no chaperone-wrapper dispatch, model/effort bridging,
+  alias translation, or engine lifecycle management in the emitter; Herdr and Orchestrate own
+  cross-vendor sessions. G2 — resolved 2026-08-24 (single-repository split; the Agent Plugins
+  port is infiquetra-agent-plugins#22, outside this run).
 - **R6.** Review contract (decision row 7): the lenses predeclared in this plan are the
   applicable lens set per unit; no lens is added later without returning to the operator. Per
   applicable lens: overall ≥ 9.0, no applicable dimension below 7.0, never averaged across
@@ -118,8 +134,14 @@ journal entry ship with their leaf's commit (R9).
   locally → gate exit 3 (the existing missing-dev-dependency precondition). Rejected:
   `@mermaid-js/mermaid-cli` (puppeteer/chromium render — hundreds of MB, slow, flaky in CI;
   rendering is not needed to parse) and any validator framework (removed from scope by the
-  operator's Phase 2 ruling). Bounded fallback: if headless `mermaid.parse()` proves
-  infeasible at the pinned version, mermaid-cli is the disclosed fallback, recorded in the PR.
+  operator's Phase 2 ruling). **No fallback to mermaid-cli is authorized** (F6 repair — it is
+  the rejected heavy path): if headless `mermaid.parse()` proves infeasible at the pinned
+  version, the unit HALTs and returns that evidence for an operator decision rather than
+  silently swapping in a browser renderer. Wiring pinned (F7 repair): `actions/setup-node` in
+  the existing Lint job; `scripts/mermaid/package.json` pinning the exact mermaid version with
+  `jsdom` as the DOM shim; the `gate.sh` step text matches the `ci.yml` step name so coverage
+  cannot be satisfied by renaming; Node absent locally → gate exit 3 (existing
+  missing-dev-dependency semantics).
 - **KTD3 — #812 is guard-and-tighten, not a migration.** Planning found zero direct GraphQL
   Stage/Status writes in saga: every Status write already funnels through
   `board_progression.default_board_writer` → mission-control `sdlc_manager.py flow set-field`
@@ -173,9 +195,10 @@ journal entry ship with their leaf's commit (R9).
   leaf-level decisions journal with their leaves. This deliberately overrides the saga plan
   skill's default journal mirror for this run only.
 - **KTD9 — Backend inline (recorded, not decided).** All eleven units execute inline on
-  worker sessions per the operator-decision table; no cc-workflows backend, no
-  team-execution. This row is an operator ruling of 2026-08-24 restated for downstream
-  consumers (`/work` honours the `backend:` frontmatter and does not re-ask).
+  worker sessions; no cc-workflows backend, no team-execution. Recorded from the launch
+  prompt and the Orchestrate driver default — not a ninth decision-table row (F12
+  correction) — and consistent with G1 NARROW (`/work` honours the `backend:` frontmatter
+  and does not re-ask).
 
 ## Lanes, dependency edges, and collision surfaces
 
@@ -195,8 +218,8 @@ it.
 | S | S1 | U7 | #812 | — | — |
 | S | S2 | U8 | #776 | after: O3; serialize: S1 | — |
 | S | S3 | U9 | #778 | serialize: S2 | — |
-| D | D1 | U10 | #808 | evidence read-only from start; impl serialize: S2 | **G1** |
-| D | D2 | U11 | #708 | after: D1 ruling | **G3** |
+| D | D1 | U10 | #808 | evidence read-only from start; impl serialize: S2 | G1 resolved: NARROW |
+| D | D2 | U11 | #708 | after: D1 | G3 resolved: NARROW |
 
 Lanes W, O, S-head (U7), and D-head evidence (U10 phase A) start concurrently at run start.
 With U1 and U4 expected to settle as verify-and-close (KTD1), lanes W and O reach their second
@@ -268,6 +291,15 @@ fix merged with PR #790, so the disclosed out-of-band push path should not be ne
 **Predeclared lenses:** none — no diff expected. Contingency diff: always-on four only
 (test-assert hardening touches no conditional domain).
 
+**Leaf contract (#792, pasted — F5 repair):** Acceptance criteria: (1) `COLUMNS=40 uv run
+pytest tests/test_orchestrate_hygiene.py -q` — all tests pass at 40 columns; (2)
+`COLUMNS=200 uv run pytest tests/test_orchestrate_hygiene.py -q` — all tests pass at 200
+columns; (3) the fix touches only `tests/test_orchestrate_hygiene.py` *(satisfied vacuously:
+verify-and-close ships no diff)*. Verification: the two COLUMNS commands. Stop conditions:
+none in the leaf. Closure shape (F8 disposition): evidence comment naming PR #790 / commit
+`6396455a` plus launch-pin rerun receipts; the #814 closing comment discloses the parent-AC
+substitution (the closing PR reference is historical, not a run PR).
+
 ### U2. #405 — always-on Mermaid syntax check (lane W, W2)
 
 **Goal:** CI parses every Mermaid fence in tracked Markdown and fails on syntax errors, naming
@@ -288,9 +320,12 @@ bookkeeping. Enumeration reuses `git grep` (tracked-files-only semantics for fre
 
 **New moving part:** a pinned Node dev dependency for mermaid's own parser — named in-scope
 failure: 13 broken diagrams shipped undetected
-(`docs/plans/2026-07-03-plugin-fleet-grounding-brief.md:187`), and no Python Mermaid parser
-exists; a regex heuristic yields false green. Node missing locally → gate exit 3 precondition
-(existing semantics).
+(`docs/plans/2026-07-03-plugin-fleet-grounding-brief.md:148-149` — F11 correction), and no
+Python Mermaid parser exists; a regex heuristic yields false green. Wiring per KTD2's F7 pin:
+`actions/setup-node` in the Lint job, `scripts/mermaid/package.json` (exact mermaid version +
+`jsdom`), gate step text matching the `ci.yml` step name. Node missing locally → gate exit 3
+precondition (existing semantics). No mermaid-cli fallback (F6): infeasibility HALTs with
+evidence.
 
 **Rejected alternative:** `@mermaid-js/mermaid-cli` (full browser render to validate a parse —
 disproportionate), the generic checkable-surface census / registry / drift framework (removed
@@ -302,7 +337,18 @@ the same change if found).
 
 **Predeclared lenses:** always-on four + `deployment-infrastructure` — the unit edits
 `.github/workflows/ci.yml` and `scripts/gate.sh`, which is CI/infrastructure configuration
-surface.
+surface. (S2 note: inside that lens, do not demand high availability or multi-tenant rollout;
+the change is a CI step and a gate coverage line.)
+
+**Leaf contract (#405, pasted — F5 repair):** Acceptance criteria: (1) `uv run pytest tests/
+-k mermaid -q` — fixture tests pass, including one broken fence failing with its file and
+line named and one valid fence passing; (2) the new check run against the current tree exits
+0 — every tracked Mermaid fence parses, or is repaired in the same change (`git grep -l
+'\`\`\`mermaid' -- '*.md'` enumerates the population); (3) `GATE_LOG_DIR=/tmp/gate-run bash
+scripts/gate.sh` — no `GATE INCOMPLETE`; the coverage self-check counts the new CI step.
+Verification: `uv run pytest tests/ -k mermaid -q`; backgrounded gate run; read
+`/tmp/gate-run/result.txt`. Stop conditions: none in the leaf (KTD2's HALT-on-infeasible-parse
+applies).
 
 ### U3. #407 — journal lint: duplicate and dangling anchors (lane W, W3)
 
@@ -331,6 +377,16 @@ same change).
 
 **Predeclared lenses:** always-on four only — a self-contained lint script and its fixtures
 touch no conditional domain.
+
+**Leaf contract (#407, pasted — F5 repair):** Acceptance criteria: (1) `uv run pytest tests/
+-k journal -q` — fixtures pass; a duplicate anchor fails naming both definition sites; a
+dangling reference fails naming the referencing line; (2) `python3
+scripts/lint_journal_order.py` — exit 0 on the current journal, or violations found are
+repaired in the same change; (3) the checks run wherever the lint runs today (CI and the
+gate), no new workflow — gate reports no `GATE INCOMPLETE`. Verification: the two commands
+above. Stop conditions: none in the leaf. (F13 correction: `ci.yml:159` is the PR-scoped
+"Journal newest-first guard (new entries)" step, not a job named Release Surface Parity;
+`ci.yml:215` is the Lint-job home.)
 
 ### U4. #725 — mirror embedded-region bound (lane O, O1)
 
@@ -368,6 +424,17 @@ if the change is a published-claim correction.
 (+ `documentation-clarity` for a claim-correction diff — the deliverable would be published
 prose).
 
+**Leaf contract (#725, pasted with substitutions — F5 repair):** Acceptance criteria: (1)
+`uv run pytest tests/ -k mirror -q` *(substitution: no mirror module or mirror tests exist
+after `84e53a72` — vacuously satisfied, disclosed)*; (2) the issue's reproduction is accepted
+by the fixed mirror *(substitution: the module is deleted; nothing refuses the file)*; (3)
+`rg -n "ordinary reading" plugins/orchestrate/` — the published bounds claim is corrected or
+removed — satisfied by removal, 0 hits. Verification: launch-pin sweeps
+`rg -n "_MAX_EMBEDDED_REGIONS|PredicateInMirrorError|ordinary reading"` over the tree.
+Stop conditions: none in the leaf. Closure shape (F8 disposition): evidence comment citing
+`84e53a72` and the sweep receipts; parent-AC substitution disclosed in the #814 closing
+comment.
+
 ### U5. #813 — per-run pool declarations and reintegration docs (lane O, O2)
 
 **Goal:** `plugins/orchestrate/skills/orchestrate/SKILL.md` documents the per-run worker-pool
@@ -400,6 +467,18 @@ release-surface parity checks and CI docs steps cover it`, per the leaf).
 
 **Predeclared lenses:** always-on four + `documentation-clarity` (the deliverable is guidance
 prose) + `agent-usability` (SKILL.md is instruction text consumed by orchestrator agents).
+
+**Leaf contract (#813, pasted — F5 repair):** Acceptance criteria: (1) `grep -n "worker-pool"
+plugins/orchestrate/skills/orchestrate/SKILL.md` returns the per-run pool declaration section
+(priority order, per-pool cap, launch template, exercised-or-not at closeout); (2)
+`grep -in "authoritative integration branch" plugins/orchestrate/skills/orchestrate/SKILL.md`
+returns the reintegration practice (target declared per run; every surviving branch
+reintegrates it after each serialized landing; release-surface versions re-resolved before
+continuing); (3) `grep -in "per-run operator inputs" plugins/orchestrate/skills/orchestrate/SKILL.md`
+returns the statement that vendors, models, efforts, caps, and the integration target are
+per-run operator inputs, never hard-coded. Verification: the three greps; release surfaces
+bumped in the shipping PR (`plugins/orchestrate/.claude-plugin/plugin.json`, `CHANGELOG.md`,
+`.claude-plugin/marketplace.json`). Stop conditions: none in the leaf.
 
 ### U6. #777 — portable agent-launcher plugin + orchestrate refactor (lane O, O3)
 
@@ -450,10 +529,42 @@ Orchestrate calls the shared launcher (no private copy). Migrated orchestrate la
 stay green. Final live smoke: one named, no-focus Codex reviewer at explicit extra-high
 reasoning, verified through Herdr, owned cleanup only.
 
+**Owned release surfaces (F10 repair):** in the same PR — `plugins/agent-launcher/.claude-plugin/plugin.json`
+(new), `plugins/agent-launcher/CHANGELOG.md` (new), the `.claude-plugin/marketplace.json`
+entry, `plugins/agent-launcher/tests/`, orchestrate's own `plugin.json`/`CHANGELOG.md`
+(behavior moves), and the existing plugin-validation / release-surface parity checks.
+
 **Predeclared lenses:** always-on four + `api-contract` (the launcher exposes a
 launch/readback contract consumed by two callers — ordinary sessions and orchestrate) +
 `reliability` (readiness polling, timeouts, partial-launch and duplicate-session failure
-modes) + `agent-usability` (a new SKILL.md consumed by ordinary sessions).
+modes) + `agent-usability` (a new SKILL.md consumed by ordinary sessions) + `adversarial`
+(F9, S2-validated: process-launch, silent substitution, and unowned cleanup are the leaf's
+named failure modes).
+
+**Leaf contract (#777, pasted — F5 repair):** Acceptance criteria: (1) a standalone plugin
+exposes one clear launch skill and one clear Herdr interaction boundary; (2) an ordinary
+session launches one supported agent in the current Herdr workspace without Orchestrate; (3)
+every launch is previewed, no-focus, preserves the explicit working directory, and records
+the exact wrapper receipt; (4) Herdr verifies live kind, model, effort, permissions, cwd,
+workspace, tab, pane, and readiness before work is submitted; (5) all post-creation
+interaction uses Herdr prompt/wait/read/input and owned cleanup; (6) no private vendor/model
+roster, no silent substitution; (7) Orchestrate consumes the shared surface and removes its
+duplicate implementation where ownership transfers; (8) #776 is implemented against this
+ownership boundary; (9) the plugin is released in `infiquetra-claude-plugins` before its port
+begins; (10) the Agent Plugins port is tracked in infiquetra-agent-plugins#22 (linked
+sub-issue) and does not block this issue once Claude-side criteria are met; (11) a live smoke
+test launches one independent Codex reviewer at explicit extra-high reasoning without
+changing operator focus, verifies through Herdr, and cleans up only that owned session.
+Verification: `uv sync --all-extras`; `uv run pytest plugins/agent-launcher/tests
+plugins/orchestrate/tests`; `uv run ruff check plugins/agent-launcher plugins/orchestrate`;
+`uv run mypy plugins/agent-launcher plugins/orchestrate`; `uv run pytest`; plus the live
+named no-focus Herdr smoke session with readback receipts. Stop conditions (leaf, verbatim):
+stop before launch if the wrapper dry run does not resolve the requested working directory
+and current Herdr workspace; stop before prompting if Herdr cannot verify the requested
+agent kind, model, effort, permissions, pane, and readiness; stop rather than silently
+substituting an unavailable agent or launch setting; stop cleanup if ownership of the target
+session cannot be proven; the port-representability stop transfers to
+infiquetra-agent-plugins#22 with the port.
 
 ### U7. #812 — Stage/Status corrections through mission-control (lane S, S1)
 
@@ -462,20 +573,27 @@ corrections through the existing narrow `flow set-field` operation, with the fie
 the operation, its authorization, and its retry identity; a static guard proves no direct
 composition remains.
 
-**Smallest viable fix (KTD3):** the inventory step is expected to confirm the planning
-finding — zero direct GraphQL Stage/Status writes in saga; the five writer-invocation sites
-(`outcome_board_sync.py:370`, `outcome_reconcile.py:461`, `reconcile_controller.py:219`,
-`:269`, and the shared mechanism at `board_progression.py:230`) all terminate in
-`default_board_writer` → `sdlc_manager.py flow set-field --field Status`
-(`board_progression.py:429-442`), and no Stage write exists. The work is therefore:
-(1) record the inventory as the leaf's step-1 deliverable; (2) scope the saga submission seam
-to the two fields by name — the writer rejects any field other than Stage or Status, and the
-field-named op-kind pair (`set-field-status` existing; `set-field-stage` added beside it in
-the certificate registry, mirroring `reversibility_certificate.py:62`) carries the field
-through operation, authorization, and retry identity; (3) retire nothing beyond asserting
-none of the hypothesized direct composition exists; (4) land the guards and round-trip tests.
-Mission-control's set-field surface changes only if the field-named identity needs tightening
-on its side — no new operation, no generic intake.
+**Smallest viable fix (KTD3, rewritten per F3/F4):** the inventory step records the planning
+finding — zero direct GraphQL Stage/Status writes in saga; the *Status set-field* writes
+funnel through `default_board_writer` → `sdlc_manager.py flow set-field --field Status`
+(`board_progression.py:428-442`), while the writer's other op-kinds (`sub-issue-close`,
+`sub-issue-reopen`, `issue-progress-comment`, `issue-label-add`/`-remove`) are unrelated
+board writes that the leaf explicitly leaves untouched. **No Stage project field exists on
+Operations, Asgard, or CAMPPS** (live `flow field-options` receipt, 2026-08-25 — F3). The
+work is therefore: (1) record the inventory, including the live field-list receipt, as the
+leaf's step-1 deliverable; (2) constrain only the *set-field* seam by field name — a
+set-field submission naming any project field other than Status is rejected (and other than
+Stage if a Stage field ever exists), with the field name carried through operation,
+authorization, and retry identity; **no `set-field-stage` op-kind and no Stage field are
+created** — dead API surface for a nonexistent field (F3), and no clamp on the writer's
+non-set-field op-kinds (F4); (3) retire nothing beyond asserting none of the hypothesized
+direct composition exists; (4) land the static guard (covering BOTH fields: no direct Status
+write and no write to a field named Stage anywhere in saga) and the round-trip tests. The
+leaf's Stage-side live-check acceptance is satisfied as a documented substitution: the
+static guard proves no Stage write exists, and the field-options receipt proves no Stage
+field exists to correct — recorded in the PR body. Mission-control's set-field surface
+changes only if the field-named identity needs tightening on its side — no new operation,
+no generic intake.
 
 **Mechanism reused:** `board_progression.authorize_and_write` and its certificate gate
 (default-GATE allowlist in `plugins/saga/scripts/reversibility_certificate.py:292`), the
@@ -495,14 +613,29 @@ new safety machinery beyond the existing certificate gate.
 no saga call site composes a direct board Stage or Status write; every surviving reference to
 the write utilities is submission-path. `plugins/mission-control/tests/` (`-k "set_field or
 correction"`) — an in-scope correction round-trips through `flow set-field` with the field
-name present in operation, authorization, and retry identity; a submission naming any other
-field is rejected. `plugins/mission-control/tests/` (`-k certificate`) — existing certificate
-gates unchanged and still enforcing. Live verification per the leaf: one Stage and one Status
-correction on a scratch issue, each executed by mission-control's set-field with the
-certificate gate engaged.
+name present in operation, authorization, and retry identity; a set-field submission naming
+any other project field is rejected. `plugins/mission-control/tests/` (`-k certificate`) —
+existing certificate gates unchanged and still enforcing. Live verification (F3
+substitution): one live **Status** correction on a scratch issue executed by
+mission-control's set-field with the certificate gate engaged; the Stage live-check is
+substituted by the static no-Stage-write guard plus the field-options receipt, disclosed in
+the PR.
 
 **Predeclared lenses:** always-on four + `reliability` (retry identity and idempotency
-semantics of the write seam are acceptance-bearing).
+semantics of the write seam are acceptance-bearing). (F9 note: `api-contract` is skipped
+because no new op-kind ships under the F3 disposition.)
+
+**Leaf contract (#812, pasted with substitutions — F5 repair):** Acceptance criteria: (1)
+`uv run pytest tests/test_saga_single_writer_guard.py -v` passes — no direct Stage write AND
+no direct Status write remains in saga; every surviving reference to the write utilities is
+submission-path only; (2) `uv run pytest plugins/mission-control/tests/ -k "set_field or
+correction" -v` passes — submissions carry the field name in operation, authorization, and
+retry identity; a non-Status (non-Stage) set-field is rejected; (3) `uv run pytest
+plugins/mission-control/tests/ -k "certificate" -v` passes — certificate gates unchanged and
+enforcing. Verification: `uv run pytest tests/test_saga_single_writer_guard.py
+plugins/mission-control/tests/ -v`; then one live Status correction end-to-end on a scratch
+issue *(Stage live-check substituted per F3 — no Stage field exists; receipt attached)*.
+Stop conditions: none in the leaf.
 
 ### U8. #776 — retire the saga external-engine transport (lane S, S2; after O3, serialize S1)
 
@@ -554,7 +687,26 @@ metadata.
 **Predeclared lenses:** always-on four + `reliability` (halt-not-fallback paths; the
 half-migrated-stage failure mode the leaf pre-mortems) + `agent-usability` (five stage
 skills' instruction text changes steer agent behavior) + `api-contract` (the
-`review_result.v1` seam and the orchestrate refusal contract).
+`review_result.v1` seam and the orchestrate refusal contract). (S2 note: do not add a fourth
+conditional.)
+
+**Leaf contract (#776, pasted — F5 repair):** Acceptance criteria: (1) `rg -n
+"engine_session_runner" plugins/saga` — no launch-path reference remains; any surviving
+mention is explicitly bounded migration/deprecation text; (2) `uv run pytest tests/ -k
+"engine or review_transport" -q` — the integration regression passes (controller plus
+reviewer seat both via Orchestrate-owned named Herdr sessions, one typed `review_result.v1`,
+no duplicate review) and the mutation guard rejects a plain-prompt or direct-launch reviewer
+before session creation; (3) `rg -n "engine-registry|engine-prefs" plugins/saga
+plugins/orchestrate` — no session-launch authority outside the Orchestrate run plan and
+persisted run record; retained capability metadata explicitly non-transport; (4) every
+Required-behavior bullet implemented or carrying a written bounded-migration note in the PR
+body. Verification: the two `rg` sweeps; `uv run pytest tests/ -k "engine or
+review_transport" -q`; `uv run pytest tests/ -q`. Stop conditions (leaf, verbatim): stop
+before launching when a reviewer is not represented in the Orchestrate run record; stop
+before submitting work when Herdr cannot verify the requested vendor, model, effort,
+worktree, and pane; stop rather than falling back to the legacy external-engine runner or
+inventing a custom review; block landing and publication until the official Saga typed
+result is terminal and accepted.
 
 ### U9. #778 — conditional-lens operator approval in Code Review (lane S, S3; serialize S2)
 
@@ -603,6 +755,19 @@ about only the delta.
 **Predeclared lenses:** always-on four + `agent-usability` (the change is agent-facing
 instruction text plus an interaction contract agents must follow unattended).
 
+**Leaf contract (#778, pasted — F5 repair):** Acceptance criteria: (1) `uv run pytest
+tests/test_lens_roster.py -q` — the four always-on lenses are pinned and cannot be silently
+omitted (removing any one fails); (2) `uv run pytest tests/ -k lens -q` — no conditional-lens
+`Agent` call occurs without an approval record bound to the reviewed commit and cycle; a
+caller- or Orchestrate-provided selection is honored without a duplicate question; an
+unchanged repair cycle does not re-ask; a materially changed diff asks once about only the
+delta; (3) `rg -n "always-on" plugins/saga/skills/code-review/SKILL.md` — the skill states
+the automatic always-on set and the one batched conditional-lens question
+(accept-recommended / always-on-only / customize) with the pause-on-no-answer rule.
+Verification: the two pytest commands. Stop conditions: none in the leaf (required behavior
+8 — pause with no conditional launches on dismissal/no answer — is the in-skill stop). (F13
+correction: the judgment-selection text sits at `code-review/SKILL.md:48-51` and `:218-231`.)
+
 ### U10. #808 — Claude Code Workflow backend fit decision (lane D, D1; gate G1)
 
 **Goal:** an evidence-backed operator decision — keep / narrow / replace / retire — on saga's
@@ -610,23 +775,27 @@ cc-workflows backend and its embedded verifier panels, recorded in
 `docs/engineering-journal/DECISIONS.md`, then implemented or delegated to dependency-aware
 follow-ups. Decision-first: current behavior is preserved until the operator rules.
 
-**Smallest viable fix:** two phases. **Phase A (evidence, read-only, starts at run start):**
-inventory every producer and consumer per the leaf's sweep
+**Smallest viable fix (rewritten per F2 — G1 is resolved: NARROW,
+issuecomment-5405414716):** two phases, no HALT for a made decision. **Phase A (evidence,
+read-only, starts at run start):** inventory every producer and consumer per the leaf's sweep
 (`rg -n "cc-workflows-ultracode|Workflow\(|readonly-verifier|verify panel" plugins/saga
 docs/plans docs/work-sessions`; planning baseline drifted already — `docs/plans/` now holds
 20 committed `*-spec.json` files against the leaf's recorded 16, so the unit re-counts at the
 pin); quantify observed unique findings, false halts, retries, token/session cost, and
-operational failures with durable work-session evidence links; draft the DECISIONS entry
-presenting all four options with migration cost, compatibility impact, and residual risk;
-then **HALT at G1** with the contract's park shape — a non-terminal artifact (draft PR or
-decision-record comment), linked `Relates to #808`, never a closing keyword, stating the
-needed decision and the no-decision consequence. **Phase B (post-ruling, serialize S2 for the
-shared work-skill text):** implement the selected decision in
-`plugins/saga/skills/plan/SKILL.md`, `plugins/saga/skills/work/SKILL.md`,
-`plugins/saga/references/execution-spec.md`, and `execution_spec.py`/its tests only if the
-ruling changes runtime behavior — or file dependency-aware follow-up issues whose combined
-acceptance criteria fully implement it. If no ruling arrives, the run parks #808 (and
-therefore #708) awaiting-operator; 9/11 closed is a successful outcome.
+operational failures with durable work-session evidence links; write the DECISIONS entry as
+**validation of the recorded NARROW ruling** — the entry presents the evidence, cites
+keep/replace/retire as considered-and-ruled-out by the operator's comment (not as an open
+menu), and records the ruling's terms: Claude Code Workflows remain only explicitly invoked
+task-local mechanisms inside Herdr-managed sessions, never a default/automatic Saga backend,
+never a generic interchangeable execution backend. **Phase B (serialize S2 for the shared
+work-skill text):** implement the smallest truthful narrowed shape — `plugins/saga/skills/plan/SKILL.md`
+and `plugins/saga/skills/work/SKILL.md` text making explicit invocation the only path to a
+Claude Code Workflow (no default/automatic backend selection, no silent substitute, no
+backend-switching abstraction), `plugins/saga/references/execution-spec.md` and
+`execution_spec.py`/its tests only if runtime behavior must change to enforce that — or file
+dependency-aware follow-up issues whose combined acceptance criteria fully implement it.
+HALT only if the evidence proves the narrowed shape internally contradictory or impossible;
+that HALT returns to the operator with the contradiction, not with the four-way menu.
 
 **Mechanism reused:** the engineering journal as the decision record (this unit is the
 contract's enumerated DECISIONS writer); the existing regression suites
@@ -635,9 +804,9 @@ oracle.
 
 **New moving part:** none in phase A. Phase B's shape is the ruling's to define.
 
-**Rejected alternative:** pre-deciding the backend's fate in this plan — G1 exists precisely
-because that is the operator's call; the plan constrains only the evidence shape and park
-mechanics.
+**Rejected alternative:** re-presenting the four-way choice the operator already ruled on
+(F2 — parking #808 and #708 for a decision already made); building a mechanism-neutral
+backend-switching abstraction (prohibited by the ruling's own terms).
 
 **Correction carried in the brief:** the leaf's verification names
 `python3 scripts/check_docs.py`, which does not exist in the current tree; the unit runs the
@@ -654,8 +823,30 @@ Work cannot silently select an unsupported backend after implementation
 **Predeclared lenses:** for the decision-record PR: always-on four + `documentation-clarity`
 (the deliverable is a decision document read by a future operator). For a phase-B
 implementation diff in this run: always-on four + `api-contract` (execution-spec surface
-contract). Any other lens requires returning to the operator — which the G1 ruling
-interaction already provides.
+contract) + `agent-usability` (F9, S2-validated: the phase-B diff is plan/work SKILL.md
+instruction text agents follow). Any other lens requires returning to the operator.
+
+**Leaf contract (#808, pasted with substitutions — F5 repair):** Acceptance criteria: (1)
+the sweep `rg -n "cc-workflows-ultracode|Workflow\(|readonly-verifier|verify panel"
+plugins/saga docs/plans docs/work-sessions` — every producer, executor, generated artifact,
+and committed spec it surfaces appears in the decision record's inventory (re-counted at the
+pin; leaf baseline 37 panels / 16 specs is stale); (2) `grep -n "Claude Code Workflow"
+docs/engineering-journal/DECISIONS.md` — a decision entry comparing the backend with Herdr
+and Orchestrate responsibilities in concrete operating scenarios; (3) the entry quantifies
+unique findings, false halts, retries, token/session cost, and operational failures with
+durable evidence links; (4) the entry records the options and the explicit operator ruling
+*(substitution per G1: the standing NARROW ruling issuecomment-5405414716 is cited as the
+recorded decision — the four-way menu is not re-presented)*; (5) the selected decision is
+implemented or dependency-aware follow-ups exist — `gh issue list --repo
+infiquetra/infiquetra-claude-plugins --search "cc-workflows in:title,body" --state open`
+names them; (6) `gh issue view 787 --json state -q .state` returns `CLOSED`, #787 and its
+children unchanged; (7) `uv run pytest tests/test_saga_execution_spec.py
+tests/test_saga_plugin.py -q` green; (8) documentation checks clean *(substitution: `python3
+scripts/check_docs.py` does not exist — run `python3 scripts/lint_journal_order.py`,
+`uv run python scripts/changelog_heading_lint.py` where applicable, and `git diff --check`,
+noted in the evidence)*. Verification: the sweep, the pytest commands, and the substituted
+documentation checks. Stop conditions: preserve current behavior until the recorded ruling's
+implementation lands; HALT only on internal contradiction of the narrowed shape.
 
 ### U11. #708 — emitter engine-dispatch opts inert in the cc-workflows runtime (lane D, D2; after D1 ruling; gate G3)
 
@@ -663,19 +854,23 @@ interaction already provides.
 runtime or rejected loudly at emit time — never silently dropped so an engine unit runs as a
 native Claude subagent.
 
-**Smallest viable fix (contingent on the G1 ruling; KTD5):** the live defect is in
-`_agent_opts` at `plugins/saga/scripts/execution_spec.py:2682-2694` — an engine-routed unit
-emits `dispatch:`/`engine:`/`verifiability:` opts keys the cc-workflows runtime ignores and
+**Smallest viable fix (rewritten per F1 — G3 is resolved: NARROW,
+issuecomment-5405419292; KTD5):** the live defect is in `_agent_opts` at
+`plugins/saga/scripts/execution_spec.py:2682-2694` — an engine-routed unit emits
+`dispatch:`/`engine:`/`verifiability:` opts keys the cc-workflows runtime ignores and
 carries no `model`/`effort` (the `else` branch adds them only for non-engine units); the
 `// external-engine dispatch:` lines the emitter writes (`execution_spec.py:3097`, `:3122`,
-`:3162`, `:3319`, `:3896`) are JS comments, visible but inert. If the ruling keeps or narrows
-the backend with an engine surface: add emit-time validation that rejects opts keys the
-runtime does not honor (named offending key), emit the chaperone form for engine units —
-explicit `model`/`effort` from the spec's tier plus a prompt block driving the guarded
-wrapper (`agy_delegate.py` / `codex_delegate.py`) with full model ids and the
-no-substitution/fail-loud rule — and enforce the full-id rule at emit. If the ruling removes
-the engine-dispatch surface: park with the evidence; the close-as-mooted vs. narrowed-fix
-disposition returns to the operator (G3) — never closed unilaterally.
+`:3162`, `:3319`, `:3896`) are JS comments, visible but inert. The fix is **fail-loud
+emit-time validation only**: an execution spec containing an external-engine unit, or opts
+keys the cc-workflows runtime does not honor, is **rejected at emit** with a named,
+actionable `SpecError` (the existing validator seam) telling the operator to route
+cross-vendor work through Herdr/Orchestrate sessions instead. Never a silent fallback to a
+native Claude subagent. **Prohibited by the ruling:** chaperone-wrapper prompts,
+model/effort bridging, alias translation, long-running engine process management, or any
+other cross-vendor dispatch surface in the emitter — Herdr and Orchestrate own cross-vendor
+sessions. The leaf's chaperone-shaped acceptance items are satisfied as documented
+substitutions: the reject path covers every case the chaperone form would have handled,
+including bare model aliases (an engine unit fails at emit regardless of alias form).
 
 **Mechanism reused:** the spec validator's existing HALT-not-degrade posture (emit-time
 `SpecError` machinery in `execution_spec.py`) as the home for opts-key validation; the
@@ -692,13 +887,30 @@ workflow-lease contract (reserve/attest/renew/release; zero dispatch code) — t
 is `execution_spec.py` (KTD5). The unit re-anchors at its pin and records the correction in
 its PR body.
 
-**Test scenarios:** `tests/test_saga_execution_spec.py` — an engine unit emits the honored
-chaperone form (model/effort + wrapper-driving prompt) or fails at emit with a named error;
-a spec carrying opts keys the runtime does not honor fails at emit naming the key; a bare
-model alias in an engine unit fails at emit.
+**Test scenarios:** `tests/test_saga_execution_spec.py` — an execution spec carrying an
+external-engine unit fails at emit with a named actionable error (no chaperone form is
+emitted); a spec carrying opts keys the runtime does not honor fails at emit naming the key;
+no code path emits inert engine opts or falls back silently to a native Claude subagent
+(mutation-tested); a bare model alias in an engine unit fails at emit via the same reject
+path.
 
 **Predeclared lenses:** always-on four + `api-contract` (the fix is a spec→runtime options
-contract made explicit and validated).
+contract made explicit and validated) + `reliability` (F9, S2-validated: post-G3 the whole
+unit is fail-loud versus silent native fallback).
+
+**Leaf contract (#708, pasted with substitutions — F5 repair):** Acceptance criteria: (1)
+`uv run pytest tests/test_saga_execution_spec.py -q` — emit-time tests prove an engine unit
+cannot emit inert dispatch opts *(substitution per G3: the honored form is rejection with a
+named error; no chaperone alternative exists)*; (2) `rg -n "external-engine|dispatch"
+plugins/saga/scripts/execution_spec.py` — every engine dispatch site routes through
+emit-time validation; no silent-drop path remains *(substitution: the leaf's `rg` targeted
+`workflow_emitter.py`, which is now a workflow-lease module with zero dispatch code —
+KTD5)*; (3) a bare model alias in an engine unit fails at emit *(via the reject path — no
+alias translation added, per the ruling)*. Verification: `uv run pytest
+tests/test_saga_execution_spec.py -q`; `rg -n "external-engine|dispatch"
+plugins/saga/scripts/execution_spec.py`. Stop conditions: the G3 boundary itself — no
+chaperone, bridging, alias, or lifecycle machinery; reject-only; disposition questions
+beyond the narrowed shape return to the operator.
 
 ## Predeclared lens roster (run view)
 
@@ -713,12 +925,12 @@ locked by KTD7 — no addition without returning to the operator:
 | U3 | #407 | — | Self-contained lint script + fixtures; no conditional domain |
 | U4 | #725 | — (no diff expected) | Verify-and-close; contingency docs diff adds documentation-clarity |
 | U5 | #813 | documentation-clarity, agent-usability | Docs-only guidance prose in an agent-consumed SKILL.md |
-| U6 | #777 | api-contract, reliability, agent-usability | New launch/readback contract with two consumers; readiness/timeout failure modes; new agent-facing skill |
-| U7 | #812 | reliability | Retry identity and idempotency of the board-write seam are acceptance-bearing |
+| U6 | #777 | api-contract, reliability, agent-usability, adversarial | New launch/readback contract with two consumers; readiness/timeout failure modes; new agent-facing skill; process-launch / silent-substitution / unowned-cleanup failure modes (F9) |
+| U7 | #812 | reliability | Retry identity and idempotency of the board-write seam are acceptance-bearing (api-contract skipped — no new op-kind ships under F3) |
 | U8 | #776 | reliability, agent-usability, api-contract | Halt-not-fallback removal paths; five stage skills' instruction text; `review_result.v1` + refusal contract |
 | U9 | #778 | agent-usability | Agent-facing instruction text and an unattended interaction contract |
-| U10 | #808 | documentation-clarity (decision PR); api-contract (phase-B impl diff) | Decision document deliverable; contingent spec-surface change |
-| U11 | #708 | api-contract | Spec→runtime options contract validated at emit |
+| U10 | #808 | documentation-clarity (decision PR); api-contract + agent-usability (phase-B impl diff) | Decision document deliverable; phase-B edits agent-followed plan/work skill text (F9) |
+| U11 | #708 | api-contract, reliability | Spec→runtime options contract validated at emit; fail-loud versus silent native fallback (F9) |
 
 ## Scope Boundaries
 
@@ -753,8 +965,9 @@ port); any #808 phase-B follow-up issues the ruling spawns.
   bumps): serialized merges + re-bump at merge time + immediate reintegration (R3, R4).
 - **Journal ordering guard reds a leaf PR.** LEARNINGS/DECISIONS are append-only newest-first
   with a PR-only CI step; leaves place entries at the top and reintegrate after every merge.
-- **#708 starts before the G1 ruling exists.** Prevented by structure: U11 is `after: D1
-  ruling`; implementing #808's direction without the recorded ruling is a run stop condition.
+- **Lane D drifts from the recorded rulings.** Prevented: the U10/U11 briefs carry the G1/G3
+  NARROW rulings verbatim; chaperone machinery and a re-opened four-way menu are named
+  prohibitions; U11 remains `after: D1`.
 
 ## Run-level verification
 
@@ -765,24 +978,15 @@ closing GraphQL board sweep shows every closed leaf Status=Done and Objective
 outcomes, typed review outcomes with any cycle-cap residuals, parked items with gates,
 operator rulings, unexercised pools, and residual risks.
 
-## Open questions
+## Open questions — all resolved at S2/S3 (2026-08-25)
 
-Recorded for the operator / doc review; none blocks launch — each carries the disposition the
-run will take absent a contrary ruling.
-
-1. **No-PR closures for U1 (#792) and U4 (#725).** Both leaves are already resolved on
-   `origin/main` (PR #790 / commit `6396455a`; commit `84e53a72`). The plan closes them with
-   evidence comments and no PR, which departs from the contract's per-merged-leaf acceptance
-   shape (written before these facts were known). Disposition taken: verify-and-close per
-   KTD1/R10 — the smallest truthful action; minting no-op PRs was rejected as ceremony with
-   collision cost.
-2. **U2's Node dev dependency reaches `scripts/gate.sh` local runs.** The gate gains a
-   node-present precondition (exit 3 when missing) — accepted as the cost of a real parser
-   (KTD2). Flagged in case the operator prefers the check CI-only-with-advisory-gate-status;
-   note the gate's own contract forbids marking a CI-blocking step advisory, so that
-   preference would require making the CI step non-blocking too.
-3. **U8 retains `engine-registry.yaml` as non-transport metadata (KTD4).** The leaf's "no new
-   vendor/model registry anywhere" is read as prohibiting *launch authorities*, and the
-   retained file is demoted to explicitly non-transport calibration data (17 registry-side
-   consumers untouched). The doc review should confirm this reading; the alternative
-   (deleting the registry subsystem) exceeds every leaf's scope.
+1. **No-PR closures for U1 (#792) and U4 (#725).** RESOLVED (S2 F8 + S3): verify-and-close
+   per KTD1/R10 stands — evidence comments naming the historical fixing commits (PR #790 /
+   `6396455a`; `84e53a72`), no no-op PRs; the parent-AC substitution is disclosed in the
+   #814 closing comment.
+2. **U2's Node dev dependency reaches `scripts/gate.sh` local runs.** RESOLVED (S2 question 5
+   + F7): CI-blocking implies gate-blocking; the step is not advisory; Node missing locally
+   stays exit 3; no mermaid-cli fallback (F6) — infeasibility HALTs with evidence.
+3. **U8 retains `engine-registry.yaml` as non-transport metadata (KTD4).** RESOLVED (S2
+   question 4): confirmed — the leaf's prohibition covers launch authorities, not calibration
+   data with 17 script consumers; deleting the registry exceeds every leaf's scope.

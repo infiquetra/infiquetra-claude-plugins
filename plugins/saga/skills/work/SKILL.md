@@ -46,11 +46,13 @@ it leaves `lifecycle_phase=work` because `/qa` does not yet advance the phase (s
    at execution time; before PR-ready, `requires_hard_test_gate` change-kinds (behavior/security/infra/
    api/deployment/data) **block** unless overridden with a recorded rationale. Run tests against the
    merge base, not stale local state.
-4. **Recommend the backend, the operator confirms.** Compute the cheapest-correct execution backend
-   with `recommend_execution_backend()`, pre-select it, and always render the offer from the full
-   `backends` enumeration — all three, each `{backend, status, note}` — so escalation is one keystroke
-   and no backend is silently dropped (operator-choice §2). The recorded value is what the operator
-   picked.
+4. **Recommend a Saga backend, the operator confirms.** Compute the cheapest-correct Saga execution
+   backend (`inline` or `team-execution`) with `recommend_execution_backend()`, pre-select that Saga
+   backend, and render the default offer from those two. `cc-workflows-ultracode` is never a default
+   or automatic Saga backend and never a generic interchangeable execution backend (issue #808
+   NARROW). If the helper recommends it, **do not pre-select** it. Enter a Claude Code Workflow only
+   by **explicit invocation** (plan `backend: cc-workflows-ultracode`, or the operator names it in
+   this session). No silent substitute. The recorded value is what the operator picked.
 5. **Coordinate the PR loop, mutate only under confirmation.** Offer PR-open, review-request, and merge
    — each an explicitly confirmed git/`gh` op, **never silent**. Deploy mutation routes to
    `deploy`; issue comments and board moves route to `mission-control`.
@@ -268,19 +270,25 @@ Skip it silently when there is no issue -- a plan with no card has no Status to 
 which backend the plan chose, record it exactly as though the operator had picked it, and continue.
 The decision was already made — at plan time, by this operator — and asking again is not a second
 confirmation, it is the same question in a place where the answer may no longer be reachable: under
-`/orchestrate` this runs in a background tab where an unanswered offer waits forever.
+`/orchestrate` this runs in a background tab where an unanswered offer waits forever. Honouring
+`backend: cc-workflows-ultracode` is honouring an **explicit invocation** already recorded on the
+plan, not a default or automatic selection.
 
 Offer only when the field is absent, which is every plan written before this contract existed.
 
-Otherwise, offer the execution backend per `references/operator-choice.md` and the **runnable
-`recommend_execution_backend()` CLI call** in `references/execution-strategy.md`: compute the
-recommendation from the work shape, pre-select it, and render the offer from the full `backends`
-enumeration — all three backends, each `{backend, status, note}` (overlap offers both as `alternative`,
-and an unavailable ultracode entry is still named with its provenance note, never dropped), confirm with
-the operator, and record what they picked via `--orchestration-mode`. Also pass
-`--orchestration-recommended <the recommend_execution_backend() output>` so the tick records
-recommended-vs-chosen on this decision (R12 override-rate telemetry); `orchestration_operator_choice`
-auto-derives from `--orchestration-mode`, so the only added burden is naming the recommendation.
+Otherwise, offer the default Saga backends per `references/operator-choice.md` (as narrowed by
+issue #808) and the **runnable `recommend_execution_backend()` CLI call** in
+`references/execution-strategy.md`: compute the recommendation from the work shape, then pre-select
+`inline` or `team-execution` only. If `recommended` is `cc-workflows-ultracode`, **do not pre-select**
+it — pre-select `team-execution` when a gated size/risk/consensus trigger fired, otherwise `inline`.
+The default offer is those two Saga backends. `cc-workflows-ultracode` is never a default/automatic
+backend and never a generic interchangeable execution backend. Enter Phase 1.5 only when the
+operator **explicitly invokes** a Claude Code Workflow in this session (or the plan field already
+recorded that invocation). Confirm with the operator, and record what they picked via
+`--orchestration-mode`. Also pass `--orchestration-recommended <the recommend_execution_backend()
+output>` so the tick records recommended-vs-chosen on this decision (R12 override-rate telemetry);
+`orchestration_operator_choice` auto-derives from `--orchestration-mode`, so the only added burden is
+naming the recommendation. Never silently substitute a Workflow for `inline` or `team-execution`.
 
 Then mint/advance the work-thread saga to `lifecycle_phase=work`. Set `--issue-ref` (the issue case — the
 saga-spec §11 `issue_ref`-adoption write), `--plan-path` whenever a plan exists, and save **on the work
@@ -314,6 +322,11 @@ appends a tick to the existing directory rather than forking. Never `git add` th
 git-ignored, machine-local). Never set `next_round` — it is derived from `rounds_seen` (saga-spec §6.1).
 
 ### 1.5 cc-workflows-ultracode: re-emit and run, or HALT
+
+**Enter this section only after explicit invocation** — the plan already recorded
+`backend: cc-workflows-ultracode`, or the operator named it in this session. Never enter it because
+`recommend_execution_backend()` recommended it, never as a silent substitute for `inline` or
+`team-execution`.
 
 When `orchestration_mode == cc-workflows-ultracode`, the recorded backend choice **and** the saved spec
 are the opt-in — ultracode mode is not required to launch a Workflow. `/work` does **not** hand-roll

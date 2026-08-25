@@ -45,7 +45,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.140.0"  # #776: retire the external-engine transport
+    assert plugin_json["version"] == "0.141.0"  # #808: cc-workflows explicit-invocation only
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]
@@ -688,6 +688,34 @@ def test_work_engine_merge_contract() -> None:
     # qa/resume routing is advisory and lifecycle does not advance past work.
     assert "advisor" in corpus.lower()  # advisory qa/resume routing
     assert "lifecycle_phase" in corpus  # the phase the engine deliberately does not advance
+
+
+def test_plan_and_work_cc_workflows_explicit_invocation_only() -> None:
+    """#808 NARROW: Plan and Work cannot silently select a Claude Code Workflow.
+
+    Instruction-text contract (runtime helper unchanged this unit): the default
+    Saga offer is inline | team-execution; cc-workflows-ultracode is entered only
+    by explicit invocation, never as a default/automatic or interchangeable backend.
+    """
+    plan = _read(PLUGIN_ROOT / "skills" / "plan" / "SKILL.md")
+    work = _read(PLUGIN_ROOT / "skills" / "work" / "SKILL.md")
+    for doc, name in ((plan, "plan"), (work, "work")):
+        lowered = doc.lower()
+        assert "explicit invocation" in lowered or "explicitly invoked" in lowered, (
+            f"{name} must name explicit invocation as the only Workflow path"
+        )
+        assert "never a default" in lowered or "not a default" in lowered, (
+            f"{name} must say Claude Code Workflows are never a default Saga backend"
+        )
+        assert "interchangeable" in lowered, (
+            f"{name} must reject treating cc-workflows-ultracode as interchangeable"
+        )
+        assert "do not pre-select" in lowered or "never pre-select" in lowered, (
+            f"{name} must not pre-select cc-workflows-ultracode from the recommender"
+        )
+        assert "Never omit `cc-workflows-ultracode`" not in doc, (
+            f"{name} must not instruct agents to always offer cc-workflows-ultracode"
+        )
 
 
 def test_work_second_opinion_trigger_contract_is_operator_confirmed_and_non_gating() -> None:

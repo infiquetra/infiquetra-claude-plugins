@@ -1,6 +1,34 @@
 # Decisions — Infiquetra Claude Plugins
 ## 2026-08-25
 
+### Plan and Work default-offer only inline and team-execution (#808 phase B) {#cc-workflows-explicit-invocation-808}
+
+**Decision.** Implement the recorded NARROW ruling in `{#cc-workflows-backend-narrow-808}`.
+Saga Plan and Saga Work offer `inline` and `team-execution` as the default execution
+backends. `cc-workflows-ultracode` remains a recorded enum value and a runnable path
+only after **explicit invocation** (the operator names it, or a plan already recorded
+`backend: cc-workflows-ultracode`). It is never a default or automatic Saga backend
+and never a generic interchangeable execution backend. If `recommend_execution_backend()`
+returns that enum, Plan and Work **do not pre-select** it. No silent substitute.
+
+**Date:** 2026-08-25 · **Issue:** #808 · **Origin:** Run orch-2026-08-25-814, unit
+`u-808-impl`, plan section U10 phase B.
+
+**Why.** Phase A recorded the ruling and left the automatic three-backend offer as the
+residue. Instruction-text in `/plan` and `/work` (plus the operator-choice contract they
+cite) is the smallest truthful narrowed shape. The helper in `lifecycle_state.py` still
+enumerates three backends; changing that recommender is a follow-up, not required to
+stop silent selection.
+
+**Rejected.** Re-presenting keep / narrow / replace / retire. Building a mechanism-neutral
+backend-switching abstraction. Changing `execution_spec.py` emit-time engine-unit
+validation (that is #708 / unit u-708). Rewriting `recommend_execution_backend()` in this
+unit (runtime surface; instruction-text is the gate).
+
+**Revisit when.** A follow-up stops the helper recommending `cc-workflows-ultracode` as
+`recommended`, or sibling skills (`/loop`, `/code-review`, `/optimize`) still auto-offer
+it as a third interchangeable backend and that residue starts selecting Workflows again.
+
 ### Retire saga's external-engine transport; halt rather than falling back (#776) {#776-halt-not-fallback-transport}
 
 **Decision.** Delete `engine_offer.py`, `engine_session_runner.py`, and `external_only.py`.

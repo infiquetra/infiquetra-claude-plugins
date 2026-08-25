@@ -1,0 +1,67 @@
+{
+  "approval_state": "needs_operator_approval",
+  "created_at": "2026-08-24T09:18:21.419680+00:00",
+  "created_issue_number": 792,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/792",
+  "draft_path": "docs/sdlc-issue-drafts/2026-08-24-test-orchestrate-hygiene-help-text-assert-is-ter.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": "actionable",
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "/private/tmp/objective-curation-20260824/mutations/width-defect-body.md",
+    "Technical Risk": "low"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "low",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-08-24-test-orchestrate-hygiene-help-text-assert-is-ter.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "### Objective\n\nMake `tests/test_orchestrate_hygiene.py::test_clean_all_help_and_docstring_name_run_state_retention`\nwidth-stable so the saga pre-push gate stops failing on a rendering artifact in narrow terminal\nenvironments.\n\n### Intent\n\nThe test asserts the literal 48-character string `delete run state only when cleanup keeps no work`\nappears in `orchestrate clean --help` stdout. argparse wraps help text to the terminal width\n(`shutil.get_terminal_size`), so in environments narrower than roughly 62 columns the string wraps\nacross lines and the assert fails while the help content is correct and complete.\n\nConcrete consequence, observed twice on 2026-08-24 during the #787 orchestration run: the saga\npre-push gate hook (`pre_push_gate_hook.py`) runs the full pytest suite in the session-hook\nenvironment (~40 columns observed), so every `git push` from a Claude session or narrow Herdr pane\nis blocked by this single false positive \u2014 6,204/6,206 tests passing, one width wrap red. A\nlens-accepted review revision (`1d07a97a`, PR #788) had to be pushed from a plain shell pane\nout-of-band, and two full 7-minute gate runs were burned proving the same wrap. An in-scope failure\nmode with a nam",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/objective-curation-20260824/mutations/width-defect-body.md",
+    "ref": "/private/tmp/objective-curation-20260824/mutations/width-defect-body.md",
+    "title": "width-defect-body",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "test_orchestrate_hygiene help-text assert is terminal-width-brittle and blocks the pre-push gate in narrow environments",
+  "updated_at": "2026-08-24T09:18:41.790642+00:00"
+}

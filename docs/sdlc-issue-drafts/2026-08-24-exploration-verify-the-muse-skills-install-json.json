@@ -1,0 +1,72 @@
+{
+  "approval_state": null,
+  "created_at": "2026-08-24T04:00:44.051486+00:00",
+  "created_issue_number": 786,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/786",
+  "draft_path": "docs/sdlc-issue-drafts/2026-08-24-exploration-verify-the-muse-skills-install-json.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "exploration",
+  "labels": [
+    "exploration",
+    "research"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create exploration in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "exploration",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "/private/tmp/plugin-transcript-audit-20260823/issue-sources/8-muse-command-contract.md",
+    "Technical Risk": "low"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Asgard mode",
+      "Missing Asgard constraints",
+      "Missing Asgard risk",
+      "Missing Asgard mode metadata"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "low",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-08-24-exploration-verify-the-muse-skills-install-json.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "# [EXPLORATION] Verify the muse `skills install --json` contract before any plugin workflow depends on an `installed` field\n\n## Observed behavior\n\nDuring unifi plugin staging work (session 2cc86ea6-7168-4a88-bc8f-460f60524ff6 in\norch-s9-resync-unifi-201, 2026-08-22T22:17:32Z), a verification harness compared two\n`muse skills install \u2026 --json` runs from two differently named source directories and crashed with\n`KeyError: 'installed'` reading one of the two JSON outputs. The harness assumed an `installed` key\nthat at least one output did not carry. It is not established whether (a) muse's JSON contract\ndiffers from the assumption, (b) the two runs returned differently shaped JSON because one failed\nfor an unrelated reason, or (c) the harness's assumption was simply wrong \u2014 the two raw JSON\noutputs were not captured in the transcript window.\n\n## Operator impact\n\nMuse is an integrated vendor across this repo's surfaces (orchestrate's vendor table maps muse\nmodel/effort flags; `plugins/saga/scripts/engine_session_runner.py` and fleet-core's tier resolver\nreference it), and skills-staging onto muse is part of the cross-vendor port workflow. An\nunverified JSON-shape assumption in that pat",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/plugin-transcript-audit-20260823/issue-sources/8-muse-command-contract.md",
+    "ref": "/private/tmp/plugin-transcript-audit-20260823/issue-sources/8-muse-command-contract.md",
+    "title": "[EXPLORATION] Verify the muse `skills install --json` contract before any plugin workflow depends on an `installed` field",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "[EXPLORATION] Verify the muse skills install --json contract before workflows depend on an installed field",
+  "updated_at": "2026-08-24T04:00:56.518430+00:00"
+}

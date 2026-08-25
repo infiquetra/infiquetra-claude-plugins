@@ -1,0 +1,68 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-08-23T02:42:47.503032+00:00",
+  "created_at": "2026-08-23T02:42:50.762917+00:00",
+  "created_issue_number": 770,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/770",
+  "draft_path": "docs/sdlc-issue-drafts/2026-08-23-negative-delta-seconds-retry-after-yields-a-nega-3.md",
+  "handoff_maturity": "resume-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "resume-ready",
+    "Objective": "docs/sdlc-issue-drafts/2026-08-23-negative-delta-seconds-retry-after-yields-a-nega-2.md",
+    "Technical Risk": "low"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "low",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-08-23-negative-delta-seconds-retry-after-yields-a-nega-3.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "---\ntitle: negative delta-seconds Retry-After yields a negative wait time, contradicting the primitive's contract\nrepo: infiquetra-claude-plugins\ntype: defect\nteam: asgard\nproject: operations\nstatus: Shaping\nlabels: defect, needs-plan\nrisk: low\nhandoff_maturity: requirements-ready\n---\n\n# negative delta-seconds Retry-After yields a negative wait time, contradicting the primitive's contract\n\n### Objective\n# Negative delta-seconds Retry-After yields a negative wait time\n\n## Intent\n\n`parse_retry_after` in `plugins/fleet-core/scripts/fleet_commons/retry_backoff.py` returns a\nnegative number for a negative delta-seconds header, contradicting its own docstring, which\nstates: \"A date already in the past yields `0.0` \u2014 retry now, never a negative delay.\" The\nHTTP-date path honours that contract; the delta-seconds path does not. A caller that reduces\nthe hint to whole seconds to advise an operator therefore prints a negative wait time.\n\nObserved on fleet-core 0.25.2, CPython 3.12.13, with no network call:\n\n| `Retry-After` | `parse_retry_after` | operator sees |\n|---|---|---|\n| `-5` | `-5.0` | `Rate limited. Retry after -5 seconds` |\n| `-120` | `-120.0` | `Rate limited. Retry after -120 secon",
+    "inferred_maturity": "resume-ready",
+    "kind": "prepared-draft",
+    "path": "docs/sdlc-issue-drafts/2026-08-23-negative-delta-seconds-retry-after-yields-a-nega-2.md",
+    "ref": "docs/sdlc-issue-drafts/2026-08-23-negative-delta-seconds-retry-after-yields-a-nega-2.md",
+    "title": "negative delta-seconds Retry-After yields a negative wait time, contradicting the primitive's contract",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "negative delta-seconds Retry-After yields a negative wait time, contradicting the primitive's contract",
+  "updated_at": "2026-08-23T02:43:04.997336+00:00"
+}

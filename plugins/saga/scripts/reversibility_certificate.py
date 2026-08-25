@@ -505,6 +505,15 @@ def idempotency_key(
     """
     op_str = op_kind.value if isinstance(op_kind, OpKind) else str(op_kind)
     if op_str == OpKind.SET_FIELD_STATUS.value:
+        # RECIPE CHANGE (#812), disclosed: this inserts a segment, so every `set-field-status`
+        # ledger entry written under the old three-part recipe is orphaned — the next tick
+        # computes a key that does not match the file on disk and takes the write branch
+        # instead of the drift-check branch. Deliberately NOT migrated: the board-sync ledger
+        # is machine-local and regenerable, the write is idempotent (same option → same board
+        # state), and `set-field-status` is in `reconcile_controller.AUTO_CORRECT_OP_KINDS`,
+        # which re-drives the asserted value on drift anyway. The bounded cost is one tick of
+        # lost drift telemetry per pre-existing key (`status: corrected`, `drift_id`,
+        # `board_value_was` are not emitted that once), never a divergent board state.
         field_name = field if field else "Status"
         return f"{op_str}:{repo}#{issue_number}:{field_name}:{target_state}"
     return f"{op_str}:{repo}#{issue_number}:{target_state}"

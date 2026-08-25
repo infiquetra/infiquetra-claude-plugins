@@ -80,6 +80,13 @@ DRIFT_KINDS = ("status-drift", "external-close", "external-reopen")
 # deliberate, reviewed change — never an accident of a new op_kind slipping through.
 AUTO_CORRECT_OP_KINDS = frozenset({"set-field-status"})
 
+#: The one correction field :func:`default_live_reader` can actually read back — it calls
+#: ``outcome_github.board_status``, which has no field parameter, and :func:`_expected_live`
+#: likewise takes no field. #812 admits ``Stage`` to the certificate's correction allowlist by
+#: name, so the drift half of this controller must refuse to judge a field it cannot read.
+#: Widening this needs a field-aware live reader, not a bigger set.
+LIVE_READABLE_CORRECTION_FIELD = "Status"
+
 
 def _drift_id(kind: str, repo: str, number: int, saga_value: str, board_value: str) -> str:
     """Deterministic short id so a CLI can reference a drift across invocations."""
@@ -249,6 +256,17 @@ def reconcile_op(
     # (3) Present key → level-triggered drift check against live.
     if live_reader is None:
         return {"status": "skipped", "key": key, **base}
+    # Fail closed on a field this controller cannot read back (#812). Comparing the live Status
+    # against another field's target_state would manufacture a false drift, and because
+    # `set-field-status` is in AUTO_CORRECT_OP_KINDS that false drift would be auto-corrected —
+    # a write driven by a reading that was never about this field. Skip instead of guessing.
+    if field_kw is not None and field_kw != LIVE_READABLE_CORRECTION_FIELD:
+        return {
+            "status": "skipped",
+            "key": key,
+            "note": (f"live drift-check reads {LIVE_READABLE_CORRECTION_FIELD}, not {field_kw}"),
+            **base,
+        }
     live = live_reader(op_kind, repo, number)
     if not live:
         return {"status": "skipped", "key": key, "note": "live unreadable", **base}

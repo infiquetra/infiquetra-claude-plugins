@@ -673,6 +673,7 @@ def test_cli_numbers_arg_routes_to_bulk_set_field() -> None:
         [1, 2, 3],
         [("Status", "Idea")],
         "text",
+        correction=False,
     )
 
 
@@ -711,6 +712,7 @@ def test_cli_repeated_field_option_pairs_route_to_bulk_set_field() -> None:
         [1, 2],
         [("Status", "Idea"), ("Objective", "defects-claude-plugins")],
         "text",
+        correction=False,
     )
 
 
@@ -804,7 +806,9 @@ def test_correction_set_field_round_trips_field_in_identity() -> None:
     identity = payload["identity"]
     assert identity["operation"] == "set-field:Status"
     assert identity["authorization"] == "correction-field:Status"
-    assert identity["retry"] == "set-field:Status:infiquetra-claude-plugins#42:Verify"
+    # Byte-identical to reversibility_certificate.idempotency_key(...) so a mission-control
+    # write and the saga ledger entry that submitted it correlate on one string (#812 repair).
+    assert identity["retry"] == "set-field-status:infiquetra-claude-plugins#42:Status:Verify"
     mutation_vars = mock_gql.call_args_list[-1].args[1]
     assert mutation_vars["fieldId"] == "FLD_status"
 
@@ -916,3 +920,118 @@ def test_cli_correction_rejects_objective_before_bulk_write(
     assert exc.value.code == 1
     err = capsys.readouterr().err
     assert "rejects field 'Objective'" in err
+
+
+def test_bulk_correction_rejects_non_status_non_stage_in_process() -> None:
+    """The correction restriction lives in the function, not only in ``main()``.
+
+    An in-process caller of the bulk path must not reach a wider field set than the CLI
+    can, and the rejection must land before any project discovery or GraphQL mutation.
+    """
+    with (
+        patch.object(sdlc_manager, "_resolve_project_fields") as resolve,
+        pytest.raises(RuntimeError, match="rejects field 'Objective'"),
+    ):
+        sdlc_manager.flow_set_fields_bulk(
+            "operations",
+            "infiquetra-claude-plugins",
+            [1, 2],
+            [("Status", "Idea"), ("Objective", "defects-claude-plugins")],
+            "json",
+            correction=True,
+        )
+    resolve.assert_not_called()
+
+
+def test_bulk_correction_marks_the_result_and_carries_per_card_identity() -> None:
+    """A bulk correction is distinguishable from an operator write in the output stream."""
+    with (
+        patch.object(sdlc_manager, "_resolve_project_fields") as resolve,
+        patch.object(sdlc_manager, "_resolve_field_option") as resolve_option,
+        patch.object(sdlc_manager, "_project_items_by_number") as items,
+        patch.object(sdlc_manager, "_set_project_field_value"),
+        patch.object(sdlc_manager, "_out") as mock_out,
+    ):
+        resolve.return_value = {"Status": {"id": "FLD_status", "_project_id": "PVT_kwx"}}
+        resolve_option.return_value = {"id": "o_idea", "name": "Idea"}
+        items.return_value = {1: {"id": "PVTI_1"}, 2: {"id": "PVTI_2"}}
+        sdlc_manager.flow_set_fields_bulk(
+            "operations",
+            "infiquetra-claude-plugins",
+            [1, 2],
+            [("Status", "Idea")],
+            "json",
+            correction=True,
+        )
+
+    result = mock_out.call_args.args[0]
+    assert result["correction"] is True
+    assert [row["operation"] for row in result["identity"]] == [
+        "set-field:Status",
+        "set-field:Status",
+    ]
+    assert result["identity"][0]["retry"] == (
+        "set-field-status:infiquetra-claude-plugins#1:Status:Idea"
+    )
+    assert result["identity"][1]["retry"] == (
+        "set-field-status:infiquetra-claude-plugins#2:Status:Idea"
+    )
+
+
+def test_bulk_correction_identity_omits_a_card_that_failed_to_write() -> None:
+    """An identity block claims a write happened; a failed card must not appear in it."""
+
+    def _fail_card_two(_project_id: str, _field: dict, _option: dict, item: dict) -> None:
+        if item["id"] == "PVTI_2":
+            raise RuntimeError("card 2 is not on the project")
+
+    with (
+        patch.object(sdlc_manager, "_resolve_project_fields") as resolve,
+        patch.object(sdlc_manager, "_resolve_field_option") as resolve_option,
+        patch.object(sdlc_manager, "_project_items_by_number") as items,
+        patch.object(sdlc_manager, "_set_project_field_value", side_effect=_fail_card_two),
+        patch.object(sdlc_manager, "_out") as mock_out,
+        pytest.raises(RuntimeError, match="failed for 1 of"),
+    ):
+        resolve.return_value = {"Status": {"id": "FLD_status", "_project_id": "PVT_kwx"}}
+        resolve_option.return_value = {"id": "o_idea", "name": "Idea"}
+        items.return_value = {1: {"id": "PVTI_1"}, 2: {"id": "PVTI_2"}}
+        sdlc_manager.flow_set_fields_bulk(
+            "operations",
+            "infiquetra-claude-plugins",
+            [1, 2],
+            [("Status", "Idea")],
+            "json",
+            correction=True,
+        )
+
+    result = mock_out.call_args.args[0]
+    assert [row["retry"] for row in result["identity"]] == [
+        "set-field-status:infiquetra-claude-plugins#1:Status:Idea"
+    ]
+    assert [row["number"] for row in result["failed"]] == [2]
+
+
+def test_bulk_without_correction_is_unmarked_and_unrestricted() -> None:
+    """CONTROL: the operator bulk path still writes Objective and carries no correction block."""
+    with (
+        patch.object(sdlc_manager, "_resolve_project_fields") as resolve,
+        patch.object(sdlc_manager, "_resolve_field_option") as resolve_option,
+        patch.object(sdlc_manager, "_project_items_by_number") as items,
+        patch.object(sdlc_manager, "_set_project_field_value"),
+        patch.object(sdlc_manager, "_out") as mock_out,
+    ):
+        resolve.return_value = {"Objective": {"id": "FLD_obj", "_project_id": "PVT_kwx"}}
+        resolve_option.return_value = {"id": "o_def", "name": "defects-claude-plugins"}
+        items.return_value = {1: {"id": "PVTI_1"}}
+        sdlc_manager.flow_set_fields_bulk(
+            "operations",
+            "infiquetra-claude-plugins",
+            [1],
+            [("Objective", "defects-claude-plugins")],
+            "json",
+        )
+
+    result = mock_out.call_args.args[0]
+    assert "correction" not in result
+    assert "identity" not in result

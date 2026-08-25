@@ -2442,7 +2442,12 @@ def correction_identity(
     return {
         "operation": f"set-field:{field_name}",
         "authorization": f"correction-field:{field_name}",
-        "retry": f"set-field:{field_name}:{repo}#{number}:{option_name}",
+        # Byte-identical to saga's ledger key —
+        # ``reversibility_certificate.idempotency_key("set-field-status", repo, number,
+        # option_name, field=field_name)``. The two recipes must move together: a retry
+        # identity that does not match the ledger key cannot correlate a mission-control
+        # write with the saga tick that submitted it, which is the only reason to emit it.
+        "retry": f"set-field-status:{repo}#{number}:{field_name}:{option_name}",
     }
 
 
@@ -2570,12 +2575,23 @@ def flow_set_fields_bulk(
     numbers: list[int],
     assignments: list[tuple[str, str]],
     fmt: str,
+    *,
+    correction: bool = False,
 ) -> None:
-    """Set one or more single-select fields across multiple cards in one discovery pass."""
+    """Set one or more single-select fields across multiple cards in one discovery pass.
+
+    ``correction=True`` applies the same #812 restriction the single-card path applies:
+    only Status (and Stage by name) may be written, and the result is marked as a
+    correction carrying the per-assignment identity. Enforcing it HERE rather than only in
+    ``main()`` means an in-process caller cannot reach a wider field set than the CLI can.
+    """
     if not numbers:
         raise RuntimeError("numbers cannot be empty")
     if not assignments:
         raise RuntimeError("field assignments cannot be empty")
+    if correction:
+        for field_name, _option in assignments:
+            assert_correction_field(field_name)
 
     field_names = [field_name for field_name, _ in assignments]
     fields = _resolve_project_fields(project_name, field_names)
@@ -2629,7 +2645,7 @@ def flow_set_fields_bulk(
                 }
             )
 
-    result = {
+    result: dict[str, Any] = {
         "action": "set-field",
         "project": project_name,
         "repo": repo,
@@ -2639,6 +2655,24 @@ def flow_set_fields_bulk(
         "updated": updated,
         "failed": failed,
     }
+    if correction:
+        # A correction reported as an ordinary bulk write is indistinguishable from an
+        # operator Initiative/Objective write in the output stream. Mark it and carry the
+        # same identity block the single-card path emits, once per (card, assignment).
+        result["correction"] = True
+        # Built from ``updated``, not from ``numbers x assignments``: an identity block is a
+        # claim that a write happened under that identity, so a card that landed in ``failed``
+        # must not appear here. Reporting a requested-but-unwritten identity is the same class
+        # of defect as reporting a correction as an ordinary write.
+        result["identity"] = [
+            correction_identity(
+                field_name=row["field"],
+                repo=row["repo"],
+                number=row["number"],
+                option_name=row["option"],
+            )
+            for row in updated
+        ]
     _out(result, fmt)
     if failed:
         raise RuntimeError(
@@ -6354,9 +6388,6 @@ def main() -> None:
                     raise RuntimeError(
                         "flow set-field requires the same number of --field and --option values"
                     )
-                if getattr(args, "correction", False):
-                    for fname in args.field:
-                        assert_correction_field(fname)
                 if args.numbers is not None or len(args.field) > 1:
                     flow_set_fields_bulk(
                         args.project,
@@ -6364,6 +6395,7 @@ def main() -> None:
                         args.numbers if args.numbers is not None else [args.number],
                         list(zip(args.field, args.option, strict=True)),
                         fmt,
+                        correction=bool(getattr(args, "correction", False)),
                     )
                 else:
                     flow_set_field(

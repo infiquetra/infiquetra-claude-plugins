@@ -49,6 +49,38 @@ name in an issue title is not evidence the field exists; `flow field-options` is
 **Refs.** Issue #812; plan `docs/plans/2026-08-25-improve-claude-plugins-run-plan.md` U7;
 DECISIONS `{#812-correction-field-named-identity}`.
 
+### Parameterizing a write seam by field silently un-parameterizes its read-back half  {#812-field-blind-drift-read}
+
+**Context.** #812's code review of PR #826. The unit made `set-field-status` carry a field
+name through argv, certificate authorization, and the idempotency key, admitting `Status` and
+`Stage` by name. Every changed line was about the *write* direction.
+
+**Evidence.** `plugins/saga/scripts/reconcile_controller.py` — `default_live_reader` maps
+`set-field-status` to `outcome_github.board_status(ref, project=...)`, which takes no field
+argument, and `_expected_live(op_kind, target_state)` takes no field either. `set-field-status`
+is the sole member of `AUTO_CORRECT_OP_KINDS`.
+
+**Mechanism.** A level-triggered controller has two halves: assert a value, then read the live
+value back and correct the difference. Widening the write half from "the Status field" to "a
+named field" made the read half ambiguous without touching one line of it — the reader would
+have compared the live *Status* against a *Stage* target, called the mismatch drift, and
+auto-corrected it. The write direction is where the change is visible, so that is where review
+attention goes; the read direction fails silently and in the safe-looking direction (a write
+that "converges" the board).
+
+**Fix.** Fail closed rather than guess: `reconcile_controller.LIVE_READABLE_CORRECTION_FIELD`
+names the one field the live reader can actually read, and a present-key tick for any other
+allowlisted field skips the comparison with a named note instead of drift-correcting on it.
+Proven load-bearing by mutation — deleting the guard fails
+`test_present_key_skips_drift_check_for_a_field_the_live_reader_cannot_read`.
+
+**Generalizable rule.** When you add a discriminator to one side of a read-modify-write loop,
+grep the other side for the same discriminator before shipping. If the reader cannot take the
+discriminator, the loop must refuse to judge — never fall back to the old unparameterized read.
+
+**Refs.** Issue #812; PR #826 code review; DECISIONS `{#812-correction-field-named-identity}`;
+LEARNINGS `{#812-status-only-no-stage-field}`.
+
 ## 2026-08-24
 
 ### One unattended Orchestrate run closed the defects-claude-plugins Objective end to end  {#unattended-orchestrate-run-787}

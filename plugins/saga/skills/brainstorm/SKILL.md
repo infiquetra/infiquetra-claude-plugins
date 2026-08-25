@@ -56,18 +56,12 @@ error, or a dropped session is never consent — do not proceed on a default and
 answer. Ask one question at a time and read the decision from the operator's actual answer, never
 from a widget's raw return value.
 
-## Engine Offer
+## Reviewer-session transport
 
-Before offering an external-engine lane for brainstorming, run
-`python3 plugins/saga/scripts/engine_offer.py offer --stage brainstorm --repo-root . --attended`.
-If the helper reports `prompt_required`, this skill owns the `AskUserQuestion` or channel-inline
-prompt and then persists the selected preference with `engine_offer.py remember`. The offer is
-advisory only; it never dispatches, decides scope, or gates requirements.
-
-<!-- gate-record: id=brainstorm-engine-offer absence=HALT transport=ask-user-question -->
-The offer prompt rides the durable gate-record contract declared in Interaction rules (gate id
-`brainstorm-engine-offer-<run-id>`): open before prompting, satisfy on answer, `resolve-absent`
-on silence (`HALT`).
+Orchestrate owns cross-vendor session transport. Do not run `engine_offer.py` and do
+not launch `engine_session_runner.py`. `engine-registry.yaml` is capability metadata
+only. If a reviewer session is required and is not in the Orchestrate run record,
+HALT rather than inventing a custom review or falling back to the retired runner.
 
 ## Topic
 

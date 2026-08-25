@@ -45,9 +45,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert (
-        plugin_json["version"] == "0.139.8"
-    )  # #812: Status/Stage correction seam — field-named identity, static single-writer guard
+    assert plugin_json["version"] == "0.140.0"  # #776: retire the external-engine transport
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]
@@ -722,7 +720,7 @@ def test_work_second_opinion_trigger_contract_is_operator_confirmed_and_non_gati
         "Never auto-dispatch.",
         "zero runner calls",
         "Only Claude-owned final status/severity",
-        "A remembered `offload` preference is not a\nvalid trigger route",
+        "There is no persisted `.saga/engine-prefs.json` preference",
     ):
         assert boundary in corpus
 

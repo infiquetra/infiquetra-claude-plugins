@@ -81,46 +81,27 @@ answer, never from a widget's raw return value.
 Use repo-relative paths in every generated document. Absolute paths break portability across machines
 and worktrees. (The one exception is the saga `--review-paths` value — see Phase 5.)
 
-## Engine Offer
+## Reviewer-session transport
 
-Before offering an external-engine second opinion for code review, run
-`python3 plugins/saga/scripts/engine_offer.py offer --stage code-review --repo-root . --attended`.
-If the helper reports `prompt_required`, `/code-review` owns the `AskUserQuestion` or channel-inline
-prompt and persists the selected preference with `engine_offer.py remember`. The offer is advisory
-only; `/code-review` still verifies every finding and owns the typed outcome.
-On this stage the helper may also list `external-only`, which excludes the home vendor from
-the external-reviewer seat. If the remaining reviewers cannot meet quorum, halt and tell the
-operator — do not fall back to the excluded vendor. Under external-only the home vendor cannot
-be reached through the external-reviewer seat. Dispatch an accepted external reviewer through
-`plugins/saga/scripts/engine_session_runner.py` (a managed terminal session), not as a
-subagent. Select that runner with `select_review_runner`; under `external-only` admit the
-roster with `external_only.admit_external_only` first.
-The installed transport guarantee remains exact: Under external-only the home vendor cannot be reached
-through the external-reviewer seat. The in-session lens fan-out is governed by the consensus-panel
-roster, which is separate work. Code Review then maps that transport roster into the canonical lens
-roster before scoring; the transport sentence does not transfer consensus ownership.
-Launch and collect through the module's CLI, the same way the offer helper is invoked:
+Orchestrate owns every reviewer session. Do not launch or collect an external reviewer
+through `engine_session_runner.py`, `engine_offer.py`, or any other saga transport.
+Do not consult `engine-registry.yaml` as a launch authority — it is capability metadata
+only and cannot override the live Orchestrate/Herdr roster.
 
-```bash
-python3 plugins/saga/scripts/engine_session_runner.py launch \
-  --invocation-file <invocation.json> --repo-root . --stage code-review \
-  --mode <second-opinion|external-only> --home-vendor <vendor> --engine-id <engine> \
-  --claim-store .saga/second-opinion-claims.json
-python3 plugins/saga/scripts/engine_session_runner.py collect \
-  --handle-file <launch-stdout.json> --claim-store .saga/second-opinion-claims.json
-```
+When this review runs as an Orchestrate unit, the run record already names the
+review-controller and any `external-reviewer` seats (vendor, model, effort, worktree).
+Consume revision-bound evidence those seats return. If a requested reviewer is not in
+the Orchestrate run record, HALT — do not invent a custom review, do not fall back to
+the retired runner, and do not dispatch a subagent, hidden subprocess, or unowned
+terminal session as a substitute.
 
-The invocation file must include the same `request_digest` as the durable requested
-claim. Persist that claim before launch. Launch reserves the pending slot, starts
-the session, and prints a JSON object that collect can read as-is (handle fields
-are at the top level). A launch that returns `session_outcome=pending` has not
-finished. Collect later. Do not treat pending as died, and do not re-launch. Terminal `ran-empty` or
-`died` delivery produces `review_incomplete` without consuming a scoring cycle or fabricating a score.
+In a standalone `/code-review` (no Orchestrate run), the operator is the transport:
+ask them to add reviewer seats through Orchestrate `expand`/`go`, or proceed without
+an external seat. Never prompt via `.saga/engine-prefs.json`.
 
-<!-- gate-record: id=code-review-engine-offer absence=HALT transport=ask-user-question -->
-The offer prompt rides the durable gate-record contract declared in Interaction method (gate id
-`code-review-engine-offer-<run-id>`): open before prompting, satisfy on answer, `resolve-absent`
-on silence (`HALT`).
+The in-session lens fan-out (Explore/Task) is the consensus-panel roster, which is
+separate from reviewer-session transport. Code Review still owns scoring, consensus,
+and `review_result.v1`.
 
 ---
 
@@ -290,10 +271,9 @@ proceed with in-distribution knowledge.
 ### External whole-diff advisory seat
 
 The external-reviewer seat receives the full revision-bound diff and may discover findings no native lens
-raised. Code Review owns the reviewer identity, request digest, typed evidence, adjudication, and lifecycle;
-`engine_session_runner.py` supplies replaceable launch and collection transport. Select the runner through
-`engine_session_runner.select_review_runner`; a selector halt is visible `unavailable`, never a home-vendor
-session under `external-only`.
+raised. Code Review owns the reviewer identity, request digest, typed evidence, adjudication, and lifecycle.
+Orchestrate launches and collects that seat as a named Herdr session (`role: external-reviewer` through
+`expand`/`go`). Halt rather than falling back to the retired saga runner or inventing a custom review.
 
 The retired heading `Second-opinion point-out (after Stage A numbering)` and its single-finding scope do
 not govern new requests. The stable `#N` identifiers still survive deduplication and routing, while the external

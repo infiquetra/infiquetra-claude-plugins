@@ -21,6 +21,46 @@
 
 ## 2026-08-25
 
+### A guard keyed on prompt wording refuses the sanctioned path and admits the bespoke one  {#776-role-not-wording}
+
+**Context.** #776 replaced saga's transport with an Orchestrate guard that refused "bespoke
+reviews" by matching the task text `review this|the`. Code review of PR #831 ran the guard
+instead of reading it. A seat correctly declaring `role: external-reviewer` — the shape the
+same PR's docs prescribe — was refused for saying "review the diff", while an undeclared unit
+saying "review PR #831 for bugs" or "do a code review of the branch" was admitted.
+**Evidence.** PR #831; `orchestrate.py` `assert_review_transport`; the seat exemption
+`if is_reviewer_seat(unit): continue` sat as the loop body's last statement, where `continue`
+is a no-op, so it never applied. The regression test's seat task
+("advisory whole-diff findings…") was worded so it could not match the regex, so the happy
+path was never exercised at its boundary.
+**Mechanism.** Two requests with the same meaning and different words must get the same
+verdict, and no regex over free-form task text delivers that. The run record already carried
+a `role` field stating what each unit is; keying admission on that field decides the question
+the guard was actually asking.
+**Fix.** Exempt a declared seat before the bespoke-review branch; refuse a review-shaped unit
+that declares **no** role. Both directions pinned by tests, including the rephrasings that
+previously slipped through.
+**Generalizable rule.** When a change introduces a field that states intent, enforce policy on
+that field — a wording heuristic beside it will disagree with it, and a test authored in the
+same breath will be phrased to agree with the heuristic.
+**Refs.** LEARNINGS `#776-registry-is-not-transport`
+
+### A second launch registry will refuse a launchable reviewer  {#776-registry-is-not-transport}
+
+**Context.** During the 2026-08-23 Team Mimir publication review, the coordinator was told to
+run one official Saga Code Review with Claude Opus 5 and Grok 4.6. After a bespoke two-reviewer
+process was stopped, it followed saga external-engine guidance, consulted `engine-registry.yaml`,
+concluded Grok was not representable, and started reasoning about `engine_session_runner` instead
+of the live Herdr roster. Grok was installed and launchable.
+**Evidence.** Issue #776; `plugins/saga/scripts/engine_session_runner.py` (deleted);
+`plugins/saga/references/engine-registry.yaml` header now `NON-TRANSPORT METADATA`.
+**Mechanism.** Two launch authorities cannot stay consistent. The registry is calibration data;
+the live Orchestrate/Herdr roster is the only session-launch authority.
+**Fix (or queued).** #776 retires the transport trio and the engine-prefs seam; reviewer seats
+are named Orchestrate units.
+**Generalizable rule.** Capability metadata must be labeled non-transport, or a stale row will
+refuse a reviewer the machine can actually launch.
+**Refs.** DECISIONS `#776-halt-not-fallback-transport`
 ### Heading `{#slug}` is the journal's definition set; mentions and fragment links must resolve  {#journal-anchor-lint-407}
 
 **Context.** The ordering lint (#659) already walked LEARNINGS.md and DECISIONS.md, but nothing checked that a `{#slug}` was unique or that a citation pointed at a heading that exists. A duplicated slug or a dangling mention corrupts the citation graph without failing CI.

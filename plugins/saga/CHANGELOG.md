@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.140.0] - 2026-08-25
+
+### Removed
+
+- **Saga external-engine transport retired (#776).** `engine_offer.py`,
+  `engine_session_runner.py`, and `external_only.py` are deleted. Stage skills
+  (ideate, brainstorm, work, doc-review, code-review) no longer invoke them.
+  Orchestrate owns reviewer-session transport; saga keeps review policy (lenses,
+  scoring, consensus, `review_result.v1`). Halt rather than falling back to the
+  retired runner. `engine-registry.yaml` is retained as explicitly non-transport
+  capability metadata and cannot override the live Orchestrate/Herdr roster.
+  The `external_only_admitted` field on `review_result.v1` external advisory
+  reviews is ignored on load (bounded migration).
+
 ## [0.139.8] - 2026-08-25
 
 ### Fixed

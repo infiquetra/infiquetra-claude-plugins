@@ -21,6 +21,44 @@
 
 ## 2026-08-25
 
+### Run orch-2026-08-25-814: coordination learnings from the improve-claude-plugins run  {#814-run-coordination-learnings}
+
+**Context.** The eleven-leaf unattended orchestration under parent #814 closed all leaves
+with reviewed-green merges (typed records on PRs #823–#835) and surfaced four coordination
+mechanics no single unit's journal entry captures.
+**Evidence.** (1) Orchestrate driver 2.0.0 in both plugin caches refuses `expand`/`go` with
+"agent-launcher plugin not found" — the #777 refactor (PR #827) split the launcher into a
+plugin installed in neither `~/.claude` nor `~/.claude-company`; the run continued on the
+self-contained 1.20.7 it started with. (2) Two grok workers (u-778, u-708) pushed their
+branches fine but their sessions blocked `gh pr create`; the coordinator opened PRs #834/#835
+from the pushed heads. (3) The #792-class argparse width flake recurred in
+`tests/test_outcome_dispatcher.py` and blocked three gated pushes (bisected fail bands
+70/75/107/110/120); the reviews of PR #833 and PR #834 then width-proofed the same assertion
+independently and the two fixes conflicted at reintegration (main's `_despaced` form from
+PR #834 won; PR #833's rider yielded in merge 90a7197b). (4) GitHub refused
+`gh pr update-branch` on PR #831 as conflicting while a local ort merge of the same refs was
+clean (adjacent journal edits); the local merge c8d7580f pushed and CI passed.
+**Mechanism.** (1) A live run's driver and its on-disk state are one system: an installed
+plugin can self-update mid-run, so re-resolving "latest" mid-run silently swaps execution
+semantics. (2) A vendor session's permission auto-mode classifies `git push` and `gh pr
+create` independently — a push succeeding says nothing about PR creation. (3) Textwrap breaks
+on hyphens, so a flag name like `--host-capable` splits mid-token; raw substring asserts over
+argparse help are width-dependent in non-monotonic bands, and a defect that blocks several
+parallel processes invites redundant fixes that later collide. (4) GitHub's merge-conflict
+probe is more conservative than git's ort strategy — its refusal is not evidence a local
+merge will conflict.
+**Fix (or queued).** (1) Pin the driver at run start; recorded here plus the
+`AGENT_LAUNCHER_ROOT=<repo>/plugins/agent-launcher` escape hatch. (2) The park protocol
+gained the "blocked `gh pr create` after a successful push" variant beside PUSH-NEEDED.
+(3) Width-proof idiom shipped twice (kept form: `_despaced`, PR #834); a repo-wide sweep for
+remaining raw help-text asserts is a disclosed residual on #814. (4) Merge locally and push
+through the gate instead of trusting the update-branch refusal.
+**Generalizable rule.** In a multi-session run, anything discovered by more than one process
+concurrently — a blocking flake, a version collision — must be fixed once by the coordinator,
+not independently by each process; and every "latest" resolution (driver, plugin, version
+pin) belongs to run start, never mid-run.
+**Refs.** #814 closeout comment (full per-leaf record); PR #833 and PR #834 review records.
+
 ### Inert agent() opts plus a JS comment is a silent native fallback  {#708-inert-engine-opts-are-a-silent-fallback}
 
 **Context.** Issue #708: the saga execution-spec emitter wrote `dispatch: "external-engine"`,

@@ -284,6 +284,8 @@ LEARNINGS `{#one-transition-one-validator-433}`,
 `{#verify-panels-blind-to-uncommitted-tree}`,
 `{#broker-schema-forward-poisoning-616}`,
 `{#verdict-contract-has-three-prompt-surfaces}`.
+`{#verdict-contract-has-three-prompt-surfaces}`;
+work-session `docs/work-sessions/2026-08-25-issue-808-cc-workflows-backend-decision.md`.
 
 ## 2026-08-24
 

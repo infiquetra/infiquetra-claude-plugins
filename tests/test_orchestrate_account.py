@@ -333,7 +333,14 @@ class TestPostLaunchAccountVerification:
         monkeypatch.setattr(
             orchestrate,
             "live_agents",
-            lambda: [{"pane_id": "pane-1", "cwd": str(repo), "interactive_ready": True}],
+            lambda: [
+                {
+                    "pane_id": "pane-1",
+                    "cwd": str(repo),
+                    "interactive_ready": True,
+                    "agent": "claude",
+                }
+            ],
         )
 
         receipt = orchestrate.verify_unit_preflight(unit, "pane-1", ready=True)
@@ -373,7 +380,14 @@ class TestPostLaunchAccountVerification:
         monkeypatch.setattr(
             orchestrate,
             "live_agents",
-            lambda: [{"pane_id": "pane-1", "cwd": str(repo), "interactive_ready": True}],
+            lambda: [
+                {
+                    "pane_id": "pane-1",
+                    "cwd": str(repo),
+                    "interactive_ready": True,
+                    "agent": "claude",
+                }
+            ],
         )
 
         with pytest.raises(orchestrate.AccountMismatchError) as excinfo:
@@ -416,7 +430,14 @@ class TestPostLaunchAccountVerification:
         monkeypatch.setattr(
             orchestrate,
             "live_agents",
-            lambda: [{"pane_id": "pane-2", "cwd": str(repo), "interactive_ready": True}],
+            lambda: [
+                {
+                    "pane_id": "pane-2",
+                    "cwd": str(repo),
+                    "interactive_ready": True,
+                    "agent": "claude",
+                }
+            ],
         )
 
         with pytest.raises(orchestrate.AccountMismatchError):
@@ -464,7 +485,14 @@ class TestPostLaunchAccountVerification:
         monkeypatch.setattr(
             orchestrate,
             "live_agents",
-            lambda: [{"pane_id": "pane-3", "cwd": str(repo), "interactive_ready": True}],
+            lambda: [
+                {
+                    "pane_id": "pane-3",
+                    "cwd": str(repo),
+                    "interactive_ready": True,
+                    "agent": "claude",
+                }
+            ],
         )
 
         with pytest.raises(orchestrate.AccountMismatchError):
@@ -569,6 +597,7 @@ class TestCmdGoAccountIntegration:
                     "pane_id": "pane-1",
                     "cwd": worker_worktree[0] if worker_worktree else str(repo),
                     "interactive_ready": True,
+                    "agent": "claude",
                 }
             ],
         )
@@ -727,7 +756,9 @@ class TestStatuslineAccountEvidence:
         monkeypatch.setattr(
             orchestrate,
             "live_agents",
-            lambda: [{"pane_id": "pane-9", "cwd": str(repo), "interactive_ready": True}],
+            lambda: [
+                {"pane_id": "pane-9", "cwd": str(repo), "interactive_ready": True, "agent": "grok"}
+            ],
         )
 
         receipt = orchestrate.verify_unit_preflight(unit, "pane-9", ready=True)

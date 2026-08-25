@@ -80,6 +80,13 @@ DRIFT_KINDS = ("status-drift", "external-close", "external-reopen")
 # deliberate, reviewed change — never an accident of a new op_kind slipping through.
 AUTO_CORRECT_OP_KINDS = frozenset({"set-field-status"})
 
+#: The one correction field :func:`default_live_reader` can actually read back — it calls
+#: ``outcome_github.board_status``, which has no field parameter, and :func:`_expected_live`
+#: likewise takes no field. #812 admits ``Stage`` to the certificate's correction allowlist by
+#: name, so the drift half of this controller must refuse to judge a field it cannot read.
+#: Widening this needs a field-aware live reader, not a bigger set.
+LIVE_READABLE_CORRECTION_FIELD = "Status"
+
 
 def _drift_id(kind: str, repo: str, number: int, saga_value: str, board_value: str) -> str:
     """Deterministic short id so a CLI can reference a drift across invocations."""
@@ -211,11 +218,27 @@ def reconcile_op(
             **base,
         }
 
-    key = cert.idempotency_key(op_kind, repo, number, target_state)
+    field_kw: str | None = None
+    if op_kind == "set-field-status":
+        field_kw = str((payload or {}).get("field") or "Status")
+        base["field"] = field_kw
+        if cert.authorize_correction_field(field_kw) != cert.AUTHORIZED:
+            return {
+                "status": "gated",
+                "halt": True,
+                "halt_reason": f"certificate-gate:correction-field:{field_kw}",
+                "verdict": "GATE",
+                **base,
+            }
+
+    key = cert.idempotency_key(op_kind, repo, number, target_state, field=field_kw)
     ledger_file = ledger_dir / bp._safe_ledger_name(key)  # noqa: SLF001
 
     # (2) Absent key → normal idempotent write / crash-safe resume, via the shared write mechanism.
     if not ledger_file.exists():
+        pay: dict[str, Any] = dict(payload or {})
+        if field_kw is not None:
+            pay.setdefault("field", field_kw)
         return bp.authorize_and_write(
             op_kind,
             repo,
@@ -225,7 +248,7 @@ def reconcile_op(
             ledger_dir=ledger_dir,
             now=now,
             max_attempts=max_attempts,
-            payload=payload,
+            payload=pay or payload,
             extra=extra,
             write_once=wo,
         )
@@ -233,6 +256,17 @@ def reconcile_op(
     # (3) Present key → level-triggered drift check against live.
     if live_reader is None:
         return {"status": "skipped", "key": key, **base}
+    # Fail closed on a field this controller cannot read back (#812). Comparing the live Status
+    # against another field's target_state would manufacture a false drift, and because
+    # `set-field-status` is in AUTO_CORRECT_OP_KINDS that false drift would be auto-corrected —
+    # a write driven by a reading that was never about this field. Skip instead of guessing.
+    if field_kw is not None and field_kw != LIVE_READABLE_CORRECTION_FIELD:
+        return {
+            "status": "skipped",
+            "key": key,
+            "note": (f"live drift-check reads {LIVE_READABLE_CORRECTION_FIELD}, not {field_kw}"),
+            **base,
+        }
     live = live_reader(op_kind, repo, number)
     if not live:
         return {"status": "skipped", "key": key, "note": "live unreadable", **base}
@@ -258,9 +292,11 @@ def reconcile_op(
 
     # Auto-correct: the certificate AUTHORIZED (checked above) and op is in the allowlist — re-drive
     # the saga-asserted target_state with the same bounded retry the writer path uses.
-    pay: dict[str, Any] = dict(payload or {})
+    pay = dict(payload or {})
     if target_state and "target_state" not in pay:
         pay["target_state"] = target_state
+    if field_kw is not None:
+        pay.setdefault("field", field_kw)
     last_exc: Exception | None = None
     attempts = 0
     for _ in range(max_attempts):

@@ -143,7 +143,7 @@ If a previous gate run timed out (e.g. killed at 600s with exit 143), was interr
    live gate runs in your other worktrees.
 3. **Clean state & re-enter**: Ensure the log directory is clean or specify a new `GATE_LOG_DIR=/tmp/gate-run`, then restart the backgrounded gate run.
 
-Exit codes: `0` green · `1` a blocking step failed · `2` coverage is short of `ci.yml` · `3` precondition failed (missing dev dependencies or unwritable log directory).
+Exit codes: `0` green · `1` a blocking step failed · `2` coverage is short of `ci.yml` · `3` precondition failed (missing dev dependencies, missing Node/npm for the Mermaid syntax check, or an unwritable log directory).
 
 ### Gate Coverage Contract
 

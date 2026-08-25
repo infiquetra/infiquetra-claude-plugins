@@ -100,6 +100,13 @@ PASS_RULES = ("majority", "unanimous")
 # and ``divergence`` want an expensive one (adversarial verification IS the product).
 ENGINE_INTENTS = _tier_palette.ENGINE_INTENTS
 
+# Claude Code Workflows agent() keys the runtime actually honors. dispatch/engine/
+# verifiability are authored on external-engine units but the runtime ignores them;
+# emitting them would silently run a native Claude subagent (#708).
+WORKFLOW_HONORED_AGENT_OPT_KEYS = frozenset(
+    {"label", "model", "effort", "schema", "agentType", "isolation"}
+)
+
 _UNIT_ID_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*$")
 _JS_RESERVED_IDENTIFIERS = frozenset(
     {
@@ -956,6 +963,50 @@ def _validate_external_engine_selector(
         engine_keys = {entry.key for entry in registry.engines}
         if engine not in engine_keys:
             raise SpecError(f"{where}: unknown engine variant {engine!r}")
+
+
+def _workflow_agent_opt_key(opt: str) -> str:
+    return opt.split(":", 1)[0].strip()
+
+
+def _reject_unhonored_workflow_agent_opts(where: str, opts: Sequence[str]) -> None:
+    """Fail emit if any agent() opt key is not honored by the cc-workflows runtime (#708)."""
+    unhonored = [
+        key
+        for key in (_workflow_agent_opt_key(opt) for opt in opts)
+        if key not in WORKFLOW_HONORED_AGENT_OPT_KEYS
+    ]
+    if not unhonored:
+        return
+    named = ", ".join(dict.fromkeys(unhonored))
+    raise SpecError(
+        f"{where}: agent() opts key {unhonored[0]!r} is not honored by the "
+        f"cc-workflows runtime (unhonored: {named}); route cross-vendor work through "
+        f"Herdr/Orchestrate sessions instead (#708 -- fail-loud, never silent native "
+        f"fallback)"
+    )
+
+
+def _unsupported_engine_unit_error(unit: Unit) -> SpecError:
+    if unit.engine is not None:
+        selector = f"engine={unit.engine!r}"
+    elif unit.capability is not None:
+        selector = f"capability={unit.capability!r}"
+    else:
+        selector = "external-engine dispatch"
+    return SpecError(
+        f"unit {unit.unit_id}: {selector} is an external-engine unit; "
+        f"the cc-workflows runtime cannot dispatch it. Route this unit through "
+        f"a Herdr/Orchestrate session instead (#708 -- fail-loud, never silent "
+        f"native fallback)"
+    )
+
+
+def _reject_unsupported_engine_units(spec: ExecutionSpec) -> None:
+    """Reject a cc-workflows emit of any unit carrying engine or capability (#708)."""
+    for unit in spec.units:
+        if unit.engine is not None or unit.capability is not None:
+            raise _unsupported_engine_unit_error(unit)
 
 
 def _validate_advisory_panel_role(where: str, role_name: str) -> None:
@@ -2640,13 +2691,11 @@ def _retry_close(unit: Unit) -> str:
 def _external_engine_marker(unit: Unit, route: UnitRouting) -> str | None:
     if route.exact_engine is None:
         return None
-    if route.authored_capability is not None:
-        marker = f"capability={route.authored_capability} resolved_engine={route.exact_engine}"
-    else:
-        marker = f"engine={route.exact_engine}"
-    if unit.verifiability is not None:
-        marker += f" verifiability={unit.verifiability}"
-    return marker
+    raise SpecError(
+        f"unit {unit.unit_id}: external-engine dispatch is not honored by the "
+        f"cc-workflows runtime; route this unit through a Herdr/Orchestrate "
+        f"session instead (#708 -- fail-loud, never silent native fallback)"
+    )
 
 
 def _return_schema(unit: Unit) -> dict[str, object]:
@@ -2680,17 +2729,25 @@ def _return_schema(unit: Unit) -> dict[str, object]:
 
 
 def _agent_opts(unit: Unit, route: UnitRouting) -> list[str]:
-    opts = [f"label: {_js_string(unit.label)}"]
-    if route.exact_engine is not None:
-        opts.append('dispatch: "external-engine"')
-        opts.append(f"engine: {_js_string(route.exact_engine)}")
+    if route.exact_engine is not None or unit.engine is not None or unit.capability is not None:
+        keys = ["dispatch", "engine"]
         if unit.verifiability is not None:
-            opts.append(f"verifiability: {_js_string(unit.verifiability)}")
-    else:
-        opts.append(f"model: {_js_string(unit.tier.model)}")
-        opts.append(f"effort: {_js_string(unit.tier.effort)}")
+            keys.append("verifiability")
+        named = ", ".join(keys)
+        raise SpecError(
+            f"unit {unit.unit_id}: agent() opts key {keys[0]!r} is not honored by the "
+            f"cc-workflows runtime (unhonored: {named}); route cross-vendor work through "
+            f"Herdr/Orchestrate sessions instead (#708 -- fail-loud, never silent native "
+            f"fallback)"
+        )
+    opts = [
+        f"label: {_js_string(unit.label)}",
+        f"model: {_js_string(unit.tier.model)}",
+        f"effort: {_js_string(unit.tier.effort)}",
+    ]
     if unit.returns:
         opts.append(f"schema: {json.dumps(_return_schema(unit), sort_keys=True)}")
+    _reject_unhonored_workflow_agent_opts(f"unit {unit.unit_id}", opts)
     return opts
 
 
@@ -2776,6 +2833,7 @@ def _verifier_agent_opts(unit: Unit) -> list[str]:
         f"isolation: {_js_string(READONLY_VERIFIER_ISOLATION)}",
     ]
     opts.append(f"schema: {json.dumps(_verifier_schema(), sort_keys=True)}")
+    _reject_unhonored_workflow_agent_opts(f"unit {unit.unit_id} verifier", opts)
     return opts
 
 
@@ -3721,10 +3779,13 @@ def emit_workflow_script(
 ) -> str:
     """Emit a runnable Claude Code workflow script (.workflow.js) from the spec.
 
-    Validates first (fail emit on R3 / R10), then renders a control-flow-only harness:
+    Validates first (fail emit on R3 / R10 / #708), then renders a control-flow-only harness:
     one ``agent()`` call per unit at its ``{model, effort}`` tier, dependency barriers
     rendered as ``await`` ordering, fan-out reconciliation + cheap-tier budget riders
     baked into prompts. The agents do the real work; this script is control flow only.
+    An external-engine unit (``engine`` / ``capability``) or any agent() opts key the
+    cc-workflows runtime does not honor is rejected here with a named ``SpecError`` --
+    never a silent fallback to a native Claude subagent (#708).
 
     ``unattended`` (#364 KTD3) is a run property, not spec state: attended emission (default)
     renders every escalate_on_signal refute as a throw-with-proposal ask gate; unattended
@@ -3734,6 +3795,7 @@ def emit_workflow_script(
     Returns the script source as a string (the caller writes it beside the plan and
     records the path as the saga ``orchestration_ref``).
     """
+    _reject_unsupported_engine_units(spec)
     emission_environment = MappingProxyType(
         dict(os.environ if environment is None else environment)
     )

@@ -59,8 +59,13 @@ the explicit emit-time `--max-concurrent` override. Before aggregate preflight, 
 the environment once and builds one immutable routing context used by worker waves, ordinary and
 iterate-to-consensus verifier panels, thunk panels, and unattended retry panels. Exact-engine
 selectors use their registry row directly. Capability selectors resolve once to an exact registry
-row; the authored capability remains inert provenance in that frozen context, while runtime dispatch
-emits only the selected exact `engine` and never re-resolves or emits a capability selector. Tier
+row; the authored capability remains inert provenance in that frozen context. **cc-workflows emit
+rejects any unit carrying `engine` or `capability` (#708):** the Claude Code Workflows `agent()`
+runtime honors `label`, `model`, `effort`, `schema`, `agentType`, and `isolation` and ignores
+`dispatch` / `engine` / `verifiability`. Emitting those keys would silently run a native Claude
+subagent. `emit_workflow_script` raises a named `SpecError` telling the operator to route the
+unit through a Herdr/Orchestrate session instead. A bare Claude model alias used as an engine
+selector fails through the same reject path; there is no alias translation. Tier
 admission can narrow but never widen the selected non-tier ceiling. A lane cap applies only to units
 resolved to that lane; ordinary units in a mixed layer keep their own resolved limit. The run
 override is the final operator instruction. Invalid values and values above the aggregate ceiling
@@ -359,10 +364,9 @@ The flow has three moving parts:
 2. **`execution_spec.recompile_for_tier(spec, mode, repo_root=...)`** — re-emits the *same* spec for the
    (possibly downgraded) tier: `cc-workflows-ultracode` → the dynamic `.workflow.js`; any
    other tier → the inline/serial baseline (`emit_inline_baseline`). Both preserve unit specs
-   and per-unit tiers. Capability-routed workflow recompilation requires the authoritative target
-   repository root so routing overlays and calibration come from that repository; omitting it fails
-   closed with `capability emission requires explicit repo_root`. Exact-engine workflow specs and
-   non-workflow tiers remain compatible with the two-argument call.
+   and per-unit tiers. Capability-routed and exact-engine **workflow** recompilation is rejected
+   at emit (#708) — the cc-workflows runtime cannot dispatch those units; route them through a
+   Herdr/Orchestrate session. Non-workflow tiers remain compatible with the two-argument call.
 
 3. **`saga.orchestration_downgrade`** — the recorded note. The downgrade is durable, not
    silent: the one-line note from step 1 is written to the saga so a later `/retro`/`/optimize`

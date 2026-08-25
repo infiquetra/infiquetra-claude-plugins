@@ -311,6 +311,38 @@ exist — and a session given nothing writes something plausible about nothing r
 The refusal is `after` only: a `serialize` dependency may commit nothing at all, because the unit
 waiting on it never needed its output — only for it to be out of the way.
 
+## Per-run worker-pool declarations
+
+Vendors, models, efforts, caps, and the integration target are **per-run operator inputs**, never
+hard-coded into this skill. Copying a previous run's pool list into a new run as a default is the
+same mistake.
+
+Declare a **worker-pool** table in the run contract before launch. Each row is one pool, and every
+row records four fields:
+
+| Field | What it records |
+| --- | --- |
+| Priority order | Dispatch preference: highest-priority pool with a free slot, lane-order tie-break, no artificial concurrency |
+| Per-pool cap | Simultaneous session cap for that pool |
+| Launch template | The vendor · model · effort (and account, if the vendor uses one) used to launch units on that pool |
+| Exercised-or-not at closeout | Whether any unit actually ran on this pool. An unexercised pool is recorded as unexercised — it is not evidence that the pool works |
+
+The table is guidance the orchestrator follows when filling the approved unit table. It is not
+scheduler or driver machinery.
+
+## Authoritative integration branch — reintegrate after every serialized landing
+
+Each run declares its **authoritative integration branch** up front. Two example declarations, not
+policy: `origin/main` for a flat-PR run; the Orchestrate run branch when the run integrates onto
+one. The target is a per-run operator input, never a hardcoded universal.
+
+Merges land serialized, one PR at a time. After each serialized landing, every surviving branch
+immediately fetches and reintegrates the declared target, then re-resolves release-surface versions
+(`plugin.json`, `CHANGELOG.md`, `.claude-plugin/marketplace.json`) against that newly landed
+target before continuing. Do not wait for the next wave or for a conflict to appear. Shared files
+such as `marketplace.json` re-dirty every still-open PR on each merge; immediate reintegration is
+the standing response.
+
 ## What this deliberately does not do
 
 Evidence-based settlement checks completion evidence on the branch (`produced_anything`), but

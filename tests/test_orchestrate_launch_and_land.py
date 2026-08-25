@@ -592,6 +592,14 @@ class TestExpansionAndCentralLauncher:
         monkeypatch.setattr(orchestrate, "await_ready", lambda _unit: True)
         monkeypatch.setattr(orchestrate, "send", lambda *_args, **_kwargs: None)
         monkeypatch.setattr(orchestrate, "took_the_task", lambda _unit: True)
+        monkeypatch.setattr(
+            orchestrate,
+            "live_agents",
+            lambda: [
+                {"pane_id": "pane-builder-1", "agent": "claude", "interactive_ready": True},
+                {"pane_id": "pane-builder-2", "agent": "grok", "interactive_ready": True},
+            ],
+        )
 
         assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
 
@@ -668,6 +676,14 @@ class TestNoFocusInvariantIntegration:
         monkeypatch.setattr(orchestrate, "await_ready", lambda _unit: True)
         monkeypatch.setattr(orchestrate, "send", lambda *_args, **_kwargs: None)
         monkeypatch.setattr(orchestrate, "took_the_task", lambda _unit: True)
+        monkeypatch.setattr(
+            orchestrate,
+            "live_agents",
+            lambda: [
+                {"pane_id": f"pane-{name}", "agent": "claude", "interactive_ready": True}
+                for name in ("unit1", "unit2", "unit3")
+            ],
+        )
 
         pane_before = focused_pane
         assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
@@ -834,6 +850,17 @@ class TestOpenCodeLaunchAndVariantRecipe:
         monkeypatch.setattr(orchestrate, "run", mocked_run)
         monkeypatch.setattr(orchestrate, "await_ready", lambda _unit: True)
         monkeypatch.setattr(orchestrate, "took_the_task", lambda _unit: True)
+        monkeypatch.setattr(
+            orchestrate,
+            "live_agents",
+            lambda: [
+                {
+                    "pane_id": "pane-mimir",
+                    "agent": "opencode",
+                    "interactive_ready": True,
+                }
+            ],
+        )
 
         assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
 
@@ -927,6 +954,17 @@ class TestOpenCodeLaunchAndVariantRecipe:
         monkeypatch.setattr(orchestrate, "run", mocked_run)
         monkeypatch.setattr(orchestrate, "await_ready", lambda _unit: True)
         monkeypatch.setattr(orchestrate, "took_the_task", lambda _unit: True)
+        monkeypatch.setattr(
+            orchestrate,
+            "live_agents",
+            lambda: [
+                {
+                    "pane_id": "pane-claude",
+                    "agent": "claude",
+                    "interactive_ready": True,
+                }
+            ],
+        )
 
         assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
 
@@ -995,6 +1033,17 @@ class TestOpenCodeLaunchAndVariantRecipe:
 
         monkeypatch.setattr(orchestrate, "run", mocked_run)
         monkeypatch.setattr(orchestrate, "await_ready", lambda _unit: True)
+        monkeypatch.setattr(
+            orchestrate,
+            "live_agents",
+            lambda: [
+                {
+                    "pane_id": "pane-mimir",
+                    "agent": "opencode",
+                    "interactive_ready": True,
+                }
+            ],
+        )
 
         assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
 
@@ -1062,6 +1111,17 @@ class TestOpenCodeLaunchAndVariantRecipe:
 
         monkeypatch.setattr(orchestrate, "run", mocked_run)
         monkeypatch.setattr(orchestrate, "await_ready", lambda _unit: True)
+        monkeypatch.setattr(
+            orchestrate,
+            "live_agents",
+            lambda: [
+                {
+                    "pane_id": "pane-mimir",
+                    "agent": "opencode",
+                    "interactive_ready": True,
+                }
+            ],
+        )
 
         assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
 
@@ -1128,7 +1188,7 @@ class TestOpenCodeLaunchAndVariantRecipe:
         monkeypatch.setattr(
             orchestrate,
             "live_agents",
-            lambda: [{"pane_id": "pane-bad-cwd", "cwd": "/wrong/worktree/dir"}],
+            lambda: [{"pane_id": "pane-bad-cwd", "cwd": "/wrong/worktree/dir", "agent": "claude"}],
         )
 
         assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
@@ -1204,6 +1264,17 @@ class TestOpenCodeLaunchAndVariantRecipe:
 
         monkeypatch.setattr(orchestrate, "run", mocked_run)
         monkeypatch.setattr(orchestrate, "await_ready", lambda _unit: True)
+        monkeypatch.setattr(
+            orchestrate,
+            "live_agents",
+            lambda: [
+                {
+                    "pane_id": "pane-mimir",
+                    "agent": "opencode",
+                    "interactive_ready": True,
+                }
+            ],
+        )
 
         assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
 
@@ -1276,6 +1347,17 @@ class TestOpenCodeLaunchAndVariantRecipe:
         monkeypatch.setattr(orchestrate, "run", mocked_run)
         monkeypatch.setattr(orchestrate, "await_ready", lambda _unit: True)
         monkeypatch.setattr(orchestrate, "took_the_task", lambda _unit: True)
+        monkeypatch.setattr(
+            orchestrate,
+            "live_agents",
+            lambda: [
+                {
+                    "pane_id": "pane-mimir",
+                    "agent": "opencode",
+                    "interactive_ready": True,
+                }
+            ],
+        )
 
         assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
 
@@ -1360,7 +1442,7 @@ class TestOpenCodeLaunchAndVariantRecipe:
         monkeypatch.setattr(
             orchestrate,
             "live_agents",
-            lambda: [{"pane_id": "pane-elsewhere", "workspace_id": "w01"}],
+            lambda: [{"pane_id": "pane-elsewhere", "workspace_id": "w01", "agent": "claude"}],
         )
 
         assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
@@ -1395,7 +1477,14 @@ class TestOpenCodeLaunchAndVariantRecipe:
         monkeypatch.setattr(
             orchestrate,
             "live_agents",
-            lambda: [{"pane_id": "pane-1", "cwd": str(repo), "interactive_ready": True}],
+            lambda: [
+                {
+                    "pane_id": "pane-1",
+                    "cwd": str(repo),
+                    "interactive_ready": True,
+                    "agent": "claude",
+                }
+            ],
         )
 
         receipt = orchestrate.verify_unit_preflight(unit, "pane-1", ready=True)
@@ -1424,7 +1513,14 @@ class TestOpenCodeLaunchAndVariantRecipe:
         monkeypatch.setattr(
             orchestrate,
             "live_agents",
-            lambda: [{"pane_id": "pane-1", "cwd": str(repo), "interactive_ready": False}],
+            lambda: [
+                {
+                    "pane_id": "pane-1",
+                    "cwd": str(repo),
+                    "interactive_ready": False,
+                    "agent": "qwen",
+                }
+            ],
         )
 
         receipt = orchestrate.verify_unit_preflight(unit, "pane-1", ready=False)

@@ -25,18 +25,18 @@ S="$CLAUDE_PLUGIN_ROOT/skills/agent-launcher/scripts/launcher.py"
 [ -f "$S" ] || S=$(ls -d ~/.claude/plugins/cache/*/agent-launcher/*/skills/agent-launcher/scripts/launcher.py | sort -V | tail -1)
 
 python3 "$S" preview --vendor <tool> --task <tab-name> --cwd "$PWD" --model <model> --effort <effort>
-python3 "$S" launch  --vendor <tool> --task <tab-name> --cwd "$PWD" --model <model> --effort <effort>
-python3 "$S" close --tab-id <tab_id> --receipt-json <receipt.json>
+python3 "$S" launch  --vendor <tool> --task <tab-name> --cwd "$PWD" --model <model> --effort <effort> > receipt.json
+python3 "$S" close --receipt-json receipt.json
 ```
 
-`launch` always dry-runs first. It records the wrapper receipt and verifies live Herdr state (pane, cwd, workspace, readiness; model stays `requested_only` because `herdr agent list` does not publish one) before any prompt is sent.
+`launch` always dry-runs first. It writes one JSON receipt to stdout (redirect it to `receipt.json` as above). It verifies live Herdr state (kind, pane, cwd, workspace, readiness; model stays `requested_only` because `herdr agent list` does not publish one) before any prompt is sent. `close` reads `tab_id` and `reused` from that file. If `reused` is true, close refuses — the tab already existed.
 
 **Stop conditions (verbatim):**
 
 - Stop before launch if the wrapper dry run does not resolve the requested working directory and current Herdr workspace.
 - Stop before prompting if Herdr cannot verify the requested agent kind, model, effort, permissions, pane, and readiness. Fields Herdr does not publish are recorded as `requested_only` rather than invented; a disagreement on a field Herdr does publish is a stop.
 - Stop rather than silently substituting an unavailable agent or launch setting.
-- Stop cleanup if ownership of the target session cannot be proven (no `tab_id`, or `tab_id` disagrees with the launch receipt).
+- Stop cleanup if ownership of the target session cannot be proven (no `tab_id`, `tab_id` disagrees with the launch receipt, or the receipt's `reused` flag is true or missing).
 
 ## The binary is the authority
 

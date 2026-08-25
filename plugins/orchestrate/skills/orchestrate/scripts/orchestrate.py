@@ -943,7 +943,7 @@ def resubmit_review_if_ready(
     return True
 
 
-def _agent_launcher_script() -> Path:
+def _agent_launcher_script() -> Path | None:
     """Locate ``plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py``."""
     override = os.environ.get("AGENT_LAUNCHER_ROOT")
     if override:
@@ -970,29 +970,69 @@ def _agent_launcher_script() -> Path:
             matches = sorted(sibling.glob("*/skills/agent-launcher/scripts/launcher.py"))
             if matches:
                 return matches[-1]
+    return None
+
+
+def _subprocess_run(
+    cmd: list[str],
+    *,
+    check: bool = True,
+    capture: bool = True,
+    timeout: float | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Fallback command runner used when the agent-launcher plugin is absent."""
+    try:
+        proc = subprocess.run(cmd, capture_output=capture, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        if check:
+            raise SystemExit(f"timed out after {timeout}s: {' '.join(cmd)}") from None
+        return subprocess.CompletedProcess(cmd, returncode=124, stdout="", stderr="timed out")
+    except OSError as exc:
+        if check:
+            raise SystemExit(f"cannot run {cmd[0]!r}: {exc}") from None
+        return subprocess.CompletedProcess(cmd, returncode=127, stdout="", stderr=str(exc))
+    if check and proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip()
+        raise SystemExit(f"command failed ({proc.returncode}): {' '.join(cmd)}\n{err}")
+    return proc
+
+
+def _agent_launcher_required(*_args: Any, **_kwargs: Any) -> Any:
     raise SystemExit(
         "agent-launcher plugin not found. Install plugins/agent-launcher or set "
-        "AGENT_LAUNCHER_ROOT to that plugin's root directory."
+        "AGENT_LAUNCHER_ROOT. Launch, roster, and go cannot run without it."
     )
 
 
-def _ingest_agent_launcher() -> None:
+def _ingest_agent_launcher() -> bool:
     """Load the shared launcher into this module's globals.
 
     Tests monkeypatch ``run``, ``live_agents``, ``launch``, and friends on this
     module. ``exec`` into ``globals()`` makes those names the ones the extracted
     functions look up, so the patches still apply. Importing a second module
-    would hide them.
+    would hide them. A missing plugin must not kill every subcommand at import.
     """
     script = _agent_launcher_script()
+    if script is None:
+        return False
     # launcher.py has a ``__main__`` CLI. When orchestrate.py is the entry point,
     # ingest would otherwise run that CLI against orchestrate's argv (``wait``,
     # ``clean``, …) and exit. The flag is this module's globals, not the environment.
     globals()["_AGENT_LAUNCHER_INGESTING"] = True
     exec(compile(script.read_text(encoding="utf-8"), str(script), "exec"), globals())
+    return True
 
 
-_ingest_agent_launcher()
+run = _subprocess_run
+if not _ingest_agent_launcher():
+    launch = _agent_launcher_required
+    agent_argv = _agent_launcher_required
+    launcher = _agent_launcher_required
+    launchable = _agent_launcher_required
+    roster = _agent_launcher_required
+    live_agents = _agent_launcher_required
+    close_run_session = _agent_launcher_required
+    verify_unit_preflight = _agent_launcher_required
 
 
 def repo_root() -> Path:

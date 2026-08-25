@@ -34,6 +34,52 @@ PROMPT_UNDELIVERED = "prompt_undelivered"
 ACCOUNT_MISMATCH = "account_mismatch"
 
 
+def assert_safe_path_component(value: str, label: str) -> None:
+    """Refuse a value that is not one safe path component.
+
+    Unchecked, a name is a write anywhere on disk: ``TASK_DIR / f"{name}.md"`` follows
+    ``..`` and an absolute right-hand operand discards the left. Mirrors orchestrate's
+    contract of the same name.
+    """
+    if not value:
+        raise SystemExit(f"{label} must not be empty")
+    if Path(value).is_absolute():
+        raise SystemExit(f"{label} {value!r} must not be an absolute path")
+    if "/" in value or "\\" in value:
+        raise SystemExit(f"{label} {value!r} must not contain a path separator")
+    if value in (".", ".."):
+        raise SystemExit(f"{label} {value!r} is a path traversal")
+
+
+def wrapper_reused(value: Any) -> bool:
+    """Whether the wrapper said this tab already existed."""
+    if value is True:
+        return True
+    return isinstance(value, str) and value.strip().lower() in {"true", "1", "yes"}
+
+
+def record_wrapper_identity(unit: Any, info: dict[str, Any]) -> dict[str, Any]:
+    """Persist the wrapper receipt before any later step can fail."""
+    unit.tab_id = info.get("tab_id")
+    unit.agent_name = info.get("agent_name", unit.name)
+    unit.pane_id = info.get("pane_id")
+    reused = wrapper_reused(info.get("reused"))
+    unit.reused = reused
+    receipt: dict[str, Any] = {
+        "unit_name": unit.name,
+        "vendor": unit.vendor,
+        "tab_id": unit.tab_id,
+        "pane": unit.pane_id,
+        "agent_name": unit.agent_name,
+        "reused": reused,
+        "permission": getattr(unit, "permission", None),
+        "verified": False,
+        "prompt_delivered": None,
+    }
+    unit.launch_receipt = receipt
+    return receipt
+
+
 def normalize_task(
     vendor: str, task: str, backend: str = "inline", *, review_elsewhere: bool = False
 ) -> str:
@@ -613,6 +659,11 @@ def drive_opencode_variant_selection(
 
 def close_run_session(unit: Any) -> None:
     """Close only the tab this run opened, leaving every session it did not create alone."""
+    if wrapper_reused(getattr(unit, "reused", False)):
+        return
+    receipt = getattr(unit, "launch_receipt", None) or {}
+    if isinstance(receipt, dict) and wrapper_reused(receipt.get("reused")):
+        return
     if unit.tab_id:
         run(["herdr", "tab", "close", unit.tab_id], check=False)
 
@@ -824,38 +875,45 @@ def verify_unit_preflight(
     row = agent_row(unit)
 
     if row is None:
-        unconfirmed.extend(["working_directory", "readiness"])
-        if unit.workspace:
-            unconfirmed.append("workspace")
-        observed_ready = bool(ready)
+        raise SystemExit(f"{unit.name}: herdr did not list the session; cannot verify agent kind")
+
+    reported_kind = row.get("agent") or row.get("kind")
+    if not reported_kind:
+        raise SystemExit(f"{unit.name}: herdr did not report agent kind; refusing to prompt")
+    if str(reported_kind).lower() != str(unit.vendor).lower():
+        close_run_session(unit)
+        raise SystemExit(
+            f"{unit.name}: herdr reports agent {reported_kind!r}, requested {unit.vendor!r}"
+        )
+    confirmed.append("kind")
+
+    reported_cwd = row.get("cwd") or row.get("foreground_cwd")
+    if reported_cwd and unit.worktree:
+        if not same_directory(reported_cwd, unit.worktree):
+            close_run_session(unit)
+            raise SystemExit(
+                f"{unit.name}: working directory {reported_cwd!r} differs from unit "
+                f"worktree {unit.worktree!r}"
+            )
+        confirmed.append("working_directory")
     else:
-        reported_cwd = row.get("cwd") or row.get("foreground_cwd")
-        if reported_cwd and unit.worktree:
-            if not same_directory(reported_cwd, unit.worktree):
-                close_run_session(unit)
-                raise SystemExit(
-                    f"{unit.name}: working directory {reported_cwd!r} differs from unit "
-                    f"worktree {unit.worktree!r}"
-                )
-            confirmed.append("working_directory")
-        else:
-            unconfirmed.append("working_directory")
+        unconfirmed.append("working_directory")
 
-        expected_workspace = workspace_id_for_name(unit.workspace)
-        reported_workspace = row.get("workspace_id")
-        if expected_workspace and reported_workspace:
-            if reported_workspace != expected_workspace:
-                close_run_session(unit)
-                raise SystemExit(
-                    f"{unit.name}: session workspace {reported_workspace!r} does not match "
-                    f"requested workspace {unit.workspace!r} ({expected_workspace})"
-                )
-            confirmed.append("workspace")
-        elif unit.workspace:
-            unconfirmed.append("workspace")
+    expected_workspace = workspace_id_for_name(unit.workspace)
+    reported_workspace = row.get("workspace_id")
+    if expected_workspace and reported_workspace:
+        if reported_workspace != expected_workspace:
+            close_run_session(unit)
+            raise SystemExit(
+                f"{unit.name}: session workspace {reported_workspace!r} does not match "
+                f"requested workspace {unit.workspace!r} ({expected_workspace})"
+            )
+        confirmed.append("workspace")
+    elif unit.workspace:
+        unconfirmed.append("workspace")
 
-        observed_ready = bool(row.get("interactive_ready")) if ready is None else bool(ready)
-        confirmed.append("readiness")
+    observed_ready = bool(row.get("interactive_ready")) if ready is None else bool(ready)
+    confirmed.append("readiness")
 
     # A Claude unit that names an account either confirms it or raises: an account that could not
     # be read is the failure this check exists for, wearing the same face as one that was never
@@ -887,6 +945,10 @@ def verify_unit_preflight(
         "model": unit.model,
         "variant": effective_variant,
         "account": unit.account,
+        "permission": getattr(unit, "permission", None),
+        "kind": str(reported_kind),
+        "agent_name": getattr(unit, "agent_name", None),
+        "reused": wrapper_reused(getattr(unit, "reused", False)),
         "working_directory": unit.worktree,
         "worktree": unit.worktree,
         "workspace": unit.workspace,
@@ -898,6 +960,7 @@ def verify_unit_preflight(
         # True by construction: every check that can fail raises above this point, so it reads
         # "preflight passed", and ``confirmed_against_herdr`` is what that passing actually covered.
         "verified": True,
+        "prompt_delivered": (getattr(unit, "launch_receipt", {}) or {}).get("prompt_delivered"),
     }
     unit.launch_receipt = receipt
     return receipt
@@ -908,15 +971,13 @@ def launch(unit: Any, backend: str = "inline", *, review_elsewhere: bool = False
     pane_id = None
     try:
         info = json.loads(proc.stdout.strip().splitlines()[-1])
-        unit.tab_id = info.get("tab_id")
-        unit.agent_name = info.get("agent_name", unit.name)
-        pane_id = info.get("pane_id")
-        unit.pane_id = pane_id
     except (ValueError, IndexError):
         unit.note = "launched, but the wrapper's JSON could not be read"
         raise SystemExit(
             f"{unit.name}: launched, but the wrapper's JSON could not be read"
         ) from None
+    record_wrapper_identity(unit, info)
+    pane_id = unit.pane_id
     if not pane_id:
         raise SystemExit(f"{unit.name}: launcher did not return a pane_id")
 
@@ -942,9 +1003,13 @@ def launch(unit: Any, backend: str = "inline", *, review_elsewhere: bool = False
                 break
     if accepted:
         unit.status = RUNNING
+        if isinstance(unit.launch_receipt, dict):
+            unit.launch_receipt["prompt_delivered"] = True
     else:
         unit.status = PROMPT_UNDELIVERED
         append_unit_note(unit, DELIVERY_WARNING)
+        if isinstance(unit.launch_receipt, dict):
+            unit.launch_receipt["prompt_delivered"] = False
 
 
 # How long a line may be before typing it into a pane stops delivering it as an instruction.
@@ -971,6 +1036,7 @@ def pane_text(unit: Any, text: str) -> str:
     """
     if len(text) <= PANE_TYPING_LIMIT:
         return text
+    assert_safe_path_component(unit.name, "task name")
     path = (TASK_DIR / f"{unit.name}.md").resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text + "\n")
@@ -1056,6 +1122,7 @@ class LaunchRequest:
     status: str = "pending"
     note: str = ""
     variant: str | None = None
+    reused: bool = False
     launch_receipt: dict[str, Any] = field(default_factory=dict)
 
 
@@ -1111,20 +1178,35 @@ def confirm_preview(preview: dict[str, str], cwd: str, workspace_id: str | None)
 
 
 def close_owned_session(unit: Any, *, receipt: dict[str, Any] | None = None) -> None:
-    """Close only a session whose tab_id matches the launch receipt."""
+    """Close only a tab this process created.
+
+    Ownership is the wrapper's ``reused`` flag (independent of ``tab_id``), not a
+    comparison of a value we copied onto both sides of the receipt.
+    """
     proof = receipt if receipt is not None else getattr(unit, "launch_receipt", {}) or {}
-    tab_id = getattr(unit, "tab_id", None)
-    owned = proof.get("tab_id") if isinstance(proof, dict) else None
+    if not isinstance(proof, dict):
+        raise SystemExit("cannot close: launch receipt is not an object, ownership unproven")
+    if "reused" not in proof:
+        raise SystemExit("cannot close: receipt does not say whether the tab was reused")
+    if wrapper_reused(proof.get("reused")):
+        raise SystemExit(
+            "cannot close: wrapper reused an existing tab; this process does not own it"
+        )
+    tab_id = getattr(unit, "tab_id", None) or proof.get("tab_id")
+    owned = proof.get("tab_id")
     if not tab_id:
         raise SystemExit("cannot close: no tab_id on the session, ownership unproven")
     if not owned:
         raise SystemExit("cannot close: launch receipt has no tab_id, ownership unproven")
     if owned != tab_id:
         raise SystemExit(f"cannot close: tab_id {tab_id!r} does not match launch receipt {owned!r}")
+    unit.tab_id = tab_id
+    unit.reused = False
     close_run_session(unit)
 
 
 def _request_from_args(args: argparse.Namespace) -> LaunchRequest:
+    assert_safe_path_component(args.task, "task name")
     cwd = str(Path(args.cwd).resolve()) if args.cwd else str(Path.cwd().resolve())
     return LaunchRequest(
         name=args.task,
@@ -1175,7 +1257,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Rejected if set: launch always previews first",
     )
     close_p = sub.add_parser("close", help="Close a session this process owns")
-    close_p.add_argument("--tab-id", required=True)
+    close_p.add_argument(
+        "--tab-id",
+        default=None,
+        help="Optional when the receipt already carries tab_id",
+    )
     close_p.add_argument("--receipt-json", required=True, help="Launch receipt proving ownership")
     sub.add_parser("roster", help="Vendors this machine can launch that this plugin can drive")
     return parser
@@ -1198,10 +1284,14 @@ def cli_main(argv: list[str] | None = None) -> int:
         return 0
     if args.cmd == "close":
         receipt = _load_receipt(args.receipt_json)
+        tab_id = args.tab_id or receipt.get("tab_id")
+        if not tab_id:
+            raise SystemExit("cannot close: no tab_id on --tab-id or the receipt")
         unit = LaunchRequest(
             name="owned",
             vendor="unknown",
-            tab_id=args.tab_id,
+            tab_id=str(tab_id),
+            reused=wrapper_reused(receipt.get("reused")),
             launch_receipt=receipt,
         )
         close_owned_session(unit, receipt=receipt)
@@ -1221,9 +1311,20 @@ def cli_main(argv: list[str] | None = None) -> int:
             raise SystemExit("refusing to launch without a dry-run preview")
         preview = parse_dry_run(run(preview_argv(unit), timeout=20).stdout)
         confirm_preview(preview, unit.worktree or ".", current_herdr_workspace_id())
-        launch(unit)
+        try:
+            launch(unit)
+        except SystemExit:
+            if unit.launch_receipt:
+                json.dump(unit.launch_receipt, sys.stdout, indent=2, sort_keys=True)
+                sys.stdout.write("\n")
+            raise
         json.dump(unit.launch_receipt, sys.stdout, indent=2, sort_keys=True)
         sys.stdout.write("\n")
+        if (
+            unit.status == PROMPT_UNDELIVERED
+            or unit.launch_receipt.get("prompt_delivered") is False
+        ):
+            return 1
         return 0
     raise SystemExit(f"unknown command {args.cmd}")
 

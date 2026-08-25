@@ -21,6 +21,28 @@
 
 ## 2026-08-25
 
+### Wrapper `reused` is ownership, not a second copy of tab_id  {#launcher-reused-ownership}
+
+**Context.** Code review of PR #827 found `close_owned_session` compared `unit.tab_id` to
+`receipt["tab_id"]` after both were copied from the same wrapper JSON, so the check could not fail
+on a real launch. The wrapper splits into an existing tab on label collision and publishes
+`reused`. Closing that tab takes every pane in it.
+
+**Evidence.** PR #827 review finding 2; `launcher.py` `record_wrapper_identity` /
+`close_run_session` / `close_owned_session`.
+
+**Mechanism.** A value copied onto both sides of a comparison is not proof. `reused` is an
+independent wrapper claim. If it is true or missing, this process does not own the tab.
+
+**Fix (or queued).** Persist tab id and `reused` immediately after the wrapper JSON returns, refuse
+close when `reused` is true or absent, and skip `herdr tab close` on mismatch for a reused tab so
+preflight cannot destroy the operator's session.
+
+**Generalizable rule.** Ownership of a created resource has to come from a field the creator did not
+write onto both sides of the check.
+
+**Refs.** Issue #777; PR #827.
+
 ### Orchestrate tests monkeypatch launcher names on the orchestrate module  {#orchestrate-ingest-launcher-globals}
 
 **Context.** Issue #777 extracts the launch seam from `orchestrate.py` into

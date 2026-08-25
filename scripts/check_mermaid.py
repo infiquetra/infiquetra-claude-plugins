@@ -19,7 +19,7 @@ import shutil
 import subprocess  # nosec B404 — git and node CLIs only, fixed argv, no shell
 import sys
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -27,8 +27,13 @@ MERMAID_DIR = REPO_ROOT / "scripts" / "mermaid"
 HELPER = MERMAID_DIR / "parse.mjs"
 NODE_MODULES = MERMAID_DIR / "node_modules" / "mermaid"
 
-FENCE_OPEN = r"^ {0,3}```mermaid\b"
-FENCE_CLOSE = r"^ {0,3}```\s*$"
+# A fence line: optional indent, three-or-more backticks or tildes, then an info
+# string. Backticks are excluded from the info string per CommonMark, which is
+# also what keeps a prose mention such as ```mermaid``` from opening a fence.
+FENCE_LINE = re.compile(r"^(?P<indent>[ \t]*)(?P<marker>`{3,}|~{3,})[ \t]*(?P<info>[^`]*?)[ \t]*$")
+# ```mermaid, optionally carrying renderer attributes. Not ```mermaidjs, not
+# ```mermaid-foo — those are different languages and must not reach the parser.
+MERMAID_INFO = re.compile(r"^mermaid(?:[ \t{].*)?$")
 
 PRECONDITION_EXIT = 3
 FAILURE_EXIT = 1
@@ -49,41 +54,79 @@ class Failure:
     message: str
 
     def __str__(self) -> str:
-        return f"{self.path}:{self.line}: {self.message}"
+        # One line per failure: mermaid's own error text is multi-line, and a
+        # newline here would break the file:line: convention editors and CI
+        # annotations parse.
+        return f"{self.path}:{self.line}: {' '.join(self.message.split())}"
 
 
 class PreconditionError(RuntimeError):
     """Node, the helper, or mermaid's install is missing — gate exit 3."""
 
 
+@dataclass
+class _OpenFence:
+    """A fence being scanned. Tracked for every info string, not just mermaid."""
+
+    indent: str
+    char: str
+    length: int
+    info: str
+    start: int
+    body: list[str] = field(default_factory=list)
+
+    @property
+    def is_mermaid(self) -> bool:
+        return bool(MERMAID_INFO.match(self.info))
+
+    def dedented(self) -> str:
+        """Body with the opener's own indent removed, per CommonMark."""
+        width = len(self.indent)
+        return "\n".join(line[width:] if line[:width].isspace() else line for line in self.body)
+
+
 def fences_in_text(rel: str, text: str) -> list[Fence]:
     """Extract mermaid fences from a Markdown document.
 
-    Opening fences may be indented up to three spaces (CommonMark). A prose
-    mention of the fence marker is not a fence. An unclosed fence is returned
+    Every fence is tracked, not only mermaid ones, so a ```mermaid block nested
+    inside a wider ````markdown block is body text rather than a fence of its
+    own. Closers follow CommonMark: same character, at least as long as the
+    opener. Tilde fences, four-or-more-backtick fences, and fences indented
+    inside a list item all count — each of them renders on GitHub, so a broken
+    diagram written that way must not slip past. An unclosed fence is returned
     with ``unclosed=True`` rather than being sent to the parser.
     """
-    open_re = re.compile(FENCE_OPEN)
-    close_re = re.compile(FENCE_CLOSE)
-    lines = text.splitlines()
     fences: list[Fence] = []
-    i = 0
-    while i < len(lines):
-        if not open_re.match(lines[i]):
-            i += 1
+    open_fence: _OpenFence | None = None
+    for lineno, line in enumerate(text.splitlines(), 1):
+        match = FENCE_LINE.match(line)
+        if open_fence is None:
+            if match:
+                marker = match.group("marker")
+                open_fence = _OpenFence(
+                    indent=match.group("indent"),
+                    char=marker[0],
+                    length=len(marker),
+                    info=match.group("info").strip(),
+                    start=lineno,
+                )
             continue
-        start_line = i + 1
-        i += 1
-        body: list[str] = []
-        closed = False
-        while i < len(lines):
-            if close_re.match(lines[i]):
-                closed = True
-                i += 1
-                break
-            body.append(lines[i])
-            i += 1
-        fences.append(Fence(path=rel, line=start_line, text="\n".join(body), unclosed=not closed))
+        closes = (
+            match is not None
+            and not match.group("info")
+            and match.group("marker")[0] == open_fence.char
+            and len(match.group("marker")) >= open_fence.length
+        )
+        if closes:
+            if open_fence.is_mermaid:
+                fences.append(Fence(path=rel, line=open_fence.start, text=open_fence.dedented()))
+            open_fence = None
+            continue
+        open_fence.body.append(line)
+    if open_fence is not None and open_fence.is_mermaid:
+        fences.append(
+            Fence(path=rel, line=open_fence.start, text=open_fence.dedented(), unclosed=True)
+        )
     return fences
 
 
@@ -94,7 +137,7 @@ def tracked_md_mentioning_mermaid(root: Path) -> list[str]:
     discards prose mentions that are not actual fences.
     """
     result = subprocess.run(  # nosec B603 B607 — fixed git argv, no shell
-        ["git", "grep", "-l", "-F", "```mermaid", "--", "*.md"],
+        ["git", "grep", "-l", "-E", "```+mermaid|~~~+mermaid", "--", "*.md"],
         cwd=root,
         capture_output=True,
         text=True,
@@ -172,7 +215,10 @@ def parse_fences(fences: Sequence[Fence], *, node: str | None = None) -> list[Fa
         if not isinstance(item, dict):
             continue
         path = str(item.get("path", ""))
-        line = int(item.get("line", 0))
+        try:
+            line = int(item.get("line", 0))
+        except (TypeError, ValueError):
+            line = 0
         message = str(item.get("message", "parse failed"))
         failures.append(Failure(path, line, f"mermaid parse failed: {message}"))
     return failures
@@ -193,13 +239,24 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     root = args.root.resolve()
     try:
+        # Prove the parser is reachable before counting, so an empty population
+        # can never report success on a toolchain that would have failed. A
+        # green line that verified nothing is the failure mode this check exists
+        # to prevent (see scripts/gate.sh's own coverage self-check).
+        _require_parser()
+        files = tracked_md_mentioning_mermaid(root)
         fences = iter_repo_fences(root)
+        if files and not fences:
+            raise PreconditionError(
+                f"{len(files)} tracked file(s) match the mermaid fence marker but no fence was "
+                "extracted — enumeration and extraction disagree, so this run verified nothing"
+            )
         failures = parse_fences(fences)
     except PreconditionError as exc:
         print(f"check_mermaid: {exc}", file=sys.stderr)
         return PRECONDITION_EXIT
     if not failures:
-        print(f"check_mermaid: {len(fences)} mermaid fence(s) parsed")
+        print(f"check_mermaid: {len(fences)} mermaid fence(s) parsed across {len(files)} file(s)")
         return 0
     for failure in failures:
         print(failure, file=sys.stderr)

@@ -2,7 +2,9 @@
 
 Fixture tests cover the two acceptance shapes: a valid fence passes, a broken
 fence fails naming file and line. The live-tree run is the third acceptance
-criterion and is asserted here so `pytest -k mermaid` exercises it.
+criterion and is asserted here so `pytest -k mermaid` exercises it. The exit
+codes are the whole interface to `scripts/gate.sh` and `.github/workflows/ci.yml`,
+so 0, 1 and 3 each have a test of their own.
 """
 
 from __future__ import annotations
@@ -111,3 +113,92 @@ def test_cli_reports_broken_fence(
     assert rc == 1
     assert "bad.md:3:" in captured.err
     assert "mermaid parse failed" in captured.err
+
+
+# --- fence forms GitHub renders -------------------------------------------------
+# Each of these renders as a diagram on GitHub. A form the scanner does not
+# recognise is a broken diagram that ships undetected — the failure #405 exists
+# to close — so each one is pinned.
+
+
+@pytest.mark.parametrize(
+    ("label", "text"),
+    [
+        ("three backticks", "```mermaid\nflowchart TD\n  A --> B\n```\n"),
+        ("four backticks", "````mermaid\nflowchart TD\n  A --> B\n````\n"),
+        ("tilde fence", "~~~mermaid\nflowchart TD\n  A --> B\n~~~\n"),
+        ("indented in a list", "- item\n\n    ```mermaid\n    flowchart TD\n    ```\n"),
+        ("renderer attributes", "```mermaid {theme=dark}\nflowchart TD\n  A --> B\n```\n"),
+    ],
+)
+def test_rendered_fence_forms_are_scanned(check: ModuleType, label: str, text: str) -> None:
+    fences = check.fences_in_text("t.md", text)
+    assert len(fences) == 1, f"{label}: {fences}"
+    assert not fences[0].unclosed, label
+
+
+def test_longer_closing_fence_closes_the_block(check: ModuleType) -> None:
+    """CommonMark: a closer may be longer than its opener. It is not unclosed."""
+    fences = check.fences_in_text("t.md", "```mermaid\nflowchart TD\n  A --> B\n````\n")
+    assert len(fences) == 1
+    assert not fences[0].unclosed
+
+
+def test_nested_example_fence_is_not_scanned(check: ModuleType) -> None:
+    """A ```mermaid block shown inside a wider ````markdown block is body text."""
+    text = "````markdown\n```mermaid\nBROKEN[[\n```\n````\n"
+    assert check.fences_in_text("doc.md", text) == []
+
+
+def test_other_info_strings_are_not_mermaid(check: ModuleType) -> None:
+    assert check.fences_in_text("t.md", "```mermaid-foo\nnot a diagram\n```\n") == []
+    assert check.fences_in_text("t.md", "```python\nprint(1)\n```\n") == []
+
+
+# --- exit-code contract ---------------------------------------------------------
+
+
+def test_main_exits_zero_on_a_clean_tree(
+    check: ModuleType, mermaid_ready: None, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    (tmp_path / "ok.md").write_text(f"```mermaid\n{VALID}```\n", encoding="utf-8")
+    subprocess.run(["git", "add", "ok.md"], cwd=tmp_path, check=True, capture_output=True)
+    assert check.main(["--root", str(tmp_path)]) == 0
+    assert "1 mermaid fence(s) parsed" in capsys.readouterr().out
+
+
+def test_main_exits_three_when_node_is_absent(
+    check: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(check.shutil, "which", lambda _name: None)
+    assert check.main([]) == check.PRECONDITION_EXIT
+    assert "node is not on PATH" in capsys.readouterr().err
+
+
+def test_require_parser_reports_a_missing_install(
+    check: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(check, "NODE_MODULES", tmp_path / "absent")
+    with pytest.raises(check.PreconditionError, match="npm ci --prefix"):
+        check._require_parser()
+
+
+def test_main_exits_three_when_extraction_finds_nothing(
+    check: ModuleType,
+    mermaid_ready: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Files matched but no fence extracted means the run verified nothing."""
+    monkeypatch.setattr(check, "tracked_md_mentioning_mermaid", lambda _root: ["ghost.md"])
+    assert check.main(["--root", str(tmp_path)]) == check.PRECONDITION_EXIT
+    assert "verified nothing" in capsys.readouterr().err
+
+
+def test_failure_renders_on_one_line(check: ModuleType) -> None:
+    """mermaid's error text is multi-line; file:line: output must not be."""
+    failure = check.Failure("d.md", 4, "mermaid parse failed: Parse error\n  ...\n  ^")
+    assert "\n" not in str(failure)
+    assert str(failure).startswith("d.md:4: mermaid parse failed:")

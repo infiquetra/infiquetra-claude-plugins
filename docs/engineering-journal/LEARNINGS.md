@@ -21,6 +21,22 @@
 
 ## 2026-08-25
 
+### A syntax gate that recognises one fence form is a silent no-op for the others  {#mermaid-fence-form-coverage-405}
+
+**Context.** The #405 Mermaid check first matched only `` ```mermaid `` at 0-3 spaces of indent. Code review of PR #824 probed the forms GitHub actually renders.
+
+**Evidence.** `scripts/check_mermaid.py` extracted zero fences from `` ````mermaid ``, from `~~~mermaid`, and from a fence indented inside a list item — all three render as diagrams on GitHub. It also reported a fence closed by a longer run of backticks as "unclosed" (CommonMark allows a longer closer), and treated a `` ```mermaid `` block nested inside a wider `` ````markdown `` block as a real fence. Repository population before and after the fix: the same 14 fences across 20 files.
+
+**Mechanism.** Matching only the opener cannot see nesting, so an example fence inside a documentation block looks identical to a live one, and a longer marker looks like no marker at all. Tracking *every* fence — any info string — and pairing each closer to its own opener by character and length settles all four cases with one scan.
+
+**Fix (or queued).** `fences_in_text` now scans all fences and records only the mermaid ones. `main` calls `_require_parser()` before counting and fails when tracked files match the marker but no fence is extracted, so an empty population can no longer report success on a toolchain that would have failed. Exit codes 0, 1 and 3 each gained a test.
+
+**Validation.** `uv run pytest tests/test_check_mermaid.py` — 20 passed (was 7); `uv run python scripts/check_mermaid.py` — `14 mermaid fence(s) parsed across 20 file(s)`.
+
+**Generalizable rule.** A gate that enumerates its own population must fail when the population comes back empty; "0 checked" and "0 broken" print the same green.
+
+**Refs.** DECISIONS `{#mermaid-syntax-check-headless-parse-405}`; issue #405; PR #824 code review.
+
 ### Headless mermaid.parse needs the DOM shim installed before mermaid is imported  {#mermaid-parse-jsdom-before-import-405}
 
 **Context.** Issue #405 adds an always-on syntax check that shells to mermaid's own parser rather than a regex heuristic. mermaid 11 is ESM and expects a `document`; Node 22 also makes `globalThis.navigator` a getter, so a naive `globalThis.navigator = window.navigator` throws before any fence is parsed.

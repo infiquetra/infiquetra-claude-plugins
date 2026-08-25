@@ -143,6 +143,15 @@ def test_delivery_warning_appends_to_the_file_handover_note(
     monkeypatch.setattr(orchestrate, "await_ready", lambda _unit: True)
     monkeypatch.setattr(orchestrate, "send", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(orchestrate, "took_the_task", lambda _unit: False)
+    monkeypatch.setattr(
+        orchestrate,
+        "agent_row",
+        lambda _unit, _agents=None: {
+            "pane_id": "pane-1",
+            "agent": "qwen",
+            "interactive_ready": True,
+        },
+    )
 
     orchestrate.launch(unit)
 

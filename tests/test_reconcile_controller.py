@@ -532,3 +532,69 @@ def test_cli_reconcile_unresolvable_mission_control_exits_nonzero(
     err = json.loads(capsys.readouterr().err.strip())
     assert err["ok"] is False
     assert "could not resolve" in err["error"]
+
+
+# ---------------------------------------------------------------------------
+# #812 repair — the drift half fails closed on a field it cannot read back
+# ---------------------------------------------------------------------------
+
+
+def test_present_key_skips_drift_check_for_a_field_the_live_reader_cannot_read(
+    tmp_path: Path,
+) -> None:
+    """A ``Stage`` correction is never drift-judged against the live ``Status`` value.
+
+    ``default_live_reader`` maps ``set-field-status`` to ``outcome_github.board_status``,
+    which has no field parameter, and ``_expected_live`` takes no field either. Since #812
+    admits ``Stage`` to the correction allowlist by name, a present-key tick for ``Stage``
+    would otherwise compare the live *Status* against the Stage target and — because
+    ``set-field-status`` is in ``AUTO_CORRECT_OP_KINDS`` — auto-correct on that false drift.
+    """
+    ledger = _ledger(tmp_path)
+    writer = RecordingWriter()
+    live = LiveBoard()
+    kw: dict[str, Any] = {
+        "board_writer": writer,
+        "ledger_dir": ledger,
+        "live_reader": live.reader,
+    }
+
+    first = RC.reconcile_op(
+        "set-field-status", "infiquetra/saga", 450, "Done", payload={"field": "Stage"}, **kw
+    )
+    assert first["status"] == "written"
+    assert first["field"] == "Stage"
+    writes_after_seed = len(writer.calls)
+
+    # The live *Status* now reads something else entirely. That is not Stage drift.
+    live.set("set-field-status", "infiquetra/saga", 450, "In-Progress")
+
+    second = RC.reconcile_op(
+        "set-field-status", "infiquetra/saga", 450, "Done", payload={"field": "Stage"}, **kw
+    )
+    assert second["status"] == "skipped", "a field-blind reading must never drive a write"
+    assert "Status" in second["note"] and "Stage" in second["note"]
+    assert len(writer.calls) == writes_after_seed, "no write from an uninterpretable reading"
+
+
+def test_present_key_still_drift_corrects_the_readable_status_field(tmp_path: Path) -> None:
+    """CONTROL: the #812 fail-closed skip does not disarm Status drift correction."""
+    ledger = _ledger(tmp_path)
+    writer = RecordingWriter()
+    live = LiveBoard()
+    kw: dict[str, Any] = {
+        "board_writer": writer,
+        "ledger_dir": ledger,
+        "live_reader": live.reader,
+    }
+
+    RC.reconcile_op(
+        "set-field-status", "infiquetra/saga", 450, "Done", payload={"field": "Status"}, **kw
+    )
+    live.set("set-field-status", "infiquetra/saga", 450, "In-Progress")
+
+    corrected = RC.reconcile_op(
+        "set-field-status", "infiquetra/saga", 450, "Done", payload={"field": "Status"}, **kw
+    )
+    assert corrected["status"] == "corrected"
+    assert corrected["board_value_was"] == "In-Progress"

@@ -23,16 +23,26 @@ to a private list, the historical catalog prose, or Team Execution's old keyword
 
 ## Select lenses from the diff
 
-Read the full merge-base diff before selection. Select every roster entry whose trigger class is
-`always-on`. For a `conditional` entry, use the roster's judgment guidance and the actual changed
-behavior, not filename or keyword matching alone.
+Read the full merge-base diff before selection. Auto-run every roster entry whose trigger class is
+`always-on` — exactly `architecture-maintainability`, `correctness`, `security`, and `testing`.
+Those four launch with no operator question. For a `conditional` entry, use the roster's judgment
+guidance and the actual changed behavior, not filename or keyword matching alone, and treat the
+result as a **recommendation**, not a launch.
 
-Record one concise reason for each selected conditional lens. The reason names the material review
-surface in this diff. Do not select a conditional lens when there is no applicable dimension merely
-to increase reviewer count. Do not omit one because another selected lens overlaps it.
+Record one concise reason for each recommended conditional lens. The reason names the material
+review surface in this diff. Do not recommend a conditional lens when there is no applicable
+dimension merely to increase reviewer count. Do not omit one because another selected lens overlaps
+it.
 
-Announce the selected team and each conditional reason before fan-out. Keep the stable identifiers
-from the roster in dispatch requests, results, cycle state, and reports.
+The roster `selection_contract` is the launch gate. Before any conditional Agent call: present one
+batched operator choice (`accept-recommended` default / `always-on-only` / `customize`), combined
+with backend selection when the client supports it. A caller- or Orchestrate-supplied selection is
+approval and is not re-asked. Persist the approved set on the existing review-cycle state against
+the reviewed commit and cycle. Reuse it on repair cycles unless applicability changes, then ask
+once about only the delta. Dismissal or no answer pauses — no conditional launches, no hidden or
+supplemental lenses. Issue #418's selection adapter produces candidates only; it cannot approve.
+
+Keep the stable identifiers from the roster in dispatch requests, results, cycle state, and reports.
 
 ## Run a roster scoring lens
 

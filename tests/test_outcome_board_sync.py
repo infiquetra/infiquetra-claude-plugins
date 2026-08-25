@@ -571,6 +571,7 @@ def test_default_board_writer_builds_correct_commands(tmp_path: Path) -> None:
         assert "x" in c and "infiquetra/x" not in c
     assert calls[0][2:6] == ["flow", "set-field", "--project", "operations"]
     assert "Status" in calls[0] and "In Progress" in calls[0]
+    assert "--correction" in calls[0]
     assert calls[1][2:4] == ["issue", "close"] and "42" in calls[1]
     assert calls[2][2:4] == ["issue", "comment"] and "hi" in calls[2]
     assert calls[3][2:4] == ["issue", "label-add"] and "blocked" in calls[3]

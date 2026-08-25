@@ -122,39 +122,24 @@ carries `"backend": "inline"` so every `/work` unit is told rather than asked. A
 already one of several parallel sessions; nesting a workflow inside one is the
 orchestration-of-orchestration this plugin exists to avoid.
 
-### Answering saga's offer up front
+### Reviewer seats live in the run, not engine-prefs
 
-`/doc-review` and `/code-review` open by resolving saga's external-engine offer. With nothing
-stored they **stop and ask the operator** — in a background tab nobody is watching, which means the
-unit waits forever. So the plan carries `engine_prefs`, which lands in every worktree before its
-session starts:
+The `.saga/engine-prefs.json` seam is retired (#776). A plan that still carries `engine_prefs` is
+refused. Represent an external reviewer as a named unit with `role: "external-reviewer"` and the
+vendor/model/effort Herdr will launch. When a Saga Code Review phase is present, Orchestrate refuses
+plain review prompts, direct reviewer launches, and duplicate review units. Halt rather than falling
+back to the retired saga runner.
 
-```json
-"engine_prefs": {
-  "doc-review":  {"intent": "none"},
-  "code-review": {"intent": "none"}
-}
-```
-
-**A unit is also told, whatever its capability, never to stop on a question.** Saga asks for more
-than the engine offer — a destination, a scope class, resume-versus-mint — and every one of those in
-a background tab is a unit lost. The dispatched task carries the rule: take the most defensible
-option from a known set and say which; for a real question about the work, write it into the output
-and stop, so this session can bring it to the operator instead of a tab swallowing it.
-
-For Code Review, store the engine choice its own contract calls for. Orchestrate does not multiply
-that choice into reviewer units or treat the external-reviewer seat as another controller. For an
-independent document-review panel, `none` still prevents each already-independent row from adding an
-unrequested second opinion. The stored value exists to stop an unattended tab hanging; it is not an
-Orchestrate review-policy decision.
-
-Stages: `ideate`, `brainstorm`, `work`, `doc-review`, `code-review` — there is no `plan` stage.
-Intents: `none`, `offload`, `second-opinion`, `external-only`. Models are tier names —
-`fable`, `opus`, `sonnet`, `haiku`. Efforts: `low`, `medium`, `high`, `xhigh`.
+**A unit is also told, whatever its capability, never to stop on a question.** Saga still asks about
+destination, scope class, resume-versus-mint — and every one of those in a background tab is a unit
+lost. The dispatched task carries the rule: take the most defensible option from a known set and say
+which; for a real question about the work, write it into the output and stop, so this session can
+bring it to the operator instead of a tab swallowing it.
 
 The one `/code-review` controller runs its own lens consensus. Its lenses, acceptance, external seat,
-cycle state, and typed outcome are its business, not something to rebuild here. The interview does
-not ask Orchestrate to decide any of them.
+cycle state, and typed outcome are its business, not something to rebuild here. Additional reviewer
+seats are named Herdr sessions on the same expand/go path as every other unit. The interview does
+not ask Orchestrate to decide review policy.
 
 ## Phase 3 — hand over the table
 
@@ -251,7 +236,6 @@ do not belong in the JSON. `task` is the literal text sent to the session.
   "run_id": "orch-2026-08-16-a",
   "source": "#48 deploy-guard remediation",
   "workspace": "issue-48",
-  "engine_prefs": {"code-review": {"intent": "second-opinion", "model": "opus", "effort": "high"}},
   "units": [
     {"name": "p1a", "vendor": "claude", "model": "opus", "effort": "high",
      "launch_args": ["--company-account"],
@@ -406,8 +390,8 @@ before anything launches.
 
 **Never create worktrees manually or invoke `agents` directly for a run unit.** Every unit — whether
 in the initial plan or added at a later phase boundary — must be persisted through `start` or `expand`
-before any worktree or session is created, and must launch only through `go` via the central
-`agent_argv` path. Bypassing `expand` or `go` by calling `agents` directly breaks run-record tracking,
+before any worktree or session is created, and must launch only through `go` via the shared
+`agent-launcher` `agent_argv` path. Bypassing `expand` or `go` by calling `agents` directly breaks run-record tracking,
 omits background launch flags (`--no-focus --current --herdr --herdr-control-only`), and steals
 operator focus. Unsupported post-launch setup (such as interactive OpenCode variant selection) is a
 controlled post-launch step performed inside the launched session; it does not authorize bypassing

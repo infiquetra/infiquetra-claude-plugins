@@ -38,7 +38,7 @@ and the §5.7 closing summary is split by mode (an S4 review finding both drill 
 independently). Interactive behavior, phase-preservation (`OMIT --lifecycle-phase`), and the no-saga
 scan-first guard unchanged. Defect 1 shipped earlier with the `/loop` rebuild
 ([#code-review-saga-scan-touchups-shipped](#code-review-saga-scan-touchups-shipped)) — the QUEUED item
-`{#code-review-saga-scan-touchups}` is now fully retired. Evidence: the drill map
+`#code-review-saga-scan-touchups` is now fully retired. Evidence: the drill map
 (`narratives/2026-07-07-zero-token-fire-drill-irreducibility-map.md`), DECISIONS
 [#zero-token-fire-drill-468](DECISIONS.md#zero-token-fire-drill-468).
 

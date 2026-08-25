@@ -4,11 +4,12 @@ Orchestrate spreads one piece of work across tracked [Herdr](https://github.com/
 agent sessions. Each unit runs on its own Git branch and worktree, while one local run record keeps
 the operator's view of dependencies, live sessions, commits, and landing state coherent.
 
-The plugin is deliberately small. It ships two Python modules:
+The plugin is deliberately small. It ships two Python modules and consumes a third:
 
 - `skills/orchestrate/scripts/orchestrate.py` is the standard-library command-line interface. It
   validates a plan, creates and launches units, records state, waits for Herdr events, reports drift,
-  lands completed branches, and cleans up worktrees and sessions.
+  lands completed branches, and cleans up worktrees and sessions. Session creation goes through the
+  `agent-launcher` plugin; this file does not keep a private copy of the launch seam.
 - `skills/orchestrate/scripts/herdr_events.py` validates Herdr protocol 19 event messages and holds
   the `events.subscribe` connection used by `wait`. When the event socket is unavailable,
   `orchestrate.py` falls back to bounded per-session waits.

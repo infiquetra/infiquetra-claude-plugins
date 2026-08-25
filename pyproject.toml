@@ -67,6 +67,10 @@ ignore = ["E501"]
 # for tests that embed class-name references in their names.
 "plugins/*/tests/*.py" = ["N802"]
 "tests/*.py" = ["N802"]
+# Orchestrate ingests agent-launcher into its module globals (``exec`` into
+# ``globals()`` so tests can still monkeypatch ``run`` / ``launch`` / ``live_agents``
+# on the orchestrate module). Static analysis cannot see those bindings.
+"plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py" = ["F821"]
 
 [tool.mypy]
 python_version = "3.12"

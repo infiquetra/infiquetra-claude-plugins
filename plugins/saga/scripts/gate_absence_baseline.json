@@ -2,8 +2,7 @@
   "schema_version": 1,
   "pending": {
     "plugins/saga/references/gate-divergence-instrumentation.md": 3,
-    "plugins/saga/references/operator-choice.md": 5,
-    "plugins/saga/skills/doc-review/SKILL.md": 1,
+    "plugins/saga/references/operator-choice.md": 4,
     "plugins/saga/skills/founder-review/references/review-modes.md": 3,
     "plugins/saga/skills/ideate/references/convergence-and-partnership.md": 2,
     "plugins/saga/skills/office-hours/SKILL.md": 5,

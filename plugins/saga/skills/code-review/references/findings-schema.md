@@ -214,8 +214,9 @@ ledger's generic command-line `--verdict` field stores the typed `outcome`; no `
 ## Whole-diff external advisory review
 
 The optional external-reviewer seat reviews the whole revision-bound diff and may introduce findings no
-native lens raised. It is cross-vendor, request-bound, externally admitted, and non-scoring. Code Review
-adjudicates every returned finding before active survivors join normal deduplication and routing.
+native lens raised. It is cross-vendor, request-bound, and non-scoring. Orchestrate owns the seat's
+session transport; Code Review adjudicates every returned finding before active survivors join normal
+deduplication and routing. The retired `external_only_admitted` field is ignored on load (#776).
 
 The managed-session claim store keeps its existing lifecycle vocabulary for wire compatibility:
 `recommended | requested | available | unavailable | declined`, `intent: second-opinion`,
@@ -233,7 +234,6 @@ These are transport and adjudication fields, not a second schema or an acceptanc
   "reviewed_revision": "<commit>",
   "whole_diff": true,
   "request_bound": true,
-  "external_only_admitted": true,
   "scoring_authority": false,
   "findings": [],
   "adjudications": [

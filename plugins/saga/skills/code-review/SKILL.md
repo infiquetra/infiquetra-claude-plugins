@@ -1,6 +1,6 @@
 ---
 name: code-review
-description: Run a structured Infiquetra code-quality review at the work-to-PR boundary. Reads the merge-base diff, runs a built-vs-planned audit plus judgment-selected review lenses, validates findings, writes a durable review artifact, appends to the work-thread saga, and routes — without mutating code. Triggers on "review this PR", "code review", "check my diff", "pre-PR review", or a /work hand-in before shipping.
+description: Run a structured Infiquetra code-quality review at the work-to-PR boundary. Reads the merge-base diff, runs a built-vs-planned audit plus the four always-on lenses and operator-approved conditionals, validates findings, writes a durable review artifact, appends to the work-thread saga, and routes — without mutating code. Triggers on "review this PR", "code review", "check my diff", "pre-PR review", or a /work hand-in before shipping.
 ---
 
 # Code Review
@@ -45,10 +45,15 @@ where `/work` set it.
    (0/25/50/75/100), are admitted to the report by the findings-schema rules, and are deduplicated by
    fingerprint (`path:line:category`). Confidence and Priority never decide review acceptance. Honor
    `pre_existing`: do not blame this diff for old code it merely touched.
-4. **Canonical judgment-based lenses.** Read the full diff, load the versioned roster at
-   `plugins/saga/references/lens-roster.json`, run its four always-on lenses, and select only conditional
-   lenses with real work to do. Announce the selected set and record a one-line reason per conditional
-   lens.
+4. **Always-on four, then one batched approval.** Load `plugins/saga/references/lens-roster.json`.
+   Auto-run exactly the four always-on lenses — `architecture-maintainability`, `correctness`,
+   `security`, `testing`. Recommend conditionals with one plain-language reason each. Do not launch
+   any conditional lens until an approval record exists for this reviewed commit and cycle. Present
+   one batched operator choice: accept-recommended (the default) / always-on-only / customize. A
+   caller- or Orchestrate-supplied selection **is** that approval — do not ask again. Persist the
+   record on the existing review-cycle state in `review_consensus.py`. Reuse it on repair cycles
+   unless applicability changes, then ask once about only the delta. Dismissal or no answer pauses
+   with no conditional launches. No hidden or supplemental lenses outside the approved set.
 5. **Built-vs-planned audit always runs.** Scope-drift detection (informational) plus the 5-state
    plan-completion audit run on every review, grounded in the `docs/plans/` artifact and the engineering
    journal. Built-versus-planned remains an independent gate; it is not folded into numeric scoring.
@@ -63,9 +68,11 @@ where `/work` set it.
 
 ## Interaction method
 
-Use `AskUserQuestion` for choices from a known set (review mode, execution backend, fixer-dispatch
-routing). Call `ToolSearch` with `select:AskUserQuestion` first if its schema is not loaded. Ask one
-question per turn. For open-ended discussion, ask inline in chat. Never silently skip a question.
+Use `AskUserQuestion` for choices from a known set (review mode, conditional-lens approval,
+execution backend, fixer-dispatch routing). Call `ToolSearch` with `select:AskUserQuestion` first if
+its schema is not loaded. Ask one question per turn, except the lens-selection gate may share its
+widget with backend selection when the client supports a multi-question payload — that is still one
+interaction. For open-ended discussion, ask inline in chat. Never silently skip a question.
 
 In a channel session (`redis-channel` active), `AskUserQuestion` cannot be called — inline the choices
 in your reply text instead. Follow the canonical channel-inline convention in
@@ -75,52 +82,34 @@ in your reply text instead. Follow the canonical channel-inline convention in
 **Operator-absence contract (#371).** Every known-set gate above declares what happens on
 silence, and the declaration above this line is the contract. `HALT` here: stop and wait. A timeout,
 a widget error, or a dropped session is never consent — do not proceed on a default and do not
-invent an answer. Ask one question at a time and read the decision from the operator's actual
-answer, never from a widget's raw return value.
+invent an answer. On the conditional-lens gate, dismissal or no answer **pauses**: run the always-on
+four only, launch no conditional lens, and persist no approval record. Ask one question at a time
+and read the decision from the operator's actual answer, never from a widget's raw return value.
 
 Use repo-relative paths in every generated document. Absolute paths break portability across machines
 and worktrees. (The one exception is the saga `--review-paths` value — see Phase 5.)
 
-## Engine Offer
+## Reviewer-session transport
 
-Before offering an external-engine second opinion for code review, run
-`python3 plugins/saga/scripts/engine_offer.py offer --stage code-review --repo-root . --attended`.
-If the helper reports `prompt_required`, `/code-review` owns the `AskUserQuestion` or channel-inline
-prompt and persists the selected preference with `engine_offer.py remember`. The offer is advisory
-only; `/code-review` still verifies every finding and owns the typed outcome.
-On this stage the helper may also list `external-only`, which excludes the home vendor from
-the external-reviewer seat. If the remaining reviewers cannot meet quorum, halt and tell the
-operator — do not fall back to the excluded vendor. Under external-only the home vendor cannot
-be reached through the external-reviewer seat. Dispatch an accepted external reviewer through
-`plugins/saga/scripts/engine_session_runner.py` (a managed terminal session), not as a
-subagent. Select that runner with `select_review_runner`; under `external-only` admit the
-roster with `external_only.admit_external_only` first.
-The installed transport guarantee remains exact: Under external-only the home vendor cannot be reached
-through the external-reviewer seat. The in-session lens fan-out is governed by the consensus-panel
-roster, which is separate work. Code Review then maps that transport roster into the canonical lens
-roster before scoring; the transport sentence does not transfer consensus ownership.
-Launch and collect through the module's CLI, the same way the offer helper is invoked:
+Orchestrate owns every reviewer session. Do not launch or collect an external reviewer
+through `engine_session_runner.py`, `engine_offer.py`, or any other saga transport.
+Do not consult `engine-registry.yaml` as a launch authority — it is capability metadata
+only and cannot override the live Orchestrate/Herdr roster.
 
-```bash
-python3 plugins/saga/scripts/engine_session_runner.py launch \
-  --invocation-file <invocation.json> --repo-root . --stage code-review \
-  --mode <second-opinion|external-only> --home-vendor <vendor> --engine-id <engine> \
-  --claim-store .saga/second-opinion-claims.json
-python3 plugins/saga/scripts/engine_session_runner.py collect \
-  --handle-file <launch-stdout.json> --claim-store .saga/second-opinion-claims.json
-```
+When this review runs as an Orchestrate unit, the run record already names the
+review-controller and any `external-reviewer` seats (vendor, model, effort, worktree).
+Consume revision-bound evidence those seats return. If a requested reviewer is not in
+the Orchestrate run record, HALT — do not invent a custom review, do not fall back to
+the retired runner, and do not dispatch a subagent, hidden subprocess, or unowned
+terminal session as a substitute.
 
-The invocation file must include the same `request_digest` as the durable requested
-claim. Persist that claim before launch. Launch reserves the pending slot, starts
-the session, and prints a JSON object that collect can read as-is (handle fields
-are at the top level). A launch that returns `session_outcome=pending` has not
-finished. Collect later. Do not treat pending as died, and do not re-launch. Terminal `ran-empty` or
-`died` delivery produces `review_incomplete` without consuming a scoring cycle or fabricating a score.
+In a standalone `/code-review` (no Orchestrate run), the operator is the transport:
+ask them to add reviewer seats through Orchestrate `expand`/`go`, or proceed without
+an external seat. Never prompt via `.saga/engine-prefs.json`.
 
-<!-- gate-record: id=code-review-engine-offer absence=HALT transport=ask-user-question -->
-The offer prompt rides the durable gate-record contract declared in Interaction method (gate id
-`code-review-engine-offer-<run-id>`): open before prompting, satisfy on answer, `resolve-absent`
-on silence (`HALT`).
+The in-session lens fan-out (Explore/Task) is the consensus-panel roster, which is
+separate from reviewer-session transport. Code Review still owns scoring, consensus,
+and `review_result.v1`.
 
 ---
 
@@ -215,36 +204,72 @@ report-only mode** — that mode makes zero file writes to reviewed code and own
 
 ---
 
-## Phase 2 — Select lenses (judgment)
+## Phase 2 — Select lenses (always-on auto-run, then one batched approval)
 
-Read the FULL diff before selecting. Load `plugins/saga/references/lens-roster.json` as the executable
-contract and `references/lens-catalog.md` as its prose guide. Run the roster's **four always-on** lenses
-and judgment-select conditional lenses whose domain the diff actually touches. Record the roster lens
-identifier and a one-line selection cause for every conditional lens.
+<!-- gate-record: id=code-review-conditional-lens-approval absence=HALT transport=ask-user-question -->
+Read the FULL diff before recommending. Load `plugins/saga/references/lens-roster.json` as the
+executable contract and `references/lens-catalog.md` as its prose guide. Drive the launch set through
+`review_consensus.resolve_lens_selection` / `launch_approved_lenses` so the approval record lives on
+the existing review-cycle state (reviewed commit + cycle) — not a new store. Issue #418's selection
+adapter may produce candidates and reasons; it **cannot** approve a launch.
+
+1. **Auto-run the always-on four.** Spawn `architecture-maintainability`, `correctness`, `security`,
+   and `testing` with no operator question. Omitting any one is a defect. These are the only lenses
+   that may receive an Agent/Task call before an approval record exists.
+2. **Recommend conditionals.** Judgment-select zero or more conditional lenses whose domain this diff
+   actually touches. Record the roster identifier and one plain-language reason each (e.g.,
+   "api-contract — diff changes the public command schema"). Filename or keyword matching is not
+   sufficient. Do not recommend a lens with no applicable dimension. Do not omit one because another
+   overlaps it.
+3. **One batched question, before any conditional launch.** If any conditional is recommended and no
+   approval already exists for this reviewed commit and cycle, ask **one** operator question whose
+   choices are exactly `accept-recommended` (the default), `always-on-only`, and `customize`.
+   Combine this question with execution-backend selection in the same AskUserQuestion payload when
+   the client supports multiple questions in one widget. Otherwise ask lens selection first.
+4. **Caller- or Orchestrate-supplied selection is approval.** If the caller, `/work`, or an
+   Orchestrate run record already named the conditional set, pass it as `caller_selection` (source
+   `caller` or `orchestrate`). Do not re-ask. Persist that record and launch exactly those
+   conditionals plus the always-on four.
+5. **Persist against reviewed commit + cycle.** Call `ReviewCycleState.record_lens_approval` (or let
+   `resolve_lens_selection` do it) so the record is keyed by reviewed commit and review cycle. Round-
+   trip it with the existing `review_cycle_state.v1` payload; do not invent a parallel store.
+6. **Reuse on repair cycles; ask only the delta.** On a later cycle, if judged applicability is
+   unchanged, reuse the approved set and do not re-ask. If the diff newly makes a conditional
+   applicable, ask once about **only that delta**. Drop conditionals that are no longer applicable
+   without asking (they have no work). Still-applicable previously approved lenses stay.
+7. **Pause on dismissal or no answer.** Do not default to `accept-recommended`. Launch no conditional
+   lens. Persist no approval. The always-on four may already be running; they are not rolled back.
+8. **No hidden lenses.** Spawn only `launch_approved_lenses`'s return value. Do not add supplemental
+   or unofficial lens reviews outside the approved set. External advisory seats are a separate
+   transport concern and are not a native lens approval.
 
 The high-signal checklist categories ground the always-on checks: enum-and-value completeness (which
 **requires reading code OUTSIDE the diff**), LLM-output trust boundary, SQL and shell injection, and
 race conditions.
 
-**Announce the team** before spawning: list the selected lenses with a one-line justification for each
-conditional lens (e.g., "data-migration — diff adds a DynamoDB GSI and a backfill script"). Do not spawn
-a lens that has no real work on this diff.
+In **programmatic / report-only** mode the caller supplies `caller_selection` (empty means
+always-on-only). If it supplies none, treat that as pause: always-on four only, no conditional Agent
+calls, no invented approval.
 
 ---
 
 ## Phase 3 — Review (fan-out)
 
-Spawn the selected lenses as **generic agents** (`Explore`/`Task` — this plugin has no `agents/` dir for
-lens-specific personas, so do **not** reference named `ce-*` agents). Each review/verify-class lens
-spawn names `subagent_type: saga:readonly-verifier` (read-only toolset) and `isolation: "worktree"`
-(disposable worktree) — see `plugins/saga/references/sandbox-spawn-sites.md`. Each lens returns
-findings in the schema defined by `references/findings-schema.md`.
+Spawn **only the approved launch set** as **generic agents** (`Explore`/`Task` — this plugin has no
+`agents/` dir for lens-specific personas, so do **not** reference named `ce-*` agents). Call
+`launch_approved_lenses` (or refuse any conditional spawn while `state.lens_approval_for(commit,
+cycle)` is missing) **before** the Agent/Task call. Each review/verify-class lens spawn names
+`subagent_type: saga:readonly-verifier` (read-only toolset) and `isolation: "worktree"` (disposable
+worktree) — see `plugins/saga/references/sandbox-spawn-sites.md`. Each lens returns findings in the
+schema defined by `references/findings-schema.md`.
 
 **Operator-choice backend.** Offer the execution backend per `../../references/operator-choice.md` (the
 plugin-root decision contract). There are exactly three backends — `inline` ("inline") |
 `team-execution` ("team execution") | `cc-workflows-ultracode` ("dynamic workflows"). Read the work
 shape, recommend the cheapest-correct backend and pre-select it, but surface the alternatives so
-escalation is one step. `inline` ("inline") suits small diffs.
+escalation is one step. `inline` ("inline") suits small diffs. When the Phase 2 lens-selection
+question is still open, attach this backend choice to that same operator interaction. When a caller-
+supplied or reused approval already closed lens selection, ask backend alone.
 
 **Dynamic workflows serve BOTH purposes** (per `operator-choice.md` §3.2) — escalate to
 `cc-workflows-ultracode` ("dynamic workflows"), without elevated risk, for **either**:
@@ -290,10 +315,9 @@ proceed with in-distribution knowledge.
 ### External whole-diff advisory seat
 
 The external-reviewer seat receives the full revision-bound diff and may discover findings no native lens
-raised. Code Review owns the reviewer identity, request digest, typed evidence, adjudication, and lifecycle;
-`engine_session_runner.py` supplies replaceable launch and collection transport. Select the runner through
-`engine_session_runner.select_review_runner`; a selector halt is visible `unavailable`, never a home-vendor
-session under `external-only`.
+raised. Code Review owns the reviewer identity, request digest, typed evidence, adjudication, and lifecycle.
+Orchestrate launches and collects that seat as a named Herdr session (`role: external-reviewer` through
+`expand`/`go`). Halt rather than falling back to the retired saga runner or inventing a custom review.
 
 The retired heading `Second-opinion point-out (after Stage A numbering)` and its single-finding scope do
 not govern new requests. The stable `#N` identifiers still survive deduplication and routing, while the external
@@ -501,7 +525,9 @@ programmatic mode: review and return `review_result.v1` — the caller owns pers
 - `../../references/lens-roster.json` — the versioned executable lens, dimension, anchor, and acceptance
   contract used by both Code Review and Team Execution.
 - `../../scripts/review_consensus.py` — the scorer, selective-rerun state machine, delivery mapping,
-  delta-check enforcement, fix consolidation, and `review_result.v1` serializer.
+  delta-check enforcement, fix consolidation, `review_result.v1` serializer, and the conditional-lens
+  approval record bound to reviewed commit + cycle (`resolve_lens_selection`,
+  `launch_approved_lenses`).
 - `references/lens-catalog.md` — prose guidance for judgment-based selection and lens execution.
 - `references/findings-schema.md` — severity (P0-P3), anchored confidence, `autofix_class`, `owner`, the
   `suggested_fix` rule, `pre_existing` honesty, evidence, fingerprint dedup, merge/sort/stable-# rules,

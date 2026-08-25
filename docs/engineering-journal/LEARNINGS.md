@@ -19,6 +19,338 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-08-25
+
+### Instruction text that names a CLI flag must name the flag's argument TYPE  {#808-flag-argument-type}
+
+**Context.** #808 phase B narrowed the Saga execution-backend offer in instruction text only
+(`/plan`, `/work`, and the two contract docs they cite). The rewrite of `/work`'s runnable offer
+reference gained a sentence telling the agent to "pass the raw helper JSON to
+`--orchestration-recommended`".
+**Evidence.** PR #833 at `128ef713`;
+`plugins/saga/skills/work/references/execution-strategy.md:209` (as written) versus
+`plugins/saga/scripts/saga.py:1528-1530`, where the flag is declared
+`choices=list(ORCHESTRATION_MODES)` (`saga.py:79`). Reproduction:
+`python3 plugins/saga/scripts/saga.py save --kind task --id probe --orchestration-recommended
+"$(python3 plugins/saga/scripts/lifecycle_state.py recommend-backend --file-count 2 --phase-count 1)"`
+→ `error: argument --orchestration-recommended: invalid choice`.
+**Mechanism.** `recommend_execution_backend` returns an object
+(`{recommended, rationale, alternatives, backends, workflow_availability}`) and the flag accepts
+one bare enum string out of that object. Prose that names the producer ("the helper output", "the
+raw helper JSON") reads as correct to a human who already knows the shape, and is unrunnable for
+an agent that does not. `/plan` already carried the unambiguous form —
+`<the backend the recommender suggested>` — so the repo had the right phrasing and the new
+sentence did not reuse it.
+**Fix.** Name the value and the constraint in the same clause: "the helper's `recommended` value —
+the bare enum string, since `--orchestration-recommended` takes `choices=ORCHESTRATION_MODES`, not
+the JSON object". Repaired during Saga Code Review of PR #833.
+**Validation.** `uv run pytest tests/test_saga_plugin.py tests/test_saga_execution_spec.py
+tests/test_operator_choice_drift.py tests/test_lint_gate_absence_contract.py -q` → 526 passed.
+**What surprised.** A substring pin over hard-wrapped Markdown silently under-asserts: the same
+phrase counts 0 when the wrap falls mid-phrase, so a guard can look present and enumerate nothing.
+Normalise whitespace (`" ".join(text.split())`) before asserting.
+**Generalizable rule.** In an agent-facing instruction plugin the instruction IS the product:
+whenever prose names a flag, name the argument's type and its constraint beside it, and prefer the
+phrasing already used elsewhere in the repo over a fresh one.
+**Refs.** DECISIONS `{#cc-workflows-explicit-invocation-808}`, `{#cc-workflows-backend-narrow-808}`.
+
+
+### An ordered comparison of a set-valued judgement silently re-asks  {#778-applicability-is-a-set}
+
+**Context.** #778's `resolve_lens_selection` decides whether a repair cycle reuses the
+operator's conditional-lens approval or asks again. It compared the current recommendation
+list to the prior one as **ordered tuples** (`recommended_ids in (prior_ids, prior_approved)`).
+**Evidence.** PR #834 code review at `a34ec79b`; `plugins/saga/scripts/review_consensus.py`
+`resolve_lens_selection`. Two reachable failures, both reproduced before the fix: the same
+lenses rebuilt in a different order fell through to the delta branch and paused with an
+**empty** delta on both sides; and a cycle where a conditional merely stopped applying —
+nothing added — also paused, so a still-applicable *approved* lens did not launch at all.
+**Mechanism.** Applicability is a set, but the judgement that produces it is a mapping whose
+iteration order is incidental. Comparing order made two equal judgements look different. The
+delta branch then treated any inequality as "ask", conflating an **addition** (genuinely new
+information the operator has not ruled on) with a **removal** (a lens with no work left).
+Only an addition is a question.
+**Fix.** Compare recommendation *sets*; ask only when `added` is non-empty; on reuse, carry
+`prior_approved` intersected with what still applies. A delta answer now decides only the
+delta, so `accept-recommended` on a widened diff no longer resurrects a lens the operator
+previously declined.
+**Validation.** Five regression tests in `tests/test_lens_selection.py`; mutating the
+`if not added:` reuse arm fails three of them.
+**Generalizable rule.** When a decision is "has this judgement changed?", compare the
+judgement as the set it is — and split "something was added" from "something went away",
+because only the first is worth an operator's attention.
+**Refs.** DECISIONS `{#778-conditional-lens-operator-approval}`, LEARNINGS `{#778-announce-is-not-approval}`
+
+### A guard that validates on write but not on read fails open  {#778-validate-both-directions}
+
+**Context.** The same change added `LensApprovalRecord`, whose whole purpose is to stop an
+unapproved lens reaching an `Agent` spawn.
+**Evidence.** PR #834 at `a34ec79b`: `record_lens_approval` rejected a non-roster lens id,
+but `LensApprovalRecord.from_dict` did not — so a round-tripped `review_cycle_state.v1`
+payload restored an approval naming any string, and `launch_approved_lenses` spawned it.
+**Mechanism.** The write path and the deserialize path are two independent doors into the
+same invariant. Validating only the one you were thinking about while writing the feature
+leaves the other wide open, and persistence means the unvalidated door is the one that gets
+used after a restart.
+**Fix.** `_require_roster_conditionals` on the deserialize path too; the record now fails
+closed, matching the module's stated fail-closed posture for unknown schemas.
+**Generalizable rule.** An invariant enforced on write must be enforced on read. Persisted
+state is untrusted input to your own future process.
+**Refs.** LEARNINGS `{#778-applicability-is-a-set}`
+
+
+### Announcing a lens team is not an approval gate  {#778-announce-is-not-approval}
+
+**Context.** Code Review's skill told the agent to judgment-select conditionals and
+announce the team before spawn. On 2026-08-23 that produced six lens launches with
+no operator question, four unapproved conditionals, and two always-on lenses omitted.
+**Evidence.** Issue #778; session `34130998-1497-48bc-831b-424237e0e0b0`;
+`review_consensus.launch_approved_lenses` now refuses a conditional Agent spawn
+until `LensApprovalRecord` exists for the reviewed commit and cycle.
+**Mechanism.** An instruction that is only prose ("announce, then spawn") has no
+launch-path check. The always-on set and the conditional set need different gates:
+auto-run vs persisted approval. Putting the record on the existing review-cycle
+state binds it to the same commit+cycle identity scoring already uses, so a repair
+cycle can reuse it without a second store.
+**Fix.** Skill text plus `resolve_lens_selection` / `launch_approved_lenses` on
+`ReviewCycleState`. Caller-supplied selection counts as approval. No answer pauses.
+**Generalizable rule.** A launch that costs operator time needs a persisted
+approval the spawn path can refuse without, not a sentence that asks the agent to
+remember to ask.
+**Refs.** DECISIONS `{#778-conditional-lens-operator-approval}`
+
+### A guard keyed on prompt wording refuses the sanctioned path and admits the bespoke one  {#776-role-not-wording}
+
+**Context.** #776 replaced saga's transport with an Orchestrate guard that refused "bespoke
+reviews" by matching the task text `review this|the`. Code review of PR #831 ran the guard
+instead of reading it. A seat correctly declaring `role: external-reviewer` — the shape the
+same PR's docs prescribe — was refused for saying "review the diff", while an undeclared unit
+saying "review PR #831 for bugs" or "do a code review of the branch" was admitted.
+**Evidence.** PR #831; `orchestrate.py` `assert_review_transport`; the seat exemption
+`if is_reviewer_seat(unit): continue` sat as the loop body's last statement, where `continue`
+is a no-op, so it never applied. The regression test's seat task
+("advisory whole-diff findings…") was worded so it could not match the regex, so the happy
+path was never exercised at its boundary.
+**Mechanism.** Two requests with the same meaning and different words must get the same
+verdict, and no regex over free-form task text delivers that. The run record already carried
+a `role` field stating what each unit is; keying admission on that field decides the question
+the guard was actually asking.
+**Fix.** Exempt a declared seat before the bespoke-review branch; refuse a review-shaped unit
+that declares **no** role. Both directions pinned by tests, including the rephrasings that
+previously slipped through.
+**Generalizable rule.** When a change introduces a field that states intent, enforce policy on
+that field — a wording heuristic beside it will disagree with it, and a test authored in the
+same breath will be phrased to agree with the heuristic.
+**Refs.** LEARNINGS `#776-registry-is-not-transport`
+
+### A second launch registry will refuse a launchable reviewer  {#776-registry-is-not-transport}
+
+**Context.** During the 2026-08-23 Team Mimir publication review, the coordinator was told to
+run one official Saga Code Review with Claude Opus 5 and Grok 4.6. After a bespoke two-reviewer
+process was stopped, it followed saga external-engine guidance, consulted `engine-registry.yaml`,
+concluded Grok was not representable, and started reasoning about `engine_session_runner` instead
+of the live Herdr roster. Grok was installed and launchable.
+**Evidence.** Issue #776; `plugins/saga/scripts/engine_session_runner.py` (deleted);
+`plugins/saga/references/engine-registry.yaml` header now `NON-TRANSPORT METADATA`.
+**Mechanism.** Two launch authorities cannot stay consistent. The registry is calibration data;
+the live Orchestrate/Herdr roster is the only session-launch authority.
+**Fix (or queued).** #776 retires the transport trio and the engine-prefs seam; reviewer seats
+are named Orchestrate units.
+**Generalizable rule.** Capability metadata must be labeled non-transport, or a stale row will
+refuse a reviewer the machine can actually launch.
+**Refs.** DECISIONS `#776-halt-not-fallback-transport`
+### Heading `{#slug}` is the journal's definition set; mentions and fragment links must resolve  {#journal-anchor-lint-407}
+
+**Context.** The ordering lint (#659) already walked LEARNINGS.md and DECISIONS.md, but nothing checked that a `{#slug}` was unique or that a citation pointed at a heading that exists. A duplicated slug or a dangling mention corrupts the citation graph without failing CI.
+
+**Evidence.** Issue #407. Before the check, DECISIONS.md defined `{#fleet-doctor-independent-audit-353}` twice (2026-07-19 "never a shared projection" and 2026-07-15 "never repairs"). Four live citations pointed at slugs with no heading: `#ship-ceremony-operator-gate-526` (meant `{#ceremony-operator-confirm-names-transition-526}`), `#marketplace-ci-guard` (moved to ARCHIVE `{#marketplace-ci-guard-pruned}`), `#code-review-saga-scan-touchups` (retired; ARCHIVE `{#code-review-saga-scan-touchups-shipped}`), and the format-template placeholder `{#slug}`.
+
+**Mechanism.** Definitions are heading-attached `{#slug}` across LEARNINGS, DECISIONS, ARCHIVE, and QUEUED jointly — a cross-file collision counts. ARCHIVE and QUEUED have no date sections, so they join the definition set without joining the newest-first check; excluding them would paint every honest QUEUED citation as a dangle. That file set is fixed rather than derived from the command line, because linting one journal alone would otherwise turn its citations of the other three into 135 false dangles. References are same-file `](#slug)` fragment targets and non-heading `{#slug}` mentions. Fenced code is skipped so a format template is not a fake definition, and a fence never closed is itself reported — skipping to end-of-file would switch both checks off for the remainder and still print `VIOLATIONS: 0`. The literal placeholder `slug` is not a citation. For the newest-first guard, an entry is an existing one when its (title, slug) pair was already in the base, when its slug was, or when its title was in the base under a slug that no longer sits on that title — the last is the rename case. Title alone is deliberately NOT an identity: that would let a brand-new anchored entry reusing an existing title be filed under a stale date heading unchecked.
+
+**Fix (or queued).** `scripts/lint_journal_order.py` `check_anchors`; the four live violations repaired in the same change. Duplicate 2026-07-15 slug renamed `{#fleet-doctor-never-repairs-353}`.
+
+**Known gap (queued).** Cross-file links — `](DECISIONS.md#slug)`, the journal's *dominant* citation form at 399 occurrences against 192 same-file ones — are outside the reference set, so 18 of them across 7 distinct targets are presently broken and this lint reports `VIOLATIONS: 0` over them. Two of those targets, `QUEUED.md#marketplace-ci-guard` and `QUEUED.md#code-review-saga-scan-touchups`, are the same dangles repaired above in their brace form: the repair pass fixed what the check could see and left the identical dangle standing in the syntax it could not. Closing it means widening `_references` and retargeting all 18, which is its own change.
+
+**Generalizable rule.** A citation graph needs one joint definition pass; per-file uniqueness misses the cross-file collision, and a roster that omits the queued/archive files turns real edges into failures. And a partial checker teaches the repair pass to see only what it checks — enumerate the reference forms in the wild and count them before deciding which ones the check covers, or the ones it skips get certified clean.
+
+**Refs.** DECISIONS `{#journal-order-linted-659}`; issue #407.
+
+### A syntax gate that recognises one fence form is a silent no-op for the others  {#mermaid-fence-form-coverage-405}
+
+**Context.** The #405 Mermaid check first matched only `` ```mermaid `` at 0-3 spaces of indent. Code review of PR #824 probed the forms GitHub actually renders.
+
+**Evidence.** `scripts/check_mermaid.py` extracted zero fences from `` ````mermaid ``, from `~~~mermaid`, and from a fence indented inside a list item — all three render as diagrams on GitHub. It also reported a fence closed by a longer run of backticks as "unclosed" (CommonMark allows a longer closer), and treated a `` ```mermaid `` block nested inside a wider `` ````markdown `` block as a real fence. Repository population before and after the fix: the same 14 fences across 20 files.
+
+**Mechanism.** Matching only the opener cannot see nesting, so an example fence inside a documentation block looks identical to a live one, and a longer marker looks like no marker at all. Tracking *every* fence — any info string — and pairing each closer to its own opener by character and length settles all four cases with one scan.
+
+**Fix (or queued).** `fences_in_text` now scans all fences and records only the mermaid ones. `main` calls `_require_parser()` before counting and fails when tracked files match the marker but no fence is extracted, so an empty population can no longer report success on a toolchain that would have failed. Exit codes 0, 1 and 3 each gained a test.
+
+**Validation.** `uv run pytest tests/test_check_mermaid.py` — 20 passed (was 7); `uv run python scripts/check_mermaid.py` — `14 mermaid fence(s) parsed across 20 file(s)`.
+
+**Generalizable rule.** A gate that enumerates its own population must fail when the population comes back empty; "0 checked" and "0 broken" print the same green.
+
+**Refs.** DECISIONS `{#mermaid-syntax-check-headless-parse-405}`; issue #405; PR #824 code review.
+
+### Headless mermaid.parse needs the DOM shim installed before mermaid is imported  {#mermaid-parse-jsdom-before-import-405}
+
+**Context.** Issue #405 adds an always-on syntax check that shells to mermaid's own parser rather than a regex heuristic. mermaid 11 is ESM and expects a `document`; Node 22 also makes `globalThis.navigator` a getter, so a naive `globalThis.navigator = window.navigator` throws before any fence is parsed.
+
+**Evidence.** Prototype at `scripts/mermaid/parse.mjs`: assigning `navigator` raised `TypeError: Cannot set property navigator of #<Object> which has only a getter`. Importing mermaid at the top of the file, before JSDOM, is the other order that fails closed. After installing JSDOM globals (skipping `navigator`) and *then* `await import("mermaid")`, `mermaid.parse()` accepted every tracked fence and rejected a truncated `flowchart TD / A -->` with file:line.
+
+**Mechanism.** mermaid.parse() is syntax-only and does not render, so jsdom is enough and `@mermaid-js/mermaid-cli` (puppeteer/chromium) is not required. The parser captures DOM globals at import time, so the shim must precede the import. Node 22's `navigator` getter is a host object, not a writable data property.
+
+**Fix (or queued).** `scripts/mermaid/parse.mjs` assigns writable DOM globals through a try/`defineProperty` helper, never writes `navigator`, and dynamically imports mermaid after the shim. Pinned mermaid 11.17.1 + jsdom 30.0.1. No mermaid-cli fallback (plan KTD2 / F6).
+
+**Validation.** `uv run pytest tests/test_check_mermaid.py` — 7 passed, including one valid fence, one broken fence named `docs/broken.md:7`, and a clean run of the 14 tracked fences.
+
+**Generalizable rule.** When a browser library is reused headless, install the DOM shim first, then import the library; never assign to host getters, and do not pull in a browser renderer to prove a parse.
+
+**Refs.** DECISIONS `{#mermaid-syntax-check-headless-parse-405}`; issue #405; plan `docs/plans/2026-08-25-improve-claude-plugins-run-plan.md` U2 / KTD2.
+### Tab ownership is a pre-launch Herdr snapshot, not the wrapper `reused` bit  {#launcher-tab-snapshot-ownership}
+
+**Context.** Cycle 2 of the PR #827 review executed the cycle-1 repair against a real wrapper
+receipt. `close_owned_session` refused every launch with "wrapper reused an existing tab", and
+`close_run_session` issued no close, so kind/cwd/workspace stop conditions left the mismatched
+session running. The wrapper sets `reused` when it joins the current Herdr workspace
+(`agent-herdr` ~1194). That is the common case inside a Herdr pane. The wrapper's real
+tab-ownership bit is `created_tab`, and the receipt does not publish it.
+
+**Evidence.** PR #827 cycle-2 finding A; wrapper receipt keys `agent`, `agent_name`, `pane_id`,
+`reused`, `session`, `tab_id`, `tab_name`, `workspace_id`; `herdr tab list --workspace` before
+`agents` vs after.
+
+**Mechanism.** Workspace join is not tab creation. Ownership has to be derived on the launcher
+side from a signal the wrapper does not control: the set of tab ids present immediately
+before launch. `owned` is true only when the receipt `tab_id` is absent from that snapshot.
+An unreadable list fails closed (`owned=false`). Orchestrate `cmd_clean` must use the same
+gate; a raw `herdr tab close` on `unit.tab_id` still destroys an operator tab.
+
+**Fix (or queued).** `list_tab_ids` / `tab_was_created` in `launcher.py`; receipt `owned`;
+`close_run_session` and `close_owned_session` gate on `owned is True`; `reap` calls
+`close_run_session`. Wrapper left unchanged (out of scope).
+
+**Generalizable rule.** When an upstream receipt names a flag that does not mean what you
+need, do not reinterpret it. Snapshot the resource set yourself before the create call, and
+treat "could not read the set" as "do not destroy".
+
+**Refs.** Supersedes {#launcher-reused-ownership}; issue #777; PR #827.
+
+### Wrapper `reused` is ownership, not a second copy of tab_id  {#launcher-reused-ownership}
+
+**Superseded 2026-08-25.** The wrapper `reused` bit means the *workspace* already existed, not
+that the tab did. See {#launcher-tab-snapshot-ownership}. The circular `tab_id` comparison
+this entry closed remains invalid; the replacement proof is the pre-launch tab snapshot.
+
+**Context.** Code review of PR #827 found `close_owned_session` compared `unit.tab_id` to
+`receipt["tab_id"]` after both were copied from the same wrapper JSON, so the check could not fail
+on a real launch. The wrapper splits into an existing tab on label collision and publishes
+`reused`. Closing that tab takes every pane in it.
+
+**Evidence.** PR #827 review finding 2; `launcher.py` `record_wrapper_identity` /
+`close_run_session` / `close_owned_session`.
+
+**Mechanism.** A value copied onto both sides of a comparison is not proof. `reused` is an
+independent wrapper claim. If it is true or missing, this process does not own the tab.
+
+**Fix (or queued).** Persist tab id and `reused` immediately after the wrapper JSON returns, refuse
+close when `reused` is true or absent, and skip `herdr tab close` on mismatch for a reused tab so
+preflight cannot destroy the operator's session.
+
+**Generalizable rule.** Ownership of a created resource has to come from a field the creator did not
+write onto both sides of the check.
+
+**Refs.** Issue #777; PR #827.
+
+### Orchestrate tests monkeypatch launcher names on the orchestrate module  {#orchestrate-ingest-launcher-globals}
+
+**Context.** Issue #777 extracts the launch seam from `orchestrate.py` into
+`plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py`. Dozens of existing tests call
+`monkeypatch.setattr(orchestrate, "run"|"live_agents"|"launch"|...)`. A normal `import` of the new
+module would make those patches miss: `launch` defined in `launcher.py` looks up `run` in
+*launcher's* globals.
+
+**Evidence.** `tests/test_orchestrate_delivery.py`, `tests/test_orchestrate_account.py`,
+`tests/test_orchestrate_status_and_notes.py` all patch names on the orchestrate module object loaded
+via `spec_from_file_location`. After the extract, `orchestrate.agent_argv.__code__.co_filename`
+points at `launcher.py` while `monkeypatch.setattr(orchestrate, "run", ...)` still intercepts
+`launch()`.
+
+**Mechanism.** Function globals are the defining module's dict. `exec(compile(launcher.py),
+orchestrate.globals())` defines the extracted functions with orchestrate's globals as
+`__globals__`, so a patch on the orchestrate module is the name those functions look up. The CLI
+path still loads `launcher.py` as its own module, so an ordinary session does not go through
+Orchestrate. The same exec inherits orchestrate's `__name__`: when `python3 orchestrate.py wait`
+runs, that name is `__main__`, so launcher.py's CLI guard would parse `wait` as a launcher
+subcommand and exit. Ingest sets `_AGENT_LAUNCHER_INGESTING` in those globals first.
+
+**Fix (or queued).** `_ingest_agent_launcher()` in `orchestrate.py`. Do not "clean this up" into a
+plain import without moving every monkeypatch target onto the launcher module.
+
+**Generalizable rule.** When extracting a seam that tests patch on the consumer module, either exec
+the extracted source into the consumer's globals or update every patch site in the same change;
+a second imported module silently drops the patches.
+
+**Refs.** Issue #777; plan U6 of `docs/plans/2026-08-25-improve-claude-plugins-run-plan.md`.
+### Live boards have Status and no Stage; #812 is a guard, not a migration  {#812-status-only-no-stage-field}
+
+**Context.** Issue #812 asked saga to stop composing board Stage/Status writes and submit
+corrections through mission-control's existing `flow set-field`. Planning already found zero
+direct GraphQL Stage/Status writes in saga; the S3-repaired run plan then bound the unit to
+the live board schema.
+
+**Evidence.** Live field list 2026-08-25 on Operations (#3), Asgard (#2), and CAMPPS (#4):
+each has `Status` and none has `Stage`. Operations Status options are Idea / Shaping / Ready
+/ Active / Verify / Done. The only saga `--field` argv is
+`plugins/saga/scripts/board_progression.py:default_board_writer`.
+
+**Mechanism.** The defect class was "a future saga script could re-introduce direct
+composition," not "today's writer talks to GraphQL." Adding a `set-field-stage` op-kind
+would have been dead API surface for a field that does not exist (doc-review F3) and would
+have widened the writer past Status (F4).
+
+**Fix (or queued).** Guard-and-tighten: field name in operation, certificate authorization,
+and retry identity; reject any correction field other than Status (Stage by name only);
+static guard in `tests/test_saga_single_writer_guard.py`; mission-control
+`flow set-field --correction` is the existing operation with a flag, not a new verb.
+
+**Generalizable rule.** Inventory the live schema before adding an op-kind for a field. A
+name in an issue title is not evidence the field exists; `flow field-options` is.
+
+**Refs.** Issue #812; plan `docs/plans/2026-08-25-improve-claude-plugins-run-plan.md` U7;
+DECISIONS `{#812-correction-field-named-identity}`.
+
+### Parameterizing a write seam by field silently un-parameterizes its read-back half  {#812-field-blind-drift-read}
+
+**Context.** #812's code review of PR #826. The unit made `set-field-status` carry a field
+name through argv, certificate authorization, and the idempotency key, admitting `Status` and
+`Stage` by name. Every changed line was about the *write* direction.
+
+**Evidence.** `plugins/saga/scripts/reconcile_controller.py` — `default_live_reader` maps
+`set-field-status` to `outcome_github.board_status(ref, project=...)`, which takes no field
+argument, and `_expected_live(op_kind, target_state)` takes no field either. `set-field-status`
+is the sole member of `AUTO_CORRECT_OP_KINDS`.
+
+**Mechanism.** A level-triggered controller has two halves: assert a value, then read the live
+value back and correct the difference. Widening the write half from "the Status field" to "a
+named field" made the read half ambiguous without touching one line of it — the reader would
+have compared the live *Status* against a *Stage* target, called the mismatch drift, and
+auto-corrected it. The write direction is where the change is visible, so that is where review
+attention goes; the read direction fails silently and in the safe-looking direction (a write
+that "converges" the board).
+
+**Fix.** Fail closed rather than guess: `reconcile_controller.LIVE_READABLE_CORRECTION_FIELD`
+names the one field the live reader can actually read, and a present-key tick for any other
+allowlisted field skips the comparison with a named note instead of drift-correcting on it.
+Proven load-bearing by mutation — deleting the guard fails
+`test_present_key_skips_drift_check_for_a_field_the_live_reader_cannot_read`.
+
+**Generalizable rule.** When you add a discriminator to one side of a read-modify-write loop,
+grep the other side for the same discriminator before shipping. If the reader cannot take the
+discriminator, the loop must refuse to judge — never fall back to the old unparameterized read.
+
+**Refs.** Issue #812; PR #826 code review; DECISIONS `{#812-correction-field-named-identity}`;
+LEARNINGS `{#812-status-only-no-stage-field}`.
+
 ## 2026-08-24
 
 ### One unattended Orchestrate run closed the defects-claude-plugins Objective end to end  {#unattended-orchestrate-run-787}

@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.141.0] - 2026-08-25
+## [0.142.0] - 2026-08-25
 
 ### Changed
 
@@ -11,6 +11,20 @@
   default or automatic Saga backend and never a generic interchangeable execution
   backend. No silent substitute. `recommend_execution_backend()` may still return
   that enum; Plan and Work must not pre-select it.
+
+## [0.141.0] - 2026-08-25
+
+### Added
+
+- **Conditional-lens operator approval in Code Review (#778).** The four always-on
+  lenses (`architecture-maintainability`, `correctness`, `security`, `testing`)
+  auto-run. Conditional lenses wait for one batched operator choice
+  (`accept-recommended` / `always-on-only` / `customize`). A caller- or
+  Orchestrate-supplied selection is that approval. The record lives on the
+  existing review-cycle state, keyed by reviewed commit and cycle, and is reused
+  on repair cycles unless applicability changes (then only the delta is asked).
+  Dismissal or no answer pauses with no conditional launches. Scoring, consensus,
+  and `review_result.v1` are unchanged.
 
 ## [0.140.0] - 2026-08-25
 

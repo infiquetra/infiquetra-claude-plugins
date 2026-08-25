@@ -360,6 +360,31 @@ def test_detailed_legacy_anchors_and_optional_focuses_are_preserved() -> None:
     assert legacy_focus == EXPECTED_LEGACY_FOCUS
 
 
+def test_selection_contract_requires_operator_approval_for_conditionals() -> None:
+    roster = _load_roster()
+    contract = roster["selection_contract"]
+    lenses = _lens_map(roster)
+
+    assert contract["always_on_auto_run"] is True
+    assert set(contract["always_on_ids"]) == ALWAYS_ON
+    assert set(contract["always_on_ids"]) == {
+        lens_id for lens_id, lens in lenses.items() if lens["trigger"]["class"] == "always-on"
+    }
+    assert contract["conditional_requires_operator_approval"] is True
+    assert contract["batched_choices"] == [
+        "accept-recommended",
+        "always-on-only",
+        "customize",
+    ]
+    assert contract["recommended_is_default"] is True
+    assert contract["caller_or_orchestrate_selection_is_approval"] is True
+    assert contract["persist_against"] == ["reviewed_commit", "review_cycle"]
+    assert contract["reuse_on_repair_cycles_unless_applicability_delta"] is True
+    assert contract["pause_on_dismissal_or_no_answer"] is True
+    assert contract["no_hidden_or_supplemental_lenses"] is True
+    assert contract["selection_adapter_cannot_approve"] is True
+
+
 def test_conditional_selection_is_judgment_with_a_recorded_one_line_reason() -> None:
     lenses = _lens_map(_load_roster())
 

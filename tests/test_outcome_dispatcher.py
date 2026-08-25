@@ -139,17 +139,25 @@ def test_resolve_available_workflow_available_requires_host_capable() -> None:
     )
 
 
+def _despaced(text: str) -> str:
+    """Strip every whitespace character so a comparison cannot depend on terminal width."""
+    return "".join(text.split())
+
+
 def test_outcome_advance_help_and_resolve_available_coupling_consistency(capsys: Any) -> None:
     # #657 AC2: CLI advance help text and resolve_available docstring agree on the flag coupling.
     with pytest.raises(SystemExit):
         OUTCOME.main(["advance", "--help"])
-    # argparse wraps help at terminal width and its textwrap breaks on hyphens, so
-    # "--host-capable" itself can split across lines in some width bands (#792 class);
-    # strip all whitespace before asserting so the check is width-insensitive.
-    captured = "".join(capsys.readouterr().out.split())
-    assert "--workflow-available" in captured
-    assert "--host-capable" in captured
-    assert "requires--host-capable" in captured
+    # argparse wraps help text at the terminal width, and the width a subprocess sees is not
+    # something this test controls -- asserting on the raw output made the result depend on the
+    # caller's pane (it passed at 60/80/90/100 columns and failed at 70/120). Wrapping also breaks
+    # INSIDE a flag: at 120 columns argparse emits "--host-\ncapable", so collapsing runs of
+    # whitespace is not enough. Drop whitespace entirely from both sides of the comparison, which
+    # leaves exactly the wording #657 AC2 pins and nothing about layout.
+    captured = _despaced(capsys.readouterr().out)
+    assert _despaced("--workflow-available") in captured
+    assert _despaced("--host-capable") in captured
+    assert _despaced("requires --host-capable") in captured
 
     doc = D.resolve_available.__doc__ or ""
     assert "workflow_available" in doc

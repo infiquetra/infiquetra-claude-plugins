@@ -18,6 +18,8 @@ Three modes:
   entry stranded above the first date heading.
 * anchors (always) -- heading-attached ``{#slug}`` definitions are unique across the joint
   file set, and ``](#slug)`` / non-heading ``{#slug}`` mentions resolve to that set (#407).
+  Covered reference forms are exactly those two. A cross-file link (``](DECISIONS.md#slug)``)
+  is NOT checked: repairing the ones already in the journal is its own change.
 * diff-scoped (``--base-ref``) -- an entry ADDED by this branch must land in the newest date
   section. This is the check that actually prevents recurrence, and it mirrors the existing
   PR-scoped guard in ``tools/release_surface_diff_guard.py``.
@@ -120,35 +122,46 @@ def check_new_entries(rel: str, text: str, base_ref: str, root: Path) -> list[st
         # New journal in this branch: every entry is new, so require them all to be up top.
         base_text = ""
 
-    def identities(heading: str) -> set[str]:
-        """Stable identities of an entry: slug (if any) and stripped title.
-
-        Slug is the primary id, so re-levelling (`##` -> `###`) is a no-op. Title is also
-        an identity so renaming a slug to disambiguate a duplicate is not a new filing —
-        the heading was already in the file. An entry is new only when none of its
-        identities existed in the base.
-        """
+    def identity(heading: str) -> tuple[str, str | None]:
+        """An entry's (title, slug). Slug is None for an unanchored entry."""
         title = re.sub(r"\{#[^}]+\}", "", heading)
         title = re.sub(r"^#+\s*", "", title).strip()
-        keys: set[str] = set()
-        if title:
-            keys.add(title)
-        if m := re.search(r"\{#([^}]+)\}", heading):
-            keys.add(f"#{m.group(1)}")
-        return keys
+        m = re.search(r"\{#([^}]+)\}", heading)
+        return title, (m.group(1) if m else None)
 
-    def all_identities(src: str) -> set[str]:
-        keys: set[str] = set()
-        for ln in src.splitlines():
-            if ENTRY.match(ln) or MISLEVELLED.match(ln):
-                keys |= identities(ln)
-        return keys
+    def pairs(src: str) -> set[tuple[str, str | None]]:
+        return {identity(ln) for ln in src.splitlines() if ENTRY.match(ln) or MISLEVELLED.match(ln)}
 
-    base_keys = all_identities(base_text)
+    base_pairs = pairs(base_text)
+    base_slugs = {slug for _, slug in base_pairs if slug}
+    new_pairs = pairs(text)
+
+    def is_new(heading: str) -> bool:
+        """Whether this entry is a NEW filing rather than an existing one moved or renamed.
+
+        Three exemptions, each carved for a real edit that must not read as a new entry:
+
+        * the exact (title, slug) pair was already in the base -- a pure move or re-level;
+        * the slug was already in the base -- the title was re-worded in place;
+        * the title was in the base under a slug that no longer sits on that title -- the
+          slug was renamed, which is how a duplicate `{#slug}` gets disambiguated (#407).
+
+        The third exemption is deliberately keyed to the base entry's OWN (title, slug) pair
+        disappearing. Keying it to the title alone would let a genuinely new entry that reuses
+        an existing title be filed at the bottom of the file unchecked, which is exactly the
+        drift this function exists to catch.
+        """
+        title, slug = identity(heading)
+        if (title, slug) in base_pairs:
+            return False
+        if slug and slug in base_slugs:
+            return False
+        return not any(bt == title and (bt, bs) not in new_pairs for bt, bs in base_pairs)
+
     added = {
         ln.rstrip()
         for ln in text.splitlines()
-        if (ENTRY.match(ln) or MISLEVELLED.match(ln)) and not (identities(ln) & base_keys)
+        if (ENTRY.match(ln) or MISLEVELLED.match(ln)) and is_new(ln)
     }
     if not added:
         return []
@@ -176,9 +189,16 @@ def check_new_entries(rel: str, text: str, base_ref: str, root: Path) -> list[st
     return problems
 
 
-def _active_lines(text: str) -> list[tuple[int, str]]:
-    """Yield (1-based line, text) skipping fenced code, including blockquoted fences."""
-    fence: tuple[str, int] | None = None
+def _scan(text: str) -> tuple[list[tuple[int, str]], int | None]:
+    """Active (non-fenced) lines as (1-based line, text), plus any unclosed fence's line.
+
+    Blockquoted fences count, so a ``> ```markdown`` template block is skipped like any
+    other. The second return value is the line that opened a fence never closed by the end
+    of the file: everything after it was skipped, so the caller must report it rather than
+    silently checking a truncated file (a fence typo would otherwise switch both anchor
+    checks off for the remainder of the file and still print VIOLATIONS: 0).
+    """
+    fence: tuple[str, int, int] | None = None
     out: list[tuple[int, str]] = []
     for i, line in enumerate(text.splitlines(), 1):
         m = FENCE_MARK.match(line)
@@ -186,19 +206,19 @@ def _active_lines(text: str) -> list[tuple[int, str]]:
             marker = m.group(1)
             ch, n = marker[0], len(marker)
             if fence is None:
-                fence = (ch, n)
+                fence = (ch, n, i)
             elif ch == fence[0] and n >= fence[1]:
                 fence = None
             continue
         if fence is None:
             out.append((i, line))
-    return out
+    return out, (fence[2] if fence else None)
 
 
-def _heading_definitions(text: str) -> list[tuple[str, int]]:
+def _heading_definitions(active: list[tuple[int, str]]) -> list[tuple[str, int]]:
     """Heading-attached ``{#slug}`` definitions as (slug, line)."""
     found: list[tuple[str, int]] = []
-    for n, line in _active_lines(text):
+    for n, line in active:
         if not HEADING_LINE.match(line):
             continue
         for m in BRACE_ANCHOR.finditer(line):
@@ -208,11 +228,15 @@ def _heading_definitions(text: str) -> list[tuple[str, int]]:
     return found
 
 
-def _references(text: str) -> list[tuple[str, int]]:
-    """``](#slug)`` targets and non-heading ``{#slug}`` mentions as (slug, line)."""
+def _references(active: list[tuple[int, str]]) -> list[tuple[str, int]]:
+    """Same-file ``](#slug)`` targets and non-heading ``{#slug}`` mentions as (slug, line).
+
+    Cross-file links (``](DECISIONS.md#slug)``) are out of scope for this pass; #407's
+    reference set is the two same-file forms above.
+    """
     found: list[tuple[str, int]] = []
     seen: set[tuple[str, int]] = set()
-    for n, line in _active_lines(text):
+    for n, line in active:
         is_heading = bool(HEADING_LINE.match(line))
         slugs: list[str] = []
         if not is_heading:
@@ -234,19 +258,27 @@ def check_anchors(files: list[tuple[str, str]]) -> list[str]:
 
     Definitions are heading-attached ``{#slug}`` across *files* together — a slug
     defined in LEARNINGS.md and again in DECISIONS.md is a duplicate. References
-    are ``](#slug)`` fragment targets and non-heading ``{#slug}`` mentions, checked
-    against that joint set. Duplicate reports name every definition site; dangling
-    reports name the referencing line.
+    are same-file ``](#slug)`` fragment targets and non-heading ``{#slug}`` mentions,
+    checked against that joint set; cross-file ``](FILE.md#slug)`` links are not in
+    the reference set. Duplicate reports name every definition site; dangling reports
+    name the referencing line; a fence left open is reported on its own line, because
+    it hides every anchor after it.
     """
     defs: dict[str, list[tuple[str, int]]] = {}
     refs: list[tuple[str, str, int]] = []
+    problems: list[str] = []
     for rel, text in files:
-        for slug, n in _heading_definitions(text):
+        active, unclosed = _scan(text)
+        if unclosed is not None:
+            problems.append(
+                f"{rel}:{unclosed}: code fence opened here is never closed — "
+                f"the rest of the file is not anchor-checked"
+            )
+        for slug, n in _heading_definitions(active):
             defs.setdefault(slug, []).append((rel, n))
-        for slug, n in _references(text):
+        for slug, n in _references(active):
             refs.append((slug, rel, n))
 
-    problems: list[str] = []
     for slug in sorted(defs):
         sites = defs[slug]
         if len(sites) < 2:
@@ -295,17 +327,19 @@ def main(argv: list[str] | None = None) -> int:
         if args.base_ref:
             problems.extend(check_new_entries(rel, text, args.base_ref, args.root))
 
+    # The anchor check is inherently joint, so its file set is fixed rather than derived
+    # from the CLI arguments: linting one journal on its own must not turn every honest
+    # citation of a slug defined in another journal into a dangling reference.
     anchor_files = list(loaded)
-    if set(journal_args) == set(DEFAULT_JOURNALS):
-        loaded_rels = {rel for rel, _ in anchor_files}
-        for rel in ANCHOR_EXTRA:
-            if rel in loaded_rels:
-                continue
-            path = args.root / rel
-            if not path.is_file():
-                continue
-            checked += 1
-            anchor_files.append((rel, path.read_text(encoding="utf-8")))
+    loaded_rels = {rel for rel, _ in anchor_files}
+    for rel in (*DEFAULT_JOURNALS, *ANCHOR_EXTRA):
+        if rel in loaded_rels:
+            continue
+        path = args.root / rel
+        if not path.is_file():
+            continue
+        checked += 1
+        anchor_files.append((rel, path.read_text(encoding="utf-8")))
     problems.extend(check_anchors(anchor_files))
 
     for p in problems:

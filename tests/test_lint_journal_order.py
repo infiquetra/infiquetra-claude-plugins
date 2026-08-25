@@ -4,6 +4,9 @@ The ordering lint exists because both journals had silently drifted ~10% of thei
 the oldest date heading. The anchor lint exists because a duplicated slug or a dangling
 ``{#slug}`` / ``](#slug)`` citation corrupts the graph silently. Each class is tested in both
 directions — a clean file must pass, and each specific drift shape must be caught by name.
+
+The anchor lint's reference set is the two same-file forms only. Cross-file links
+(``](DECISIONS.md#slug)``) are not checked, so nothing here asserts they resolve.
 """
 
 from __future__ import annotations
@@ -197,6 +200,22 @@ def test_unquoted_fenced_heading_is_not_a_definition(lint: ModuleType) -> None:
     assert not any("duplicate" in p for p in lint.check_anchors([(LEARNINGS, colliding)]))
 
 
+def test_unclosed_fence_is_reported_rather_than_silently_skipping(lint: ModuleType) -> None:
+    """A fence never closed hides every later anchor; a silent pass would be the worst answer."""
+    text = (
+        "# Learnings\n\n## 2026-07-27\n\n### A  {#a}\n\n"
+        "```python\nnever closed\n\n### B  {#a}\n\nSee `{#ghost}`.\n"
+    )
+    problems = lint.check_anchors([(LEARNINGS, text)])
+    n = next(i for i, ln in enumerate(text.splitlines(), 1) if ln.startswith("```"))
+    assert any(f"{LEARNINGS}:{n}:" in p and "never closed" in p for p in problems), problems
+
+
+def test_a_balanced_fence_reports_no_unclosed_fence(lint: ModuleType) -> None:
+    text = CLEAN + "\n```python\nx = 1\n```\n"
+    assert not any("never closed" in p for p in lint.check_anchors([(LEARNINGS, text)]))
+
+
 # --- the real fleet journals must stay clean ---------------------------------
 
 
@@ -208,7 +227,12 @@ def test_committed_journals_pass_the_structural_lint(lint: ModuleType) -> None:
 
 
 def test_committed_journals_pass_the_anchor_lint(lint: ModuleType) -> None:
-    """Regression sentinel: the live citation graph has no duplicate or dangling slugs (#407)."""
+    """Regression sentinel: no duplicate slug, and every same-file citation resolves (#407).
+
+    Scoped to what ``check_anchors`` actually reads — ``{#slug}`` mentions and same-file
+    ``](#slug)`` targets. Cross-file ``](FILE.md#slug)`` links are outside its reference set,
+    so this asserts nothing about them.
+    """
     files: list[tuple[str, str]] = []
     for rel in (*lint.DEFAULT_JOURNALS, *lint.ANCHOR_EXTRA):
         path = REPO / rel
@@ -319,6 +343,45 @@ def test_renaming_an_existing_slug_is_not_an_addition(lint: ModuleType, repo: Pa
     assert lint.check_new_entries(LEARNINGS, text, base, repo) == []
 
 
+def test_renaming_a_slug_while_the_duplicate_survives_elsewhere_is_not_an_addition(
+    lint: ModuleType, repo: Path
+) -> None:
+    """The real #407 repair shape: one of TWO entries sharing a slug gets renamed.
+
+    The other entry keeps the old slug, so the old slug is still present in the file. An
+    exemption keyed to "the base slug vanished from the file" would miss that and read the
+    renamed entry as a new filing.
+    """
+    base_text = CLEAN + "\n### Twin  {#dup}\n\nbody\n"
+    _journal(repo, LEARNINGS, base_text.replace("{#older}", "{#dup}"))
+    _git(repo, "commit", "-qam", "two entries share a slug")
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    text = base_text.replace("### Older thing  {#older}", "### Older thing  {#older-renamed}")
+    _journal(repo, LEARNINGS, text)
+    _git(repo, "commit", "-qam", "disambiguate the duplicate")
+    assert lint.check_new_entries(LEARNINGS, text, base, repo) == []
+
+
+def test_a_new_bottom_entry_reusing_an_existing_title_is_still_caught(
+    lint: ModuleType, repo: Path
+) -> None:
+    """Title alone must not exempt an entry — only a title whose base slug moved off it.
+
+    Treating the title as an unconditional identity let a brand-new anchored entry be filed
+    under a stale date heading unchecked whenever its title matched any existing entry.
+    """
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    text = CLEAN + "\n### Newest thing  {#second-newest}\n\nbody\n"
+    _journal(repo, LEARNINGS, text)
+    _git(repo, "commit", "-qam", "reuse a title at the bottom")
+    problems = lint.check_new_entries(LEARNINGS, text, base, repo)
+    assert any("outside the newest section" in p for p in problems), problems
+
+
 def test_a_genuinely_new_slug_at_the_bottom_is_still_caught(lint: ModuleType, repo: Path) -> None:
     """The move/re-level exemptions must not blunt the check they are carved out of."""
     base = subprocess.run(
@@ -353,3 +416,15 @@ def test_cli_exits_nonzero_on_a_broken_journal(lint: ModuleType, tmp_path: Path)
 def test_missing_journal_is_not_a_violation(lint: ModuleType, tmp_path: Path) -> None:
     """Most plugins carry no journal; absence is not drift."""
     assert lint.main([LEARNINGS, "--root", str(tmp_path)]) == 0
+
+
+def test_linting_one_journal_still_resolves_slugs_defined_in_the_others(
+    lint: ModuleType,
+) -> None:
+    """The definition set is joint, so naming one file must not manufacture dangles.
+
+    The anchor pass is inherently cross-file: LEARNINGS cites DECISIONS, ARCHIVE, and QUEUED
+    slugs constantly. Deriving its file set from the CLI arguments turned every one of those
+    honest citations into a dangling reference.
+    """
+    assert lint.main([LEARNINGS, "--root", str(REPO)]) == 0

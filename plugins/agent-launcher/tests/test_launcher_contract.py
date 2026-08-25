@@ -56,6 +56,26 @@ def test_orchestrate_has_no_private_launcher_copy() -> None:
     assert "def close_run_session(" not in text
     assert "_ingest_agent_launcher" in text
     assert "agent-launcher" in text
+    assert 'run(["herdr", "tab", "close"' not in text
+    assert "close_run_session(unit)" in text
+
+
+def test_degraded_path_binds_settle_and_review_names() -> None:
+    text = ORCHESTRATE.read_text(encoding="utf-8")
+    block = text.split("if not _ingest_agent_launcher():", 1)[1].split("def repo_root", 1)[0]
+    for name in (
+        "append_unit_note",
+        "VENDOR_FLAGS",
+        "say",
+        "has_delivery_warning",
+        "VENDOR_PERMISSION",
+        "VENDOR_NOTES",
+        "models",
+        "favourites",
+        "clear_delivery_warning",
+        "AccountMismatchError",
+    ):
+        assert name in block, name
 
 
 def test_orchestrate_subprocess_cli_is_not_the_launcher_cli() -> None:
@@ -234,7 +254,7 @@ def test_prompt_delivery_failure_records_undelivered(
 
 def test_close_without_receipt_tab_id_stops(launcher: ModuleType) -> None:
     unit = launcher.LaunchRequest(name="x", vendor="codex", tab_id="tab-1")
-    with pytest.raises(SystemExit, match="reused"):
+    with pytest.raises(SystemExit, match="ownership"):
         launcher.close_owned_session(unit, receipt={})
 
 
@@ -250,7 +270,7 @@ def test_close_mismatched_receipt_stops(
     monkeypatch.setattr(launcher, "run", fake_run)
     unit = launcher.LaunchRequest(name="x", vendor="codex", tab_id="tab-1")
     with pytest.raises(SystemExit, match="does not match"):
-        launcher.close_owned_session(unit, receipt={"tab_id": "tab-other", "reused": False})
+        launcher.close_owned_session(unit, receipt={"tab_id": "tab-other", "owned": True})
     assert closed == []
 
 
@@ -265,7 +285,7 @@ def test_close_owned_session_closes_only_receipt_tab(
 
     monkeypatch.setattr(launcher, "run", fake_run)
     unit = launcher.LaunchRequest(name="x", vendor="codex", tab_id="tab-owned")
-    launcher.close_owned_session(unit, receipt={"tab_id": "tab-owned", "reused": False})
+    launcher.close_owned_session(unit, receipt={"tab_id": "tab-owned", "owned": True})
     assert closed == [["herdr", "tab", "close", "tab-owned"]]
 
 
@@ -320,6 +340,8 @@ def test_herdr_readback_receipt_separates_confirmed_from_requested(
     assert "workspace" in receipt["confirmed_against_herdr"]
     assert "readiness" in receipt["confirmed_against_herdr"]
     assert "model" in receipt["requested_only"]
+    assert "permission" in receipt["requested_only"]
+    assert "permission" not in receipt["confirmed_against_herdr"]
     assert receipt["agent_name"] is None or "agent_name" in receipt
     assert receipt["permission"] == "auto"
     assert receipt["kind"] == "codex"
@@ -383,7 +405,10 @@ def test_pane_text_refuses_traversal_name(launcher: ModuleType, tmp_path: Path) 
         launcher.pane_text(unit, long_text)
 
 
-def test_reused_tab_is_never_closed(launcher: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_preexisting_tab_is_not_owned(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ownership is launcher-side: tab_id present in the pre-launch snapshot is not owned."""
     closed: list[list[str]] = []
 
     def fake_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
@@ -391,15 +416,19 @@ def test_reused_tab_is_never_closed(launcher: ModuleType, monkeypatch: pytest.Mo
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
     monkeypatch.setattr(launcher, "run", fake_run)
-    unit = launcher.LaunchRequest(name="u-777", vendor="codex", tab_id="w80:t4", reused=True)
+    preexisting = frozenset({"w80:t4", "w80:t1"})
+    assert launcher.tab_was_created("w80:t4", preexisting) is False
+    assert launcher.tab_was_created("w80:t9", preexisting) is True
+    unit = launcher.LaunchRequest(name="u-777", vendor="codex", tab_id="w80:t4", owned=False)
+    receipt = {"tab_id": "w80:t4", "owned": False}
     launcher.close_run_session(unit)
     assert closed == []
-    with pytest.raises(SystemExit, match="reused an existing tab"):
-        launcher.close_owned_session(unit, receipt={"tab_id": "w80:t4", "reused": True})
+    with pytest.raises(SystemExit, match="existed before this launch"):
+        launcher.close_owned_session(unit, receipt=receipt)
     assert closed == []
 
 
-def test_cwd_mismatch_on_reused_tab_does_not_close(
+def test_cwd_mismatch_on_preexisting_tab_does_not_close(
     launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     closed: list[list[str]] = []
@@ -426,11 +455,73 @@ def test_cwd_mismatch_on_reused_tab_does_not_close(
         worktree="/tmp/wt",
         pane_id="pane-1",
         tab_id="tab-1",
-        reused=True,
+        owned=False,
+        launch_receipt={"tab_id": "tab-1", "owned": False},
     )
     with pytest.raises(SystemExit, match="working directory"):
         launcher.verify_unit_preflight(unit, "pane-1", ready=True)
     assert closed == []
+
+
+def test_ownership_is_tab_id_not_in_prelaunch_snapshot(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    listed: list[str] = []
+
+    def fake_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
+        listed.append(" ".join(cmd))
+        if cmd[:3] == ["herdr", "tab", "list"]:
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                json.dumps(
+                    {
+                        "result": {
+                            "tabs": [
+                                {"tab_id": "w80:t1", "label": "old"},
+                                {"tab_id": "w80:t4", "label": "u-777"},
+                            ]
+                        }
+                    }
+                ),
+                "",
+            )
+        if cmd[:3] == ["herdr", "pane", "current"]:
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                json.dumps({"result": {"pane": {"workspace_id": "w80"}}}),
+                "",
+            )
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            json.dumps(
+                {
+                    "tab_id": "w80:t9",
+                    "agent_name": "smoke",
+                    "pane_id": "w80:p9",
+                    "reused": True,
+                }
+            ),
+            "",
+        )
+
+    monkeypatch.setattr(launcher, "run", fake_run)
+    monkeypatch.setattr(launcher, "await_ready", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        launcher,
+        "verify_unit_preflight",
+        lambda *a, **k: (_ for _ in ()).throw(SystemExit("stop after identity")),
+    )
+    unit = launcher.LaunchRequest(name="smoke", vendor="codex", worktree="/tmp/wt")
+    with pytest.raises(SystemExit, match="stop after identity"):
+        launcher.launch(unit)
+    assert unit.tab_id == "w80:t9"
+    assert unit.owned is True
+    assert unit.launch_receipt["owned"] is True
+    assert unit.launch_receipt["reused"] is True
+    assert any("tab list" in c for c in listed)
 
 
 def test_kind_mismatch_stops_before_prompt(
@@ -552,6 +643,9 @@ def test_skill_cleanup_example_redirects_receipt() -> None:
     assert "> receipt.json" in skill
     assert "close --receipt-json receipt.json" in skill
     assert "close --tab-id <tab_id> --receipt-json <receipt.json>" not in skill
+    assert "owned" in skill
+    assert "workspace" in skill.lower()
+    assert "tab set snapshotted immediately before" in skill or "pre-launch" in skill
 
 
 def test_skill_declares_herdr_dependency_and_no_duplicate_herdr_skill() -> None:

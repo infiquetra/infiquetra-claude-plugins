@@ -21,7 +21,40 @@
 
 ## 2026-08-25
 
+### Tab ownership is a pre-launch Herdr snapshot, not the wrapper `reused` bit  {#launcher-tab-snapshot-ownership}
+
+**Context.** Cycle 2 of the PR #827 review executed the cycle-1 repair against a real wrapper
+receipt. `close_owned_session` refused every launch with "wrapper reused an existing tab", and
+`close_run_session` issued no close, so kind/cwd/workspace stop conditions left the mismatched
+session running. The wrapper sets `reused` when it joins the current Herdr workspace
+(`agent-herdr` ~1194). That is the common case inside a Herdr pane. The wrapper's real
+tab-ownership bit is `created_tab`, and the receipt does not publish it.
+
+**Evidence.** PR #827 cycle-2 finding A; wrapper receipt keys `agent`, `agent_name`, `pane_id`,
+`reused`, `session`, `tab_id`, `tab_name`, `workspace_id`; `herdr tab list --workspace` before
+`agents` vs after.
+
+**Mechanism.** Workspace join is not tab creation. Ownership has to be derived on the launcher
+side from a signal the wrapper does not control: the set of tab ids present immediately
+before launch. `owned` is true only when the receipt `tab_id` is absent from that snapshot.
+An unreadable list fails closed (`owned=false`). Orchestrate `cmd_clean` must use the same
+gate; a raw `herdr tab close` on `unit.tab_id` still destroys an operator tab.
+
+**Fix (or queued).** `list_tab_ids` / `tab_was_created` in `launcher.py`; receipt `owned`;
+`close_run_session` and `close_owned_session` gate on `owned is True`; `reap` calls
+`close_run_session`. Wrapper left unchanged (out of scope).
+
+**Generalizable rule.** When an upstream receipt names a flag that does not mean what you
+need, do not reinterpret it. Snapshot the resource set yourself before the create call, and
+treat "could not read the set" as "do not destroy".
+
+**Refs.** Supersedes {#launcher-reused-ownership}; issue #777; PR #827.
+
 ### Wrapper `reused` is ownership, not a second copy of tab_id  {#launcher-reused-ownership}
+
+**Superseded 2026-08-25.** The wrapper `reused` bit means the *workspace* already existed, not
+that the tab did. See {#launcher-tab-snapshot-ownership}. The circular `tab_id` comparison
+this entry closed remains invalid; the replacement proof is the pre-launch tab snapshot.
 
 **Context.** Code review of PR #827 found `close_owned_session` compared `unit.tab_id` to
 `receipt["tab_id"]` after both were copied from the same wrapper JSON, so the check could not fail

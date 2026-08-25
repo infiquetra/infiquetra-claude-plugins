@@ -1033,6 +1033,16 @@ if not _ingest_agent_launcher():
     live_agents = _agent_launcher_required
     close_run_session = _agent_launcher_required
     verify_unit_preflight = _agent_launcher_required
+    append_unit_note = _agent_launcher_required
+    say = _agent_launcher_required
+    has_delivery_warning = _agent_launcher_required
+    clear_delivery_warning = _agent_launcher_required
+    models = _agent_launcher_required
+    favourites = _agent_launcher_required
+    VENDOR_FLAGS = {}
+    VENDOR_PERMISSION = {}
+    VENDOR_NOTES = {}
+    AccountMismatchError = SystemExit
 
 
 def repo_root() -> Path:
@@ -3177,7 +3187,7 @@ def reap(
             kept.append(unit.name)
             continue
         if unit.tab_id:
-            run(["herdr", "tab", "close", unit.tab_id], check=False)
+            close_run_session(unit)
         if unit.worktree and Path(unit.worktree).exists():
             run(["git", "worktree", "remove", "--force", unit.worktree], check=False)
         if branches and unit.branch:

@@ -52,19 +52,64 @@ def assert_safe_path_component(value: str, label: str) -> None:
 
 
 def wrapper_reused(value: Any) -> bool:
-    """Whether the wrapper said this tab already existed."""
+    """Whether the wrapper said the *workspace* already existed.
+
+    This is not tab ownership. The wrapper sets it when it joins the current
+    Herdr workspace, which is the common case. Tab ownership is derived
+    launcher-side by ``list_tab_ids`` / ``tab_was_created``.
+    """
     if value is True:
         return True
     return isinstance(value, str) and value.strip().lower() in {"true", "1", "yes"}
 
 
-def record_wrapper_identity(unit: Any, info: dict[str, Any]) -> dict[str, Any]:
+def list_tab_ids(workspace_id: str | None = None) -> frozenset[str] | None:
+    """Tab ids in a Herdr workspace, or None if the list cannot be read."""
+    ws = workspace_id or current_herdr_workspace_id()
+    if not ws:
+        return None
+    proc = run(["herdr", "tab", "list", "--workspace", ws], check=False, timeout=20)
+    if proc.returncode != 0:
+        return None
+    try:
+        tabs = json.loads(proc.stdout)["result"]["tabs"]
+    except (ValueError, KeyError, TypeError):
+        return None
+    if not isinstance(tabs, list):
+        return None
+    ids = {str(tab["tab_id"]) for tab in tabs if isinstance(tab, dict) and tab.get("tab_id")}
+    return frozenset(ids)
+
+
+def tab_was_created(tab_id: str | None, preexisting: frozenset[str] | None) -> bool:
+    """True only when the receipt tab was absent from the pre-launch snapshot."""
+    if not tab_id or preexisting is None:
+        return False
+    return tab_id not in preexisting
+
+
+def session_owned(unit: Any, receipt: dict[str, Any] | None = None) -> bool:
+    """Whether the launcher proved it created this tab."""
+    proof = receipt if receipt is not None else getattr(unit, "launch_receipt", {}) or {}
+    if isinstance(proof, dict) and "owned" in proof:
+        return proof.get("owned") is True
+    return getattr(unit, "owned", False) is True
+
+
+def record_wrapper_identity(
+    unit: Any,
+    info: dict[str, Any],
+    *,
+    preexisting: frozenset[str] | None = None,
+) -> dict[str, Any]:
     """Persist the wrapper receipt before any later step can fail."""
     unit.tab_id = info.get("tab_id")
     unit.agent_name = info.get("agent_name", unit.name)
     unit.pane_id = info.get("pane_id")
     reused = wrapper_reused(info.get("reused"))
     unit.reused = reused
+    owned = tab_was_created(unit.tab_id, preexisting)
+    unit.owned = owned
     receipt: dict[str, Any] = {
         "unit_name": unit.name,
         "vendor": unit.vendor,
@@ -72,6 +117,7 @@ def record_wrapper_identity(unit: Any, info: dict[str, Any]) -> dict[str, Any]:
         "pane": unit.pane_id,
         "agent_name": unit.agent_name,
         "reused": reused,
+        "owned": owned,
         "permission": getattr(unit, "permission", None),
         "verified": False,
         "prompt_delivered": None,
@@ -658,11 +704,8 @@ def drive_opencode_variant_selection(
 
 
 def close_run_session(unit: Any) -> None:
-    """Close only the tab this run opened, leaving every session it did not create alone."""
-    if wrapper_reused(getattr(unit, "reused", False)):
-        return
-    receipt = getattr(unit, "launch_receipt", None) or {}
-    if isinstance(receipt, dict) and wrapper_reused(receipt.get("reused")):
+    """Close only the tab this launch created, leaving every other session alone."""
+    if not session_owned(unit):
         return
     if unit.tab_id:
         run(["herdr", "tab", "close", unit.tab_id], check=False)
@@ -871,7 +914,7 @@ def verify_unit_preflight(
         raise SystemExit(f"{unit.name}: session was not assigned a valid pane_id")
 
     confirmed: list[str] = ["pane"]
-    unconfirmed: list[str] = ["model"]  # herdr does not report the agent's model
+    unconfirmed: list[str] = ["model", "permission"]  # herdr publishes neither
     row = agent_row(unit)
 
     if row is None:
@@ -949,6 +992,7 @@ def verify_unit_preflight(
         "kind": str(reported_kind),
         "agent_name": getattr(unit, "agent_name", None),
         "reused": wrapper_reused(getattr(unit, "reused", False)),
+        "owned": session_owned(unit),
         "working_directory": unit.worktree,
         "worktree": unit.worktree,
         "workspace": unit.workspace,
@@ -967,6 +1011,7 @@ def verify_unit_preflight(
 
 
 def launch(unit: Any, backend: str = "inline", *, review_elsewhere: bool = False) -> None:
+    preexisting = list_tab_ids()
     proc = run(agent_argv(unit))
     pane_id = None
     try:
@@ -976,7 +1021,7 @@ def launch(unit: Any, backend: str = "inline", *, review_elsewhere: bool = False
         raise SystemExit(
             f"{unit.name}: launched, but the wrapper's JSON could not be read"
         ) from None
-    record_wrapper_identity(unit, info)
+    record_wrapper_identity(unit, info, preexisting=preexisting)
     pane_id = unit.pane_id
     if not pane_id:
         raise SystemExit(f"{unit.name}: launcher did not return a pane_id")
@@ -1123,6 +1168,7 @@ class LaunchRequest:
     note: str = ""
     variant: str | None = None
     reused: bool = False
+    owned: bool = False
     launch_receipt: dict[str, Any] = field(default_factory=dict)
 
 
@@ -1178,30 +1224,36 @@ def confirm_preview(preview: dict[str, str], cwd: str, workspace_id: str | None)
 
 
 def close_owned_session(unit: Any, *, receipt: dict[str, Any] | None = None) -> None:
-    """Close only a tab this process created.
+    """Close only a tab this launch created.
 
-    Ownership is the wrapper's ``reused`` flag (independent of ``tab_id``), not a
-    comparison of a value we copied onto both sides of the receipt.
+    Ownership is launcher-side: the receipt tab_id was not in the Herdr workspace
+    tab set snapshotted immediately before the wrapper ran.
     """
     proof = receipt if receipt is not None else getattr(unit, "launch_receipt", {}) or {}
     if not isinstance(proof, dict):
         raise SystemExit("cannot close: launch receipt is not an object, ownership unproven")
-    if "reused" not in proof:
-        raise SystemExit("cannot close: receipt does not say whether the tab was reused")
-    if wrapper_reused(proof.get("reused")):
+    if "owned" not in proof:
+        raise SystemExit("cannot close: receipt does not prove tab ownership")
+    if proof.get("owned") is not True:
         raise SystemExit(
-            "cannot close: wrapper reused an existing tab; this process does not own it"
+            "cannot close: tab existed before this launch; this process does not own it"
         )
     tab_id = getattr(unit, "tab_id", None) or proof.get("tab_id")
-    owned = proof.get("tab_id")
+    recorded = proof.get("tab_id")
     if not tab_id:
         raise SystemExit("cannot close: no tab_id on the session, ownership unproven")
-    if not owned:
+    if not recorded:
         raise SystemExit("cannot close: launch receipt has no tab_id, ownership unproven")
-    if owned != tab_id:
-        raise SystemExit(f"cannot close: tab_id {tab_id!r} does not match launch receipt {owned!r}")
+    if recorded != tab_id:
+        raise SystemExit(
+            f"cannot close: tab_id {tab_id!r} does not match launch receipt {recorded!r}"
+        )
     unit.tab_id = tab_id
-    unit.reused = False
+    unit.owned = True
+    if not isinstance(getattr(unit, "launch_receipt", None), dict):
+        unit.launch_receipt = dict(proof)
+    else:
+        unit.launch_receipt["owned"] = True
     close_run_session(unit)
 
 
@@ -1292,6 +1344,7 @@ def cli_main(argv: list[str] | None = None) -> int:
             vendor="unknown",
             tab_id=str(tab_id),
             reused=wrapper_reused(receipt.get("reused")),
+            owned=receipt.get("owned") is True,
             launch_receipt=receipt,
         )
         close_owned_session(unit, receipt=receipt)

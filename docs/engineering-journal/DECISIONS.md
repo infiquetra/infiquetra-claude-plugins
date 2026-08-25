@@ -1,6 +1,26 @@
 # Decisions — Infiquetra Claude Plugins
 ## 2026-08-25
 
+### Prove launcher tab ownership from a Herdr snapshot, not the wrapper `reused` bit (#777) {#launcher-owned-from-tab-snapshot}
+
+**Decision.** The agent-launcher records `owned` on its receipt by snapshotting
+`herdr tab list` immediately before the `agents` create call. `owned` is true only when the
+returned `tab_id` was not in that set. Cleanup (`close_run_session`, `close_owned_session`,
+Orchestrate `cmd_clean`/`reap`) closes only when `owned is True`. The wrapper `reused` bit
+stays on the receipt as workspace-join metadata and is not an ownership gate. Permission and
+model stay in `requested_only` because `herdr agent list` does not publish them.
+
+**Why.** The wrapper does not publish `created_tab`. Its `reused` flag is true whenever the
+launch joins the current Herdr workspace, which is the normal in-pane case, so treating
+`reused` as "this tab already existed" made owned cleanup unreachable.
+
+**Rejected.** Changing the `agents` wrapper to publish `created_tab` (out of scope for #777;
+the leaf forbids wrapper changes). Interpreting `reused=false` as ownership (false in the
+common case). Closing on `tab_id` presence alone (takes an operator tab on label collision).
+
+**Revisit when.** The wrapper publishes a tab-created bit, or Herdr returns the creating
+command's new tab as a distinct field that cannot collide with a preexisting id.
+
 ### Extract the orchestrate launch seam; do not redesign it (#777) {#agent-launcher-extract-777}
 
 **Decision.** Move the single-session launch contract out of `orchestrate.py` into a new

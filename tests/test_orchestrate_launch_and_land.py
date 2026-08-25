@@ -737,6 +737,7 @@ class TestScopedCleanup:
                     branch="orch/r1-alpha",
                     worktree=str(wt_alpha),
                     tab_id="tab-run-alpha",
+                    launch_receipt={"tab_id": "tab-run-alpha", "owned": True},
                 ),
             ],
         )
@@ -762,6 +763,41 @@ class TestScopedCleanup:
         # Verify foreign resources were NOT touched
         assert foreign_wt.exists()
         assert _git_branch_exists(repo, "foreign-feature")
+
+    def test_cleanup_does_not_close_a_tab_the_launch_did_not_own(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """cmd_clean must not issue herdr tab close when the receipt does not own the tab."""
+        monkeypatch.chdir(repo)
+        _write_run(
+            repo,
+            [
+                _unit(
+                    "operator",
+                    status="running",
+                    branch=None,
+                    tab_id="tab-operator",
+                    launch_receipt={"tab_id": "tab-operator", "owned": False},
+                )
+            ],
+        )
+        closed_tabs: list[str] = []
+        original_run = orchestrate.run
+
+        def track_tab_close(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            if cmd[:3] == ["herdr", "tab", "close"]:
+                closed_tabs.append(cmd[3])
+                return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+            return cast(subprocess.CompletedProcess[str], original_run(cmd, **kwargs))
+
+        monkeypatch.setattr(orchestrate, "run", track_tab_close)
+        assert (
+            orchestrate.cmd_clean(argparse.Namespace(merged=False, branches=False, all=False)) == 0
+        )
+        assert closed_tabs == []
 
 
 class TestStatusSurfacesUnrecordedDrift:
@@ -1175,6 +1211,20 @@ class TestOpenCodeLaunchAndVariantRecipe:
                     + "\n",
                     stderr="",
                 )
+            if cmd[:3] == ["herdr", "pane", "current"]:
+                return subprocess.CompletedProcess(
+                    cmd,
+                    returncode=0,
+                    stdout=json.dumps({"result": {"pane": {"workspace_id": "w80"}}}),
+                    stderr="",
+                )
+            if cmd[:3] == ["herdr", "tab", "list"]:
+                return subprocess.CompletedProcess(
+                    cmd,
+                    returncode=0,
+                    stdout=json.dumps({"result": {"tabs": []}}),
+                    stderr="",
+                )
             if cmd[:3] == ["herdr", "tab", "close"]:
                 closed_tabs.append(cmd[3])
                 return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
@@ -1411,6 +1461,20 @@ class TestOpenCodeLaunchAndVariantRecipe:
                         }
                     )
                     + "\n",
+                    stderr="",
+                )
+            if cmd[:3] == ["herdr", "pane", "current"]:
+                return subprocess.CompletedProcess(
+                    cmd,
+                    returncode=0,
+                    stdout=json.dumps({"result": {"pane": {"workspace_id": "w80"}}}),
+                    stderr="",
+                )
+            if cmd[:3] == ["herdr", "tab", "list"]:
+                return subprocess.CompletedProcess(
+                    cmd,
+                    returncode=0,
+                    stdout=json.dumps({"result": {"tabs": []}}),
                     stderr="",
                 )
             if cmd[:3] == ["herdr", "workspace", "list"]:

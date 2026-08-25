@@ -29,14 +29,14 @@ python3 "$S" launch  --vendor <tool> --task <tab-name> --cwd "$PWD" --model <mod
 python3 "$S" close --receipt-json receipt.json
 ```
 
-`launch` always dry-runs first. It writes one JSON receipt to stdout (redirect it to `receipt.json` as above). It verifies live Herdr state (kind, pane, cwd, workspace, readiness; model stays `requested_only` because `herdr agent list` does not publish one) before any prompt is sent. `close` reads `tab_id` and `reused` from that file. If `reused` is true, close refuses — the tab already existed.
+`launch` always dry-runs first. It writes one JSON receipt to stdout (redirect it to `receipt.json` as above). It verifies live Herdr state (kind, pane, cwd, workspace, readiness; model and permission stay `requested_only` because `herdr agent list` does not publish them) before any prompt is sent. `close` reads `tab_id` and `owned` from that file. `owned` is true only when the receipt `tab_id` was **not** in the Herdr workspace tab set snapshotted immediately before the wrapper ran. The wrapper's `reused` bit means the *workspace* already existed, which is the common case inside Herdr, and is not tab ownership.
 
 **Stop conditions (verbatim):**
 
 - Stop before launch if the wrapper dry run does not resolve the requested working directory and current Herdr workspace.
 - Stop before prompting if Herdr cannot verify the requested agent kind, model, effort, permissions, pane, and readiness. Fields Herdr does not publish are recorded as `requested_only` rather than invented; a disagreement on a field Herdr does publish is a stop.
 - Stop rather than silently substituting an unavailable agent or launch setting.
-- Stop cleanup if ownership of the target session cannot be proven (no `tab_id`, `tab_id` disagrees with the launch receipt, or the receipt's `reused` flag is true or missing).
+- Stop cleanup if ownership of the target session cannot be proven (no `tab_id`, `tab_id` disagrees with the launch receipt, or `owned` is not true — the tab already existed in the pre-launch snapshot).
 
 ## The binary is the authority
 
@@ -127,11 +127,11 @@ The creation command prints one JSON object. Keep these keys:
 agent  agent_name  pane_id  reused  session  tab_id  tab_name  workspace_id
 ```
 
-`reused` refers to the **workspace**, not the pane — `true` means an existing workspace was joined, not that an agent was recycled. `agent_name` is uniquified by the wrapper if it collides, so read it back rather than assuming the name you asked for.
+The wrapper's `reused` bit refers to the **workspace**, not the tab — `true` means an existing workspace was joined, which is normal inside Herdr. Tab ownership is the launcher's `owned` field: the receipt `tab_id` was absent from `herdr tab list` immediately before launch. `agent_name` is uniquified by the wrapper if it collides, so read it back rather than assuming the name you asked for. Never close a tab with `owned` false or missing.
 
 Then use the `herdr` skill against those exact IDs to confirm the agent reports the requested kind, tab, absolute working directory, permissions, and the selected model and effort — and that it is ready for input. Herdr returning success from its start path is the readiness evidence; confirm state before sending work.
 
-From that point on: `herdr agent prompt`, `herdr agent wait`, `herdr agent read`, and Herdr's own cleanup commands. Never reach back for `agents`. Close only a session this launch owns; prove ownership from the receipt `tab_id`.
+From that point on: `herdr agent prompt`, `herdr agent wait`, `herdr agent read`, and Herdr's own cleanup commands. Never reach back for `agents`. Close only a session this launch owns; prove ownership from the receipt `owned` field (tab was not preexisting).
 
 ## Providers and models
 

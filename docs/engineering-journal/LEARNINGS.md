@@ -51,6 +51,65 @@ the extracted source into the consumer's globals or update every patch site in t
 a second imported module silently drops the patches.
 
 **Refs.** Issue #777; plan U6 of `docs/plans/2026-08-25-improve-claude-plugins-run-plan.md`.
+### Live boards have Status and no Stage; #812 is a guard, not a migration  {#812-status-only-no-stage-field}
+
+**Context.** Issue #812 asked saga to stop composing board Stage/Status writes and submit
+corrections through mission-control's existing `flow set-field`. Planning already found zero
+direct GraphQL Stage/Status writes in saga; the S3-repaired run plan then bound the unit to
+the live board schema.
+
+**Evidence.** Live field list 2026-08-25 on Operations (#3), Asgard (#2), and CAMPPS (#4):
+each has `Status` and none has `Stage`. Operations Status options are Idea / Shaping / Ready
+/ Active / Verify / Done. The only saga `--field` argv is
+`plugins/saga/scripts/board_progression.py:default_board_writer`.
+
+**Mechanism.** The defect class was "a future saga script could re-introduce direct
+composition," not "today's writer talks to GraphQL." Adding a `set-field-stage` op-kind
+would have been dead API surface for a field that does not exist (doc-review F3) and would
+have widened the writer past Status (F4).
+
+**Fix (or queued).** Guard-and-tighten: field name in operation, certificate authorization,
+and retry identity; reject any correction field other than Status (Stage by name only);
+static guard in `tests/test_saga_single_writer_guard.py`; mission-control
+`flow set-field --correction` is the existing operation with a flag, not a new verb.
+
+**Generalizable rule.** Inventory the live schema before adding an op-kind for a field. A
+name in an issue title is not evidence the field exists; `flow field-options` is.
+
+**Refs.** Issue #812; plan `docs/plans/2026-08-25-improve-claude-plugins-run-plan.md` U7;
+DECISIONS `{#812-correction-field-named-identity}`.
+
+### Parameterizing a write seam by field silently un-parameterizes its read-back half  {#812-field-blind-drift-read}
+
+**Context.** #812's code review of PR #826. The unit made `set-field-status` carry a field
+name through argv, certificate authorization, and the idempotency key, admitting `Status` and
+`Stage` by name. Every changed line was about the *write* direction.
+
+**Evidence.** `plugins/saga/scripts/reconcile_controller.py` — `default_live_reader` maps
+`set-field-status` to `outcome_github.board_status(ref, project=...)`, which takes no field
+argument, and `_expected_live(op_kind, target_state)` takes no field either. `set-field-status`
+is the sole member of `AUTO_CORRECT_OP_KINDS`.
+
+**Mechanism.** A level-triggered controller has two halves: assert a value, then read the live
+value back and correct the difference. Widening the write half from "the Status field" to "a
+named field" made the read half ambiguous without touching one line of it — the reader would
+have compared the live *Status* against a *Stage* target, called the mismatch drift, and
+auto-corrected it. The write direction is where the change is visible, so that is where review
+attention goes; the read direction fails silently and in the safe-looking direction (a write
+that "converges" the board).
+
+**Fix.** Fail closed rather than guess: `reconcile_controller.LIVE_READABLE_CORRECTION_FIELD`
+names the one field the live reader can actually read, and a present-key tick for any other
+allowlisted field skips the comparison with a named note instead of drift-correcting on it.
+Proven load-bearing by mutation — deleting the guard fails
+`test_present_key_skips_drift_check_for_a_field_the_live_reader_cannot_read`.
+
+**Generalizable rule.** When you add a discriminator to one side of a read-modify-write loop,
+grep the other side for the same discriminator before shipping. If the reader cannot take the
+discriminator, the loop must refuse to judge — never fall back to the old unparameterized read.
+
+**Refs.** Issue #812; PR #826 code review; DECISIONS `{#812-correction-field-named-identity}`;
+LEARNINGS `{#812-status-only-no-stage-field}`.
 
 ## 2026-08-24
 

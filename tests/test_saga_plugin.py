@@ -46,8 +46,8 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
 
     assert plugin_json["name"] == "saga"
     assert (
-        plugin_json["version"] == "0.139.7"
-    )  # #692: Option 3 missing-aware quorum tightening at odd n
+        plugin_json["version"] == "0.139.8"
+    )  # #812: Status/Stage correction seam — field-named identity, static single-writer guard
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]

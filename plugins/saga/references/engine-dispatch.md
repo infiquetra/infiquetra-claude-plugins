@@ -123,9 +123,9 @@ overflow from the resolver) short-circuits: `dispatch()` returns that halt witho
 
 ## Offload economics preview vs dispatch stop
 
-`plugins/saga/scripts/engine_offer.py` may include `cost_delta_preview` on an advisory `offload` offer when
-the caller provides complete economics estimates. That preview is operator-facing context only: it must not
-be treated as authorization to spend or as a completion gate.
+`engine_offer.py` (retired in #776) used to include `cost_delta_preview` on an advisory `offload`
+offer. That preview was operator-facing context only and never authorization to spend. The helper
+is gone; `dispatch()` remains the hard enforcement point.
 
 `dispatch()` remains the hard enforcement point. Metered offload routes require enough economics metadata to
 prove both positive token savings and provider-budget headroom before runner invocation. If the break-even

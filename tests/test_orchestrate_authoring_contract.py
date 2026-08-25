@@ -62,8 +62,7 @@ def _assert_all_present(text: str, required: tuple[str, ...], where: str) -> Non
 def _run_plan_examples(text: str) -> list[dict[str, Any]]:
     """The fenced JSON blocks that carry a ``units`` list -- the Phase 4 contract examples.
 
-    The other ```json block in the command file is an ``engine_prefs`` fragment, not standalone
-    JSON, and is deliberately not parsed here.
+    JSON examples without a ``units`` list are not run plans and are deliberately not parsed here.
     """
     blocks = re.findall(r"```json\n(.*?)\n```", text, flags=re.DOTALL)
     return [json.loads(block) for block in blocks if '"units"' in block]

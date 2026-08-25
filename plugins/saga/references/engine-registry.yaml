@@ -1,5 +1,9 @@
 # Saga external-engine capability registry (R1-R4).
 #
+# NON-TRANSPORT METADATA (issue #776 / KTD4). This file is capability and calibration data only.
+# It is not a session-launch authority and cannot override the live Orchestrate/Herdr roster.
+# Reviewer sessions launch only as named units in an Orchestrate run record.
+#
 # SEED DATA (2026-06-27), not a permanent ranking. This is current benchmark + practitioner
 # evidence, tagged per row by source + corroboration strength. The architecture does not depend on
 # any cell being eternally correct -- last_validated (R3) makes staleness visible, and the data is

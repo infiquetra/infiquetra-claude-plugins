@@ -575,6 +575,43 @@ def test_external_whole_diff_finding_is_adjudicated_but_never_scores_or_gates() 
     assert "external-reviewer" not in result.attempted_lenses
     assert [item.finding_id for item in result.findings] == ["external-new-finding"]
     assert result.external_advisory_reviews[0].scoring_authority is False
+    assert not hasattr(result.external_advisory_reviews[0], "external_only_admitted")
+
+
+def test_external_only_admitted_is_ignored_on_load() -> None:
+    finding = _finding(
+        "external-reviewer",
+        "external-new-finding",
+        autofix_class="advisory",
+        owner="downstream-resolver",
+    )
+    payload = {
+        "reviewer_id": "external-seat-1",
+        "reviewer_vendor": "vendor-b",
+        "home_vendor": "vendor-a",
+        "request_id": "request-1",
+        "request_digest": "digest-1",
+        "reviewed_revision": "revision-1",
+        "whole_diff": True,
+        "request_bound": True,
+        "external_only_admitted": False,
+        "scoring_authority": False,
+        "findings": [finding.to_dict()],
+        "adjudications": [
+            {
+                "finding_id": "external-new-finding",
+                "decision": "keep",
+                "rationale": "The independent whole-diff evidence is valid.",
+                "final_severity": "P1",
+                "final_status": "active",
+            }
+        ],
+    }
+    loaded = CONSENSUS.ExternalAdvisoryReview.from_dict(payload)
+    dumped = loaded.to_dict()
+    assert "external_only_admitted" not in dumped
+    assert loaded.whole_diff is True
+    assert loaded.request_bound is True
 
 
 def test_finding_routes_serialize_into_consolidated_fix_requests() -> None:

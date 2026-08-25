@@ -208,16 +208,27 @@ def authorize_and_write(
         # R17: surface the gate — no silent write, no silent skip.
         return {"status": "gated", **base, "verdict": "GATE"}
 
-    key = cert.idempotency_key(op_kind, repo, number, target_state)
+    pay: dict[str, Any] = dict(payload or {})
+    if target_state and "target_state" not in pay:
+        pay["target_state"] = target_state
+
+    field_kw: str | None = None
+    if op_kind == str(cert.OpKind.SET_FIELD_STATUS):
+        field_name = str(pay.get("field") or "Status")
+        pay["field"] = field_name
+        field_kw = field_name
+        base["field"] = field_name
+        # Field name is part of authorization (#812): Status/Stage only.
+        if cert.authorize_correction_field(field_name) != cert.AUTHORIZED:
+            return {"status": "gated", **base, "verdict": "GATE"}
+
+    key = cert.idempotency_key(op_kind, repo, number, target_state, field=field_kw)
     ledger_file = ledger_dir / _safe_ledger_name(key)
 
     # (i) Key present → idempotent no-op (crash/retry safety, coalescing).
     if ledger_file.exists():
         return {"status": "skipped", **base, "key": key}
 
-    pay: dict[str, Any] = dict(payload or {})
-    if target_state and "target_state" not in pay:
-        pay["target_state"] = target_state
     if op_kind == str(cert.OpKind.ISSUE_PROGRESS_COMMENT):
         pay["body"] = _append_comment_marker(str(pay.get("body", "")), key)
 
@@ -254,6 +265,7 @@ def authorize_and_write(
                 "repo": repo,
                 "number": number,
                 "target_state": target_state,
+                **({"field": field_kw} if field_kw is not None else {}),
                 "ts": now(),
                 # #620 R7: persist the tick's mission-control provenance so a stale resolution is
                 # diagnosable from the durable ledger. Empty for every consumer that passes none.
@@ -426,6 +438,13 @@ def default_board_writer(
         repo = repo.rsplit("/", 1)[-1]
         owner_repo = f"infiquetra/{repo}"
         if op_kind == "set-field-status":
+            cert = _cert()
+            field_name = str(payload.get("field") or "Status")
+            if cert.authorize_correction_field(field_name) != cert.AUTHORIZED:
+                allowed = ", ".join(sorted(cert.CORRECTION_FIELDS))
+                raise ValueError(
+                    f"set-field submission rejects field {field_name!r}; allowed: {allowed}"
+                )
             cmd = base + [
                 "flow",
                 "set-field",
@@ -436,9 +455,10 @@ def default_board_writer(
                 "--number",
                 n,
                 "--field",
-                "Status",
+                field_name,
                 "--option",
                 str(payload.get("target_state", "")),
+                "--correction",
             ]
         elif op_kind == "sub-issue-close":
             cmd = base + ["issue", "close", "--repo", repo, "--number", n]

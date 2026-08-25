@@ -415,3 +415,117 @@ def test_cli_authorized_op_written(tmp_path: Path, capsys: Any, monkeypatch: Any
     assert out["status"] == "written"
     assert rc == 0
     assert calls == [("set-field-status", "infiquetra/x", 42)]
+
+
+# ---------------------------------------------------------------------------
+# #812 field-named Status/Stage correction seam
+# ---------------------------------------------------------------------------
+
+
+def test_set_field_status_key_and_payload_carry_field_name(tmp_path: Path) -> None:
+    """Retry identity and the writer payload both name the field (#812)."""
+    ld = _ledger(tmp_path)
+    writer = RecordingWriter()
+    rec = BP.authorize_and_write(
+        "set-field-status",
+        "infiquetra/x",
+        42,
+        "Done",
+        board_writer=writer,
+        ledger_dir=ld,
+    )
+    assert rec["status"] == "written"
+    assert rec["field"] == "Status"
+    assert rec["key"] == "set-field-status:infiquetra/x#42:Status:Done"
+    assert writer.calls[0]["payload"]["field"] == "Status"
+    assert writer.calls[0]["payload"]["target_state"] == "Done"
+
+
+def test_set_field_non_correction_field_is_gated(tmp_path: Path) -> None:
+    """A set-field submission naming Initiative is GATE — field is authorization."""
+    ld = _ledger(tmp_path)
+    writer = RecordingWriter()
+    rec = BP.authorize_and_write(
+        "set-field-status",
+        "infiquetra/x",
+        42,
+        "platform-v1",
+        board_writer=writer,
+        ledger_dir=ld,
+        payload={"field": "Initiative"},
+    )
+    assert rec["status"] == "gated"
+    assert rec["field"] == "Initiative"
+    assert writer.calls == []
+    assert not list(ld.glob("*.json"))
+
+
+def test_default_writer_emits_field_and_correction_flag(tmp_path: Path) -> None:
+    """Production writer passes --field Status and --correction to mission-control."""
+    calls: list[list[str]] = []
+
+    class _Ok:
+        returncode = 0
+        stderr = ""
+
+    def fake_run(cmd: list[str], **_kw: Any) -> Any:
+        calls.append(cmd)
+        return _Ok()
+
+    writer = BP.default_board_writer(mission_control_root=tmp_path, runner=fake_run)
+    writer(
+        op_kind="set-field-status",
+        repo="infiquetra/x",
+        number=42,
+        payload={"target_state": "Verify"},
+    )
+    cmd = calls[0]
+    assert cmd[2:4] == ["flow", "set-field"]
+    field_at = cmd.index("--field")
+    assert cmd[field_at + 1] == "Status"
+    assert "--correction" in cmd
+    assert "Verify" in cmd
+
+
+def test_default_writer_rejects_non_correction_field(tmp_path: Path) -> None:
+    """Direct writer call with Objective raises — does not shell out."""
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **_kw: Any) -> Any:
+        calls.append(cmd)
+        raise AssertionError("writer must reject before the child process")
+
+    writer = BP.default_board_writer(mission_control_root=tmp_path, runner=fake_run)
+    with pytest.raises(ValueError, match="rejects field 'Objective'"):
+        writer(
+            op_kind="set-field-status",
+            repo="infiquetra/x",
+            number=42,
+            payload={"field": "Objective", "target_state": "defects-claude-plugins"},
+        )
+    assert calls == []
+
+
+def test_default_writer_allows_stage_by_name_without_new_op_kind(tmp_path: Path) -> None:
+    """Stage is a field name on the existing set-field-status op, not a new op-kind."""
+    calls: list[list[str]] = []
+
+    class _Ok:
+        returncode = 0
+        stderr = ""
+
+    def fake_run(cmd: list[str], **_kw: Any) -> Any:
+        calls.append(cmd)
+        return _Ok()
+
+    writer = BP.default_board_writer(mission_control_root=tmp_path, runner=fake_run)
+    writer(
+        op_kind="set-field-status",
+        repo="infiquetra/x",
+        number=42,
+        payload={"field": "Stage", "target_state": "whatever"},
+    )
+    cmd = calls[0]
+    assert cmd[cmd.index("--field") + 1] == "Stage"
+    assert "--correction" in cmd
+    assert "set-field-stage" not in cmd

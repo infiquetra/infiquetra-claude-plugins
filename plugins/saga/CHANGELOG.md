@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.140.0] - 2026-08-25
+
+### Removed
+
+- **Saga external-engine transport retired (#776).** `engine_offer.py`,
+  `engine_session_runner.py`, and `external_only.py` are deleted. Stage skills
+  (ideate, brainstorm, work, doc-review, code-review) no longer invoke them.
+  Orchestrate owns reviewer-session transport; saga keeps review policy (lenses,
+  scoring, consensus, `review_result.v1`). Halt rather than falling back to the
+  retired runner. `engine-registry.yaml` is retained as explicitly non-transport
+  capability metadata and cannot override the live Orchestrate/Herdr roster.
+  The `external_only_admitted` field on `review_result.v1` external advisory
+  reviews is ignored on load (bounded migration).
+
+## [0.139.8] - 2026-08-25
+
+### Fixed
+
+- **Stage/Status corrections submit only through mission-control (#812).** Saga already had
+  no direct GraphQL Stage/Status writes; the Status `set-field` seam now carries the field
+  name in the operation, certificate authorization, and retry identity, and rejects any
+  project field other than Status (Stage by name only — no Stage field exists on Operations,
+  Asgard, or CAMPPS, and no `set-field-stage` op-kind is created). `flow set-field --correction`
+  is the child process. A static guard (`tests/test_saga_single_writer_guard.py`) proves no
+  direct composition remains. Other board op-kinds (close, comment, labels) are untouched.
+- **Ledger-key recipe change, disclosed.** The `set-field-status` idempotency key gains a
+  field segment, so pre-existing board-sync ledger entries for that op-kind are orphaned and
+  re-driven once. Board state is unaffected (the write is idempotent and the op auto-corrects
+  on drift regardless); the bounded cost is one tick of missing drift telemetry per stale key.
+  The ledger is machine-local and regenerable, so no migration ships.
+- **The drift check fails closed on a field it cannot read (#812 review repair).**
+  `reconcile_controller` refuses to drift-judge a correction whose field the live reader
+  cannot read back — `default_live_reader` reads board Status only — instead of comparing the
+  live Status against another field's target and auto-correcting on that false signal.
+
 ## [0.139.7] - 2026-08-24
 
 ### Fixed

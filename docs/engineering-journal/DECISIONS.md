@@ -19,6 +19,21 @@ Deleting the registry subsystem (17 calibration consumers; no leaf authorizes it
 **Revisit when.** The live Herdr roster publishes capability ratings that make the registry
 redundant, or a leaf authorizes deleting it.
 
+### Mermaid syntax check uses mermaid.parse() plus jsdom, not mermaid-cli  {#mermaid-syntax-check-headless-parse-405}
+
+**Date:** 2026-08-25 · **Issue:** #405 · **Origin:** Run orch-2026-08-25-814, unit U2
+
+**Context and Problem Statement.** Nothing in CI or `scripts/` parsed Mermaid fences, and 13 broken diagrams had shipped undetected. No Python Mermaid parser exists. A regex heuristic would have passed broken diagrams (false green — worse than no check). The operator's Phase 2 ruling kept this as one lightweight always-on syntax check: no census, no JSON registry, no validator framework.
+
+**Decision.** Pin mermaid 11.17.1 and jsdom 30.0.1 under `scripts/mermaid/`, enumerate tracked ```` ```mermaid ```` fences with `git grep`, and validate each through `mermaid.parse()` in Node. Wire one new step named `Mermaid syntax check` into the existing Lint job and into `scripts/gate.sh` with that exact name so the coverage self-check cannot be satisfied by renaming. Node/npm missing locally is gate exit 3 (existing missing-dev-dependency semantics). If headless parse is infeasible at the pinned version, HALT with that evidence — do not fall back to `@mermaid-js/mermaid-cli`.
+
+**Rejected alternatives.**
+
+1. **`@mermaid-js/mermaid-cli` (puppeteer/chromium render to validate a parse).** Rendering is not required to parse. The extra hundreds of MB, slower CI, and flake surface are disproportionate for a syntax check. Re-authorizing it as a silent fallback was doc-review finding F6 and was withdrawn.
+2. **A Python regex / heuristic lint.** Would have passed the recorded broken diagrams. False green is worse than no check.
+3. **A checkable-surface census / committed JSON registry / drift framework.** Removed from this issue by the 2026-08-24 Phase 2 operator ruling.
+
+**Revisit when.** mermaid.parse() at the pinned version needs a real browser to accept a diagram type this repository actually uses, or Node is no longer acceptable as a local gate precondition.
 ### Prove launcher tab ownership from a Herdr snapshot, not the wrapper `reused` bit (#777) {#launcher-owned-from-tab-snapshot}
 
 **Decision.** The agent-launcher records `owned` on its receipt by snapshotting

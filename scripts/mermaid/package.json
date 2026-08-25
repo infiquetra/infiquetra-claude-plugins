@@ -1,0 +1,10 @@
+{
+  "name": "infiquetra-mermaid-check",
+  "private": true,
+  "type": "module",
+  "description": "Headless mermaid.parse helper for scripts/check_mermaid.py (#405).",
+  "dependencies": {
+    "jsdom": "30.0.1",
+    "mermaid": "11.17.1"
+  }
+}

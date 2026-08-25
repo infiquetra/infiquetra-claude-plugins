@@ -1,6 +1,25 @@
 # Decisions — Infiquetra Claude Plugins
 ## 2026-08-25
 
+### Conditional lenses launch only after commit+cycle approval (#778) {#778-conditional-lens-operator-approval}
+
+**Decision.** Auto-run the four always-on Code Review lenses. Recommend conditionals
+with one reason each. Ask once (`accept-recommended` / `always-on-only` /
+`customize`) before any conditional launch. Persist the approved set on the existing
+review-cycle state, keyed by reviewed commit and cycle. Caller- or Orchestrate-
+supplied selection is approval. Reuse on repair cycles; ask only an applicability
+delta. Pause on no answer. No hidden lenses. No new store. Scoring and
+`review_result.v1` unchanged. #418's adapter cannot approve.
+
+**Why.** Announce-then-spawn let an agent add unapproved conditionals and omit
+always-on lenses with nothing to check at launch time.
+
+**Rejected.** Granting the #418 selection adapter autonomous approval. A new
+approval store beside review-cycle state. Changing scoring or consensus.
+
+**Revisit when.** A mechanical recommender is wanted; this change keeps judgment
+in the skill and only gates launch.
+
 ### Retire saga's external-engine transport; halt rather than falling back (#776) {#776-halt-not-fallback-transport}
 
 **Decision.** Delete `engine_offer.py`, `engine_session_runner.py`, and `external_only.py`.

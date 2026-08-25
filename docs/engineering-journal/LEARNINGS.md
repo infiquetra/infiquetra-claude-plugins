@@ -21,6 +21,26 @@
 
 ## 2026-08-25
 
+### Announcing a lens team is not an approval gate  {#778-announce-is-not-approval}
+
+**Context.** Code Review's skill told the agent to judgment-select conditionals and
+announce the team before spawn. On 2026-08-23 that produced six lens launches with
+no operator question, four unapproved conditionals, and two always-on lenses omitted.
+**Evidence.** Issue #778; session `34130998-1497-48bc-831b-424237e0e0b0`;
+`review_consensus.launch_approved_lenses` now refuses a conditional Agent spawn
+until `LensApprovalRecord` exists for the reviewed commit and cycle.
+**Mechanism.** An instruction that is only prose ("announce, then spawn") has no
+launch-path check. The always-on set and the conditional set need different gates:
+auto-run vs persisted approval. Putting the record on the existing review-cycle
+state binds it to the same commit+cycle identity scoring already uses, so a repair
+cycle can reuse it without a second store.
+**Fix.** Skill text plus `resolve_lens_selection` / `launch_approved_lenses` on
+`ReviewCycleState`. Caller-supplied selection counts as approval. No answer pauses.
+**Generalizable rule.** A launch that costs operator time needs a persisted
+approval the spawn path can refuse without, not a sentence that asks the agent to
+remember to ask.
+**Refs.** DECISIONS `{#778-conditional-lens-operator-approval}`
+
 ### A guard keyed on prompt wording refuses the sanctioned path and admits the bespoke one  {#776-role-not-wording}
 
 **Context.** #776 replaced saga's transport with an Orchestrate guard that refused "bespoke

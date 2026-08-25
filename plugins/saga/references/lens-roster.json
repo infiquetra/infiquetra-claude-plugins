@@ -34,6 +34,28 @@
     "duplicate_action": "merge",
     "record_cross_reviewer_agreement": true
   },
+  "selection_contract": {
+    "always_on_auto_run": true,
+    "always_on_ids": [
+      "architecture-maintainability",
+      "correctness",
+      "security",
+      "testing"
+    ],
+    "conditional_requires_operator_approval": true,
+    "batched_choices": [
+      "accept-recommended",
+      "always-on-only",
+      "customize"
+    ],
+    "recommended_is_default": true,
+    "caller_or_orchestrate_selection_is_approval": true,
+    "persist_against": ["reviewed_commit", "review_cycle"],
+    "reuse_on_repair_cycles_unless_applicability_delta": true,
+    "pause_on_dismissal_or_no_answer": true,
+    "no_hidden_or_supplemental_lenses": true,
+    "selection_adapter_cannot_approve": true
+  },
   "participant_defaults": {
     "external_advisory_seat": {
       "id": "external-reviewer",

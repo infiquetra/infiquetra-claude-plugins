@@ -26,6 +26,8 @@ Public Entry Points and State Machine Overview:
        - `ReviewFinding(...)`: Defines structured findings with severity, owner, and actionability.
        - `ReviewCycleState.record_cycle(revision, lens_scores, ...)`: Records a review
          round, reconciles findings, updates failing lenses, and determines outcome.
+       - `resolve_lens_selection` / `launch_approved_lenses`: persist conditional-lens approval
+         against reviewed commit + cycle on this same state; refuse Agent spawn until it exists.
     3. Gate Readiness Evaluation:
        - `evaluate_review_readiness(lens_scores, independent_gates=...)`: Combines lens
          scores with independent non-scoring gate results into a composite readiness decision.
@@ -104,6 +106,9 @@ ReviewOutcome = Literal[
     "review_incomplete",
 ]
 RunnerDeliveryStatus = Literal["ready", "pending", "incomplete"]
+LensLaunchChoice = Literal["accept-recommended", "always-on-only", "customize"]
+LensApprovalSource = Literal["operator", "caller", "orchestrate"]
+LensQuestionKind = Literal["full", "delta"]
 
 _OUTCOME_NEXT_ACTION: Mapping[ReviewOutcome, str] = MappingProxyType(
     {
@@ -126,8 +131,14 @@ __all__ = [
     "ExternalFindingAdjudication",
     "FindingEvidence",
     "FixRequest",
+    "AgentCallTranscript",
+    "ALWAYS_ON_LENSES",
+    "ConditionalLensRecommendation",
     "IndependentGateResult",
+    "LensApprovalRecord",
     "LensReviewResult",
+    "LensSelectionDecision",
+    "LensSelectionQuestion",
     "LensScore",
     "ResidualSummary",
     "ReviewConsensusError",
@@ -141,8 +152,12 @@ __all__ = [
     "ReviewScoringPolicy",
     "UnsupportedReviewResultSchemaError",
     "consolidate_fix_requests",
+    "always_on_lenses",
     "evaluate_review_readiness",
+    "launch_approved_lenses",
     "load_scoring_policy",
+    "recommend_conditional_lenses",
+    "resolve_lens_selection",
     "score_lens_review",
 ]
 
@@ -275,6 +290,139 @@ def _review_text_mapping(value: object, *, label: str) -> dict[str, str]:
 
 def _plain_dataclass(value: object) -> dict[str, Any]:
     return json.loads(json.dumps(asdict(value), sort_keys=True))
+
+
+_LENS_LAUNCH_CHOICES = frozenset({"accept-recommended", "always-on-only", "customize"})
+_LENS_APPROVAL_SOURCES = frozenset({"operator", "caller", "orchestrate"})
+
+
+@dataclass(frozen=True)
+class ConditionalLensRecommendation:
+    """One judged conditional lens plus the one-line reason the operator sees."""
+
+    lens_id: str
+    reason: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {"lens_id": self.lens_id, "reason": self.reason}
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> ConditionalLensRecommendation:
+        mapping = _review_mapping(payload, label="conditional recommendation")
+        return cls(
+            lens_id=_review_text(mapping.get("lens_id"), label="recommendation lens_id"),
+            reason=_review_text(mapping.get("reason"), label="recommendation reason"),
+        )
+
+
+@dataclass(frozen=True)
+class LensApprovalRecord:
+    """Operator (or caller) approval bound to one reviewed commit and cycle."""
+
+    reviewed_commit: str
+    cycle: int
+    approved_conditionals: tuple[str, ...]
+    recommended: tuple[ConditionalLensRecommendation, ...]
+    source: LensApprovalSource
+    question_asked: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "reviewed_commit": self.reviewed_commit,
+            "cycle": self.cycle,
+            "approved_conditionals": list(self.approved_conditionals),
+            "recommended": [item.to_dict() for item in self.recommended],
+            "source": self.source,
+            "question_asked": self.question_asked,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> LensApprovalRecord:
+        mapping = _review_mapping(payload, label="lens approval")
+        source = mapping.get("source")
+        if source not in _LENS_APPROVAL_SOURCES:
+            raise ReviewConsensusError(f"unsupported lens approval source {source!r}")
+        cycle = mapping.get("cycle")
+        if not isinstance(cycle, int) or isinstance(cycle, bool) or cycle < 1:
+            raise ReviewConsensusError("lens approval cycle must be a positive integer")
+        recommended = tuple(
+            ConditionalLensRecommendation.from_dict(item)
+            for item in _review_mapping_list(
+                mapping.get("recommended", []),
+                label="approval recommended",
+            )
+        )
+        asked = mapping.get("question_asked")
+        if not isinstance(asked, bool):
+            raise ReviewConsensusError("lens approval question_asked must be a boolean")
+        return cls(
+            reviewed_commit=_review_text(
+                mapping.get("reviewed_commit"), label="approval reviewed_commit"
+            ),
+            cycle=cycle,
+            approved_conditionals=_review_text_tuple(
+                mapping.get("approved_conditionals", ()),
+                label="approved_conditionals",
+            ),
+            recommended=recommended,
+            source=source,
+            question_asked=asked,
+        )
+
+
+@dataclass(frozen=True)
+class LensSelectionQuestion:
+    """The one batched conditional-lens question, or a repair-cycle delta."""
+
+    kind: LensQuestionKind
+    recommended: tuple[ConditionalLensRecommendation, ...]
+    delta_added: tuple[ConditionalLensRecommendation, ...] = ()
+    delta_removed: tuple[str, ...] = ()
+    choices: tuple[LensLaunchChoice, ...] = (
+        "accept-recommended",
+        "always-on-only",
+        "customize",
+    )
+    default_choice: LensLaunchChoice = "accept-recommended"
+    combine_with_backend: bool = True
+
+
+@dataclass(frozen=True)
+class LensSelectionDecision:
+    """Launch set plus whether the operator still has to answer."""
+
+    reviewed_commit: str
+    cycle: int
+    launch_set: tuple[str, ...]
+    approved_conditionals: tuple[str, ...]
+    recommended: tuple[ConditionalLensRecommendation, ...]
+    needs_question: bool
+    paused: bool
+    reused: bool
+    question: LensSelectionQuestion | None = None
+    approval: LensApprovalRecord | None = None
+
+
+class AgentCallTranscript:
+    """Ordered approval and Agent-spawn events for one lens launch."""
+
+    def __init__(self) -> None:
+        self.events: list[tuple[str, str]] = []
+
+    def record_approval(self, reviewed_commit: str, cycle: int) -> None:
+        self.events.append(("approval", f"{reviewed_commit}:{cycle}"))
+
+    def spawn_agent(self, lens_id: str) -> None:
+        self.events.append(("agent", lens_id))
+
+    @property
+    def agent_calls(self) -> tuple[str, ...]:
+        return tuple(lens_id for kind, lens_id in self.events if kind == "agent")
+
+    @property
+    def conditional_agent_calls(self) -> tuple[str, ...]:
+        always_on = set(always_on_lenses())
+        return tuple(lens_id for lens_id in self.agent_calls if lens_id not in always_on)
 
 
 @dataclass(frozen=True)
@@ -1270,6 +1418,7 @@ class ReviewCycleState:
         self._resolved_fix_ids: set[str] = set()
         self._score_regressions: tuple[ScoreRegression, ...] = ()
         self._external_reviews: tuple[ExternalAdvisoryReview, ...] = ()
+        self._lens_approvals: tuple[LensApprovalRecord, ...] = ()
         self._terminal_outcome: ReviewOutcome | None = None
         self._review_incomplete_reason: str | None = None
 
@@ -1294,6 +1443,49 @@ class ReviewCycleState:
     @property
     def failing_lenses(self) -> tuple[str, ...]:
         return self._failing_lenses
+
+    @property
+    def lens_approvals(self) -> tuple[LensApprovalRecord, ...]:
+        return self._lens_approvals
+
+    def lens_approval_for(self, reviewed_commit: str, cycle: int) -> LensApprovalRecord | None:
+        commit = _review_text(reviewed_commit, label="reviewed_commit")
+        if not isinstance(cycle, int) or isinstance(cycle, bool) or cycle < 1:
+            raise ReviewConsensusError("lens approval cycle must be a positive integer")
+        for item in reversed(self._lens_approvals):
+            if item.reviewed_commit == commit and item.cycle == cycle:
+                return item
+        return None
+
+    def latest_lens_approval(self) -> LensApprovalRecord | None:
+        if not self._lens_approvals:
+            return None
+        return self._lens_approvals[-1]
+
+    def record_lens_approval(self, approval: LensApprovalRecord) -> LensApprovalRecord:
+        """Persist a commit+cycle approval without changing scoring or selected lenses."""
+        if not isinstance(approval, LensApprovalRecord):
+            raise ReviewConsensusError("lens approval must be a LensApprovalRecord")
+        if approval.cycle > MAX_REVIEW_CYCLES:
+            raise ReviewConsensusError(f"lens approval cycle cannot exceed {MAX_REVIEW_CYCLES}")
+        known = set(self._policy.lens_dimensions)
+        always_on = set(always_on_lenses())
+        for lens_id in approval.approved_conditionals:
+            if lens_id not in known:
+                raise ReviewConsensusError(f"approved conditional {lens_id!r} is not a roster lens")
+            if lens_id in always_on:
+                raise ReviewConsensusError(
+                    f"always-on lens {lens_id!r} is not a conditional approval"
+                )
+        remaining = tuple(
+            item
+            for item in self._lens_approvals
+            if not (
+                item.reviewed_commit == approval.reviewed_commit and item.cycle == approval.cycle
+            )
+        )
+        self._lens_approvals = (*remaining, approval)
+        return approval
 
     def record_cycle(
         self,
@@ -1594,6 +1786,7 @@ class ReviewCycleState:
             "resolved_fix_ids": sorted(self._resolved_fix_ids),
             "score_regressions": [item.to_dict() for item in self._score_regressions],
             "external_advisory_reviews": [item.to_dict() for item in self._external_reviews],
+            "lens_approvals": [item.to_dict() for item in self._lens_approvals],
             "evidence_ledger": dict(self._evidence_ledger),
             "terminal_outcome": self._terminal_outcome,
             "current_outcome": current_outcome,
@@ -1663,6 +1856,16 @@ class ReviewCycleState:
             for item in _review_mapping_list(
                 payload.get("external_advisory_reviews"),
                 label="external_advisory_reviews",
+            )
+        )
+        raw_approvals = payload.get("lens_approvals", [])
+        if raw_approvals is None:
+            raw_approvals = []
+        state._lens_approvals = tuple(
+            LensApprovalRecord.from_dict(item)
+            for item in _review_mapping_list(
+                raw_approvals,
+                label="lens_approvals",
             )
         )
         terminal = payload.get("terminal_outcome")
@@ -1741,6 +1944,350 @@ class ReviewCycleState:
                 ),
             )
         )
+
+
+def always_on_lenses(roster_path: Path = ROSTER_PATH) -> tuple[str, ...]:
+    """Return the roster's always-on lens identifiers in roster order."""
+    try:
+        payload = json.loads(roster_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ReviewScoringError(f"cannot load lens roster {roster_path}: {exc}") from exc
+    roster = _require_mapping(payload, label="lens roster")
+    if roster.get("schema") != ROSTER_SCHEMA:
+        raise ReviewScoringError(f"unsupported lens roster schema {roster.get('schema')!r}")
+    lenses = _require_list(roster.get("lenses"), label="lenses")
+    always_on: list[str] = []
+    for index, raw_lens in enumerate(lenses):
+        lens = _require_mapping(raw_lens, label=f"lenses[{index}]")
+        lens_id = _nonempty_text(lens.get("id"), label=f"lenses[{index}].id")
+        trigger = _require_mapping(lens.get("trigger"), label=f"lens {lens_id!r} trigger")
+        if trigger.get("class") == "always-on":
+            always_on.append(lens_id)
+    if not always_on:
+        raise ReviewScoringError("roster must declare always-on lenses")
+    return tuple(always_on)
+
+
+def _conditional_lens_ids(roster_path: Path = ROSTER_PATH) -> frozenset[str]:
+    try:
+        payload = json.loads(roster_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ReviewScoringError(f"cannot load lens roster {roster_path}: {exc}") from exc
+    roster = _require_mapping(payload, label="lens roster")
+    lenses = _require_list(roster.get("lenses"), label="lenses")
+    conditionals: set[str] = set()
+    for index, raw_lens in enumerate(lenses):
+        lens = _require_mapping(raw_lens, label=f"lenses[{index}]")
+        lens_id = _nonempty_text(lens.get("id"), label=f"lenses[{index}].id")
+        trigger = _require_mapping(lens.get("trigger"), label=f"lens {lens_id!r} trigger")
+        if trigger.get("class") == "conditional":
+            conditionals.add(lens_id)
+    return frozenset(conditionals)
+
+
+def recommend_conditional_lenses(
+    judged_applicable: Mapping[str, str],
+) -> tuple[ConditionalLensRecommendation, ...]:
+    """Validate judged conditional recommendations against the roster.
+
+    `judged_applicable` maps a roster conditional lens id to one plain-language
+    reason. Always-on lenses are not recommendations — they auto-run.
+    """
+    mapping = _review_mapping(judged_applicable, label="judged_applicable")
+    conditionals = _conditional_lens_ids()
+    always_on = set(always_on_lenses())
+    recommendations: list[ConditionalLensRecommendation] = []
+    seen: set[str] = set()
+    for lens_id, reason in mapping.items():
+        identifier = _review_text(lens_id, label="recommended lens_id")
+        if identifier in seen:
+            raise ReviewConsensusError(f"duplicate conditional recommendation {identifier!r}")
+        seen.add(identifier)
+        if identifier in always_on:
+            raise ReviewConsensusError(
+                f"always-on lens {identifier!r} is not a conditional recommendation"
+            )
+        if identifier not in conditionals:
+            raise ReviewConsensusError(f"unknown conditional lens {identifier!r}")
+        recommendations.append(
+            ConditionalLensRecommendation(
+                lens_id=identifier,
+                reason=_review_text(reason, label=f"reason for {identifier}"),
+            )
+        )
+    return tuple(recommendations)
+
+
+def _validate_conditionals(lens_ids: Iterable[str]) -> tuple[str, ...]:
+    values = _review_text_tuple(lens_ids, label="conditional lenses")
+    always_on = set(always_on_lenses())
+    conditionals = _conditional_lens_ids()
+    cleaned: list[str] = []
+    for lens_id in values:
+        if lens_id in always_on:
+            continue
+        if lens_id not in conditionals:
+            raise ReviewConsensusError(f"unknown conditional lens {lens_id!r}")
+        cleaned.append(lens_id)
+    return tuple(cleaned)
+
+
+def _approved_from_choice(
+    choice: LensLaunchChoice,
+    recommended: tuple[ConditionalLensRecommendation, ...],
+    customized: tuple[str, ...],
+) -> tuple[str, ...]:
+    if choice == "accept-recommended":
+        return tuple(item.lens_id for item in recommended)
+    if choice == "always-on-only":
+        return ()
+    return customized
+
+
+def _launch_set(approved_conditionals: tuple[str, ...]) -> tuple[str, ...]:
+    always_on = always_on_lenses()
+    return (*always_on, *approved_conditionals)
+
+
+def _question(
+    kind: LensQuestionKind,
+    recommended: tuple[ConditionalLensRecommendation, ...],
+    *,
+    delta_added: tuple[ConditionalLensRecommendation, ...] = (),
+    delta_removed: tuple[str, ...] = (),
+) -> LensSelectionQuestion:
+    return LensSelectionQuestion(
+        kind=kind,
+        recommended=recommended,
+        delta_added=delta_added,
+        delta_removed=delta_removed,
+    )
+
+
+def _paused_decision(
+    reviewed_commit: str,
+    cycle: int,
+    recommended: tuple[ConditionalLensRecommendation, ...],
+    question: LensSelectionQuestion,
+    *,
+    reused: bool = False,
+) -> LensSelectionDecision:
+    return LensSelectionDecision(
+        reviewed_commit=reviewed_commit,
+        cycle=cycle,
+        launch_set=always_on_lenses(),
+        approved_conditionals=(),
+        recommended=recommended,
+        needs_question=True,
+        paused=True,
+        reused=reused,
+        question=question,
+        approval=None,
+    )
+
+
+def _approved_decision(
+    approval: LensApprovalRecord,
+    *,
+    needs_question: bool = False,
+    reused: bool = False,
+    question: LensSelectionQuestion | None = None,
+) -> LensSelectionDecision:
+    return LensSelectionDecision(
+        reviewed_commit=approval.reviewed_commit,
+        cycle=approval.cycle,
+        launch_set=_launch_set(approval.approved_conditionals),
+        approved_conditionals=approval.approved_conditionals,
+        recommended=approval.recommended,
+        needs_question=needs_question,
+        paused=False,
+        reused=reused,
+        question=question,
+        approval=approval,
+    )
+
+
+def resolve_lens_selection(
+    *,
+    reviewed_commit: str,
+    cycle: int,
+    recommended: Iterable[ConditionalLensRecommendation] = (),
+    state: ReviewCycleState | None = None,
+    operator_choice: LensLaunchChoice | None = None,
+    customized_conditionals: Iterable[str] = (),
+    caller_selection: Iterable[str] | None = None,
+    caller_source: LensApprovalSource = "caller",
+) -> LensSelectionDecision:
+    """Resolve the approved conditional set for one reviewed commit and cycle.
+
+    Always-on lenses auto-run. A caller- or Orchestrate-supplied selection is
+    approval and is not re-asked. Repair cycles reuse a prior approval unless the
+    judged applicable set changed; then only the delta is asked. Dismissal or no
+    answer pauses with no conditional launches and no persisted approval.
+    """
+    commit = _review_text(reviewed_commit, label="reviewed_commit")
+    if not isinstance(cycle, int) or isinstance(cycle, bool) or cycle < 1:
+        raise ReviewConsensusError("lens approval cycle must be a positive integer")
+    if cycle > MAX_REVIEW_CYCLES:
+        raise ReviewConsensusError(f"lens approval cycle cannot exceed {MAX_REVIEW_CYCLES}")
+    recommendations = tuple(recommended)
+    for item in recommendations:
+        if not isinstance(item, ConditionalLensRecommendation):
+            raise ReviewConsensusError("recommended lenses must be typed recommendations")
+    recommend_conditional_lenses({item.lens_id: item.reason for item in recommendations})
+    customized = _validate_conditionals(customized_conditionals)
+    if operator_choice is not None and operator_choice not in _LENS_LAUNCH_CHOICES:
+        raise ReviewConsensusError(f"unsupported lens selection choice {operator_choice!r}")
+    if caller_source not in _LENS_APPROVAL_SOURCES:
+        raise ReviewConsensusError(f"unsupported lens approval source {caller_source!r}")
+
+    if caller_selection is not None:
+        approved = _validate_conditionals(caller_selection)
+        approval = LensApprovalRecord(
+            reviewed_commit=commit,
+            cycle=cycle,
+            approved_conditionals=approved,
+            recommended=recommendations,
+            source=caller_source,
+            question_asked=False,
+        )
+        if state is not None:
+            state.record_lens_approval(approval)
+        return _approved_decision(approval)
+
+    if state is not None:
+        exact = state.lens_approval_for(commit, cycle)
+        if exact is not None:
+            return _approved_decision(exact, reused=True)
+        prior = state.latest_lens_approval()
+        if prior is not None:
+            recommended_ids = tuple(item.lens_id for item in recommendations)
+            prior_ids = tuple(item.lens_id for item in prior.recommended)
+            prior_approved = prior.approved_conditionals
+            if recommended_ids in (prior_ids, prior_approved):
+                reused = LensApprovalRecord(
+                    reviewed_commit=commit,
+                    cycle=cycle,
+                    approved_conditionals=prior_approved,
+                    recommended=recommendations,
+                    source=prior.source,
+                    question_asked=False,
+                )
+                state.record_lens_approval(reused)
+                return _approved_decision(reused, reused=True)
+            prior_set = set(prior_approved)
+            recommended_set = set(recommended_ids)
+            added = tuple(item for item in recommendations if item.lens_id not in prior_set)
+            removed = tuple(lens_id for lens_id in prior_approved if lens_id not in recommended_set)
+            still_applicable = tuple(
+                lens_id for lens_id in prior_approved if lens_id in recommended_set
+            )
+            question = _question(
+                "delta",
+                recommendations,
+                delta_added=added,
+                delta_removed=removed,
+            )
+            if operator_choice is None:
+                return _paused_decision(commit, cycle, recommendations, question, reused=True)
+            if operator_choice == "accept-recommended":
+                approved = recommended_ids
+            elif operator_choice == "always-on-only":
+                approved = still_applicable
+            else:
+                extra = tuple(lens_id for lens_id in customized if lens_id not in still_applicable)
+                approved = (*still_applicable, *extra)
+            approval = LensApprovalRecord(
+                reviewed_commit=commit,
+                cycle=cycle,
+                approved_conditionals=approved,
+                recommended=recommendations,
+                source="operator",
+                question_asked=True,
+            )
+            state.record_lens_approval(approval)
+            return _approved_decision(approval, question=question)
+
+    question = _question("full", recommendations)
+    if operator_choice is None:
+        return _paused_decision(commit, cycle, recommendations, question)
+    approved = _approved_from_choice(operator_choice, recommendations, customized)
+    approval = LensApprovalRecord(
+        reviewed_commit=commit,
+        cycle=cycle,
+        approved_conditionals=approved,
+        recommended=recommendations,
+        source="operator",
+        question_asked=True,
+    )
+    if state is not None:
+        state.record_lens_approval(approval)
+    return _approved_decision(approval, question=question)
+
+
+def _spawn_lens_agent(
+    lens_id: str,
+    *,
+    allowed_conditionals: frozenset[str],
+    agent: AgentCallTranscript,
+) -> None:
+    always_on = set(always_on_lenses())
+    if lens_id in always_on:
+        agent.spawn_agent(lens_id)
+        return
+    if lens_id not in allowed_conditionals:
+        raise ReviewConsensusError(
+            f"refusing Agent spawn for unapproved conditional lens {lens_id!r}"
+        )
+    agent.spawn_agent(lens_id)
+
+
+def launch_approved_lenses(
+    *,
+    reviewed_commit: str,
+    cycle: int,
+    state: ReviewCycleState | None = None,
+    decision: LensSelectionDecision | None = None,
+    extra_lenses: Iterable[str] = (),
+    agent: AgentCallTranscript | None = None,
+) -> tuple[str, ...]:
+    """Spawn always-on lenses, then only approved conditionals.
+
+    A conditional lens is never passed to the Agent spawn until an approval
+    record exists for this reviewed commit and cycle. Extra/hidden lenses are
+    refused before the spawn call.
+    """
+    transcript = agent if agent is not None else AgentCallTranscript()
+    commit = _review_text(reviewed_commit, label="reviewed_commit")
+    if not isinstance(cycle, int) or isinstance(cycle, bool) or cycle < 1:
+        raise ReviewConsensusError("lens approval cycle must be a positive integer")
+    approval: LensApprovalRecord | None = None
+    paused = False
+    if decision is not None:
+        if decision.reviewed_commit != commit or decision.cycle != cycle:
+            raise ReviewConsensusError("launch decision does not match reviewed commit+cycle")
+        paused = decision.paused
+        approval = decision.approval
+    if approval is None and state is not None:
+        approval = state.lens_approval_for(commit, cycle)
+    allowed = frozenset(approval.approved_conditionals if approval is not None else ())
+    if paused:
+        allowed = frozenset()
+    launched: list[str] = []
+    for lens_id in always_on_lenses():
+        _spawn_lens_agent(lens_id, allowed_conditionals=allowed, agent=transcript)
+        launched.append(lens_id)
+    if approval is not None and not paused:
+        transcript.record_approval(approval.reviewed_commit, approval.cycle)
+        if state is not None and state.lens_approval_for(commit, cycle) is None:
+            state.record_lens_approval(approval)
+        for lens_id in approval.approved_conditionals:
+            _spawn_lens_agent(lens_id, allowed_conditionals=allowed, agent=transcript)
+            launched.append(lens_id)
+    for lens_id in _review_text_tuple(extra_lenses, label="extra_lenses") if extra_lenses else ():
+        _spawn_lens_agent(lens_id, allowed_conditionals=allowed, agent=transcript)
+        launched.append(lens_id)
+    return tuple(launched)
 
 
 def load_scoring_policy(roster_path: Path = ROSTER_PATH) -> ReviewScoringPolicy:
@@ -2147,3 +2694,4 @@ def _score_value(
 
 
 DEFAULT_SCORING_POLICY = load_scoring_policy()
+ALWAYS_ON_LENSES = always_on_lenses()

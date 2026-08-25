@@ -152,11 +152,15 @@ already landed some units.
 
 ## Backend recommendation — `recommend_execution_backend()` (Phase 1.4)
 
-`/work` lands the deferred operator-choice helper (operator-choice §7). Compute the cheapest-correct
-backend, pre-select it, and render the offer from the full `backends` enumeration so escalation is one
-keystroke. Before calling the CLI, **probe Workflow-tool availability with `ToolSearch`** and pass the
-result as `--workflow-availability-source probed`; fall back to the `asserted` default only when a live
-probe isn't possible on this host. Call the CLI:
+`/work` lands the deferred operator-choice helper (operator-choice §7), **narrowed by issue #808**.
+Compute the cheapest-correct **Saga** backend (`inline` or `team-execution`), pre-select that Saga
+backend, and render the default offer from those two. `cc-workflows-ultracode` is never a default or
+automatic backend and never a generic interchangeable execution backend. If `recommended` is
+`cc-workflows-ultracode`, **do not pre-select** it. Enter a Claude Code Workflow only by **explicit
+invocation**. Before calling the CLI, **probe Workflow-tool availability with `ToolSearch`** (needed
+if the operator later invokes a Workflow) and pass the result as `--workflow-availability-source
+probed`; fall back to the `asserted` default only when a live probe isn't possible on this host. Call
+the CLI:
 
 ```bash
 python3 plugins/saga/scripts/lifecycle_state.py recommend-backend \
@@ -195,9 +199,13 @@ ultracode. `alternatives` lists every reachable backend **independent of which o
 an overlap job (consensus AND fan-out) still offers both — escalation stays one step (operator-choice
 §3.3).
 
-Surface the recommendation with `AskUserQuestion` (or channel-inline), rendering **all three backends**
-from `backends` — pre-selecting the `recommended` one, listing the `alternative` ones, and **still naming**
-any `unavailable` one with its availability note (never a silent drop — operator-choice §4). If the
-operator picks `cc-workflows-ultracode` but it turns out unavailable, fall back to `team-execution` or
-`inline` with a one-line note. Record the operator's pick via the saga's `--orchestration-mode`
-(Phase 1.4) — that is the durable home for the choice (operator-choice §6).
+Surface the recommendation with `AskUserQuestion` (or channel-inline), rendering the **two Saga
+backends** (`inline` and `team-execution`). If `recommended` is `cc-workflows-ultracode`, **do not
+pre-select** it — pre-select `team-execution` when a gated size/risk/consensus trigger fired,
+otherwise `inline`. Do not add `cc-workflows-ultracode` as a third interchangeable choice. If the
+operator **explicitly invokes** `cc-workflows-ultracode` but it turns out unavailable, HALT with a
+recovery line pointing at `team-execution` or `inline` — never silently substitute. Record the
+operator's pick via the saga's `--orchestration-mode` (Phase 1.4) — that is the durable home for the
+choice (operator-choice §6). Pass the helper's `recommended` value — the bare enum string, since
+`--orchestration-recommended` takes `choices=ORCHESTRATION_MODES`, not the JSON object — even when
+the pre-select differs, so R12 telemetry still sees recommended-vs-chosen.

@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.142.0] - 2026-08-25
+
+### Changed
+
+- **Claude Code Workflows are explicit-invocation only (#808).** Saga Plan and Saga Work
+  default-offer `inline` and `team-execution` only. `cc-workflows-ultracode` remains a
+  recorded enum value and a runnable path after the operator explicitly invokes a
+  Claude Code Workflow (or a plan already recorded that invocation). It is never a
+  default or automatic Saga backend and never a generic interchangeable execution
+  backend. No silent substitute. `recommend_execution_backend()` may still return
+  that enum; Plan and Work must not pre-select it.
+
 ## [0.141.0] - 2026-08-25
 
 ### Added

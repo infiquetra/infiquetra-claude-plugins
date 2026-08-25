@@ -303,23 +303,34 @@ or another vendor, so an executor that did not run in this directory cannot see 
 is committed and travels with the work, which makes it the only place a decision made here can
 reliably be read later. `/work` honours that field and does not ask again.
 
-Offer the execution backend per `references/operator-choice.md` (the decision contract). There are
-exactly three backends — `inline` ("inline") | `team-execution` ("team execution") |
-`cc-workflows-ultracode` ("dynamic workflows"). Read the work shape, **recommend the cheapest-correct**
-backend and pre-select it, but always render the offer from the full `backends` enumeration
-(`lifecycle_state.recommend_execution_backend`'s `backends` key — all three, each with a
-`{backend, status, note}` entry) so every offer names all three and escalation is one step.
+The recorded enum still has three values — `inline` ("inline") | `team-execution` ("team execution") |
+`cc-workflows-ultracode` ("dynamic workflows") — matching `references/operator-choice.md` and
+`ORCHESTRATION_MODES`. **The default Saga offer is only `inline` and `team-execution`.** Claude Code
+Workflows (`cc-workflows-ultracode`) remain only an **explicitly invoked** task-local mechanism inside
+a Herdr-managed Claude Code session: never a default or automatic Saga backend, never a generic
+interchangeable execution backend (DECISIONS `{#cc-workflows-backend-narrow-808}`, issue #808 NARROW
+ruling). Never pre-select `cc-workflows-ultracode`. Never launch a Workflow because
+`recommend_execution_backend()` returned it. Never silently substitute a Workflow for `inline` or
+`team-execution`. Do not build a mechanism-neutral backend-switching abstraction around it.
 
-**Before offering, probe Workflow-tool availability with `ToolSearch`** (not an assumption) and pass
-the result as `--workflow-availability-source probed`; only fall back to the `asserted` default when a
-live probe is not possible on this host (e.g. a non-Claude-Code runner). The recommender echoes the
-source back in `workflow_availability` so the offer can say whether availability was verified or merely
-assumed.
+Offer the default Saga backends per `references/operator-choice.md` (the decision contract, as
+narrowed by #808). Read the work shape, **recommend the cheapest-correct Saga backend** (`inline` or
+`team-execution`) and pre-select it. Call `lifecycle_state.recommend_execution_backend` so the tick
+can record `--orchestration-recommended` (R12 telemetry). If `recommended` is `cc-workflows-ultracode`,
+**do not pre-select** it — pre-select `team-execution` when a gated size/risk/consensus trigger fired,
+otherwise `inline`. Confirm with the operator and record what they picked via `--orchestration-mode`.
 
-**Dynamic workflows serve the five workflow shapes** (per `references/operator-choice.md` §3.2) —
-escalate to `cc-workflows-ultracode` ("dynamic workflows"), without elevated risk, when the work matches
-any of the frozen `WORKFLOW_SHAPES` — **understand / design / research / review / migrate** — or either
-of the two legacy triggers still recognized beside them:
+**Before an explicit Workflow invocation, probe Workflow-tool availability with `ToolSearch`** (not
+an assumption) and pass the result as `--workflow-availability-source probed`; only fall back to the
+`asserted` default when a live probe is not possible on this host (e.g. a non-Claude-Code runner). The
+recommender echoes the source back in `workflow_availability` so the offer can say whether
+availability was verified or merely assumed. An unavailable Workflow is **not** a third interchangeable
+choice; name it only to explain that explicit invocation cannot run here.
+
+**Claude Code Workflows still serve the five workflow shapes** (per `references/operator-choice.md`
+§3.2) — **understand / design / research / review / migrate** — and the two legacy purposes beside
+them. Those purposes describe **when an operator might explicitly invoke** a Workflow. They are **not**
+automatic offer triggers and **not** a reason to pre-select `cc-workflows-ultracode`:
 
 - **Breadth / scale** (`broad_independent_fanout`) — broad independent fan-out, the same operation
   across many enumerated targets, or an exhaustive probe-all sweep where missing a target is the
@@ -331,20 +342,17 @@ of the two legacy triggers still recognized beside them:
   `review` shape covers a multi-lens review *sweep* requested as a workflow; the explicit refute-N /
   judge-panel form stays `adversarial_confidence` — the two may co-fire, no precedence between them.)
 
-Pass any matching shape(s) via repeatable `--workflow-shape`; an unrecognized shape is rejected loud
-(`ValueError`), never silently downgraded to inline.
+Pass any matching shape(s) via repeatable `--workflow-shape` when authoring a spec after explicit
+invocation; an unrecognized shape is rejected loud (`ValueError`), never silently downgraded to inline.
 
 **The team↔workflow fork is GOVERNANCE, not "review depth"** (both have review depth). The question is:
 **does the verdict need to stick?** Escalate to `team-execution` ("team execution") when the work needs
 **gated** consensus — a verdict that blocks a merge/deploy and persists as standing evidence (a reviewer-
 CONSENSUS gate, named scanners, a guarded deploy), or the size/risk signals fire (≥8 functional files,
 ≥4 phases, security, infra, cross-repo, deployment-sensitive). When the consensus signal is **advisory**
-— N throwaway in-session votes you act on yourself, nothing recorded or blocking — it is a
-dynamic-workflow judge-panel, not a team-execution job. **Never omit `cc-workflows-ultracode` ("dynamic
-workflows") from the offer** — when the Workflow tool is observably absent in this session (or only
-asserted, unprobed), still name it in the enumeration with `status: unavailable` and its provenance note,
-so the operator sees the full map even on a host that cannot run it. Confirm with the operator and record
-what they picked via `--orchestration-mode`.
+— N throwaway in-session votes you act on yourself, nothing recorded or blocking — stay on `inline`
+unless the operator **explicitly invokes** a Claude Code Workflow judge-panel. Confirm with the operator
+and record what they picked via `--orchestration-mode`. Enter §5.2a only after that explicit invocation.
 
 **KTD4 — the gated-vs-advisory interrogation (R7).** When a consensus / multi-reviewer / many-attempt
 signal is present, do **not** silently force `team-execution`. Ask the operator (`AskUserQuestion`, or
@@ -353,20 +361,26 @@ channel-inline) one question, with the work-shape default pre-selected:
 > **Does this verdict need to BLOCK a merge/deploy or PERSIST as evidence — or are these throwaway
 > in-session votes you act on yourself?**
 > **A) Gated** — block/persist (a reviewer-CONSENSUS gate, named scanners, a guarded deploy) → `team-execution`.
-> **B) Advisory** — N throwaway votes, nothing recorded/blocking → `cc-workflows-ultracode` (a judge-panel).
+> **B) Advisory** — N throwaway votes, nothing recorded/blocking → `inline` (a judge-panel Workflow
+> only if the operator then explicitly invokes `cc-workflows-ultracode`).
 
 **Work-shape default:** pre-select **Gated** when any deploy / security / persist signal is present
 (`--destination merge|nonprod-deploy`, security/infra work, or a verdict that must be recorded); pre-select
 **Advisory** otherwise. Pass the answer into the recommender as `--advisory-consensus` (set for B; omit for
-A — gated is the default). The advisory path feeds the existing `adversarial_confidence` ultracode trigger,
-so a contested-but-not-gated job reaches the judge-panel and never regresses to `inline`. If the work is
-**both** gated **and** broadly parallel, list both backends (per `references/operator-choice.md` §3.3).
+A — gated is the default). Advisory consensus no longer auto-routes onto `cc-workflows-ultracode`; the
+default Saga path is `inline`, and a Workflow judge-panel is explicit-invocation only. If the work is
+**both** gated **and** broadly parallel, the default offer is still `team-execution` (and `inline` as
+the cheaper alternative), not a third interchangeable Workflow choice.
 
 #### 5.2a Author the ExecutionSpec (cc-workflows-ultracode only)
 
-When the operator chooses `cc-workflows-ultracode`, **author a structured `ExecutionSpec` before writing
-the saga tick**. This is the canonical artifact `/work` re-emits from; the spec JSON — not the prose plan
-— is the single source of truth (KTD1, `references/operator-choice.md` §6).
+**Enter this section only after explicit invocation** — the operator named `cc-workflows-ultracode` in
+this session, or a prior operator decision already recorded it. Never enter it because the recommender
+suggested it, never as a silent substitute for `inline` or `team-execution`.
+
+When the operator **explicitly invokes** `cc-workflows-ultracode`, **author a structured `ExecutionSpec`
+before writing the saga tick**. This is the canonical artifact `/work` re-emits from; the spec JSON —
+not the prose plan — is the single source of truth (KTD1, `references/operator-choice.md` §6).
 
 **Step 1 — Derive per-unit tiers.** For each Implementation Unit in the plan, assign a `{model, effort}`
 tier from the work-shape heuristic (R10). Surface the tier table for operator override before locking:

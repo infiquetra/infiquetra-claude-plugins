@@ -22,10 +22,18 @@ work.
 
 ## 1. The three execution backends
 
-There are exactly three backends. The recorded value is **EXACTLY one of** `inline | team-execution |
-cc-workflows-ultracode` — these strings are the contract (they match `ORCHESTRATION_MODES` in
-[`scripts/saga.py`](../scripts/saga.py) and §4 of `saga-spec.md`). Prose labels people say out loud
-("CC workflows", "ultracode", "team mode") are **not** the contract; only the enum strings are.
+There are exactly three recorded enum values. The stored value is **EXACTLY one of** `inline |
+team-execution | cc-workflows-ultracode` — these strings are the contract (they match
+`ORCHESTRATION_MODES` in [`scripts/saga.py`](../scripts/saga.py) and §4 of `saga-spec.md`). Prose
+labels people say out loud ("CC workflows", "ultracode", "team mode") are **not** the contract; only
+the enum strings are.
+
+**NARROW offer (issue #808).** The default Saga offer is `inline` and `team-execution` only.
+`cc-workflows-ultracode` remains available only by **explicit invocation** as a task-local mechanism
+inside a Herdr-managed Claude Code session. It is never a default or automatic Saga backend and
+never a generic interchangeable execution backend (DECISIONS `{#cc-workflows-backend-narrow-808}`).
+`/plan` and `/work` must not pre-select it, must not include it as a third interchangeable choice,
+and must not silently substitute it for `inline` or `team-execution`.
 
 | Backend (enum) | What it is | Owns execution? | Availability |
 |---|---|---|---|
@@ -45,13 +53,16 @@ backend (`orchestration_ref`); it is never the execution authority.
 The operator decides; lifecycle makes the cheapest-correct path one keystroke away.
 
 - **inline by default.** Absent any escalation signal, work runs `inline`. No ceremony.
-- **Auto-recommend the fitting backend.** Lifecycle reads the work shape (§3) and pre-selects the backend it
-  judges best. This is a recommendation, not an imposition.
-- **ALWAYS surface the choice.** Even when the recommendation is `inline`, the offer names the alternatives
-  so escalation is **one step**. The pairing is *explicit default + cheap escalation*: the operator never
-  has to know the backend names cold to reach for a heavier one.
+- **Auto-recommend a Saga backend.** Lifecycle reads the work shape (§3) and pre-selects `inline` or
+  `team-execution`. This is a recommendation, not an imposition. If the helper's `recommended` value
+  is `cc-workflows-ultracode`, **do not pre-select** it — map the default offer to the cheapest Saga
+  backend instead. A Workflow is entered only when the operator explicitly invokes it.
+- **ALWAYS surface the Saga choice.** Even when the recommendation is `inline`, the offer names
+  `team-execution` so escalation is **one step**. Do not treat `cc-workflows-ultracode` as a third
+  interchangeable alternative in that default offer.
 - **Operator confirms or overrides.** The recorded value is whatever the operator picked, not what lifecycle
-  guessed.
+  guessed. An explicit invocation of `cc-workflows-ultracode` is a named operator act, not an override
+  of a default third option.
 
 ---
 
@@ -84,15 +95,16 @@ deciding question is whether the verdict **needs to stick**:
 | Consensus shape | What it means | Backend |
 |---|---|---|
 | **gated** (`consensus_is_gated=True`, the default) | the verdict must BLOCK a merge/deploy and PERSIST as standing evidence — a reviewer-CONSENSUS gate, named scanners, a guarded deploy | `team-execution` |
-| **advisory** (`consensus_is_gated=False`) | N throwaway in-session votes the operator acts on themselves; nothing is recorded or blocks | `cc-workflows-ultracode` (a judge-panel — §3.2 adversarial confidence) |
+| **advisory** (`consensus_is_gated=False`) | N throwaway in-session votes the operator acts on themselves; nothing is recorded or blocks | `inline`. A Claude Code Workflow judge-panel is allowed only by **explicit invocation** (§3.2 adversarial confidence), never as the automatic advisory path. |
 
 So `recommend_execution_backend` no longer hard-forces team-execution on *every* consensus signal: only
-**gated** consensus reaches team-execution; **advisory** consensus is OR'd into the `adversarial_confidence`
-ultracode trigger (§3.2). A contested-but-not-gated job therefore reaches the advisory ultracode branch and
-**never regresses to inline**. When advisory consensus AND a broad fan-out both fire, the offer still lists
-both (§3.3). `/plan` resolves the gated/advisory question with the KTD4 interrogation question
-(`skills/plan/SKILL.md` §5.2), defaulting to *gated* when deploy/security/persist signals are present and
-*advisory* otherwise — the operator confirms.
+**gated** consensus reaches team-execution. **Advisory** consensus stays on `inline` in the default Saga
+offer; a Workflow judge-panel is **explicit invocation only** (§3.2), never the automatic advisory path.
+When advisory consensus AND a broad fan-out both fire, the default offer is still the Saga pair
+(`inline` / `team-execution`), not a third interchangeable Workflow choice (§3.3). `/plan` resolves the
+gated/advisory question with the KTD4 interrogation question (`skills/plan/SKILL.md` §5.2), defaulting
+to *gated* when deploy/security/persist signals are present and *advisory* otherwise — the operator
+confirms.
 
 **Docs exception (`has_code_surface=False`).** team-execution's scanners + deploy gate are code-shaped and
 inert on pure docs/spec/research output, so the **output-blind** rows above — `file_count`, `phase_count`,
@@ -105,9 +117,12 @@ crossing an ownership boundary = a multi-party coordination need) and the **gate
 
 ### 3.2 `inline` -> `cc-workflows-ultracode` (Claude Code only)
 
-Offer when the work matches **any** of the frozen `workflow_shapes` vocabulary — **understand / design /
+**Explicit invocation only — never a default offer.** An operator may explicitly invoke a Claude Code
+Workflow when the work matches **any** of the frozen `workflow_shapes` vocabulary — **understand / design /
 research / review / migrate**, the shapes the Workflow tool doc itself names — or either of the two
-legacy ungoverned-multiplicity triggers still recognized beside them, all without elevated risk:
+legacy ungoverned-multiplicity triggers still recognized beside them, all without elevated risk. These
+purposes describe when that invocation is *useful*. They do **not** auto-select, pre-select, or add
+`cc-workflows-ultracode` as a generic interchangeable third backend:
 
 - **Breadth / scale** (`broad_independent_fanout`) — high-parallelism, broad independent fan-out (the
   same operation across many targets), or an exhaustive search-all / probe-all sweep where missing a
@@ -131,23 +146,26 @@ registry, no guarded deploy. That — not "review depth" — is the line to `tea
 **The mechanical boundary** (artifact kind, not ceremony level): ultracode gives a *throwaway* confidence
 signal on a finding you then act on yourself — N votes, the run ends, nothing is recorded or blocks.
 team-execution gives a *standing* verdict — a consensus score that blocks downstream scanners and the deploy
-and persists as evidence. Want independent cross-checking of a read-only finding → ultracode. Need the review
-to gate a merge/deploy or be recorded → team-execution. (A job that is both risky **and** wide offers both —
-§3.3.)
+and persists as evidence. Want independent cross-checking of a read-only finding → an **explicitly invoked**
+Workflow. Need the review to gate a merge/deploy or be recorded → team-execution. A job that is both risky
+**and** wide still offers the Saga pair (`team-execution` / `inline`) — §3.3 — and enters a Workflow only
+if the operator explicitly invokes one.
 
 ### 3.3 Overlap (both fire)
 
 A large security audit is legitimately *both* risky **and** parallel — both triggers fire. When that
-happens, **OFFER BOTH** and let the operator pick. List `team-execution` first (a mild risk-lean), but there
-is **no hard precedence rule**: because the offer always confirms with the operator, any precedence would be
-cosmetic. The operator resolves the overlap.
+happens, **OFFER the Saga pair** (`team-execution` first, `inline` as the cheaper alternative) and let
+the operator pick. Do **not** add `cc-workflows-ultracode` as a third interchangeable choice. There is
+**no hard precedence rule** between the two Saga backends: because the offer always confirms with the
+operator, any precedence would be cosmetic. The operator resolves the overlap. A Workflow remains
+available only by explicit invocation.
 
 Recommended-default rule of thumb (which one to pre-select):
 
 | Work shape | Lean |
 |---|---|
 | risky **and** parallel | `team-execution` |
-| parallel **and** not risky | `cc-workflows-ultracode` |
+| parallel **and** not risky | `inline` (Workflow only by explicit invocation) |
 | neither | `inline` |
 
 ---
@@ -157,20 +175,18 @@ Recommended-default rule of thumb (which one to pre-select):
 This plugin runs on hosts **without** the Workflow tool (e.g. redis-channel sessions, other runners). Two
 rules keep the contract honest across hosts:
 
-- **Document all three backends ALWAYS.** This file is the full map; an off-host reader needs to understand
-  `cc-workflows-ultracode` even though they cannot run it.
-- **At the offer, always name and mark all three backends, with provenance.** Never drop
-  `cc-workflows-ultracode` from the offer when the Workflow tool is observably absent — render it with
-  `status: unavailable` and a note carrying the availability source (`probed` via `ToolSearch` at offer
-  time, or `asserted` when a live probe wasn't possible). An `asserted` absence renders as "unverified;
-  probe before trusting", never a silent omission. Don't let the operator discover a backend exists only
-  by reading this file after the fact.
+- **Document all three enum values ALWAYS.** This file is the full map; an off-host reader needs to
+  understand `cc-workflows-ultracode` even though they cannot run it.
+- **At the default offer, name the two Saga backends.** Do not treat `cc-workflows-ultracode` as a
+  third interchangeable choice, available or not. When the operator has **explicitly invoked** a
+  Workflow, probe availability (`probed` via `ToolSearch`, or `asserted` when a live probe wasn't
+  possible) and HALT rather than silently substituting `inline` or `team-execution` if the tool is
+  absent. An `asserted` absence renders as "unverified; probe before trusting".
 
-**Regardless of the offer:** if `cc-workflows-ultracode` is chosen but turns out to be unavailable, **fall
-back to `team-execution` or `inline` with a one-line note** rather than failing. This is the same
-*attempt + graceful fallback* pattern `/ideate` and `/brainstorm` already use for `AskUserQuestion` (try the
-rich path; degrade cleanly when it isn't there). `/loop`'s own phase-walk is the cross-host fallback when no
-heavier backend is reachable.
+**If `cc-workflows-ultracode` was explicitly invoked but turns out to be unavailable,** HALT with a
+recovery line pointing at `team-execution` or `inline` — do not silently substitute. `/work` Phase 1.5
+owns that halt. `/loop`'s own phase-walk is the cross-host fallback when no heavier Saga backend is
+reachable.
 
 ---
 
@@ -179,9 +195,11 @@ heavier backend is reachable.
 The offer renders differently depending on the surface, because not every surface can call
 `AskUserQuestion`:
 
-- **Claude Code session** — use `AskUserQuestion` with the **recommended backend pre-selected** (§2, §3.3).
+- **Claude Code session** — use `AskUserQuestion` with the **recommended Saga backend pre-selected**
+  (`inline` or `team-execution`; §2, §3.3). Do not pre-select `cc-workflows-ultracode`.
 - **redis-channel session** — `AskUserQuestion` **cannot** be called; inline **lettered choices** in the
-  reply text instead ("Which backend? A) inline … B) team-execution … C) cc-workflows-ultracode …"). Follow
+  reply text instead ("Which backend? A) inline … B) team-execution …"). A Claude Code Workflow is not
+  a default letter; it is entered only when the operator explicitly names it. Follow
   the canonical channel-inline convention documented in
   [`skills/brainstorm/SKILL.md`](../skills/brainstorm/SKILL.md) — **reference it; do not duplicate its
   wording here.** That doc is the single source for how channel-inline choices are phrased.

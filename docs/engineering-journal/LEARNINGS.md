@@ -21,6 +21,40 @@
 
 ## 2026-08-25
 
+### Instruction text that names a CLI flag must name the flag's argument TYPE  {#808-flag-argument-type}
+
+**Context.** #808 phase B narrowed the Saga execution-backend offer in instruction text only
+(`/plan`, `/work`, and the two contract docs they cite). The rewrite of `/work`'s runnable offer
+reference gained a sentence telling the agent to "pass the raw helper JSON to
+`--orchestration-recommended`".
+**Evidence.** PR #833 at `128ef713`;
+`plugins/saga/skills/work/references/execution-strategy.md:209` (as written) versus
+`plugins/saga/scripts/saga.py:1528-1530`, where the flag is declared
+`choices=list(ORCHESTRATION_MODES)` (`saga.py:79`). Reproduction:
+`python3 plugins/saga/scripts/saga.py save --kind task --id probe --orchestration-recommended
+"$(python3 plugins/saga/scripts/lifecycle_state.py recommend-backend --file-count 2 --phase-count 1)"`
+→ `error: argument --orchestration-recommended: invalid choice`.
+**Mechanism.** `recommend_execution_backend` returns an object
+(`{recommended, rationale, alternatives, backends, workflow_availability}`) and the flag accepts
+one bare enum string out of that object. Prose that names the producer ("the helper output", "the
+raw helper JSON") reads as correct to a human who already knows the shape, and is unrunnable for
+an agent that does not. `/plan` already carried the unambiguous form —
+`<the backend the recommender suggested>` — so the repo had the right phrasing and the new
+sentence did not reuse it.
+**Fix.** Name the value and the constraint in the same clause: "the helper's `recommended` value —
+the bare enum string, since `--orchestration-recommended` takes `choices=ORCHESTRATION_MODES`, not
+the JSON object". Repaired during Saga Code Review of PR #833.
+**Validation.** `uv run pytest tests/test_saga_plugin.py tests/test_saga_execution_spec.py
+tests/test_operator_choice_drift.py tests/test_lint_gate_absence_contract.py -q` → 526 passed.
+**What surprised.** A substring pin over hard-wrapped Markdown silently under-asserts: the same
+phrase counts 0 when the wrap falls mid-phrase, so a guard can look present and enumerate nothing.
+Normalise whitespace (`" ".join(text.split())`) before asserting.
+**Generalizable rule.** In an agent-facing instruction plugin the instruction IS the product:
+whenever prose names a flag, name the argument's type and its constraint beside it, and prefer the
+phrasing already used elsewhere in the repo over a fresh one.
+**Refs.** DECISIONS `{#cc-workflows-explicit-invocation-808}`, `{#cc-workflows-backend-narrow-808}`.
+
+
 ### An ordered comparison of a set-valued judgement silently re-asks  {#778-applicability-is-a-set}
 
 **Context.** #778's `resolve_lens_selection` decides whether a repair cycle reuses the

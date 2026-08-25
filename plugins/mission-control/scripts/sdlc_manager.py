@@ -2361,6 +2361,13 @@ def rollout_update(repo: str, field: str, status: str, fmt: str) -> None:
 #   - link-sub-issue     wrap the native sub-issue API
 #   - verify-label       self-heal missing labels (404 → create; exists → no-op)
 #   - validate-card      run the card_validator schema check on an issue body
+#
+# #812 correction seam: saga submits Stage/Status through ``flow set-field --correction``.
+# The operator CLI without ``--correction`` still sets Initiative / Objective / other
+# live fields. No new operation; field name is part of operation, authorization, and
+# retry identity. Stage is allowed by name only — no Stage field exists on the live
+# boards and no ``set-field-stage`` op-kind is created.
+CORRECTION_FIELDS = frozenset({"Status", "Stage"})
 
 
 def _resolve_project_field(project_name: str, field_name: str) -> dict:
@@ -2413,6 +2420,32 @@ def flow_field_options(project_name: str, field_name: str, fmt: str) -> None:
             print(f"  {o['name']:30s}  (id: {o['id']})")
 
 
+def assert_correction_field(field_name: str) -> str:
+    """Reject a correction set-field that names any field other than Status or Stage."""
+    if field_name not in CORRECTION_FIELDS:
+        raise RuntimeError(
+            f"correction set-field rejects field {field_name!r}; "
+            f"allowed: {sorted(CORRECTION_FIELDS)}"
+        )
+    return field_name
+
+
+def correction_identity(
+    *,
+    field_name: str,
+    repo: str,
+    number: int,
+    option_name: str,
+) -> dict[str, str]:
+    """Field-named operation / authorization / retry identity for a correction write."""
+    field_name = assert_correction_field(field_name)
+    return {
+        "operation": f"set-field:{field_name}",
+        "authorization": f"correction-field:{field_name}",
+        "retry": f"set-field:{field_name}:{repo}#{number}:{option_name}",
+    }
+
+
 def flow_set_field(
     project_name: str,
     repo: str,
@@ -2420,9 +2453,17 @@ def flow_set_field(
     field_name: str,
     option_name: str,
     fmt: str,
+    *,
+    correction: bool = False,
 ) -> None:
     """Set a single-select field value on a card. Idempotent: re-running
-    with the same option produces the same final state."""
+    with the same option produces the same final state.
+
+    ``correction=True`` is the saga submission seam (#812): only Status (and
+    Stage by name) are accepted; the field name is carried in the result identity.
+    """
+    if correction:
+        field_name = assert_correction_field(field_name)
     field = _resolve_project_field(project_name, field_name)
     project_id = field["_project_id"]
     option = _resolve_field_option(project_name, field_name, field, option_name)
@@ -2436,6 +2477,26 @@ def flow_set_field(
         )
 
     _set_project_field_value(project_id, field, option, target_item)
+    if correction:
+        _out(
+            {
+                "action": "set-field",
+                "field": field_name,
+                "option": option_name,
+                "repo": repo,
+                "number": number,
+                "project": project_name,
+                "correction": True,
+                "identity": correction_identity(
+                    field_name=field_name,
+                    repo=repo,
+                    number=number,
+                    option_name=option_name,
+                ),
+            },
+            fmt,
+        )
+        return
     _out(f"Set {field_name}='{option_name}' on {repo}#{number} ({project_name})", fmt)
 
 
@@ -6064,6 +6125,14 @@ def main() -> None:
         action="append",
         help="Option name, case-insensitive (repeat with --field)",
     )
+    flow_setfield_p.add_argument(
+        "--correction",
+        action="store_true",
+        help=(
+            "Restrict this write to Status/Stage correction fields (saga submission "
+            "seam). Operator writes of Initiative/Objective omit this flag."
+        ),
+    )
 
     flow_options_p = flow_sp.add_parser(
         "field-options",
@@ -6285,6 +6354,9 @@ def main() -> None:
                     raise RuntimeError(
                         "flow set-field requires the same number of --field and --option values"
                     )
+                if getattr(args, "correction", False):
+                    for fname in args.field:
+                        assert_correction_field(fname)
                 if args.numbers is not None or len(args.field) > 1:
                     flow_set_fields_bulk(
                         args.project,
@@ -6295,7 +6367,13 @@ def main() -> None:
                     )
                 else:
                     flow_set_field(
-                        args.project, args.repo, args.number, args.field[0], args.option[0], fmt
+                        args.project,
+                        args.repo,
+                        args.number,
+                        args.field[0],
+                        args.option[0],
+                        fmt,
+                        correction=bool(getattr(args, "correction", False)),
                     )
             elif args.action == "field-options":
                 flow_field_options(args.project, args.field, fmt)

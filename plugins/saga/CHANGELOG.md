@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.139.8] - 2026-08-25
+
+### Fixed
+
+- **Stage/Status corrections submit only through mission-control (#812).** Saga already had
+  no direct GraphQL Stage/Status writes; the Status `set-field` seam now carries the field
+  name in the operation, certificate authorization, and retry identity, and rejects any
+  project field other than Status (Stage by name only — no Stage field exists on Operations,
+  Asgard, or CAMPPS, and no `set-field-stage` op-kind is created). `flow set-field --correction`
+  is the child process. A static guard (`tests/test_saga_single_writer_guard.py`) proves no
+  direct composition remains. Other board op-kinds (close, comment, labels) are untouched.
+
 ## [0.139.7] - 2026-08-24
 
 ### Fixed

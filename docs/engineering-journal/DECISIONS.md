@@ -1,4 +1,35 @@
 # Decisions — Infiquetra Claude Plugins
+## 2026-08-25
+
+### #812 correction seam is Status-only, field-named, no new op-kind  {#812-correction-field-named-identity}
+
+**Date:** 2026-08-25 · **Issue:** #812 · **Origin:** Run orch-2026-08-25-814 unit U7
+
+**Context and Problem Statement.** The operator ruled that saga must not compose board
+Stage/Status writes and must not deepen the #593 saga-owned writer. The live Operations /
+Asgard / CAMPPS boards have a Status field and no Stage field. Saga already submitted Status
+through `board_progression.default_board_writer` → `sdlc_manager.py flow set-field --field
+Status`. The missing enforcement was field-named identity plus a static guard.
+
+**Decision.** Keep the existing `set-field-status` op-kind. Carry the field name through the
+CLI argv, `authorize_correction_field`, and the idempotency key
+`{op_kind}:{repo}#{number}:{field}:{target_state}`. Allow Status and Stage *by name*; reject
+every other project field on the correction path. Do not create `set-field-stage`. Do not
+restrict the operator `flow set-field` CLI (Initiative / Objective remain). Saga's writer
+always passes `--correction`.
+
+**Rejected alternatives.**
+
+1. **A new `set-field-stage` op-kind.** Dead API for a nonexistent field (F3) and a clamp on
+   the writer's non-set-field op-kinds if copied (F4).
+2. **Restricting all of `flow set-field` to Status/Stage.** Breaks operator Initiative /
+   Objective assignment, the plugin's primary board-write surface.
+3. **Deepening the saga-owned board writer (#593).** Closed by the same operator ruling.
+
+**Revisit when.** A Stage project field is actually created on Operations, Asgard, or CAMPPS.
+Until then Stage remains a name on the allowlist only; live discovery will fail-loud if a
+caller submits it.
+
 ## 2026-08-24
 
 ### Verify panel quorum policy at odd panel sizes — Missing-Aware Tightening (#692) {#verify-panel-odd-n-quorum-policy-692}

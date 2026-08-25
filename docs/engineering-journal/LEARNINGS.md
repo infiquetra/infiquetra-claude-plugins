@@ -19,6 +19,36 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-08-25
+
+### Live boards have Status and no Stage; #812 is a guard, not a migration  {#812-status-only-no-stage-field}
+
+**Context.** Issue #812 asked saga to stop composing board Stage/Status writes and submit
+corrections through mission-control's existing `flow set-field`. Planning already found zero
+direct GraphQL Stage/Status writes in saga; the S3-repaired run plan then bound the unit to
+the live board schema.
+
+**Evidence.** Live field list 2026-08-25 on Operations (#3), Asgard (#2), and CAMPPS (#4):
+each has `Status` and none has `Stage`. Operations Status options are Idea / Shaping / Ready
+/ Active / Verify / Done. The only saga `--field` argv is
+`plugins/saga/scripts/board_progression.py:default_board_writer`.
+
+**Mechanism.** The defect class was "a future saga script could re-introduce direct
+composition," not "today's writer talks to GraphQL." Adding a `set-field-stage` op-kind
+would have been dead API surface for a field that does not exist (doc-review F3) and would
+have widened the writer past Status (F4).
+
+**Fix (or queued).** Guard-and-tighten: field name in operation, certificate authorization,
+and retry identity; reject any correction field other than Status (Stage by name only);
+static guard in `tests/test_saga_single_writer_guard.py`; mission-control
+`flow set-field --correction` is the existing operation with a flag, not a new verb.
+
+**Generalizable rule.** Inventory the live schema before adding an op-kind for a field. A
+name in an issue title is not evidence the field exists; `flow field-options` is.
+
+**Refs.** Issue #812; plan `docs/plans/2026-08-25-improve-claude-plugins-run-plan.md` U7;
+DECISIONS `{#812-correction-field-named-identity}`.
+
 ## 2026-08-24
 
 ### One unattended Orchestrate run closed the defects-claude-plugins Objective end to end  {#unattended-orchestrate-run-787}

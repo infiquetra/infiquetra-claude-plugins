@@ -740,3 +740,179 @@ def test_cli_rejects_mismatched_repeated_field_option_pairs() -> None:
         pytest.raises(SystemExit),
     ):
         sdlc_manager.main()
+
+
+# --- #812 correction set-field (field-named identity; Status/Stage only) ---
+
+
+def _status_field_response() -> dict:
+    return {
+        "organization": {
+            "projectV2": {
+                "id": "PVT_kwx",
+                "fields": {
+                    "nodes": [
+                        {
+                            "id": "FLD_status",
+                            "name": "Status",
+                            "options": [
+                                {"id": "o_verify", "name": "Verify"},
+                                {"id": "o_active", "name": "Active"},
+                            ],
+                        },
+                        {
+                            "id": "FLD_init",
+                            "name": "Initiative",
+                            "options": [{"id": "o_init", "name": "platform-v1"}],
+                        },
+                    ]
+                },
+            }
+        }
+    }
+
+
+def test_correction_set_field_round_trips_field_in_identity() -> None:
+    """A Status correction carries the field name in operation, authorization, and retry."""
+    with (
+        patch.object(sdlc_manager, "load_config") as mock_load,
+        patch.object(sdlc_manager, "get_project_items") as mock_items,
+        patch.object(sdlc_manager, "_graphql") as mock_gql,
+        patch.object(sdlc_manager, "_out") as mock_out,
+    ):
+        mock_load.return_value = {
+            "project_mappings": {"projects": {"operations": {"number": 3, "name": "Operations"}}},
+        }
+        mock_items.return_value = (
+            "PVT_kwx",
+            [_project_item(42, "PVTI_42", repo="infiquetra-claude-plugins")],
+        )
+        mock_gql.side_effect = [_status_field_response(), {}]
+        sdlc_manager.flow_set_field(
+            "operations",
+            "infiquetra-claude-plugins",
+            42,
+            "Status",
+            "Verify",
+            fmt="json",
+            correction=True,
+        )
+
+    payload = mock_out.call_args.args[0]
+    assert payload["correction"] is True
+    assert payload["field"] == "Status"
+    identity = payload["identity"]
+    assert identity["operation"] == "set-field:Status"
+    assert identity["authorization"] == "correction-field:Status"
+    assert identity["retry"] == "set-field:Status:infiquetra-claude-plugins#42:Verify"
+    mutation_vars = mock_gql.call_args_list[-1].args[1]
+    assert mutation_vars["fieldId"] == "FLD_status"
+
+
+def test_correction_set_field_rejects_non_status_non_stage() -> None:
+    """Initiative is a live operator field but is rejected as a correction submission."""
+    with pytest.raises(RuntimeError, match="rejects field 'Initiative'"):
+        sdlc_manager.flow_set_field(
+            "operations",
+            "infiquetra-claude-plugins",
+            42,
+            "Initiative",
+            "platform-v1",
+            fmt="json",
+            correction=True,
+        )
+
+
+def test_correction_set_field_allows_stage_by_name() -> None:
+    """Stage is authorized by name; live discovery (no such field) is a later failure."""
+    assert sdlc_manager.assert_correction_field("Stage") == "Stage"
+    identity = sdlc_manager.correction_identity(
+        field_name="Stage",
+        repo="x",
+        number=1,
+        option_name="n/a",
+    )
+    assert identity["operation"] == "set-field:Stage"
+    assert identity["authorization"] == "correction-field:Stage"
+    assert "Stage" in identity["retry"]
+
+
+def test_correction_certificate_gate_stays_on_saga_write_path() -> None:
+    """MC does not reimplement the reversibility certificate; it only names the field.
+
+    The certificate still AUTHORIZES ``set-field-status`` in saga; this module
+    has no ``authorize_write``. A correction write still goes through
+    ``_set_project_field_value`` (the existing GraphQL mutation).
+    """
+    assert not hasattr(sdlc_manager, "authorize_write")
+    assert callable(sdlc_manager._set_project_field_value)
+    assert "set-field-stage" not in dir(sdlc_manager)
+
+
+def test_cli_correction_flag_routes_to_flow_set_field() -> None:
+    with (
+        patch.object(
+            sys,
+            "argv",
+            [
+                "sdlc_manager.py",
+                "flow",
+                "set-field",
+                "--project",
+                "operations",
+                "--repo",
+                "infiquetra-claude-plugins",
+                "--number",
+                "42",
+                "--field",
+                "Status",
+                "--option",
+                "Verify",
+                "--correction",
+            ],
+        ),
+        patch.object(sdlc_manager, "flow_set_field") as set_field,
+    ):
+        sdlc_manager.main()
+
+    set_field.assert_called_once_with(
+        "operations",
+        "infiquetra-claude-plugins",
+        42,
+        "Status",
+        "Verify",
+        "text",
+        correction=True,
+    )
+
+
+def test_cli_correction_rejects_objective_before_bulk_write(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch.object(
+            sys,
+            "argv",
+            [
+                "sdlc_manager.py",
+                "flow",
+                "set-field",
+                "--project",
+                "operations",
+                "--repo",
+                "infiquetra-claude-plugins",
+                "--numbers",
+                "1,2",
+                "--field",
+                "Objective",
+                "--option",
+                "defects-claude-plugins",
+                "--correction",
+            ],
+        ),
+        pytest.raises(SystemExit) as exc,
+    ):
+        sdlc_manager.main()
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "rejects field 'Objective'" in err

@@ -211,11 +211,27 @@ def reconcile_op(
             **base,
         }
 
-    key = cert.idempotency_key(op_kind, repo, number, target_state)
+    field_kw: str | None = None
+    if op_kind == "set-field-status":
+        field_kw = str((payload or {}).get("field") or "Status")
+        base["field"] = field_kw
+        if cert.authorize_correction_field(field_kw) != cert.AUTHORIZED:
+            return {
+                "status": "gated",
+                "halt": True,
+                "halt_reason": f"certificate-gate:correction-field:{field_kw}",
+                "verdict": "GATE",
+                **base,
+            }
+
+    key = cert.idempotency_key(op_kind, repo, number, target_state, field=field_kw)
     ledger_file = ledger_dir / bp._safe_ledger_name(key)  # noqa: SLF001
 
     # (2) Absent key → normal idempotent write / crash-safe resume, via the shared write mechanism.
     if not ledger_file.exists():
+        pay: dict[str, Any] = dict(payload or {})
+        if field_kw is not None:
+            pay.setdefault("field", field_kw)
         return bp.authorize_and_write(
             op_kind,
             repo,
@@ -225,7 +241,7 @@ def reconcile_op(
             ledger_dir=ledger_dir,
             now=now,
             max_attempts=max_attempts,
-            payload=payload,
+            payload=pay or payload,
             extra=extra,
             write_once=wo,
         )
@@ -258,9 +274,11 @@ def reconcile_op(
 
     # Auto-correct: the certificate AUTHORIZED (checked above) and op is in the allowlist — re-drive
     # the saga-asserted target_state with the same bounded retry the writer path uses.
-    pay: dict[str, Any] = dict(payload or {})
+    pay = dict(payload or {})
     if target_state and "target_state" not in pay:
         pay["target_state"] = target_state
+    if field_kw is not None:
+        pay.setdefault("field", field_kw)
     last_exc: Exception | None = None
     attempts = 0
     for _ in range(max_attempts):

@@ -52,6 +52,13 @@ GATE = Verdict.GATE
 # ---------------------------------------------------------------------------
 
 
+# Project fields saga may submit as a correction through mission-control ``flow set-field``.
+# Status is the live field on Operations / Asgard / CAMPPS. Stage is allowed *by name* so a
+# future Stage field can reuse this seam; no Stage field exists today and no ``set-field-stage``
+# op-kind is created (#812, S3-repaired: Status-only against the live board schema).
+CORRECTION_FIELDS = frozenset({"Status", "Stage"})
+
+
 class OpKind(StrEnum):
     """Canonical names for mission-control operations, mirroring mission-control verbs.
 
@@ -176,7 +183,7 @@ _REGISTRY: dict[OpKind, OpFacts] = {
         ),
         abort_cost=None,
         always_operator=False,
-        key_recipe="{op_kind}:{repo}#{issue_number}:{target_state}",
+        key_recipe="{op_kind}:{repo}#{issue_number}:{field}:{target_state}",
     ),
     OpKind.ISSUE_LABEL_ADD: OpFacts(
         op_kind=OpKind.ISSUE_LABEL_ADD,
@@ -324,6 +331,19 @@ def authorize_write(op_kind: str | OpKind) -> Verdict:
     return GATE  # belt-and-suspenders default
 
 
+def authorize_correction_field(field_name: str) -> Verdict:
+    """AUTHORIZE Status and Stage by name; GATE every other project field (#812).
+
+    The field name is part of authorization: a ``set-field-status`` op that names
+    Initiative / Objective / anything else is GATE, never a silent write. Stage is
+    allowed as a name only — no Stage field exists on the live boards (receipt
+    2026-08-25) and no ``set-field-stage`` op-kind is created.
+    """
+    if field_name in CORRECTION_FIELDS:
+        return AUTHORIZED
+    return GATE
+
+
 class EnvelopeAuthorization:
     """One #449 envelope-class authorization verdict — pure data, echoed facts.
 
@@ -458,11 +478,20 @@ def side_effected(had_side_effect: bool) -> bool:
     return had_side_effect
 
 
-def idempotency_key(op_kind: str | OpKind, repo: str, issue_number: int, target_state: str) -> str:
+def idempotency_key(
+    op_kind: str | OpKind,
+    repo: str,
+    issue_number: int,
+    target_state: str,
+    *,
+    field: str | None = None,
+) -> str:
     """Return a deterministic idempotency key for an autonomous board write (KTD4 / R9).
 
     Key form:
-      reversible/always-op: ``"{op_kind}:{repo}#{issue_number}:{target_state}"``
+      set-field-status:     ``"{op_kind}:{repo}#{issue_number}:{field}:{target_state}"``
+                            (``field`` defaults to ``Status``; #812 retry identity)
+      other reversible/op:  ``"{op_kind}:{repo}#{issue_number}:{target_state}"``
       additive comment:     ``"issue-progress-comment:{repo}#{issue_number}:{target_state}"``
                             where ``target_state`` carries the leaf_transition_id as the coalescing
                             discriminator (so one comment is posted per meaningful leaf transition).
@@ -475,6 +504,9 @@ def idempotency_key(op_kind: str | OpKind, repo: str, issue_number: int, target_
     keys in the board-sync idempotency ledger is U4's responsibility (KTD4).
     """
     op_str = op_kind.value if isinstance(op_kind, OpKind) else str(op_kind)
+    if op_str == OpKind.SET_FIELD_STATUS.value:
+        field_name = field if field else "Status"
+        return f"{op_str}:{repo}#{issue_number}:{field_name}:{target_state}"
     return f"{op_str}:{repo}#{issue_number}:{target_state}"
 
 
@@ -498,11 +530,13 @@ __all__ = [
     "Verdict",
     "AUTHORIZED",
     "GATE",
+    "CORRECTION_FIELDS",
     "InverseDescriptor",
     "OpFacts",
     "EnvelopeAuthorization",
     "facts",
     "authorize_write",
+    "authorize_correction_field",
     "authorize_write_under_envelope",
     "side_effected",
     "idempotency_key",

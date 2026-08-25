@@ -3238,7 +3238,7 @@ the ceremony's base, so a second hardcode would move the bug rather than remove 
 
 **KTD6 — `--operator-confirmed branch_delete:<target>` is required for `branch_delete`.** The bare
 form refuses with a message naming the resolved target, so the operator's confirming invocation
-carries a value they have actually seen — the typed-payload growth `{#ship-ceremony-operator-gate-526}`'s
+carries a value they have actually seen — the typed-payload growth `{#ceremony-operator-confirm-names-transition-526}`'s
 own "Revisit when" clause anticipated ("a transition is added whose confirmation needs an argument of
 its own"). The mismatch rule stays uniform: a qualified confirmation whose target does not match the
 resolved target refuses, exactly like a plain name mismatch. Every other transition keeps the bare
@@ -4114,7 +4114,7 @@ native runtime can atomically stop and attest a resident without the current req
 
 ---
 
-### Fleet doctor correlates raw sources independently and never repairs {#fleet-doctor-independent-audit-353}
+### Fleet doctor correlates raw sources independently and never repairs {#fleet-doctor-never-repairs-353}
 
 **Date:** 2026-07-15 · **Plan:**
 `docs/plans/2026-07-15-issue-353-fleet-doctor-plan.md` · **Issue:** #353
@@ -5772,8 +5772,8 @@ offload lanes across one real lifecycle loop; the map is evidence, never a gate.
   *Rejected:* single-lane variants — either loses AC1 compliance or leaves the newly wired lane
   unmeasured. *Revisit when:* a third $0-class row lands in the registry.
 - **KTD2 — drill target is a verified-real QUEUED item: `/code-review` Defect 2
-  (`{#code-review-saga-scan-touchups}`), after stale-draft re-triage killed the first pick.**
-  `{#marketplace-ci-guard}` turned out already-shipped three ways in CI (validator, generator
+  (`{#code-review-saga-scan-touchups-shipped}`), after stale-draft re-triage killed the first pick.**
+  `{#marketplace-ci-guard-pruned}` turned out already-shipped three ways in CI (validator, generator
   `--check`, tri-lock test) — pruned by this drill. *Rejected:* `{#loop-rounds-seen-placeholder-crash}`
   (two placeholder edits — degenerate implementation signal). *Revisit when:* never — target is
   one-shot.

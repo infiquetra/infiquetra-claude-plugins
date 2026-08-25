@@ -1,8 +1,9 @@
-"""Tests for the engineering-journal ordering lint (#659).
+"""Tests for the engineering-journal ordering lint (#659) and anchor lint (#407).
 
-The lint exists because both journals had silently drifted ~10% of their content below the
-oldest date heading. Two classes of check, tested in both directions — a clean file must pass,
-and each specific drift shape must be caught by name.
+The ordering lint exists because both journals had silently drifted ~10% of their content below
+the oldest date heading. The anchor lint exists because a duplicated slug or a dangling
+``{#slug}`` / ``](#slug)`` citation corrupts the graph silently. Each class is tested in both
+directions — a clean file must pass, and each specific drift shape must be caught by name.
 """
 
 from __future__ import annotations
@@ -97,6 +98,105 @@ def test_file_with_no_date_headings_is_reported(lint: ModuleType) -> None:
     assert any("no `## YYYY-MM-DD` headings" in p for p in problems), problems
 
 
+# --- anchor uniqueness and dangling refs (#407) ------------------------------
+
+
+def test_clean_journal_passes_anchor_check(lint: ModuleType) -> None:
+    assert lint.check_anchors([(LEARNINGS, CLEAN)]) == []
+
+
+def test_duplicate_anchor_names_both_sites(lint: ModuleType) -> None:
+    """Cross-file collision: the same heading slug in LEARNINGS and DECISIONS."""
+    decisions = "# Decisions\n\n## 2026-07-27\n\n### Copycat  {#newest}\n\nbody\n"
+    problems = lint.check_anchors([(LEARNINGS, CLEAN), (DECISIONS, decisions)])
+    assert len(problems) == 1, problems
+    msg = problems[0]
+    assert "duplicate" in msg and "{#newest}" in msg, problems
+    assert f"{LEARNINGS}:" in msg and f"{DECISIONS}:" in msg, problems
+    newest_line = next(i for i, ln in enumerate(CLEAN.splitlines(), 1) if "{#newest}" in ln)
+    copy_line = next(i for i, ln in enumerate(decisions.splitlines(), 1) if "{#newest}" in ln)
+    assert f"{LEARNINGS}:{newest_line}" in msg, problems
+    assert f"{DECISIONS}:{copy_line}" in msg, problems
+
+
+def test_same_file_duplicate_anchor_names_both_sites(lint: ModuleType) -> None:
+    text = CLEAN.replace("{#older}", "{#newest}")
+    problems = lint.check_anchors([(LEARNINGS, text)])
+    assert any("duplicate" in p and "{#newest}" in p for p in problems), problems
+    lines = [i for i, ln in enumerate(text.splitlines(), 1) if "{#newest}" in ln]
+    assert len(lines) == 2, lines
+    msg = next(p for p in problems if "duplicate" in p)
+    assert f"{LEARNINGS}:{lines[0]}" in msg and f"{LEARNINGS}:{lines[1]}" in msg, problems
+
+
+def test_dangling_brace_mention_names_the_referencing_line(lint: ModuleType) -> None:
+    text = CLEAN + "\nSee `{#ghost}`.\n"
+    n = next(i for i, ln in enumerate(text.splitlines(), 1) if "{#ghost}" in ln)
+    problems = lint.check_anchors([(LEARNINGS, text)])
+    assert any(
+        f"{LEARNINGS}:{n}:" in p and "dangling" in p and "{#ghost}" in p for p in problems
+    ), problems
+
+
+def test_dangling_fragment_link_names_the_referencing_line(lint: ModuleType) -> None:
+    text = CLEAN + "\nSee [missing](#ghost).\n"
+    n = next(i for i, ln in enumerate(text.splitlines(), 1) if "](#ghost)" in ln)
+    problems = lint.check_anchors([(LEARNINGS, text)])
+    assert any(
+        f"{LEARNINGS}:{n}:" in p and "dangling" in p and "{#ghost}" in p for p in problems
+    ), problems
+
+
+def test_defined_slug_satisfies_mention_and_fragment(lint: ModuleType) -> None:
+    text = CLEAN + "\nSee `{#newest}` and [newest](#newest).\n"
+    assert lint.check_anchors([(LEARNINGS, text)]) == []
+
+
+def test_cross_file_mention_resolves_against_the_joint_set(lint: ModuleType) -> None:
+    decisions = "# Decisions\n\n## 2026-07-27\n\n### A decision  {#decision}\n\nbody\n"
+    learnings = CLEAN + "\nSee `{#decision}`.\n"
+    assert lint.check_anchors([(LEARNINGS, learnings), (DECISIONS, decisions)]) == []
+
+
+def test_fenced_template_slug_is_not_a_definition(lint: ModuleType) -> None:
+    """The LEARNINGS header shows ``### title {#slug}`` inside a quoted fence; that is not live."""
+    text = (
+        "# Learnings\n\n"
+        "> ```markdown\n"
+        "> ### Short descriptive title  {#slug}\n"
+        "> ```\n\n"
+        "## 2026-07-27\n\n"
+        "### Real entry  {#real}\n\n"
+        "body\n"
+    )
+    assert lint.check_anchors([(LEARNINGS, text)]) == []
+    # And it must not satisfy a real citation of {#slug} either — that's the placeholder.
+    # (PLACEHOLDER_SLUGS already exempts it; this asserts the fence did not define it.)
+    colliding = text.replace("{#real}", "{#other}") + "\n### Collision  {#slug}\n\nbody\n"
+    problems = lint.check_anchors([(LEARNINGS, colliding)])
+    assert not any("duplicate" in p for p in problems), problems
+
+
+def test_literal_placeholder_slug_is_not_dangling(lint: ModuleType) -> None:
+    text = CLEAN + "\nThe `{#slug}` HTML anchor on the entry title makes it linkable.\n"
+    assert lint.check_anchors([(LEARNINGS, text)]) == []
+
+
+def test_unquoted_fenced_heading_is_not_a_definition(lint: ModuleType) -> None:
+    """A ``### Title {#slug}`` inside a fence is an example, not a live definition."""
+    text = CLEAN + "\n```markdown\n### Example  {#example-only}\n```\n\nSee `{#example-only}`.\n"
+    n = next(i for i, ln in enumerate(text.splitlines(), 1) if "See" in ln)
+    problems = lint.check_anchors([(LEARNINGS, text)])
+    assert any(
+        f"{LEARNINGS}:{n}:" in p and "dangling" in p and "{#example-only}" in p for p in problems
+    ), problems
+    # Nor does it collide with a real heading of the same slug.
+    colliding = CLEAN.replace("{#newest}", "{#example-only}") + (
+        "\n```markdown\n### Example  {#example-only}\n```\n"
+    )
+    assert not any("duplicate" in p for p in lint.check_anchors([(LEARNINGS, colliding)]))
+
+
 # --- the real fleet journals must stay clean ---------------------------------
 
 
@@ -105,6 +205,16 @@ def test_committed_journals_pass_the_structural_lint(lint: ModuleType) -> None:
     for rel in (LEARNINGS, DECISIONS):
         text = (REPO / rel).read_text(encoding="utf-8")
         assert lint.check_structure(rel, text) == [], rel
+
+
+def test_committed_journals_pass_the_anchor_lint(lint: ModuleType) -> None:
+    """Regression sentinel: the live citation graph has no duplicate or dangling slugs (#407)."""
+    files: list[tuple[str, str]] = []
+    for rel in (*lint.DEFAULT_JOURNALS, *lint.ANCHOR_EXTRA):
+        path = REPO / rel
+        if path.is_file():
+            files.append((rel, path.read_text(encoding="utf-8")))
+    assert lint.check_anchors(files) == []
 
 
 # --- diff-scoped check -------------------------------------------------------
@@ -196,6 +306,17 @@ def test_relevelling_an_entry_is_not_an_addition(lint: ModuleType, repo: Path) -
     _journal(repo, LEARNINGS, fixed)
     _git(repo, "commit", "-qam", "demote to entry level")
     assert lint.check_new_entries(LEARNINGS, fixed, base, repo) == []
+
+
+def test_renaming_an_existing_slug_is_not_an_addition(lint: ModuleType, repo: Path) -> None:
+    """Disambiguating a duplicate slug on an old heading is not a new filing (#407)."""
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    text = CLEAN.replace("{#older}", "{#older-renamed}")
+    _journal(repo, LEARNINGS, text)
+    _git(repo, "commit", "-qam", "rename an old slug")
+    assert lint.check_new_entries(LEARNINGS, text, base, repo) == []
 
 
 def test_a_genuinely_new_slug_at_the_bottom_is_still_caught(lint: ModuleType, repo: Path) -> None:

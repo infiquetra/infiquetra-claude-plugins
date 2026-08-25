@@ -21,6 +21,20 @@
 
 ## 2026-08-25
 
+### Heading `{#slug}` is the journal's definition set; mentions and fragment links must resolve  {#journal-anchor-lint-407}
+
+**Context.** The ordering lint (#659) already walked LEARNINGS.md and DECISIONS.md, but nothing checked that a `{#slug}` was unique or that a citation pointed at a heading that exists. A duplicated slug or a dangling mention corrupts the citation graph without failing CI.
+
+**Evidence.** Issue #407. Before the check, DECISIONS.md defined `{#fleet-doctor-independent-audit-353}` twice (2026-07-19 "never a shared projection" and 2026-07-15 "never repairs"). Four live citations pointed at slugs with no heading: `#ship-ceremony-operator-gate-526` (meant `{#ceremony-operator-confirm-names-transition-526}`), `#marketplace-ci-guard` (moved to ARCHIVE `{#marketplace-ci-guard-pruned}`), `#code-review-saga-scan-touchups` (retired; ARCHIVE `{#code-review-saga-scan-touchups-shipped}`), and the format-template placeholder `{#slug}`.
+
+**Mechanism.** Definitions are heading-attached `{#slug}` across LEARNINGS, DECISIONS, ARCHIVE, and QUEUED jointly — a cross-file collision counts. ARCHIVE and QUEUED have no date sections, so they join the definition set without joining the newest-first check; excluding them would paint every honest QUEUED citation as a dangle. References are `](#slug)` fragment targets and non-heading `{#slug}` mentions. Fenced code is skipped so a format template is not a fake definition. The literal placeholder `slug` is not a citation. Identity for the newest-first guard is slug *or* title, so renaming a slug to split a duplicate is not a new filing.
+
+**Fix (or queued).** `scripts/lint_journal_order.py` `check_anchors`; the four live violations repaired in the same change. Duplicate 2026-07-15 slug renamed `{#fleet-doctor-never-repairs-353}`.
+
+**Generalizable rule.** A citation graph needs one joint definition pass; per-file uniqueness misses the cross-file collision, and a roster that omits the queued/archive files turns real edges into failures.
+
+**Refs.** DECISIONS `{#journal-order-linted-659}`; issue #407.
+
 ### A syntax gate that recognises one fence form is a silent no-op for the others  {#mermaid-fence-form-coverage-405}
 
 **Context.** The #405 Mermaid check first matched only `` ```mermaid `` at 0-3 spaces of indent. Code review of PR #824 probed the forms GitHub actually renders.

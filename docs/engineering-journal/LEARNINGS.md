@@ -21,6 +21,23 @@
 
 ## 2026-08-25
 
+### A second launch registry will refuse a launchable reviewer  {#776-registry-is-not-transport}
+
+**Context.** During the 2026-08-23 Team Mimir publication review, the coordinator was told to
+run one official Saga Code Review with Claude Opus 5 and Grok 4.6. After a bespoke two-reviewer
+process was stopped, it followed saga external-engine guidance, consulted `engine-registry.yaml`,
+concluded Grok was not representable, and started reasoning about `engine_session_runner` instead
+of the live Herdr roster. Grok was installed and launchable.
+**Evidence.** Issue #776; `plugins/saga/scripts/engine_session_runner.py` (deleted);
+`plugins/saga/references/engine-registry.yaml` header now `NON-TRANSPORT METADATA`.
+**Mechanism.** Two launch authorities cannot stay consistent. The registry is calibration data;
+the live Orchestrate/Herdr roster is the only session-launch authority.
+**Fix (or queued).** #776 retires the transport trio and the engine-prefs seam; reviewer seats
+are named Orchestrate units.
+**Generalizable rule.** Capability metadata must be labeled non-transport, or a stale row will
+refuse a reviewer the machine can actually launch.
+**Refs.** DECISIONS `#776-halt-not-fallback-transport`
+
 ### Tab ownership is a pre-launch Herdr snapshot, not the wrapper `reused` bit  {#launcher-tab-snapshot-ownership}
 
 **Context.** Cycle 2 of the PR #827 review executed the cycle-1 repair against a real wrapper

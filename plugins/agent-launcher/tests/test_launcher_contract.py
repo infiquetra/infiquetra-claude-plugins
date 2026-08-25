@@ -633,8 +633,9 @@ def test_orchestrate_declares_agent_launcher_dependency_and_breaking_version() -
     )
     marketplace = json.loads((REPO / ".claude-plugin" / "marketplace.json").read_text())
     entry = next(p for p in marketplace["plugins"] if p["name"] == "orchestrate")
-    assert plugin["version"] == "2.0.0"
-    assert entry["version"] == "2.0.0"
+    version = tuple(int(part) for part in plugin["version"].split("."))
+    assert version >= (2, 0, 0)
+    assert entry["version"] == plugin["version"]
     assert plugin["dependencies"]["agent-launcher"] == ">=1.0.0"
 
 

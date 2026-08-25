@@ -76,19 +76,19 @@ Use repo-relative paths in every generated document. Absolute paths break portab
 and worktrees. (The one exception is the saga `--review-paths` value passed through to `/code-review`,
 which mirrors that skill's convention.)
 
-## Engine Offer
+## Reviewer-session transport
 
-Before offering external-engine help for a work unit, run
-`python3 plugins/saga/scripts/engine_offer.py offer --stage work --repo-root . --attended`.
-Pass explicit unit shape or fingerprint text when available so mechanical/scaffold work can default to
-offload while judgment work stays advisory. If the helper reports `prompt_required`, `/work` owns the
-operator prompt and persists the selected preference with `engine_offer.py remember`. The offer never
-dispatches by itself, never replaces `/work`'s backend choice, and never satisfies a gate.
+Orchestrate owns reviewer-session transport. Do not run `engine_offer.py`, do not
+launch `engine_session_runner.py`, and do not consult `engine-registry.yaml` as a
+launch authority — it is capability metadata only. If this `/work` unit needs an external reviewer and that reviewer
+is not already a named unit in the Orchestrate run record, HALT — do not invent a
+custom review and do not fall back to the retired runner. The offer never replaces
+`/work`'s backend choice and never satisfies a gate.
 
 ## Second-opinion triggers
 
-Issue-specific or plan-specific work may add an advisory second-opinion trigger, but it never changes the
-Engine Offer choices into a generic offload path. For a repeated-test-failure trigger, create the Markdown
+Issue-specific or plan-specific work may add an advisory second-opinion trigger, but it never becomes a
+generic offload path or a substitute for Orchestrate-owned reviewer sessions. For a repeated-test-failure trigger, create the Markdown
 work-session and its adjacent `saga.work-second-opinion.v1` sidecar together:
 
 ```text
@@ -110,10 +110,11 @@ streak, print exactly this one line and persist its offer key before asking:
 Second opinion available: {target} failed after 3 fix attempts; dispatch an advisory second opinion?
 ```
 
-The `none` work preference suppresses only this automatic offer. A remembered `offload` preference is not a
-valid trigger route and cannot change it from `second-opinion`. Do not write a permanent preference because
-the operator declined one offer. No answer or unattended mode records `unattended`; decline records
-`declined`; both proceed through the existing work gates with zero runner calls.
+There is no persisted `.saga/engine-prefs.json` preference that suppresses this offer.
+Decline records `declined` on the sidecar; no answer or unattended mode records
+`unattended`. Both proceed through the existing work gates with zero runner calls.
+If acceptance would require launching a reviewer session, that session must already
+be represented in the Orchestrate run record; otherwise HALT.
 
 For explicit acceptance, pass the trusted runtime session id (`session_id = CLAUDE_CODE_SESSION_ID`,
 the same configured Saga session used by direct Agent/Task hooks) to `prepare_second_opinion`; a

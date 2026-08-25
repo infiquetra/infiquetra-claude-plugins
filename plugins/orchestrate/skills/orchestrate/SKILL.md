@@ -87,12 +87,11 @@ silently treated as valid expansion. That detection reads branches and nothing e
 worktree or session named outside that series is invisible to both commands, which is the second
 reason never to make one.
 
-**Saga's external-engine offer is answered before dispatch.** A `/doc-review` or `/code-review`
-session with no stored preference stops and asks the operator, in a tab nobody is watching. The
-plan's `engine_prefs` block is written to `<worktree>/.saga/engine-prefs.json` at worktree creation,
-which saga reads and skips the question. Keyed by stage (`ideate`, `brainstorm`, `work`,
-`doc-review`, `code-review`) with an `intent` of `none`, `offload`, `second-opinion` or
-`external-only`, plus a tier `model` and `effort`.
+**Reviewer seats live in the run record, not engine-prefs.** The `.saga/engine-prefs.json` seam is
+retired (#776). External-reviewer selection is a named unit in the plan (`role: external-reviewer`)
+launched through `expand`/`go`. A plan that still carries `engine_prefs` is refused. When a Code
+Review phase is present, Orchestrate refuses plain review prompts, direct reviewer launches, and
+duplicate review units. Halt; never fall back to the retired saga external-engine runner.
 
 **Code Review has one controller and owns acceptance.** Its plan row declares
 `role: "review-controller"`; `start` and `expand` refuse a second. Work rows that may receive repairs

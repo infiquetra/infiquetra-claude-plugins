@@ -172,7 +172,10 @@ ACCOUNT_MISMATCH = "account_mismatch"
 ORPHANED = "orphaned"
 
 REVIEW_CONTROLLER_ROLE = "review-controller"
+REVIEWER_SEAT_ROLE = "external-reviewer"
 WORK_FIX_ROLES = frozenset({"review-fixer", "downstream-resolver"})
+_STANDALONE_REVIEW = re.compile(r"(?i)(?:^|\b)(?:please\s+)?(?:code\s+)?review\s+(?:this|the)\b")
+_RETIRED_TRANSPORT = re.compile(r"engine_session_runner|engine_offer\.py")
 OPERATOR_FIX_ROLES = frozenset({"human", "release"})
 REVIEW_RESULT_SCHEMA = "review_result.v1"
 REVIEW_OUTCOMES = frozenset(
@@ -259,9 +262,11 @@ class Unit:
     role: str | None = None
     """The unit's review-loop role, when it participates in that loop.
 
-    ``review-controller`` identifies the one top-level Code Review invocation. Work workers use
-    ``review-fixer`` or ``downstream-resolver`` so an opaque result can be routed without treating a
-    unit name as policy. Older run records carry no role and continue to load unchanged."""
+    ``review-controller`` identifies the one top-level Code Review invocation. Additional
+    reviewer seats requested by that controller use ``external-reviewer`` and launch through
+    the same expand/go path as every other unit. Work workers use ``review-fixer`` or
+    ``downstream-resolver`` so an opaque result can be routed without treating a unit name as
+    policy. Older run records carry no role and continue to load unchanged."""
     paths: list[str] = field(default_factory=list)
     """Repository paths this Work worker owns for review-fix routing.
 
@@ -362,14 +367,6 @@ class Run:
     ``workspace`` wins; there is no other precedence."""
     account: str | None = None
     """Default account selection every unit inherits unless it sets its own (e.g. "company")."""
-    engine_prefs: dict[str, dict[str, str]] = field(default_factory=dict)
-    """Saga's per-stage external-engine answers, decided once in the interview.
-
-    Keyed by saga stage (``code-review``, ``doc-review``, ``work``, …), each value carrying
-    ``intent`` and optionally ``model`` and ``effort``. Written into every worktree so a dispatched
-    saga command finds the answer already stored and never stops to ask a question in a tab nobody
-    is watching. See ``write_engine_prefs``.
-    """
     issues: dict[str, str] = field(default_factory=dict)
     """Unit name -> issue reference (``owner/repo#N``) whose board card this run reports to.
 
@@ -404,7 +401,6 @@ class Run:
             backend=raw.get("backend", "inline"),
             branch=raw.get("branch", ""),
             conflict_worktree=raw.get("conflict_worktree") or None,
-            engine_prefs=raw.get("engine_prefs", {}),
             issues=raw.get("issues", {}),
             status_map=raw.get("status_map", {}),
             workspace=raw.get("workspace") or None,
@@ -414,6 +410,7 @@ class Run:
             review_resubmit_pending=bool(raw.get("review_resubmit_pending", False)),
             operator_fix_requests=raw.get("operator_fix_requests", []),
         )
+        # engine_prefs was retired with #776; ignore it on load so older run files still open.
         loaded.resolve_branch_once()
         return loaded
 
@@ -462,7 +459,6 @@ class Run:
             "backend": self.backend,
             "branch": self.branch,
             "conflict_worktree": self.conflict_worktree,
-            "engine_prefs": self.engine_prefs,
             "issues": self.issues,
             "status_map": self.status_map,
             "workspace": self.workspace,
@@ -638,7 +634,7 @@ def plan_units(plan: Mapping[str, Any]) -> list[Unit]:
                 _route_path(path, label=f"unit {unit.name!r} owned path") for path in unit.paths
             ]
         units.append(unit)
-    assert_single_review_controller(units)
+    assert_review_transport(units)
     return units
 
 
@@ -651,6 +647,62 @@ def assert_single_review_controller(units: Sequence[Unit]) -> None:
             f"review phase has {len(controllers)} controller units ({names}); create exactly one "
             "top-level Code Review controller"
         )
+
+
+def is_standalone_review_prompt(task: str) -> bool:
+    """A bespoke review prompt that is not an official Saga Code Review invocation."""
+    if is_code_review_task(task):
+        return False
+    return bool(_STANDALONE_REVIEW.search(task))
+
+
+def is_reviewer_seat(unit: Unit) -> bool:
+    return unit.role == REVIEWER_SEAT_ROLE
+
+
+def assert_no_engine_prefs(plan: Mapping[str, Any]) -> None:
+    """The engine-prefs seam is retired; reviewer seats live in the run unit table."""
+    if plan.get("engine_prefs"):
+        raise SystemExit(
+            "plan carries engine_prefs; that seam is retired (#776). Represent reviewer "
+            "seats as named units with role 'review-controller' or 'external-reviewer' "
+            "in the Orchestrate run record, not .saga/engine-prefs.json"
+        )
+
+
+def assert_review_transport(units: Sequence[Unit]) -> None:
+    """Refuse bespoke reviews and unrecorded reviewer launches when Code Review is present.
+
+    Halt. Never fall back to the retired saga external-engine runner.
+    """
+    if not any(is_review_controller(unit) for unit in units):
+        return
+    assert_single_review_controller(units)
+    for unit in units:
+        if is_review_controller(unit):
+            continue
+        if _RETIRED_TRANSPORT.search(unit.task):
+            raise SystemExit(
+                f"unit {unit.name!r} names the retired saga external-engine runner; halt and "
+                f"dispatch reviewer seats through expand/go with role {REVIEWER_SEAT_ROLE!r}"
+            )
+        if is_code_review_task(unit.task) and unit.role not in {
+            *WORK_FIX_ROLES,
+            *OPERATOR_FIX_ROLES,
+        }:
+            raise SystemExit(
+                f"unit {unit.name!r} is a duplicate Code Review; create exactly one "
+                "top-level review-controller and dispatch extra reviewer seats through "
+                f"expand/go with role {REVIEWER_SEAT_ROLE!r}"
+            )
+        if is_standalone_review_prompt(unit.task):
+            raise SystemExit(
+                f"unit {unit.name!r} is a plain review prompt; when a Saga Code Review "
+                "phase is present, Orchestrate refuses bespoke reviews. Add a named "
+                f"{REVIEWER_SEAT_ROLE!r} seat through expand/go, or halt"
+            )
+        if is_reviewer_seat(unit):
+            continue
 
 
 def _route_path(value: object, *, label: str) -> str:
@@ -1074,27 +1126,6 @@ def ensure_local_run_state_excluded() -> None:
 # ----------------------------------------------------------------- launching
 
 
-def write_engine_prefs(worktree: Path, prefs: dict[str, dict[str, str]]) -> None:
-    """Answer saga's external-engine offer before the session is even launched.
-
-    A dispatched ``/code-review`` or ``/doc-review`` opens by resolving an engine offer, and with
-    nothing stored it stops and asks the operator -- in a background tab, which means it waits
-    forever. Saga reads a stored answer from ``<repo>/.saga/engine-prefs.json`` and skips the
-    question entirely (``engine_offer.resolve_offer`` returns early, ``prompt_required=False``).
-
-    Written directly rather than by shelling out to saga's ``engine_offer.py remember``, which would
-    mean resolving another plugin's script path across install layouts. The format is small and
-    carries its own version. If saga ever moves past version 1 the stored answer stops being
-    honoured, and the visible symptom is a review unit sitting at ``blocked`` in ``status`` -- which
-    is the first place to look if that ever happens.
-    """
-    if not prefs:
-        return
-    path = worktree / ".saga" / "engine-prefs.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"stages": prefs, "version": 1}, indent=2) + "\n")
-
-
 def produced_anything(dep: Unit, r: Run) -> bool:
     """Did this unit actually commit something to its branch?
 
@@ -1185,7 +1216,6 @@ def make_worktree(unit: Unit, r: Run, root: Path) -> None:
         unit.branched_from = resolve_ref(branch)
     unit.worktree = str(path)
     unit.branch = branch
-    write_engine_prefs(path, r.engine_prefs)
     print(f"  {unit.name}: {path.name} on {branch} from {base}")
 
 
@@ -1607,6 +1637,7 @@ def _report_landing_cleanup_failures(failures: Sequence[tuple[Path, str]]) -> No
 
 def cmd_start(args: argparse.Namespace) -> int:
     plan = json.loads(Path(args.plan).read_text())
+    assert_no_engine_prefs(plan)
     assert_safe_path_component(plan["run_id"], "run id")
     units = plan_units(plan)
     assert_safe_unit_names(units)
@@ -1617,7 +1648,6 @@ def cmd_start(args: argparse.Namespace) -> int:
         base=base,
         units=units,
         backend=plan.get("backend", "inline"),
-        engine_prefs=plan.get("engine_prefs", {}),
         issues=plan.get("issues", {}),
         status_map=plan.get("status_map", {}),
         workspace=plan.get("workspace") or None,
@@ -1907,6 +1937,7 @@ def cmd_expand(args: argparse.Namespace) -> int:
     """
     r = Run.load()
     added = json.loads(Path(args.plan).read_text())
+    assert_no_engine_prefs(added)
     incoming = plan_units(added)
     assert_safe_unit_names(incoming)
 
@@ -1917,12 +1948,11 @@ def cmd_expand(args: argparse.Namespace) -> int:
             raise SystemExit(f"unit {unit.name!r} is already in this run; give the new one a name")
         seen.add(unit.name)
     assert_dependencies_reachable(incoming, existing)
-    assert_single_review_controller([*r.units, *incoming])
+    assert_review_transport([*r.units, *incoming])
 
     assert_vendors_available(incoming)
     assert_saga_reachable(incoming)
     r.units.extend(incoming)
-    r.engine_prefs.update(added.get("engine_prefs", {}))
     r.issues.update(added.get("issues", {}))
     r.status_map.update(added.get("status_map", {}))
     if "workspace" in added:
@@ -1995,6 +2025,7 @@ def cmd_go(args: argparse.Namespace) -> int:
     r = Run.load()
     if r.unresolvable_branch:
         raise SystemExit(f"run branch {r.unresolvable_branch!r} does not resolve; cannot go")
+    assert_review_transport(r.units)
     ready = r.eligible()
     if not ready:
         print("nothing eligible -- either everything is running or dependencies are unmet.")

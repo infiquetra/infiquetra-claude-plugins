@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.1.0] - 2026-08-25
+
+### Removed
+
+- **`.saga/engine-prefs.json` seam retired (#776).** Plans no longer carry
+  `engine_prefs`; `start` and `expand` refuse a plan that still does. Reviewer
+  seats are named units (`role: review-controller` / `role: external-reviewer`)
+  launched through `expand`/`go`. When a Saga Code Review phase is present,
+  Orchestrate refuses plain review prompts, direct reviewer launches, and
+  duplicate review units before any session is created. Halt, never fall back
+  to the retired saga runner. Older run files that still contain `engine_prefs`
+  load and drop the field.
+
 ## [2.0.0] - 2026-08-25
 
 ### Changed

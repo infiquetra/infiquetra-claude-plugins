@@ -1,7 +1,7 @@
-# Data-authored defaults for lifecycle-stage external-engine offers.
+# Data-authored defaults for lifecycle-stage capability intent (non-transport metadata).
 #
-# Repo-local `.saga/engine-prefs.json` preferences override these defaults. These
-# values only choose the first offer shown or reused when no stored preference exists.
+# The `.saga/engine-prefs.json` seam is retired (#776). These values are not a session-launch
+# authority and cannot override the live Orchestrate/Herdr roster.
 version: 1
 defaults:
   unknown:

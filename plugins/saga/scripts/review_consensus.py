@@ -475,7 +475,6 @@ class ExternalAdvisoryReview:
     adjudications: tuple[ExternalFindingAdjudication, ...]
     whole_diff: bool = True
     request_bound: bool = True
-    external_only_admitted: bool = True
     scoring_authority: bool = False
 
     def __post_init__(self) -> None:
@@ -494,7 +493,7 @@ class ExternalAdvisoryReview:
             )
         if self.reviewer_vendor.casefold() == self.home_vendor.casefold():
             raise ReviewConsensusError("external advisory review must use another vendor")
-        if not (self.whole_diff and self.request_bound and self.external_only_admitted):
+        if not (self.whole_diff and self.request_bound):
             raise ReviewConsensusError("external advisory review lost a lifecycle safeguard")
         if self.scoring_authority:
             raise ReviewConsensusError("external advisory review cannot score")
@@ -553,6 +552,7 @@ class ExternalAdvisoryReview:
                 data.get("adjudications"), label="external adjudications"
             )
         )
+        data.pop("external_only_admitted", None)  # retired with #776 transport
         try:
             return cls(**data)
         except TypeError as exc:

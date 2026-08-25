@@ -1,6 +1,24 @@
 # Decisions — Infiquetra Claude Plugins
 ## 2026-08-25
 
+### Retire saga's external-engine transport; halt rather than falling back (#776) {#776-halt-not-fallback-transport}
+
+**Decision.** Delete `engine_offer.py`, `engine_session_runner.py`, and `external_only.py`.
+Keep `engine-registry.yaml` as explicitly non-transport capability metadata. External-reviewer
+selection lives in the Orchestrate run record (`role: review-controller` /
+`role: external-reviewer`). When a Code Review phase is present, refuse plain review prompts,
+direct reviewer launches, and duplicate review units before creating a session. Halt; never
+fall back to the retired runner.
+
+**Why.** A second launch path consulted a stale registry and refused a reviewer Herdr could
+launch (2026-08-23). Keeping the runner as fallback would reproduce that incident.
+
+**Rejected.** Keeping `engine_session_runner` as fallback. A replacement transport abstraction.
+Deleting the registry subsystem (17 calibration consumers; no leaf authorizes it).
+
+**Revisit when.** The live Herdr roster publishes capability ratings that make the registry
+redundant, or a leaf authorizes deleting it.
+
 ### Prove launcher tab ownership from a Herdr snapshot, not the wrapper `reused` bit (#777) {#launcher-owned-from-tab-snapshot}
 
 **Decision.** The agent-launcher records `owned` on its receipt by snapshotting

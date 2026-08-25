@@ -1,10 +1,10 @@
 # Changelog
 
-## [2.1.0] - 2026-08-25
+## [3.0.0] - 2026-08-25
 
 ### Removed
 
-- **`.saga/engine-prefs.json` seam retired (#776).** Plans no longer carry
+- **BREAKING: `.saga/engine-prefs.json` seam retired (#776).** Plans no longer carry
   `engine_prefs`; `start` and `expand` refuse a plan that still does. Reviewer
   seats are named units (`role: review-controller` / `role: external-reviewer`)
   launched through `expand`/`go`. When a Saga Code Review phase is present,

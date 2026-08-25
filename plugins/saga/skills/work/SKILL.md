@@ -82,8 +82,8 @@ Orchestrate owns reviewer-session transport. Do not run `engine_offer.py`, do no
 launch `engine_session_runner.py`, and do not consult `engine-registry.yaml` as a
 launch authority — it is capability metadata only. If this `/work` unit needs an external reviewer and that reviewer
 is not already a named unit in the Orchestrate run record, HALT — do not invent a
-custom review and do not fall back to the retired runner. The offer never replaces
-`/work`'s backend choice and never satisfies a gate.
+custom review and do not fall back to the retired runner. The second-opinion trigger
+below never replaces `/work`'s backend choice and never satisfies a gate.
 
 ## Second-opinion triggers
 

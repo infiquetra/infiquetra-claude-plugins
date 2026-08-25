@@ -174,8 +174,8 @@ ORPHANED = "orphaned"
 REVIEW_CONTROLLER_ROLE = "review-controller"
 REVIEWER_SEAT_ROLE = "external-reviewer"
 WORK_FIX_ROLES = frozenset({"review-fixer", "downstream-resolver"})
-_STANDALONE_REVIEW = re.compile(r"(?i)(?:^|\b)(?:please\s+)?(?:code\s+)?review\s+(?:this|the)\b")
-_RETIRED_TRANSPORT = re.compile(r"engine_session_runner|engine_offer\.py")
+_REVIEW_SHAPED = re.compile(r"(?i)\breview\b")
+_RETIRED_TRANSPORT = re.compile(r"engine_session_runner|engine_offer|external_only")
 OPERATOR_FIX_ROLES = frozenset({"human", "release"})
 REVIEW_RESULT_SCHEMA = "review_result.v1"
 REVIEW_OUTCOMES = frozenset(
@@ -649,11 +649,21 @@ def assert_single_review_controller(units: Sequence[Unit]) -> None:
         )
 
 
-def is_standalone_review_prompt(task: str) -> bool:
-    """A bespoke review prompt that is not an official Saga Code Review invocation."""
-    if is_code_review_task(task):
+def is_standalone_review_prompt(unit: Unit) -> bool:
+    """A review-shaped unit that declares no role, i.e. a bespoke review.
+
+    Wording cannot carry this decision. "review this PR" and "do a code review of the
+    branch" are the same request, and no regex that admits the first while refusing the
+    second is worth trusting. The role field this run record already carries is the
+    signal: a reviewer seat, a work-fix worker, and an operator row each say what they
+    are, so anything left over that talks about reviewing is the bespoke review the
+    leaf refuses.
+    """
+    if is_code_review_task(unit.task):
         return False
-    return bool(_STANDALONE_REVIEW.search(task))
+    if unit.role is not None:
+        return False
+    return bool(_REVIEW_SHAPED.search(unit.task))
 
 
 def is_reviewer_seat(unit: Unit) -> bool:
@@ -695,14 +705,17 @@ def assert_review_transport(units: Sequence[Unit]) -> None:
                 "top-level review-controller and dispatch extra reviewer seats through "
                 f"expand/go with role {REVIEWER_SEAT_ROLE!r}"
             )
-        if is_standalone_review_prompt(unit.task):
+        if is_reviewer_seat(unit):
+            # The sanctioned transport. A seat's task reads like a review instruction
+            # because reviewing is what the seat is for; refusing it here would leave
+            # the run record with no way to express the reviewer the leaf requires.
+            continue
+        if is_standalone_review_prompt(unit):
             raise SystemExit(
                 f"unit {unit.name!r} is a plain review prompt; when a Saga Code Review "
                 "phase is present, Orchestrate refuses bespoke reviews. Add a named "
                 f"{REVIEWER_SEAT_ROLE!r} seat through expand/go, or halt"
             )
-        if is_reviewer_seat(unit):
-            continue
 
 
 def _route_path(value: object, *, label: str) -> str:

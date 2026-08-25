@@ -200,7 +200,7 @@ def test_review_transport_mutation_refuses_plain_review_prompt_before_session(
     repo: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    mutated = _grok_seat_row(task="review this PR for bugs")
+    mutated = _grok_seat_row(task="review this PR for bugs", role=None)
     _write_run(repo, [_controller_row(), mutated])
     monkeypatch.chdir(repo)
     launched: list[str] = []
@@ -245,6 +245,60 @@ def test_review_transport_mutation_refuses_direct_reviewer_launch_before_session
     assert launched == []
 
 
+def test_review_transport_admits_a_named_seat_whose_task_reads_like_a_review(
+    orchestrate: ModuleType,
+) -> None:
+    """A seat's task reads like a review instruction because that is what a seat is for.
+
+    Refusing it left the run record with no way to express the reviewer the leaf
+    requires, while the docs told authors to use exactly this shape.
+    """
+    for task in (
+        "review the diff at 41e318c1",
+        "Please review this whole diff and return findings",
+        "code review the frozen revision",
+    ):
+        units = orchestrate.plan_units({"units": [_controller_row(), _grok_seat_row(task=task)]})
+        orchestrate.assert_review_transport(units)
+        assert [u.role for u in units] == ["review-controller", "external-reviewer"]
+
+
+@pytest.mark.parametrize(
+    "task",
+    [
+        "review PR #831 for bugs",
+        "Review changes on the branch",
+        "do a code review of the branch",
+        "take a look and review my diff",
+    ],
+)
+def test_review_transport_refuses_rephrased_bespoke_reviews(
+    orchestrate: ModuleType, task: str
+) -> None:
+    """Refusal keys on the missing role, not on one blessed phrasing.
+
+    A wording match admitted every one of these while refusing the seats above.
+    """
+    with pytest.raises(SystemExit, match="plain review prompt"):
+        orchestrate.plan_units({"units": [_controller_row(), _grok_seat_row(task=task, role=None)]})
+
+
+def test_review_transport_leaves_declared_work_roles_alone(orchestrate: ModuleType) -> None:
+    """A review-fixer talks about review findings; it is not a bespoke review."""
+    fixer = {
+        "name": "fixer",
+        "vendor": "claude",
+        "model": "sonnet",
+        "effort": "medium",
+        "task": "address review findings in plugins/saga",
+        "role": "review-fixer",
+        "paths": ["plugins/saga"],
+        "status": "pending",
+    }
+    units = orchestrate.plan_units({"units": [_controller_row(), fixer]})
+    orchestrate.assert_review_transport(units)
+
+
 def test_review_transport_refuses_engine_prefs_and_the_retired_runner(
     orchestrate: ModuleType,
 ) -> None:
@@ -262,6 +316,22 @@ def test_review_transport_refuses_engine_prefs_and_the_retired_runner(
                 ]
             }
         )
+
+
+@pytest.mark.parametrize(
+    "task",
+    [
+        "run engine_session_runner.py launch",
+        "use engine_offer to pick a vendor",
+        "admit the roster with external_only first",
+    ],
+)
+def test_review_transport_refuses_every_retired_transport_name(
+    orchestrate: ModuleType, task: str
+) -> None:
+    """All three retired modules, with or without the .py suffix."""
+    with pytest.raises(SystemExit, match="retired saga external-engine runner"):
+        orchestrate.plan_units({"units": [_controller_row(), _grok_seat_row(task=task)]})
 
 
 def test_review_transport_loads_legacy_run_files_without_engine_prefs(

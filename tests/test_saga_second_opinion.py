@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import re
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -16,6 +17,10 @@ ROOT = Path(__file__).parent.parent
 SCRIPTS = ROOT / "plugins" / "saga" / "scripts"
 CODE_REVIEW_SKILL = ROOT / "plugins" / "saga" / "skills" / "code-review" / "SKILL.md"
 DOC_REVIEW_SKILL = ROOT / "plugins" / "saga" / "skills" / "doc-review" / "SKILL.md"
+GATE_RECORD = re.compile(
+    r"<!-- gate-record: id=(?P<id>[^\s]+) absence=(?P<absence>[^\s]+) "
+    r"transport=(?P<transport>[^\s]+) -->"
+)
 
 
 def _load(name: str, path: Path) -> ModuleType:
@@ -30,6 +35,7 @@ def _load(name: str, path: Path) -> ModuleType:
 
 
 SO = _load("second_opinion", SCRIPTS / "second_opinion.py")
+D = SO.engine_dispatch
 
 
 def test_dispatch_second_opinion_still_takes_an_injected_runner() -> None:
@@ -61,3 +67,26 @@ def test_review_skills_halt_instead_of_naming_a_launch_cli() -> None:
         assert "engine_session_runner.py launch" not in text
         assert "HALT" in text
         assert "Orchestrate" in text
+
+
+def test_operator_absence_gate_record_survives_the_transport_retirement() -> None:
+    """Only the engine-offer record was retired; #371's interaction contract stayed.
+
+    The repo-wide lint checks that a marker's vocabulary is legal, not that this
+    marker still says HALT, so without this pin a swap to `absence=escalate` lints
+    clean.
+    """
+    code_review = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    records = {m.group("id"): m.groupdict() for m in GATE_RECORD.finditer(code_review)}
+    assert records["code-review-interaction"] == {
+        "id": "code-review-interaction",
+        "absence": "HALT",
+        "transport": "ask-user-question",
+    }
+    assert "code-review-engine-offer" not in records
+    assert "never consent" in code_review
+
+
+def test_advisory_reviewer_and_panel_remain_non_gating() -> None:
+    """An advisory seat cannot satisfy a gate; #776 moved its transport, not its authority."""
+    assert frozenset({"advisory-reviewer", "panel"}) == D.NON_GATING_ROLE_KINDS

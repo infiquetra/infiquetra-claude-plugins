@@ -1,5 +1,31 @@
 # Changelog
 
+## [2.0.0] - 2026-08-25
+
+### Changed
+
+- **Launch seam moved to the agent-launcher plugin (#777).** Breaking: Orchestrate now
+  depends on `agent-launcher >=1.0.0` (`plugin.json` `dependencies`). Vendor flag tables,
+  wrapper resolution, argv assembly, launch, Herdr preflight, prompt delivery, and owned
+  cleanup live in `plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py`.
+  Orchestrate ingests that module and keeps run-scheduling, landing, review policy, and
+  the run ledger. A missing agent-launcher plugin no longer kills every subcommand at
+  import; launch/roster/go fail with a clear error, and git-backed commands still run.
+
+## [1.20.8] - 2026-08-25
+
+### Added
+
+- **Per-run worker-pool declarations and reintegration practice.** `SKILL.md` now documents the
+  two run practices proven in orch-2026-08-24-787: a per-run worker-pool table (priority order,
+  per-pool cap, launch template, exercised-or-not at closeout) and immediate reintegration of
+  the run's declared authoritative integration branch after every serialized landing, with
+  release-surface versions re-resolved before continuing. Reintegration is a merge, never a
+  rebase: a surviving branch carries an open pull request, and rewriting its commits strands the
+  revision-bound review records that name the reviewed SHA. Vendors, models, efforts, caps, and
+  the integration target are per-run operator inputs, never hard-coded. Guidance only — no
+  scheduler or driver change.
+
 ## [1.20.7] - 2026-08-24
 
 ### Changed

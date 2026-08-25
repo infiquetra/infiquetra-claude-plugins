@@ -17,7 +17,9 @@ Phase B of the same issue (serialize after lane S2, issue #776) plus the already
 follow-up #708.
 
 **Date:** 2026-08-25 · **Issue:** #808 · **Origin:** Run orch-2026-08-25-814, unit
-`u-808-evidence`, plan section U10 phase A · **Pin:** worktree
+`u-808-evidence`, plan section U10 phase A of
+`docs/plans/2026-08-25-improve-claude-plugins-run-plan.md` (the F-numbers below are that
+plan's numbered doc-review findings) · **Pin:** worktree
 `orch/orch-2026-08-25-814-u-808-evidence` at `58ce3079` after `git fetch origin && git merge
 origin/main` (`origin/main` `ebe476d4` is an ancestor). Sweep and counts below were taken
 on that pin.
@@ -147,11 +149,16 @@ the backend; they are evidence sources for the metrics below, not additional pro
   (3 units × 3) all upheld with examined-SHA quoting, while the post-workflow whole-diff
   `/code-review` surfaced 10 confirmed findings the panels structurally could not see
   (LEARNINGS `{#unit-panels-vs-whole-diff-lenses-476}`; work-session evidence in the
-  #476 code-review artifact cited there). (3) Issue #390: one of twelve verifiers
-  returned a real refutation (release surfaces missing at U3's intermediate SHA —
-  owned by U7, moot at branch tip) even while aggregation treated the panel as empty
-  (LEARNINGS `{#verify-panel-prose-verdicts-vacuous-aggregation}`;
-  `docs/work-sessions/2026-07-07-no-silent-claude-fallback.md`). (4) Issue #686 in
+  #476 code-review artifact cited there). (3) Issue #384 (third ultracode run,
+  `wf_3e667626-303`): one of twelve verifiers returned a real refutation — release
+  surfaces missing at U3's intermediate SHA, deliberately owned by U7 and moot at
+  branch tip — while the panel arithmetic still counted that unit `0/3 reporting`
+  (LEARNINGS `{#panel-verdicts-unparsed-prose}`). Issue #390's own twelve verifiers
+  returned **zero** refutations (LEARNINGS
+  `{#verify-panel-prose-verdicts-vacuous-aggregation}`;
+  `docs/work-sessions/2026-07-07-no-silent-claude-fallback.md`); #390's contribution
+  was the vacuous-aggregation class recorded under false halts below, not a unique
+  finding. (4) Issue #686 in
   sibling `infiquetra/infiquetra-codex-plugins` pull request #71: a verifier objected
   to a unit's prose; that was a real advisory the single-bucket gate then misclassified
   (`docs/work-sessions/2026-08-03-verify-panel-severity-axis.md`). Panels catch
@@ -259,12 +266,13 @@ skill-text change. This PR does not close #808.
 twenty children remain `CLOSED`. This unit writes only the journal entry and its work
 session.
 
-**Substitutions (F5).** Leaf verification named `python3 scripts/check_docs.py`, which
+**Substitutions (plan finding F5 — verification-command substitution).** Leaf verification named `python3 scripts/check_docs.py`, which
 does not exist in this tree. Documentation checks used instead:
 `python3 scripts/lint_journal_order.py`, `uv run python scripts/changelog_heading_lint.py`
 where applicable, and `git diff --check`.
 
-**Rejected alternatives (this phase).** Re-presenting the four-way choice (plan F2).
+**Rejected alternatives (this phase).** Re-presenting the four-way choice (plan
+finding F2 — the operator had already ruled, so the menu is not re-offered).
 Building a mechanism-neutral backend-switching abstraction (prohibited by the ruling).
 Implementing Phase B skill-text edits in this unit (serialize: S2; those files are
 shared with #776). HALTing because operator-choice.md still lists three backends
@@ -280,6 +288,7 @@ account for; or the operator withdraws the NARROW ruling.
 `{#verify-panel-odd-n-quorum-policy-692}`, `{#verify-panel-severity-axis-686}`;
 LEARNINGS `{#one-transition-one-validator-433}`,
 `{#unit-panels-vs-whole-diff-lenses-476}`,
+`{#panel-verdicts-unparsed-prose}`,
 `{#verify-panel-prose-verdicts-vacuous-aggregation}`,
 `{#verify-panels-blind-to-uncommitted-tree}`,
 `{#broker-schema-forward-poisoning-616}`,

@@ -1,4 +1,291 @@
 # Decisions — Infiquetra Claude Plugins
+## 2026-08-25
+
+### Claude Code Workflows stay explicit and task-local inside Herdr sessions (#808) {#cc-workflows-backend-narrow-808}
+
+**Decision.** Validate and record the operator's 2026-08-25 **NARROW** ruling
+([issuecomment-5405414716](https://github.com/infiquetra/infiquetra-claude-plugins/issues/808#issuecomment-5405414716))
+on issue #808. Claude Code Workflows remain available only when explicitly invoked as a
+task-local mechanism inside a Herdr-managed session. They are not Saga Plan or Saga Work's
+default or automatic execution backend, and they are not a generic interchangeable execution
+backend. A workflow may define its own internal steps or verification behavior. Saga Code
+Review remains a separate review process that may run after the workflow or as an explicitly
+requested follow-on step. This phase (U10 phase A of the #814 run) inventories the live
+producers, consumers, costs, and failures and records that ruling. It does not re-present
+keep / narrow / replace / retire as an open menu. Implementation of the narrowed shape is
+Phase B of the same issue (serialize after lane S2, issue #776) plus the already-open
+follow-up #708.
+
+**Date:** 2026-08-25 · **Issue:** #808 · **Origin:** Run orch-2026-08-25-814, unit
+`u-808-evidence`, plan section U10 phase A · **Pin:** worktree
+`orch/orch-2026-08-25-814-u-808-evidence` at `58ce3079` after `git fetch origin && git merge
+origin/main` (`origin/main` `ebe476d4` is an ancestor). Sweep and counts below were taken
+on that pin.
+
+**Context.** Saga Plan can still author an execution specification for the
+`cc-workflows-ultracode` backend, and Saga Work can still execute the generated Claude Code
+Workflow, including optional per-unit adversarial verifier panels. That machinery predates
+the current Herdr-centered operating model, in which Orchestrate launches vendor sessions
+and Herdr owns the tabs. Issue #808 asked for a current fit decision. Gate G1 of parent
+issue #814 was pre-resolved NARROW so this run would not halt merely to ask the same
+question again.
+
+**Concrete operating scenarios (Claude Code Workflow vs Herdr vs Orchestrate).**
+
+1. *This unit, running now.* Orchestrate launched a Grok worker in a Herdr tab against a
+   plan whose frontmatter is `backend: inline`. Saga Work honours that field and does not
+   offer or launch a Claude Code Workflow. Cross-vendor work is a Herdr session, not a
+   workflow child. This is the NARROW shape in use.
+2. *Explicit Claude Code invocation (historical, still allowed).* Issue #616's work session
+   records an operator-approved `cc-workflows-ultracode` run (`wf_c0db62d7-210`) inside a
+   Claude Code Herdr session. The Workflow tool owned unit fan-out and the refute-3 panels;
+   the driving `/work` session remained the producer of record; Saga Code Review still ran
+   afterwards as a separate process. That is the remaining allowed use: explicit, task-local,
+   Claude-Code-only.
+3. *Cross-vendor engine dispatch.* Committed specs can still emit `dispatch:
+   "external-engine"` / `engine:` / `verifiability:` option keys that the Claude Code
+   Workflow runtime ignores (issue #708). The NARROW ruling plus the G3 NARROW ruling
+   ([issuecomment-5405419292](https://github.com/infiquetra/infiquetra-claude-plugins/issues/708#issuecomment-5405419292))
+   send that work through Herdr and Orchestrate sessions, not through a chaperone inside
+   the emitter.
+4. *Automatic recommendation (residual for Phase B).*
+   `recommend_execution_backend()` in `plugins/saga/scripts/lifecycle_state.py` can still
+   recommend `cc-workflows-ultracode` for broad fan-out or an adversarial-confidence pass,
+   and `plugins/saga/references/operator-choice.md` still lists it as one of three
+   interchangeable backends. That automatic offer is what Phase B must make untrue as a
+   default path — explicit invocation only, no silent substitute, no backend-switching
+   abstraction.
+
+**Inventory at the pin.** Leaf baseline was 37 three-verifier panels across 16 committed
+specs. Re-count: **20** committed `docs/plans/*-spec.json` files, **37** verify blocks
+still all `n=3` / `pass_rule=majority`, **0** of those panel-bearing units selecting an
+external engine or capability. The extra four specs versus the leaf baseline have no
+verify block:
+`2026-07-05-dispatch-tier-resolver-spec.json`,
+`2026-07-05-effort-first-class-spec.json`,
+`2026-07-25-issue-635-ship-ceremony-base-branch-resolution-spec.json`,
+`2026-08-02-issue-686-verify-panel-severity-axis-spec.json`.
+The 16 panel-bearing specs and their unit counts: evidence-provenance (U1, U3);
+codex-first-party-bridge (U2, U3, U6); external-engine-http-bridge (U5, U6, U7);
+delegation-tripwires (U1, U3, U4, U5); no-silent-claude-fallback (U1, U2, U5, U6);
+ceremony-hazards-watcher-undo (U3, U4); ship-teardown-reconciliation (U3, U4);
+ship-ceremony-operator-gate (U1); deploy-handoff-ack (U1, U2); backend-offer-fix
+(U1, U3); lease-seam-guard-scope (U1, U2, U4); refuse-mode-hardening (U1, U2);
+worktree-write-fence-scoping (U1, U2); registry-schema-forward-compat (U1, U2);
+async-posttooluse-race (U1, U2); house-style-output-style-plugin (U5).
+
+Sweep
+`rg -n "cc-workflows-ultracode|Workflow\(|readonly-verifier|verify panel" plugins/saga docs/plans docs/work-sessions`
+on the pin: **750** matching lines in **136** files. The regex does not catch every spec
+or every generated harness (those files often say `"verify"` / `"n": 3` without the
+sweep's literals), which is why the re-count above is authoritative for specs and
+panels. What the sweep *does* surface, grouped as the leaf requires:
+
+- **Producers (author, offer, or recommend the backend).**
+  `plugins/saga/skills/plan/SKILL.md`,
+  `plugins/saga/skills/plan/references/plan-sections.md`,
+  `plugins/saga/skills/work/SKILL.md`,
+  `plugins/saga/skills/work/references/execution-strategy.md`,
+  `plugins/saga/scripts/execution_spec.py`,
+  `plugins/saga/scripts/spec_table.py`,
+  `plugins/saga/scripts/lifecycle_state.py`,
+  `plugins/saga/scripts/saga.py`,
+  `plugins/saga/scripts/outcome.py`,
+  `plugins/saga/scripts/outcome_dispatcher.py`,
+  `plugins/saga/scripts/outcome_spec.py`,
+  `plugins/saga/scripts/override_rate_reader.py`,
+  `plugins/saga/references/execution-spec.md`,
+  `plugins/saga/references/operator-choice.md`,
+  `plugins/saga/references/saga-spec.md`,
+  `plugins/saga/references/sandbox-spawn-sites.md`.
+- **Executors (launch the Workflow tool, emit the harness, or spawn verifiers).**
+  `plugins/saga/skills/work/SKILL.md` (the `Workflow({ scriptPath })` launch in Phase 1.5),
+  `plugins/saga/scripts/execution_spec.py` (emit plus panel reconciliation),
+  `plugins/saga/agents/readonly-verifier.md`.
+  Mention-only consumers the sweep also hits:
+  `plugins/saga/skills/code-review/SKILL.md`,
+  `plugins/saga/skills/founder-review/SKILL.md`,
+  `plugins/saga/skills/investigate/SKILL.md`,
+  `plugins/saga/skills/investigate/references/methodology.md`,
+  `plugins/saga/skills/loop/SKILL.md`,
+  `plugins/saga/skills/optimize/SKILL.md`,
+  `plugins/saga/skills/optimize/references/experiment-loop.md`,
+  `plugins/saga/skills/outcome/SKILL.md`,
+  `plugins/saga/skills/qa/SKILL.md`,
+  `plugins/saga/skills/resume/SKILL.md`,
+  `plugins/saga/skills/retro/SKILL.md`,
+  `plugins/saga/skills/retro/references/self-edit-safety.md`.
+  Changelog and model YAML are history, not live producers:
+  `plugins/saga/CHANGELOG.md`, `plugins/saga/README.md`,
+  `plugins/saga/docs/model/saga-docs-model.yaml`.
+- **Generated artifacts.** 21 committed `docs/plans/*.workflow.js` files at the pin. The
+  sweep hits 17 of them; the four it misses
+  (`2026-07-01-evidence-provenance-manifests.workflow.js`,
+  `2026-07-05-dispatch-tier-resolver.workflow.js`,
+  `2026-07-05-effort-first-class.workflow.js`,
+  `2026-08-02-issue-686-verify-panel-severity-axis.workflow.js`)
+  are still generated harnesses of this backend and are included here.
+- **Committed specs the sweep itself hits (6 of 20):**
+  `2026-07-06-codex-first-party-bridge-plugin-spec.json`,
+  `2026-07-06-external-engine-http-bridge-receipt-pair-spec.json`,
+  `2026-07-07-delegation-tripwires-spec.json`,
+  `2026-07-07-no-silent-claude-fallback-spec.json`,
+  `2026-07-25-issue-635-ship-ceremony-base-branch-resolution-spec.json`,
+  `2026-08-08-issue-704-house-style-output-style-plugin-spec.json`.
+  The other 14 specs are in the re-count above.
+
+The remaining sweep hits are plan documents (47) and work-sessions (34) that *describe*
+the backend; they are evidence sources for the metrics below, not additional producers.
+
+**Quantified observations (each linked to a durable work-session or journal entry).**
+
+- **Unique findings the panels actually produced.** (1) Issue #433: an adversarial
+  verify panel (3/3) demonstrated a monotonic-merge side door — `set-intent` sailed a
+  `default-gated → merge: "auto"` transition that `repost` already rejected — and that
+  finding drove the one-transition-one-validator fix (LEARNINGS
+  `{#one-transition-one-validator-433}`). (2) Issue #476: nine refute-panel verifiers
+  (3 units × 3) all upheld with examined-SHA quoting, while the post-workflow whole-diff
+  `/code-review` surfaced 10 confirmed findings the panels structurally could not see
+  (LEARNINGS `{#unit-panels-vs-whole-diff-lenses-476}`; work-session evidence in the
+  #476 code-review artifact cited there). (3) Issue #390: one of twelve verifiers
+  returned a real refutation (release surfaces missing at U3's intermediate SHA —
+  owned by U7, moot at branch tip) even while aggregation treated the panel as empty
+  (LEARNINGS `{#verify-panel-prose-verdicts-vacuous-aggregation}`;
+  `docs/work-sessions/2026-07-07-no-silent-claude-fallback.md`). (4) Issue #686 in
+  sibling `infiquetra/infiquetra-codex-plugins` pull request #71: a verifier objected
+  to a unit's prose; that was a real advisory the single-bucket gate then misclassified
+  (`docs/work-sessions/2026-08-03-verify-panel-severity-axis.md`). Panels catch
+  unit-scoped claim failures and some live transitions; they do not replace whole-diff
+  Saga Code Review. That split is exactly the ruling's "workflow-internal verification
+  stays; Code Review stays separate."
+
+- **False halts.** (1) Issue #616: four consecutive passes of `wf_c0db62d7-210` produced
+  refute-3/3 (passes 1–3) then 2/3 (pass 4) with **zero counter-evidence on any
+  mechanism claim** — every halt was lease/TTL/schema/claim fencing, not a unit defect
+  (`docs/work-sessions/2026-07-22-issue-616-worktree-write-fence-scoping.md`; LEARNINGS
+  `{#broker-schema-forward-poisoning-616}`). Issue #808's own comment records the same
+  class: four consecutive false `refuted 3/3` verdicts during #616, and 3 of 8
+  sandboxed subagents hitting the fence during the #643 code review. (2) First real
+  `/work` ultracode run (`wf_6f7f3de8-926`, issues #387+#383): refute-N ran 0/3
+  vacuous on every panel because worktree-isolated verifiers cut from `main` and saw
+  nothing to verify (LEARNINGS `{#verify-panels-blind-to-uncommitted-tree}`). A second
+  run (`wf_5afd99b3-636`) then confidently refuted the wrong revision. (3) Issue #390:
+  all four refute-3 panels logged `3/3 missing — UNDER-STRENGTH` while all twelve
+  verifiers had returned real content — aggregation counted only structured
+  `{refuted: [...]}` objects, so prose emptied the panel
+  (`docs/work-sessions/2026-07-07-no-silent-claude-fallback.md`). (4) Issue #686:
+  sibling-repo prose-as-refutation discarded a **correct** unit and dead-lettered five
+  units downstream (`docs/work-sessions/2026-08-03-verify-panel-severity-axis.md`).
+  The lease-fencing class cannot recur in that form: the former lease broker is
+  absent (#677/U4). The prose-shape and worktree-visibility classes were later
+  hardened (#527, #686) and remain reasons the backend is not a default.
+
+- **Retries.** Issue #616 retried the same invocation four times
+  (`docs/work-sessions/2026-07-22-issue-616-worktree-write-fence-scoping.md`). Issue
+  #637 halted `wf_881dd2cb-fa1` on a stale-hook fence and relaunched as
+  `wf_36c601cc-5a6` (`docs/work-sessions/2026-07-21-issue-637-work-halt-stale-hooks.md`,
+  `docs/work-sessions/2026-07-22-issue-637-refuse-mode-hardening-work.md`). The emitter
+  still carries `iterate_to_consensus` and `escalate_on_signal` retry loops
+  (`docs/work-sessions/2026-07-06-runtime-ladder-climbing.md`). These are operator-visible
+  reruns, not silent recovery.
+
+- **Token and session cost (documented sample; not a complete fleet sum).** Issue #390:
+  19 agents (7 units + 12 verifiers), ~775K subagent tokens
+  (`docs/work-sessions/2026-07-07-no-silent-claude-fallback.md`). Issue #346: 12/12
+  agents done, ~1.045M subagent tokens
+  (`docs/work-sessions/2026-07-11-issue-346-ceremony-hazards-watcher-undo.md`). Issue
+  #686: 294,697 subagent tokens, 138 tool calls, 32.2 minutes wall clock
+  (`docs/work-sessions/2026-08-03-verify-panel-severity-axis.md`). Issue #367: 6 agents,
+  ~491K (`docs/work-sessions/2026-07-05-effort-first-class.md`). Issue #398: 13 agents,
+  ~663K (`docs/work-sessions/2026-07-01-evidence-provenance-manifests.md`). Issue #526:
+  6/6 agents, 219K (`docs/work-sessions/2026-07-11-issue-526-ship-ceremony-operator-gate.md`).
+  Issue #637 relaunch: 473K
+  (`docs/work-sessions/2026-07-22-issue-637-refuse-mode-hardening-work.md`). Issue #617
+  first segment: ~400K, ~22 minutes
+  (`docs/work-sessions/2026-07-23-issue-617-registry-schema-forward-compat.md`). A
+  three-verifier panel triples the session count of each guarded unit; that multiplier
+  is why the backend is not a default for a single-user plugin suite.
+
+- **Operational failures.** Claude Code Workflows are Claude-Code-only
+  (`plugins/saga/references/operator-choice.md` §4); a Grok or Antigravity Orchestrate
+  worker cannot invoke `Workflow()`. Engine-dispatch option keys in emitted specs are
+  inert in that runtime (#708). A blind `ship_ceremony.py run` loop during the #390
+  ultracode scaffold merged PR #525 without the operator's word
+  (`docs/work-sessions/2026-07-07-no-silent-claude-fallback.md`) — an operational
+  failure of driving-session ceremony, not of the Workflow tool itself, but it happened
+  on a workflow-backed run. No durable evidence was found that the NARROW shape is
+  internally contradictory or impossible: explicit invocation still works in a
+  Claude Code Herdr session; this Grok worker is executing inline without it; Herdr
+  and Orchestrate already own cross-vendor sessions.
+
+**Options considered and ruled out by the operator (not re-offered).** The leaf named
+four dispositions. The operator's comment selected **narrow** before this run reached
+G1. The other three are recorded here only as already-rejected, with the evidence
+that makes each a worse fit than the ruling:
+
+- *Keep as a default or automatic Saga backend.* Rejected. `recommend_execution_backend()`
+  and the three-backend offer would keep selecting this machinery for fan-out and
+  refute-N work. Documented false-halt classes and the Claude-Code-only availability
+  constraint make that a silent trap for Orchestrate workers on other vendors.
+- *Replace with a mechanism-neutral backend-switching abstraction.* Rejected by the
+  ruling's own terms ("Do not silently select, substitute, fall back to, or build a
+  mechanism-neutral backend-switching abstraction"). Herdr and Orchestrate already
+  switch vendors by launching sessions, not by wrapping Claude Code Workflows.
+- *Retire (delete the emitter, harnesses, and verifier panels).* Rejected as
+  disproportionate. Explicit Claude Code invocation still has unique value: unit-scoped
+  refute-N caught the #433 side door, and 37 committed `n=3` panels across 16 specs are
+  retained-behavior oracles (`tests/test_saga_execution_spec.py`). Deleting them would
+  churn the sole-writer `execution_spec.py` surface for a decision that said *narrow*,
+  not *remove*.
+
+**Rationale.** The evidence supports NARROW and does not contradict it. Unique findings
+are real and unit-scoped; false halts were concentrated in lease-fencing and verdict-shape
+bugs that later leaves already tightened; cost is high enough that the backend must not
+be a default; availability is Claude-Code-only, which is exactly "task-local inside a
+Herdr-managed session." Phase B makes that boundary truthful in plan/work skill text.
+Issue #708 makes emit-time rejection of inert engine-dispatch opts fail loud.
+
+**Contradiction check (HALT gate).** No HALT. The remaining gap is that operator-choice
+still *offers* `cc-workflows-ultracode` as a third interchangeable backend — a Phase B
+cleanup, not an internal impossibility of the narrowed shape.
+
+**Follow-up issues whose combined acceptance criteria implement the ruling.**
+`gh issue list --repo infiquetra/infiquetra-claude-plugins --search "cc-workflows in:title,body" --state open`
+on 2026-08-25 named #808 (this issue; Phase B still open), #708 (G3 NARROW emit-time
+rejection), and parent #814. Phase B of #808 (serialize: S2 / #776) owns the plan/work
+skill-text change. This PR does not close #808.
+
+**#787 unchanged.** `gh issue view 787 --json state -q .state` returned `CLOSED`. All
+twenty children remain `CLOSED`. This unit writes only the journal entry and its work
+session.
+
+**Substitutions (F5).** Leaf verification named `python3 scripts/check_docs.py`, which
+does not exist in this tree. Documentation checks used instead:
+`python3 scripts/lint_journal_order.py`, `uv run python scripts/changelog_heading_lint.py`
+where applicable, and `git diff --check`.
+
+**Rejected alternatives (this phase).** Re-presenting the four-way choice (plan F2).
+Building a mechanism-neutral backend-switching abstraction (prohibited by the ruling).
+Implementing Phase B skill-text edits in this unit (serialize: S2; those files are
+shared with #776). HALTing because operator-choice.md still lists three backends
+(that listing is the Phase B residue, not a contradiction).
+
+**Revisit when.** A Claude Code Workflow becomes runnable from a non-Claude Orchestrate
+worker without a chaperone (the availability constraint would have changed); or a
+production explicit-invocation run after the lease-broker deletion (#677/U4) and the
+severity-axis split (#686) still produces a false halt class this entry does not
+account for; or the operator withdraws the NARROW ruling.
+
+**Refs.** Issue #808 comment 5405414716; issue #708; parent #814; DECISIONS
+`{#verify-panel-odd-n-quorum-policy-692}`, `{#verify-panel-severity-axis-686}`;
+LEARNINGS `{#one-transition-one-validator-433}`,
+`{#unit-panels-vs-whole-diff-lenses-476}`,
+`{#verify-panel-prose-verdicts-vacuous-aggregation}`,
+`{#verify-panels-blind-to-uncommitted-tree}`,
+`{#broker-schema-forward-poisoning-616}`,
+`{#verdict-contract-has-three-prompt-surfaces}`;
+work-session `docs/work-sessions/2026-08-25-issue-808-cc-workflows-backend-decision.md`.
+
 ## 2026-08-24
 
 ### Verify panel quorum policy at odd panel sizes — Missing-Aware Tightening (#692) {#verify-panel-odd-n-quorum-policy-692}

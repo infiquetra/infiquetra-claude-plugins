@@ -317,15 +317,22 @@ Vendors, models, efforts, caps, and the integration target are **per-run operato
 hard-coded into this skill. Copying a previous run's pool list into a new run as a default is the
 same mistake.
 
-Declare a **worker-pool** table in the run contract before launch. Each row is one pool, and every
-row records four fields:
+Declare a **worker-pool** table beside the unit table the operator approves, before `start` records
+the run. Each row is one pool, and every row records four fields:
 
 | Field | What it records |
 | --- | --- |
-| Priority order | Dispatch preference: highest-priority pool with a free slot, lane-order tie-break, no artificial concurrency |
+| Priority order | The highest-priority pool with a free slot takes the next unit; ties break in the approved unit table's own row order. No pool is held idle to spread load, and no parallelism beyond the declared caps is invented |
 | Per-pool cap | Simultaneous session cap for that pool |
 | Launch template | The vendor · model · effort (and account, if the vendor uses one) used to launch units on that pool |
 | Exercised-or-not at closeout | Whether any unit actually ran on this pool. An unexercised pool is recorded as unexercised — it is not evidence that the pool works |
+
+A filled row uses placeholders for everything the operator supplies, so no vendor or model is
+baked in here:
+
+| Pool | Priority | Cap | Launch template | Closeout |
+| --- | --- | --- | --- | --- |
+| `<pool-name>` | 1 | `<n>` | `<vendor>` · `<model>` · `<effort>` · `<account>` | exercised / unexercised |
 
 The table is guidance the orchestrator follows when filling the approved unit table. It is not
 scheduler or driver machinery.
@@ -336,12 +343,25 @@ Each run declares its **authoritative integration branch** up front. Two example
 policy: `origin/main` for a flat-PR run; the Orchestrate run branch when the run integrates onto
 one. The target is a per-run operator input, never a hardcoded universal.
 
-Merges land serialized, one PR at a time. After each serialized landing, every surviving branch
-immediately fetches and reintegrates the declared target, then re-resolves release-surface versions
-(`plugin.json`, `CHANGELOG.md`, `.claude-plugin/marketplace.json`) against that newly landed
-target before continuing. Do not wait for the next wave or for a conflict to appear. Shared files
-such as `marketplace.json` re-dirty every still-open PR on each merge; immediate reintegration is
-the standing response.
+Pull requests merge one at a time, in a single serialized queue. After each merge, the session
+owning each surviving worktree immediately fetches the declared target and merges it, then
+re-resolves that repository's release-surface versions against the newly landed target before
+continuing. Do not wait for the next wave or for a conflict to appear.
+
+```bash
+# From each surviving worktree, after every merge. TARGET is the run's declared branch.
+git fetch origin
+git merge "$TARGET"        # merge, never rebase
+```
+
+**Merge, never rebase.** These branches carry open pull requests, and a rebase rewrites every
+commit on them. Orchestrate's review records are revision-bound — each one names the exact reviewed
+SHA — so a rebase strands those records against commits that no longer exist, and the force-push it
+requires lands on top of the head a reviewer froze.
+
+Shared files re-dirty every still-open pull request on each merge; in this repository those are
+`plugin.json`, `CHANGELOG.md` and `.claude-plugin/marketplace.json`. Immediate reintegration is the
+standing response.
 
 ## What this deliberately does not do
 

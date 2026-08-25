@@ -8,7 +8,9 @@
   two run practices proven in orch-2026-08-24-787: a per-run worker-pool table (priority order,
   per-pool cap, launch template, exercised-or-not at closeout) and immediate reintegration of
   the run's declared authoritative integration branch after every serialized landing, with
-  release-surface versions re-resolved before continuing. Vendors, models, efforts, caps, and
+  release-surface versions re-resolved before continuing. Reintegration is a merge, never a
+  rebase: a surviving branch carries an open pull request, and rewriting its commits strands the
+  revision-bound review records that name the reviewed SHA. Vendors, models, efforts, caps, and
   the integration target are per-run operator inputs, never hard-coded. Guidance only — no
   scheduler or driver change.
 

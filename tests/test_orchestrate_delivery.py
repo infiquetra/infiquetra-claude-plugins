@@ -90,7 +90,12 @@ class TestDispatchDeliveryConfirmation:
         monkeypatch.setattr(
             orchestrate,
             "agent_row",
-            lambda _unit, _agents=None: {"pane_id": "pane-1", "agent_status": "idle"},
+            lambda _unit, _agents=None: {
+                "pane_id": "pane-1",
+                "agent_status": "idle",
+                "agent": "claude",
+                "interactive_ready": True,
+            },
         )
         monkeypatch.setattr(orchestrate, "took_the_task", lambda _unit: False)
 
@@ -123,7 +128,12 @@ class TestDispatchDeliveryConfirmation:
         monkeypatch.setattr(
             orchestrate,
             "agent_row",
-            lambda _unit, _agents=None: {"pane_id": "pane-1", "agent_status": "done"},
+            lambda _unit, _agents=None: {
+                "pane_id": "pane-1",
+                "agent_status": "done",
+                "agent": "claude",
+                "interactive_ready": True,
+            },
         )
         monkeypatch.setattr(orchestrate, "took_the_task", lambda _unit: False)
 
@@ -157,7 +167,12 @@ class TestDispatchDeliveryConfirmation:
         monkeypatch.setattr(
             orchestrate,
             "agent_row",
-            lambda _unit, _agents=None: {"pane_id": "pane-1", "agent_status": "working"},
+            lambda _unit, _agents=None: {
+                "pane_id": "pane-1",
+                "agent_status": "working",
+                "agent": "claude",
+                "interactive_ready": True,
+            },
         )
         monkeypatch.setattr(orchestrate, "took_the_task", lambda _unit: False)
 
@@ -182,7 +197,15 @@ class TestDispatchDeliveryConfirmation:
             "send",
             lambda u, p, b="inline", **kw: send_calls.append((u, p, b, kw)),
         )
-        monkeypatch.setattr(orchestrate, "agent_row", lambda _unit, _agents=None: None)
+        rows: list[dict[str, Any] | None] = [
+            {"pane_id": "pane-1", "agent": "claude", "interactive_ready": True},
+            None,
+        ]
+        monkeypatch.setattr(
+            orchestrate,
+            "agent_row",
+            lambda _unit, _agents=None: rows.pop(0) if rows else None,
+        )
         monkeypatch.setattr(orchestrate, "took_the_task", lambda _unit: False)
 
         orchestrate.launch(unit)
@@ -207,6 +230,15 @@ class TestDispatchDeliveryConfirmation:
             lambda u, p, b="inline", **kw: send_calls.append((u, p, b, kw)),
         )
         monkeypatch.setattr(orchestrate, "took_the_task", lambda _unit: True)
+        monkeypatch.setattr(
+            orchestrate,
+            "agent_row",
+            lambda _unit, _agents=None: {
+                "pane_id": "pane-1",
+                "agent": "claude",
+                "interactive_ready": True,
+            },
+        )
 
         orchestrate.launch(unit)
 
@@ -235,7 +267,12 @@ class TestDispatchDeliveryConfirmation:
         monkeypatch.setattr(
             orchestrate,
             "agent_row",
-            lambda _unit, _agents=None: {"pane_id": "pane-1", "agent_status": "idle"},
+            lambda _unit, _agents=None: {
+                "pane_id": "pane-1",
+                "agent_status": "idle",
+                "agent": "claude",
+                "interactive_ready": True,
+            },
         )
         monkeypatch.setattr(orchestrate, "took_the_task", lambda _unit: next(acceptance_results))
 

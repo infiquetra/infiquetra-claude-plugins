@@ -406,8 +406,8 @@ before anything launches.
 
 **Never create worktrees manually or invoke `agents` directly for a run unit.** Every unit — whether
 in the initial plan or added at a later phase boundary — must be persisted through `start` or `expand`
-before any worktree or session is created, and must launch only through `go` via the central
-`agent_argv` path. Bypassing `expand` or `go` by calling `agents` directly breaks run-record tracking,
+before any worktree or session is created, and must launch only through `go` via the shared
+`agent-launcher` `agent_argv` path. Bypassing `expand` or `go` by calling `agents` directly breaks run-record tracking,
 omits background launch flags (`--no-focus --current --herdr --herdr-control-only`), and steals
 operator focus. Unsupported post-launch setup (such as interactive OpenCode variant selection) is a
 controlled post-launch step performed inside the launched session; it does not authorize bypassing

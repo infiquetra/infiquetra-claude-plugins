@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.12.3] - 2026-08-25
+
+### Added - field-named Status/Stage correction identity on `flow set-field` (#812)
+
+- `flow set-field --correction` rejects any project field other than Status (and Stage by
+  name). Operator writes of Initiative / Objective / other live fields omit the flag and
+  are unchanged. No new operation.
+- Correction results carry the field name in operation, authorization, and retry identity
+  so a saga submission and a retried write name the same field. The reported retry identity
+  is byte-identical to saga's ledger key
+  (`reversibility_certificate.idempotency_key`), so the two sides correlate on one string.
+- `--correction` now also covers the bulk (`--numbers` / repeated `--field`) path: the
+  restriction is enforced inside `flow_set_fields_bulk` rather than only in the CLI parser,
+  and a bulk correction is marked in its result with per-card identity.
+
 ## [2.12.2] - 2026-08-24
 
 ### Fixed - GraphQL project fields pagination, query-scoped pagination lint, and explicit live parity skip (#584)

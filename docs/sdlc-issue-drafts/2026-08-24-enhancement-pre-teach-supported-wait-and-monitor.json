@@ -1,0 +1,81 @@
+{
+  "approval_state": null,
+  "created_at": "2026-08-24T03:58:53.179113+00:00",
+  "created_issue_number": 783,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/783",
+  "draft_path": "docs/sdlc-issue-drafts/2026-08-24-enhancement-pre-teach-supported-wait-and-monitor.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "/private/tmp/plugin-transcript-audit-20260823/issue-sources/5-supported-monitoring.md",
+    "Technical Risk": "low"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "'Acceptance criteria' is not executable (card_validator requires each criterion to name a runnable check -- a `code span` or a ``` fenced block -- with its expected result)",
+      "'Verification' has no fenced code block (card_validator requires at least one ``` block)",
+      "'Files expected to change' has no path-like line (card_validator requires at least one `dir/file` style entry)",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "low",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-08-24-enhancement-pre-teach-supported-wait-and-monitor.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "# [ENHANCEMENT] Orchestration guidance must pre-teach supported wait/monitor patterns \u2014 seven guard-blocked sleep-chain polls in two sessions\n\n## Observed behavior\n\nAcross the two large agent-plugins orchestration sessions in the 48-hour audit window, agents\nreached for chained `sleep N && <check>` shell polling seven times \u2014 to poll PR checks\n(`gh pr checks`), background task output, and sibling agent panes (`herdr agent read \u2026`) \u2014 and the\nexecution guard rejected every attempt with the same fixed text (\"To wait for a condition, use\nMonitor with an until-loop\u2026 use run_in_background\u2026 Do not chain shorter sleeps\"). Each block cost a\nfull agent turn before the supported mechanism was used. Meanwhile the Orchestrate plugin already\nships a supported settlement wait (`orchestrate.py wait`, event-socket based, SKILL.md:176\u2013181) and\nHerdr ships `agent wait`/`pane wait-output` \u2014 none of which the governing workflow docs pre-teach\nfor these recurring wait shapes.\n\nOccurrences: session 754b6091-9bb0-46dc-88b2-e00814b02fd8 at 2026-08-22T03:54:22Z (`sleep 25` before\n`gh pr checks 2`) and 2026-08-23T00:00:54Z (`sleep 240` before `gh pr checks 768`); session\n939e7ee5-181f-4f11-a2fd-7ec978d73517 ",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/plugin-transcript-audit-20260823/issue-sources/5-supported-monitoring.md",
+    "ref": "/private/tmp/plugin-transcript-audit-20260823/issue-sources/5-supported-monitoring.md",
+    "title": "[ENHANCEMENT] Orchestration guidance must pre-teach supported wait/monitor patterns \u2014 seven guard-blocked sleep-chain polls in two sessions",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "[ENHANCEMENT] Pre-teach supported wait and monitor patterns in orchestration guidance",
+  "updated_at": "2026-08-24T03:59:06.396754+00:00"
+}

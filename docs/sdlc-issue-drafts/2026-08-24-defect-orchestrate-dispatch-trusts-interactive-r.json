@@ -1,0 +1,81 @@
+{
+  "approval_state": null,
+  "created_at": "2026-08-24T03:57:33.989449+00:00",
+  "created_issue_number": 779,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/779",
+  "draft_path": "docs/sdlc-issue-drafts/2026-08-24-defect-orchestrate-dispatch-trusts-interactive-r.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "/private/tmp/plugin-transcript-audit-20260823/issue-sources/1-orchestrate-prompt-delivery.md",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "'Acceptance criteria' is not executable (card_validator requires each criterion to name a runnable check -- a `code span` or a ``` fenced block -- with its expected result)",
+      "'Verification' has no fenced code block (card_validator requires at least one ``` block)",
+      "'Files expected to change' has no path-like line (card_validator requires at least one `dir/file` style entry)",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-08-24-defect-orchestrate-dispatch-trusts-interactive-r.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "# [DEFECT] Orchestrate dispatch trusts interactive_ready and loses first prompts to startup dialogs\n\n## Observed behavior\n\nDuring Team Mimir orchestration on 2026-08-23 (session b31ec85e-82d5-4a00-aa18-e82cc22b2284,\n\"Hermes update model design discovery\"), a freshly launched worker session repeatedly still showed a\nvendor startup dialog \u2014 a folder-trust prompt (Claude Opus into a new worktree) or Antigravity's\n\"Verifying your account\" gate (concurrent same-account agy launches) \u2014 while Herdr reported the\nagent `interactive_ready`. The first task prompt sent in that window disappeared silently: the pane\nshowed no new input and the token counter stayed at 0/1.0M. This happened at least four separate\ntimes in one session; the session's working tell became \"watch the token counter move,\" not the\nreadiness flag or the prompt command's exit status.\n\nOrchestrate's own code acknowledges the gap: the comment at\n`plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py:1368` states that sending into that\ngap \"does not fail,\" and dispatch gates only on `row.get(\"interactive_ready\")`\n(`orchestrate.py:1413`).\n\n## Operator impact\n\nA swallowed brief means a worker sits idle believing it was ",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/plugin-transcript-audit-20260823/issue-sources/1-orchestrate-prompt-delivery.md",
+    "ref": "/private/tmp/plugin-transcript-audit-20260823/issue-sources/1-orchestrate-prompt-delivery.md",
+    "title": "[DEFECT] Orchestrate dispatch trusts interactive_ready and loses first prompts to startup dialogs",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "[DEFECT] Orchestrate dispatch trusts interactive_ready and loses first prompts to startup dialogs",
+  "updated_at": "2026-08-24T03:57:48.481382+00:00"
+}

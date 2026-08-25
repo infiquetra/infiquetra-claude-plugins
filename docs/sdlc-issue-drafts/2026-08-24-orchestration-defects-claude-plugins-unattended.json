@@ -1,0 +1,70 @@
+{
+  "approval_state": null,
+  "created_at": "2026-08-24T05:09:17.194959+00:00",
+  "created_issue_number": 787,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/787",
+  "draft_path": "docs/sdlc-issue-drafts/2026-08-24-orchestration-defects-claude-plugins-unattended.md",
+  "handoff_maturity": "resume-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "resume-ready",
+    "Objective": "/private/tmp/objective-curation-20260824/mutations/parent-body.md",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing required H3 sections: ['Context library links']",
+      "Missing required H3 sections for capability/medium: ['Context library links']"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-08-24-orchestration-defects-claude-plugins-unattended.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "# [ORCHESTRATION] defects-claude-plugins unattended run \u2014 execution contract (20 issues, 4 lanes)\n\n### Objective\n\nOne unattended Orchestrate run that drives every retained open issue in the Operations-board\nObjective `defects-claude-plugins` to merged-and-closed, honoring the dependency graph, the\nshared-file collision constraints, and the single operator decision gate below. This card is the\norchestration entry point: invoke `/orchestrate` on this issue.\n\n### Intent\n\nThe Objective was audited and curated on 2026-08-24 (51 board members: 31 closed history, 20\nretained open issues; #677 verified complete against the live tree and closed with evidence; three\ncontaminated bodies repaired; six cards refreshed with verified anchors and executable acceptance\ncriteria). Every retained leaf is decision-complete: problem, impact, evidence, owning surface,\nexclusions, acceptance criteria, and verification live in the leaf. This parent adds only what a\nsingle unattended run needs: ordering, lanes, collision rules, gates, and completion evidence.\n\n### Authoritative inventory \u2014 the 20 sub-issues\n\n| Lane | Order | Issue | Surface owned |\n| --- | --- | --- | --- |\n| A | A1 | #779 dispatch deliver",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/objective-curation-20260824/mutations/parent-body.md",
+    "ref": "/private/tmp/objective-curation-20260824/mutations/parent-body.md",
+    "title": "[ORCHESTRATION] defects-claude-plugins unattended run \u2014 execution contract (20 issues, 4 lanes)",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "[ORCHESTRATION] defects-claude-plugins unattended run \u2014 execution contract (20 issues, 4 lanes)",
+  "updated_at": "2026-08-24T05:09:30.752282+00:00"
+}

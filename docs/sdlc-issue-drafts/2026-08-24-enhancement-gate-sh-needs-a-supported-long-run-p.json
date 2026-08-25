@@ -1,0 +1,81 @@
+{
+  "approval_state": null,
+  "created_at": "2026-08-24T03:58:37.013737+00:00",
+  "created_issue_number": 782,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/782",
+  "draft_path": "docs/sdlc-issue-drafts/2026-08-24-enhancement-gate-sh-needs-a-supported-long-run-p.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "/private/tmp/plugin-transcript-audit-20260823/issue-sources/4-gate-timeout-guidance.md",
+    "Technical Risk": "low"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "'Acceptance criteria' is not executable (card_validator requires each criterion to name a runnable check -- a `code span` or a ``` fenced block -- with its expected result)",
+      "'Verification' has no fenced code block (card_validator requires at least one ``` block)",
+      "'Files expected to change' has no path-like line (card_validator requires at least one `dir/file` style entry)",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "low",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-08-24-enhancement-gate-sh-needs-a-supported-long-run-p.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "# [ENHANCEMENT] gate.sh needs a supported long-run pattern: it outruns the ten-minute foreground timeout the docs steer sessions into\n\n## Observed behavior\n\nA saga:work session in the unifi/fleet-core repair train ran `bash scripts/gate.sh` in the\nforeground exactly as this repository's CLAUDE.md instructs (\"Before pushing, run the whole gate \u2014\nnot a subset: `scripts/gate.sh`\"). The Bash tool's default 600000ms foreground timeout killed it\n(exit 143) with only a `base=<sha>` line printed \u2014 the gate's first visible step had not finished\nprinting. The session then re-ran the identical command backgrounded with redirected output and\npolled the file. Every fresh session following the instruction literally loses a full ten-minute\ntimeout cycle before discovering this, and a naive retry risks overlapping duplicate gate runs.\n\n## Operator impact\n\nOne wasted timeout cycle per fresh session that follows the documented command; risk of duplicate\nconcurrent gate runs after the kill; completion status captured ad hoc rather than reliably.\n\n## Evidence and provenance\n\n- `~/.claude/projects/-Users-jefcox-workspace-infiquetra-orch-o3-fleetcore-retry-after/0981fa8e-357f-49a8-9fc2-5634d2f1de33.json",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/plugin-transcript-audit-20260823/issue-sources/4-gate-timeout-guidance.md",
+    "ref": "/private/tmp/plugin-transcript-audit-20260823/issue-sources/4-gate-timeout-guidance.md",
+    "title": "[ENHANCEMENT] gate.sh needs a supported long-run pattern: it outruns the ten-minute foreground timeout the docs steer sessions into",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "[ENHANCEMENT] gate.sh needs a supported long-run pattern for the ten-minute foreground timeout",
+  "updated_at": "2026-08-24T03:58:50.644831+00:00"
+}

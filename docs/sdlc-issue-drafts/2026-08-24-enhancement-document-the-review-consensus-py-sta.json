@@ -1,0 +1,81 @@
+{
+  "approval_state": null,
+  "created_at": "2026-08-24T03:59:08.805522+00:00",
+  "created_issue_number": 784,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/784",
+  "draft_path": "docs/sdlc-issue-drafts/2026-08-24-enhancement-document-the-review-consensus-py-sta.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "enhancement",
+  "labels": [
+    "enhancement",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create enhancement in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "enhancement",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "/private/tmp/plugin-transcript-audit-20260823/issue-sources/6-review-consensus-api.md",
+    "Technical Risk": "low"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "'Acceptance criteria' is not executable (card_validator requires each criterion to name a runnable check -- a `code span` or a ``` fenced block -- with its expected result)",
+      "'Verification' has no fenced code block (card_validator requires at least one ``` block)",
+      "'Files expected to change' has no path-like line (card_validator requires at least one `dir/file` style entry)",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "low",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-08-24-enhancement-document-the-review-consensus-py-sta.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "# [ENHANCEMENT] review_consensus.py state API: document inputs, outputs, call order, and a worked example \u2014 or expose a supported command\n\n## Observed behavior\n\nWhile scoring a completed review cycle, the live agent-plugins orchestrator (session\n939e7ee5-181f-4f11-a2fd-7ec978d73517, 2026-08-23T17:10\u201317:13Z) drove\n`plugins/saga/scripts/review_consensus.py` directly and needed six failed attempts to discover the\ncalling convention: `inspect.signature(rc.record_cycle)` \u2192 `AttributeError: module\n'review_consensus' has no attribute 'record_cycle'` (it is a method on `ReviewCycleState`);\n`inspect.getdoc(...)` \u2192 `TypeError: 'NoneType' object is not subscriptable` (no docstring to\nreturn); then four more wrong-keyword-shape constructions of `ReviewFinding`/`record_cycle` against\n`ReviewConsensusError` messages before a working call. At repo HEAD 818fd684,\n`ReviewCycleState.record_cycle` (review_consensus.py:1176\u20131186), `ReviewFinding` (:204), and\n`evaluate_review_readiness` (:1706) carry no docstrings.\n\n## Operator impact\n\nAny session that must drive the review-consensus state machine outside the skill's own emitter\nrediscovers the parameter shapes by trial and error \u2014 six wasted tool call",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/plugin-transcript-audit-20260823/issue-sources/6-review-consensus-api.md",
+    "ref": "/private/tmp/plugin-transcript-audit-20260823/issue-sources/6-review-consensus-api.md",
+    "title": "[ENHANCEMENT] review_consensus.py state API: document inputs, outputs, call order, and a worked example \u2014 or expose a supported command",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "[ENHANCEMENT] Document the review_consensus.py state API or expose a supported command",
+  "updated_at": "2026-08-24T03:59:22.118363+00:00"
+}

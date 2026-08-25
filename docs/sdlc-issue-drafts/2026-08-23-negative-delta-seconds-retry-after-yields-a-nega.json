@@ -1,0 +1,57 @@
+{
+  "approval_state": null,
+  "draft_path": "docs/sdlc-issue-drafts/2026-08-23-negative-delta-seconds-retry-after-yields-a-nega.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "needs-plan"
+  ],
+  "mode": null,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-agent-plugins/754b6091-9bb0-46dc-88b2-e00814b02fd8/scratchpad/fleet-core-negative-retry-after.md",
+    "Technical Risk": "low"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "'Acceptance criteria' is not executable (card_validator requires each criterion to name a runnable check -- a `code span` or a ``` fenced block -- with its expected result)",
+      "'Verification' has no fenced code block (card_validator requires at least one ``` block)",
+      "'Files expected to change' has no path-like line (card_validator requires at least one `dir/file` style entry)",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "repo": "infiquetra-claude-plugins",
+  "risk": "low",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-08-23-negative-delta-seconds-retry-after-yields-a-nega.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "# Negative delta-seconds Retry-After reaches the operator as a negative wait time\n\n`parse_retry_after` in `plugins/fleet-core/scripts/fleet_commons/retry_backoff.py`\nreturns a negative number for a negative delta-seconds header, contradicting the\nfunction's own documented contract.\n\n## The contract it violates\n\nThe docstring states: \"A date already in the past yields `0.0` \u2014 retry now, never a\nnegative delay.\" The HTTP-date path honours that. The delta-seconds path does not.\n\n## Reproduction\n\nObserved on fleet-core 0.25.2, CPython 3.12.13, no network call:\n\n| `Retry-After` | `parse_retry_after` | `math.ceil` of it | Operator sees |\n|---|---|---|---|\n| `-5` | `-5.0` | `-5` | `Rate limited. Retry after -5 seconds` |\n| `-120` | `-120.0` | `-120` | `Rate limited. Retry after -120 seconds` |\n| past HTTP-date | `0.0` | `0` | `Rate limited. Retry after 0 seconds` |\n\nThe sleep path is unaffected: `_retry_delay` rejects a non-positive hint and falls back\nto computed jittered backoff, so no tight retry loop is possible. The damage is confined\nto the advice value a caller reduces to whole seconds after retries are exhausted, which\nboth UniFi clients surface in their typed 429 error.\n\n## Sugge",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-agent-plugins/754b6091-9bb0-46dc-88b2-e00814b02fd8/scratchpad/fleet-core-negative-retry-after.md",
+    "ref": "/private/tmp/claude-501/-Users-jefcox-workspace-infiquetra-infiquetra-agent-plugins/754b6091-9bb0-46dc-88b2-e00814b02fd8/scratchpad/fleet-core-negative-retry-after.md",
+    "title": "Negative delta-seconds Retry-After reaches the operator as a negative wait time",
+    "url": null
+  },
+  "state": "blocked",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "negative delta-seconds Retry-After yields a negative wait time, contradicting the primitive's contract",
+  "updated_at": "2026-08-23T02:41:29.781177+00:00"
+}

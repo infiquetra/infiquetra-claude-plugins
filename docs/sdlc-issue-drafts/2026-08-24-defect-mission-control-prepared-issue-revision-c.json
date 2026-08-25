@@ -1,0 +1,81 @@
+{
+  "approval_state": null,
+  "created_at": "2026-08-24T03:59:24.673894+00:00",
+  "created_issue_number": 785,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/785",
+  "draft_path": "docs/sdlc-issue-drafts/2026-08-24-defect-mission-control-prepared-issue-revision-c.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "/private/tmp/plugin-transcript-audit-20260823/issue-sources/7-mission-control-draft-revision.md",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "'Acceptance criteria' is not executable (card_validator requires each criterion to name a runnable check -- a `code span` or a ``` fenced block -- with its expected result)",
+      "'Verification' has no fenced code block (card_validator requires at least one ``` block)",
+      "'Files expected to change' has no path-like line (card_validator requires at least one `dir/file` style entry)",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-08-24-defect-mission-control-prepared-issue-revision-c.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "# [DEFECT] Mission Control prepared-issue revision can leave a stored draft with duplicated front matter and body\n\n## Observed behavior\n\nThe final prepared draft for issue #770,\n`docs/sdlc-issue-drafts/2026-08-23-negative-delta-seconds-retry-after-yields-a-nega-3.md`, is\nmalformed on disk: it contains two `---`-delimited YAML front-matter blocks back to back (four\n`---` fences total \u2014 re-verified 2026-08-24 by direct read: blocks at lines 1\u201312 and 16\u201326) and the\nentire card body twice, once under `##` headings and again under `###` headings (lines 28\u2013188).\nThis suggests the prepare/revise path appended the revised document instead of replacing the prior\ncontent. The pipeline still succeeded: the sidecar JSON records `readiness.passed: true` and\n`created_issue_number: 770`, and the created GitHub issue body is clean \u2014 the corruption is in the\nstored draft artifact only, as far as observed.\n\nProvenance limitation, stated plainly: no transcript of the `mission-control:issue` command that\nwrote this file was found in the audit window (the writing session's log was not among the\npersisted sources), so the append-instead-of-replace mechanism is inferred from the artifact, not\nobserved li",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/plugin-transcript-audit-20260823/issue-sources/7-mission-control-draft-revision.md",
+    "ref": "/private/tmp/plugin-transcript-audit-20260823/issue-sources/7-mission-control-draft-revision.md",
+    "title": "[DEFECT] Mission Control prepared-issue revision can leave a stored draft with duplicated front matter and body",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "[DEFECT] Mission Control prepared-issue revision can leave a draft with duplicated front matter and body",
+  "updated_at": "2026-08-24T03:59:37.115237+00:00"
+}

@@ -1,0 +1,81 @@
+{
+  "approval_state": null,
+  "created_at": "2026-08-24T03:58:16.684288+00:00",
+  "created_issue_number": 781,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/781",
+  "draft_path": "docs/sdlc-issue-drafts/2026-08-24-defect-orchestrate-does-not-preserve-the-operato.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "defect",
+  "labels": [
+    "defect",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create defect in infiquetra/infiquetra-claude-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to operations"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Shaping"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "defect",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "/private/tmp/plugin-transcript-audit-20260823/issue-sources/3-orchestrate-account-propagation.md",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "'Acceptance criteria' is not executable (card_validator requires each criterion to name a runnable check -- a `code span` or a ``` fenced block -- with its expected result)",
+      "'Verification' has no fenced code block (card_validator requires at least one ``` block)",
+      "'Files expected to change' has no path-like line (card_validator requires at least one `dir/file` style entry)",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text",
+      "'Intent' contains only placeholder text",
+      "'Out-of-scope / non-goals' contains only placeholder text",
+      "'Files expected to change' contains only placeholder text",
+      "'Tests to add or update' contains only placeholder text",
+      "'Verification' contains only placeholder text"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-08-24-defect-orchestrate-does-not-preserve-the-operato.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "# [DEFECT] Orchestrate does not preserve the operator's company-account choice across worker launches\n\n## Observed behavior\n\nWith the coordinator session running under the company account (`CLAUDE_CONFIG_DIR`\npointing at `~/.claude-company`, jeff@infiquetra.com), four worker sessions launched through the\n`agents` wrapper on 2026-08-23 (~23:55Z, coordinator session\n308ed475-2221-4f97-893d-2c9904c521ec in Herdr workspace w7M) all came up on the PERSONAL account:\ntheir transcripts were created under `~/.claude/projects/` (default root, `~/.claude.json` \u2192\nnamredips@gmail.com). The launched pane receives a fresh login environment, so the caller's\n`CLAUDE_CONFIG_DIR` never reaches it; the account choice silently reverted. Recovery required\ntearing down all four tabs and relaunching with the wrapper-private `--company-account` flag, after\nwhich all four transcripts landed under `~/.claude-company/projects/` (verified, plus\n`jefcox [company]` in each pane statusline).\n\nOrchestrate knows this flag exists \u2014 `plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py:330`\ndocuments that `--company-account` \"swaps the configuration directory before the tool starts\" \u2014 but\nnothing in the plan",
+    "inferred_maturity": "requirements-ready",
+    "kind": "local-file",
+    "path": "/private/tmp/plugin-transcript-audit-20260823/issue-sources/3-orchestrate-account-propagation.md",
+    "ref": "/private/tmp/plugin-transcript-audit-20260823/issue-sources/3-orchestrate-account-propagation.md",
+    "title": "[DEFECT] Orchestrate does not preserve the operator's company-account choice across worker launches",
+    "url": null
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "[DEFECT] Orchestrate does not preserve the operator company-account choice across worker launches",
+  "updated_at": "2026-08-24T03:58:34.492400+00:00"
+}

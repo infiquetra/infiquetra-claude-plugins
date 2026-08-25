@@ -1,0 +1,55 @@
+{
+  "approval_state": "needs_operator_approval",
+  "created_at": "2026-08-25T03:11:02Z",
+  "created_issue_number": 814,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/814",
+  "draft_path": "docs/sdlc-issue-drafts/2026-08-25-improve-claude-plugins-unattended-orchestration.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "mark-draft",
+      "detail": "Record existing issue #814 on draft and sidecar without GitHub mutation"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "operations",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "infiquetra/infiquetra-claude-plugins#814",
+    "Technical Risk": "medium"
+  },
+  "readiness": {
+    "blocking_gaps": [],
+    "passed": true,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-claude-plugins",
+  "risk": "medium",
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-08-25-improve-claude-plugins-unattended-orchestration.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "# improve-claude-plugins unattended orchestration execution contract\n\n### Objective\n\nOne unattended Orchestrate run that drives every retained open issue in the Operations-board Objective `improve-claude-plugins` to merged-and-closed, honoring the dependency graph, the shared-file collision constraints, and the decision gates below. This card is the orchestration entry point: after the operator resolves every `PENDING OPERATOR DECISION` row below, invoke `/orchestrate` on this issue. **The run must not launch while any decision row is unresolved.**\n\n### Intent\n\nThe Objective was audited live on 2026-08-24 against `origin/main` at `d8289513` and the Operations board: exactly eleven open cards carry Objective `improve-claude-plugins` \u2014 the eleven sub-issues below, no more, no fewer. These issues were recently curated (amended Phase 2 rulings of 2026-08-24/25); this contract performs no backlog rewrite. Eight bodies (#405, #407, #708, #725, #776, #778, #808, #812) were amended on 2026-08-24 solely to pass the mission-control card validator \u2014 section headers normalized, acceptance criteria made executable, scope unchanged, originals in edit history, each amendment documented by an issu",
+    "inferred_maturity": "requirements-ready",
+    "kind": "github-issue",
+    "path": null,
+    "ref": "infiquetra/infiquetra-claude-plugins#814",
+    "title": "improve-claude-plugins unattended orchestration execution contract",
+    "url": "https://github.com/infiquetra/infiquetra-claude-plugins/issues/814"
+  },
+  "state": "created",
+  "status": "Shaping",
+  "team": "asgard",
+  "title": "improve-claude-plugins unattended orchestration execution contract",
+  "updated_at": "2026-08-25T03:28:27.084234+00:00"
+}

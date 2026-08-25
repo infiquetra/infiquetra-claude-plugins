@@ -206,5 +206,6 @@ otherwise `inline`. Do not add `cc-workflows-ultracode` as a third interchangeab
 operator **explicitly invokes** `cc-workflows-ultracode` but it turns out unavailable, HALT with a
 recovery line pointing at `team-execution` or `inline` — never silently substitute. Record the
 operator's pick via the saga's `--orchestration-mode` (Phase 1.4) — that is the durable home for the
-choice (operator-choice §6). Pass the raw helper JSON to `--orchestration-recommended` even when
+choice (operator-choice §6). Pass the helper's `recommended` value — the bare enum string, since
+`--orchestration-recommended` takes `choices=ORCHESTRATION_MODES`, not the JSON object — even when
 the pre-select differs, so R12 telemetry still sees recommended-vs-chosen.

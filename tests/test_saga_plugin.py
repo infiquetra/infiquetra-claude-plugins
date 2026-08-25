@@ -718,6 +718,37 @@ def test_plan_and_work_cc_workflows_explicit_invocation_only() -> None:
         )
 
 
+def test_backend_offer_contract_docs_pin_explicit_invocation() -> None:
+    """#808 NARROW: the contract docs /plan and /work cite carry the same pin.
+
+    The two SKILL.md files are pinned above, but the decision contract
+    (references/operator-choice.md) and /work's runnable offer reference
+    (skills/work/references/execution-strategy.md) carry the same narrowed rule
+    and revert just as easily. Whitespace is normalised because both docs
+    hard-wrap mid-phrase.
+    """
+    docs = {
+        "operator-choice": PLUGIN_ROOT / "references" / "operator-choice.md",
+        "execution-strategy": (
+            PLUGIN_ROOT / "skills" / "work" / "references" / "execution-strategy.md"
+        ),
+    }
+    for name, path in docs.items():
+        text = " ".join(_read(path).lower().split())
+        assert "explicit invocation" in text or "explicitly invoked" in text, (
+            f"{name} must name explicit invocation as the only Workflow path"
+        )
+        assert "never a default" in text, (
+            f"{name} must say Claude Code Workflows are never a default Saga backend"
+        )
+        assert "interchangeable" in text, (
+            f"{name} must reject treating cc-workflows-ultracode as interchangeable"
+        )
+        assert "do not pre-select" in text, (
+            f"{name} must not pre-select cc-workflows-ultracode from the recommender"
+        )
+
+
 def test_work_second_opinion_trigger_contract_is_operator_confirmed_and_non_gating() -> None:
     """Issue #394 keeps repeated-failure assistance typed, durable, and advisory-only."""
     work = PLUGIN_ROOT / "skills" / "work"

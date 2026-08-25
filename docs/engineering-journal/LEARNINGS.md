@@ -19,6 +19,39 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-08-25
+
+### Orchestrate tests monkeypatch launcher names on the orchestrate module  {#orchestrate-ingest-launcher-globals}
+
+**Context.** Issue #777 extracts the launch seam from `orchestrate.py` into
+`plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py`. Dozens of existing tests call
+`monkeypatch.setattr(orchestrate, "run"|"live_agents"|"launch"|...)`. A normal `import` of the new
+module would make those patches miss: `launch` defined in `launcher.py` looks up `run` in
+*launcher's* globals.
+
+**Evidence.** `tests/test_orchestrate_delivery.py`, `tests/test_orchestrate_account.py`,
+`tests/test_orchestrate_status_and_notes.py` all patch names on the orchestrate module object loaded
+via `spec_from_file_location`. After the extract, `orchestrate.agent_argv.__code__.co_filename`
+points at `launcher.py` while `monkeypatch.setattr(orchestrate, "run", ...)` still intercepts
+`launch()`.
+
+**Mechanism.** Function globals are the defining module's dict. `exec(compile(launcher.py),
+orchestrate.globals())` defines the extracted functions with orchestrate's globals as
+`__globals__`, so a patch on the orchestrate module is the name those functions look up. The CLI
+path still loads `launcher.py` as its own module, so an ordinary session does not go through
+Orchestrate. The same exec inherits orchestrate's `__name__`: when `python3 orchestrate.py wait`
+runs, that name is `__main__`, so launcher.py's CLI guard would parse `wait` as a launcher
+subcommand and exit. Ingest sets `_AGENT_LAUNCHER_INGESTING` in those globals first.
+
+**Fix (or queued).** `_ingest_agent_launcher()` in `orchestrate.py`. Do not "clean this up" into a
+plain import without moving every monkeypatch target onto the launcher module.
+
+**Generalizable rule.** When extracting a seam that tests patch on the consumer module, either exec
+the extracted source into the consumer's globals or update every patch site in the same change;
+a second imported module silently drops the patches.
+
+**Refs.** Issue #777; plan U6 of `docs/plans/2026-08-25-improve-claude-plugins-run-plan.md`.
+
 ## 2026-08-24
 
 ### One unattended Orchestrate run closed the defects-claude-plugins Objective end to end  {#unattended-orchestrate-run-787}

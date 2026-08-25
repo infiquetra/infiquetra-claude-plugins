@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.21.0] - 2026-08-25
+
+### Changed
+
+- **Launch seam moved to the agent-launcher plugin (#777).** Vendor flag tables, wrapper
+  resolution, argv assembly, launch, Herdr preflight, prompt delivery, and owned cleanup now
+  live in `plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py`. Orchestrate
+  ingests that module and keeps run-scheduling, landing, review policy, and the run ledger.
+  Behaviour of `go` is unchanged; there is no private copy of the launcher implementation.
+
 ## [1.20.8] - 2026-08-25
 
 ### Added

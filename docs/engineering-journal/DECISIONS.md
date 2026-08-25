@@ -1,6 +1,27 @@
 # Decisions — Infiquetra Claude Plugins
 ## 2026-08-25
 
+### Extract the orchestrate launch seam; do not redesign it (#777) {#agent-launcher-extract-777}
+
+**Decision.** Move the single-session launch contract out of `orchestrate.py` into a new
+`agent-launcher` plugin. Keep the live `agents` wrapper and Herdr as the only authorities. Do not
+add a vendor/model registry. Orchestrate ingests the extracted module and retains run-scheduling,
+landing, review policy, and the run ledger. The Agent Plugins port is infiquetra-agent-plugins#22
+and does not gate this release.
+
+**Why.** The reusable launch behaviour lived inside a 4,600-line orchestrate module and a
+machine-local skill, two copies already drifting. Ordinary sessions could not apply the verified
+contract without starting a full Orchestrate run.
+
+**Rejected.** A second launcher implementation in orchestrate (the drift failure the leaf
+pre-mortems). A new vendor/model registry (the live wrapper and Herdr remain authoritative).
+Headless/hidden subprocess paths (prohibited). Redesigning `Unit` into a new launch DTO (extract,
+don't redesign).
+
+**Revisit when.** The Agent Plugins port (infiquetra-agent-plugins#22) starts, or Herdr begins
+publishing model/effort/permissions so preflight can confirm those fields instead of recording
+them as `requested_only`.
+
 ### Claude Code Workflows stay explicit and task-local inside Herdr sessions (#808) {#cc-workflows-backend-narrow-808}
 
 **Decision.** Validate and record the operator's 2026-08-25 **NARROW** ruling

@@ -61,6 +61,21 @@ are named Orchestrate units.
 **Generalizable rule.** Capability metadata must be labeled non-transport, or a stale row will
 refuse a reviewer the machine can actually launch.
 **Refs.** DECISIONS `#776-halt-not-fallback-transport`
+### Heading `{#slug}` is the journal's definition set; mentions and fragment links must resolve  {#journal-anchor-lint-407}
+
+**Context.** The ordering lint (#659) already walked LEARNINGS.md and DECISIONS.md, but nothing checked that a `{#slug}` was unique or that a citation pointed at a heading that exists. A duplicated slug or a dangling mention corrupts the citation graph without failing CI.
+
+**Evidence.** Issue #407. Before the check, DECISIONS.md defined `{#fleet-doctor-independent-audit-353}` twice (2026-07-19 "never a shared projection" and 2026-07-15 "never repairs"). Four live citations pointed at slugs with no heading: `#ship-ceremony-operator-gate-526` (meant `{#ceremony-operator-confirm-names-transition-526}`), `#marketplace-ci-guard` (moved to ARCHIVE `{#marketplace-ci-guard-pruned}`), `#code-review-saga-scan-touchups` (retired; ARCHIVE `{#code-review-saga-scan-touchups-shipped}`), and the format-template placeholder `{#slug}`.
+
+**Mechanism.** Definitions are heading-attached `{#slug}` across LEARNINGS, DECISIONS, ARCHIVE, and QUEUED jointly — a cross-file collision counts. ARCHIVE and QUEUED have no date sections, so they join the definition set without joining the newest-first check; excluding them would paint every honest QUEUED citation as a dangle. That file set is fixed rather than derived from the command line, because linting one journal alone would otherwise turn its citations of the other three into 135 false dangles. References are same-file `](#slug)` fragment targets and non-heading `{#slug}` mentions. Fenced code is skipped so a format template is not a fake definition, and a fence never closed is itself reported — skipping to end-of-file would switch both checks off for the remainder and still print `VIOLATIONS: 0`. The literal placeholder `slug` is not a citation. For the newest-first guard, an entry is an existing one when its (title, slug) pair was already in the base, when its slug was, or when its title was in the base under a slug that no longer sits on that title — the last is the rename case. Title alone is deliberately NOT an identity: that would let a brand-new anchored entry reusing an existing title be filed under a stale date heading unchecked.
+
+**Fix (or queued).** `scripts/lint_journal_order.py` `check_anchors`; the four live violations repaired in the same change. Duplicate 2026-07-15 slug renamed `{#fleet-doctor-never-repairs-353}`.
+
+**Known gap (queued).** Cross-file links — `](DECISIONS.md#slug)`, the journal's *dominant* citation form at 399 occurrences against 192 same-file ones — are outside the reference set, so 18 of them across 7 distinct targets are presently broken and this lint reports `VIOLATIONS: 0` over them. Two of those targets, `QUEUED.md#marketplace-ci-guard` and `QUEUED.md#code-review-saga-scan-touchups`, are the same dangles repaired above in their brace form: the repair pass fixed what the check could see and left the identical dangle standing in the syntax it could not. Closing it means widening `_references` and retargeting all 18, which is its own change.
+
+**Generalizable rule.** A citation graph needs one joint definition pass; per-file uniqueness misses the cross-file collision, and a roster that omits the queued/archive files turns real edges into failures. And a partial checker teaches the repair pass to see only what it checks — enumerate the reference forms in the wild and count them before deciding which ones the check covers, or the ones it skips get certified clean.
+
+**Refs.** DECISIONS `{#journal-order-linted-659}`; issue #407.
 
 ### A syntax gate that recognises one fence form is a silent no-op for the others  {#mermaid-fence-form-coverage-405}
 

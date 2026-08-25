@@ -508,6 +508,8 @@ def test_ownership_is_tab_id_not_in_prelaunch_snapshot(
         )
 
     monkeypatch.setattr(launcher, "run", fake_run)
+    # launch() resolves the wrapper in agent_argv before run(); stubbing run is not enough.
+    monkeypatch.setattr(launcher, "launcher", lambda: "agents")
     monkeypatch.setattr(launcher, "await_ready", lambda *_a, **_k: True)
     monkeypatch.setattr(
         launcher,

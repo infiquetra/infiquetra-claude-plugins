@@ -311,6 +311,58 @@ exist — and a session given nothing writes something plausible about nothing r
 The refusal is `after` only: a `serialize` dependency may commit nothing at all, because the unit
 waiting on it never needed its output — only for it to be out of the way.
 
+## Per-run worker-pool declarations
+
+Vendors, models, efforts, caps, and the integration target are **per-run operator inputs**, never
+hard-coded into this skill. Copying a previous run's pool list into a new run as a default is the
+same mistake.
+
+Declare a **worker-pool** table beside the unit table the operator approves, before `start` records
+the run. Each row is one pool, and every row records four fields:
+
+| Field | What it records |
+| --- | --- |
+| Priority order | The highest-priority pool with a free slot takes the next unit; ties break in the approved unit table's own row order. No pool is held idle to spread load, and no parallelism beyond the declared caps is invented |
+| Per-pool cap | Simultaneous session cap for that pool |
+| Launch template | The vendor · model · effort (and account, if the vendor uses one) used to launch units on that pool |
+| Exercised-or-not at closeout | Whether any unit actually ran on this pool. An unexercised pool is recorded as unexercised — it is not evidence that the pool works |
+
+A filled row uses placeholders for everything the operator supplies, so no vendor or model is
+baked in here:
+
+| Pool | Priority | Cap | Launch template | Closeout |
+| --- | --- | --- | --- | --- |
+| `<pool-name>` | 1 | `<n>` | `<vendor>` · `<model>` · `<effort>` · `<account>` | exercised / unexercised |
+
+The table is guidance the orchestrator follows when filling the approved unit table. It is not
+scheduler or driver machinery.
+
+## Authoritative integration branch — reintegrate after every serialized landing
+
+Each run declares its **authoritative integration branch** up front. Two example declarations, not
+policy: `origin/main` for a flat-PR run; the Orchestrate run branch when the run integrates onto
+one. The target is a per-run operator input, never a hardcoded universal.
+
+Pull requests merge one at a time, in a single serialized queue. After each merge, the session
+owning each surviving worktree immediately fetches the declared target and merges it, then
+re-resolves that repository's release-surface versions against the newly landed target before
+continuing. Do not wait for the next wave or for a conflict to appear.
+
+```bash
+# From each surviving worktree, after every merge. TARGET is the run's declared branch.
+git fetch origin
+git merge "$TARGET"        # merge, never rebase
+```
+
+**Merge, never rebase.** These branches carry open pull requests, and a rebase rewrites every
+commit on them. Orchestrate's review records are revision-bound — each one names the exact reviewed
+SHA — so a rebase strands those records against commits that no longer exist, and the force-push it
+requires lands on top of the head a reviewer froze.
+
+Shared files re-dirty every still-open pull request on each merge; in this repository those are
+`plugin.json`, `CHANGELOG.md` and `.claude-plugin/marketplace.json`. Immediate reintegration is the
+standing response.
+
 ## What this deliberately does not do
 
 Evidence-based settlement checks completion evidence on the branch (`produced_anything`), but

@@ -19,6 +19,24 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-08-25
+
+### Headless mermaid.parse needs the DOM shim installed before mermaid is imported  {#mermaid-parse-jsdom-before-import-405}
+
+**Context.** Issue #405 adds an always-on syntax check that shells to mermaid's own parser rather than a regex heuristic. mermaid 11 is ESM and expects a `document`; Node 22 also makes `globalThis.navigator` a getter, so a naive `globalThis.navigator = window.navigator` throws before any fence is parsed.
+
+**Evidence.** Prototype at `scripts/mermaid/parse.mjs`: assigning `navigator` raised `TypeError: Cannot set property navigator of #<Object> which has only a getter`. Importing mermaid at the top of the file, before JSDOM, is the other order that fails closed. After installing JSDOM globals (skipping `navigator`) and *then* `await import("mermaid")`, `mermaid.parse()` accepted every tracked fence and rejected a truncated `flowchart TD / A -->` with file:line.
+
+**Mechanism.** mermaid.parse() is syntax-only and does not render, so jsdom is enough and `@mermaid-js/mermaid-cli` (puppeteer/chromium) is not required. The parser captures DOM globals at import time, so the shim must precede the import. Node 22's `navigator` getter is a host object, not a writable data property.
+
+**Fix (or queued).** `scripts/mermaid/parse.mjs` assigns writable DOM globals through a try/`defineProperty` helper, never writes `navigator`, and dynamically imports mermaid after the shim. Pinned mermaid 11.17.1 + jsdom 30.0.1. No mermaid-cli fallback (plan KTD2 / F6).
+
+**Validation.** `uv run pytest tests/test_check_mermaid.py` — 7 passed, including one valid fence, one broken fence named `docs/broken.md:7`, and a clean run of the 14 tracked fences.
+
+**Generalizable rule.** When a browser library is reused headless, install the DOM shim first, then import the library; never assign to host getters, and do not pull in a browser renderer to prove a parse.
+
+**Refs.** DECISIONS `{#mermaid-syntax-check-headless-parse-405}`; issue #405; plan `docs/plans/2026-08-25-improve-claude-plugins-run-plan.md` U2 / KTD2.
+
 ## 2026-08-24
 
 ### One unattended Orchestrate run closed the defects-claude-plugins Objective end to end  {#unattended-orchestrate-run-787}

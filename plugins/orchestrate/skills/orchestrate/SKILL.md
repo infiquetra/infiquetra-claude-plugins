@@ -75,10 +75,11 @@ a duplicate name or a dependency that is in no run.
 
 **Single launch seam and no-focus invariant.** Every run unit, including units added at a later
 phase boundary, must be persisted through `start` or `expand` before any worktree or session is
-created, and must launch only through `go` via the central `agent_argv` path. Never create worktrees
-manually or invoke `agents` directly for a run unit. Direct wrapper calls bypass Orchestrate's
-background launch flags (`--no-focus --current --herdr --herdr-control-only`) and steal operator UI
-focus. Unsupported post-launch setup (such as interactive OpenCode variant selection) is a
+created, and must launch only through `go` via the shared `agent-launcher` plugin (`agent_argv`).
+Never create worktrees manually or invoke `agents` directly for a run unit. Direct wrapper calls
+bypass the background launch flags (`--no-focus --current --herdr --herdr-control-only`) and steal
+operator UI focus. The launch contract lives in `plugins/agent-launcher/`; Orchestrate does not
+keep a private copy. Unsupported post-launch setup (such as interactive OpenCode variant selection) is a
 controlled post-launch step, not a license to bypass `expand` or `go`. A branch in the run's
 `orch/<run-id>-<unit>` series with no row in the table is flagged as unrecorded drift by `status` and
 `check`, requiring explicit adoption with `adopt --yes` or run-owned cleanup rather than being

@@ -280,7 +280,7 @@
     {
       "name": "orchestrate",
       "source": "./plugins/orchestrate",
-      "version": "1.20.8",
+      "version": "2.0.0",
       "description": "Run one piece of work across several herdr agent sessions, one git worktree per unit.",
       "author": {
         "name": "Infiquetra",
@@ -299,6 +299,26 @@
         "verification",
         "consensus",
         "review"
+      ],
+      "category": "development"
+    },
+    {
+      "name": "agent-launcher",
+      "source": "./plugins/agent-launcher",
+      "version": "1.0.0",
+      "description": "Create one verified coding-agent session through the agents wrapper and Herdr. Orchestrate consumes this shared launch surface.",
+      "author": {
+        "name": "Infiquetra",
+        "email": "hello@infiquetra.com"
+      },
+      "repository": "https://github.com/infiquetra/infiquetra-claude-plugins",
+      "license": "MIT",
+      "keywords": [
+        "agent-launcher",
+        "agents",
+        "herdr",
+        "launch",
+        "sessions"
       ],
       "category": "development"
     }

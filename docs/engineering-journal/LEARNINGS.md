@@ -21,6 +21,91 @@
 
 ## 2026-08-25
 
+### Tab ownership is a pre-launch Herdr snapshot, not the wrapper `reused` bit  {#launcher-tab-snapshot-ownership}
+
+**Context.** Cycle 2 of the PR #827 review executed the cycle-1 repair against a real wrapper
+receipt. `close_owned_session` refused every launch with "wrapper reused an existing tab", and
+`close_run_session` issued no close, so kind/cwd/workspace stop conditions left the mismatched
+session running. The wrapper sets `reused` when it joins the current Herdr workspace
+(`agent-herdr` ~1194). That is the common case inside a Herdr pane. The wrapper's real
+tab-ownership bit is `created_tab`, and the receipt does not publish it.
+
+**Evidence.** PR #827 cycle-2 finding A; wrapper receipt keys `agent`, `agent_name`, `pane_id`,
+`reused`, `session`, `tab_id`, `tab_name`, `workspace_id`; `herdr tab list --workspace` before
+`agents` vs after.
+
+**Mechanism.** Workspace join is not tab creation. Ownership has to be derived on the launcher
+side from a signal the wrapper does not control: the set of tab ids present immediately
+before launch. `owned` is true only when the receipt `tab_id` is absent from that snapshot.
+An unreadable list fails closed (`owned=false`). Orchestrate `cmd_clean` must use the same
+gate; a raw `herdr tab close` on `unit.tab_id` still destroys an operator tab.
+
+**Fix (or queued).** `list_tab_ids` / `tab_was_created` in `launcher.py`; receipt `owned`;
+`close_run_session` and `close_owned_session` gate on `owned is True`; `reap` calls
+`close_run_session`. Wrapper left unchanged (out of scope).
+
+**Generalizable rule.** When an upstream receipt names a flag that does not mean what you
+need, do not reinterpret it. Snapshot the resource set yourself before the create call, and
+treat "could not read the set" as "do not destroy".
+
+**Refs.** Supersedes {#launcher-reused-ownership}; issue #777; PR #827.
+
+### Wrapper `reused` is ownership, not a second copy of tab_id  {#launcher-reused-ownership}
+
+**Superseded 2026-08-25.** The wrapper `reused` bit means the *workspace* already existed, not
+that the tab did. See {#launcher-tab-snapshot-ownership}. The circular `tab_id` comparison
+this entry closed remains invalid; the replacement proof is the pre-launch tab snapshot.
+
+**Context.** Code review of PR #827 found `close_owned_session` compared `unit.tab_id` to
+`receipt["tab_id"]` after both were copied from the same wrapper JSON, so the check could not fail
+on a real launch. The wrapper splits into an existing tab on label collision and publishes
+`reused`. Closing that tab takes every pane in it.
+
+**Evidence.** PR #827 review finding 2; `launcher.py` `record_wrapper_identity` /
+`close_run_session` / `close_owned_session`.
+
+**Mechanism.** A value copied onto both sides of a comparison is not proof. `reused` is an
+independent wrapper claim. If it is true or missing, this process does not own the tab.
+
+**Fix (or queued).** Persist tab id and `reused` immediately after the wrapper JSON returns, refuse
+close when `reused` is true or absent, and skip `herdr tab close` on mismatch for a reused tab so
+preflight cannot destroy the operator's session.
+
+**Generalizable rule.** Ownership of a created resource has to come from a field the creator did not
+write onto both sides of the check.
+
+**Refs.** Issue #777; PR #827.
+
+### Orchestrate tests monkeypatch launcher names on the orchestrate module  {#orchestrate-ingest-launcher-globals}
+
+**Context.** Issue #777 extracts the launch seam from `orchestrate.py` into
+`plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py`. Dozens of existing tests call
+`monkeypatch.setattr(orchestrate, "run"|"live_agents"|"launch"|...)`. A normal `import` of the new
+module would make those patches miss: `launch` defined in `launcher.py` looks up `run` in
+*launcher's* globals.
+
+**Evidence.** `tests/test_orchestrate_delivery.py`, `tests/test_orchestrate_account.py`,
+`tests/test_orchestrate_status_and_notes.py` all patch names on the orchestrate module object loaded
+via `spec_from_file_location`. After the extract, `orchestrate.agent_argv.__code__.co_filename`
+points at `launcher.py` while `monkeypatch.setattr(orchestrate, "run", ...)` still intercepts
+`launch()`.
+
+**Mechanism.** Function globals are the defining module's dict. `exec(compile(launcher.py),
+orchestrate.globals())` defines the extracted functions with orchestrate's globals as
+`__globals__`, so a patch on the orchestrate module is the name those functions look up. The CLI
+path still loads `launcher.py` as its own module, so an ordinary session does not go through
+Orchestrate. The same exec inherits orchestrate's `__name__`: when `python3 orchestrate.py wait`
+runs, that name is `__main__`, so launcher.py's CLI guard would parse `wait` as a launcher
+subcommand and exit. Ingest sets `_AGENT_LAUNCHER_INGESTING` in those globals first.
+
+**Fix (or queued).** `_ingest_agent_launcher()` in `orchestrate.py`. Do not "clean this up" into a
+plain import without moving every monkeypatch target onto the launcher module.
+
+**Generalizable rule.** When extracting a seam that tests patch on the consumer module, either exec
+the extracted source into the consumer's globals or update every patch site in the same change;
+a second imported module silently drops the patches.
+
+**Refs.** Issue #777; plan U6 of `docs/plans/2026-08-25-improve-claude-plugins-run-plan.md`.
 ### Live boards have Status and no Stage; #812 is a guard, not a migration  {#812-status-only-no-stage-field}
 
 **Context.** Issue #812 asked saga to stop composing board Stage/Status writes and submit

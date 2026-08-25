@@ -21,6 +21,50 @@
 
 ## 2026-08-25
 
+### An ordered comparison of a set-valued judgement silently re-asks  {#778-applicability-is-a-set}
+
+**Context.** #778's `resolve_lens_selection` decides whether a repair cycle reuses the
+operator's conditional-lens approval or asks again. It compared the current recommendation
+list to the prior one as **ordered tuples** (`recommended_ids in (prior_ids, prior_approved)`).
+**Evidence.** PR #834 code review at `a34ec79b`; `plugins/saga/scripts/review_consensus.py`
+`resolve_lens_selection`. Two reachable failures, both reproduced before the fix: the same
+lenses rebuilt in a different order fell through to the delta branch and paused with an
+**empty** delta on both sides; and a cycle where a conditional merely stopped applying —
+nothing added — also paused, so a still-applicable *approved* lens did not launch at all.
+**Mechanism.** Applicability is a set, but the judgement that produces it is a mapping whose
+iteration order is incidental. Comparing order made two equal judgements look different. The
+delta branch then treated any inequality as "ask", conflating an **addition** (genuinely new
+information the operator has not ruled on) with a **removal** (a lens with no work left).
+Only an addition is a question.
+**Fix.** Compare recommendation *sets*; ask only when `added` is non-empty; on reuse, carry
+`prior_approved` intersected with what still applies. A delta answer now decides only the
+delta, so `accept-recommended` on a widened diff no longer resurrects a lens the operator
+previously declined.
+**Validation.** Five regression tests in `tests/test_lens_selection.py`; mutating the
+`if not added:` reuse arm fails three of them.
+**Generalizable rule.** When a decision is "has this judgement changed?", compare the
+judgement as the set it is — and split "something was added" from "something went away",
+because only the first is worth an operator's attention.
+**Refs.** DECISIONS `{#778-conditional-lens-operator-approval}`, LEARNINGS `{#778-announce-is-not-approval}`
+
+### A guard that validates on write but not on read fails open  {#778-validate-both-directions}
+
+**Context.** The same change added `LensApprovalRecord`, whose whole purpose is to stop an
+unapproved lens reaching an `Agent` spawn.
+**Evidence.** PR #834 at `a34ec79b`: `record_lens_approval` rejected a non-roster lens id,
+but `LensApprovalRecord.from_dict` did not — so a round-tripped `review_cycle_state.v1`
+payload restored an approval naming any string, and `launch_approved_lenses` spawned it.
+**Mechanism.** The write path and the deserialize path are two independent doors into the
+same invariant. Validating only the one you were thinking about while writing the feature
+leaves the other wide open, and persistence means the unvalidated door is the one that gets
+used after a restart.
+**Fix.** `_require_roster_conditionals` on the deserialize path too; the record now fails
+closed, matching the module's stated fail-closed posture for unknown schemas.
+**Generalizable rule.** An invariant enforced on write must be enforced on read. Persisted
+state is untrusted input to your own future process.
+**Refs.** LEARNINGS `{#778-applicability-is-a-set}`
+
+
 ### Announcing a lens team is not an approval gate  {#778-announce-is-not-approval}
 
 **Context.** Code Review's skill told the agent to judgment-select conditionals and

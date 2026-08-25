@@ -356,3 +356,137 @@ def test_skill_states_always_on_set_and_batched_conditional_question() -> None:
         assert choice in skill
     assert "pauses" in skill
     assert "caller" in skill.lower() or "Orchestrate" in skill
+
+
+def test_reordered_recommendations_are_the_same_judgement_and_do_not_reask() -> None:
+    """Applicability is a set: rebuilding the same judgement in a different order is unchanged."""
+    state = CONSENSUS.ReviewCycleState(CONSENSUS.always_on_lenses())
+    CONSENSUS.resolve_lens_selection(
+        reviewed_commit="order-1",
+        cycle=1,
+        recommended=_api_agent(),
+        state=state,
+        operator_choice="accept-recommended",
+    )
+    reordered = CONSENSUS.recommend_conditional_lenses(
+        {
+            "agent-usability": "the change alters a skill agents must discover and operate",
+            "api-contract": "the change exposes an agent-facing interface contract",
+        }
+    )
+    second = CONSENSUS.resolve_lens_selection(
+        reviewed_commit="order-2",
+        cycle=2,
+        recommended=reordered,
+        state=state,
+    )
+    assert second.needs_question is False
+    assert second.paused is False
+    assert second.reused is True
+    assert set(second.approved_conditionals) == {"api-contract", "agent-usability"}
+
+
+def test_dropped_conditional_reuses_without_asking_and_keeps_still_applicable() -> None:
+    """A conditional that stopped applying has no work — drop it, never re-ask for it."""
+    state = CONSENSUS.ReviewCycleState(CONSENSUS.always_on_lenses())
+    CONSENSUS.resolve_lens_selection(
+        reviewed_commit="drop-1",
+        cycle=1,
+        recommended=_api_agent(),
+        state=state,
+        operator_choice="accept-recommended",
+    )
+    narrowed = CONSENSUS.recommend_conditional_lenses(
+        {"agent-usability": "the change alters a skill agents must discover and operate"}
+    )
+    second = CONSENSUS.resolve_lens_selection(
+        reviewed_commit="drop-2",
+        cycle=2,
+        recommended=narrowed,
+        state=state,
+    )
+    assert second.needs_question is False
+    assert second.paused is False
+    assert second.approved_conditionals == ("agent-usability",)
+    # the still-applicable approved lens actually launches on the repair cycle
+    assert second.launch_set == (*CONSENSUS.always_on_lenses(), "agent-usability")
+
+
+def test_delta_answer_does_not_resurrect_a_previously_declined_lens() -> None:
+    """A delta question decides only the delta."""
+    state = CONSENSUS.ReviewCycleState(CONSENSUS.always_on_lenses())
+    CONSENSUS.resolve_lens_selection(
+        reviewed_commit="scope-1",
+        cycle=1,
+        recommended=_api_agent(),
+        state=state,
+        operator_choice="customize",
+        customized_conditionals=("api-contract",),
+    )
+    widened = CONSENSUS.recommend_conditional_lenses(
+        {
+            "api-contract": "the change exposes an agent-facing interface contract",
+            "agent-usability": "the change alters a skill agents must discover and operate",
+            "documentation-clarity": "the repair added operator-facing documentation",
+        }
+    )
+    accepted = CONSENSUS.resolve_lens_selection(
+        reviewed_commit="scope-2",
+        cycle=2,
+        recommended=widened,
+        state=state,
+        operator_choice="accept-recommended",
+    )
+    assert accepted.approved_conditionals == ("api-contract", "documentation-clarity")
+    assert "agent-usability" not in accepted.approved_conditionals
+
+
+def test_round_tripped_approval_rejects_a_non_roster_lens() -> None:
+    """The deserialize path validates too, or the no-hidden-lenses guard fails open."""
+    with pytest.raises(CONSENSUS.ReviewConsensusError, match="not a roster lens"):
+        CONSENSUS.LensApprovalRecord.from_dict(
+            {
+                "reviewed_commit": "forged",
+                "cycle": 1,
+                "approved_conditionals": ["not-a-real-lens"],
+                "recommended": [],
+                "source": "operator",
+                "question_asked": True,
+            }
+        )
+    with pytest.raises(CONSENSUS.ReviewConsensusError, match="not a conditional approval"):
+        CONSENSUS.LensApprovalRecord.from_dict(
+            {
+                "reviewed_commit": "forged",
+                "cycle": 1,
+                "approved_conditionals": ["security"],
+                "recommended": [],
+                "source": "operator",
+                "question_asked": True,
+            }
+        )
+
+
+def test_launch_never_spawns_the_same_lens_twice() -> None:
+    state = CONSENSUS.ReviewCycleState(CONSENSUS.always_on_lenses())
+    recs = CONSENSUS.recommend_conditional_lenses(
+        {"agent-usability": "the change alters a skill agents must discover and operate"}
+    )
+    CONSENSUS.resolve_lens_selection(
+        reviewed_commit="dup-rev",
+        cycle=1,
+        recommended=recs,
+        state=state,
+        operator_choice="accept-recommended",
+    )
+    transcript = CONSENSUS.AgentCallTranscript()
+    launched = CONSENSUS.launch_approved_lenses(
+        reviewed_commit="dup-rev",
+        cycle=1,
+        state=state,
+        extra_lenses=("security", "agent-usability"),
+        agent=transcript,
+    )
+    assert launched == (*CONSENSUS.always_on_lenses(), "agent-usability")
+    assert len(set(launched)) == len(launched)
+    assert transcript.agent_calls == launched

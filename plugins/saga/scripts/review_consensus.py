@@ -360,7 +360,7 @@ class LensApprovalRecord:
                 mapping.get("reviewed_commit"), label="approval reviewed_commit"
             ),
             cycle=cycle,
-            approved_conditionals=_review_text_tuple(
+            approved_conditionals=_require_roster_conditionals(
                 mapping.get("approved_conditionals", ()),
                 label="approved_conditionals",
             ),
@@ -1985,6 +1985,25 @@ def _conditional_lens_ids(roster_path: Path = ROSTER_PATH) -> frozenset[str]:
     return frozenset(conditionals)
 
 
+def _require_roster_conditionals(lens_ids: Iterable[str], *, label: str) -> tuple[str, ...]:
+    """Fail closed on any id that is not a roster conditional lens.
+
+    `record_lens_approval` validates what it is handed, so the deserialize path has to
+    validate too: without this, a round-tripped `review_cycle_state.v1` payload could
+    restore an approval naming a lens the roster does not have and `launch_approved_lenses`
+    would spawn it.
+    """
+    values = _review_text_tuple(lens_ids, label=label)
+    always_on = set(always_on_lenses())
+    conditionals = _conditional_lens_ids()
+    for lens_id in values:
+        if lens_id in always_on:
+            raise ReviewConsensusError(f"always-on lens {lens_id!r} is not a conditional approval")
+        if lens_id not in conditionals:
+            raise ReviewConsensusError(f"approved conditional {lens_id!r} is not a roster lens")
+    return values
+
+
 def recommend_conditional_lenses(
     judged_applicable: Mapping[str, str],
 ) -> tuple[ConditionalLensRecommendation, ...]:
@@ -2161,27 +2180,29 @@ def resolve_lens_selection(
             return _approved_decision(exact, reused=True)
         prior = state.latest_lens_approval()
         if prior is not None:
-            recommended_ids = tuple(item.lens_id for item in recommendations)
-            prior_ids = tuple(item.lens_id for item in prior.recommended)
+            recommended_set = {item.lens_id for item in recommendations}
+            prior_recommended = {item.lens_id for item in prior.recommended}
             prior_approved = prior.approved_conditionals
-            if recommended_ids in (prior_ids, prior_approved):
+            # Applicability is a set, not an ordering: the same judgement rebuilt in a
+            # different order is unchanged and must not re-ask. Only a conditional the
+            # prior judgement never raised is a new question; one that merely stopped
+            # applying is dropped silently because it has no work left to do.
+            added = tuple(item for item in recommendations if item.lens_id not in prior_recommended)
+            removed = tuple(lens_id for lens_id in prior_approved if lens_id not in recommended_set)
+            still_applicable = tuple(
+                lens_id for lens_id in prior_approved if lens_id in recommended_set
+            )
+            if not added:
                 reused = LensApprovalRecord(
                     reviewed_commit=commit,
                     cycle=cycle,
-                    approved_conditionals=prior_approved,
+                    approved_conditionals=still_applicable,
                     recommended=recommendations,
                     source=prior.source,
                     question_asked=False,
                 )
                 state.record_lens_approval(reused)
                 return _approved_decision(reused, reused=True)
-            prior_set = set(prior_approved)
-            recommended_set = set(recommended_ids)
-            added = tuple(item for item in recommendations if item.lens_id not in prior_set)
-            removed = tuple(lens_id for lens_id in prior_approved if lens_id not in recommended_set)
-            still_applicable = tuple(
-                lens_id for lens_id in prior_approved if lens_id in recommended_set
-            )
             question = _question(
                 "delta",
                 recommendations,
@@ -2190,8 +2211,10 @@ def resolve_lens_selection(
             )
             if operator_choice is None:
                 return _paused_decision(commit, cycle, recommendations, question, reused=True)
+            # A delta question decides only the delta: previously approved lenses that
+            # still apply are kept, and previously declined ones stay declined.
             if operator_choice == "accept-recommended":
-                approved = recommended_ids
+                approved = (*still_applicable, *(item.lens_id for item in added))
             elif operator_choice == "always-on-only":
                 approved = still_applicable
             else:
@@ -2274,19 +2297,27 @@ def launch_approved_lenses(
     if paused:
         allowed = frozenset()
     launched: list[str] = []
-    for lens_id in always_on_lenses():
+    seen: set[str] = set()
+
+    def _launch_once(lens_id: str) -> None:
+        # A lens only reaches `seen` after passing the spawn guard, so skipping a repeat
+        # never bypasses validation — it just stops one lens being reviewed twice.
+        if lens_id in seen:
+            return
         _spawn_lens_agent(lens_id, allowed_conditionals=allowed, agent=transcript)
+        seen.add(lens_id)
         launched.append(lens_id)
+
+    for lens_id in always_on_lenses():
+        _launch_once(lens_id)
     if approval is not None and not paused:
         transcript.record_approval(approval.reviewed_commit, approval.cycle)
         if state is not None and state.lens_approval_for(commit, cycle) is None:
             state.record_lens_approval(approval)
         for lens_id in approval.approved_conditionals:
-            _spawn_lens_agent(lens_id, allowed_conditionals=allowed, agent=transcript)
-            launched.append(lens_id)
+            _launch_once(lens_id)
     for lens_id in _review_text_tuple(extra_lenses, label="extra_lenses") if extra_lenses else ():
-        _spawn_lens_agent(lens_id, allowed_conditionals=allowed, agent=transcript)
-        launched.append(lens_id)
+        _launch_once(lens_id)
     return tuple(launched)
 
 

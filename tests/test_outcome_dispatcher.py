@@ -143,10 +143,13 @@ def test_outcome_advance_help_and_resolve_available_coupling_consistency(capsys:
     # #657 AC2: CLI advance help text and resolve_available docstring agree on the flag coupling.
     with pytest.raises(SystemExit):
         OUTCOME.main(["advance", "--help"])
-    captured = capsys.readouterr().out
+    # argparse wraps help at terminal width and its textwrap breaks on hyphens, so
+    # "--host-capable" itself can split across lines in some width bands (#792 class);
+    # strip all whitespace before asserting so the check is width-insensitive.
+    captured = "".join(capsys.readouterr().out.split())
     assert "--workflow-available" in captured
     assert "--host-capable" in captured
-    assert "requires --host-capable" in captured
+    assert "requires--host-capable" in captured
 
     doc = D.resolve_available.__doc__ or ""
     assert "workflow_available" in doc

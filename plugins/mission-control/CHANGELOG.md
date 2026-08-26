@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.12.4] - 2026-08-26
+
+### Fixed - defer module-scope PyYAML import in sdlc_manager.py (#828)
+
+- Moved `import yaml` from module scope into `_load_live_mimir_coverage()`, allowing `--help` and every YAML-free subcommand to run on an interpreter without PyYAML installed.
+- When PyYAML is absent, invoking Team Mimir coverage validation raises a clear `RuntimeError` naming the missing `PyYAML` dependency rather than failing at module import with an unhandled `ModuleNotFoundError`.
+- Behavior with PyYAML present is unchanged; PyYAML remains a declared dependency.
+- Added `test_sdlc_manager_optional_deps.py` with unimportable-yaml simulations and an AST/mutation proof.
+
 ## [2.12.3] - 2026-08-25
 
 ### Added - field-named Status/Stage correction identity on `flow set-field` (#812)

@@ -127,7 +127,7 @@ repository, put the brief there, and give the unit the brief's absolute path (a 
 different worktree, so a repository-relative path points at the wrong tree). Do not use a session
 scratchpad or `/tmp`: those paths can disappear while the run record still names them. Generated
 long-task handovers already use this directory and the same containment boundary, stamped with an
-Orchestrate ownership marker (`<!-- orchestrate:owner run_id=... unit=... -->`). Orchestrate refuses
+Orchestrate ownership marker (`<!-- orchestrate:owner json={"run_id": "...", "unit": "..."} -->`). Orchestrate refuses
 to overwrite unmarked existing files (such as hand-authored briefs) or files owned by another
 run/unit, preserving their original bytes and naming the conflicting path. Same-owner updates remain
 idempotent.

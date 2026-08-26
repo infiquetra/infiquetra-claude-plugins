@@ -306,6 +306,8 @@ class TestTaskSpillOwnershipAndNoClobber:
             ("run/quoted", 'unit\'s "name"'),
             ("r1", "unit[0]"),
             ("r-λ", "unit-λ"),
+            ("r1", "step-->next"),
+            ("orch-->run", "a-->b-->c"),
         ],
     )
     def test_ownership_marker_round_trips_legal_unit_names_and_run_ids(
@@ -323,45 +325,42 @@ class TestTaskSpillOwnershipAndNoClobber:
         assert parsed == (run_id, unit_name)
         assert orchestrate.strip_task_spill_marker(stamped) == LONG_TASK
 
-    def test_crash_truncated_spill_allows_same_owner_retry(
+    def test_damaged_or_truncated_spill_is_refused_cleanly(
         self, orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A 0-byte or truncated spill from a crash does not brick same-owner save retry."""
+        """A damaged or truncated file that lacks a valid ownership marker is refused cleanly."""
         monkeypatch.chdir(tmp_path)
         spill_file = _spill_path(tmp_path, "build")
         spill_file.parent.mkdir(parents=True, exist_ok=True)
+        spill_file.write_text("<!-- corrupted or truncated", encoding="utf-8")
 
-        # Case 1: 0-byte file from crash
-        spill_file.write_bytes(b"")
         r = _run(orchestrate, orchestrate.Unit(name="build", vendor="claude", task=LONG_TASK))
-        r.save()
-        assert orchestrate.Run.load().unit("build").task == LONG_TASK
-
-        # Case 2: Incomplete / truncated marker from same run
-        spill_file.write_text(
-            '<!-- orchestrate:owner json={"run_id": "r1", "unit": "buil', encoding="utf-8"
-        )
-        r.save()
-        assert orchestrate.Run.load().unit("build").task == LONG_TASK
-
-        # Case 3: Incomplete / truncated marker from different run is refused
-        spill_file.write_text(
-            '<!-- orchestrate:owner json={"run_id": "other-run", "unit": "buil', encoding="utf-8"
-        )
-        with pytest.raises(SystemExit):
+        with pytest.raises(SystemExit) as exc_info:
             r.save()
+        assert "refusing to overwrite unmarked task file" in str(exc_info.value)
 
-    def test_empty_run_id_default_does_not_create_conflicting_owner(
+    def test_empty_run_id_raises_system_exit(
         self, orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Calling spill_unit without run_id does not create a conflicting owner identity."""
+        """Calling spill_unit with an empty run_id fails loudly with SystemExit."""
         monkeypatch.chdir(tmp_path)
         u = orchestrate.Unit(name="build", vendor="claude", task=LONG_TASK)
-        orchestrate.spill_unit(u)
+        with pytest.raises(SystemExit) as exc_info:
+            orchestrate.spill_unit(u, run_id="")
+        assert "run_id must not be empty" in str(exc_info.value)
 
-        r = orchestrate.Run(run_id="r1", source="test", base="0" * 40, units=[u])
-        r.save()
-        assert orchestrate.Run.load().unit("build").task == LONG_TASK
+    def test_atomic_spill_write_leaves_no_temp_files(
+        self, orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Atomic write creates the target file and cleans up any temp files."""
+        monkeypatch.chdir(tmp_path)
+        _run(orchestrate, orchestrate.Unit(name="build", vendor="claude", task=LONG_TASK)).save()
+        spill_file = _spill_path(tmp_path, "build")
+        assert spill_file.exists()
+        temp_files = list(spill_file.parent.glob(".tmp.*")) + list(
+            spill_file.parent.glob("*.tmp.*")
+        )
+        assert not temp_files
 
     def test_non_utf8_task_file_refuses_cleanly_without_raising(
         self, orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

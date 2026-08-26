@@ -5,8 +5,29 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[3]
-PLUGIN_ROOT = ROOT / "plugins" / "mission-control"
+import pytest
+
+
+def _find_package_root(start: Path | None = None) -> Path:
+    current = start or Path(__file__)
+    for parent in current.resolve().parents:
+        if (parent / ".claude-plugin" / "plugin.json").is_file():
+            return parent
+    raise RuntimeError(
+        f"package root containing .claude-plugin/plugin.json not found from {current.resolve()}"
+    )
+
+
+def _find_repo_root(package_root: Path) -> Path:
+    for parent in package_root.resolve().parents:
+        if (parent / ".claude-plugin" / "marketplace.json").is_file():
+            return parent
+    return package_root.resolve().parent.parent
+
+
+PACKAGE_ROOT = _find_package_root()
+PLUGIN_ROOT = PACKAGE_ROOT
+ROOT = _find_repo_root(PACKAGE_ROOT)
 
 
 def _read(path: Path) -> str:
@@ -200,3 +221,20 @@ def test_saga_handoff_routes_without_copying_issue_templates() -> None:
     assert "do not copy\n   SDLC issue template sections into Saga" in issue_command
     assert "### Objective" not in handoff
     assert "### Acceptance criteria" not in handoff
+
+
+def test_find_package_root_resolves_plugin_root() -> None:
+    root = _find_package_root()
+    assert (root / ".claude-plugin" / "plugin.json").is_file()
+    assert (root / "skills" / "issues" / "SKILL.md").is_file()
+    assert root == PACKAGE_ROOT
+
+
+def test_find_package_root_fails_loudly_when_missing(tmp_path: Path) -> None:
+    dummy_file = tmp_path / "deep" / "nested" / "file.py"
+    dummy_file.parent.mkdir(parents=True)
+    dummy_file.touch()
+    with pytest.raises(
+        RuntimeError, match=r"package root containing \.claude-plugin/plugin\.json not found"
+    ):
+        _find_package_root(dummy_file)

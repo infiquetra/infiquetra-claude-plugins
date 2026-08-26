@@ -21,6 +21,16 @@
 
 ## 2026-08-26
 
+### Dynamic package-root resolution via plugin.json discovery eliminates fixed-depth parents[N] assumptions in test files  {#829-package-root-resolution-plugin-json}
+
+**Context.** `plugins/mission-control/tests/test_issue_contract_parity.py` and `plugins/mission-control/tests/test_prompt_alignment.py` hard-coded `ROOT = Path(__file__).resolve().parents[3]`, assuming test modules always sit exactly four levels below a repository root. When the Mission Control package was relocated (staged assessment copies, session-scoped plugin directories, vendored checkouts at another depth), the resolved root was invalid and both modules failed before collection or on file reads rather than failing meaningful assertions.
+**Evidence.** Issue #829; downstream assessment in `infiquetra/infiquetra-agent-plugins#9` and `#18`; relocating `plugins/mission-control` to another directory depth failed 15 tests in `test_issue_contract_parity.py` and 9 tests in `test_prompt_alignment.py` with `FileNotFoundError`.
+**Mechanism.** Fixed `parents[N]` path traversals encode implicit directory nesting depth into test files. When a package is relocated, copied, or vendored without identical monorepo ancestor depth, static ancestor offsets resolve to wrong directories. Walking up ancestors from `__file__` until locating `.claude-plugin/plugin.json` dynamically discovers the package root regardless of hosting depth.
+**Fix.** Replaced `parents[3]` repository-depth derivations in `test_issue_contract_parity.py` and `test_prompt_alignment.py` with `_find_package_root()` (walking up `current.resolve().parents` to the directory containing `.claude-plugin/plugin.json`), deriving package-local target paths from `PACKAGE_ROOT`. In `test_prompt_alignment.py`, added `_find_repo_root()` walking up for `.claude-plugin/marketplace.json`. Added explicit unit tests verifying package root discovery and loud failures on missing package roots.
+**Validation.** `uv run pytest plugins/mission-control/tests/test_issue_contract_parity.py plugins/mission-control/tests/test_prompt_alignment.py -q` and `uv run pytest plugins/mission-control/tests/ -q` pass with 100% green; relocated copies of the repository and standalone package staged at deeper paths collect and pass.
+**Generalizable rule.** In plugin test and CLI scripts, resolve package-internal resources dynamically by discovering the package manifest (`.claude-plugin/plugin.json`) rather than assuming a fixed repository nesting depth (`parents[N]`).
+**Refs.** Issue #829; sibling issue #822; run plan `docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md` unit U12.
+
 ### Module-scope imports in multi-subcommand CLIs couple unrelated commands to unneeded dependencies  {#828-defer-module-scope-yaml-import-sdlc-manager}
 
 **Context.** `plugins/mission-control/scripts/sdlc_manager.py` imported `yaml` at top level (module scope). The only caller was `_load_live_mimir_coverage()` at line 2716, which validates Team Mimir repository admission documents. Every other subcommand — and `--help` itself — failed at import time with an unhandled `ModuleNotFoundError` on environments lacking PyYAML.

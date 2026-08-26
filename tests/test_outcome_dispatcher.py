@@ -1194,7 +1194,9 @@ def test_make_dispatcher_raises_backend_halt_on_unenforceable_sandbox() -> None:
     assert "workspace_isolation" in exc.value.receipt.reason
 
 
-def test_frontier_budget_downgrade_restamps_backends_enumeration() -> None:
+def test_frontier_budget_downgrade_restamps_backends_enumeration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """KTD4 compat contract: the frontier-budget downgrade re-stamps the leaf recommender's
     full-enumeration ``backends`` payload so the authoritative enumeration never contradicts the
     downgraded ``recommended``.
@@ -1203,6 +1205,19 @@ def test_frontier_budget_downgrade_restamps_backends_enumeration() -> None:
     (a dynamic workflow per leaf is expensive). The ``backends`` list must follow: team-execution
     reads ``recommended``, ultracode reads ``alternative`` carrying the ``budget_note`` reason.
     """
+
+    def _mock_rec(**kwargs: Any) -> dict[str, Any]:
+        return {
+            "recommended": "cc-workflows-ultracode",
+            "alternatives": ["inline", "team-execution"],
+            "backends": [
+                {"backend": "inline", "status": "alternative", "note": ""},
+                {"backend": "team-execution", "status": "alternative", "note": ""},
+                {"backend": "cc-workflows-ultracode", "status": "recommended", "note": ""},
+            ],
+        }
+
+    monkeypatch.setattr("lifecycle_state.recommend_execution_backend", _mock_rec)
     # Narrow frontier: no downgrade, ultracode stays recommended in both keys.
     narrow = D.recommend_outcome_backend(frontier_width=1, broad_independent_fanout=True)
     assert narrow["recommended"] == "cc-workflows-ultracode"

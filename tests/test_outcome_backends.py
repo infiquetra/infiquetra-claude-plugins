@@ -17,6 +17,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import pytest
+
 ROOT = Path(__file__).parent.parent
 SCRIPTS = ROOT / "plugins" / "saga" / "scripts"
 
@@ -176,7 +178,19 @@ def test_fork_is_cheap_only_when_everything_matches_within_ttl() -> None:
     )
 
 
-def test_recommender_is_frontier_budget_aware() -> None:
+def test_recommender_is_frontier_budget_aware(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _mock_rec(**kwargs: Any) -> dict[str, Any]:
+        return {
+            "recommended": "cc-workflows-ultracode",
+            "alternatives": ["inline", "team-execution"],
+            "backends": [
+                {"backend": "inline", "status": "alternative", "note": ""},
+                {"backend": "team-execution", "status": "alternative", "note": ""},
+                {"backend": "cc-workflows-ultracode", "status": "recommended", "note": ""},
+            ],
+        }
+
+    monkeypatch.setattr("lifecycle_state.recommend_execution_backend", _mock_rec)
     narrow = D.recommend_outcome_backend(frontier_width=1, broad_independent_fanout=True)
     assert (
         narrow["recommended"] == "cc-workflows-ultracode"

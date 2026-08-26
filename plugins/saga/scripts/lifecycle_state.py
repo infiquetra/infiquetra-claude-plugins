@@ -203,9 +203,11 @@ def recommend_execution_backend(
     """Recommend an execution backend, mirroring operator-choice.md section 3.
 
     Reuses ``should_offer_team_execution`` for the team-execution trigger
-    (passing all six required kwargs) and adds the ultracode branch. The
-    precedence is lean (operator-choice section 3.3): team-execution wins over
-    ultracode wins over inline.
+    (passing all six required kwargs). Per the operator ruling C5 (issue #840),
+    ``recommend_execution_backend()`` never returns ``cc-workflows-ultracode`` with
+    status ``recommended`` under any trigger: default offers present ``inline`` or
+    ``team-execution`` only. Claude Code Workflows remain available only via explicit
+    invocation or an already-approved recorded choice.
 
     GATED vs ADVISORY consensus (R7 keystone). A ``needs_consensus`` signal is
     no longer an unconditional hard-force to team-execution. The governance axis
@@ -219,46 +221,25 @@ def recommend_execution_backend(
       still recommends team-execution).
     * **advisory** consensus (``consensus_is_gated=False``) — N throwaway
       in-session votes the operator acts on themselves; nothing is recorded or
-      blocks. That is a dynamic-workflow judge-panel, so advisory consensus feeds
-      the existing ``adversarial_confidence`` ultracode trigger instead of forcing
-      team-execution. A contested-but-not-gated job therefore reaches the advisory
-      ultracode branch and never regresses to inline.
-
-    This stops the old unconditional ``or needs_consensus`` hard-force: only the
-    GATED branch reaches team-execution; the advisory branch is OR'd into the
-    ultracode trigger beside ``adversarial_confidence``.
+      blocks. Leaves the default recommendation as ``inline`` while keeping
+      ``team-execution`` and ``cc-workflows-ultracode`` in alternatives.
 
     ``has_code_surface`` (default True) neutralizes the code-shaped team-execution
     proxies for pure docs/spec/research work (see ``should_offer_team_execution``).
-    It also gates the ultracode RISK SUPPRESSOR below: ``has_infra`` /
-    ``has_security`` are ``parse_issue.py`` keyword matches (mention, not touch),
-    so on a docs change they are false positives that must not block an ultracode
-    fan-out any more than they force team-execution.
 
-    ``adversarial_confidence`` (default False) is the second ultracode trigger
-    beside ``broad_independent_fanout``: prove-by-refutation / judge-panel /
-    perspective-diverse verification is an ultracode shape (deterministic
-    INDEPENDENT verification, not merely breadth). Advisory consensus rides the
-    same branch. Without either, "stress-test this from many angles" work with no
-    deploy/security signal would fall to inline.
+    ``adversarial_confidence`` (default False) and ``broad_independent_fanout``
+    (default False) describe shapes for explicit workflow invocation; under C5
+    they do not auto-recommend ultracode.
 
     ``alternatives`` lists every *reachable* backend (capability-gated by
     ``workflow_available``) computed INDEPENDENTLY of which backend won
-    precedence, so an overlap job (e.g. GATED ``needs_consensus`` AND
-    ``broad_independent_fanout``) recommends ``team-execution`` yet still lists
-    ``cc-workflows-ultracode`` in ``alternatives`` — escalation stays one
-    keystroke (operator-choice section 3.3).
+    precedence, so escalation stays one keystroke (operator-choice section 3.3).
 
     ``workflow_shapes`` (KTD2, default empty) is a sequence of dynamic-workflow
     shapes drawn from the frozen :data:`WORKFLOW_SHAPES` vocabulary — understand /
     design / research / review / migrate, the shapes the Workflow tool doc names.
-    ANY entry trips the ultracode branch beside ``broad_independent_fanout`` /
-    ``adversarial_confidence`` (they may co-fire, no precedence between them), and
-    rides the SAME elevated-risk suppressor and ``has_code_surface`` neutralizer as
-    the existing triggers. An unknown shape raises ``ValueError`` (fail loud — a
-    silent typo must never degrade to inline). The ``review`` shape covers a
-    multi-lens review *sweep* requested as a workflow; the explicit
-    refute-N / judge-panel form stays ``adversarial_confidence``.
+    An unknown shape raises ``ValueError`` (fail loud — a silent typo must never
+    pass).
 
     ``workflow_availability_source`` (KTD3, default ``"asserted"``) records the
     provenance of ``workflow_available``: ``"probed"`` (the caller ran a ToolSearch
@@ -291,10 +272,8 @@ def recommend_execution_backend(
             f"unknown workflow_availability_source: {workflow_availability_source!r}; "
             f"valid sources are {', '.join(WORKFLOW_AVAILABILITY_SOURCES)}"
         )
-    has_workflow_shape = bool(shapes)
 
     gated_consensus = needs_consensus and consensus_is_gated
-    advisory_consensus = needs_consensus and not consensus_is_gated
     team = (
         should_offer_team_execution(
             file_count=file_count,
@@ -308,36 +287,10 @@ def recommend_execution_backend(
         )
         or gated_consensus
     )
-    # The risk suppressor only bites when there is a real code/scanner surface:
-    # has_infra / has_security are keyword matches that false-positive on docs.
-    # Under the current precedence this term is not independently reachable: every input
-    # that makes elevated_risk True also satisfies should_offer_team_execution (the same
-    # flags behind the same has_code_surface gate), so the `if team:` branch resolves those
-    # inputs first. Kept as a guard against a future if/elif reordering, which would
-    # otherwise route risky fan-outs to ultracode.
-    elevated_risk = (has_security or has_infra or deployment_sensitive) and has_code_surface
-    ultracode = (
-        broad_independent_fanout
-        or adversarial_confidence
-        or advisory_consensus
-        or has_workflow_shape
-    ) and not elevated_risk
 
     if team:
         recommended = "team-execution"
         rationale = "size/risk or consensus signal -> review consensus + gates fit"
-    elif ultracode and workflow_available:
-        recommended = "cc-workflows-ultracode"
-        reasons = []
-        if broad_independent_fanout:
-            reasons.append("broad fan-out")
-        if adversarial_confidence or advisory_consensus:
-            reasons.append("adversarial-confidence pass")
-        if has_workflow_shape:
-            reasons.append("workflow shape(s) " + "/".join(shapes))
-        rationale = (
-            f"{', '.join(reasons)} without elevated risk -> deterministic independent verification"
-        )
     else:
         recommended = "inline"
         rationale = "no escalation signal -> the agent does the work itself"
@@ -497,7 +450,7 @@ def _build_parser() -> argparse.ArgumentParser:
     backend.add_argument(
         "--advisory-consensus",
         action="store_true",
-        help="treat the consensus signal as ADVISORY (throwaway votes) -> ultracode, not gated team-execution",
+        help="treat the consensus signal as ADVISORY (throwaway in-session votes; default remains inline)",
     )
     backend.add_argument("--broad-fanout", action="store_true")
     backend.add_argument("--adversarial-confidence", action="store_true")
@@ -516,7 +469,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=[],
         choices=WORKFLOW_SHAPES,
         metavar="SHAPE",
-        help=f"repeatable dynamic-workflow shape ({'|'.join(WORKFLOW_SHAPES)}); any entry trips ultracode (KTD2)",
+        help=f"repeatable dynamic-workflow shape ({'|'.join(WORKFLOW_SHAPES)}) for explicit invocation (KTD2)",
     )
     backend.add_argument(
         "--workflow-availability-source",

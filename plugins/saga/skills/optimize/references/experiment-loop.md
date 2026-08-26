@@ -239,7 +239,7 @@ the run:
 ## Operator-choice fan-out note
 
 The default loop is **serial**. For **independent experiment fan-out** — many hypotheses that do not share
-output — **OFFER** a backend per `../../../references/operator-choice.md` (§3.2: broad, independent,
-low-risk fan-out leans `cc-workflows-ultracode`; risky-and-parallel leans `team-execution`). `/optimize`
+output — **OFFER** a backend per `../../../references/operator-choice.md` (the narrow default offer:
+`inline` and `team-execution`; `cc-workflows-ultracode` only on explicit invocation). `/optimize`
 writes **no saga**, so the chosen backend is recorded **NARRATIVELY** in the strategy digest (operator-choice
 §6 — a non-saga-writer records the choice in prose, never via `saga.save`). Never auto-spawn a backend.

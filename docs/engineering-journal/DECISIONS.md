@@ -25,9 +25,16 @@ backend-switching abstraction. Changing `execution_spec.py` emit-time engine-uni
 validation (that is #708 / unit u-708). Rewriting `recommend_execution_backend()` in this
 unit (runtime surface; instruction-text is the gate).
 
-**Revisit when.** A follow-up stops the helper recommending `cc-workflows-ultracode` as
-`recommended`, or sibling skills (`/loop`, `/code-review`, `/optimize`) still auto-offer
-it as a third interchangeable backend and that residue starts selecting Workflows again.
+**Amendment 2026-08-26 (operator ruling C5, issue #840).** The "Revisit when" condition fired.
+`recommend_execution_backend()` in `plugins/saga/scripts/lifecycle_state.py` is updated so it
+never returns `cc-workflows-ultracode` with status `recommended` under any trigger
+(`broad_independent_fanout`, `adversarial_confidence`, or any `WORKFLOW_SHAPES` entry). All surviving
+sibling Saga skills (`/loop`, `/code-review`, `/founder-review`, `/optimize`, `/qa`, `/investigate`,
+`/retro`) and supporting references are aligned with the narrow policy: default offers present
+`inline` and `team-execution` only; `cc-workflows-ultracode` remains available only by explicit
+invocation or an already-approved recorded plan choice.
+
+**Revisit when.** A future operator ruling reconsiders the narrow default offer framework.
 ### Conditional lenses launch only after commit+cycle approval (#778) {#778-conditional-lens-operator-approval}
 
 **Decision.** Auto-run the four always-on Code Review lenses. Recommend conditionals

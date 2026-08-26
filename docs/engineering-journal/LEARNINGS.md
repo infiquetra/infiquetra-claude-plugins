@@ -50,6 +50,15 @@
 **Validation.** `uv run pytest tests/test_lint_journal_order.py -q` passes (39 tests including cross-file validation, missing anchor reporting, outside-covered-set rejection, and relative path navigation); `python3 scripts/lint_journal_order.py` passes with 0 violations across all 4 journals.
 **Generalizable rule.** A documentation link validator that does not resolve cross-file targets against both explicit anchors and Markdown-generated heading slugs creates false confidence and lets inter-document citations rot silently during knowledge promotion and archival.
 **Refs.** Issue #838; PR #832; Unit U2 in `docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md`.
+### Runtime recommender alignment must match prompt and instruction narrowing (#840) {#recommender-alignment-matches-narrowing-840}
+
+**Context.** When issue #808 narrowed Claude Code Workflows to explicit-invocation-only, the skill instructions in `/plan` and `/work` were updated, but `recommend_execution_backend()` in `lifecycle_state.py` and seven sibling Saga skills still contained legacy three-backend auto-offer prose and automatic `cc-workflows-ultracode` recommendations on fan-out and confidence triggers.
+**Evidence.** Running `recommend_execution_backend(broad_independent_fanout=True)` returned `{"recommended": "cc-workflows-ultracode"}`, contradicting the policy that default offers present `inline` and `team-execution` only. Sibling skills (`/loop`, `/code-review`, `/founder-review`, `/optimize`, `/qa`, `/investigate`, `/retro`) and supporting references still described a 3-backend default offer.
+**Mechanism.** Narrowing a capability's role in prompt text or documentation without updating the underlying programmatic recommender leaves a split-brain state where programmatic callers and unattended agents re-escalate to the narrowed backend.
+**Fix (or queued).** (1) Updated `recommend_execution_backend()` in `lifecycle_state.py` to recommend `inline` or `team-execution` and never return `cc-workflows-ultracode` with status `recommended`. (2) Aligned all surviving Saga skills and references with the narrow policy. (3) Amended DECISIONS `{#cc-workflows-explicit-invocation-808}` to record the C5 operator ruling.
+**Validation (if applicable).** `tests/test_saga_plugin.py` and `tests/test_saga_execution_spec.py` verify that `recommend_execution_backend()` never returns `cc-workflows-ultracode` as `recommended` across all triggers while preserving wire enumeration and explicit invocation.
+**Generalizable rule.** When narrowing an execution mode to explicit-invocation-only, update the default recommendation logic in the same unit to prevent runtime re-escalation.
+**Refs.** Issues #808, #840, #847; PR #833; DECISIONS `{#cc-workflows-explicit-invocation-808}`, `{#cc-workflows-backend-narrow-808}`.
 
 ### Layout-independent help assertions and terminal-width matrix validation  {#layout-independent-help-assertions-width-matrix}
 

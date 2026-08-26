@@ -45,7 +45,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     entry = next(p for p in marketplace["plugins"] if p["name"] == "saga")
 
     assert plugin_json["name"] == "saga"
-    assert plugin_json["version"] == "0.142.1"  # #708: fail-loud engine-unit emit reject
+    assert plugin_json["version"] == "0.143.0"  # #840: align backend-offer with narrow policy
     assert entry["version"] == plugin_json["version"]
     assert entry["source"] == "./plugins/saga"
     assert "lifecycle" in plugin_json["description"]
@@ -2702,14 +2702,12 @@ def test_destination_selector_and_escalation_helpers() -> None:
 
 
 def test_recommend_execution_backend_precedence_and_overlap() -> None:
-    """Unit-level contract for the deferred-from-0.5.0 backend helper that lands with /work.
+    """Unit-level contract for the backend helper under the C5 narrow policy.
 
-    Precedence is the lean operator-choice section 3.3 ladder: a size/risk OR consensus
-    signal -> team-execution; broad independent fan-out without elevated risk ->
-    cc-workflows-ultracode; neither -> inline. The load-bearing case is the OVERLAP one:
-    alternatives is computed independently of which backend won precedence, so a job that
-    is both contested AND broadly parallel recommends team-execution yet still LISTS
-    cc-workflows-ultracode as a one-keystroke escalation.
+    Precedence is the lean operator-choice section 3.3 ladder: a size/risk OR gated consensus
+    signal -> team-execution; neither -> inline. Under operator ruling C5 (issue #840),
+    broad independent fan-out without elevated risk never recommends cc-workflows-ultracode
+    (default remains inline with ultracode as an alternative).
     """
     lifecycle = _load_module("lifecycle_state.py")
 
@@ -2724,12 +2722,12 @@ def test_recommend_execution_backend_precedence_and_overlap() -> None:
     assert lifecycle.recommend_execution_backend(file_count=8)["recommended"] == "team-execution"
     assert lifecycle.recommend_execution_backend(file_count=7)["recommended"] == "inline"
 
-    # Precedence: broad independent fan-out without elevated risk -> cc-workflows-ultracode.
+    # Under C5: broad independent fan-out defaults to inline with ultracode as an alternative.
     fanout = lifecycle.recommend_execution_backend(broad_independent_fanout=True)
-    assert fanout["recommended"] == "cc-workflows-ultracode"
+    assert fanout["recommended"] == "inline"
+    assert "cc-workflows-ultracode" in fanout["alternatives"]
 
-    # An elevated-risk signal suppresses the ultracode branch (it must not run risky
-    # work through deterministic fan-out) and falls back to team-execution.
+    # An elevated-risk signal routes to team-execution.
     risky_fanout = lifecycle.recommend_execution_backend(
         broad_independent_fanout=True, has_infra=True
     )
@@ -2765,14 +2763,14 @@ def test_recommend_execution_backend_precedence_and_overlap() -> None:
         b for b in no_workflow["backends"] if b["backend"] == "cc-workflows-ultracode"
     )
     assert ultra_entry["status"] == "unavailable"
-    # With ultracode capability-gated out, a pure-fan-out job degrades to inline.
+    # With ultracode capability-gated out, a pure-fan-out job stays inline.
     assert (
         lifecycle.recommend_execution_backend(
             broad_independent_fanout=True, workflow_available=False
         )["recommended"]
         == "inline"
     )
-    # When workflow IS available, the ultracode entry is reachable (recommended or alternative,
+    # When workflow IS available, the ultracode entry is reachable (alternative,
     # never unavailable) and omit_ultracode is gone.
     available = lifecycle.recommend_execution_backend()
     assert "omit_ultracode" not in available
@@ -2780,7 +2778,7 @@ def test_recommend_execution_backend_precedence_and_overlap() -> None:
     available_ultra = next(
         b for b in available["backends"] if b["backend"] == "cc-workflows-ultracode"
     )
-    assert available_ultra["status"] != "unavailable"
+    assert available_ultra["status"] == "alternative"
 
 
 def test_lifecycle_state_cli_subcommands(capsys: pytest.CaptureFixture[str]) -> None:
@@ -2826,23 +2824,23 @@ def test_lifecycle_state_cli_subcommands(capsys: pytest.CaptureFixture[str]) -> 
 
 
 def test_recommend_execution_backend_adversarial_confidence() -> None:
-    """adversarial_confidence is the SECOND ultracode trigger beside broad fan-out.
+    """adversarial_confidence describes explicit-invocation shapes; under C5 default remains inline.
 
-    Prove-by-refutation / judge-panel work with no deploy/security signal is an
-    ultracode shape (deterministic INDEPENDENT verification), not an inline one.
-    It rides the same risk gate and the same capability gate as broad fan-out.
+    Prove-by-refutation / judge-panel work with no deploy/security signal leaves the default
+    recommendation as inline, while keeping cc-workflows-ultracode in alternatives.
     """
     lifecycle = _load_module("lifecycle_state.py")
     rec = lifecycle.recommend_execution_backend
 
-    # adversarial_confidence alone, no risk -> cc-workflows-ultracode.
-    assert rec(adversarial_confidence=True)["recommended"] == "cc-workflows-ultracode"
+    # Under C5: adversarial_confidence alone, no risk -> inline with ultracode alternative.
+    result = rec(adversarial_confidence=True)
+    assert result["recommended"] == "inline"
+    assert "cc-workflows-ultracode" in result["alternatives"]
 
-    # The risk gate still suppresses it: an elevated-risk signal routes to team.
+    # The risk gate routes to team-execution.
     assert rec(adversarial_confidence=True, has_security=True)["recommended"] == "team-execution"
 
-    # Capability gate: with the Workflow tool absent it degrades to inline and
-    # marks the ultracode backend unavailable in the enumeration (mirrors the broad-fanout degrade).
+    # Capability gate: with the Workflow tool absent it marks ultracode unavailable.
     gated = rec(adversarial_confidence=True, workflow_available=False)
     assert gated["recommended"] == "inline"
     assert "omit_ultracode" not in gated
@@ -2851,7 +2849,7 @@ def test_recommend_execution_backend_adversarial_confidence() -> None:
         == "unavailable"
     )
 
-    # Overlap: adversarial_confidence (ultracode) AND needs_consensus (team wins)
+    # Overlap: adversarial_confidence AND needs_consensus (team wins)
     # still lists ultracode as a one-keystroke alternative.
     overlap = rec(adversarial_confidence=True, needs_consensus=True)
     assert overlap["recommended"] == "team-execution"
@@ -2861,16 +2859,10 @@ def test_recommend_execution_backend_adversarial_confidence() -> None:
 def test_recommend_execution_backend_gated_vs_advisory_consensus() -> None:
     """R7 keystone: needs_consensus splits on the GOVERNANCE axis (gated vs advisory).
 
-    The old behavior hard-forced team-execution on EVERY consensus signal
-    (``or needs_consensus``). U6 replaces that with consensus_is_gated:
-
+    Under C5 ruling:
     * GATED (default) -> team-execution: the verdict must block/persist.
-    * ADVISORY        -> cc-workflows-ultracode: throwaway in-session votes
-      ride the existing adversarial_confidence ultracode branch.
-
-    A contested-but-not-gated job must reach the ADVISORY ultracode branch and
-    NEVER regress to inline. The docs-gating (has_code_surface) and the overlap
-    alternatives behavior are preserved.
+    * ADVISORY        -> inline: throwaway in-session votes leave default as inline
+      with team-execution and ultracode as alternatives.
     """
     lifecycle = _load_module("lifecycle_state.py")
     rec = lifecycle.recommend_execution_backend
@@ -2881,30 +2873,25 @@ def test_recommend_execution_backend_gated_vs_advisory_consensus() -> None:
     assert gated["recommended"] == "team-execution"
     assert rec(needs_consensus=True, consensus_is_gated=True)["recommended"] == "team-execution"
 
-    # AE1 — ADVISORY consensus, no risk -> cc-workflows-ultracode (the judge-panel),
-    # NOT team-execution and NOT inline.
+    # AE1 — ADVISORY consensus, no risk -> inline (under C5, never ultracode recommended).
     advisory = rec(needs_consensus=True, consensus_is_gated=False)
-    assert advisory["recommended"] == "cc-workflows-ultracode"
-
-    # The hard-force is gone: advisory consensus alone no longer routes to team.
-    assert advisory["recommended"] != "team-execution"
-    # team-execution stays a one-keystroke alternative for the advisory pick.
+    assert advisory["recommended"] == "inline"
     assert "team-execution" in advisory["alternatives"]
+    assert "cc-workflows-ultracode" in advisory["alternatives"]
 
     # consensus_is_gated is INERT when there is no consensus signal at all:
     # a bare job stays inline whether the flag is set or not.
     assert rec(consensus_is_gated=False)["recommended"] == "inline"
     assert rec(consensus_is_gated=True)["recommended"] == "inline"
 
-    # Advisory consensus rides the SAME risk gate as the other ultracode triggers:
-    # an elevated-risk code surface suppresses the ultracode branch -> team-execution.
+    # Advisory consensus with elevated-risk code surface routes to team-execution.
     assert (
         rec(needs_consensus=True, consensus_is_gated=False, has_security=True)["recommended"]
         == "team-execution"
     )
 
-    # Advisory consensus rides the SAME capability gate: absent the Workflow tool
-    # it degrades to inline; ultracode drops from alternatives but is enumerated unavailable.
+    # Advisory consensus rides the capability gate: absent the Workflow tool
+    # ultracode drops from alternatives and is enumerated unavailable.
     no_wf = rec(needs_consensus=True, consensus_is_gated=False, workflow_available=False)
     assert no_wf["recommended"] == "inline"
     assert "omit_ultracode" not in no_wf
@@ -2921,23 +2908,17 @@ def test_recommend_execution_backend_gated_vs_advisory_consensus() -> None:
     assert "cc-workflows-ultracode" in overlap["alternatives"]
     assert "team-execution" not in overlap["alternatives"]
 
-    # DOCS-GATING preserved. Advisory consensus on a pure-docs change (no code
-    # surface) still reaches the ultracode judge-panel — has_code_surface gates the
-    # code-shaped proxies, not the governance-shaped consensus routing.
+    # DOCS-GATING: advisory consensus on docs change defaults to inline with ultracode alternative.
     docs_advisory = rec(needs_consensus=True, consensus_is_gated=False, has_code_surface=False)
-    assert docs_advisory["recommended"] == "cc-workflows-ultracode"
+    assert docs_advisory["recommended"] == "inline"
+    assert "cc-workflows-ultracode" in docs_advisory["alternatives"]
     # GATED consensus survives the docs neutralizer (it is governance, not code).
     docs_gated = rec(needs_consensus=True, consensus_is_gated=True, has_code_surface=False)
     assert docs_gated["recommended"] == "team-execution"
 
 
 def test_recommend_backend_cli_advisory_consensus(capsys: pytest.CaptureFixture[str]) -> None:
-    """--advisory-consensus round-trips through main(): the new branch is CLI-reachable.
-
-    Without a runnable flag the gated/advisory split is unreachable from the
-    markdown caller, so the flag must flow end-to-end. Omitting it keeps the
-    gated default (team-execution); setting it routes to the ultracode judge-panel.
-    """
+    """--advisory-consensus round-trips through main(): the branch is CLI-reachable."""
     lifecycle = _load_module("lifecycle_state.py")
 
     # Default (gated): --needs-consensus alone -> team-execution.
@@ -2945,11 +2926,12 @@ def test_recommend_backend_cli_advisory_consensus(capsys: pytest.CaptureFixture[
     gated = json.loads(capsys.readouterr().out)
     assert gated["recommended"] == "team-execution"
 
-    # --advisory-consensus flips it to the ultracode judge-panel.
+    # --advisory-consensus leaves default as inline with both alternatives.
     assert lifecycle.main(["recommend-backend", "--needs-consensus", "--advisory-consensus"]) == 0
     advisory = json.loads(capsys.readouterr().out)
-    assert advisory["recommended"] == "cc-workflows-ultracode"
+    assert advisory["recommended"] == "inline"
     assert "team-execution" in advisory["alternatives"]
+    assert "cc-workflows-ultracode" in advisory["alternatives"]
 
 
 def test_recommend_execution_backend_docs_no_code_surface() -> None:
@@ -2977,16 +2959,14 @@ def test_recommend_execution_backend_docs_no_code_surface() -> None:
     assert rec(has_security=True, has_code_surface=False)["recommended"] == "inline"
     assert rec(deployment_sensitive=True, has_code_surface=False)["recommended"] == "inline"
 
-    # Broad docs (many files) fan out via ultracode even with a keyword risk flag
-    # set, because the suppressor is itself gated by has_code_surface.
-    assert (
-        rec(file_count=12, broad_independent_fanout=True, has_code_surface=False)["recommended"]
-        == "cc-workflows-ultracode"
-    )
-    assert (
-        rec(has_infra=True, broad_independent_fanout=True, has_code_surface=False)["recommended"]
-        == "cc-workflows-ultracode"
-    )
+    # Broad docs (many files) default to inline under C5 with ultracode in alternatives.
+    broad_docs = rec(file_count=12, broad_independent_fanout=True, has_code_surface=False)
+    assert broad_docs["recommended"] == "inline"
+    assert "cc-workflows-ultracode" in broad_docs["alternatives"]
+
+    infra_docs = rec(has_infra=True, broad_independent_fanout=True, has_code_surface=False)
+    assert infra_docs["recommended"] == "inline"
+    assert "cc-workflows-ultracode" in infra_docs["alternatives"]
 
     # The output-AGNOSTIC governance signals SURVIVE the neutralizer: cross_repo
     # (ownership boundary) and needs_consensus (contested) still fire on docs.
@@ -3006,17 +2986,14 @@ def test_recommend_execution_backend_docs_no_code_surface() -> None:
 
 
 def test_recommend_backend_cli_new_flags(capsys: pytest.CaptureFixture[str]) -> None:
-    """--adversarial-confidence and --no-code-surface round-trip through main().
-
-    Without a runnable CLI surface the new triggers are unreachable from the
-    markdown callers, so the flags must flow end-to-end, not just exist in Python.
-    """
+    """--adversarial-confidence and --no-code-surface round-trip through main()."""
     lifecycle = _load_module("lifecycle_state.py")
 
-    # --adversarial-confidence -> cc-workflows-ultracode.
+    # Under C5: --adversarial-confidence -> inline with ultracode alternative.
     assert lifecycle.main(["recommend-backend", "--adversarial-confidence"]) == 0
     adv = json.loads(capsys.readouterr().out)
-    assert adv["recommended"] == "cc-workflows-ultracode"
+    assert adv["recommended"] == "inline"
+    assert "cc-workflows-ultracode" in adv["alternatives"]
 
     # --no-code-surface voids the size proxy: a 12-file docs change -> inline.
     assert lifecycle.main(["recommend-backend", "--file-count", "12", "--no-code-surface"]) == 0
@@ -3079,25 +3056,21 @@ def test_recommend_backend_release_surface_subtraction() -> None:
 
 
 def test_recommend_backend_workflow_shapes() -> None:
-    """KTD2 (R2): the frozen workflow-shape vocabulary trips ultracode; an unknown shape fails loud.
+    """KTD2 (R2): the frozen workflow-shape vocabulary is validated; under C5 default remains inline.
 
-    understand / design / research / review / migrate are the shapes the Workflow tool doc names;
-    any one reaches the ultracode branch beside broad fan-out and adversarial confidence. An
-    unknown shape raises ValueError (never a silent inline). Elevated-risk inputs route to
-    team-execution by branch PRECEDENCE (those flags are team triggers first); the elif-side
-    suppressor term is a reordering guard, not independently reachable today.
+    understand / design / research / review / migrate are the shapes the Workflow tool doc names.
+    Under C5, workflow_shapes do not auto-recommend ultracode (default is inline with ultracode
+    in alternatives). An unknown shape raises ValueError (never a silent inline). Elevated-risk
+    inputs route to team-execution by branch PRECEDENCE.
     """
     lifecycle = _load_module("lifecycle_state.py")
     rec = lifecycle.recommend_execution_backend
 
-    # Every frozen shape trips ultracode on its own.
+    # Every frozen shape defaults to inline under C5, with ultracode in alternatives.
     for shape in lifecycle.WORKFLOW_SHAPES:
-        assert rec(workflow_shapes=[shape])["recommended"] == "cc-workflows-ultracode", shape
-
-    # A representative shape names itself in the rationale (the offer explains itself).
-    research = rec(workflow_shapes=["research"])
-    assert research["recommended"] == "cc-workflows-ultracode"
-    assert "research" in research["rationale"]
+        res = rec(workflow_shapes=[shape])
+        assert res["recommended"] == "inline", shape
+        assert "cc-workflows-ultracode" in res["alternatives"], shape
 
     # Unknown shape -> ValueError, fail loud.
     with pytest.raises(ValueError, match="unknown workflow shape"):
@@ -3107,13 +3080,10 @@ def test_recommend_backend_workflow_shapes() -> None:
         rec(workflow_shapes=["research", "bogus"])
 
     # RISK PRECEDENCE: an elevated-risk code surface routes a shape job to team-execution.
-    # The mechanism is team-branch precedence (has_infra/has_security are team triggers first);
-    # the elif's `and not elevated_risk` term is a guard against future reordering and is not
-    # independently reachable under the current branch order.
     assert rec(workflow_shapes=["migrate"], has_infra=True)["recommended"] == "team-execution"
     assert rec(workflow_shapes=["review"], has_security=True)["recommended"] == "team-execution"
 
-    # Capability gate: absent the Workflow tool a shape job degrades to inline.
+    # Capability gate: absent the Workflow tool a shape job degrades to inline with ultracode unavailable.
     gated = rec(workflow_shapes=["design"], workflow_available=False)
     assert gated["recommended"] == "inline"
     assert (
@@ -3121,9 +3091,10 @@ def test_recommend_backend_workflow_shapes() -> None:
         == "unavailable"
     )
 
-    # Shapes co-fire with the other ultracode triggers (no precedence between them).
+    # Shapes co-fire with the other ultracode triggers without recommending ultracode.
     both = rec(workflow_shapes=["understand"], broad_independent_fanout=True)
-    assert both["recommended"] == "cc-workflows-ultracode"
+    assert both["recommended"] == "inline"
+    assert "cc-workflows-ultracode" in both["alternatives"]
 
 
 def test_recommend_backend_workflow_availability_provenance() -> None:
@@ -3166,7 +3137,7 @@ def test_recommend_backend_full_enumeration() -> None:
 
     Every offer carries a fixed-order {backend, status, note} list for inline / team-execution /
     cc-workflows-ultracode. Exactly one is recommended; reachable non-winners are alternative; an
-    unreachable ultracode is unavailable. Never a silent drop.
+    unreachable ultracode is unavailable. Under C5, ultracode is never recommended.
     """
     lifecycle = _load_module("lifecycle_state.py")
     rec = lifecycle.recommend_execution_backend
@@ -3193,9 +3164,10 @@ def test_recommend_backend_full_enumeration() -> None:
     assert _statuses(team)["team-execution"] == "recommended"
     assert _statuses(team)["cc-workflows-ultracode"] == "alternative"
 
-    # ultracode recommendation.
+    # Under C5: broad_independent_fanout recommends inline, ultracode is alternative.
     ultra = rec(broad_independent_fanout=True)
-    assert _statuses(ultra)["cc-workflows-ultracode"] == "recommended"
+    assert _statuses(ultra)["inline"] == "recommended"
+    assert _statuses(ultra)["cc-workflows-ultracode"] == "alternative"
 
     # workflow_available=False -> exactly-3 entries, ultracode unavailable, others reachable.
     absent = rec(broad_independent_fanout=True, workflow_available=False)
@@ -3213,6 +3185,73 @@ def test_recommend_backend_full_enumeration() -> None:
         recommended_entries = [b for b in result["backends"] if b["status"] == "recommended"]
         assert len(recommended_entries) == 1
         assert recommended_entries[0]["backend"] == result["recommended"]
+
+
+def test_narrow_backend_offer_policy_and_operator_choice_citations() -> None:
+    """Issue #840 / U19: verify narrow backend offer policy across Saga skills and recommender.
+
+    1. recommend_execution_backend() NEVER returns cc-workflows-ultracode as 'recommended'
+       across all triggers (broad_independent_fanout, adversarial_confidence, workflow_shapes,
+       advisory_consensus, docs no-code-surface, etc.).
+    2. Complete 3-backend wire enumeration holds with status in {alternative, unavailable}.
+    3. No surviving 3-backend default offer prose exists in skills or references.
+    """
+    lifecycle = _load_module("lifecycle_state.py")
+    rec = lifecycle.recommend_execution_backend
+
+    # 1. Exhaustive trigger matrix verification: recommended is never cc-workflows-ultracode.
+    trigger_cases: list[dict[str, object]] = [
+        {"broad_independent_fanout": True},
+        {"adversarial_confidence": True},
+        {"needs_consensus": True, "consensus_is_gated": False},
+        {"file_count": 12, "broad_independent_fanout": True, "has_code_surface": False},
+        {"has_infra": True, "broad_independent_fanout": True, "has_code_surface": False},
+        {"broad_independent_fanout": True, "adversarial_confidence": True},
+    ]
+    for shape in lifecycle.WORKFLOW_SHAPES:
+        trigger_cases.append({"workflow_shapes": [shape]})
+        trigger_cases.append({"workflow_shapes": [shape], "broad_independent_fanout": True})
+        trigger_cases.append({"workflow_shapes": [shape], "adversarial_confidence": True})
+
+    for kwargs in trigger_cases:
+        res = rec(**kwargs)
+        assert res["recommended"] != "cc-workflows-ultracode", f"failed for {kwargs}"
+        assert res["recommended"] in {"inline", "team-execution"}, (
+            f"unexpected recommended for {kwargs}"
+        )
+
+    # 2. Check skill and reference documents for legacy 3-backend default offer prose.
+    repo_root = Path(__file__).resolve().parent.parent
+    saga_dir = repo_root / "plugins" / "saga"
+
+    # Search for obsolete phrasing patterns that contradict the narrow offer
+    forbidden_patterns = [
+        re.compile(
+            r"There are exactly three backends — `inline`[^\n]*`team-execution`[^\n]*`cc-workflows-ultracode`",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"OFFER a backend per `[^`]*operator-choice\.md` \(`inline` / `team-execution` / `cc-workflows-ultracode`\)",
+            re.IGNORECASE,
+        ),
+        re.compile(r"the 3-backend contract for offering", re.IGNORECASE),
+        re.compile(
+            r"escalate to `cc-workflows-ultracode`[^\n]*without elevated risk", re.IGNORECASE
+        ),
+    ]
+
+    checked_files = 0
+    for path in saga_dir.rglob("*.md"):
+        # operator-choice.md itself documents the 3 enum backends in section 1
+        if path.name == "operator-choice.md" or "CHANGELOG" in path.name:
+            continue
+        text = path.read_text(encoding="utf-8")
+        for pat in forbidden_patterns:
+            match = pat.search(text)
+            assert match is None, f"Found legacy 3-backend offer prose in {path}: {match.group(0)}"
+        checked_files += 1
+
+    assert checked_files >= 10, f"Expected at least 10 markdown files checked, got {checked_files}"
 
 
 def test_recommend_backend_cli_new_offer_flags(capsys: pytest.CaptureFixture[str]) -> None:
@@ -3237,7 +3276,7 @@ def test_recommend_backend_cli_new_offer_flags(capsys: pytest.CaptureFixture[str
     subtracted = json.loads(capsys.readouterr().out)
     assert subtracted["recommended"] == "inline"
 
-    # Repeatable --workflow-shape round-trips and trips ultracode.
+    # Repeatable --workflow-shape round-trips; under C5 default remains inline.
     assert (
         lifecycle.main(
             [
@@ -3251,8 +3290,8 @@ def test_recommend_backend_cli_new_offer_flags(capsys: pytest.CaptureFixture[str
         == 0
     )
     shaped = json.loads(capsys.readouterr().out)
-    assert shaped["recommended"] == "cc-workflows-ultracode"
-    assert "understand" in shaped["rationale"] and "migrate" in shaped["rationale"]
+    assert shaped["recommended"] == "inline"
+    assert "cc-workflows-ultracode" in shaped["alternatives"]
 
     # argparse rejects an out-of-vocabulary shape cleanly (choices-gated, like the source flag);
     # the Python-API ValueError path is covered in test_recommend_backend_workflow_shapes.

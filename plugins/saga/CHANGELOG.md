@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.143.0] - 2026-08-26
+
+### Changed
+
+- **Runtime recommender and sibling skills aligned with narrow backend offer policy (#840).**
+  Per operator ruling C5, `recommend_execution_backend()` in `plugins/saga/scripts/lifecycle_state.py`
+  never returns `cc-workflows-ultracode` with status `recommended` under any trigger
+  (`broad_independent_fanout`, `adversarial_confidence`, or any `WORKFLOW_SHAPES` entry). Default
+  offers across all surviving Saga skills (`/loop`, `/code-review`, `/founder-review`,
+  `/optimize`, `/qa`, `/investigate`, `/retro`) and supporting references present `inline` and
+  `team-execution` only. `cc-workflows-ultracode` remains available only by explicit invocation or
+  an already-approved recorded plan choice, preserving complete three-backend wire enumeration and
+  explicit-path execution.
+
 ## [0.142.1] - 2026-08-25
 
 ### Fixed

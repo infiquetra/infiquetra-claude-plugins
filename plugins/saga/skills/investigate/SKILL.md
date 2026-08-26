@@ -216,12 +216,12 @@ assumptions; works-locally-fails-elsewhere → environment problem; fix-works-bu
 symptom, keep investigating.
 
 **Parallel read-only sub-agents (offer).** When hypotheses are **evidence-bottlenecked across clearly
-independent subsystems**, OFFER a backend per `../../references/operator-choice.md` (`inline` /
-`team-execution` / `cc-workflows-ultracode`) to dispatch read-only probes in parallel — each with one
-explicit hypothesis and a structured evidence-return format, **no edits**. Never auto-spawn; skip when
-hypotheses depend on each other. Parallel sub-agents use **generic** `Explore` / `Task` agents (this
-plugin has no `agents/` dir for probe-specific personas), each spawned with
-`subagent_type: saga:readonly-verifier` and `isolation: "worktree"` per
+independent subsystems**, OFFER a backend per `../../references/operator-choice.md` (the narrow default
+offer: `inline` / `team-execution`; `cc-workflows-ultracode` only on explicit invocation) to dispatch
+read-only probes in parallel — each with one explicit hypothesis and a structured evidence-return
+format, **no edits**. Never auto-spawn; skip when hypotheses depend on each other. Parallel sub-agents
+use **generic** `Explore` / `Task` agents (this plugin has no `agents/` dir for probe-specific
+personas), each spawned with `subagent_type: saga:readonly-verifier` and `isolation: "worktree"` per
 `plugins/saga/references/sandbox-spawn-sites.md`.
 
 **Present findings + the gate.** Present the root cause (causal-chain summary with `file:line`), the
@@ -366,8 +366,8 @@ default action; the diagnosis is.
 - `references/debug-report.md` — the DEBUG REPORT template (the gstack enum'd shape), the journal-
   LEARNINGS promotion template, and the `/handoff` defect-routing note (report = evidence, fix reaches
   `/work` via a `/handoff` ISSUE, never via the report path through the classifier).
-- `../../references/operator-choice.md` — the 3-backend contract for offering a backend for large/parallel
-  read-only investigation.
+- `../../references/operator-choice.md` — the decision contract for offering an execution backend for
+  large/parallel read-only investigation (narrow default offer: inline / team-execution).
 - `loop/references/dispatch-table.md` — the outbound routing reference (read, never restate).
 - `../brainstorm/SKILL.md` — the canonical channel-inline convention (cite, never duplicate).
 - `../../references/saga-spec.md` — the saga contract (`restore` / `ticks`; `/investigate` is read-only).

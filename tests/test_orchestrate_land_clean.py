@@ -45,7 +45,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -1050,7 +1050,10 @@ class TestCleanBranchesRemotePass:
         out = capsys.readouterr().out
 
         assert _remote_branch_exists(repo, "orch/r1-fixer")
-        assert "retained remote branch orch/r1-fixer: retained (unit has outstanding review fixes)" in out
+        assert (
+            "retained remote branch orch/r1-fixer: retained (unit has outstanding review fixes)"
+            in out
+        )
 
     def test_repeated_cleanup_is_idempotent_and_reports_already_absent_cleanly(
         self,
@@ -1120,7 +1123,7 @@ class TestCleanBranchesRemotePass:
                     }
                 ]
                 return subprocess.CompletedProcess(argv, 0, stdout=json.dumps(payload), stderr="")
-            return original_run(argv, *a, **kw)
+            return cast(subprocess.CompletedProcess[str], original_run(argv, *a, **kw))
 
         monkeypatch.setattr(orchestrate, "run", mock_run)
 
@@ -1163,7 +1166,7 @@ class TestCleanBranchesRemotePass:
                     }
                 ]
                 return subprocess.CompletedProcess(argv, 0, stdout=json.dumps(payload), stderr="")
-            return original_run(argv, *a, **kw)
+            return cast(subprocess.CompletedProcess[str], original_run(argv, *a, **kw))
 
         monkeypatch.setattr(orchestrate, "run", mock_run)
 

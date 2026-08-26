@@ -3428,10 +3428,7 @@ def prove_remote_branch_merged(
             prs = json.loads(pr_res.stdout)
             if isinstance(prs, list) and prs:
                 for p in prs:
-                    if (
-                        p.get("headRefName") == branch
-                        or p.get("headRefOid") == remote_sha
-                    ):
+                    if p.get("headRefName") == branch or p.get("headRefOid") == remote_sha:
                         state = (p.get("state") or "").upper()
                         if state == "OPEN":
                             return False, f"open (PR #{p.get('number')} is OPEN)"
@@ -3459,10 +3456,7 @@ def prove_remote_branch_merged(
         rb = resolve_ref(r.branch)
         if rb and rb not in auth_targets:
             auth_targets.append(rb)
-        rr = (
-            resolve_ref(f"refs/remotes/{remote}/{r.branch}")
-            or resolve_ref(f"{remote}/{r.branch}")
-        )
+        rr = resolve_ref(f"refs/remotes/{remote}/{r.branch}") or resolve_ref(f"{remote}/{r.branch}")
         if rr and rr not in auth_targets:
             auth_targets.append(rr)
     main_ref = (

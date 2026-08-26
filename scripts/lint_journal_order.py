@@ -42,12 +42,12 @@ DEFAULT_JOURNALS = (
     "docs/engineering-journal/LEARNINGS.md",
     "docs/engineering-journal/DECISIONS.md",
 )
-#: ARCHIVE/QUEUED carry heading anchors but not newest-first date sections, so they join
-#: the definition set without joining the ordering check. A LEARNINGS citation of a QUEUED
-#: slug is a real edge in the graph, not a dangle.
+#: ARCHIVE/QUEUED/README carry heading anchors or fragment citations without newest-first
+#: date sections, so they join the definition and reference set without joining the ordering check.
 ANCHOR_EXTRA = (
     "docs/engineering-journal/ARCHIVE.md",
     "docs/engineering-journal/QUEUED.md",
+    "docs/engineering-journal/README.md",
 )
 
 DATE_HEADING = re.compile(r"^## (\d{4}-\d{2}-\d{2})\s*$")
@@ -315,9 +315,7 @@ def check_anchors(files: list[tuple[str, str]]) -> list[str]:
     file_refs: list[tuple[str, list[tuple[str | None, str, int]]]] = []
     problems: list[str] = []
 
-    covered_by_basename: dict[str, str] = {}
     for rel, text in files:
-        covered_by_basename[Path(rel).name] = rel
         active, unclosed = _scan(text)
         if unclosed is not None:
             problems.append(
@@ -351,13 +349,10 @@ def check_anchors(files: list[tuple[str, str]]) -> list[str]:
                 target_rel = None
                 cand1 = os.path.normpath(src_parent / file_part).replace("\\", "/")
                 cand2 = os.path.normpath(file_part).replace("\\", "/")
-                cand3 = covered_by_basename.get(Path(file_part).name)
                 if cand1 in file_defs:
                     target_rel = cand1
                 elif cand2 in file_defs:
                     target_rel = cand2
-                elif cand3 and cand3 in file_defs:
-                    target_rel = cand3
 
                 if target_rel is None:
                     problems.append(
@@ -379,8 +374,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="lint_journal_order.py",
         description=(
-            "Check the engineering journal's newest-first ordering (#659) "
-            "and joint {#slug} uniqueness / dangling refs (#407)."
+            "Check the engineering journal's newest-first ordering (#659), "
+            "joint {#slug} uniqueness, and same-file / cross-file dangling fragment citations (#407, #838)."
         ),
     )
     ap.add_argument("journals", nargs="*", default=list(DEFAULT_JOURNALS))

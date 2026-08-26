@@ -11,6 +11,13 @@ Operator ruling (C1, 2026-08-26):
   repository's CI. CI workflows in this repository do not check out the home-lab
   repository, and no second copy of the validator is vendored. When the authority
   checkout is absent, tests in this module skip loudly naming the expected path.
+
+Known divergence on unclosed Verification fences:
+  `sdlc_manager.validate_card_body` requires >=2 ``` markers (opening and closing
+  fence), whereas home-lab `card_validator.py` checks `_CODE_BLOCK_RE.search(verification)`
+  with pattern `^````, which accepts a single opening ``` with no closing fence.
+  This known split is explicitly tracked by `test_verdict_agreement_unclosed_verification_code_block`
+  (marked xfail) so a passing run is not misinterpreted as proof that fence-closing semantics match.
 """
 
 from __future__ import annotations
@@ -588,11 +595,11 @@ def test_verdict_agreement_files_expected_no_path() -> None:
 
 
 def test_verdict_agreement_verification_no_code_block() -> None:
-    """Verification without fenced code block fails both."""
+    """Verification without fenced code block fails both while keeping remaining sections."""
     auth = _require_authority()
     body = re.sub(
-        r"### Verification\n.*",
-        "### Verification\nRun pytest in the main directory\n",
+        r"### Verification\n.*?\n\n###",
+        "### Verification\nRun pytest in the main directory\n\n###",
         VALID_CARD_CANONICAL,
         flags=re.DOTALL,
     )
@@ -603,6 +610,33 @@ def test_verdict_agreement_verification_no_code_block() -> None:
     )
     assert auth_passed is False
     assert port_passed is False
+
+
+@pytest.mark.xfail(
+    reason=(
+        "Known fence-count divergence: sdlc_manager.validate_card_body requires >=2 ``` markers "
+        "(open+close), while home-lab card_validator accepts a single opening ``` marker (^``` search)."
+    ),
+    strict=True,
+)
+def test_verdict_agreement_unclosed_verification_code_block() -> None:
+    """Known divergence: unclosed code block (single opening ```) passes home-lab but fails portable."""
+    auth = _require_authority()
+    unclosed_body = re.sub(
+        r"### Verification\n.*?\n\n###",
+        "### Verification\n```bash\npytest -v\n\n###",
+        VALID_CARD_CANONICAL,
+        flags=re.DOTALL,
+    )
+    auth_passed, auth_fails = _eval_authority(auth, unclosed_body)
+    port_passed, port_errs = _eval_portable(unclosed_body)
+    _assert_verdict_agreement(
+        auth_passed,
+        port_passed,
+        "unclosed-verification-code-block",
+        auth_fails,
+        port_errs,
+    )
 
 
 # ─── 7. Risk-Tier Context Variants Corpus ─────────────────────────────────────

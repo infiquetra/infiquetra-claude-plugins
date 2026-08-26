@@ -107,9 +107,10 @@ presentation format; the gate itself is:
   carries an **EXPLICIT warning in the diff header**:
   > **WARNING: this changes your GLOBAL Claude config and affects ALL projects, not just this repo.**
 
-**Never auto-launch** a destructive self-edit or an execution backend. A backend (`team-execution` ("team execution") /
-`cc-workflows-ultracode` ("dynamic workflows")) for a big refactor is **offered** per
-`../../references/operator-choice.md`, never started without the operator's pick.
+**Never auto-launch** a destructive self-edit or an execution backend. A backend (`inline` ("inline") /
+`team-execution` ("team execution"); `cc-workflows-ultracode` only on explicit invocation) for a big
+refactor is **offered** per `../../references/operator-choice.md`, never started without the
+operator's pick.
 
 ---
 
@@ -441,8 +442,8 @@ The passes neither source had, all gated (`references/retro-passes.md`):
   reducers never gain write access to the registry's own data). `status: "no-proposal"` is a
   normal, silent no-op — never force a calibration from thin evidence.
 
-A **big multi-file refactor** surfaced by any pass → **OFFER** a backend (`team-execution`
-("team execution") / `cc-workflows-ultracode` ("dynamic workflows")) per
+A **big multi-file refactor** surfaced by any pass → **OFFER** a backend (`inline` ("inline") /
+`team-execution` ("team execution"); `cc-workflows-ultracode` only on explicit invocation) per
 `../../references/operator-choice.md`. **Never auto-run** it.
 
 ---
@@ -489,7 +490,8 @@ It never blocks the router.
   directive disambiguation with the cross-project warning, and never-auto-launch.
 - `references/retro-report.md` — the `docs/retros/` writeup shape (agent-consumable structured findings,
   links + diff-vs-last) and the journal-promotion entry templates (LEARNINGS / DECISIONS / QUEUED / ARCHIVE).
-- `../../references/operator-choice.md` — the 3-backend contract for offering a refactor backend.
+- `../../references/operator-choice.md` — the decision contract for offering a refactor backend
+  (narrow default offer: inline / team-execution).
 - `loop/references/dispatch-table.md` — the outbound routing reference (read, never restate).
 - `../brainstorm/SKILL.md` — the canonical channel-inline convention (cite, never duplicate).
 - `../../references/saga-spec.md` — the saga contract (`restore` / `ticks`; `/retro` is read-only).

@@ -17,6 +17,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import pytest
+
 ROOT = Path(__file__).parent.parent
 SCRIPTS = ROOT / "plugins" / "saga" / "scripts"
 
@@ -176,16 +178,37 @@ def test_fork_is_cheap_only_when_everything_matches_within_ttl() -> None:
     )
 
 
-def test_recommender_is_frontier_budget_aware() -> None:
+def test_recommender_is_frontier_budget_aware(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Live post-C5 behavior: recommend_execution_backend never recommends ultracode,
+    # so live outcome recommendations default to inline across narrow and wide frontiers.
     narrow = D.recommend_outcome_backend(frontier_width=1, broad_independent_fanout=True)
-    assert (
-        narrow["recommended"] == "cc-workflows-ultracode"
-    )  # a narrow frontier affords the workflow
+    assert narrow["recommended"] == "inline"
+    assert "cc-workflows-ultracode" in narrow["alternatives"]
+    assert narrow["frontier_width"] == 1
+
     wide = D.recommend_outcome_backend(frontier_width=20, broad_independent_fanout=True)
-    assert (
-        wide["recommended"] == "team-execution" and "budget_note" in wide
-    )  # wide -> budget downgrade
-    assert "cc-workflows-ultracode" in wide["alternatives"]  # escalation stays one keystroke
+    assert wide["recommended"] == "inline"
+    assert wide["frontier_width"] == 20
+
+    # Defensive restamp coverage: if an upstream engine/caller ever injected
+    # cc-workflows-ultracode as recommended (unreachable under C5), the dispatcher's
+    # frontier budget downgrade restamps team-execution and sets budget_note.
+    def _mock_rec(**kwargs: Any) -> dict[str, Any]:
+        return {
+            "recommended": "cc-workflows-ultracode",
+            "alternatives": ["inline", "team-execution"],
+            "backends": [
+                {"backend": "inline", "status": "alternative", "note": ""},
+                {"backend": "team-execution", "status": "alternative", "note": ""},
+                {"backend": "cc-workflows-ultracode", "status": "recommended", "note": ""},
+            ],
+        }
+
+    monkeypatch.setattr("lifecycle_state.recommend_execution_backend", _mock_rec)
+    defensive = D.recommend_outcome_backend(frontier_width=20, broad_independent_fanout=True)
+    assert defensive["recommended"] == "team-execution"
+    assert "budget_note" in defensive
+    assert "cc-workflows-ultracode" in defensive["alternatives"]
 
 
 def test_recommender_takes_fork_only_when_cheap() -> None:

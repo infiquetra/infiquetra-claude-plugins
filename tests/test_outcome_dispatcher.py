@@ -1194,41 +1194,62 @@ def test_make_dispatcher_raises_backend_halt_on_unenforceable_sandbox() -> None:
     assert "workspace_isolation" in exc.value.receipt.reason
 
 
-def test_frontier_budget_downgrade_restamps_backends_enumeration() -> None:
-    """KTD4 compat contract: the frontier-budget downgrade re-stamps the leaf recommender's
-    full-enumeration ``backends`` payload so the authoritative enumeration never contradicts the
-    downgraded ``recommended``.
+def test_frontier_budget_downgrade_restamps_backends_enumeration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KTD4 compat contract: prove live post-C5 wrapper behavior and defensive restamp.
 
-    A wide frontier turns a ``cc-workflows-ultracode`` leaf recommendation into ``team-execution``
-    (a dynamic workflow per leaf is expensive). The ``backends`` list must follow: team-execution
-    reads ``recommended``, ultracode reads ``alternative`` carrying the ``budget_note`` reason.
+    Under live post-C5 policy, recommend_outcome_backend returns inline (ultracode is never
+    recommended). For defensive coverage of the restamping branch (unreachable under C5 unless
+    injected), verify that a mocked cc-workflows-ultracode recommendation on a wide frontier
+    re-stamps the full-enumeration backends payload so team-execution is recommended and
+    ultracode is alternative with the budget_note.
     """
-    # Narrow frontier: no downgrade, ultracode stays recommended in both keys.
-    narrow = D.recommend_outcome_backend(frontier_width=1, broad_independent_fanout=True)
-    assert narrow["recommended"] == "cc-workflows-ultracode"
-    narrow_statuses = {b["backend"]: b["status"] for b in narrow["backends"]}
+    # 1. Live post-C5 wrapper verification (no mocks)
+    live_narrow = D.recommend_outcome_backend(frontier_width=1, broad_independent_fanout=True)
+    assert live_narrow["recommended"] == "inline"
+    assert "cc-workflows-ultracode" in live_narrow["alternatives"]
+    assert live_narrow["frontier_width"] == 1
+
+    live_wide = D.recommend_outcome_backend(frontier_width=20, broad_independent_fanout=True)
+    assert live_wide["recommended"] == "inline"
+    assert live_wide["frontier_width"] == 20
+
+    # 2. Defensive restamp branch coverage (labeled unreachable under C5)
+    def _mock_rec(**kwargs: Any) -> dict[str, Any]:
+        return {
+            "recommended": "cc-workflows-ultracode",
+            "alternatives": ["inline", "team-execution"],
+            "backends": [
+                {"backend": "inline", "status": "alternative", "note": ""},
+                {"backend": "team-execution", "status": "alternative", "note": ""},
+                {"backend": "cc-workflows-ultracode", "status": "recommended", "note": ""},
+            ],
+        }
+
+    monkeypatch.setattr("lifecycle_state.recommend_execution_backend", _mock_rec)
+    mock_narrow = D.recommend_outcome_backend(frontier_width=1, broad_independent_fanout=True)
+    assert mock_narrow["recommended"] == "cc-workflows-ultracode"
+    narrow_statuses = {b["backend"]: b["status"] for b in mock_narrow["backends"]}
     assert narrow_statuses["cc-workflows-ultracode"] == "recommended"
 
-    # Wide frontier: budget downgrade to team-execution AND the enumeration is re-stamped.
-    wide = D.recommend_outcome_backend(frontier_width=20, broad_independent_fanout=True)
-    assert wide["recommended"] == "team-execution"
-    assert "budget_note" in wide
-    assert "omit_ultracode" not in wide
-    statuses = {b["backend"]: b["status"] for b in wide["backends"]}
+    mock_wide = D.recommend_outcome_backend(frontier_width=20, broad_independent_fanout=True)
+    assert mock_wide["recommended"] == "team-execution"
+    assert "budget_note" in mock_wide
+    assert "omit_ultracode" not in mock_wide
+    statuses = {b["backend"]: b["status"] for b in mock_wide["backends"]}
     assert statuses == {
         "inline": "alternative",
         "team-execution": "recommended",
         "cc-workflows-ultracode": "alternative",
     }
-    # Exactly one recommended entry and it matches the downgraded recommended key.
-    recommended_entries = [b for b in wide["backends"] if b["status"] == "recommended"]
+    recommended_entries = [b for b in mock_wide["backends"] if b["status"] == "recommended"]
     assert len(recommended_entries) == 1
-    assert recommended_entries[0]["backend"] == wide["recommended"]
-    # The ultracode entry's note carries the budget_note reason.
+    assert recommended_entries[0]["backend"] == mock_wide["recommended"]
     ultra_note = next(
-        b["note"] for b in wide["backends"] if b["backend"] == "cc-workflows-ultracode"
+        b["note"] for b in mock_wide["backends"] if b["backend"] == "cc-workflows-ultracode"
     )
-    assert ultra_note == wide["budget_note"]
+    assert ultra_note == mock_wide["budget_note"]
 
 
 # --------------------------------------------------------------------------- #373: captured run-start

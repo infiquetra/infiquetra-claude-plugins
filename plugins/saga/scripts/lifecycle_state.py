@@ -452,8 +452,16 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="treat the consensus signal as ADVISORY (throwaway in-session votes; default remains inline)",
     )
-    backend.add_argument("--broad-fanout", action="store_true")
-    backend.add_argument("--adversarial-confidence", action="store_true")
+    backend.add_argument(
+        "--broad-fanout",
+        action="store_true",
+        help="indicate broad fan-out shape (recommends inline; does not change recommended under C5)",
+    )
+    backend.add_argument(
+        "--adversarial-confidence",
+        action="store_true",
+        help="indicate adversarial-confidence shape (recommends inline; does not change recommended under C5)",
+    )
     backend.add_argument("--no-code-surface", action="store_true")
     backend.add_argument("--no-workflow", action="store_true")
     backend.add_argument(

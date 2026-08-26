@@ -3194,12 +3194,14 @@ def test_narrow_backend_offer_policy_and_operator_choice_citations() -> None:
        across all triggers (broad_independent_fanout, adversarial_confidence, workflow_shapes,
        advisory_consensus, docs no-code-surface, etc.).
     2. Complete 3-backend wire enumeration holds with status in {alternative, unavailable}.
-    3. No surviving 3-backend default offer prose exists in skills or references.
+    3. Dropping explicit-invocation wording from any of the 7 skills or 3 references fails.
+    4. Wrapped and single-line legacy 3-backend default offer prose fails the inventory.
     """
     lifecycle = _load_module("lifecycle_state.py")
     rec = lifecycle.recommend_execution_backend
 
-    # 1. Exhaustive trigger matrix verification: recommended is never cc-workflows-ultracode.
+    # 1. Exhaustive trigger matrix verification: recommended is never cc-workflows-ultracode,
+    # and complete 3-backend wire enumeration holds (F-07).
     trigger_cases: list[dict[str, object]] = [
         {"broad_independent_fanout": True},
         {"adversarial_confidence": True},
@@ -3219,24 +3221,60 @@ def test_narrow_backend_offer_policy_and_operator_choice_citations() -> None:
         assert res["recommended"] in {"inline", "team-execution"}, (
             f"unexpected recommended for {kwargs}"
         )
+        # Complete 3-backend wire enumeration check (F-07)
+        backends = res["backends"]
+        assert len(backends) == 3
+        backend_names = [b["backend"] for b in backends]
+        assert backend_names == ["inline", "team-execution", "cc-workflows-ultracode"]
+        ultra_status = next(
+            b["status"] for b in backends if b["backend"] == "cc-workflows-ultracode"
+        )
+        assert ultra_status in {"alternative", "unavailable"}, (
+            f"expected alternative or unavailable for ultracode in {kwargs}, got {ultra_status}"
+        )
 
-    # 2. Check skill and reference documents for legacy 3-backend default offer prose.
     repo_root = Path(__file__).resolve().parent.parent
     saga_dir = repo_root / "plugins" / "saga"
 
-    # Search for obsolete phrasing patterns that contradict the narrow offer
+    # 2. Pin required explicit-invocation wording across all 7 skills and 3 references (F-02).
+    required_explicit_invocation_paths = [
+        saga_dir / "skills" / "loop" / "SKILL.md",
+        saga_dir / "skills" / "code-review" / "SKILL.md",
+        saga_dir / "skills" / "founder-review" / "SKILL.md",
+        saga_dir / "skills" / "optimize" / "SKILL.md",
+        saga_dir / "skills" / "qa" / "SKILL.md",
+        saga_dir / "skills" / "investigate" / "SKILL.md",
+        saga_dir / "skills" / "retro" / "SKILL.md",
+        saga_dir / "skills" / "optimize" / "references" / "experiment-loop.md",
+        saga_dir / "skills" / "investigate" / "references" / "methodology.md",
+        saga_dir / "skills" / "retro" / "references" / "self-edit-safety.md",
+    ]
+    for p in required_explicit_invocation_paths:
+        assert p.exists(), f"Expected required path to exist: {p}"
+        raw_text = p.read_text(encoding="utf-8")
+        assert "explicit invocation" in raw_text.lower(), (
+            f"Missing required explicit-invocation wording in {p}"
+        )
+
+    # 3. Check all markdown documents for legacy 3-backend default offer prose,
+    # matching over whitespace-normalized text so multiline/wrapped prose fails (F-01).
     forbidden_patterns = [
         re.compile(
-            r"There are exactly three backends — `inline`[^\n]*`team-execution`[^\n]*`cc-workflows-ultracode`",
+            r"There are exactly three backends\s*—\s*`inline`.*?`team-execution`.*?`cc-workflows-ultracode`",
             re.IGNORECASE,
         ),
         re.compile(
-            r"OFFER a backend per `[^`]*operator-choice\.md` \(`inline` / `team-execution` / `cc-workflows-ultracode`\)",
+            r"OFFER\s+(?:routing\s+accepted\s+changes\s+through\s+)?a\s+backend\s+per\s+`[^`]*operator-choice\.md`\s*\(`inline`\s*/\s*`team-execution`\s*/\s*`cc-workflows-ultracode`\)",
             re.IGNORECASE,
         ),
         re.compile(r"the 3-backend contract for offering", re.IGNORECASE),
         re.compile(
-            r"escalate to `cc-workflows-ultracode`[^\n]*without elevated risk", re.IGNORECASE
+            r"escalate to `cc-workflows-ultracode`.*?without elevated risk",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"OFFER\s+a\s+backend.*?\(`inline`\s*/\s*`team-execution`\s*/\s*`cc-workflows-ultracode`\)",
+            re.IGNORECASE,
         ),
     ]
 
@@ -3245,9 +3283,10 @@ def test_narrow_backend_offer_policy_and_operator_choice_citations() -> None:
         # operator-choice.md itself documents the 3 enum backends in section 1
         if path.name == "operator-choice.md" or "CHANGELOG" in path.name:
             continue
-        text = path.read_text(encoding="utf-8")
+        raw_text = path.read_text(encoding="utf-8")
+        normalized_text = re.sub(r"\s+", " ", raw_text)
         for pat in forbidden_patterns:
-            match = pat.search(text)
+            match = pat.search(normalized_text)
             assert match is None, f"Found legacy 3-backend offer prose in {path}: {match.group(0)}"
         checked_files += 1
 

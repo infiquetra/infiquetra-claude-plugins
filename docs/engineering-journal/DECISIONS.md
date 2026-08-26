@@ -16,16 +16,15 @@ returns that enum, Plan and Work **do not pre-select** it. No silent substitute.
 
 **Why.** Phase A recorded the ruling and left the automatic three-backend offer as the
 residue. Instruction-text in `/plan` and `/work` (plus the operator-choice contract they
-cite) is the smallest truthful narrowed shape. The helper in `lifecycle_state.py` still
-enumerates three backends; changing that recommender is a follow-up, not required to
-stop silent selection.
+cite) was the initial narrowed shape in #808. Aligning the helper in `lifecycle_state.py`
+and sibling skills was scheduled as a follow-up (#840).
 
 **Rejected.** Re-presenting keep / narrow / replace / retire. Building a mechanism-neutral
 backend-switching abstraction. Changing `execution_spec.py` emit-time engine-unit
-validation (that is #708 / unit u-708). Rewriting `recommend_execution_backend()` in this
-unit (runtime surface; instruction-text is the gate).
+validation (that is #708 / unit u-708). Rewriting `recommend_execution_backend()` in the
+initial #808 unit before the follow-up.
 
-**Amendment 2026-08-26 (operator ruling C5, issue #840).** The "Revisit when" condition fired.
+**Amendment 2026-08-26 (operator ruling C5, issue #840).** The planned follow-up shipped.
 `recommend_execution_backend()` in `plugins/saga/scripts/lifecycle_state.py` is updated so it
 never returns `cc-workflows-ultracode` with status `recommended` under any trigger
 (`broad_independent_fanout`, `adversarial_confidence`, or any `WORKFLOW_SHAPES` entry). All surviving

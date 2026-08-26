@@ -6,6 +6,8 @@ import hashlib
 import importlib.util
 import json
 import sys
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import ModuleType
@@ -339,16 +341,41 @@ def test_atomic_claim_has_one_winner(tmp_path: Path) -> None:
     ledger = _ledger(tmp_path)
     identity = _subject(ledger)
     _open(ledger, identity)
+    barrier = threading.Barrier(2)
 
-    def compete(event_id: str) -> str:
+    def compete(event_id: str, pre_poll_delay: float = 0.0) -> str:
+        if pre_poll_delay > 0:
+            time.sleep(pre_poll_delay)
+        decision = LV.poll_subject(ledger, identity.subject_id, now=60)
+        candidate = decision["reping"]
+        assert isinstance(candidate, dict)
+        generation = decision["generation"]
+        barrier.wait(timeout=5.0)
         try:
-            _claim(ledger, identity, now=60, event_id=event_id)
+            _append(
+                ledger,
+                identity,
+                "reping-intent",
+                event_id,
+                {
+                    "generation_id": candidate["generation_id"],
+                    "cause": candidate["cause"],
+                    "anchor_ref": generation["anchor_ref"],
+                    "opened_monotonic": 60,
+                    "liveness_attempt": candidate["liveness_attempt"],
+                    "retry_ordinal": candidate["retry_ordinal"],
+                    "predecessor_failure_ref": candidate["predecessor_failure_ref"],
+                    "claim_key": candidate["claim_key"],
+                },
+            )
         except LV.LivenessEventError:
             return "lost"
         return "won"
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        results = list(pool.map(compete, ("claim-a", "claim-b")))
+        fut_a = pool.submit(compete, "claim-a", 0.0)
+        fut_b = pool.submit(compete, "claim-b", 0.02)
+        results = [fut_a.result(timeout=5.0), fut_b.result(timeout=5.0)]
     assert sorted(results) == ["lost", "won"]
     assert sum(record["event"] == "reping-intent" for record in RL.read_facts(ledger)) == 1
 

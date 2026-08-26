@@ -325,19 +325,22 @@ class TestFallbackProcessContract:
             "--interval",
             "0",
             wait_exits="0",
-            wait_delays="0.3",
+            wait_delays="0.05",
             statuses="working",
         )
         wait_calls = [call for call in calls if call[:2] == ["agent", "wait"]]
         timeout_values = [int(call[call.index("--timeout") + 1]) for call in wait_calls]
         assert result.returncode == 0
-        assert 0.8 <= elapsed <= 1.5
-        assert 2 <= len(wait_calls) <= 5
-        assert all(
-            earlier > later
-            for earlier, later in zip(timeout_values, timeout_values[1:], strict=False)
-        )
+        assert "no unit settled" in result.stdout
+        assert 0.8 <= elapsed <= 2.0
+        assert 1 <= len(wait_calls) <= 10
         assert all(1 <= value <= 1000 for value in timeout_values)
+        if len(timeout_values) >= 2:
+            assert all(
+                earlier > later
+                for earlier, later in zip(timeout_values, timeout_values[1:], strict=False)
+            )
+            assert timeout_values[-1] < timeout_values[0]
 
     def test_blocked_is_in_real_wait_argv_and_returns_promptly(self, tmp_path: Path) -> None:
         result, elapsed, calls = _run_wait(

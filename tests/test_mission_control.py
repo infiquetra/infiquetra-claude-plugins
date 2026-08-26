@@ -1,5 +1,6 @@
-"""Unit tests for sdlc_manager.py."""
-
+import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -13,6 +14,7 @@ sys.path.insert(
 )
 
 import sdlc_manager
+import sync_template_docs
 
 # ===========================
 # Helpers
@@ -660,3 +662,195 @@ def test_labels_deploy_validates_taxonomy_before_gh_mutation() -> None:
         sdlc_manager.labels_deploy("infiquetra-claude-plugins", fmt="text")
 
     mock_gh.assert_not_called()
+
+
+# ===========================
+# sync_template_docs relocated copy & package root resolution (#822)
+# ===========================
+
+
+class TestSyncTemplateDocsRelocatedCopy:
+    """Tests for sync_template_docs package-root resolution and relocated copies."""
+
+    @staticmethod
+    def _stage_mission_control_copy(destination_dir: Path) -> Path:
+        """Stage a clean copy of plugins/mission-control into destination_dir."""
+        pkg_root = Path(__file__).resolve().parent.parent / "plugins" / "mission-control"
+        shutil.copytree(
+            pkg_root,
+            destination_dir,
+            ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", "*.pyc"),
+        )
+        return destination_dir
+
+    def test_find_package_root_resolves_package_root(self) -> None:
+        """_find_package_root resolves the mission-control plugin root."""
+        root = sync_template_docs._find_package_root()
+        assert (root / ".claude-plugin" / "plugin.json").is_file()
+        assert (root / "config" / "generated" / "issue_contract_data.py").is_file()
+        assert (root / "skills" / "issues" / "references" / "templates-reference.md").is_file()
+        assert root == sync_template_docs.PACKAGE_ROOT
+
+    def test_find_package_root_fails_loudly_when_missing(self, tmp_path: Path) -> None:
+        """_find_package_root fails loudly naming the resolved path when missing plugin.json."""
+        dummy_file = tmp_path / "deep" / "nested" / "script.py"
+        dummy_file.parent.mkdir(parents=True)
+        dummy_file.touch()
+
+        with pytest.raises(
+            RuntimeError,
+            match=r"package root containing \.claude-plugin/plugin\.json not found from",
+        ) as exc_info:
+            sync_template_docs._find_package_root(dummy_file)
+
+        assert str(dummy_file.resolve()) in str(exc_info.value)
+
+    def test_relocated_copy_help_exits_zero(self, tmp_path: Path) -> None:
+        """--help exits 0 when plugins/mission-control is relocated to another depth."""
+        relocated_pkg = tmp_path / "deep" / "staging" / "dir" / "mission-control"
+        self._stage_mission_control_copy(relocated_pkg)
+
+        script_path = relocated_pkg / "scripts" / "sync_template_docs.py"
+        proc = subprocess.run(
+            [sys.executable, str(script_path), "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert proc.returncode == 0, f"Expected 0 exit code, got {proc.returncode}. Stderr: {proc.stderr}"
+        assert "usage: sync_template_docs.py" in proc.stdout
+        assert "--check" in proc.stdout
+
+    def test_relocated_copy_check_behaves_identically(self, tmp_path: Path) -> None:
+        """--check behaves identically from checkout and relocated copy."""
+        relocated_pkg = tmp_path / "another" / "depth" / "mission-control"
+        self._stage_mission_control_copy(relocated_pkg)
+
+        script_path = relocated_pkg / "scripts" / "sync_template_docs.py"
+        sdlc_dir = sync_template_docs.template_directory()
+        env = dict(os.environ)
+
+        if sdlc_dir.exists():
+            proc = subprocess.run(
+                [sys.executable, str(script_path), "--check"],
+                capture_output=True,
+                text=True,
+                env=env,
+                check=False,
+            )
+            assert proc.returncode == 0, f"Check failed: {proc.stderr}"
+            assert "Template docs are in sync:" in proc.stdout
+            assert (
+                str(relocated_pkg / "skills" / "issues" / "references" / "templates-reference.md")
+                in proc.stdout
+            )
+        else:
+            proc = subprocess.run(
+                [sys.executable, str(script_path), "--check"],
+                capture_output=True,
+                text=True,
+                env=env,
+                check=False,
+            )
+            assert proc.returncode == 2
+            assert "Canonical template directory not found:" in proc.stderr
+
+    def test_missing_required_contract_data_fails_loudly(self, tmp_path: Path) -> None:
+        """Missing required contract data fails loudly naming the resolved path."""
+        relocated_pkg = tmp_path / "corrupt" / "mission-control"
+        self._stage_mission_control_copy(relocated_pkg)
+
+        contract_data = relocated_pkg / "config" / "generated" / "issue_contract_data.py"
+        contract_data.unlink()
+
+        script_path = relocated_pkg / "scripts" / "sync_template_docs.py"
+        proc = subprocess.run(
+            [sys.executable, str(script_path), "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert proc.returncode != 0
+        assert "issue_contract_data.py" in proc.stderr
+        assert str(contract_data) in proc.stderr or "issue_contract_data.py" in proc.stderr
+
+    def test_mutation_proof_parents_depth_fails_relocated_copy(self, tmp_path: Path) -> None:
+        """Restoring the parents[3] fixed-depth assumption causes relocated copy to fail."""
+        relocated_pkg = tmp_path / "deep" / "nested" / "staging" / "mission-control"
+        self._stage_mission_control_copy(relocated_pkg)
+
+        script_path = relocated_pkg / "scripts" / "sync_template_docs.py"
+
+        # Baseline: unmutated relocated script exits 0
+        baseline_proc = subprocess.run(
+            [sys.executable, str(script_path), "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert baseline_proc.returncode == 0
+
+        # Mutation: restore fixed parents[3] repository-root pattern
+        content = script_path.read_text(encoding="utf-8")
+        mutated = content.replace(
+            "PACKAGE_ROOT = _find_package_root()",
+            "PACKAGE_ROOT = Path(__file__).resolve().parents[3] / 'plugins' / 'mission-control'",
+        )
+        assert mutated != content, "Mutation replacement target not found in script content"
+        script_path.write_text(mutated, encoding="utf-8")
+
+        # Mutated script must fail on relocated copy
+        mutated_proc = subprocess.run(
+            [sys.executable, str(script_path), "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert mutated_proc.returncode != 0
+        assert (
+            "FileNotFoundError" in mutated_proc.stderr
+            or "No such file or directory" in mutated_proc.stderr
+        )
+        assert "issue_contract_data.py" in mutated_proc.stderr
+
+    def test_pattern_parity_with_m2(self) -> None:
+        """Resolution pattern in sync_template_docs matches issue #829 tests."""
+        script_path = (
+            Path(__file__).resolve().parent.parent
+            / "plugins"
+            / "mission-control"
+            / "scripts"
+            / "sync_template_docs.py"
+        )
+        parity_test_path = (
+            Path(__file__).resolve().parent.parent
+            / "plugins"
+            / "mission-control"
+            / "tests"
+            / "test_issue_contract_parity.py"
+        )
+        prompt_test_path = (
+            Path(__file__).resolve().parent.parent
+            / "plugins"
+            / "mission-control"
+            / "tests"
+            / "test_prompt_alignment.py"
+        )
+
+        script_src = script_path.read_text(encoding="utf-8")
+        parity_src = parity_test_path.read_text(encoding="utf-8")
+        prompt_src = prompt_test_path.read_text(encoding="utf-8")
+
+        # All three must define _find_package_root with identical signature and pattern
+        for src in (script_src, parity_src, prompt_src):
+            assert "def _find_package_root(start: Path | None = None) -> Path:" in src
+            assert 'if (parent / ".claude-plugin" / "plugin.json").is_file():' in src
+            assert (
+                'raise RuntimeError(\n        f"package root containing .claude-plugin/plugin.json not found from {current.resolve()}"\n    )'
+                in src
+                or 'raise RuntimeError(f"package root containing .claude-plugin/plugin.json not found from {current.resolve()}")'
+                in src
+            )
+            assert "PACKAGE_ROOT = _find_package_root()" in src

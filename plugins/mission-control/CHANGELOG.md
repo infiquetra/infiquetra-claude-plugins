@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.12.5] - 2026-08-26
+
+### Fixed - dynamic package-root resolution in sync_template_docs.py (#822)
+
+- Replaced fixed `REPO_ROOT = Path(__file__).resolve().parents[3]` at `sync_template_docs.py:16` with dynamic `_find_package_root()` discovering `.claude-plugin/plugin.json`, adopting the identical package-root resolution pattern established in issue #829.
+- Updated derived paths (`REFERENCE_PATH` and `CONTRACT_DATA_PATH`) to resolve relative to `PACKAGE_ROOT`, enabling relocated and staged copies of `mission-control` to run entrypoints including `--help` and `--check` regardless of directory depth.
+- Maintained fail-loud behavior naming the resolved path when `.claude-plugin/plugin.json` or required data files are missing.
+- Added relocated-copy guard tests and mutation proof in `tests/test_mission_control.py` and `plugins/mission-control/tests/test_template_sync.py` verifying `--help`, `--check`, missing-file fail-loud behavior, and failure of the static `parents[3]` pattern.
+
 ## [2.12.4] - 2026-08-26
 
 ### Fixed - defer module-scope PyYAML import in sdlc_manager.py (#828)

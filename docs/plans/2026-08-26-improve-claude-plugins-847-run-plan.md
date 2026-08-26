@@ -38,9 +38,10 @@ unconditional `write_text` in `spill_unit` at `orchestrate.py:546`).
 - Preflight receipt: #847 comment of 2026-08-26 — P1–P14 all PASS; pinned driver at
   `/Users/jefcox/workspace/infiquetra/orch-driver-847-3ab04adb`; the `847-` task-name prefix is
   reserved and collision-free (P10); all six launch templates validated.
-- Pre-launch operator-decision audit: #847 comment of 2026-08-26 — per-unit apparent choices
-  classified; the two proof obligations it flags (G2's `narratives/` citations, O1's
-  install-behavior proof) are carried into units U2 and U5 below.
+- Pre-launch operator-decision audit: #847 comment of 2026-08-26 — apparent choices for the
+  then-eighteen-child set classified; the two proof obligations it flags (G2's `narratives/`
+  citations, O1's install-behavior proof) are carried into units U2 and U5 below. Issue #848 was
+  created after that audit; its body and the updated parent contract govern U6 directly.
 - Each child issue body is that unit's contract; its acceptance criteria and non-goals govern.
 
 ## Requirements
@@ -59,14 +60,15 @@ unconditional `write_text` in `spill_unit` at `orchestrate.py:546`).
   package-root resolution pattern and adopts that same pattern, citing where it was set.
 - **R5.** Every unit appends its own engineering-journal entry in its shipping pull request, at the
   documented position only, and rebases after G2 merges; G2 alone repairs existing citations.
-- **R6.** Every review is Saga Code Review at vendor `grok`, model `grok-4.6`, effort `xhigh`; at
-  most six concurrent review sessions; lenses are predeclared per unit below, never assigned
+- **R6.** Every review is Saga Code Review at vendor `grok`, model `grok-4.6`, effort `xhigh`,
+  transported by the pinned Orchestrate run's one typed controller and named reviewer seats; at
+  most six reviewer seats are live at once; lenses are predeclared per unit below, never assigned
   mechanically (D11).
 - **R7.** Workers branch, edit, test, commit, push, and open pull requests only; the coordinator is
   the sole merger and sole board writer, with a readback after every board write (D15, D16).
-- **R8.** Worker pools fill in strict priority — pool 1 to its cap of four, overflow to pool 2 (cap
-  four), pool 3 only when pools 1 and 2 cannot supply capacity; a running unit is never migrated
-  (D8).
+- **R8.** At most four implementation workers are active across the run. For each free worker seat,
+  pools fill in strict priority — pool 1 first, pool 2 only when pool 1 cannot supply that seat, and
+  pool 3 only when pools 1 and 2 cannot supply it; a running unit is never migrated (D5–D8).
 - **R9.** Every unit name carries the reserved `847-` prefix so task spills cannot collide with the
   122 pre-existing files under `.orchestrate/tasks/` (preflight P10).
 - **R10.** Each unit's own verification block passes at its frozen revision; `bash scripts/gate.sh`
@@ -78,24 +80,38 @@ unconditional `write_text` in `spill_unit` at `orchestrate.py:546`).
 - **KTD1 — Unit naming `847-<lane>-<issue>`:** matches the preflight-reserved `847-` prefix and
   makes a spilled task file's owner readable from its filename. Rejected: bare issue numbers, which
   P10 only cleared as a scheme, not per-name, and which lose the lane at a glance.
-- **KTD2 — Reviews are coordinator-launched Grok sessions, not expand-JSON units:** Orchestrate
-  3.0.0 admits exactly one `role: review-controller` per run, and its review-transport classifier is
-  itself defective until unit U7 (#837) lands mid-run. The preflight P8/P12 receipts validated the
-  direct per-unit review template (`agents --task 847-review-<issue> grok -m grok-4.6
-  --reasoning-effort xhigh`), so reviews dispatch through it into workspace `847-lane-review`, at
-  most six concurrent (D10). Rejected: one typed controller unit inside the run — it would gate the
-  whole run's loadability on the very defect U7 exists to fix.
-- **KTD3 — Expand JSON emits pool 1 values; overflow substitutes at dispatch:** every unit row
-  carries pool 1 (`agy` / `gemini-3.7-flash-high` / `high`). When pool 1 is at cap, the coordinator
-  launches the queued unit with pool 2's vendor and model (then pool 3's), **omitting the effort
-  field** — the wrapper rejects `--effort` on an interactive OpenCode launch by design, and the
-  preflight probes confirmed variant `xhigh` active in-session on both Muse routes. Rejected:
-  authoring alternate rows per pool, which would pre-assign pools and break strict priority.
+- **KTD2 — Code Review uses the pinned Orchestrate typed transport:** the binding launch
+  clarification forbids manual reviewer launch, settlement, or result custody outside the pinned
+  controller. Before the first review batch, the coordinator appends exactly one
+  `role: review-controller` row through `expand`/`go`: `grok` / `grok-4.6` / `xhigh`, workspace
+  `847-lane-review`, `merge: false`, and a task invoking `/saga:code-review`. For each batch of
+  frozen pull-request heads it appends one named `role: external-reviewer` seat per ready child,
+  with the same vendor, model, effort, and workspace, never more than six live seats. The controller
+  consumes only those run-record seats, applies each child's predeclared lens set and D12 policy,
+  and emits one canonical `review_result.v1` at a time for the pinned driver's `review-result`
+  command. The driver permits one controller and separately sanctions reviewer seats; every one of
+  the nineteen Work rows has a non-null `review-fixer` role, so issue #837's role-less
+  `\breview\b` classifier cannot reject them. Rejected: direct `agents` launches, pull-request
+  comments as result custody, a second controller, a plain review prompt, or any retired Saga
+  reviewer transport.
+- **KTD3 — Pool fields are materialized immediately before each expand:** the canonical rows below
+  show pool 1 (`agy` / `gemini-3.7-flash-high` / `high`). The coordinator expands only the rows it
+  is about to dispatch and first replaces `vendor`, `model`, and `effort` with the first available
+  route in the pool table below. For both OpenCode pools, `effort` is exactly `xhigh`: the pinned
+  driver does not forward that value as the wrapper's rejected interactive `--effort` flag; its
+  ingested Agent Launcher opens `/variants`, selects `unit.effort`, reads the effective variant
+  back, and refuses to submit the task unless `xhigh` is confirmed. Rejected: pre-assigning a
+  fallback pool before capacity is known, omitting the decided variant, editing a pending run row,
+  or migrating a running unit.
 - **KTD4 — Only launch-blocking edges live in `after`/`serialize`:** the JSON encodes the Lane O
   serialize chain, the Lane M serialize chain, and the one true content dependency M2 → M2a (an
   `after` edge). Merge-order rules (G1 first, G2 before journal entries, S1/S2 early, one merge at a
   time) are coordinator merge policy — lanes may start together per the contract, so encoding merge
-  order as launch edges would serialize work the contract deliberately lets run in parallel.
+  order as launch edges would serialize work the contract deliberately lets run in parallel. A
+  pinned-driver `serialize` edge becomes eligible when its predecessor worker is merely done, not
+  when that pull request is merged or its worktree is gone. The coordinator therefore does not
+  expand a Lane O or Lane M successor until the predecessor is reviewed, merged, green in CI, and
+  cleaned; this enforces #847's one-worktree lane rule without adding or changing an edge.
 - **KTD5 — Concurrent journal appends are accepted for `LEARNINGS.md`/`DECISIONS.md`:** the
   contract's collision table overrides the default never-share-a-file rule for exactly these two
   files: append-only at the documented position, rebase after G2, G2 owns existing-citation repair.
@@ -108,19 +124,95 @@ unconditional `write_text` in `spill_unit` at `orchestrate.py:546`).
 
 | Role | Vendor | Model | Effort / variant | Cap | Workspace |
 |---|---|---|---|---|---|
+| Planning | `claude` | Fable 5 | `xhigh` | 1 | `847-lane-plan` |
+| Plan / document review | `codex` | `gpt-5.6-sol` | `max` | 1 | `847-lane-plan` |
 | Work pool 1 | `agy` | `gemini-3.7-flash-high` | `high` | 4 | per-lane |
 | Work pool 2 | `opencode` | `opencode-go/muse-spark-1.2-contributor` | variant `xhigh`, in-session | 4 | per-lane |
 | Work pool 3 | `opencode` | `opencode/muse-spark-1.2-contributor-free` | variant `xhigh`, in-session | on demand | per-lane |
-| Code review | `grok` | `grok-4.6` | `xhigh` | 6 sessions | `847-lane-review` |
+| Code Review controller | `grok` | `grok-4.6` | `xhigh` | exactly 1 | `847-lane-review` |
+| Code Review seats | `grok` | `grok-4.6` | `xhigh` | at most 6 live | `847-lane-review` |
 
-Strict pool priority (fill 1, overflow 2, then 3); never migrate a running unit. Genuine
-parallelism is at most four concurrent units — one Lane O, one Lane M, plus Guards/Stability/Saga —
-so pool 1 alone usually suffices and an unexercised pool 2/3 is disclosed at closeout as configured
-capacity, not validated capability.
+Strict pool priority applies independently to each of the four global worker seats; fallback pool
+caps are replacement capacity, not permission to exceed four active workers. This is the most
+defensible reading of #847 because its collision section and D5 rationale both state a four-worker
+ceiling. Pool 1 alone should normally supply all four seats; an unexercised pool 2/3 is disclosed at
+closeout as configured capacity, not validated capability.
 
 Lane workspaces (already created at preflight P13): `847-lane-guards` (G1, G2),
 `847-lane-stability` (S1, S2), `847-lane-orchestrate` (O1–O5), `847-lane-mission-control` (M1–M7),
 `847-lane-saga` (A1), `847-lane-review` (all reviews).
+
+### Dispatch and expansion protocol
+
+The coordinator never expands the nineteen canonical rows as one pool-1 payload. It scans the rows
+in document order, selects only eligible units for the currently free worker seats, materializes
+their exact pool fields from this table, and passes that selected `{"units": [...]}` subset to the
+pinned driver's `expand`. The initial four seats go to G1, G2, S1, and S2 because #847 requires
+their merges before or immediately ahead of all remaining work; O1, M1, and A1 remain eligible and
+queue without acquiring a pool or worktree.
+
+| Pool | `vendor` | `model` | `effort` | Use |
+|---|---|---|---|---|
+| 1 | `agy` | `gemini-3.7-flash-high` | `high` | First available route for every free worker seat |
+| 2 | `opencode` | `opencode-go/muse-spark-1.2-contributor` | `xhigh` | Only when pool 1 cannot supply that seat |
+| 3 | `opencode` | `opencode/muse-spark-1.2-contributor-free` | `xhigh` | Only when pools 1 and 2 cannot supply that seat |
+
+The coordinator stops instead of substituting any other vendor, model, effort, account, workspace,
+or route. Before expanding a Lane O or Lane M successor, it also applies KTD4's reviewed, merged,
+CI-green, and cleaned predecessor gate. M2a additionally reads M2's merged package-root pattern and
+cites it before its own row is expanded.
+
+### Typed Code Review expansion and collection
+
+The coordinator appends the controller row below exactly once, in the first review expansion, and
+launches it only through the pinned driver's `expand`/`go`. The controller remains the single Code
+Review policy and result owner for all nineteen children. It never launches a reviewer itself.
+
+When pull requests are ready, the coordinator freezes each head, chooses at most six whose previous
+review seat is not live, and materializes one seat row per pull request from the template below.
+The unique name is `847-review-<issue>-c<cycle>`; a changed head increments `<cycle>` and creates a
+new seat rather than reusing stale evidence. The coordinator copies the unit's entire **Lenses**
+paragraph verbatim into `[predeclared lens text]`. It replaces only the bracketed runtime values,
+passes that exact batch as `{"units": [...]}` to `expand`, and calls `go`. A later batch is not
+expanded until the number of `pending` or `running` `external-reviewer` rows leaves enough of D10's
+six-seat limit. Terminal rows remain historical run records and do not count as live seats.
+
+```json
+{
+  "units": [
+    {"name": "847-review-controller", "vendor": "grok", "model": "grok-4.6",
+     "effort": "xhigh", "workspace": "847-lane-review", "role": "review-controller",
+     "merge": false, "paths": [], "after": [], "serialize": [],
+     "task": "/saga:code-review Act as the one Code Review controller for issue #847. Consume revision-bound evidence only from named role:external-reviewer seats in this Orchestrate run. For each frozen pull-request head, use exactly the lens set and one-line reasons carried by that seat; do not add a hidden lens. Preserve D12 consensus and acceptance unchanged. Emit one compact canonical review_result.v1 at a time, bound to the reviewed commit, for Orchestrate review-result collection. Do not launch sessions, edit files, commit, merge, write the project board, or create a parallel lifecycle."},
+    {"name": "847-review-[issue]-c[cycle]", "vendor": "grok", "model": "grok-4.6",
+     "effort": "xhigh", "workspace": "847-lane-review", "role": "external-reviewer",
+     "merge": false, "paths": [], "after": [], "serialize": [],
+     "task": "Review [PR URL] at exact commit [40-character head] for issue #[issue] and return revision-bound evidence to the run's 847-review-controller. Apply exactly this predeclared set, including each recorded reason: [predeclared lens text]. Do not invoke Code Review, score or decide acceptance, add a lens, edit files, commit, merge, write the project board, or launch another session."}
+  ]
+}
+```
+
+The template row is never submitted with brackets. The first review expansion contains the
+controller plus one to six fully materialized seats; later expansions contain only new seats. Across
+the nineteen children, batches continue until every frozen head has a typed disposition. A repair
+uses the same predeclared lens set on its new head.
+
+The controller returns each result's exact compact bytes. Without parsing or restating them, the
+coordinator writes those bytes to `.orchestrate/review-results/847-<issue>-<head>.json` and invokes
+the pinned controller:
+
+```bash
+python3 /Users/jefcox/workspace/infiquetra/orch-driver-847-3ab04adb/plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py \
+  review-result --file .orchestrate/review-results/847-<issue>-<head>.json
+```
+
+`review-result` persists the complete `review_result.v1` before it reads the routing envelope. Its
+only admitted outcomes are `accepted`, `repairs_requested`, `cycle_cap_best_available`, and
+`review_incomplete`; Orchestrate does not recalculate D12 policy. Result collection is serialized:
+if one result requests repairs, the coordinator pauses the rest of the batch while Orchestrate
+routes the fixes, lands them, and resubmits the new revision through the same controller. Before a
+merge, the result's reviewed commit must still equal the pull-request head. Reviewer seats do not
+consume one of the four implementation-worker seats.
 
 ```mermaid
 graph TD
@@ -159,16 +251,39 @@ when ready, then one at a time.
 ## Implementation Units
 
 Every unit: fetch and integrate current `origin/main` before starting, re-anchor file and line
-references, append its own journal entry (R5), run its verification block, then commit, push, and
-open a pull request linked to its issue. Workers never merge and never write the board (R7). Units
-in Lanes O, M, and A bump their plugin's release surfaces (`plugin.json`, `CHANGELOG.md`,
+references, append its own `LEARNINGS.md` entry (R5), run its verification block, then commit, push,
+and open a pull request linked to its issue. A1 also amends the existing `DECISIONS.md` entry named
+by its card; no other unit creates a new decision because this plan settles the implementation
+choices. Workers never merge and never write the board (R7).
+
+The thirteen behavior or guidance units — O1 through O5 (including O1a), M1, M2a, M4 through M7,
+and A1 — bump their plugin's release surfaces (`plugin.json`, `CHANGELOG.md`, and
 `.claude-plugin/marketplace.json`) in the same pull request, re-resolving the version against
-current `origin/main` at commit time; Guards and Stability units touch no plugin release surface.
+current `origin/main` at commit time. Guards, Stability, the M2 test-only path repair, and the M3
+test-only agreement guard touch no plugin release surface.
+
+Release-surface wording below is exact. Orchestrate means
+`plugins/orchestrate/.claude-plugin/plugin.json`, `plugins/orchestrate/CHANGELOG.md`, and
+`.claude-plugin/marketplace.json`; Mission Control means
+`plugins/mission-control/.claude-plugin/plugin.json`, `plugins/mission-control/CHANGELOG.md`, and
+the same marketplace file; Saga means `plugins/saga/.claude-plugin/plugin.json`,
+`plugins/saga/CHANGELOG.md`, and the same marketplace file. No unit may infer another metadata or
+documentation file from the phrase.
+
+The per-unit **Owned files** field names the card-owned files plus the exact release set above.
+Routine `LEARNINGS.md` appends remain the explicit shared-journal exception in #847 rather than an
+exclusive review-routing path; G2 and A1 list journal paths because their cards require repairs or
+an amendment there.
 
 Lens shorthand: the roster's four always-on lenses — `architecture-maintainability`, `correctness`,
 `security`, `testing` — auto-run on every review by contract (`plugins/saga/references/lens-roster.json`);
 each unit below predeclares them with a reason plus only the conditional lenses that earn a seat
 (D11, cap six).
+
+Every implementation task begins with `/saga:work`, so the pinned driver rewrites it to the selected
+vendor's installed Saga syntax and appends the unattended-choice contract. Because KTD2 gives the
+run one separate typed Code Review controller, every Work task also explicitly skips Saga Work
+Phase 5 self-review; only the Orchestrate-owned controller and reviewer seats can satisfy R6.
 
 ### U1. G1 — #842 release guard rejects non-advancing plugin versions
 
@@ -196,11 +311,12 @@ script that says no.
 documentation-only cases in `tests/test_release_surface_diff_guard.py`; comparisons read committed
 base and head content only.
 
-**Lenses (4):** correctness — version-comparison edge cases (malformed, incomparable, new plugin)
+**Lenses (5):** correctness — version-comparison edge cases (malformed, incomparable, new plugin)
 are the whole defect; testing — the card demands a five-class regression matrix; 
 architecture-maintainability — the extension must stay inside the existing one-script guard;
-security — always-on floor, no elevated surface here. Conditionals: none — a bounded guard
-extension.
+security — always-on floor, no elevated surface here; adversarial — this is a release gate, so the
+review must try bypasses such as documentation-only classification, incomparable versions, and
+working-tree drift.
 
 **Verification:**
 
@@ -233,9 +349,10 @@ honest citations.
 
 **Rejected alternative:** a general Markdown site crawler or external-URL validation.
 
-**Owned files:** `scripts/lint_journal_order.py`, `tests/test_lint_journal_order.py`, affected files
-under `docs/engineering-journal/`. **Shared surfaces:** journals — G2 alone repairs existing
-citations; merges before any other unit's journal entry (R3).
+**Owned files:** `scripts/lint_journal_order.py`, `tests/test_lint_journal_order.py`, and the covered
+journals `docs/engineering-journal/LEARNINGS.md`, `DECISIONS.md`, `ARCHIVE.md`, and `QUEUED.md`.
+**Shared surfaces:** journals — G2 alone repairs existing citations; merges before any other unit's
+journal entry (R3).
 
 **Tests:** accept valid cross-file fragment; reject absent destination anchor naming source line and
 destination; reject destination outside the covered set with an actionable message; preserve all
@@ -301,16 +418,18 @@ git diff --check
 
 ### U4. S2 — #839 layout-independent help assertions
 
-**Smallest viable fix:** one bounded inventory of tests asserting raw substrings against
-`argparse`-rendered (formatter-controlled) help output, then make only the vulnerable assertions
-layout-independent — normalize wrapped whitespace or assert on option names and required
-relationships — preserving each assertion's semantic check. Exercise changed assertions across the
-card's `COLUMNS` matrix (40–200).
+**Smallest viable fix:** preserve the two layout-independent repairs already on `main`, add the
+card's `COLUMNS` matrix (40–200) around those focused assertions, and run one bounded inventory of
+the remaining direct `--help` tests. The plan-grounding inventory at `3ab04ad` found no additional
+layout-sensitive multiword raw-substring assertion: the other help tests either assert exit status,
+normalize whitespace, or check single option/action tokens. If current `origin/main` differs at
+dispatch, repeat the inventory before editing and stop under the file-ownership rule if a new
+candidate is outside the two declared files.
 
 **Mechanism reused:** the repair pattern already on `main` from the two fixed instances
 (`tests/test_outcome_dispatcher.py`, `tests/test_orchestrate_hygiene.py`).
 
-**New moving part:** none — a sweep applying a proven pattern. **Boundary carried from the
+**New moving part:** only the width-matrix parametrization in the two existing modules. **Boundary carried from the
 contract:** S2 may not modify the thirteen test modules reserved to other retained units; a flagged
 reserved module is recorded in S2's pull request for the owning unit to repair; an unowned one S2
 repairs itself. **C3 authority:** a production defect the inventory directly discovers is filed,
@@ -320,12 +439,13 @@ the run — bounded to direct inventory discoveries.
 **Rejected alternative:** terminal-emulation or snapshot-test dependency; normalizing every string
 assertion in the suite.
 
-**Owned files:** vulnerable help-output tests under `tests/` per the inventory (proven instances:
-`tests/test_outcome_dispatcher.py`, `tests/test_orchestrate_hygiene.py`); no production files.
+**Owned files:** `tests/test_outcome_dispatcher.py` and `tests/test_orchestrate_hygiene.py`; no
+production files. A new candidate at a later `origin/main` is a stop-and-replan condition, not
+implicit authority to widen this row.
 **Shared surfaces:** journals (own entry only); the reserved-module boundary above.
 
-**Tests:** width-matrix runs at 40, 60, 70, 75, 80, 90, 100, 105, 107, 110, 120, 200 columns;
-mutation-prove that removing a required option name or relationship still fails.
+**Tests:** the two focused modules run at 40, 60, 70, 75, 80, 90, 100, 105, 107, 110, 120, and 200
+columns; mutation-prove that removing a required option name or relationship still fails.
 
 **Lenses (4):** correctness — normalization must not accept help text the old assertion rightly
 rejected; testing — mutation-proofing the surviving semantic checks is the card's core demand;
@@ -470,10 +590,11 @@ Lane O serialization (after O1a); journals (own entry).
 role-less `/doc-review` unit + controller loads; `review this PR for bugs` still rejected before
 session launch; completed non-Code-Review units stay loadable after the controller is appended.
 
-**Lenses (4):** correctness — the classification boundary between explicit capability and untyped
+**Lenses (5):** correctness — the classification boundary between explicit capability and untyped
 prose is the entire defect; testing — both false positives and the preserved rejection need
 regression cases; architecture-maintainability — always-on floor (the fix must not grow a role
-framework); security — always-on floor. Conditionals: none — one classifier repair.
+framework); security — always-on floor; adversarial — review transport is a load-bearing agent
+orchestration gate, so near-miss prompts and completed-unit reloads must be attacked explicitly.
 
 **Verification:**
 
@@ -514,11 +635,12 @@ Lane O serialization (after O2); journals (own entry).
 byte-for-byte unchanged; other-owner file preserved and refused; same-owner rewrite idempotent;
 existing safety and legacy-record tests stay green.
 
-**Lenses (5):** correctness — ownership matching and refusal semantics decide whether real briefs
+**Lenses (6):** correctness — ownership matching and refusal semantics decide whether real briefs
 survive; testing — byte-preservation and idempotence proofs are on the card; reliability — the
 defect class is silent data loss of operator-authored files; security — path containment and
 symlink protections must not be weakened by the new write path; architecture-maintainability —
-always-on floor.
+always-on floor; api-contract — the ownership marker changes a persisted task-file format whose
+generated and hand-authored consumers must remain compatible.
 
 **Verification:**
 
@@ -559,11 +681,12 @@ unclear), Orchestrate release surfaces. **Shared surfaces:** Lane O serializatio
 request; resume idempotent and adopts an existing match; missing/changed remote head fails loudly
 without mutation; failed push excluded; run identifier, unit evidence, frozen revision unchanged.
 
-**Lenses (5):** correctness — state-entry conditions and adopt-vs-open logic are the defect surface;
+**Lenses (6):** correctness — state-entry conditions and adopt-vs-open logic are the defect surface;
 testing — idempotence and loud-failure cases are on the card; reliability — this is a recovery path
 at an unattended failure boundary, and a wrong resume corrupts a live run; 
 architecture-maintainability — the state must fit the existing run-record machine, not a parallel
-one; security — always-on floor.
+one; security — always-on floor; adversarial — the change adds a lifecycle state and resume path,
+so changed remote heads, duplicate pull requests, and partial mutations need hostile sequencing.
 
 **Verification:**
 
@@ -724,8 +847,8 @@ other staging depth today (recorded in the downstream compatibility matrix, Curs
 **Rejected alternative:** a path-resolution helper package or shared configuration module.
 
 **Owned files:** `plugins/mission-control/scripts/sync_template_docs.py`,
-`tests/test_mission_control.py` or a focused relocated-copy guard, Mission Control release
-surfaces. **Shared surfaces:** Lane M serialization; content dependency on M2 (start-order edge);
+`tests/test_mission_control.py`, and Mission Control release surfaces. **Shared surfaces:** Lane M
+serialization; content dependency on M2 (start-order edge);
 Mission Control release surfaces + `marketplace.json`; journals (own entry).
 
 **Tests:** relocated `--help`/`--check` behavior; loud failure naming the resolved path on a
@@ -770,10 +893,10 @@ passes one gate and bounces off the other.
 **Rejected alternative:** vendoring a second copy of the validator (recreates the duplication);
 coupling this repository's CI to the home-lab checkout; extracting a shared validator in this card.
 
-**Owned files:** `plugins/mission-control/tests/test_card_validator_agreement.py` (new),
-`plugins/mission-control/skills/flow/SKILL.md` only if the mirror note must name the new test,
-Mission Control release surfaces. **Shared surfaces:** Lane M serialization (after M2a); Mission
-Control release surfaces + `marketplace.json`; journals (own entry).
+**Owned files:** `plugins/mission-control/tests/test_card_validator_agreement.py` (new).
+**Shared surfaces:** Lane M serialization (after M2a); journals (own entry). **Scope choice:** do not
+edit the optional `flow/SKILL.md` mirror note; the required module docstring and skip reason carry
+the local-only limitation, so this remains a test-only pull request with no release-surface bump.
 
 **Tests:** corpus agreement per case naming case and both verdicts on disagreement; loud skip with
 expected path; mutation-prove a one-side verdict change fails; existing
@@ -815,20 +938,22 @@ any update (the plugin ships at 2.12.3; every documented invocation is file-not-
 
 **Rejected alternative:** a documentation generator or a runtime path-resolution helper.
 
-**Owned files:** `plugins/mission-control/README.md`, `commands/board.md`, `commands/issue.md`,
-`commands/metrics.md`, `commands/triage.md`, `tests/test_mission_control.py` or a focused guard,
-Mission Control release surfaces. **Shared surfaces:** `README.md` shared with M6,
-`commands/issue.md` shared with M5 — same lane, already serialized; release surfaces +
-`marketplace.json`; journals (own entry).
+**Owned files:** `plugins/mission-control/README.md`,
+`plugins/mission-control/commands/board.md`, `plugins/mission-control/commands/issue.md`,
+`plugins/mission-control/commands/metrics.md`, `plugins/mission-control/commands/triage.md`,
+`tests/test_mission_control.py`, and Mission Control release surfaces. **Shared surfaces:**
+`README.md` shared with M6, `commands/issue.md` shared with M5 — same lane, already serialized;
+release surfaces + `marketplace.json`; journals (own entry).
 
 **Tests:** guard fails on any version-pinned path; replacement form present at all six sites;
 mutation-prove a restored pin fails; `agents/sdlc-operator.md` unaffected.
 
-**Lenses (4):** correctness — the replacement path must actually resolve under the plugin runtime;
+**Lenses (5):** correctness — the replacement path must actually resolve under the plugin runtime;
 testing — the drift guard is the durable half of the fix; documentation-clarity — six
-copy-pasteable invocations are the product surface being repaired; security — always-on floor
-(architecture-maintainability also auto-runs; no distinct concern beyond the floor). Conditionals
-beyond documentation-clarity: none — six path lines and one guard.
+copy-pasteable invocations are the product surface being repaired; security — always-on floor;
+architecture-maintainability — the repair must reuse the established plugin-root convention rather
+than introduce a resolver. Conditionals beyond documentation-clarity: none — six path lines and one
+guard.
 
 **Verification:**
 
@@ -865,10 +990,11 @@ or deprecation registry.
 **Tests:** neither repaired sentence carries an alias clause; four-command roster assertion;
 changelog heading grammar stays green.
 
-**Lenses (4):** correctness — the deletion must not disturb adjacent changelog structure; testing —
+**Lenses (5):** correctness — the deletion must not disturb adjacent changelog structure; testing —
 the guard assertions; documentation-clarity — two sentences whose only defect is meaning;
-security — always-on floor (architecture-maintainability auto-runs; no distinct concern).
-Conditionals beyond documentation-clarity: none — two sentences.
+security — always-on floor; architecture-maintainability — history remains the single authority,
+with no alias registry or compatibility mechanism added. Conditionals beyond documentation-clarity:
+none — two sentences.
 
 **Verification:**
 
@@ -895,17 +1021,18 @@ map and it silently omitted a skill the same file documents at line 214.
 
 **Rejected alternative:** a README generator or templating system.
 
-**Owned files:** `plugins/mission-control/README.md`, `tests/test_mission_control.py` or a focused
-guard, Mission Control release surfaces. **Shared surfaces:** `README.md` shared with M4 — same
-lane, already serialized; release surfaces + `marketplace.json`; journals (own entry).
+**Owned files:** `plugins/mission-control/README.md`, `tests/test_mission_control.py`, and Mission
+Control release surfaces. **Shared surfaces:** `README.md` shared with M4 — same lane, already
+serialized; release surfaces + `marketplace.json`; journals (own entry).
 
 **Tests:** every shipped skill has a row; every row has a shipped skill; removing the `flow` row
 fails naming `flow`.
 
-**Lenses (4):** correctness — the bijection guard's set logic; testing — mutation proof on the
+**Lenses (5):** correctness — the bijection guard's set logic; testing — mutation proof on the
 guard; documentation-clarity — the row's activation text must match the skill definition;
-security — always-on floor. Conditionals beyond documentation-clarity: none — one row and one
-guard.
+security — always-on floor; architecture-maintainability — the skills directory stays the only
+source of truth and no README generator is introduced. Conditionals beyond documentation-clarity:
+none — one row and one guard.
 
 **Verification:**
 
@@ -937,7 +1064,7 @@ building a replacement rollout-state capability (C2 forbids under this issue).
 
 **Owned files:** `plugins/mission-control/scripts/sdlc_manager.py`,
 `plugins/mission-control/README.md`, `plugins/mission-control/skills/rollout/SKILL.md`,
-`tests/test_mission_control.py` or a focused guard, Mission Control release surfaces. **Shared
+`tests/test_mission_control.py`, and Mission Control release surfaces. **Shared
 surfaces:** `sdlc_manager.py` shared with M1, `README.md` shared with M4/M6 — same lane, already
 serialized (M7 last); release surfaces + `marketplace.json`; journals (own entry).
 
@@ -946,10 +1073,11 @@ argparse as invalid choice; five survivors work; no document names `beads-config
 target; three `legacy_rollout_config` readers behaviorally unchanged; reintroduction mutation
 fails.
 
-**Lenses (4):** correctness — the removal must sever parser, function, dispatch, and docs without
+**Lenses (5):** correctness — the removal must sever parser, function, dispatch, and docs without
 touching the three live readers of `legacy_rollout_config`; testing — the survivor and
 graceful-degradation assertions; architecture-maintainability — always-on floor; security —
-always-on floor. Conditionals: none — a bounded removal.
+always-on floor; agent-usability — the change removes an agent-operated command and must leave the
+five surviving subcommands discoverable without advertising the dead path.
 
 **Verification:**
 
@@ -995,9 +1123,10 @@ places it here).
 `plugins/saga/scripts/lifecycle_state.py`, `tests/test_saga_plugin.py`,
 `tests/test_saga_execution_spec.py`, `docs/engineering-journal/DECISIONS.md` (amendment), Saga
 release surfaces. **Shared surfaces:** `marketplace.json` (repo-wide rule); `DECISIONS.md`
-(append/amend at documented position, rebase after G2); journals (own entry). Note the card's
-verification runs `tests/test_saga_workflow_emitter.py`; treat the union of the card's files list
-and verification block as in-scope test modules.
+(append/amend at documented position, rebase after G2); journals (own entry).
+
+`tests/test_saga_workflow_emitter.py` is verification-only. Running it does not authorize editing a
+file absent from issue #840's file list.
 
 **Tests:** citation inventory of `operator-choice.md` fails on surviving three-backend offer prose;
 explicit invocation documented and reachable; defaults never present or preselect ultracode;
@@ -1024,12 +1153,17 @@ git diff --check
 
 ## Expand JSON
 
-Directly consumable by the pinned driver's `expand` (decision D17: the driver at
-`/Users/jefcox/workspace/infiquetra/orch-driver-847-3ab04adb`, never re-resolved mid-run). Every
-row is emitted at pool 1 values per KTD3; the coordinator substitutes pool 2/3 vendor+model
-(omitting `effort`; variant `xhigh` applied in-session) only at dispatch-time overflow. Reviews are
-not rows here (KTD2). Merge-order rules R3/R4 are coordinator policy on top of these launch edges
-(KTD4).
+These are the canonical nineteen implementation rows for the pinned driver's `expand` (decision
+D17: the driver at
+`/Users/jefcox/workspace/infiquetra/orch-driver-847-3ab04adb`, never re-resolved mid-run). The block
+is valid JSON and every row carries the required `name`, `vendor`, `model`, `effort`, `workspace`,
+`role`, `paths`, `after`, `serialize`, and exact `task`; its pool fields show pool 1. Per KTD3, the
+coordinator selects only the rows about to dispatch, materializes their three pool fields, and sends
+that exact `{"units": [...]}` subset to `expand` — never the full block as a one-shot pool-1
+assignment and never a pending-row edit. The KTD2 controller and materialized reviewer-seat rows are
+separate review expansions in this same run; they do not change any implementation row, lane, edge,
+path, pool, or role. Merge-order rules R3/R4 and the merged-predecessor gate are coordinator policy
+on top of the unchanged launch edges (KTD4).
 
 ```json
 {
@@ -1038,97 +1172,97 @@ not rows here (KTD2). Merge-order rules R3/R4 are coordinator policy on top of t
      "workspace": "847-lane-guards", "role": "review-fixer",
      "paths": ["tools/release_surface_diff_guard.py", "tests/test_release_surface_diff_guard.py"],
      "after": [], "serialize": [],
-     "task": "847-g1-842: fix #842 — extend tools/release_surface_diff_guard.py so a changed plugin's manifest version must be strictly greater than its merge-base version; equal, lower, malformed, and incomparable fail naming the plugin and both values. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U1 plus issue #842; the card's non-goals govern; smallest compatible fix, committed base/head content only, no new dependency. Append this unit's engineering-journal entry at the documented position in the same PR. Run U1's verification block until green. Commit (type(scope): description), push your branch, open a PR linked to #842. Never merge; never write the project board."},
+     "task": "/saga:work 847-g1-842: fix #842 — extend tools/release_surface_diff_guard.py so a changed plugin's manifest version must be strictly greater than its merge-base version; equal, lower, malformed, and incomparable fail naming the plugin and both values. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U1 plus issue #842; the card's non-goals govern; smallest compatible fix, committed base/head content only, no new dependency. Append this unit's engineering-journal entry at the documented position in the same PR. Run U1's verification block until green. Commit (type(scope): description), push your branch, open a PR linked to #842. This run uses the Orchestrate-owned typed Grok Code Review controller and reviewer seats; skip Saga Work Phase 5 self-review, do not call Code Review, and do not ask for an override. Never merge; never write the project board."},
     {"name": "847-g2-838", "vendor": "agy", "model": "gemini-3.7-flash-high", "effort": "high",
      "workspace": "847-lane-guards", "role": "review-fixer",
-     "paths": ["scripts/lint_journal_order.py", "tests/test_lint_journal_order.py", "docs/engineering-journal"],
+     "paths": ["scripts/lint_journal_order.py", "tests/test_lint_journal_order.py", "docs/engineering-journal/LEARNINGS.md", "docs/engineering-journal/DECISIONS.md", "docs/engineering-journal/ARCHIVE.md", "docs/engineering-journal/QUEUED.md"],
      "after": [], "serialize": [],
-     "task": "847-g2-838: fix #838 — extend scripts/lint_journal_order.py to validate cross-file Markdown fragment citations among the covered journal set, then repair the eighteen broken citations recorded in PR #832 (or the surviving set, disposition documented). The four legitimate ../DECISIONS.md# and ../LEARNINGS.md# citations under docs/engineering-journal/narratives/ must not red: leave narratives/ out of source scope or resolve ../ correctly. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U2 plus issue #838; non-goals govern; no site crawler, no new CI workflow. Append this unit's engineering-journal entry. Run U2's verification block until green. Commit, push, open a PR linked to #838. Never merge; never write the project board."},
+     "task": "/saga:work 847-g2-838: fix #838 — extend scripts/lint_journal_order.py to validate cross-file Markdown fragment citations among the covered journal set, then repair the eighteen broken citations recorded in PR #832 (or the surviving set, disposition documented). The four legitimate ../DECISIONS.md# and ../LEARNINGS.md# citations under docs/engineering-journal/narratives/ must not red: leave narratives/ out of source scope or resolve ../ correctly. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U2 plus issue #838; non-goals govern; no site crawler, no new CI workflow. Append this unit's engineering-journal entry. Run U2's verification block until green. Commit, push, open a PR linked to #838. This run uses the Orchestrate-owned typed Grok Code Review controller and reviewer seats; skip Saga Work Phase 5 self-review, do not call Code Review, and do not ask for an override. Never merge; never write the project board."},
     {"name": "847-s1-846", "vendor": "agy", "model": "gemini-3.7-flash-high", "effort": "high",
      "workspace": "847-lane-stability", "role": "review-fixer",
      "paths": ["tests/test_orchestrate_wait_debounce.py", "tests/test_liveness_events.py"],
      "after": [], "serialize": [],
-     "task": "847-s1-846: fix #846 — make the two load-sensitive Orchestrate concurrency tests deterministic: barrier both claim threads in tests/test_liveness_events.py::test_atomic_claim_has_one_winner after candidate observation and before either claims; rework tests/test_orchestrate_wait_debounce.py::TestFallbackProcessContract::test_restarts_share_one_monotonic_deadline to assert elapsed-deadline behavior and upper bounds, not a minimum scheduler call count. Add deliberate scheduling skew that fails the old shapes. No production changes unless a deterministic test proves a real defect; no mocks replacing real concurrency. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U3 plus issue #846. Append this unit's engineering-journal entry. Run U3's verification block (twenty consecutive green focused runs) until green. Commit, push, open a PR linked to #846. Never merge; never write the project board."},
+     "task": "/saga:work 847-s1-846: fix #846 — make the two load-sensitive Orchestrate concurrency tests deterministic: barrier both claim threads in tests/test_liveness_events.py::test_atomic_claim_has_one_winner after candidate observation and before either claims; rework tests/test_orchestrate_wait_debounce.py::TestFallbackProcessContract::test_restarts_share_one_monotonic_deadline to assert elapsed-deadline behavior and upper bounds, not a minimum scheduler call count. Add deliberate scheduling skew that fails the old shapes. No production changes unless a deterministic test proves a real defect; no mocks replacing real concurrency. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U3 plus issue #846. Append this unit's engineering-journal entry. Run U3's verification block (twenty consecutive green focused runs) until green. Commit, push, open a PR linked to #846. This run uses the Orchestrate-owned typed Grok Code Review controller and reviewer seats; skip Saga Work Phase 5 self-review, do not call Code Review, and do not ask for an override. Never merge; never write the project board."},
     {"name": "847-s2-839", "vendor": "agy", "model": "gemini-3.7-flash-high", "effort": "high",
      "workspace": "847-lane-stability", "role": "review-fixer",
      "paths": ["tests/test_outcome_dispatcher.py", "tests/test_orchestrate_hygiene.py"],
      "after": [], "serialize": [],
-     "task": "847-s2-839: fix #839 — run one bounded inventory of tests asserting raw substrings against argparse-rendered help output, and make only the vulnerable assertions layout-independent while preserving option names, required relationships, and wording; exercise changed assertions across the COLUMNS matrix 40,60,70,75,80,90,100,105,107,110,120,200. You may NOT modify these reserved modules — record findings in your PR for the owning unit instead: test_orchestrate_review_transport, test_orchestrate_settlement, test_orchestrate_land_clean, test_orchestrate_task_spill, test_orchestrate_task_file_safety, test_agent_launcher_plugin, test_release_surface_diff_guard, test_lint_journal_order, test_orchestrate_wait_debounce, test_liveness_events, test_mission_control, test_orchestrate_model_authority, test_orchestrate_account (all under tests/). A production defect the inventory directly discovers is reported in your PR for the coordinator to file under the C3 authority — do not file it yourself. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U4 plus issue #839. Append this unit's engineering-journal entry. Run U4's verification block until green. Commit, push, open a PR linked to #839. Never merge; never write the project board."},
+     "task": "/saga:work 847-s2-839: fix #839 — preserve the two layout-independent repairs already in tests/test_outcome_dispatcher.py and tests/test_orchestrate_hygiene.py, add the COLUMNS matrix 40,60,70,75,80,90,100,105,107,110,120,200 around their focused help assertions, and repeat the bounded direct-help-test inventory. The plan-grounding inventory at 3ab04ad found no additional vulnerable multiword raw-substring assertion. If current origin/main differs and a new candidate lies outside these two declared files, stop and report the exact path under #847's file-ownership rule; do not edit it. You may NOT modify these reserved modules — record findings in your PR for the owning unit instead: test_orchestrate_review_transport, test_orchestrate_settlement, test_orchestrate_land_clean, test_orchestrate_task_spill, test_orchestrate_task_file_safety, test_agent_launcher_plugin, test_release_surface_diff_guard, test_lint_journal_order, test_orchestrate_wait_debounce, test_liveness_events, test_mission_control, test_orchestrate_model_authority, test_orchestrate_account (all under tests/). A production defect the inventory directly discovers is reported in your PR for the coordinator to file under the C3 authority — do not file it yourself. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U4 plus issue #839. Append this unit's engineering-journal entry. Run U4's verification block until green. Commit, push, open a PR linked to #839. This run uses the Orchestrate-owned typed Grok Code Review controller and reviewer seats; skip Saga Work Phase 5 self-review, do not call Code Review, and do not ask for an override. Never merge; never write the project board."},
     {"name": "847-o1-841", "vendor": "agy", "model": "gemini-3.7-flash-high", "effort": "high",
      "workspace": "847-lane-orchestrate", "role": "review-fixer",
-     "paths": ["plugins/orchestrate", ".claude-plugin/marketplace.json", "tests/test_agent_launcher_plugin.py"],
+     "paths": ["plugins/orchestrate/.claude-plugin/plugin.json", "plugins/orchestrate/CHANGELOG.md", ".claude-plugin/marketplace.json", "plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py", "plugins/orchestrate/skills/orchestrate/SKILL.md", "tests/test_agent_launcher_plugin.py"],
      "after": [], "serialize": [],
-     "task": "847-o1-841: fix #841 — make installed Orchestrate launch-ready or fail fast: keep the agent-launcher >=1.0.0 declaration, make roster/expand/go fail before any session or worktree is created when the companion is unresolvable, naming it and the exact supported remediation (claude plugin install agent-launcher@infiquetra-plugins), no machine-specific paths. Add the regression test that simulates the installed layout with no discoverable launcher (the roster smoke passes from a source checkout with the defect present and proves nothing — the test carries the proof). Do not assume manifest dependencies auto-install unless a test proves it. Bump Orchestrate release surfaces (plugin.json, CHANGELOG, marketplace.json), re-resolving the version against current origin/main at commit time. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U5 plus issue #841. Append this unit's engineering-journal entry. Run U5's verification block until green. Commit, push, open a PR linked to #841. Never merge; never write the project board."},
+     "task": "/saga:work 847-o1-841: fix #841 — make installed Orchestrate launch-ready or fail fast: keep the agent-launcher >=1.0.0 declaration, make roster/expand/go fail before any session or worktree is created when the companion is unresolvable, naming it and the exact supported remediation (claude plugin install agent-launcher@infiquetra-plugins), no machine-specific paths. Add the regression test that simulates the installed layout with no discoverable launcher (the roster smoke passes from a source checkout with the defect present and proves nothing — the test carries the proof). Do not assume manifest dependencies auto-install unless a test proves it. Bump Orchestrate release surfaces (plugin.json, CHANGELOG, marketplace.json), re-resolving the version against current origin/main at commit time. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U5 plus issue #841. Append this unit's engineering-journal entry. Run U5's verification block until green. Commit, push, open a PR linked to #841. This run uses the Orchestrate-owned typed Grok Code Review controller and reviewer seats; skip Saga Work Phase 5 self-review, do not call Code Review, and do not ask for an override. Never merge; never write the project board."},
     {"name": "847-o1a-848", "vendor": "agy", "model": "gemini-3.7-flash-high", "effort": "high",
      "workspace": "847-lane-orchestrate", "role": "review-fixer",
-     "paths": ["plugins/orchestrate", ".claude-plugin/marketplace.json", "tests/test_orchestrate_model_authority.py", "tests/test_orchestrate_account.py"],
+     "paths": ["plugins/orchestrate/.claude-plugin/plugin.json", "plugins/orchestrate/CHANGELOG.md", ".claude-plugin/marketplace.json", "plugins/orchestrate/skills/orchestrate/SKILL.md", "plugins/orchestrate/commands/orchestrate.md", "plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py", "tests/test_orchestrate_model_authority.py", "tests/test_orchestrate_account.py"],
      "after": [], "serialize": ["847-o1-841"],
-     "task": "847-o1a-848: fix #848 — establish the model-authority boundary: external availability, exact model names, and effort/variant controls come only from the installed agents wrapper and vendor-native live catalogs; dry run proves argument resolution, bounded real launch proves client acceptance, Herdr proves only workspace/pane/cwd/readiness; Fleet Commons keeps internal Team Execution tiers but never gates external routes; ~/.config/orchestrate/models.json is ordering only, never an allowlist; opencode-go is a provider, not an agent kind; receipts separate requested-only from Herdr-confirmed facts; catalog drift fails precisely with no substitution. State it in SKILL.md and commands/orchestrate.md; add tests/test_orchestrate_model_authority.py and extend tests/test_orchestrate_account.py; touch orchestrate.py only if runtime enforcement is proven needed. Do not edit Agent Operations. Bump Orchestrate release surfaces, re-resolving the version at commit time. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U6 plus issue #848. Append this unit's engineering-journal entry. Run U6's verification block until green. Commit, push, open a PR linked to #848. Never merge; never write the project board."},
+     "task": "/saga:work 847-o1a-848: fix #848 — establish the model-authority boundary: external availability, exact model names, and effort/variant controls come only from the installed agents wrapper and vendor-native live catalogs; dry run proves argument resolution, bounded real launch proves client acceptance, Herdr proves only workspace/pane/cwd/readiness; Fleet Commons keeps internal Team Execution tiers but never gates external routes; ~/.config/orchestrate/models.json is ordering only, never an allowlist; opencode-go is a provider, not an agent kind; receipts separate requested-only from Herdr-confirmed facts; catalog drift fails precisely with no substitution. State it in SKILL.md and commands/orchestrate.md; add tests/test_orchestrate_model_authority.py and extend tests/test_orchestrate_account.py; touch orchestrate.py only if runtime enforcement is proven needed. Do not edit Agent Operations. Bump Orchestrate release surfaces, re-resolving the version at commit time. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U6 plus issue #848. Append this unit's engineering-journal entry. Run U6's verification block until green. Commit, push, open a PR linked to #848. This run uses the Orchestrate-owned typed Grok Code Review controller and reviewer seats; skip Saga Work Phase 5 self-review, do not call Code Review, and do not ask for an override. Never merge; never write the project board."},
     {"name": "847-o2-837", "vendor": "agy", "model": "gemini-3.7-flash-high", "effort": "high",
      "workspace": "847-lane-orchestrate", "role": "review-fixer",
-     "paths": ["plugins/orchestrate", ".claude-plugin/marketplace.json", "tests/test_orchestrate_review_transport.py"],
+     "paths": ["plugins/orchestrate/.claude-plugin/plugin.json", "plugins/orchestrate/CHANGELOG.md", ".claude-plugin/marketplace.json", "plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py", "tests/test_orchestrate_review_transport.py"],
      "after": [], "serialize": ["847-o1a-848"],
-     "task": "847-o2-837: fix #837 — stop is_standalone_review_prompt() classifying explicit non-Code-Review Saga capability units (leading /saga:plan, /doc-review, or equivalent explicit form) as standalone Code Review prompts from the bare word review, while keeping genuine untyped prompts rejected before any session launches; preserve the one-controller, typed reviewer-seat, and typed repair-routing contracts. Regression cases: the two orch-2026-08-25-voice false positives load with one typed controller appended; 'review this PR for bugs' stays rejected. Bump Orchestrate release surfaces, re-resolving the version at commit time. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U7 plus issue #837. Append this unit's engineering-journal entry. Run U7's verification block until green. Commit, push, open a PR linked to #837. Never merge; never write the project board."},
+     "task": "/saga:work 847-o2-837: fix #837 — stop is_standalone_review_prompt() classifying explicit non-Code-Review Saga capability units (leading /saga:plan, /doc-review, or equivalent explicit form) as standalone Code Review prompts from the bare word review, while keeping genuine untyped prompts rejected before any session launches; preserve the one-controller, typed reviewer-seat, and typed repair-routing contracts. Regression cases: the two orch-2026-08-25-voice false positives load with one typed controller appended; 'review this PR for bugs' stays rejected. Bump Orchestrate release surfaces, re-resolving the version at commit time. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U7 plus issue #837. Append this unit's engineering-journal entry. Run U7's verification block until green. Commit, push, open a PR linked to #837. This run uses the Orchestrate-owned typed Grok Code Review controller and reviewer seats; skip Saga Work Phase 5 self-review, do not call Code Review, and do not ask for an override. Never merge; never write the project board."},
     {"name": "847-o3-845", "vendor": "agy", "model": "gemini-3.7-flash-high", "effort": "high",
      "workspace": "847-lane-orchestrate", "role": "review-fixer",
-     "paths": ["plugins/orchestrate", ".claude-plugin/marketplace.json", "tests/test_orchestrate_task_spill.py", "tests/test_orchestrate_task_file_safety.py"],
+     "paths": ["plugins/orchestrate/.claude-plugin/plugin.json", "plugins/orchestrate/CHANGELOG.md", ".claude-plugin/marketplace.json", "plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py", "plugins/orchestrate/skills/orchestrate/SKILL.md", "tests/test_orchestrate_task_spill.py", "tests/test_orchestrate_task_file_safety.py"],
      "after": [], "serialize": ["847-o2-837"],
-     "task": "847-o3-845: fix #845 — make spill_unit() stamp generated task files with a stable Orchestrate ownership marker carrying run and unit identity, refuse to overwrite an unmarked file or one owned by another run/unit (loud refusal, original bytes untouched, conflicting path named), keep same-owner rewrites idempotent, and keep loading unmarked hand-authored briefs supported. Do not weaken path containment, traversal, or symlink protections. Bump Orchestrate release surfaces, re-resolving the version at commit time. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U8 plus issue #845. Append this unit's engineering-journal entry. Run U8's verification block until green. Commit, push, open a PR linked to #845. Never merge; never write the project board."},
+     "task": "/saga:work 847-o3-845: fix #845 — make spill_unit() stamp generated task files with a stable Orchestrate ownership marker carrying run and unit identity, refuse to overwrite an unmarked file or one owned by another run/unit (loud refusal, original bytes untouched, conflicting path named), keep same-owner rewrites idempotent, and keep loading unmarked hand-authored briefs supported. Do not weaken path containment, traversal, or symlink protections. Bump Orchestrate release surfaces, re-resolving the version at commit time. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U8 plus issue #845. Append this unit's engineering-journal entry. Run U8's verification block until green. Commit, push, open a PR linked to #845. This run uses the Orchestrate-owned typed Grok Code Review controller and reviewer seats; skip Saga Work Phase 5 self-review, do not call Code Review, and do not ask for an override. Never merge; never write the project board."},
     {"name": "847-o4-843", "vendor": "agy", "model": "gemini-3.7-flash-high", "effort": "high",
      "workspace": "847-lane-orchestrate", "role": "review-fixer",
-     "paths": ["plugins/orchestrate", ".claude-plugin/marketplace.json", "tests/test_orchestrate_settlement.py"],
+     "paths": ["plugins/orchestrate/.claude-plugin/plugin.json", "plugins/orchestrate/CHANGELOG.md", ".claude-plugin/marketplace.json", "plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py", "plugins/orchestrate/skills/orchestrate/SKILL.md", "plugins/orchestrate/commands/orchestrate.md", "tests/test_orchestrate_settlement.py"],
      "after": [], "serialize": ["847-o3-845"],
-     "task": "847-o4-843: fix #843 — add a typed durable parked state for push-succeeded / PR-creation-blocked, recorded only after the pushed commit is verified on the recorded remote branch (verified remote head, authoritative base, unit identity, frozen revision, failure evidence), plus one idempotent coordinator-owned resume operation that opens the missing PR from the recorded head and base or adopts an existing matching one, continuing the original run without a second run or rewritten evidence. A failed push never enters this path; a missing or changed remote head fails loudly without mutating the run record. Bump Orchestrate release surfaces, re-resolving the version at commit time. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U9 plus issue #843. Append this unit's engineering-journal entry. Run U9's verification block until green. Commit, push, open a PR linked to #843. Never merge; never write the project board."},
+     "task": "/saga:work 847-o4-843: fix #843 — add a typed durable parked state for push-succeeded / PR-creation-blocked, recorded only after the pushed commit is verified on the recorded remote branch (verified remote head, authoritative base, unit identity, frozen revision, failure evidence), plus one idempotent coordinator-owned resume operation that opens the missing PR from the recorded head and base or adopts an existing matching one, continuing the original run without a second run or rewritten evidence. A failed push never enters this path; a missing or changed remote head fails loudly without mutating the run record. Bump Orchestrate release surfaces, re-resolving the version at commit time. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U9 plus issue #843. Append this unit's engineering-journal entry. Run U9's verification block until green. Commit, push, open a PR linked to #843. This run uses the Orchestrate-owned typed Grok Code Review controller and reviewer seats; skip Saga Work Phase 5 self-review, do not call Code Review, and do not ask for an override. Never merge; never write the project board."},
     {"name": "847-o5-844", "vendor": "agy", "model": "gemini-3.7-flash-high", "effort": "high",
      "workspace": "847-lane-orchestrate", "role": "review-fixer",
-     "paths": ["plugins/orchestrate", ".claude-plugin/marketplace.json", "tests/test_orchestrate_land_clean.py"],
+     "paths": ["plugins/orchestrate/.claude-plugin/plugin.json", "plugins/orchestrate/CHANGELOG.md", ".claude-plugin/marketplace.json", "plugins/orchestrate/skills/orchestrate/scripts/orchestrate.py", "plugins/orchestrate/skills/orchestrate/SKILL.md", "tests/test_orchestrate_land_clean.py"],
      "after": [], "serialize": ["847-o4-843"],
-     "task": "847-o5-844: fix #844 — extend clean --branches with an opt-in remote pass: exact branch names recorded by the current run only, deletion only on merged-PR or committed ancestry proof, read back every deletion, refuse open/diverged/unknown/retained branches with a clear reason and retained evidence, idempotent repeats reporting already-absent branches cleanly; local cleanup unchanged. Test against real temporary bare remotes with linked worktrees. Note: this run will NOT use your new remote path on its own cleanup — that is disclosed at closeout. Bump Orchestrate release surfaces, re-resolving the version at commit time. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U10 plus issue #844. Append this unit's engineering-journal entry. Run U10's verification block until green. Commit, push, open a PR linked to #844. Never merge; never write the project board."},
+     "task": "/saga:work 847-o5-844: fix #844 — extend clean --branches with an opt-in remote pass: exact branch names recorded by the current run only, deletion only on merged-PR or committed ancestry proof, read back every deletion, refuse open/diverged/unknown/retained branches with a clear reason and retained evidence, idempotent repeats reporting already-absent branches cleanly; local cleanup unchanged. Test against real temporary bare remotes with linked worktrees. Note: this run will NOT use your new remote path on its own cleanup — that is disclosed at closeout. Bump Orchestrate release surfaces, re-resolving the version at commit time. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U10 plus issue #844. Append this unit's engineering-journal entry. Run U10's verification block until green. Commit, push, open a PR linked to #844. This run uses the Orchestrate-owned typed Grok Code Review controller and reviewer seats; skip Saga Work Phase 5 self-review, do not call Code Review, and do not ask for an override. Never merge; never write the project board."},
     {"name": "847-m1-828", "vendor": "agy", "model": "gemini-3.7-flash-high", "effort": "high",
      "workspace": "847-lane-mission-control", "role": "review-fixer",
-     "paths": ["plugins/mission-control", ".claude-plugin/marketplace.json"],
+     "paths": ["plugins/mission-control/scripts/sdlc_manager.py", "plugins/mission-control/tests/test_sdlc_manager_optional_deps.py", "plugins/mission-control/.claude-plugin/plugin.json", "plugins/mission-control/CHANGELOG.md", ".claude-plugin/marketplace.json"],
      "after": [], "serialize": [],
-     "task": "847-m1-828: fix #828 — move import yaml from plugins/mission-control/scripts/sdlc_manager.py:83 into _load_live_mimir_coverage() (its only consumer), so --help and every YAML-free subcommand run on a bare interpreter and a missing PyYAML yields a clear message naming the dependency; behavior with PyYAML present is unchanged; PyYAML stays declared. Add plugins/mission-control/tests/test_sdlc_manager_optional_deps.py with an unimportable-yaml simulation and a mutation proof. Bump Mission Control release surfaces (plugin.json, CHANGELOG, marketplace.json), re-resolving the version at commit time. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U11 plus issue #828. Append this unit's engineering-journal entry. Run U11's verification block until green. Commit, push, open a PR linked to #828. Never merge; never write the project board."},
+     "task": "/saga:work 847-m1-828: fix #828 — move import yaml from plugins/mission-control/scripts/sdlc_manager.py:83 into _load_live_mimir_coverage() (its only consumer), so --help and every YAML-free subcommand run on a bare interpreter and a missing PyYAML yields a clear message naming the dependency; behavior with PyYAML present is unchanged; PyYAML stays declared. Add plugins/mission-control/tests/test_sdlc_manager_optional_deps.py with an unimportable-yaml simulation and a mutation proof. Bump Mission Control release surfaces (plugin.json, CHANGELOG, marketplace.json), re-resolving the version at commit time. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U11 plus issue #828. Append this unit's engineering-journal entry. Run U11's verification block until green. Commit, push, open a PR linked to #828. This run uses the Orchestrate-owned typed Grok Code Review controller and reviewer seats; skip Saga Work Phase 5 self-review, do not call Code Review, and do not ask for an override. Never merge; never write the project board."},
     {"name": "847-m2-829", "vendor": "agy", "model": "gemini-3.7-flash-high", "effort": "high",
      "workspace": "847-lane-mission-control", "role": "review-fixer",
      "paths": ["plugins/mission-control/tests/test_issue_contract_parity.py", "plugins/mission-control/tests/test_prompt_alignment.py"],
      "after": [], "serialize": ["847-m1-828"],
-     "task": "847-m2-829: fix #829 — replace the parents[3] repository-depth assumption in plugins/mission-control/tests/test_issue_contract_parity.py:35 and plugins/mission-control/tests/test_prompt_alignment.py:8 with resolution from the package root the file lives in (walk up to the directory containing .claude-plugin/plugin.json), deriving every target from it. No assertion changes meaning; missing targets still fail loudly, never skip; no shared fixture framework — this unit SETS the pattern issue #822 adopts, so keep it small and citable. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U12 plus issue #829. Append this unit's engineering-journal entry. Run U12's verification block until green. Commit, push, open a PR linked to #829. Never merge; never write the project board."},
+     "task": "/saga:work 847-m2-829: fix #829 — replace the parents[3] repository-depth assumption in plugins/mission-control/tests/test_issue_contract_parity.py:35 and plugins/mission-control/tests/test_prompt_alignment.py:8 with resolution from the package root the file lives in (walk up to the directory containing .claude-plugin/plugin.json), deriving every target from it. No assertion changes meaning; missing targets still fail loudly, never skip; no shared fixture framework — this unit SETS the pattern issue #822 adopts, so keep it small and citable. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U12 plus issue #829. Append this unit's engineering-journal entry. Run U12's verification block until green. Commit, push, open a PR linked to #829. This run uses the Orchestrate-owned typed Grok Code Review controller and reviewer seats; skip Saga Work Phase 5 self-review, do not call Code Review, and do not ask for an override. Never merge; never write the project board."},
     {"name": "847-m2a-822", "vendor": "agy", "model": "gemini-3.7-flash-high", "effort": "high",
      "workspace": "847-lane-mission-control", "role": "review-fixer",
-     "paths": ["plugins/mission-control", ".claude-plugin/marketplace.json", "tests/test_mission_control.py"],
+     "paths": ["plugins/mission-control/scripts/sync_template_docs.py", "tests/test_mission_control.py", "plugins/mission-control/.claude-plugin/plugin.json", "plugins/mission-control/CHANGELOG.md", ".claude-plugin/marketplace.json"],
      "after": ["847-m2-829"], "serialize": [],
-     "task": "847-m2a-822: fix #822 — replace REPO_ROOT = Path(__file__).resolve().parents[3] at plugins/mission-control/scripts/sync_template_docs.py:16 with the identical package-root resolution pattern issue #829 established (read #829's merged change first and cite in your PR where the pattern was set); every derived constant including the importlib contract-data load follows. Add a relocated-copy guard: --help exits 0 and --check behaves identically from another staging depth; missing required files fail loudly naming the resolved path; mutation-prove that restoring parents[3] fails. Bump Mission Control release surfaces, re-resolving the version at commit time. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U13 plus issue #822. Append this unit's engineering-journal entry. Run U13's verification block until green. Commit, push, open a PR linked to #822. Never merge; never write the project board."},
+     "task": "/saga:work 847-m2a-822: fix #822 — replace REPO_ROOT = Path(__file__).resolve().parents[3] at plugins/mission-control/scripts/sync_template_docs.py:16 with the identical package-root resolution pattern issue #829 established (read #829's merged change first and cite in your PR where the pattern was set); every derived constant including the importlib contract-data load follows. Add a relocated-copy guard: --help exits 0 and --check behaves identically from another staging depth; missing required files fail loudly naming the resolved path; mutation-prove that restoring parents[3] fails. Bump Mission Control release surfaces, re-resolving the version at commit time. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U13 plus issue #822. Append this unit's engineering-journal entry. Run U13's verification block until green. Commit, push, open a PR linked to #822. This run uses the Orchestrate-owned typed Grok Code Review controller and reviewer seats; skip Saga Work Phase 5 self-review, do not call Code Review, and do not ask for an override. Never merge; never write the project board."},
     {"name": "847-m3-830", "vendor": "agy", "model": "gemini-3.7-flash-high", "effort": "high",
      "workspace": "847-lane-mission-control", "role": "review-fixer",
-     "paths": ["plugins/mission-control", ".claude-plugin/marketplace.json"],
+     "paths": ["plugins/mission-control/tests/test_card_validator_agreement.py"],
      "after": [], "serialize": ["847-m2a-822"],
-     "task": "847-m3-830: fix #830 — add plugins/mission-control/tests/test_card_validator_agreement.py: dynamically load the home-lab authority card_validator.py at test time, run a corpus spanning valid variants, missing and reordered headers, placeholder sections, semantic violations, and risk-tier context variants, and assert both implementations return the same valid/invalid VERDICT per case (never shared constants or message text); on an absent authority checkout, skip loudly naming the expected path. Per the C1 ruling, the module docstring AND the skip reason must state drift is caught locally, not by this repository's CI; no CI coupling to home-lab, no vendored second copy. Bump Mission Control release surfaces, re-resolving the version at commit time. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U14 plus issue #830. Append this unit's engineering-journal entry. Run U14's verification block until green. Commit, push, open a PR linked to #830. Never merge; never write the project board."},
+     "task": "/saga:work 847-m3-830: fix #830 — add plugins/mission-control/tests/test_card_validator_agreement.py: dynamically load the home-lab authority card_validator.py at test time, run a corpus spanning valid variants, missing and reordered headers, placeholder sections, semantic violations, and risk-tier context variants, and assert both implementations return the same valid/invalid VERDICT per case (never shared constants or message text); on an absent authority checkout, skip loudly naming the expected path. Per the C1 ruling, the module docstring AND the skip reason must state drift is caught locally, not by this repository's CI; no CI coupling to home-lab, no vendored second copy. Keep this test-only: do not edit flow/SKILL.md or any Mission Control release surface because the required docstring and skip reason carry the local-only limitation. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U14 plus issue #830. Append this unit's engineering-journal entry. Run U14's verification block until green. Commit, push, open a PR linked to #830. This run uses the Orchestrate-owned typed Grok Code Review controller and reviewer seats; skip Saga Work Phase 5 self-review, do not call Code Review, and do not ask for an override. Never merge; never write the project board."},
     {"name": "847-m4-818", "vendor": "agy", "model": "gemini-3.7-flash-high", "effort": "high",
      "workspace": "847-lane-mission-control", "role": "review-fixer",
-     "paths": ["plugins/mission-control", ".claude-plugin/marketplace.json", "tests/test_mission_control.py"],
+     "paths": ["plugins/mission-control/README.md", "plugins/mission-control/commands/board.md", "plugins/mission-control/commands/issue.md", "plugins/mission-control/commands/metrics.md", "plugins/mission-control/commands/triage.md", "tests/test_mission_control.py", "plugins/mission-control/.claude-plugin/plugin.json", "plugins/mission-control/CHANGELOG.md", ".claude-plugin/marketplace.json"],
      "after": [], "serialize": ["847-m3-830"],
-     "task": "847-m4-818: fix #818 — replace the six version-pinned installed paths (README.md:28, commands/board.md:42, commands/issue.md:50 and :59, commands/metrics.md:40, commands/triage.md:40) with the settled convention \"$CLAUDE_PLUGIN_ROOT/scripts/sdlc_manager.py\" (no skills/ segment), and add one drift guard failing on any version-pinned infiquetra-plugins/mission-control/<version>/ path in tracked Mission Control documents; agents/sdlc-operator.md is clean — do not touch it. Bump Mission Control release surfaces, re-resolving the version at commit time. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U15 plus issue #818. Append this unit's engineering-journal entry. Run U15's verification block until green. Commit, push, open a PR linked to #818. Never merge; never write the project board."},
+     "task": "/saga:work 847-m4-818: fix #818 — replace the six version-pinned installed paths (README.md:28, commands/board.md:42, commands/issue.md:50 and :59, commands/metrics.md:40, commands/triage.md:40) with the settled convention \"$CLAUDE_PLUGIN_ROOT/scripts/sdlc_manager.py\" (no skills/ segment), and add one drift guard failing on any version-pinned infiquetra-plugins/mission-control/<version>/ path in tracked Mission Control documents; agents/sdlc-operator.md is clean — do not touch it. Bump Mission Control release surfaces, re-resolving the version at commit time. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U15 plus issue #818. Append this unit's engineering-journal entry. Run U15's verification block until green. Commit, push, open a PR linked to #818. This run uses the Orchestrate-owned typed Grok Code Review controller and reviewer seats; skip Saga Work Phase 5 self-review, do not call Code Review, and do not ask for an override. Never merge; never write the project board."},
     {"name": "847-m5-819", "vendor": "agy", "model": "gemini-3.7-flash-high", "effort": "high",
      "workspace": "847-lane-mission-control", "role": "review-fixer",
-     "paths": ["plugins/mission-control", ".claude-plugin/marketplace.json"],
+     "paths": ["plugins/mission-control/commands/issue.md", "plugins/mission-control/CHANGELOG.md", "plugins/mission-control/.claude-plugin/plugin.json", ".claude-plugin/marketplace.json"],
      "after": [], "serialize": ["847-m4-818"],
-     "task": "847-m5-819: fix #819 — delete the self-referential alias clause from plugins/mission-control/commands/issue.md:7 and plugins/mission-control/CHANGELOG.md:259-260 (do NOT correct it to /create-issue and do NOT add any alias — commit b6a03e07 / PR #199 shows the legacy spelling, and no such command ships; cite b6a03e07 in your PR). Add the focused assertions: no sentence names a command as its own compatibility alias; the plugin ships exactly board, issue, metrics, triage. Keep the changelog heading grammar green. Bump Mission Control release surfaces, re-resolving the version at commit time. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U16 plus issue #819. Append this unit's engineering-journal entry. Run U16's verification block until green. Commit, push, open a PR linked to #819. Never merge; never write the project board."},
+     "task": "/saga:work 847-m5-819: fix #819 — delete the self-referential alias clause from plugins/mission-control/commands/issue.md:7 and plugins/mission-control/CHANGELOG.md:259-260 (do NOT correct it to /create-issue and do NOT add any alias — commit b6a03e07 / PR #199 shows the legacy spelling, and no such command ships; cite b6a03e07 in your PR). Add the focused assertions: no sentence names a command as its own compatibility alias; the plugin ships exactly board, issue, metrics, triage. Keep the changelog heading grammar green. Bump Mission Control release surfaces, re-resolving the version at commit time. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U16 plus issue #819. Append this unit's engineering-journal entry. Run U16's verification block until green. Commit, push, open a PR linked to #819. This run uses the Orchestrate-owned typed Grok Code Review controller and reviewer seats; skip Saga Work Phase 5 self-review, do not call Code Review, and do not ask for an override. Never merge; never write the project board."},
     {"name": "847-m6-820", "vendor": "agy", "model": "gemini-3.7-flash-high", "effort": "high",
      "workspace": "847-lane-mission-control", "role": "review-fixer",
-     "paths": ["plugins/mission-control", ".claude-plugin/marketplace.json", "tests/test_mission_control.py"],
+     "paths": ["plugins/mission-control/README.md", "tests/test_mission_control.py", "plugins/mission-control/.claude-plugin/plugin.json", "plugins/mission-control/CHANGELOG.md", ".claude-plugin/marketplace.json"],
      "after": [], "serialize": ["847-m5-819"],
-     "task": "847-m6-820: fix #820 — add the flow row to the Skill|Activates-When table in plugins/mission-control/README.md with activation text consistent with plugins/mission-control/skills/flow/SKILL.md, and add a guard asserting a bijection between directories under plugins/mission-control/skills/ and table rows, naming the missing or extra skill on failure; mutation-prove that removing the flow row fails. Bump Mission Control release surfaces, re-resolving the version at commit time. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U17 plus issue #820. Append this unit's engineering-journal entry. Run U17's verification block until green. Commit, push, open a PR linked to #820. Never merge; never write the project board."},
+     "task": "/saga:work 847-m6-820: fix #820 — add the flow row to the Skill|Activates-When table in plugins/mission-control/README.md with activation text consistent with plugins/mission-control/skills/flow/SKILL.md, and add a guard asserting a bijection between directories under plugins/mission-control/skills/ and table rows, naming the missing or extra skill on failure; mutation-prove that removing the flow row fails. Bump Mission Control release surfaces, re-resolving the version at commit time. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U17 plus issue #820. Append this unit's engineering-journal entry. Run U17's verification block until green. Commit, push, open a PR linked to #820. This run uses the Orchestrate-owned typed Grok Code Review controller and reviewer seats; skip Saga Work Phase 5 self-review, do not call Code Review, and do not ask for an override. Never merge; never write the project board."},
     {"name": "847-m7-821", "vendor": "agy", "model": "gemini-3.7-flash-high", "effort": "high",
      "workspace": "847-lane-mission-control", "role": "review-fixer",
-     "paths": ["plugins/mission-control", ".claude-plugin/marketplace.json", "tests/test_mission_control.py"],
+     "paths": ["plugins/mission-control/scripts/sdlc_manager.py", "plugins/mission-control/README.md", "plugins/mission-control/skills/rollout/SKILL.md", "tests/test_mission_control.py", "plugins/mission-control/.claude-plugin/plugin.json", "plugins/mission-control/CHANGELOG.md", ".claude-plugin/marketplace.json"],
      "after": [], "serialize": ["847-m6-820"],
-     "task": "847-m7-821: fix #821 — remove the dead rollout update subcommand per the C2 ruling: the parser (sdlc_manager.py:6126-6134), rollout_update() (:2308-2341), the dispatch arm (:6383), the module-docstring example (:50), the reader-list comment mention (:230), and the documented invocations (README.md:211, skills/rollout/SKILL.md:153-155). Leave legacy_rollout_config and its three readers (board_wip, rollout_status, config_show) untouched; build no rollout-status.json replacement; leave the other five rollout subcommands intact. Add the guard: rollout --help lists five subcommands and no update; rollout update is an argparse invalid choice; no document names beads-config.json as a write target; reintroduction fails. Bump Mission Control release surfaces, re-resolving the version at commit time. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U18 plus issue #821. Append this unit's engineering-journal entry. Run U18's verification block until green. Commit, push, open a PR linked to #821. Never merge; never write the project board."},
+     "task": "/saga:work 847-m7-821: fix #821 — remove the dead rollout update subcommand per the C2 ruling: the parser (sdlc_manager.py:6126-6134), rollout_update() (:2308-2341), the dispatch arm (:6383), the module-docstring example (:50), the reader-list comment mention (:230), and the documented invocations (README.md:211, skills/rollout/SKILL.md:153-155). Leave legacy_rollout_config and its three readers (board_wip, rollout_status, config_show) untouched; build no rollout-status.json replacement; leave the other five rollout subcommands intact. Add the guard: rollout --help lists five subcommands and no update; rollout update is an argparse invalid choice; no document names beads-config.json as a write target; reintroduction fails. Bump Mission Control release surfaces, re-resolving the version at commit time. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U18 plus issue #821. Append this unit's engineering-journal entry. Run U18's verification block until green. Commit, push, open a PR linked to #821. This run uses the Orchestrate-owned typed Grok Code Review controller and reviewer seats; skip Saga Work Phase 5 self-review, do not call Code Review, and do not ask for an override. Never merge; never write the project board."},
     {"name": "847-a1-840", "vendor": "agy", "model": "gemini-3.7-flash-high", "effort": "high",
      "workspace": "847-lane-saga", "role": "review-fixer",
-     "paths": ["plugins/saga", ".claude-plugin/marketplace.json", "tests/test_saga_plugin.py", "tests/test_saga_execution_spec.py", "docs/engineering-journal/DECISIONS.md"],
+     "paths": ["plugins/saga/skills/loop/SKILL.md", "plugins/saga/skills/code-review/SKILL.md", "plugins/saga/skills/founder-review/SKILL.md", "plugins/saga/skills/optimize/SKILL.md", "plugins/saga/skills/qa/SKILL.md", "plugins/saga/skills/investigate/SKILL.md", "plugins/saga/skills/retro/SKILL.md", "plugins/saga/skills/optimize/references/experiment-loop.md", "plugins/saga/skills/investigate/references/methodology.md", "plugins/saga/skills/retro/references/self-edit-safety.md", "plugins/saga/scripts/lifecycle_state.py", "tests/test_saga_plugin.py", "tests/test_saga_execution_spec.py", "docs/engineering-journal/DECISIONS.md", "plugins/saga/.claude-plugin/plugin.json", "plugins/saga/CHANGELOG.md", ".claude-plugin/marketplace.json"],
      "after": [], "serialize": [],
-     "task": "847-a1-840: fix #840 — align every surviving Saga backend-offer surface (skills loop, code-review, founder-review, optimize, qa, investigate, retro plus references experiment-loop.md, methodology.md, self-edit-safety.md) with the narrow policy: default offers present inline and Team Execution; Claude Code Workflows only on explicit invocation or an already-approved recorded choice; canonical wording per plugins/saga/references/operator-choice.md. Per the C5 ruling also change recommend_execution_backend() in plugins/saga/scripts/lifecycle_state.py so it NEVER returns cc-workflows-ultracode with status recommended under any trigger (broad_independent_fanout, adversarial_confidence, every WORKFLOW_SHAPES entry); keep the enum value, explicit invocation, recorded-plan execution, the complete three-backend wire enumeration (ultracode as alternative or unavailable), and loud failure on unsupported external-engine work. Amend DECISIONS {#cc-workflows-explicit-invocation-808} to record the C5 override and date. Bump Saga release surfaces, re-resolving the version at commit time. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U19 plus issue #840. Append this unit's engineering-journal entry. Run U19's verification block until green. Commit, push, open a PR linked to #840. Never merge; never write the project board."}
+     "task": "/saga:work 847-a1-840: fix #840 — align every surviving Saga backend-offer surface (skills loop, code-review, founder-review, optimize, qa, investigate, retro plus references experiment-loop.md, methodology.md, self-edit-safety.md) with the narrow policy: default offers present inline and Team Execution; Claude Code Workflows only on explicit invocation or an already-approved recorded choice; canonical wording per plugins/saga/references/operator-choice.md. Per the C5 ruling also change recommend_execution_backend() in plugins/saga/scripts/lifecycle_state.py so it NEVER returns cc-workflows-ultracode with status recommended under any trigger (broad_independent_fanout, adversarial_confidence, every WORKFLOW_SHAPES entry); keep the enum value, explicit invocation, recorded-plan execution, the complete three-backend wire enumeration (ultracode as alternative or unavailable), and loud failure on unsupported external-engine work. Amend DECISIONS {#cc-workflows-explicit-invocation-808} to record the C5 override and date. Bump Saga release surfaces, re-resolving the version at commit time. First git fetch origin and start from current origin/main. Authoritative contract: docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md unit U19 plus issue #840. Append this unit's engineering-journal entry. Run U19's verification block until green. Commit, push, open a PR linked to #840. This run uses the Orchestrate-owned typed Grok Code Review controller and reviewer seats; skip Saga Work Phase 5 self-review, do not call Code Review, and do not ask for an override. Never merge; never write the project board."}
   ]
 }
 ```
@@ -1153,20 +1287,16 @@ production-safety boundaries are never relaxed.
 Deferred to follow-up (already tracked, not this run): anything a unit's inventory surfaces that is
 not admitted under the C3 authority.
 
-## Open questions (for the operator; the run proceeds on the stated defaults)
+## Recorded unattended choices
 
-1. **Review-session transport.** KTD2 dispatches each unit's Saga Code Review as a
-   coordinator-launched Grok session using the preflight-validated template, outside Orchestrate's
-   typed one-controller transport — because that transport admits one controller per run and its
-   classifier defect is unit U7's own subject, live until mid-run. Confirm this is the intended
-   shape; the alternative (a typed controller appended per unit-batch after U7 merges) would make
-   review provenance run-record-native for the later units at the cost of a mid-run transport
-   switch. Default taken: coordinator-launched sessions for the whole run, uniformly.
-2. **Overflow launch shape.** Before the first overflow to pool 2/3, the coordinator should confirm
-   the pinned driver's OpenCode launch path omits the wrapper `--effort` flag in interactive shape
-   (the preflight negative control proved the wrapper rejects it, exit 65) and applies the variant
-   in-session. If the driver's argv path would emit it, launch overflow units through the validated
-   direct template instead. Default taken: the preflight template, verified at first overflow.
+No operator question remains in this plan. Review transport is not an implementation choice: the
+binding launch clarification requires the KTD2 typed Orchestrate controller, reviewer seats,
+`expand`/`go`, and `review-result` path. The one remaining known-set implementation choice is:
+
+1. **Overflow launch shape:** keep overflow inside the pinned Orchestrate driver and materialize
+   `effort: xhigh` for either OpenCode route. The pinned Agent Launcher consumes that field through
+   its interactive `/variants` picker and verifies the selected variant before task delivery, so a
+   direct-template escape or an omitted effort field is neither needed nor permitted.
 
 ## Verification (run-level)
 

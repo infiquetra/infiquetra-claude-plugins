@@ -80,8 +80,6 @@ from pathlib import Path
 from typing import Any, cast
 from urllib.parse import quote
 
-import yaml
-
 # ===========================
 # CONFIGURATION
 # ===========================
@@ -2704,6 +2702,13 @@ def flow_discover_project(repo: str, fmt: str) -> None:
 
 def _load_live_mimir_coverage(repo: str) -> dict[str, Any]:
     """Read and validate Team Mimir's exact repository admission from GitHub main."""
+    try:
+        import yaml
+    except ImportError as exc:
+        raise RuntimeError(
+            "PyYAML is required for Team Mimir coverage validation; no mutation performed"
+        ) from exc
+
     encoded = _gh(
         [
             "api",

@@ -94,18 +94,39 @@ order — not a checklist, and stop as soon as the answers determine the table:
     actually offered variant from the live choices when maximum available is requested, waits until the
     session is task-ready, and verifies the effective model and variant before task submission.
 
-   **Offer the operator's own favourites first.** `python3 "$S" roster --models` prints them from
-   `~/.config/orchestrate/models.json` when that file exists — the handful they actually use, in
-   their order of preference. Offer those as the options and keep one for typing something else.
-   opencode alone fronts 164 models across eight providers; picking four out of that is noise, and
-   was wrong three rounds running.
+   **Offer the operator's own favourites first.** `python3 "$S" roster --models` lists the operator's
+   favourites from `~/.config/orchestrate/models.json` at the top when that file exists, followed by
+   the vendor's full live model catalog. Offer preferred models at the top for convenience, but treat
+   them strictly as preference ordering rather than an allowlist or the exclusive option set. Absence from
+   favourites never makes a model unsupported, and reordering or truncating favourites never changes
+   which models are reachable.
+   opencode alone fronts 164 models across eight providers; listing favourites first avoids noise while
+   leaving every live catalog model reachable.
+
+   **Model authority boundary: live catalog, never stale tables.** External worker and reviewer
+   availability, exact model names, and effort or variant controls come **only** from the installed
+   `agents` wrapper and vendor-native live catalogs or help — **never** from Fleet Commons tier data
+   (`fleet_commons.tier_resolver`) or `~/.config/orchestrate/models.json`.
+
+   - **Interview-time model discovery:** Run `python3 "$S" roster` to verify installed wrapper tools
+     and `python3 "$S" roster --models` to query live vendor models and favourites. This check inspects
+     the live catalog without creating worktrees, git branches, Herdr sessions, or run state.
+   - **Herdr verification bounds:** Herdr proves only workspace, pane, working-directory (`cwd`), and
+     readiness facts (`herdr agent list`), never models.
+   - **Internal tier decoupling:** Fleet Commons retains internal Team Execution tier ownership and must never
+     gate external Herdr routes.
+   - **Provider route preservation:** `opencode-go` is an OpenCode provider (e.g.,
+     `opencode-go/muse-spark-1.2-contributor`), not an agent kind (`opencode`). Exact provider/model
+     identities and advertised variants are preserved verbatim.
+   - **Refusal and no substitution:** `start` and `expand` refuse unknown vendors (`assert_vendors_available`);
+     interactive variant selection refuses unadvertised OpenCode variants (`resolve_opencode_variant`); and
+     `agent_argv` emits exact requested parameters with no silent substitution of model, provider, effort,
+     account, or agent kind.
 
    **Never write a model name from memory.** Run `python3 "$S" roster --models`, which asks each
-   vendor that can answer. `grok` and `opencode` can; `claude` documents its aliases in
+   vendor that can answer. `grok`, `agy`, and `opencode` can; `claude` documents its aliases in
    `claude --help` (`fable`, `opus`, `sonnet`, and full names); the rest cannot answer, and for
-   those you ask the operator rather than guessing. A recalled model name that has since been
-   renamed does not fail politely — the session starts on some default and nobody is told.
-   `opencode` needs `provider/model`, not a bare name.
+   those you ask the operator rather than guessing. `opencode` needs `provider/model`, not a bare name.
 4. **Does `/plan` want competing plans?** One vendor plans by default. The operator may instead have
    two or three vendors each write a plan independently, in their own worktrees, with no knowledge
    of each other. If so, **this session reads all of them and writes the merged plan itself** — no

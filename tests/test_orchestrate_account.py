@@ -764,3 +764,100 @@ class TestStatuslineAccountEvidence:
         receipt = orchestrate.verify_unit_preflight(unit, "pane-9", ready=True)
         assert "account" in receipt["requested_only"]
         assert "account" not in receipt["confirmed_against_herdr"]
+
+
+@pytest.mark.usefixtures("launcher_on_path")
+class TestNoSilentAccountSubstitution:
+    """Proof that Orchestrate never silently substitutes personal or company accounts (#848)."""
+
+    @staticmethod
+    def _pane(monkeypatch: pytest.MonkeyPatch, orchestrate: ModuleType, text: str | None) -> None:
+        def fake_run(cmd: list[str], *args: Any, **kwargs: Any) -> Any:
+            if cmd[:3] == ["herdr", "pane", "read"]:
+                if text is None:
+                    return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="no such pane")
+                return subprocess.CompletedProcess(cmd, 0, stdout=text, stderr="")
+            raise AssertionError(f"unexpected command {cmd}")
+
+        monkeypatch.setattr(orchestrate, "run", fake_run)
+        monkeypatch.setenv("USER", "jefcox")
+
+    def test_unverified_company_account_raises_and_never_substitutes_personal(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        fake_claude_roots: tuple[Path, Path],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When company account cannot be verified, fail loudly rather than defaulting to personal."""
+        self._pane(monkeypatch, orchestrate, None)
+        unit = orchestrate.Unit(
+            name="worker",
+            vendor="claude",
+            task="do work",
+            worktree=str(repo),
+            account="company",
+            tab_id="tab-1",
+            pane_id="pane-1",
+        )
+
+        monkeypatch.setattr(
+            orchestrate,
+            "live_agents",
+            lambda: [
+                {
+                    "pane_id": "pane-1",
+                    "cwd": str(repo),
+                    "interactive_ready": True,
+                    "agent": "claude",
+                }
+            ],
+        )
+
+        with pytest.raises(orchestrate.AccountMismatchError) as excinfo:
+            orchestrate.verify_unit_account(unit, "pane-1")
+
+        assert "account unverified" in str(excinfo.value)
+        assert unit.status == orchestrate.ACCOUNT_MISMATCH
+
+    def test_mismatched_personal_statusline_refuses_launch_without_silent_override(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        fake_claude_roots: tuple[Path, Path],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Detected personal account when company was requested closes session and stops."""
+        self._pane(monkeypatch, orchestrate, "jefcox:/infiquetra/repo (main)\n")
+
+        unit = orchestrate.Unit(
+            name="worker",
+            vendor="claude",
+            task="do work",
+            worktree=str(repo),
+            account="company",
+            tab_id="tab-1",
+            pane_id="pane-1",
+        )
+
+        with pytest.raises(orchestrate.AccountMismatchError) as excinfo:
+            orchestrate.verify_unit_account(unit, "pane-1")
+
+        assert "on the personal account when company was required" in str(excinfo.value)
+        assert unit.status == orchestrate.ACCOUNT_MISMATCH
+
+    def test_unknown_account_value_rejected_without_default_substitution(
+        self, orchestrate: ModuleType, repo: Path
+    ) -> None:
+        """An unknown account name fails fast and is never silently mapped to personal or company."""
+        unit = orchestrate.Unit(
+            name="worker",
+            vendor="claude",
+            task="do work",
+            worktree=str(repo),
+            account="enterprise-tier",
+        )
+        ok, error = orchestrate.check_unit_account(unit, "pane-1", seconds=0)
+        assert ok is False
+        assert error is not None
+        assert "unknown account selection 'enterprise-tier'" in error

@@ -47,7 +47,6 @@ Usage:
     sdlc_manager.py rollout deploy-labels --repo athena-service
     sdlc_manager.py rollout deploy-templates --repo athena-service
     sdlc_manager.py rollout deploy-all --repo athena-service
-    sdlc_manager.py rollout update --repo athena-service --field labels --status complete
 
     sdlc_manager.py flow set-field --project asgard --repo R --number N --field Initiative --option <name>
     sdlc_manager.py flow field-options --project asgard --field Objective
@@ -225,7 +224,7 @@ def load_config() -> dict[str, Any]:
     # `legacy_rollout_config` reads `beads-config.json` for back-compat.
     # That file was removed from infiquetra-sdlc on 2026-04-26 (Beads removal);
     # this key now degrades gracefully to {} on missing-file. Several functions
-    # below (board_wip, rollout_status, rollout_update, config_show) read this
+    # below (board_wip, rollout_status, config_show) read this
     # config; they treat empty as "no rollout state tracked" and behave
     # sensibly. When a replacement file ships (e.g., rollout-status.json),
     # rename the key + path here.
@@ -2301,42 +2300,6 @@ def rollout_deploy_all(repo: str, fmt: str) -> None:
     rollout_deploy_templates(repo, fmt)
     print("\nStep 3: Gap analysis")
     rollout_gap_analysis(repo, fmt)
-
-
-def rollout_update(repo: str, field: str, status: str, fmt: str) -> None:
-    """Update beads-config.json for a repo."""
-    sdlc_path = get_sdlc_path()
-    status_file = sdlc_path / "config" / "beads-config.json"
-
-    config = load_config()
-    beads = config.get("legacy_rollout_config", {})
-    repos = beads.get("repositories", {})
-
-    if repo not in repos:
-        _error(f"Repo '{repo}' not found in beads-config.json")
-        sys.exit(1)
-
-    repos[repo][field] = status
-    beads["last_updated"] = datetime.now().strftime("%Y-%m-%d")
-
-    # Recalculate summary
-    summary = {"total_repos": len(repos), "completed": 0, "in_progress": 0, "pending": 0}
-    for repo_data in repos.values():
-        fields = ["labels", "templates", "claude_md", "project"]
-        statuses_vals = [repo_data.get(f, "pending") for f in fields]
-        if all(v == "complete" for v in statuses_vals):
-            summary["completed"] += 1
-        elif any(v == "complete" for v in statuses_vals):
-            summary["in_progress"] += 1
-        else:
-            summary["pending"] += 1
-    beads["summary"] = summary
-
-    with open(status_file, "w") as f:
-        json.dump(beads, f, indent=2)
-        f.write("\n")
-
-    print(f"Updated {repo}.{field} = {status} in beads-config.json")
 
 
 # NOTE: The `beads` subcommand group + `_bd` shell helper + `beads_*`
@@ -6128,15 +6091,6 @@ def main() -> None:
     rollout_all_p = rollout_sp.add_parser("deploy-all", help="Full SDLC deployment to repo")
     rollout_all_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
 
-    rollout_update_p = rollout_sp.add_parser("update", help="Update beads-config.json")
-    rollout_update_p.add_argument("--repo", required=True, type=_normalize_repo_arg)
-    rollout_update_p.add_argument(
-        "--field", required=True, choices=["labels", "templates", "claude_md", "project"]
-    )
-    rollout_update_p.add_argument(
-        "--status", required=True, choices=["pending", "in-progress", "complete"]
-    )
-
     # ===========================
     # FLOW (Phase C — operator-facing GraphQL/REST surface)
     # ===========================
@@ -6384,8 +6338,6 @@ def main() -> None:
                 rollout_deploy_templates(args.repo, fmt)
             elif args.action == "deploy-all":
                 rollout_deploy_all(args.repo, fmt)
-            elif args.action == "update":
-                rollout_update(args.repo, args.field, args.status, fmt)
 
         elif args.resource == "flow":
             if args.action == "set-field":

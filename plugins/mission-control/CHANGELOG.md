@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.12.9] - 2026-08-26
+
+### Removed - dead rollout update subcommand and beads-config write claims (#821)
+
+- Removed the dead `rollout update` subcommand parser, the `rollout_update()` function, the dispatch arm, the module-docstring example, the reader-list comment mention, and documented invocations across `README.md` and `skills/rollout/SKILL.md` per operator ruling C2.
+- Left the `legacy_rollout_config` mechanism and its three surviving readers (`board_wip`, `rollout_status`, `config_show`) intact and gracefully degrading to `{}` on missing files.
+- Added `TestMissionControlRolloutSurfaceGuard` in `tests/test_mission_control.py` verifying that `rollout --help` lists exactly five subcommands with no `update`, `rollout update` is rejected as an argparse invalid choice, no document names `beads-config.json` as a write target, the three readers handle missing configs gracefully, and mutation tests fail on reintroducing the dead command or write claims.
+
 ## [2.12.8] - 2026-08-26
 
 ### Fixed - add flow row to skills table in README (#820)

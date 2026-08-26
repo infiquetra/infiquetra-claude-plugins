@@ -165,6 +165,26 @@ idempotently opens the missing pull request or adopts an existing matching pull 
 the unit to `done` and continuing the original run without rewriting completed evidence. If the remote
 branch is missing or has changed, `resume` fails loudly without mutating the run record.
 
+## Remote Branch Cleanup
+
+When cleaning up branches with `clean --branches`, Orchestrate deletes local unit branches and runs an
+opt-in remote branch cleanup pass:
+
+```bash
+python3 "$S" clean --branches
+```
+
+Remote branch cleanup adheres strictly to these safety boundaries:
+- **Run-owned branches only:** Considers only exact branch names recorded in `run.json` (`unit.branch`).
+  It never sweeps branches by prefix or touches branches belonging to another run.
+- **Merge or ancestry proof required:** Deletes a remote branch only after verifying merged-PR proof (via
+  `gh pr list`) or committed ancestry proof that the remote head is contained in the authoritative branch
+  (`r.branch`, `main`, or base).
+- **Refusal with retained evidence:** Refuses open (e.g. `RUNNING` or `PENDING` units, or open PRs), diverged,
+  unknown, or operator-retained branches (such as units with outstanding review fixes) with a clear reason.
+- **Read-back verification:** Reads back every remote deletion via `git ls-remote` to confirm removal.
+- **Idempotence:** Repeated sweeps report already-absent branches cleanly without error.
+
 ## Workspaces
 
 A herdr workspace is the unit of attention, not of isolation — isolation is the worktree. Below

@@ -41,6 +41,16 @@
 **Generalizable rule.** A documentation link validator that does not resolve cross-file targets against both explicit anchors and Markdown-generated heading slugs creates false confidence and lets inter-document citations rot silently during knowledge promotion and archival.
 **Refs.** Issue #838; PR #832; Unit U2 in `docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md`.
 
+### Layout-independent help assertions and terminal-width matrix validation  {#layout-independent-help-assertions-width-matrix}
+
+**Context.** In issue #839 (unit U4 of orchestration parent #847), tests asserting command `--help` output against raw substrings were susceptible to terminal width variations due to `argparse` wrapping and hyphen-splitting behavior across non-monotonic column widths (such as 70, 75, 107, 110, 120).
+**Evidence.** Prior run #814 hit pre-push gate blocks in `tests/test_outcome_dispatcher.py` and `tests/test_orchestrate_hygiene.py`. Adding the full 12-column matrix (`40, 60, 70, 75, 80, 90, 100, 105, 107, 110, 120, 200`) and conducting a bounded inventory across all 9 direct `--help` test sites in `tests/` confirmed no additional vulnerable raw-substring assertions remain in the test suite.
+**Mechanism.** `argparse` wraps help text using `shutil.get_terminal_size()`, which respects the `COLUMNS` environment variable. At narrow or specific column boundaries, hyphenated flag names (e.g. `--host-capable`) wrap across lines (e.g. `"--host-\ncapable"`), causing raw multiword substring assertions or simple space-collapsing to fail unless strings are despaced or normalized layout-independently.
+**Fix (or queued).** Parametrized the focused help assertion tests in `tests/test_outcome_dispatcher.py` and `tests/test_orchestrate_hygiene.py` across the 12-column width matrix using `monkeypatch.setenv("COLUMNS", str(columns))`, verified semantic mutation failure, and proved suite-wide gate pass.
+**Validation (if applicable).** `uv run pytest tests/test_outcome_dispatcher.py tests/test_orchestrate_hygiene.py -q` passed all 97 tests across the 12-width matrix, and `bash scripts/gate.sh` exited 0 with 25/25 steps passing.
+**Generalizable rule.** Never assert raw substrings or line-dependent layouts against `argparse` help output; strip layout dependencies (e.g. via despacing) and test across a representative column-width matrix (40–200) to ensure terminal-width invariance.
+**Refs.** #839; #847; #814; `tests/test_outcome_dispatcher.py`; `tests/test_orchestrate_hygiene.py`.
+
 ### Load-sensitive concurrency test flakes require barrier rendezvous and elapsed bounds, not uncoordinated polling or call-count minimums  {#846-concurrency-test-determinism}
 
 **Context.** Under gate and continuous integration load in parent run #847 / issue #846, two Orchestrate concurrency tests flaked intermittently: `tests/test_liveness_events.py::test_atomic_claim_has_one_winner` and `tests/test_orchestrate_wait_debounce.py::TestFallbackProcessContract::test_restarts_share_one_monotonic_deadline`, causing false failures and eight-minute gate reruns despite correct production behavior.

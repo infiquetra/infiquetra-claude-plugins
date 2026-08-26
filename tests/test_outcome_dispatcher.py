@@ -144,7 +144,16 @@ def _despaced(text: str) -> str:
     return "".join(text.split())
 
 
-def test_outcome_advance_help_and_resolve_available_coupling_consistency(capsys: Any) -> None:
+@pytest.mark.parametrize(
+    "columns",
+    [40, 60, 70, 75, 80, 90, 100, 105, 107, 110, 120, 200],
+)
+def test_outcome_advance_help_and_resolve_available_coupling_consistency(
+    capsys: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    columns: int,
+) -> None:
+    monkeypatch.setenv("COLUMNS", str(columns))
     # #657 AC2: CLI advance help text and resolve_available docstring agree on the flag coupling.
     with pytest.raises(SystemExit):
         OUTCOME.main(["advance", "--help"])

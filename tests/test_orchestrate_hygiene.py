@@ -186,10 +186,17 @@ def test_skill_keeps_hand_authored_briefs_with_the_run() -> None:
     assert "give the unit the brief's absolute path" in skill
 
 
+@pytest.mark.parametrize(
+    "columns",
+    [40, 60, 70, 75, 80, 90, 100, 105, 107, 110, 120, 200],
+)
 def test_clean_all_help_and_docstring_name_run_state_retention(
     orchestrate: ModuleType,
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    columns: int,
 ) -> None:
+    monkeypatch.setenv("COLUMNS", str(columns))
     with pytest.raises(SystemExit) as raised:
         orchestrate.main(["clean", "--help"])
 

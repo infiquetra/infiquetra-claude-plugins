@@ -429,6 +429,6 @@ class TestWhatMustKeepWorking:
         r.save()
 
         spill = _task_dir(repo) / "build.task.md"
-        assert spill.read_text() == LONG_TASK
+        assert spill.read_text() == f"{orchestrate.task_spill_marker('r1', 'build')}\n{LONG_TASK}"
         assert _MARKER not in (repo / ".orchestrate" / "run.json").read_text()
         assert orchestrate.Run.load().unit("build").task == LONG_TASK

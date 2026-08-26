@@ -1,5 +1,17 @@
 # Changelog
 
+## [3.0.4] - 2026-08-26
+
+### Fixed
+
+- **Task spill never clobbers hand-authored task briefs (#845).** `spill_unit()` now stamps
+  generated `.orchestrate/tasks/<unit>.task.md` spill files with a stable Orchestrate ownership
+  marker carrying run and unit identity (`<!-- orchestrate:owner run_id=... unit=... -->`).
+  When saving a spilled task, Orchestrate refuses to overwrite an existing unmarked file (such as a
+  hand-authored brief) or a file owned by a different run or unit, failing loudly with `SystemExit`,
+  identifying the conflicting path, and leaving original bytes untouched. Same-owner rewrites remain
+  idempotent, and loading unmarked hand-authored briefs remains fully supported.
+
 ## [3.0.3] - 2026-08-26
 
 ### Fixed

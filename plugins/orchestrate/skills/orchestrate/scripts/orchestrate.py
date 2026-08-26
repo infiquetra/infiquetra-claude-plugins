@@ -495,7 +495,7 @@ class Run:
             "review_outcome": self.review_outcome,
             "review_resubmit_pending": self.review_resubmit_pending,
             "operator_fix_requests": self.operator_fix_requests,
-            "units": [spill_unit(u) for u in self.units],
+            "units": [spill_unit(u, run_id=self.run_id) for u in self.units],
         }
         path.write_text(json.dumps(payload, indent=2) + "\n")
 
@@ -555,6 +555,32 @@ class Run:
         return "; ".join(parts)
 
 
+_TASK_SPILL_MARKER_PATTERN = re.compile(
+    r"^<!--\s*orchestrate:owner\s+run_id=(?P<run_id>[^\s>]*)\s+unit=(?P<unit>[^\s>]+)\s*-->\r?\n?"
+)
+
+
+def task_spill_marker(run_id: str, unit_name: str) -> str:
+    """Format the stable ownership marker for a generated task spill file."""
+    return f"<!-- orchestrate:owner run_id={run_id} unit={unit_name} -->"
+
+
+def parse_task_spill_marker(content: str) -> tuple[str, str] | None:
+    """Extract (run_id, unit_name) from a task spill file's ownership marker, if present."""
+    match = _TASK_SPILL_MARKER_PATTERN.match(content)
+    if not match:
+        return None
+    return match.group("run_id"), match.group("unit")
+
+
+def strip_task_spill_marker(content: str) -> str:
+    """Return task content with any leading orchestrate ownership marker removed."""
+    match = _TASK_SPILL_MARKER_PATTERN.match(content)
+    if not match:
+        return content
+    return content[match.end():]
+
+
 def resolve_task_file(pointer: str) -> Path:
     """The spill file a ``task_file`` pointer names, refusing anything outside ``TASK_DIR``.
 
@@ -571,20 +597,45 @@ def resolve_task_file(pointer: str) -> Path:
     return resolved
 
 
-def spill_unit(unit: Unit) -> dict[str, Any]:
+def spill_unit(unit: Unit, run_id: str = "") -> dict[str, Any]:
     """One unit's row in the run record, with a long task spilled to its own file.
 
-    The record keeps the pointer and ``TASK_DIR`` keeps the text, so run.json stops being 83%
-    task prose on a big run. A short task stays inline, and any pointer on one is dropped: a row
-    carrying both would have its inline text overwritten by the file at load. The in-memory unit
-    is untouched -- the spill is something that happens to the record, not to the run."""
+    The record keeps the pointer and ``TASK_DIR`` keeps the text, stamped with an Orchestrate
+    ownership marker carrying run and unit identity. If the target file already exists, it is
+    overwritten only if it is owned by the same run and unit (idempotent update). If the file is
+    unmarked (such as a hand-authored brief) or owned by another run/unit, saving fails loudly with
+    SystemExit, naming the conflicting path, leaving the existing file bytes untouched."""
     data = asdict(unit)
     if len(unit.task) <= TASK_SPILL_THRESHOLD:
         data["task_file"] = None
         return data
     TASK_DIR.mkdir(parents=True, exist_ok=True)
     pointer = f"{unit.name}.task.md"
-    resolve_task_file(pointer).write_text(unit.task)
+    target = resolve_task_file(pointer)
+
+    if target.exists():
+        try:
+            existing_content = target.read_text()
+        except OSError as exc:
+            raise SystemExit(
+                f"cannot check task file {pointer!r} ({target}): {exc}"
+            ) from exc
+        owner = parse_task_spill_marker(existing_content)
+        if owner is None:
+            raise SystemExit(
+                f"refusing to overwrite unmarked task file {pointer!r} ({target}); "
+                "hand-authored briefs are protected from generated task spills"
+            )
+        existing_run_id, existing_unit_name = owner
+        if existing_run_id != run_id or existing_unit_name != unit.name:
+            raise SystemExit(
+                f"refusing to overwrite task file {pointer!r} ({target}) owned by "
+                f"run {existing_run_id!r} unit {existing_unit_name!r} "
+                f"(current run {run_id!r} unit {unit.name!r})"
+            )
+
+    stamped_task = f"{task_spill_marker(run_id, unit.name)}\n{unit.task}"
+    target.write_text(stamped_task)
     data["task"] = ""
     data["task_file"] = pointer
     return data
@@ -599,13 +650,16 @@ def read_unit(raw: dict[str, Any]) -> Unit:
     with a note naming it: a run record must stay loadable even when its spill does not. Every
     other read failure -- a directory standing where the file should be, a permission error, an
     I/O error -- raises rather than being absorbed: absorbing it also drops the pointer, so the
-    next save would make the loss permanent and the unit could be launched with no instructions."""
+    next save would make the loss permanent and the unit could be launched with no instructions.
+    If the file contains a leading Orchestrate ownership marker, the marker is stripped so the
+    unit's in-memory task text is restored cleanly; unmarked hand-authored briefs load verbatim."""
     unit = Unit(**raw)
     if not unit.task_file:
         return unit
     spill = resolve_task_file(unit.task_file)
     try:
-        unit.task = spill.read_text()
+        raw_text = spill.read_text()
+        unit.task = strip_task_spill_marker(raw_text)
     except FileNotFoundError:
         unit.task = ""
         unit.task_file = None

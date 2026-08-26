@@ -109,11 +109,12 @@ class TestALongTaskSpillsOnSave:
     def test_the_spill_file_holds_exactly_the_task(
         self, orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Byte-identical on disk: no trailing newline added, nothing escaped or rewrapped."""
+        """The generated spill on disk begins with a stable ownership marker followed by task text."""
         monkeypatch.chdir(tmp_path)
         _run(orchestrate, orchestrate.Unit(name="build", vendor="claude", task=LONG_TASK)).save()
 
-        assert _spill_path(tmp_path, "build").read_text() == LONG_TASK
+        marker = orchestrate.task_spill_marker("r1", "build")
+        assert _spill_path(tmp_path, "build").read_text() == f"{marker}\n{LONG_TASK}"
 
     def test_a_task_one_over_the_threshold_spills(
         self, orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -125,6 +126,115 @@ class TestALongTaskSpillsOnSave:
         record = _read_run(tmp_path)["units"][0]
         assert record["task"] == ""
         assert record["task_file"] == "edge.task.md"
+
+
+class TestTaskSpillOwnershipAndNoClobber:
+    """Generated spills carry run/unit ownership; unmarked or foreign files are protected."""
+
+    def test_generated_spill_marker_parses_run_and_unit_identity(
+        self, orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        _run(orchestrate, orchestrate.Unit(name="build", vendor="claude", task=LONG_TASK)).save()
+
+        content = _spill_path(tmp_path, "build").read_text()
+        owner = orchestrate.parse_task_spill_marker(content)
+        assert owner == ("r1", "build")
+
+    def test_unmarked_hand_authored_brief_is_never_overwritten_and_bytes_untouched(
+        self, orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        spill_file = _spill_path(tmp_path, "build")
+        spill_file.parent.mkdir(parents=True, exist_ok=True)
+        original_bytes = b"# Hand-authored brief\nDo not clobber this file.\n"
+        spill_file.write_bytes(original_bytes)
+
+        with pytest.raises(SystemExit) as exc_info:
+            _run(orchestrate, orchestrate.Unit(name="build", vendor="claude", task=LONG_TASK)).save()
+
+        assert "refusing to overwrite unmarked task file" in str(exc_info.value)
+        assert "build.task.md" in str(exc_info.value)
+        assert spill_file.read_bytes() == original_bytes
+
+    def test_foreign_run_owned_task_file_is_never_overwritten(
+        self, orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        spill_file = _spill_path(tmp_path, "build")
+        spill_file.parent.mkdir(parents=True, exist_ok=True)
+        foreign_marker = orchestrate.task_spill_marker("other-run", "build")
+        original_bytes = f"{foreign_marker}\nPrior run task instructions".encode()
+        spill_file.write_bytes(original_bytes)
+
+        with pytest.raises(SystemExit) as exc_info:
+            _run(orchestrate, orchestrate.Unit(name="build", vendor="claude", task=LONG_TASK)).save()
+
+        assert "refusing to overwrite task file" in str(exc_info.value)
+        assert "other-run" in str(exc_info.value)
+        assert "r1" in str(exc_info.value)
+        assert "build.task.md" in str(exc_info.value)
+        assert spill_file.read_bytes() == original_bytes
+
+    def test_foreign_unit_owned_task_file_is_never_overwritten(
+        self, orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        spill_file = _spill_path(tmp_path, "build")
+        spill_file.parent.mkdir(parents=True, exist_ok=True)
+        foreign_marker = orchestrate.task_spill_marker("r1", "other-unit")
+        original_bytes = f"{foreign_marker}\nOther unit task instructions".encode()
+        spill_file.write_bytes(original_bytes)
+
+        with pytest.raises(SystemExit) as exc_info:
+            _run(orchestrate, orchestrate.Unit(name="build", vendor="claude", task=LONG_TASK)).save()
+
+        assert "refusing to overwrite task file" in str(exc_info.value)
+        assert "other-unit" in str(exc_info.value)
+        assert "build.task.md" in str(exc_info.value)
+        assert spill_file.read_bytes() == original_bytes
+
+    def test_same_owner_rewrite_is_idempotent_and_updates_cleanly(
+        self, orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        r = _run(orchestrate, orchestrate.Unit(name="build", vendor="claude", task=LONG_TASK))
+        r.save()
+
+        updated_task = LONG_TASK + "\nAdditional instructions."
+        r.units[0].task = updated_task
+        r.save()
+
+        loaded = orchestrate.Run.load()
+        assert loaded.unit("build").task == updated_task
+        marker = orchestrate.task_spill_marker("r1", "build")
+        assert _spill_path(tmp_path, "build").read_text() == f"{marker}\n{updated_task}"
+
+    def test_loading_unmarked_hand_authored_brief_loads_verbatim(
+        self, orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        brief_path = _spill_path(tmp_path, "hand_authored")
+        brief_path.parent.mkdir(parents=True, exist_ok=True)
+        brief_text = "# Custom Brief\n1. Do this.\n2. Do that.\n"
+        brief_path.write_text(brief_text)
+
+        _write_raw_run(
+            tmp_path,
+            [
+                {
+                    "name": "u",
+                    "vendor": "claude",
+                    "task": "",
+                    "task_file": "hand_authored.task.md",
+                    "status": "pending",
+                }
+            ],
+        )
+
+        loaded = orchestrate.Run.load()
+        assert loaded.unit("u").task == brief_text
+        assert loaded.unit("u").task_file == "hand_authored.task.md"
 
 
 class TestAShortTaskStaysInline:
@@ -199,7 +309,8 @@ class TestOldFormatRecordsStillLoad:
         loaded.save()
 
         assert _MARKER not in _run_path(tmp_path).read_text()
-        assert _spill_path(tmp_path, "old").read_text() == LONG_TASK
+        marker = orchestrate.task_spill_marker("r1", "old")
+        assert _spill_path(tmp_path, "old").read_text() == f"{marker}\n{LONG_TASK}"
         assert orchestrate.Run.load().unit("old").task == LONG_TASK
 
 

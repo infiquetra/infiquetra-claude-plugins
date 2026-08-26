@@ -1199,3 +1199,168 @@ class TestMissionControlSkillsTableBijectionGuard:
         msg = str(exc_info.value)
         assert "metrics" in msg
         assert "README table rows with no shipped skill directory" in msg
+
+
+# ===========================
+# Rollout surface drift guard (#821)
+# ===========================
+
+
+class TestMissionControlRolloutSurfaceGuard:
+    """Drift guards verifying the removal of the dead rollout update subcommand (#821)."""
+
+    SURVIVING_ROLLOUT_SUBCOMMANDS = {
+        "status",
+        "gap-analysis",
+        "deploy-labels",
+        "deploy-templates",
+        "deploy-all",
+    }
+
+    BEADS_WRITE_PATTERN = re.compile(
+        r"(?:update|write|modify|save|dump).*\bbeads-config\.json\b|\bbeads-config\.json\b.*(?:as a write target|updated|written|modified)",
+        re.IGNORECASE,
+    )
+
+    def test_rollout_help_lists_five_subcommands_and_no_update(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Confirm rollout --help lists exactly five subcommands and no update subcommand."""
+        monkeypatch.setattr(sys, "argv", ["sdlc_manager.py", "rollout", "--help"])
+        with pytest.raises(SystemExit) as exc:
+            sdlc_manager.main()
+        assert exc.value.code == 0
+        captured = capsys.readouterr()
+        stdout = captured.out
+
+        # Verify no update subcommand in help output
+        assert "update" not in stdout.split()
+
+        # Verify all 5 surviving subcommands are present
+        for subcmd in self.SURVIVING_ROLLOUT_SUBCOMMANDS:
+            assert subcmd in stdout, f"Missing surviving subcommand '{subcmd}' in rollout --help"
+
+    def test_rollout_update_rejected_as_argparse_invalid_choice(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Confirm rollout update is rejected by argparse as an invalid choice."""
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "sdlc_manager.py",
+                "rollout",
+                "update",
+                "--repo",
+                "infiquetra-core",
+                "--field",
+                "labels",
+                "--status",
+                "complete",
+            ],
+        )
+        with pytest.raises(SystemExit) as exc:
+            sdlc_manager.main()
+        assert exc.value.code == 2, (
+            f"Expected exit code 2 (argparse invalid choice), got {exc.value.code}"
+        )
+        captured = capsys.readouterr()
+        assert (
+            "invalid choice: 'update'" in captured.err or "invalid choice: update" in captured.err
+        )
+        assert "Traceback" not in captured.err
+
+    def test_surviving_rollout_subcommands_parse_without_error(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Confirm each of the five surviving rollout subcommands is recognized by the parser."""
+        for subcmd in self.SURVIVING_ROLLOUT_SUBCOMMANDS:
+            monkeypatch.setattr(sys, "argv", ["sdlc_manager.py", "rollout", subcmd, "--help"])
+            with pytest.raises(SystemExit) as exc:
+                sdlc_manager.main()
+            assert exc.value.code == 0, f"rollout {subcmd} --help failed with code {exc.value.code}"
+
+    def test_no_document_names_beads_config_as_write_target(self) -> None:
+        """Confirm no docstring, help string, README, or skill doc names beads-config.json as a write target."""
+        mc_dir = Path(__file__).resolve().parent.parent / "plugins" / "mission-control"
+
+        # 1. Check Python files for any write open of beads-config.json
+        for py_file in mc_dir.rglob("*.py"):
+            text = py_file.read_text(encoding="utf-8")
+            assert 'open(status_file, "w")' not in text
+            assert 'open(status_file, "w+")' not in text
+            lines = text.splitlines()
+            for lineno, line in enumerate(lines, start=1):
+                if "beads-config.json" in line and (
+                    "'w'" in line or '"w"' in line or "write" in line.lower()
+                ):
+                    if "#" in line and "removed" in line.lower():
+                        continue
+                    pytest.fail(
+                        f"Found beads-config write reference in {py_file.name}:{lineno}: {line}"
+                    )
+
+        # 2. Check README.md and SKILL.md for rollout update or beads-config write mentions
+        for doc_path in [mc_dir / "README.md", mc_dir / "skills" / "rollout" / "SKILL.md"]:
+            text = doc_path.read_text(encoding="utf-8")
+            assert "rollout update" not in text, f"Found 'rollout update' in {doc_path.name}"
+            for lineno, line in enumerate(text.splitlines(), start=1):
+                if self.BEADS_WRITE_PATTERN.search(line):
+                    pytest.fail(
+                        f"Found beads-config write claim in {doc_path.name}:{lineno}: {line}"
+                    )
+
+        # 3. Check sdlc_manager.py module docstring and comments
+        sdlc_text = (mc_dir / "scripts" / "sdlc_manager.py").read_text(encoding="utf-8")
+        assert "rollout update" not in sdlc_text, "Found 'rollout update' in sdlc_manager.py"
+
+    def test_legacy_rollout_config_readers_graceful_degradation(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Confirm board_wip, rollout_status, and config_show gracefully handle missing legacy config."""
+        empty_config = {
+            "project_mappings": {
+                "projects": {"mount-olympus": {"number": 1, "name": "MO Ops", "id": "P1"}}
+            },
+            "legacy_rollout_config": {},
+        }
+
+        with patch.object(sdlc_manager, "load_config", return_value=empty_config):
+            # 1. board_wip
+            with patch.object(sdlc_manager, "get_project_items", return_value=("P1", [])):
+                sdlc_manager.board_wip("mount-olympus", "text")
+                captured = capsys.readouterr()
+                assert "WIP Status" in captured.out
+
+            # 2. rollout_status
+            sdlc_manager.rollout_status(team_filter=None, fmt="text")
+            captured = capsys.readouterr()
+            assert "No rollout status data found" in captured.out or captured.out != ""
+
+            # 3. config_show (text format)
+            sdlc_manager.config_show(fmt="text")
+            captured = capsys.readouterr()
+            assert "Rollout: 0/0 repos complete" in captured.out
+
+            # 4. config_show (json format)
+            sdlc_manager.config_show(fmt="json")
+            captured = capsys.readouterr()
+            assert '"legacy_rollout_config": {}' in captured.out
+
+    def test_mutation_proof_reintroducing_update_subcommand_fails_guard(self) -> None:
+        """Mutation-prove that reintroducing the update subcommand fails the guard."""
+        fake_help_output = (
+            "positional arguments:\n"
+            "  {status,gap-analysis,deploy-labels,deploy-templates,deploy-all,update}\n"
+            "    status              Show rollout status\n"
+            "    update              Update beads-config.json\n"
+        )
+        with pytest.raises(AssertionError):
+            assert "update" not in fake_help_output.split()
+
+    def test_mutation_proof_reintroducing_beads_write_claim_fails_guard(self) -> None:
+        """Mutation-prove that reintroducing a write claim to beads-config.json fails the pattern matcher."""
+        claim_1 = "Update beads-config.json for a repo."
+        claim_2 = "sdlc_manager.py rollout update --repo foo (writes beads-config.json)"
+        assert self.BEADS_WRITE_PATTERN.search(claim_1) is not None
+        assert self.BEADS_WRITE_PATTERN.search(claim_2) is not None

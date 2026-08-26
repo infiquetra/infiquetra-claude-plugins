@@ -207,9 +207,6 @@ python3 $SCRIPT rollout deploy-templates --repo athena-service
 
 # Full SDLC deployment (labels + templates)
 python3 $SCRIPT rollout deploy-all --repo athena-service
-
-# Update rollout tracking
-python3 $SCRIPT rollout update --repo athena-service --field labels --status complete
 ```
 
 ### Flow Operations (Phase C)

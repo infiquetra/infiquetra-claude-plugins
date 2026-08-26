@@ -40,6 +40,8 @@ python3 "$S" expand --plan .orchestrate/next.json  # append units a finished pha
 python3 "$S" review-result --file <result.json>     # persist the typed result and route repairs
 python3 "$S" land                                  # merge finished unit branches onto the run branch
 python3 "$S" collect                               # merge the run branch into the operator tree
+python3 "$S" park --unit <name> --evidence "<err>" # record push-succeeded / PR-blocked unit
+python3 "$S" resume --unit <name>                  # open/adopt missing PR and continue run
 python3 "$S" clean --branches                      # close tabs, remove worktrees
 ```
 
@@ -115,7 +117,7 @@ Operator-owned requests prevent that resubmission.
 
 One file, `.orchestrate/run.json`: run id, source, base commit, the verbatim review result and routing
 state, and per unit its name, vendor, model, effort, account, task, role, owned paths, outstanding fix requests,
-dependencies, worktree, branch, tab, Herdr agent name, status, `variant`, and `launch_receipt`. If
+dependencies, worktree, branch, tab, Herdr agent name, status, `variant`, `launch_receipt`, and `parked_state`. If
 session state is wrong, `herdr agent list` is the real truth.
 
 `start` adds `.orchestrate/` to the driven repository's local `.git/info/exclude`, preserving every
@@ -134,6 +136,34 @@ idempotent.
 
 The unit's `name` is the dependency key and never changes. The wrapper uniquifies agent names, so
 what herdr calls the session is recorded separately as `agent_name`.
+
+## Parked State and Resume
+
+When a worker pushes its branch successfully but pull request creation is blocked (e.g. by vendor
+permission mode or API rate limits), the coordinator records the unit in the typed `parked` state:
+
+```bash
+python3 "$S" park --unit <name> --evidence "<error message>"
+```
+
+Orchestrate verifies the pushed commit on the remote branch via `git ls-remote` before writing the
+run record. A failed push never enters the parked state. The parked record captures:
+- `remote_head`: the verified remote commit SHA
+- `base`: the authoritative base branch or commit
+- `unit`: the unit identity
+- `frozen_revision`: the frozen local commit SHA matching the remote head
+- `failure_evidence`: the failure evidence string
+
+To resume the parked unit:
+
+```bash
+python3 "$S" resume --unit <name>
+```
+
+`resume` verifies that the remote branch is present and its head matches `remote_head`, then
+idempotently opens the missing pull request or adopts an existing matching pull request, transitioning
+the unit to `done` and continuing the original run without rewriting completed evidence. If the remote
+branch is missing or has changed, `resume` fails loudly without mutating the run record.
 
 ## Workspaces
 

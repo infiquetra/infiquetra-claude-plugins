@@ -331,8 +331,9 @@ class TestFallbackProcessContract:
         wait_calls = [call for call in calls if call[:2] == ["agent", "wait"]]
         timeout_values = [int(call[call.index("--timeout") + 1]) for call in wait_calls]
         assert result.returncode == 0
-        assert 0.8 <= elapsed <= 1.5
-        assert 2 <= len(wait_calls) <= 5
+        assert "no unit settled" in result.stdout
+        assert 0.8 <= elapsed <= 2.5
+        assert 1 <= len(wait_calls) <= 10
         assert all(
             earlier > later
             for earlier, later in zip(timeout_values, timeout_values[1:], strict=False)

@@ -333,7 +333,35 @@ class TestFallbackProcessContract:
         assert result.returncode == 0
         assert "no unit settled" in result.stdout
         assert 0.8 <= elapsed <= 2.0
-        assert 1 <= len(wait_calls) <= 10
+        assert wait_calls
+        assert all(1 <= value <= 1000 for value in timeout_values)
+        if len(timeout_values) >= 2:
+            assert all(
+                earlier > later
+                for earlier, later in zip(timeout_values, timeout_values[1:], strict=False)
+            )
+            assert timeout_values[-1] < timeout_values[0]
+
+    def test_restarts_share_one_monotonic_deadline_under_scheduling_skew(
+        self, tmp_path: Path
+    ) -> None:
+        """Rapid child wakeups / scheduling skew produce >10 wait calls while sharing the deadline."""
+        result, elapsed, calls = _run_wait(
+            tmp_path,
+            "--timeout",
+            "1",
+            "--interval",
+            "0",
+            wait_exits="0",
+            wait_delays="0",
+            statuses="working",
+        )
+        wait_calls = [call for call in calls if call[:2] == ["agent", "wait"]]
+        timeout_values = [int(call[call.index("--timeout") + 1]) for call in wait_calls]
+        assert result.returncode == 0
+        assert "no unit settled" in result.stdout
+        assert 0.8 <= elapsed <= 2.0
+        assert len(wait_calls) > 10
         assert all(1 <= value <= 1000 for value in timeout_values)
         if len(timeout_values) >= 2:
             assert all(

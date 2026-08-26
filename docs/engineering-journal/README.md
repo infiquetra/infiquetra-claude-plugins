@@ -36,7 +36,7 @@ Each of the four core files has a block-quote intro at the top with its own form
 - Marketplace registry drift (PRs #110/#111 missed registration) → [LEARNINGS](LEARNINGS.md#marketplace-drift)
 - `marketplace.json` `Edit` requires `]` in `old_string` → [LEARNINGS](LEARNINGS.md#marketplace-edit-guard)
 - Gitignore `.claude/` and skip `uv.lock` → [DECISIONS](DECISIONS.md#gitignore-claude-and-no-uv-lock)
-- CI guard for plugins/marketplace drift → [QUEUED](QUEUED.md#marketplace-ci-guard)
+- CI guard for plugins/marketplace drift → [ARCHIVE](ARCHIVE.md#marketplace-ci-guard-pruned)
 - Future `plugins/engineering-journal/` plugin → [QUEUED](QUEUED.md#engineering-journal-plugin)
 - Phase 5 spawn primitive: tmux-wrapped foreground (replaces `--bg` from current plan) → [QUEUED](QUEUED.md#phase5-spawn-via-tmux)
 - File feature request with Anthropic re channels-in-bg → [QUEUED](QUEUED.md#channels-in-bg-feature-request)

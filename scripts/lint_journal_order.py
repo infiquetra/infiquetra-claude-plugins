@@ -18,8 +18,9 @@ Three modes:
   entry stranded above the first date heading.
 * anchors (always) -- heading-attached ``{#slug}`` definitions are unique across the joint
   file set, and ``](#slug)`` / non-heading ``{#slug}`` mentions resolve to that set (#407).
-  Covered reference forms are exactly those two. A cross-file link (``](DECISIONS.md#slug)``)
-  is NOT checked: repairing the ones already in the journal is its own change.
+  Cross-file Markdown fragment links (``](FILE.md#anchor)``) among the covered journal set
+  resolve against the destination file's explicit ``{#slug}`` and GitHub-generated heading
+  anchors (#838).
 * diff-scoped (``--base-ref``) -- an entry ADDED by this branch must land in the newest date
   section. This is the check that actually prevents recurrence, and it mirrors the existing
   PR-scoped guard in ``tools/release_surface_diff_guard.py``.
@@ -31,6 +32,7 @@ and commit-hash presence are out of scope (operator ruling on #407).
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -40,12 +42,12 @@ DEFAULT_JOURNALS = (
     "docs/engineering-journal/LEARNINGS.md",
     "docs/engineering-journal/DECISIONS.md",
 )
-#: ARCHIVE/QUEUED carry heading anchors but not newest-first date sections, so they join
-#: the definition set without joining the ordering check. A LEARNINGS citation of a QUEUED
-#: slug is a real edge in the graph, not a dangle.
+#: ARCHIVE/QUEUED/README carry heading anchors or fragment citations without newest-first
+#: date sections, so they join the definition and reference set without joining the ordering check.
 ANCHOR_EXTRA = (
     "docs/engineering-journal/ARCHIVE.md",
     "docs/engineering-journal/QUEUED.md",
+    "docs/engineering-journal/README.md",
 )
 
 DATE_HEADING = re.compile(r"^## (\d{4}-\d{2}-\d{2})\s*$")
@@ -54,7 +56,7 @@ ENTRY = re.compile(r"^### ")
 MISLEVELLED = re.compile(r"^## (?!\d{4}-\d{2}-\d{2}\s*$).*\{#[^}]+\}\s*$")
 HEADING_LINE = re.compile(r"^#{1,6}\s+")
 BRACE_ANCHOR = re.compile(r"\{#([^}]+)\}")
-FRAGMENT_REF = re.compile(r"\]\(#([^)\s\"]+)")
+MARKDOWN_LINK = re.compile(r"\]\(([^)\s\"]+)\)")
 FENCE_MARK = re.compile(r"^(?:> ?)* {0,3}(`{3,}|~{3,})")
 #: The format-template placeholder in the journal headers, not a citation.
 PLACEHOLDER_SLUGS = frozenset({"slug"})
@@ -228,28 +230,71 @@ def _heading_definitions(active: list[tuple[int, str]]) -> list[tuple[str, int]]
     return found
 
 
-def _references(active: list[tuple[int, str]]) -> list[tuple[str, int]]:
-    """Same-file ``](#slug)`` targets and non-heading ``{#slug}`` mentions as (slug, line).
+def _github_slug(heading_line: str) -> str:
+    """GitHub-generated heading slug from a Markdown heading line."""
+    text = re.sub(r"^#{1,6}\s+", "", heading_line)
+    text = re.sub(r"\{#[^}]+\}", "", text).strip()
+    text = re.sub(r"[`*_~]", "", text)
+    text = text.lower()
+    text = re.sub(r"[^\w\s-]", "", text)
+    text = re.sub(r"\s+", "-", text)
+    return text.strip("-")
 
-    Cross-file links (``](DECISIONS.md#slug)``) are out of scope for this pass; #407's
-    reference set is the two same-file forms above.
+
+def _heading_slugs(active: list[tuple[int, str]]) -> set[str]:
+    """GitHub-generated heading anchor slugs from active heading lines."""
+    slugs: set[str] = set()
+    counts: dict[str, int] = {}
+    for _, line in active:
+        if not HEADING_LINE.match(line):
+            continue
+        base_slug = _github_slug(line)
+        if not base_slug:
+            continue
+        count = counts.get(base_slug, 0)
+        counts[base_slug] = count + 1
+        if count == 0:
+            slugs.add(base_slug)
+        else:
+            slugs.add(f"{base_slug}-{count}")
+    return slugs
+
+
+def _references(active: list[tuple[int, str]]) -> list[tuple[str | None, str, int]]:
+    """Same-file mentions/fragments and cross-file Markdown fragment links.
+
+    Returns tuples of (target_file_or_None, anchor, line). target_file is None
+    for same-file fragment targets (](#anchor)) and non-heading {#slug} mentions.
     """
-    found: list[tuple[str, int]] = []
-    seen: set[tuple[str, int]] = set()
+    found: list[tuple[str | None, str, int]] = []
+    seen: set[tuple[str | None, str, int]] = set()
     for n, line in active:
         is_heading = bool(HEADING_LINE.match(line))
-        slugs: list[str] = []
         if not is_heading:
-            slugs.extend(m.group(1).strip() for m in BRACE_ANCHOR.finditer(line))
-        slugs.extend(m.group(1).strip() for m in FRAGMENT_REF.finditer(line))
-        for slug in slugs:
-            if not slug or slug in PLACEHOLDER_SLUGS:
+            for m in BRACE_ANCHOR.finditer(line):
+                slug = m.group(1).strip()
+                if not slug or slug in PLACEHOLDER_SLUGS:
+                    continue
+                mention_key: tuple[str | None, str, int] = (None, slug, n)
+                if mention_key not in seen:
+                    seen.add(mention_key)
+                    found.append(mention_key)
+        for m in MARKDOWN_LINK.finditer(line):
+            target = m.group(1).strip()
+            if "#" not in target:
                 continue
-            key = (slug, n)
-            if key in seen:
+            dest_file, anchor = target.split("#", 1)
+            dest_file = dest_file.strip()
+            anchor = anchor.strip()
+            if not anchor or anchor in PLACEHOLDER_SLUGS:
                 continue
-            seen.add(key)
-            found.append(key)
+            if dest_file.startswith(("http://", "https://", "mailto:")):
+                continue
+            file_part = dest_file if dest_file else None
+            link_key: tuple[str | None, str, int] = (file_part, anchor, n)
+            if link_key not in seen:
+                seen.add(link_key)
+                found.append(link_key)
     return found
 
 
@@ -258,15 +303,18 @@ def check_anchors(files: list[tuple[str, str]]) -> list[str]:
 
     Definitions are heading-attached ``{#slug}`` across *files* together — a slug
     defined in LEARNINGS.md and again in DECISIONS.md is a duplicate. References
-    are same-file ``](#slug)`` fragment targets and non-heading ``{#slug}`` mentions,
-    checked against that joint set; cross-file ``](FILE.md#slug)`` links are not in
-    the reference set. Duplicate reports name every definition site; dangling reports
-    name the referencing line; a fence left open is reported on its own line, because
-    it hides every anchor after it.
+    include same-file mentions/fragments as well as cross-file ``](FILE.md#anchor)``
+    links resolved against destination files' explicit ``{#slug}`` and GitHub-generated
+    heading slugs. Duplicate reports name every definition site; dangling reports
+    name the referencing line and destination; an unclosed code fence is reported
+    on its own line.
     """
     defs: dict[str, list[tuple[str, int]]] = {}
-    refs: list[tuple[str, str, int]] = []
+    file_defs: dict[str, set[str]] = {}
+    file_heading_slugs: dict[str, set[str]] = {}
+    file_refs: list[tuple[str, list[tuple[str | None, str, int]]]] = []
     problems: list[str] = []
+
     for rel, text in files:
         active, unclosed = _scan(text)
         if unclosed is not None:
@@ -274,10 +322,13 @@ def check_anchors(files: list[tuple[str, str]]) -> list[str]:
                 f"{rel}:{unclosed}: code fence opened here is never closed — "
                 f"the rest of the file is not anchor-checked"
             )
+        f_defs: set[str] = set()
         for slug, n in _heading_definitions(active):
             defs.setdefault(slug, []).append((rel, n))
-        for slug, n in _references(active):
-            refs.append((slug, rel, n))
+            f_defs.add(slug)
+        file_defs[rel] = f_defs
+        file_heading_slugs[rel] = _heading_slugs(active)
+        file_refs.append((rel, _references(active)))
 
     for slug in sorted(defs):
         sites = defs[slug]
@@ -286,11 +337,36 @@ def check_anchors(files: list[tuple[str, str]]) -> list[str]:
         named = " and ".join(f"{rel}:{n}" for rel, n in sites)
         problems.append(f"duplicate {{#{slug}}}: {named}")
 
-    defined = set(defs)
-    for slug, rel, n in refs:
-        if slug in defined:
-            continue
-        problems.append(f"{rel}:{n}: dangling {{#{slug}}} — no heading definition")
+    joint_explicit = set(defs)
+    for rel, refs in file_refs:
+        src_parent = Path(rel).parent
+        for file_part, anchor, n in refs:
+            if file_part is None:
+                if anchor in joint_explicit or anchor in file_heading_slugs.get(rel, set()):
+                    continue
+                problems.append(f"{rel}:{n}: dangling {{#{anchor}}} — no heading definition")
+            else:
+                target_rel = None
+                cand1 = os.path.normpath(src_parent / file_part).replace("\\", "/")
+                cand2 = os.path.normpath(file_part).replace("\\", "/")
+                if cand1 in file_defs:
+                    target_rel = cand1
+                elif cand2 in file_defs:
+                    target_rel = cand2
+
+                if target_rel is None:
+                    problems.append(
+                        f"{rel}:{n}: destination `{file_part}` is outside the covered journal set or does not exist"
+                    )
+                else:
+                    valid_anchors = file_defs.get(target_rel, set()) | file_heading_slugs.get(
+                        target_rel, set()
+                    )
+                    if anchor not in valid_anchors:
+                        problems.append(
+                            f"{rel}:{n}: dangling reference to `{file_part}#{anchor}` — "
+                            f"no heading definition in {target_rel}"
+                        )
     return problems
 
 
@@ -298,8 +374,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="lint_journal_order.py",
         description=(
-            "Check the engineering journal's newest-first ordering (#659) "
-            "and joint {#slug} uniqueness / dangling refs (#407)."
+            "Check the engineering journal's newest-first ordering (#659), "
+            "joint {#slug} uniqueness, and same-file / cross-file dangling fragment citations (#407, #838)."
         ),
     )
     ap.add_argument("journals", nargs="*", default=list(DEFAULT_JOURNALS))

@@ -1,12 +1,13 @@
-"""Tests for the engineering-journal ordering lint (#659) and anchor lint (#407).
+"""Tests for the engineering-journal ordering lint (#659) and anchor lint (#407, #838).
 
 The ordering lint exists because both journals had silently drifted ~10% of their content below
 the oldest date heading. The anchor lint exists because a duplicated slug or a dangling
 ``{#slug}`` / ``](#slug)`` citation corrupts the graph silently. Each class is tested in both
 directions — a clean file must pass, and each specific drift shape must be caught by name.
 
-The anchor lint's reference set is the two same-file forms only. Cross-file links
-(``](DECISIONS.md#slug)``) are not checked, so nothing here asserts they resolve.
+The anchor lint validates both same-file citations (``{#slug}``, ``](#slug)``) and cross-file
+Markdown fragment citations (``](FILE.md#anchor)``) across the covered journal set against
+explicit heading ``{#slug}`` definitions and GitHub-generated heading anchor slugs (#838).
 """
 
 from __future__ import annotations
@@ -216,6 +217,98 @@ def test_a_balanced_fence_reports_no_unclosed_fence(lint: ModuleType) -> None:
     assert not any("never closed" in p for p in lint.check_anchors([(LEARNINGS, text)]))
 
 
+def test_cross_file_valid_fragment_explicit_and_generated(lint: ModuleType) -> None:
+    decisions = (
+        "# Decisions\n\n## 2026-07-27\n\n"
+        "### Explicit decision  {#explicit-decision}\n\nbody\n\n"
+        "### GitHub Auto Generated Heading\n\nbody\n"
+    )
+    learnings = (
+        CLEAN + "\nSee [explicit](DECISIONS.md#explicit-decision) and "
+        "[auto](DECISIONS.md#github-auto-generated-heading).\n"
+    )
+    assert lint.check_anchors([(LEARNINGS, learnings), (DECISIONS, decisions)]) == []
+
+
+def test_cross_file_missing_anchor_reports_source_and_destination(lint: ModuleType) -> None:
+    decisions = "# Decisions\n\n## 2026-07-27\n\n### Valid  {#valid}\n\nbody\n"
+    learnings = CLEAN + "\nSee [broken](DECISIONS.md#missing-slug).\n"
+    n = next(i for i, ln in enumerate(learnings.splitlines(), 1) if "See [broken]" in ln)
+    problems = lint.check_anchors([(LEARNINGS, learnings), (DECISIONS, decisions)])
+    assert problems == [
+        f"{LEARNINGS}:{n}: dangling reference to `DECISIONS.md#missing-slug` — "
+        f"no heading definition in {DECISIONS}"
+    ]
+
+
+def test_cross_file_slug_in_other_covered_file_but_missing_in_target_fails(
+    lint: ModuleType,
+) -> None:
+    """A slug defined in one covered file (e.g. ARCHIVE.md) must fail if cited against DECISIONS.md."""
+    archive_path = "docs/engineering-journal/ARCHIVE.md"
+    archive = "# Archive\n\n### Arch Entry  {#arch-slug}\n\nbody\n"
+    decisions = "# Decisions\n\n## 2026-07-27\n\n### Dec Entry  {#dec-slug}\n\nbody\n"
+    learnings = CLEAN + "\nSee [wrong file citation](DECISIONS.md#arch-slug).\n"
+    n = next(
+        i for i, ln in enumerate(learnings.splitlines(), 1) if "See [wrong file citation]" in ln
+    )
+    problems = lint.check_anchors(
+        [(LEARNINGS, learnings), (DECISIONS, decisions), (archive_path, archive)]
+    )
+    assert problems == [
+        f"{LEARNINGS}:{n}: dangling reference to `DECISIONS.md#arch-slug` — "
+        f"no heading definition in {DECISIONS}"
+    ]
+
+
+def test_cross_file_destination_outside_covered_set_or_missing(lint: ModuleType) -> None:
+    learnings = CLEAN + "\nSee [outside](OTHER_DOC.md#some-anchor).\n"
+    n = next(i for i, ln in enumerate(learnings.splitlines(), 1) if "See [outside]" in ln)
+    problems = lint.check_anchors([(LEARNINGS, learnings)])
+    assert problems == [
+        f"{LEARNINGS}:{n}: destination `OTHER_DOC.md` is outside the covered journal set or does not exist"
+    ]
+
+
+def test_cross_file_non_covered_path_with_covered_basename_is_rejected(lint: ModuleType) -> None:
+    """Destination resolution is strictly path-based; matching basename in another dir is rejected."""
+    learnings = CLEAN + "\nSee [uncovered path](some/other/dir/DECISIONS.md#valid-target).\n"
+    n = next(i for i, ln in enumerate(learnings.splitlines(), 1) if "See [uncovered path]" in ln)
+    decisions = "# Decisions\n\n## 2026-07-27\n\n### Valid Target  {#valid-target}\n\nbody\n"
+    problems = lint.check_anchors([(LEARNINGS, learnings), (DECISIONS, decisions)])
+    assert problems == [
+        f"{LEARNINGS}:{n}: destination `some/other/dir/DECISIONS.md` is outside the covered journal set or does not exist"
+    ]
+
+
+def test_cross_file_relative_path_navigation(lint: ModuleType) -> None:
+    narrative_path = "docs/engineering-journal/narratives/custom-run.md"
+    decisions = "# Decisions\n\n## 2026-07-27\n\n### Valid Target  {#valid-target}\n\nbody\n"
+    narrative_text = "# Narrative\n\nSee [ref](../DECISIONS.md#valid-target).\n"
+    assert lint.check_anchors([(narrative_path, narrative_text), (DECISIONS, decisions)]) == []
+
+
+def test_cross_file_invalid_relative_path_fails(lint: ModuleType) -> None:
+    narrative_path = "docs/engineering-journal/narratives/custom-run.md"
+    decisions = "# Decisions\n\n## 2026-07-27\n\n### Valid Target  {#valid-target}\n\nbody\n"
+    narrative_text = "# Narrative\n\nSee [broken relative](../../DECISIONS.md#valid-target).\n"
+    n = next(
+        i for i, ln in enumerate(narrative_text.splitlines(), 1) if "See [broken relative]" in ln
+    )
+    problems = lint.check_anchors([(narrative_path, narrative_text), (DECISIONS, decisions)])
+    assert problems == [
+        f"{narrative_path}:{n}: destination `../../DECISIONS.md` is outside the covered journal set or does not exist"
+    ]
+
+
+def test_cross_file_external_links_ignored(lint: ModuleType) -> None:
+    learnings = (
+        CLEAN + "\nSee [external](https://github.com/org/repo#section) and "
+        "[mailto](mailto:alice@example.com#anchor).\n"
+    )
+    assert lint.check_anchors([(LEARNINGS, learnings)]) == []
+
+
 # --- the real fleet journals must stay clean ---------------------------------
 
 
@@ -227,11 +320,10 @@ def test_committed_journals_pass_the_structural_lint(lint: ModuleType) -> None:
 
 
 def test_committed_journals_pass_the_anchor_lint(lint: ModuleType) -> None:
-    """Regression sentinel: no duplicate slug, and every same-file citation resolves (#407).
+    """Regression sentinel: no duplicate slug, and every citation resolves (#407, #838).
 
-    Scoped to what ``check_anchors`` actually reads — ``{#slug}`` mentions and same-file
-    ``](#slug)`` targets. Cross-file ``](FILE.md#slug)`` links are outside its reference set,
-    so this asserts nothing about them.
+    Validates both same-file citations and cross-file Markdown fragment links
+    among the covered journal set.
     """
     files: list[tuple[str, str]] = []
     for rel in (*lint.DEFAULT_JOURNALS, *lint.ANCHOR_EXTRA):

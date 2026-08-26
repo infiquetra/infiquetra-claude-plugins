@@ -1035,6 +1035,15 @@ def _agent_launcher_script() -> Path | None:
             matches = sorted(sibling.glob("*/skills/agent-launcher/scripts/launcher.py"))
             if matches:
                 return matches[-1]
+    for parent in here.parents:
+        if parent.name == "orchestrate":
+            sibling = parent.parent / "agent-launcher"
+            direct = sibling / "skills" / "agent-launcher" / "scripts" / "launcher.py"
+            if direct.is_file():
+                return direct
+            matches = sorted(sibling.glob("*/skills/agent-launcher/scripts/launcher.py"))
+            if matches:
+                return matches[-1]
     return None
 
 
@@ -1062,11 +1071,20 @@ def _subprocess_run(
     return proc
 
 
+_REMEDIATION_MESSAGE = (
+    "agent-launcher plugin not found. Install the companion plugin: "
+    "claude plugin install agent-launcher@infiquetra-plugins"
+)
+
+
 def _agent_launcher_required(*_args: Any, **_kwargs: Any) -> Any:
-    raise SystemExit(
-        "agent-launcher plugin not found. Install plugins/agent-launcher or set "
-        "AGENT_LAUNCHER_ROOT. Launch, roster, and go cannot run without it."
-    )
+    raise SystemExit(_REMEDIATION_MESSAGE)
+
+
+def assert_agent_launcher_available() -> None:
+    """Fail fast before creating any worktree, session, or mutating run state."""
+    if not _AGENT_LAUNCHER_AVAILABLE:
+        raise SystemExit(_REMEDIATION_MESSAGE)
 
 
 def _ingest_agent_launcher() -> bool:
@@ -1090,6 +1108,7 @@ def _ingest_agent_launcher() -> bool:
 
 run = _subprocess_run
 if not _ingest_agent_launcher():
+    _AGENT_LAUNCHER_AVAILABLE = False
     launch = _agent_launcher_required
     agent_argv = _agent_launcher_required
     launcher = _agent_launcher_required
@@ -1100,14 +1119,18 @@ if not _ingest_agent_launcher():
     verify_unit_preflight = _agent_launcher_required
     append_unit_note = _agent_launcher_required
     say = _agent_launcher_required
-    has_delivery_warning = _agent_launcher_required
-    clear_delivery_warning = _agent_launcher_required
     models = _agent_launcher_required
     favourites = _agent_launcher_required
+    has_delivery_warning = _agent_launcher_required
+    clear_delivery_warning = _agent_launcher_required
     VENDOR_FLAGS = {}
     VENDOR_PERMISSION = {}
     VENDOR_NOTES = {}
-    AccountMismatchError = SystemExit
+
+    class AccountMismatchError(Exception):
+        pass
+else:
+    _AGENT_LAUNCHER_AVAILABLE = True
 
 
 def repo_root() -> Path:
@@ -1649,6 +1672,7 @@ def _report_landing_cleanup_failures(failures: Sequence[tuple[Path, str]]) -> No
 
 
 def cmd_start(args: argparse.Namespace) -> int:
+    assert_agent_launcher_available()
     plan = json.loads(Path(args.plan).read_text())
     assert_no_engine_prefs(plan)
     assert_safe_path_component(plan["run_id"], "run id")
@@ -1756,6 +1780,7 @@ def saga_capabilities(vendor: str) -> list[str]:
 
 def cmd_saga(args: argparse.Namespace) -> int:
     """Show how each vendor invokes a saga capability, and whether it has saga at all."""
+    assert_agent_launcher_available()
     for name, _ in roster():
         caps = saga_capabilities(name)
         if not caps:
@@ -1772,6 +1797,7 @@ def cmd_saga(args: argparse.Namespace) -> int:
 
 def cmd_roster(args: argparse.Namespace) -> int:
     """Print the agents this machine can run, asked now rather than remembered."""
+    assert_agent_launcher_available()
     rows = roster()
     if not rows:
         print("could not read the wrapper's tool list; check that it runs and prints `Tools:`")
@@ -1948,6 +1974,7 @@ def cmd_expand(args: argparse.Namespace) -> int:
     and they are appended to the same run -- not started as a second one. That keeps ``after``
     reaching back to the units they depend on, and keeps one ``collect`` for the whole thing.
     """
+    assert_agent_launcher_available()
     r = Run.load()
     added = json.loads(Path(args.plan).read_text())
     assert_no_engine_prefs(added)
@@ -2035,6 +2062,7 @@ def cmd_review_result(args: argparse.Namespace) -> int:
 
 
 def cmd_go(args: argparse.Namespace) -> int:
+    assert_agent_launcher_available()
     r = Run.load()
     if r.unresolvable_branch:
         raise SystemExit(f"run branch {r.unresolvable_branch!r} does not resolve; cannot go")

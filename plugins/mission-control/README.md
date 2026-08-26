@@ -78,6 +78,7 @@ when the repo is not mapped to the requested project, and starts issues in safe 
 | Skill | Activates When... |
 |-------|------------------|
 | `board` | Board review, item movement, WIP analysis, standup prep |
+| `flow` | Project field assignment, sub-issue linking, label verification, card validation |
 | `issues` | Issue creation, type selection, template guidance |
 | `labels` | Label deployment, field sync, audit |
 | `metrics` | Cycle time, throughput, WIP age analysis |

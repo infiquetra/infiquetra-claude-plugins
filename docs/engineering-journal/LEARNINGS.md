@@ -19,6 +19,17 @@
 > **Refs.** Cross-links to DECISIONS / QUEUED / narratives / other LEARNINGS entries.
 > ```
 
+## 2026-08-26
+
+### Strict semantic-version comparison in release-surface diff guard prevents duplicate and non-advancing releases  {#diff-guard-strict-semver-advancement}
+
+**Context.** The PR-scoped diff-aware release guard (`tools/release_surface_diff_guard.py`) historically verified only that `.claude-plugin/plugin.json` and `CHANGELOG.md` appeared in the PR's changed files list when non-documentation runtime files were modified. This allowed parallel PRs to claim duplicate or non-advancing plugin versions without failing CI.
+**Evidence.** During the improve-Claude-Plugins run (orchestration parent #814), PRs #833 and #834 both claimed Saga version `0.141.0`. After PR #833 merged, PR #834 remained green at the duplicate version until manual coordinator intervention. A prior incident on 2026-08-22 noted in `{#bump-guard-checks-touch-not-delta}` showed unifi edits remaining green because `description` edits in `plugin.json` satisfied path membership without advancing the version.
+**Mechanism.** Path-presence verification is an imperfect proxy for version advancement. When multiple branches branch from the same base ref or when a file is edited without incrementing its `version` field, path membership succeeds while the version delta is zero or negative. Strict comparison requires parsing the committed merge-base manifest version via `git show <merge-base>:path` and comparing against the committed head manifest version.
+**Fix (or queued).** Extended `tools/release_surface_diff_guard.py` with standard library `SemVer` parsing and comparison. `find_violations()` parses committed manifest versions at the merge base and at head for every changed plugin with non-documentation modifications, enforcing that the proposed version is strictly greater. Equal, lower, malformed, and incomparable versions fail with explicit messages naming the plugin and both values. Added unit and git-fixture regression tests in `tests/test_release_surface_diff_guard.py`.
+**Generalizable rule.** A release gate must verify the semantic state transition (the version delta between committed merge base and head), not merely file touch presence in the diff.
+**Refs.** Issues #842, #847; PRs #833, #834; `tools/release_surface_diff_guard.py`; `{#bump-guard-checks-touch-not-delta}`.
+
 ## 2026-08-25
 
 ### Run orch-2026-08-25-814: coordination learnings from the improve-claude-plugins run  {#814-run-coordination-learnings}

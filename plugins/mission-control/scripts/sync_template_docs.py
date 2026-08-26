@@ -25,9 +25,7 @@ def _find_package_root(start: Path | None = None) -> Path:
 
 
 PACKAGE_ROOT = _find_package_root()
-REFERENCE_PATH = (
-    PACKAGE_ROOT / "skills" / "issues" / "references" / "templates-reference.md"
-)
+REFERENCE_PATH = PACKAGE_ROOT / "skills" / "issues" / "references" / "templates-reference.md"
 DEFAULT_SDLC_PATH = Path.home() / "workspace" / "infiquetra" / "infiquetra-sdlc"
 
 ACTIONABLE_TEMPLATES = ("capability", "enhancement", "defect")

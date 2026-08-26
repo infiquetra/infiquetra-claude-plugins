@@ -718,43 +718,59 @@ class TestSyncTemplateDocsRelocatedCopy:
             check=False,
         )
 
-        assert proc.returncode == 0, f"Expected 0 exit code, got {proc.returncode}. Stderr: {proc.stderr}"
+        assert proc.returncode == 0, (
+            f"Expected 0 exit code, got {proc.returncode}. Stderr: {proc.stderr}"
+        )
         assert "usage: sync_template_docs.py" in proc.stdout
         assert "--check" in proc.stdout
 
     def test_relocated_copy_check_behaves_identically(self, tmp_path: Path) -> None:
         """--check behaves identically from checkout and relocated copy."""
+        checkout_script = (
+            Path(__file__).resolve().parent.parent
+            / "plugins"
+            / "mission-control"
+            / "scripts"
+            / "sync_template_docs.py"
+        )
         relocated_pkg = tmp_path / "another" / "depth" / "mission-control"
         self._stage_mission_control_copy(relocated_pkg)
+        relocated_script = relocated_pkg / "scripts" / "sync_template_docs.py"
 
-        script_path = relocated_pkg / "scripts" / "sync_template_docs.py"
-        sdlc_dir = sync_template_docs.template_directory()
         env = dict(os.environ)
 
-        if sdlc_dir.exists():
-            proc = subprocess.run(
-                [sys.executable, str(script_path), "--check"],
-                capture_output=True,
-                text=True,
-                env=env,
-                check=False,
+        # Run --check from checkout
+        checkout_proc = subprocess.run(
+            [sys.executable, str(checkout_script), "--check"],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+
+        # Run --check from relocated copy
+        relocated_proc = subprocess.run(
+            [sys.executable, str(relocated_script), "--check"],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+
+        # Both must produce identical exit code and result class
+        assert relocated_proc.returncode == checkout_proc.returncode
+
+        if checkout_proc.returncode == 0:
+            assert "Template docs are in sync:" in checkout_proc.stdout
+            assert "Template docs are in sync:" in relocated_proc.stdout
+            relocated_ref = (
+                relocated_pkg / "skills" / "issues" / "references" / "templates-reference.md"
             )
-            assert proc.returncode == 0, f"Check failed: {proc.stderr}"
-            assert "Template docs are in sync:" in proc.stdout
-            assert (
-                str(relocated_pkg / "skills" / "issues" / "references" / "templates-reference.md")
-                in proc.stdout
-            )
+            assert str(relocated_ref) in relocated_proc.stdout
         else:
-            proc = subprocess.run(
-                [sys.executable, str(script_path), "--check"],
-                capture_output=True,
-                text=True,
-                env=env,
-                check=False,
-            )
-            assert proc.returncode == 2
-            assert "Canonical template directory not found:" in proc.stderr
+            assert checkout_proc.returncode == 2
+            assert "Canonical template directory not found:" in checkout_proc.stderr
+            assert "Canonical template directory not found:" in relocated_proc.stderr
 
     def test_missing_required_contract_data_fails_loudly(self, tmp_path: Path) -> None:
         """Missing required contract data fails loudly naming the resolved path."""
@@ -773,8 +789,7 @@ class TestSyncTemplateDocsRelocatedCopy:
         )
 
         assert proc.returncode != 0
-        assert "issue_contract_data.py" in proc.stderr
-        assert str(contract_data) in proc.stderr or "issue_contract_data.py" in proc.stderr
+        assert str(contract_data) in proc.stderr
 
     def test_mutation_proof_parents_depth_fails_relocated_copy(self, tmp_path: Path) -> None:
         """Restoring the parents[3] fixed-depth assumption causes relocated copy to fail."""

@@ -1,5 +1,15 @@
 # Changelog
 
+## [3.0.1] - 2026-08-26
+
+### Fixed
+
+- **Fail fast on unresolvable Agent Launcher companion (#841).** When Orchestrate is installed
+  without its required `agent-launcher` companion, `roster`, `start`, `expand`, and `go` fail
+  preflight before creating any git worktree or Herdr session. The error message names the missing
+  companion and provides the exact supported remediation
+  (`claude plugin install agent-launcher@infiquetra-plugins`) without machine-specific paths.
+
 ## [3.0.0] - 2026-08-25
 
 ### Removed

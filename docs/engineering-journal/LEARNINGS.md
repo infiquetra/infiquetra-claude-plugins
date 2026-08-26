@@ -61,6 +61,36 @@
 **Generalizable rule.** Never assert minimum iteration counts for deadline-bounded loops or rely on thread start timing for racing contenders: use rendezvous barriers to guarantee concurrent state observation and prove deadline properties through elapsed duration and parameter bounds.
 **Refs.** Issues #846, #847; plan `docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md` unit U3.
 
+### Orchestrate fail-fast preflight on unresolvable Agent Launcher companion  {#841-orchestrate-agent-launcher-preflight}
+
+**Context.** Issue #841 (unit U5): Orchestrate 3.0.0 declares `agent-launcher >=1.0.0` in its
+`plugin.json` dependencies, but Claude Code's plugin manager does not automatically install
+declared dependencies upon plugin installation. When Orchestrate was installed into a clean
+environment without Agent Launcher, running `roster`, `expand`, or `go` crashed mid-command
+or after creating worktrees on disk, with an error message referencing monorepo source paths
+(`Install plugins/agent-launcher or set AGENT_LAUNCHER_ROOT`).
+**Evidence.** Running `orchestrate.py roster` from an installed cache layout without `agent-launcher`
+failed mid-command with `agent-launcher plugin not found` and suggested source checkout paths.
+In `cmd_go`, `make_worktree` was invoked before `launch` called the ingested launcher stub,
+leaving uncleaned worktrees behind on failure.
+**Mechanism.** Claude Code plugin dependencies are declarations, not installation triggers.
+Orchestrate requires Agent Launcher at runtime for command-line assembly and session lifecycle.
+Without an explicit preflight check across `roster`, `start`, `expand`, and `go`, commands
+progressed into partial state mutation before hitting the missing stub.
+**Fix.** Added `assert_agent_launcher_available()` fail-fast preflight across entry points
+before any worktree or session creation; extended `_agent_launcher_script()` cache sibling
+resolution; updated the refusal message to name the exact supported remediation
+(`claude plugin install agent-launcher@infiquetra-plugins`) without machine-specific paths;
+added regression suite in `tests/test_agent_launcher_plugin.py` simulating installed cache layouts.
+**Validation.** `uv run pytest tests/test_agent_launcher_plugin.py tests/test_orchestrate_launch_and_land.py tests/test_orchestrate_account.py -q`
+passed, verifying that preflight fails before worktree creation in isolated installed cache layouts
+and succeeds when the companion is installed.
+**Generalizable rule.** Never assume manifest dependencies are automatically installed by the
+runtime; pair dependency declarations with fail-fast preflight checks that halt before state
+mutation and emit exact, user-actionable installation commands without machine-local paths.
+**Refs.** Issues #841, #847; docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md (U5);
+PR #827 (launcher extraction #777).
+
 ## 2026-08-25
 
 ### Run orch-2026-08-25-814: coordination learnings from the improve-claude-plugins run  {#814-run-coordination-learnings}

@@ -1,5 +1,18 @@
 # Changelog
 
+## [3.0.2] - 2026-08-26
+
+### Fixed
+
+- **Model authority boundary: live catalog, never stale tables (#848).** External worker and
+  reviewer availability, exact model names, and effort or variant controls come only from the
+  installed `agents` wrapper and vendor-native live catalogs or help — never from Fleet Commons tier
+  data (`fleet_commons.tier_resolver`) or `~/.config/orchestrate/models.json`. Favourites provide
+  ordering only and never act as an allowlist or reachability constraint. `opencode-go` is documented
+  and handled as an OpenCode provider route, not an agent kind (`opencode`). Launch receipts separate
+  requested-only model facts from Herdr-confirmed runtime facts, and launch / variant validation refuses
+  unsupported vendors and unadvertised variants with no silent substitution.
+
 ## [3.0.1] - 2026-08-26
 
 ### Fixed

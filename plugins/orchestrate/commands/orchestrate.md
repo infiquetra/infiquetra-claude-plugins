@@ -97,11 +97,26 @@ order — not a checklist, and stop as soon as the answers determine the table:
    **Offer the operator's own favourites first.** `python3 "$S" roster --models` prints them from
    `~/.config/orchestrate/models.json` when that file exists — the handful they actually use, in
    their order of preference. Offer those as the options and keep one for typing something else.
+   Favourites provide preference ordering only, never an allowlist or reachability constraint; absence
+   from favourites never makes a model unsupported, and reordering or truncating favourites never changes
+   which models are reachable.
    opencode alone fronts 164 models across eight providers; picking four out of that is noise, and
    was wrong three rounds running.
 
+   **Model authority boundary: live catalog, never stale tables.** External worker and reviewer
+   availability, exact model names, and effort or variant controls come **only** from the installed
+   `agents` wrapper and vendor-native live catalogs or help — **never** from Fleet Commons tier data
+   (`fleet_commons.tier_resolver`) or `~/.config/orchestrate/models.json`. A model-aware dry run proves
+   argument resolution; a bounded real launch proves client acceptance; Herdr proves only workspace, pane,
+   working-directory (`cwd`), and readiness facts, never models. Fleet Commons retains internal Team Execution
+   tier ownership and must never gate external Herdr routes. `opencode-go` is an OpenCode provider
+   (e.g., `opencode-go/muse-spark-1.2-contributor`), not an agent kind (`opencode`). Exact provider/model
+   identities and their advertised variants are preserved verbatim. Catalog drift fails precisely, naming
+   the requested and available identities, with no silent substitution of model, provider, effort, account,
+   or agent kind.
+
    **Never write a model name from memory.** Run `python3 "$S" roster --models`, which asks each
-   vendor that can answer. `grok` and `opencode` can; `claude` documents its aliases in
+   vendor that can answer. `grok`, `agy`, and `opencode` can; `claude` documents its aliases in
    `claude --help` (`fable`, `opus`, `sonnet`, and full names); the rest cannot answer, and for
    those you ask the operator rather than guessing. A recalled model name that has since been
    renamed does not fail politely — the session starts on some default and nobody is told.

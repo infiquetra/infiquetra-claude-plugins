@@ -189,10 +189,26 @@ with `ORCHESTRATE_AGENT_LAUNCHER`. Model and effort flags are per vendor:
 | qwen | `-m` | via `setup` |
 | opencode | `-m` (as `provider/model`) | via `/variants` picker |
 
+**Model authority boundary: live catalog, never stale tables.** External worker and reviewer
+availability, exact model names, and effort or variant controls come **only** from the installed `agents`
+wrapper and vendor-native live catalogs or help (such as `roster --models` querying `grok models`,
+`agy models`, `opencode models`, or vendor `--help` output) — **never** from Fleet Commons tier data
+(`fleet_commons.tier_resolver`) or `~/.config/orchestrate/models.json`. A model-aware dry run proves argument
+resolution. A bounded real launch proves client acceptance when a dry run cannot. Herdr proves only the
+workspace, pane, working-directory (`cwd`), and readiness facts its own API exposes (`herdr agent list`) —
+nothing about models. Fleet Commons retains internal Team Execution tier semantics intact, but must never
+accept, reject, rename, downgrade, or gate an external Herdr route. `opencode-go` is an OpenCode provider
+(e.g., `opencode-go/muse-spark-1.2-contributor`), not an agent kind (`opencode`); exact provider/model identities
+and advertised variants are preserved verbatim. Catalog drift — a requested model the live catalog no longer
+advertises — fails precisely, naming the requested and available identities, with no silent substitution of
+model, provider, effort, account, or agent kind.
+
 **Favourites.** `~/.config/orchestrate/models.json` maps a vendor to the models the operator
 actually uses, most-preferred first — `{"opencode": ["deepseek/deepseek-v4-pro"], "codex": [...]}`.
 `roster --models` shows them above the vendor's full list. Absent or unreadable, nothing changes; it
-is a convenience, never a constraint, and a model not listed is still perfectly usable.
+is a convenience, never a constraint, and a model not listed is still perfectly usable. Favourites
+provide preference ordering only, never an allowlist or reachability constraint, and reordering or
+truncating favourites never changes which models are reachable.
 
 **Every vendor can be given a tier.** Where the command line has no flag, tier is established before
 task submission: for OpenCode, Orchestrate drives the interactive `/variants` picker inside the

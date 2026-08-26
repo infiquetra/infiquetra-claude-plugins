@@ -578,7 +578,7 @@ def strip_task_spill_marker(content: str) -> str:
     match = _TASK_SPILL_MARKER_PATTERN.match(content)
     if not match:
         return content
-    return content[match.end():]
+    return content[match.end() :]
 
 
 def resolve_task_file(pointer: str) -> Path:
@@ -617,9 +617,7 @@ def spill_unit(unit: Unit, run_id: str = "") -> dict[str, Any]:
         try:
             existing_content = target.read_text()
         except OSError as exc:
-            raise SystemExit(
-                f"cannot check task file {pointer!r} ({target}): {exc}"
-            ) from exc
+            raise SystemExit(f"cannot check task file {pointer!r} ({target}): {exc}") from exc
         owner = parse_task_spill_marker(existing_content)
         if owner is None:
             raise SystemExit(

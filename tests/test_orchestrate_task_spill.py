@@ -151,7 +151,9 @@ class TestTaskSpillOwnershipAndNoClobber:
         spill_file.write_bytes(original_bytes)
 
         with pytest.raises(SystemExit) as exc_info:
-            _run(orchestrate, orchestrate.Unit(name="build", vendor="claude", task=LONG_TASK)).save()
+            _run(
+                orchestrate, orchestrate.Unit(name="build", vendor="claude", task=LONG_TASK)
+            ).save()
 
         assert "refusing to overwrite unmarked task file" in str(exc_info.value)
         assert "build.task.md" in str(exc_info.value)
@@ -168,7 +170,9 @@ class TestTaskSpillOwnershipAndNoClobber:
         spill_file.write_bytes(original_bytes)
 
         with pytest.raises(SystemExit) as exc_info:
-            _run(orchestrate, orchestrate.Unit(name="build", vendor="claude", task=LONG_TASK)).save()
+            _run(
+                orchestrate, orchestrate.Unit(name="build", vendor="claude", task=LONG_TASK)
+            ).save()
 
         assert "refusing to overwrite task file" in str(exc_info.value)
         assert "other-run" in str(exc_info.value)
@@ -187,7 +191,9 @@ class TestTaskSpillOwnershipAndNoClobber:
         spill_file.write_bytes(original_bytes)
 
         with pytest.raises(SystemExit) as exc_info:
-            _run(orchestrate, orchestrate.Unit(name="build", vendor="claude", task=LONG_TASK)).save()
+            _run(
+                orchestrate, orchestrate.Unit(name="build", vendor="claude", task=LONG_TASK)
+            ).save()
 
         assert "refusing to overwrite task file" in str(exc_info.value)
         assert "other-unit" in str(exc_info.value)

@@ -1,5 +1,21 @@
 # Changelog
 
+## [3.0.5] - 2026-08-26
+
+### Fixed
+
+- **Typed parked state and idempotent resume for push-succeeded / PR-blocked units (#843).**
+  Orchestrate now records a distinct typed `parked` state and `parked_state` dictionary on units
+  when a worker's `git push` succeeded but pull request creation was blocked (e.g. by session
+  permission mode or API rate limits). The parked state is recorded via `park --unit <name> --evidence <text>`
+  only after the pushed commit is verified on the remote branch via `git ls-remote` (capturing
+  verified remote head, authoritative base, unit identity, frozen revision, and failure evidence);
+  failed pushes never enter this path. A coordinator-owned `resume --unit <name>` operation verifies
+  that the remote head is unchanged, then idempotently opens the missing pull request or adopts an
+  existing matching one and advances the unit to `done`, continuing the original run without a
+  second run or rewritten evidence. Missing or changed remote heads fail loudly without mutating the
+  run record.
+
 ## [3.0.4] - 2026-08-26
 
 ### Fixed

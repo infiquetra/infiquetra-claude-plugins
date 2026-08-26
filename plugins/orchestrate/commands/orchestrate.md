@@ -347,12 +347,24 @@ exits non-zero when it finds something.
 python3 "$S" check                                 # does the record still describe reality?
 python3 "$S" adopt                                 # what would it take back?
 python3 "$S" adopt --yes                           # take it back
+python3 "$S" park --unit <name> --evidence "<err>" # record push-succeeded / PR-blocked unit
+python3 "$S" resume --unit <name>                  # open/adopt missing PR and continue run
 ```
 
 `adopt` is the repair for a branch with no unit. It rebuilds the row from the branch, its worktree
 and the session sitting in it, and leaves `task`, `after`, `serialize`, `model` and `effort` empty
 rather than inventing them — the session already has its task, and nothing is ever sent to it
 again. Once adopted, the work is visible to `land` and `clean` like any other unit.
+
+**`park` and `resume` for push-succeeded / PR-creation-blocked recovery.** When a worker pushes its
+branch successfully but cannot create its pull request (e.g. rate-limited or blocked by session
+permission mode), the coordinator records the unit in the typed `parked` state with
+`park --unit <name> --evidence <text>`. The parked state is recorded only after the pushed commit is
+verified on the remote branch (`git ls-remote`), capturing the verified remote head, authoritative
+base, unit identity, frozen revision, and failure evidence. A failed push never enters this path. To
+resume, run `resume --unit <name>`: it idempotently opens the missing PR or adopts an existing
+matching one and advances the unit to `done`, continuing the original run without a second run or
+rewritten evidence. A missing or changed remote head fails loudly without mutating the run record.
 
 `python3`, not `uv run` — the script imports nothing outside the standard library, and the target
 repo may not be a uv project at all.

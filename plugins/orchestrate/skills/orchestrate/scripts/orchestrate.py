@@ -171,6 +171,7 @@ PENDING, RUNNING, DONE, FAILED = "pending", "running", "done", "failed"
 PROMPT_UNDELIVERED = "prompt_undelivered"
 ACCOUNT_MISMATCH = "account_mismatch"
 ORPHANED = "orphaned"
+PARKED = "parked"
 
 REVIEW_CONTROLLER_ROLE = "review-controller"
 REVIEWER_SEAT_ROLE = "external-reviewer"
@@ -339,6 +340,8 @@ class Unit:
     """Effective model variant (e.g. for OpenCode), verified before task submission."""
     launch_receipt: dict[str, Any] = field(default_factory=dict)
     """Verified launch state: provider, model, variant, cwd, worktree, workspace, pane."""
+    parked_state: dict[str, Any] = field(default_factory=dict)
+    """Typed parked state for push-succeeded / PR-creation-blocked recovery."""
 
 
 @dataclass
@@ -3833,6 +3836,263 @@ def cmd_adopt(args: argparse.Namespace) -> int:
     return 0
 
 
+def _default_pr_title(unit: Unit, r: Run) -> str:
+    issue_ref = r.issues.get(unit.name)
+    if issue_ref:
+        m = re.search(r"#(\d+)", issue_ref)
+        if m:
+            return f"fix({unit.name}): resolve #{m.group(1)}"
+    m = re.search(r"fix\s+#?(\d+)", unit.task, re.IGNORECASE)
+    if m:
+        return f"fix({unit.name}): resolve #{m.group(1)}"
+    return f"fix({unit.name}): {one_line(unit.task)[:60]}"
+
+
+def _default_pr_body(unit: Unit, r: Run, parked: dict[str, Any]) -> str:
+    lines = [
+        f"Coordinator-resumed PR for parked unit `{unit.name}` in run `{r.run_id}`.",
+        "",
+        f"**Frozen revision:** `{parked.get('frozen_revision', '')}`",
+        f"**Remote head:** `{parked.get('remote_head', '')}`",
+        f"**Authoritative base:** `{parked.get('base', '')}`",
+    ]
+    if parked.get("failure_evidence"):
+        lines.extend(
+            [
+                "",
+                "**Original PR creation blocker:**",
+                f"```\n{parked.get('failure_evidence')}\n```",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def park_unit(
+    r: Run,
+    unit_name: str,
+    failure_evidence: str,
+    *,
+    remote: str = "origin",
+    base: str | None = None,
+) -> Unit:
+    """Record a typed parked state for a unit whose push succeeded but PR creation blocked.
+
+    A failed push never enters this path: the pushed commit must be verified on the recorded
+    remote branch via `git ls-remote` before the run record is mutated. If the remote branch is
+    missing, or its head differs from the local frozen revision, this fails loudly without
+    mutating the run record.
+    """
+    unit = r.unit(unit_name)
+    if not unit.branch:
+        raise SystemExit(f"unit {unit_name!r} has no branch recorded; cannot park")
+    local_tip = resolve_ref(unit.branch)
+    if not local_tip:
+        raise SystemExit(
+            f"unit {unit_name!r} branch {unit.branch!r} does not resolve locally; cannot park"
+        )
+
+    remote_ref = unit.branch if unit.branch.startswith("refs/") else f"refs/heads/{unit.branch}"
+    ls_remote = run(["git", "ls-remote", remote, remote_ref], check=False)
+    if ls_remote.returncode != 0:
+        err = (ls_remote.stderr or ls_remote.stdout or "").strip()
+        raise SystemExit(f"failed to query remote {remote!r} for branch {unit.branch!r}: {err}")
+    output = ls_remote.stdout.strip()
+    if not output:
+        raise SystemExit(
+            f"unit {unit_name!r} branch {unit.branch!r} not found on remote {remote!r}; "
+            "a failed push never enters the parked state"
+        )
+    remote_sha = output.splitlines()[0].split()[0]
+    if remote_sha != local_tip:
+        raise SystemExit(
+            f"unit {unit_name!r} remote head {remote_sha!r} on {remote!r} does not match "
+            f"local frozen revision {local_tip!r}; cannot park"
+        )
+
+    auth_base = base or (r.branch if r.branch else "main")
+    unit.status = PARKED
+    unit.parked_state = {
+        "unit": unit.name,
+        "remote_head": remote_sha,
+        "base": auth_base,
+        "frozen_revision": local_tip,
+        "failure_evidence": failure_evidence,
+        "remote_branch": unit.branch,
+        "remote": remote,
+        "pr_url": None,
+        "pr_number": None,
+        "resumed": False,
+    }
+    append_note = (
+        f"parked: push verified at {remote_sha[:8]}; PR creation blocked ({failure_evidence})"
+    )
+    unit.note = f"{unit.note}; {append_note}" if unit.note else append_note
+    r.save()
+    return unit
+
+
+def resume_unit(
+    r: Run,
+    unit_name: str,
+    *,
+    title: str | None = None,
+    body: str | None = None,
+    base: str | None = None,
+    remote: str | None = None,
+) -> tuple[Unit, dict[str, Any]]:
+    """Idempotently open or adopt a PR for a parked unit, continuing the original run.
+
+    Fails loudly without mutating the run record if the remote branch is missing or if its
+    remote head has changed from the recorded frozen revision.
+    """
+    unit = r.unit(unit_name)
+    if unit.status != PARKED:
+        if unit.status == DONE and unit.parked_state and unit.parked_state.get("resumed"):
+            pr_info = {
+                "action": "already_resumed",
+                "pr_url": unit.parked_state.get("pr_url"),
+                "pr_number": unit.parked_state.get("pr_number"),
+            }
+            return unit, pr_info
+        raise SystemExit(
+            f"unit {unit_name!r} is not in parked state (status={unit.status!r}); cannot resume"
+        )
+
+    parked = unit.parked_state
+    if not parked or not parked.get("remote_head") or not parked.get("frozen_revision"):
+        raise SystemExit(f"unit {unit_name!r} has invalid or missing parked state; cannot resume")
+
+    target_remote = remote or parked.get("remote", "origin")
+    remote_branch = parked.get("remote_branch") or unit.branch
+    if not remote_branch:
+        raise SystemExit(f"unit {unit_name!r} has no remote branch recorded; cannot resume")
+    expected_remote_head = parked["remote_head"]
+    auth_base = base or parked.get("base") or (r.branch if r.branch else "main")
+
+    # Verify remote head before doing anything
+    remote_ref = (
+        remote_branch if remote_branch.startswith("refs/") else f"refs/heads/{remote_branch}"
+    )
+    ls_remote = run(["git", "ls-remote", target_remote, remote_ref], check=False)
+    if ls_remote.returncode != 0:
+        err = (ls_remote.stderr or ls_remote.stdout or "").strip()
+        raise SystemExit(
+            f"failed to query remote {target_remote!r} for branch {remote_branch!r}: {err}"
+        )
+    output = ls_remote.stdout.strip()
+    if not output:
+        raise SystemExit(
+            f"remote branch {remote_branch!r} is missing on remote {target_remote!r}; "
+            "cannot resume without verified remote branch"
+        )
+    current_remote_sha = output.splitlines()[0].split()[0]
+    if current_remote_sha != expected_remote_head:
+        raise SystemExit(
+            f"remote head for {remote_branch!r} on {target_remote!r} has changed: "
+            f"expected {expected_remote_head!r}, found {current_remote_sha!r}; "
+            "cannot resume"
+        )
+
+    # Check for existing matching PR on GitHub
+    pr_list = run(
+        [
+            "gh",
+            "pr",
+            "list",
+            "--head",
+            remote_branch,
+            "--json",
+            "number,url,state,headRefName,headRefOid",
+        ],
+        check=False,
+    )
+    existing_pr: dict[str, Any] | None = None
+    if pr_list.returncode == 0 and pr_list.stdout.strip():
+        try:
+            prs = json.loads(pr_list.stdout)
+            if isinstance(prs, list) and prs:
+                for p in prs:
+                    if (
+                        p.get("headRefName") == remote_branch
+                        or p.get("headRefOid") == expected_remote_head
+                    ):
+                        existing_pr = p
+                        break
+                if not existing_pr and prs:
+                    existing_pr = prs[0]
+        except (ValueError, KeyError):
+            existing_pr = None
+
+    if existing_pr is not None:
+        pr_url = str(existing_pr.get("url", ""))
+        pr_number = existing_pr.get("number")
+        action = "adopted"
+    else:
+        pr_title = title or _default_pr_title(unit, r)
+        pr_body = body or _default_pr_body(unit, r, parked)
+        create_argv = [
+            "gh",
+            "pr",
+            "create",
+            "--head",
+            remote_branch,
+            "--base",
+            auth_base,
+            "--title",
+            pr_title,
+            "--body",
+            pr_body,
+        ]
+        created = run(create_argv, check=False)
+        if created.returncode != 0:
+            err = (created.stderr or created.stdout or "").strip()
+            raise SystemExit(f"failed to create PR for unit {unit_name!r}: {err}")
+        pr_url = created.stdout.strip().splitlines()[-1]
+        m = re.search(r"/pull/(\d+)", pr_url)
+        pr_number = int(m.group(1)) if m else None
+        action = "opened"
+
+    unit.parked_state["pr_url"] = pr_url
+    unit.parked_state["pr_number"] = pr_number
+    unit.parked_state["resumed"] = True
+    unit.status = DONE
+    note_msg = f"resumed ({action} PR #{pr_number or pr_url})"
+    unit.note = f"{unit.note}; {note_msg}" if unit.note else note_msg
+    r.save()
+    return unit, {"action": action, "pr_url": pr_url, "pr_number": pr_number}
+
+
+def cmd_park(args: argparse.Namespace) -> int:
+    r = Run.load()
+    evidence = args.evidence.strip()
+    if not evidence:
+        raise SystemExit("failure evidence must not be empty")
+    unit = park_unit(r, args.unit, evidence, remote=args.remote, base=args.base)
+    print(
+        f"  {unit.name}: parked (remote head {unit.parked_state['remote_head'][:8]} verified on {args.remote})"
+    )
+    return 0
+
+
+def cmd_resume(args: argparse.Namespace) -> int:
+    r = Run.load()
+    unit, info = resume_unit(
+        r,
+        args.unit,
+        title=args.title,
+        body=args.body,
+        base=args.base,
+        remote=args.remote,
+    )
+    action = info["action"]
+    pr_url = info.get("pr_url", "")
+    if action == "already_resumed":
+        print(f"  {unit.name}: already resumed ({pr_url})")
+    else:
+        print(f"  {unit.name}: {action} PR {pr_url} -> status=done")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="orchestrate", description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -3952,6 +4212,37 @@ def main(argv: list[str] | None = None) -> int:
         "--yes", action="store_true", help="write the discovered units into the run file"
     )
     s.set_defaults(func=cmd_adopt)
+
+    s = sub.add_parser(
+        "park",
+        help="record a typed parked state for a unit whose push succeeded but PR creation blocked",
+    )
+    s.add_argument("--unit", required=True, help="unit name to park")
+    s.add_argument(
+        "--evidence",
+        "--error",
+        dest="evidence",
+        required=True,
+        help="failure evidence or error message explaining why PR creation was blocked",
+    )
+    s.add_argument("--remote", default="origin", help="remote name (default origin)")
+    s.add_argument("--base", help="authoritative base branch (defaults to run branch, or main)")
+    s.set_defaults(func=cmd_park)
+
+    s = sub.add_parser(
+        "resume",
+        help="idempotently open or adopt a pull request for a parked unit and continue the run",
+    )
+    s.add_argument("--unit", required=True, help="parked unit name to resume")
+    s.add_argument("--title", help="PR title (default derived from unit name/task)")
+    s.add_argument("--body", help="PR body")
+    s.add_argument("--base", help="authoritative base branch (defaults to recorded parked base)")
+    s.add_argument(
+        "--remote",
+        default=None,
+        help="remote name (defaults to recorded parked remote, or origin)",
+    )
+    s.set_defaults(func=cmd_resume)
 
     args = p.parse_args(argv)
     return int(args.func(args))

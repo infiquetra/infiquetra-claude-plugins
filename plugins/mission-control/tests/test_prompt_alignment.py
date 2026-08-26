@@ -22,7 +22,9 @@ def _find_repo_root(package_root: Path) -> Path:
     for parent in package_root.resolve().parents:
         if (parent / ".claude-plugin" / "marketplace.json").is_file():
             return parent
-    return package_root.resolve().parent.parent
+    raise RuntimeError(
+        f"repository root containing .claude-plugin/marketplace.json not found from {package_root.resolve()}"
+    )
 
 
 PACKAGE_ROOT = _find_package_root()
@@ -238,3 +240,19 @@ def test_find_package_root_fails_loudly_when_missing(tmp_path: Path) -> None:
         RuntimeError, match=r"package root containing \.claude-plugin/plugin\.json not found"
     ):
         _find_package_root(dummy_file)
+
+
+def test_find_repo_root_resolves_repo_root() -> None:
+    repo_root = _find_repo_root(PACKAGE_ROOT)
+    assert (repo_root / ".claude-plugin" / "marketplace.json").is_file()
+    assert repo_root == ROOT
+
+
+def test_find_repo_root_fails_loudly_when_missing(tmp_path: Path) -> None:
+    fake_pkg_root = tmp_path / "somewhere" / "mission-control"
+    fake_pkg_root.mkdir(parents=True)
+    with pytest.raises(
+        RuntimeError,
+        match=r"repository root containing \.claude-plugin/marketplace\.json not found",
+    ):
+        _find_repo_root(fake_pkg_root)

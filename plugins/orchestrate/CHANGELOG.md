@@ -1,5 +1,19 @@
 # Changelog
 
+## [3.0.6] - 2026-08-26
+
+### Fixed
+
+- **Opt-in remote branch cleanup for merged run-owned branches (#844).** `clean --branches`
+  now extends branch cleanup with an opt-in remote pass. Remote branch cleanup considers only
+  exact branch names recorded by the current run (`run.json`), deleting a remote branch only after
+  merged-PR proof (via `gh pr list`) or committed ancestry proof that the head is contained in
+  the authoritative branch (`r.branch`, `main`, or base). Every deletion is read back via
+  `git ls-remote` to confirm removal. Open (`RUNNING`/`PENDING`), diverged, unknown, or
+  operator-retained branches are refused with clear reasons and retained evidence. Repeated
+  cleanup passes are idempotent and report already-absent branches cleanly without error. Local
+  cleanup behavior and normal `clean --merged` remain unchanged.
+
 ## [3.0.5] - 2026-08-26
 
 ### Fixed

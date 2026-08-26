@@ -3389,12 +3389,199 @@ def reapable(unit: Unit, r: Run) -> bool:
     return landed(unit.branch, r) is True
 
 
+@dataclass
+class RemoteCleanReport:
+    deleted: list[str] = field(default_factory=list)
+    already_absent: list[str] = field(default_factory=list)
+    refused: list[tuple[str, str]] = field(default_factory=list)
+
+
+def prove_remote_branch_merged(
+    branch: str,
+    remote_sha: str,
+    r: Run,
+    *,
+    remote: str = "origin",
+) -> tuple[bool, str]:
+    """Check if the remote branch head is proven merged via GitHub PR or Git ancestry.
+
+    Returns (is_merged, evidence_or_refusal_reason).
+    """
+    remote_ref = branch if branch.startswith("refs/") else f"refs/heads/{branch}"
+    # 1. GitHub PR verification if gh is available
+    pr_res = run(
+        [
+            "gh",
+            "pr",
+            "list",
+            "--head",
+            branch,
+            "--state",
+            "all",
+            "--json",
+            "number,url,state,mergedAt,headRefName,headRefOid",
+        ],
+        check=False,
+    )
+    if pr_res.returncode == 0 and pr_res.stdout.strip():
+        try:
+            prs = json.loads(pr_res.stdout)
+            if isinstance(prs, list) and prs:
+                for p in prs:
+                    if (
+                        p.get("headRefName") == branch
+                        or p.get("headRefOid") == remote_sha
+                    ):
+                        state = (p.get("state") or "").upper()
+                        if state == "OPEN":
+                            return False, f"open (PR #{p.get('number')} is OPEN)"
+                        if state == "MERGED" or p.get("mergedAt"):
+                            return True, f"merged PR #{p.get('number')}"
+                        if state == "CLOSED":
+                            return (
+                                False,
+                                f"refused: PR #{p.get('number')} was closed without merge",
+                            )
+        except (ValueError, KeyError):
+            pass
+
+    # 2. Git committed ancestry proof
+    if resolve_ref(remote_sha) is None:
+        run(["git", "fetch", remote, remote_ref], check=False)
+
+    if resolve_ref(remote_sha) is None:
+        return False, f"unknown: remote head {remote_sha[:8]} not found locally or on remote"
+
+    auth_targets: list[str] = []
+    if r.resolved_branch:
+        auth_targets.append(r.resolved_branch)
+    if r.branch:
+        rb = resolve_ref(r.branch)
+        if rb and rb not in auth_targets:
+            auth_targets.append(rb)
+        rr = (
+            resolve_ref(f"refs/remotes/{remote}/{r.branch}")
+            or resolve_ref(f"{remote}/{r.branch}")
+        )
+        if rr and rr not in auth_targets:
+            auth_targets.append(rr)
+    main_ref = (
+        resolve_ref("main")
+        or resolve_ref(f"refs/remotes/{remote}/main")
+        or resolve_ref(f"{remote}/main")
+    )
+    if main_ref and main_ref not in auth_targets:
+        auth_targets.append(main_ref)
+    if r.base:
+        base_ref = resolve_ref(r.base)
+        if base_ref and base_ref not in auth_targets:
+            auth_targets.append(base_ref)
+
+    # Also check remote heads of run branch and main if present on remote
+    for ref_name in [r.branch, "main"]:
+        if not ref_name:
+            continue
+        t_ref = ref_name if ref_name.startswith("refs/") else f"refs/heads/{ref_name}"
+        ls_target = run(["git", "ls-remote", remote, t_ref], check=False)
+        if ls_target.returncode == 0 and ls_target.stdout.strip():
+            t_sha = ls_target.stdout.strip().splitlines()[0].split()[0]
+            if resolve_ref(t_sha) is None:
+                run(["git", "fetch", remote, t_ref], check=False)
+            if resolve_ref(t_sha) and t_sha not in auth_targets:
+                auth_targets.append(t_sha)
+
+    for target in auth_targets:
+        anc = run(["git", "merge-base", "--is-ancestor", remote_sha, target], check=False)
+        if anc.returncode == 0:
+            if (
+                r.base
+                and resolve_ref(r.base) == remote_sha
+                and not branch_produced_anything(branch, r)
+            ):
+                return False, f"not merged (branch {branch} committed no work)"
+            return True, f"ancestry proven: contained in {target[:8]}"
+
+    return (
+        False,
+        f"diverged / unmerged: remote head {remote_sha[:8]} is not contained in authoritative branch",
+    )
+
+
+def clean_remote_branches(
+    r: Run,
+    *,
+    remote: str = "origin",
+    only: Sequence[str] | None = None,
+) -> RemoteCleanReport:
+    """Delete eligible run-owned remote branches.
+
+    Considers only exact branch names recorded by the current run. Deletes only after merged-PR
+    proof or committed ancestry proof that the head is contained in the authoritative branch.
+    Refuses open, diverged, unknown, or retained branches with a clear reason and retains evidence.
+    Reads back every deletion; repeated sweeps report already-absent branches cleanly.
+    """
+    report = RemoteCleanReport()
+    scope = set(only) if only is not None else None
+
+    unit_by_branch: dict[str, list[Unit]] = {}
+    for u in r.units:
+        if u.branch:
+            unit_by_branch.setdefault(u.branch, []).append(u)
+
+    for branch, units in unit_by_branch.items():
+        if scope is not None and not any(u.name in scope for u in units):
+            report.refused.append((branch, "retained (unit not in clean scope)"))
+            continue
+        if any(u.fix_requests for u in units):
+            report.refused.append((branch, "retained (unit has outstanding review fixes)"))
+            continue
+        if any(u.status in (RUNNING, PENDING) for u in units):
+            open_units = [u.name for u in units if u.status in (RUNNING, PENDING)]
+            report.refused.append((branch, f"open (unit(s) {', '.join(open_units)} in progress)"))
+            continue
+
+        remote_ref = branch if branch.startswith("refs/") else f"refs/heads/{branch}"
+        ls_res = run(["git", "ls-remote", remote, remote_ref], check=False)
+        if ls_res.returncode != 0:
+            err = (ls_res.stderr or ls_res.stdout or "").strip()
+            report.refused.append((branch, f"unknown / remote query failed on {remote!r}: {err}"))
+            continue
+
+        output = ls_res.stdout.strip()
+        if not output:
+            report.already_absent.append(branch)
+            continue
+
+        remote_sha = output.splitlines()[0].split()[0]
+        is_merged, evidence = prove_remote_branch_merged(branch, remote_sha, r, remote=remote)
+        if not is_merged:
+            report.refused.append((branch, evidence))
+            continue
+
+        del_res = run(["git", "push", remote, "--delete", branch], check=False)
+        if del_res.returncode != 0:
+            err = (del_res.stderr or del_res.stdout or "").strip()
+            report.refused.append((branch, f"deletion failed on {remote!r}: {err}"))
+            continue
+
+        rb_res = run(["git", "ls-remote", remote, remote_ref], check=False)
+        if rb_res.returncode == 0 and not rb_res.stdout.strip():
+            report.deleted.append(branch)
+        else:
+            report.refused.append(
+                (branch, f"read-back failed: branch {branch} still present on {remote!r}")
+            )
+
+    return report
+
+
 def reap(
     r: Run,
     *,
     merged_only: bool,
     branches: bool = False,
     only: Sequence[str] | None = None,
+    remote: str = "origin",
 ) -> tuple[list[str], list[str]]:
     """Close tabs and remove worktrees; return ``(closed, kept)`` by unit name.
 
@@ -3437,6 +3624,15 @@ def reap(
         if branches and unit.branch:
             run(["git", "branch", "-D", unit.branch], check=False)
         closed.append(unit.name)
+
+    if branches:
+        remote_report = clean_remote_branches(r, remote=remote, only=only)
+        for b in remote_report.deleted:
+            print(f"deleted remote branch: {b}")
+        for b in remote_report.already_absent:
+            print(f"already absent on remote: {b}")
+        for b, reason in remote_report.refused:
+            print(f"retained remote branch {b}: {reason}")
 
     if r.conflict_worktree:
         conflict_path = Path(r.conflict_worktree)
@@ -3538,7 +3734,8 @@ def cmd_clean(args: argparse.Namespace) -> int:
             f"WARNING: run branch {r.unresolvable_branch!r} does not resolve; "
             "branch-dependent cleanup checks are unavailable"
         )
-    closed, kept = reap(r, merged_only=args.merged, branches=args.branches)
+    remote = getattr(args, "remote", "origin") or "origin"
+    closed, kept = reap(r, merged_only=args.merged, branches=args.branches, remote=remote)
     if args.all and not kept:
         shutil.rmtree(RUN_FILE.parent, ignore_errors=True)
     elif args.all:
@@ -4188,6 +4385,11 @@ def main(argv: list[str] | None = None) -> int:
         "--all",
         action="store_true",
         help="delete run state only when cleanup keeps no work",
+    )
+    s.add_argument(
+        "--remote",
+        default="origin",
+        help="remote name for branch cleanup (default origin)",
     )
     s.set_defaults(func=cmd_clean)
 

@@ -866,3 +866,342 @@ class TestLandCleanReapsOnlyWhatThisLandMerged:
         assert wt_alpha.exists(), "an earlier invocation kept alpha; this land did not merge it"
         reaped = [line for line in out.splitlines() if line.startswith("reaped:")]
         assert reaped == ["reaped: beta"]
+
+
+def _remote_repo(tmp_path: Path, repo: Path) -> Path:
+    """Create a bare remote and wire it as 'origin' in repo."""
+    bare = tmp_path / "remote.git"
+    _git(tmp_path, "init", "--bare", str(bare))
+    _git(repo, "remote", "add", "origin", str(bare))
+    _git(repo, "push", "-u", "origin", "main")
+    _git(repo, "push", "-u", "origin", "orch/r1")
+    return bare
+
+
+def _remote_branch_exists(repo: Path, branch: str, remote: str = "origin") -> bool:
+    remote_ref = branch if branch.startswith("refs/") else f"refs/heads/{branch}"
+    got = subprocess.run(
+        ["git", "ls-remote", remote, remote_ref],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+    )
+    return got.returncode == 0 and bool(got.stdout.strip())
+
+
+class TestCleanBranchesRemotePass:
+    """Tests for opt-in remote branch cleanup during `clean --branches`."""
+
+    def test_merged_run_owned_remote_branch_is_deleted_and_read_back(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _remote_repo(tmp_path, repo)
+        wt = _worktree(repo, "alpha")
+        _commit(wt, "alpha.txt")
+        _git(wt, "push", "-u", "origin", "orch/r1-alpha")
+        assert _remote_branch_exists(repo, "orch/r1-alpha")
+
+        # Land alpha onto orch/r1 and push run branch
+        _git(repo, "checkout", "orch/r1")
+        _git(repo, "merge", "--no-ff", "--no-edit", "orch/r1-alpha")
+        _git(repo, "push", "origin", "orch/r1")
+        _git(repo, "checkout", "main")
+
+        _write_run(repo, [_unit_row("alpha", wt, "done")])
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_clean(_clean_args(merged=True, branches=True)) == 0
+        out = capsys.readouterr().out
+
+        assert not _branch_exists(repo, "orch/r1-alpha")
+        assert not _remote_branch_exists(repo, "orch/r1-alpha")
+        assert "deleted remote branch: orch/r1-alpha" in out
+
+    def test_unmerged_run_owned_remote_branch_is_preserved(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _remote_repo(tmp_path, repo)
+        wt = _worktree(repo, "beta")
+        _commit(wt, "beta.txt")
+        _git(wt, "push", "-u", "origin", "orch/r1-beta")
+        assert _remote_branch_exists(repo, "orch/r1-beta")
+
+        # Beta has commits not landed on orch/r1
+        _write_run(repo, [_unit_row("beta", wt, "done")])
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_clean(_clean_args(merged=True, branches=True)) == 0
+        out = capsys.readouterr().out
+
+        # Local branch kept because merged_only is True, remote branch preserved with reason
+        assert _remote_branch_exists(repo, "orch/r1-beta")
+        assert "retained remote branch orch/r1-beta: diverged / unmerged" in out
+
+    def test_similarly_prefixed_non_run_branch_is_preserved(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _remote_repo(tmp_path, repo)
+        wt_alpha = _worktree(repo, "alpha")
+        _commit(wt_alpha, "alpha.txt")
+        _git(wt_alpha, "push", "-u", "origin", "orch/r1-alpha")
+
+        # Land alpha onto orch/r1
+        _git(repo, "checkout", "orch/r1")
+        _git(repo, "merge", "--no-ff", "--no-edit", "orch/r1-alpha")
+        _git(repo, "push", "origin", "orch/r1")
+        _git(repo, "checkout", "main")
+
+        # Create a similarly prefixed branch not recorded in run.json
+        _git(repo, "checkout", "-b", "orch/r1-other", "main")
+        _commit(repo, "other.txt")
+        _git(repo, "push", "-u", "origin", "orch/r1-other")
+        _git(repo, "checkout", "main")
+        assert _remote_branch_exists(repo, "orch/r1-other")
+
+        _write_run(repo, [_unit_row("alpha", wt_alpha, "done")])
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_clean(_clean_args(merged=True, branches=True)) == 0
+        out = capsys.readouterr().out
+
+        assert not _remote_branch_exists(repo, "orch/r1-alpha")
+        assert _remote_branch_exists(repo, "orch/r1-other")
+        assert "deleted remote branch: orch/r1-alpha" in out
+        assert "orch/r1-other" not in out
+
+    def test_unmerged_empty_unit_branch_is_preserved(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _remote_repo(tmp_path, repo)
+        wt_silent = _worktree(repo, "silent")
+        _git(wt_silent, "push", "-u", "origin", "orch/r1-silent")
+        assert _remote_branch_exists(repo, "orch/r1-silent")
+
+        _write_run(repo, [_unit_row("silent", wt_silent, "done")])
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_clean(_clean_args(merged=True, branches=True)) == 0
+        out = capsys.readouterr().out
+
+        assert _remote_branch_exists(repo, "orch/r1-silent")
+        assert "retained remote branch orch/r1-silent: not merged" in out
+
+    def test_running_or_pending_unit_remote_branch_is_preserved(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _remote_repo(tmp_path, repo)
+        wt = _worktree(repo, "builder")
+        _commit(wt, "builder.txt")
+        _git(wt, "push", "-u", "origin", "orch/r1-builder")
+        assert _remote_branch_exists(repo, "orch/r1-builder")
+
+        _write_run(repo, [_unit_row("builder", wt, "running")])
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_clean(_clean_args(merged=False, branches=True)) == 0
+        out = capsys.readouterr().out
+
+        assert _remote_branch_exists(repo, "orch/r1-builder")
+        assert "retained remote branch orch/r1-builder: open (unit(s) builder in progress)" in out
+
+    def test_unit_with_fix_requests_remote_branch_is_preserved(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _remote_repo(tmp_path, repo)
+        wt = _worktree(repo, "fixer")
+        _commit(wt, "fixer.txt")
+        _git(wt, "push", "-u", "origin", "orch/r1-fixer")
+        assert _remote_branch_exists(repo, "orch/r1-fixer")
+
+        _write_run(repo, [_unit_row("fixer", wt, "done", fix_requests=[{"id": "fix1"}])])
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_clean(_clean_args(merged=True, branches=True)) == 0
+        out = capsys.readouterr().out
+
+        assert _remote_branch_exists(repo, "orch/r1-fixer")
+        assert "retained remote branch orch/r1-fixer: retained (unit has outstanding review fixes)" in out
+
+    def test_repeated_cleanup_is_idempotent_and_reports_already_absent_cleanly(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _remote_repo(tmp_path, repo)
+        wt = _worktree(repo, "alpha")
+        _commit(wt, "alpha.txt")
+        _git(wt, "push", "-u", "origin", "orch/r1-alpha")
+
+        # Land alpha onto orch/r1
+        _git(repo, "checkout", "orch/r1")
+        _git(repo, "merge", "--no-ff", "--no-edit", "orch/r1-alpha")
+        _git(repo, "push", "origin", "orch/r1")
+        _git(repo, "checkout", "main")
+
+        _write_run(repo, [_unit_row("alpha", wt, "done")])
+        monkeypatch.chdir(repo)
+
+        # First clean pass deletes it
+        assert orchestrate.cmd_clean(_clean_args(merged=True, branches=True)) == 0
+        out1 = capsys.readouterr().out
+        assert "deleted remote branch: orch/r1-alpha" in out1
+        assert not _remote_branch_exists(repo, "orch/r1-alpha")
+
+        # Second clean pass reports already absent
+        assert orchestrate.cmd_clean(_clean_args(merged=True, branches=True)) == 0
+        out2 = capsys.readouterr().out
+        assert "already absent on remote: orch/r1-alpha" in out2
+        assert "deleted remote branch: orch/r1-alpha" not in out2
+
+    def test_merged_pr_proof_via_gh_deletes_remote_branch(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _remote_repo(tmp_path, repo)
+        wt = _worktree(repo, "pr-unit")
+        _commit(wt, "pr.txt")
+        _git(wt, "push", "-u", "origin", "orch/r1-pr-unit")
+        head_oid = _git_out(wt, "rev-parse", "HEAD")
+        assert _remote_branch_exists(repo, "orch/r1-pr-unit")
+
+        _write_run(repo, [_unit_row("pr-unit", wt, "done")])
+        monkeypatch.chdir(repo)
+
+        # Mock gh pr list to return a merged PR
+        original_run = orchestrate.run
+
+        def mock_run(argv: list[str], *a: Any, **kw: Any) -> subprocess.CompletedProcess[str]:
+            if len(argv) >= 2 and argv[0] == "gh" and argv[1] == "pr":
+                payload = [
+                    {
+                        "number": 101,
+                        "url": "https://github.com/org/repo/pull/101",
+                        "state": "MERGED",
+                        "mergedAt": "2026-08-26T12:00:00Z",
+                        "headRefName": "orch/r1-pr-unit",
+                        "headRefOid": head_oid,
+                    }
+                ]
+                return subprocess.CompletedProcess(argv, 0, stdout=json.dumps(payload), stderr="")
+            return original_run(argv, *a, **kw)
+
+        monkeypatch.setattr(orchestrate, "run", mock_run)
+
+        assert orchestrate.cmd_clean(_clean_args(merged=True, branches=True)) == 0
+        out = capsys.readouterr().out
+
+        assert not _remote_branch_exists(repo, "orch/r1-pr-unit")
+        assert "deleted remote branch: orch/r1-pr-unit" in out
+
+    def test_open_pr_proof_via_gh_refuses_deletion(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _remote_repo(tmp_path, repo)
+        wt = _worktree(repo, "open-pr")
+        _commit(wt, "open.txt")
+        _git(wt, "push", "-u", "origin", "orch/r1-open-pr")
+        head_oid = _git_out(wt, "rev-parse", "HEAD")
+        assert _remote_branch_exists(repo, "orch/r1-open-pr")
+
+        _write_run(repo, [_unit_row("open-pr", wt, "done")])
+        monkeypatch.chdir(repo)
+
+        original_run = orchestrate.run
+
+        def mock_run(argv: list[str], *a: Any, **kw: Any) -> subprocess.CompletedProcess[str]:
+            if len(argv) >= 2 and argv[0] == "gh" and argv[1] == "pr":
+                payload = [
+                    {
+                        "number": 102,
+                        "url": "https://github.com/org/repo/pull/102",
+                        "state": "OPEN",
+                        "mergedAt": None,
+                        "headRefName": "orch/r1-open-pr",
+                        "headRefOid": head_oid,
+                    }
+                ]
+                return subprocess.CompletedProcess(argv, 0, stdout=json.dumps(payload), stderr="")
+            return original_run(argv, *a, **kw)
+
+        monkeypatch.setattr(orchestrate, "run", mock_run)
+
+        assert orchestrate.cmd_clean(_clean_args(merged=True, branches=True)) == 0
+        out = capsys.readouterr().out
+
+        assert _remote_branch_exists(repo, "orch/r1-open-pr")
+        assert "retained remote branch orch/r1-open-pr: open (PR #102 is OPEN)" in out
+
+    def test_unavailable_remote_retains_evidence_without_breaking_local_cleanup(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        wt = _worktree(repo, "alpha")
+        _commit(wt, "alpha.txt")
+
+        # Land alpha onto orch/r1
+        _git(repo, "checkout", "orch/r1")
+        _git(repo, "merge", "--no-ff", "--no-edit", "orch/r1-alpha")
+        _git(repo, "checkout", "main")
+
+        _write_run(repo, [_unit_row("alpha", wt, "done")])
+        monkeypatch.chdir(repo)
+
+        # Clean with a remote name that does not exist
+        assert (
+            orchestrate.cmd_clean(
+                argparse.Namespace(
+                    merged=True, branches=True, all=False, remote="nonexistent-remote"
+                )
+            )
+            == 0
+        )
+        out = capsys.readouterr().out
+
+        # Local branch was deleted
+        assert not _branch_exists(repo, "orch/r1-alpha")
+        assert "retained remote branch orch/r1-alpha: unknown / remote query failed" in out

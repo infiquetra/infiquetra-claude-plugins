@@ -75,6 +75,7 @@ def test_mimir_coverage_fails_with_clear_message_without_yaml() -> None:
         "    sdlc_manager._load_live_mimir_coverage('test-repo')\n"
         "except RuntimeError as exc:\n"
         "    assert 'PyYAML is required' in str(exc)\n"
+        "    assert 'no mutation performed' in str(exc)\n"
         "    sys.exit(0)\n"
         "except Exception as exc:\n"
         "    print(f'Wrong exception: {type(exc)}: {exc}', file=sys.stderr)\n"
@@ -118,13 +119,22 @@ def test_no_module_scope_yaml_import_in_ast() -> None:
             assert node.module != "yaml", f"Found top-level 'from yaml ...' at line {node.lineno}"
 
 
-def test_mutation_proof_module_scope_import_fails_without_yaml() -> None:
-    """Mutation proof: restoring module-scope `import yaml` causes import to fail without yaml."""
-    mutated_code = "import yaml\n" + SDLC_MANAGER_SCRIPT.read_text(encoding="utf-8")
+def test_mutation_proof_restoring_module_scope_yaml_import_fails_help(tmp_path: Path) -> None:
+    """Mutation proof: restoring module-scope `import yaml` in sdlc_manager.py fails --help."""
+    original_code = SDLC_MANAGER_SCRIPT.read_text(encoding="utf-8")
+    mutated_code = original_code.replace(
+        "# ===========================\n# CONFIGURATION",
+        "import yaml\n\n# ===========================\n# CONFIGURATION",
+        1,
+    )
+    assert "import yaml" in mutated_code
+    mutant_path = tmp_path / "sdlc_manager_mutant.py"
+    mutant_path.write_text(mutated_code, encoding="utf-8")
+
     code = (
-        "import types\n"
-        "mod = types.ModuleType('sdlc_manager')\n"
-        f"exec({mutated_code!r}, mod.__dict__)\n"
+        "import runpy, sys\n"
+        "sys.argv = ['sdlc_manager.py', '--help']\n"
+        f"runpy.run_path({str(mutant_path)!r}, run_name='__main__')\n"
     )
     result = _run_in_unimportable_yaml_subprocess(code)
     assert result.returncode != 0

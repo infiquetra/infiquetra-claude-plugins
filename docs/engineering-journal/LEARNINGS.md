@@ -21,6 +21,16 @@
 
 ## 2026-08-26
 
+### Module-scope imports in multi-subcommand CLIs couple unrelated commands to unneeded dependencies  {#828-defer-module-scope-yaml-import-sdlc-manager}
+
+**Context.** `plugins/mission-control/scripts/sdlc_manager.py` imported `yaml` at top level (module scope). The only caller was `_load_live_mimir_coverage()` at line 2716, which validates Team Mimir repository admission documents. Every other subcommand — and `--help` itself — failed at import time with an unhandled `ModuleNotFoundError` on environments lacking PyYAML.
+**Evidence.** Issue #828; downstream port in `infiquetra-agent-plugins` PR #23 had to add PyYAML to its floor-pinned CI job and ten-client assessment virtual environment solely so entrypoints could answer `--help`.
+**Mechanism.** Importing heavy or optional third-party packages at module scope couples the module's entire surface (including help menus and independent subcommands) to that dependency's presence before CLI argument dispatch occurs.
+**Fix.** Moved `import yaml` from module scope into `_load_live_mimir_coverage()`, wrapping it in a `try...except ImportError` that raises a descriptive `RuntimeError` naming PyYAML when absent. Kept PyYAML declared in dependencies. Added `plugins/mission-control/tests/test_sdlc_manager_optional_deps.py` with unimportable-yaml simulations and AST/mutation proofs.
+**Validation.** `uv run pytest plugins/mission-control/tests/test_sdlc_manager_optional_deps.py -q` and `uv run pytest plugins/mission-control/tests/ -q` pass with 100% green; `--help` and YAML-free subcommands succeed in subprocesses where `yaml` is unimportable.
+**Generalizable rule.** In multi-command CLI scripts, defer domain-specific imports to their leaf functions when not required by the rest of the CLI surface, so baseline entrypoints like `--help` run on minimal interpreters.
+**Refs.** Issue #828; run plan `docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md` unit U11.
+
 ### Strict semantic-version comparison in release-surface diff guard prevents duplicate and non-advancing releases  {#diff-guard-strict-semver-advancement}
 
 **Context.** The PR-scoped diff-aware release guard (`tools/release_surface_diff_guard.py`) historically verified only that `.claude-plugin/plugin.json` and `CHANGELOG.md` appeared in the PR's changed files list when non-documentation runtime files were modified. This allowed PRs to claim duplicate or non-advancing plugin versions without failing CI.
@@ -40,15 +50,6 @@
 **Validation.** `uv run pytest tests/test_lint_journal_order.py -q` passes (39 tests including cross-file validation, missing anchor reporting, outside-covered-set rejection, and relative path navigation); `python3 scripts/lint_journal_order.py` passes with 0 violations across all 4 journals.
 **Generalizable rule.** A documentation link validator that does not resolve cross-file targets against both explicit anchors and Markdown-generated heading slugs creates false confidence and lets inter-document citations rot silently during knowledge promotion and archival.
 **Refs.** Issue #838; PR #832; Unit U2 in `docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md`.
-### Module-scope imports in multi-subcommand CLIs couple unrelated commands to unneeded dependencies  {#828-defer-module-scope-yaml-import-sdlc-manager}
-
-**Context.** `plugins/mission-control/scripts/sdlc_manager.py` imported `yaml` at top level (module scope). The only caller was `_load_live_mimir_coverage()` at line 2716, which validates Team Mimir repository admission documents. Every other subcommand — and `--help` itself — failed at import time with an unhandled `ModuleNotFoundError` on environments lacking PyYAML.
-**Evidence.** Issue #828; downstream port in `infiquetra-agent-plugins` PR #23 had to add PyYAML to its floor-pinned CI job and ten-client assessment virtual environment solely so entrypoints could answer `--help`.
-**Mechanism.** Importing heavy or optional third-party packages at module scope couples the module's entire surface (including help menus and independent subcommands) to that dependency's presence before CLI argument dispatch occurs.
-**Fix.** Moved `import yaml` from module scope into `_load_live_mimir_coverage()`, wrapping it in a `try...except ImportError` that raises a descriptive `RuntimeError` naming PyYAML when absent. Kept PyYAML declared in dependencies. Added `plugins/mission-control/tests/test_sdlc_manager_optional_deps.py` with unimportable-yaml simulations and AST/mutation proofs.
-**Validation.** `uv run pytest plugins/mission-control/tests/test_sdlc_manager_optional_deps.py -q` and `uv run pytest plugins/mission-control/tests/ -q` pass with 100% green; `--help` and YAML-free subcommands succeed in subprocesses where `yaml` is unimportable.
-**Generalizable rule.** In multi-command CLI scripts, defer domain-specific imports to their leaf functions when not required by the rest of the CLI surface, so baseline entrypoints like `--help` run on minimal interpreters.
-**Refs.** Issue #828; run plan `docs/plans/2026-08-26-improve-claude-plugins-847-run-plan.md` unit U11.
 
 ### Layout-independent help assertions and terminal-width matrix validation  {#layout-independent-help-assertions-width-matrix}
 

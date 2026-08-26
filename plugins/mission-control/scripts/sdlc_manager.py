@@ -2706,7 +2706,7 @@ def _load_live_mimir_coverage(repo: str) -> dict[str, Any]:
         import yaml
     except ImportError as exc:
         raise RuntimeError(
-            "PyYAML is required for Team Mimir coverage validation; install PyYAML to use this command"
+            "PyYAML is required for Team Mimir coverage validation; no mutation performed"
         ) from exc
 
     encoded = _gh(

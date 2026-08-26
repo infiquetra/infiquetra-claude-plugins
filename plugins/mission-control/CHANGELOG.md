@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.12.8] - 2026-08-26
+
+### Fixed - add flow row to skills table in README (#820)
+
+- Added the `flow` row to the "Skill | Activates When..." table in `README.md` with activation text consistent with `skills/flow/SKILL.md` (`Project field assignment, sub-issue linking, label verification, card validation`), restoring complete alignment between shipped skills and the README activation map.
+- Added `TestMissionControlSkillsTableBijectionGuard` in `tests/test_mission_control.py` asserting a bidirectional 1-to-1 match (bijection) between directories under `plugins/mission-control/skills/` and README table rows, ensuring failure messages name specific missing or extra skills, verifying activation content, and mutation-proving that removing the `flow` row or altering skills fails the guard.
+
 ## [2.12.7] - 2026-08-26
 
 ### Fixed - delete self-referential alias clauses in issue command docs (#819)

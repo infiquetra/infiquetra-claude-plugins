@@ -1055,3 +1055,147 @@ class TestMissionControlSelfReferentialAliasDriftGuard:
         violations = self._find_alias_violations(tmp_path)
         assert len(violations) == 2
         assert any("CHANGELOG.md:1:" in v for v in violations)
+
+
+# ===========================
+# Skills table bijection guard (#820)
+# ===========================
+
+
+class TestMissionControlSkillsTableBijectionGuard:
+    """Drift guards asserting a bijection between plugins/mission-control/skills/ and README table (#820)."""
+
+    SKILLS_TABLE_ROW_PATTERN = re.compile(r"^\|\s*`([a-zA-Z0-9_-]+)`\s*\|\s*([^|]+?)\s*\|")
+
+    @classmethod
+    def _extract_skills_table(cls, readme_text: str) -> dict[str, str]:
+        """Extract skill names and activation descriptions from the ## Skills table."""
+        lines = readme_text.splitlines()
+        in_skills_section = False
+        table_rows: dict[str, str] = {}
+
+        for line in lines:
+            if line.strip().startswith("## Skills"):
+                in_skills_section = True
+                continue
+            if in_skills_section:
+                if line.strip().startswith("## ") and not line.strip().startswith("## Skills"):
+                    break
+                match = cls.SKILLS_TABLE_ROW_PATTERN.match(line.strip())
+                if match:
+                    skill_name, activates_when = match.group(1), match.group(2).strip()
+                    table_rows[skill_name] = activates_when
+
+        return table_rows
+
+    @classmethod
+    def _get_shipped_skills(cls, skills_dir: Path) -> set[str]:
+        """Get set of skill names shipped as directories under skills_dir."""
+        if not skills_dir.is_dir():
+            return set()
+        return {p.name for p in skills_dir.iterdir() if p.is_dir() and not p.name.startswith(".")}
+
+    @classmethod
+    def _assert_skills_bijection(cls, skills_dir: Path, readme_text: str) -> None:
+        """Assert exact bijection between shipped skill directories and README skills table rows."""
+        shipped = cls._get_shipped_skills(skills_dir)
+        table_map = cls._extract_skills_table(readme_text)
+        table_skills = set(table_map.keys())
+
+        missing_in_readme = sorted(shipped - table_skills)
+        extra_in_readme = sorted(table_skills - shipped)
+
+        errors = []
+        if missing_in_readme:
+            errors.append(
+                f"Shipped skills missing from README table: {', '.join(missing_in_readme)}"
+            )
+        if extra_in_readme:
+            errors.append(
+                f"README table rows with no shipped skill directory: {', '.join(extra_in_readme)}"
+            )
+
+        if errors:
+            raise AssertionError("; ".join(errors))
+
+    def test_shipped_skills_match_readme_table_bijection(self) -> None:
+        """Every shipped skill directory has a README row, and every row maps to a shipped skill."""
+        mc_dir = Path(__file__).resolve().parent.parent / "plugins" / "mission-control"
+        skills_dir = mc_dir / "skills"
+        readme_text = (mc_dir / "README.md").read_text(encoding="utf-8")
+
+        self._assert_skills_bijection(skills_dir, readme_text)
+
+    def test_flow_skill_row_present_with_accurate_activation_text(self) -> None:
+        """The flow skill is present with activation text consistent with flow/SKILL.md."""
+        mc_dir = Path(__file__).resolve().parent.parent / "plugins" / "mission-control"
+        readme_text = (mc_dir / "README.md").read_text(encoding="utf-8")
+        table = self._extract_skills_table(readme_text)
+
+        assert "flow" in table, "flow skill missing from README skills table"
+        activation = table["flow"]
+        assert "field" in activation.lower()
+        assert "sub-issue" in activation.lower()
+        assert "label" in activation.lower()
+        assert "card" in activation.lower()
+
+    def test_mutation_proof_removing_flow_row_fails_naming_flow(self) -> None:
+        """Mutation-prove that removing the flow row from README fails the guard naming flow."""
+        mc_dir = Path(__file__).resolve().parent.parent / "plugins" / "mission-control"
+        skills_dir = mc_dir / "skills"
+        readme_text = (mc_dir / "README.md").read_text(encoding="utf-8")
+
+        # Mutate by removing the flow row
+        mutated_lines = [
+            line
+            for line in readme_text.splitlines()
+            if not re.match(r"^\|\s*`flow`\s*\|", line.strip())
+        ]
+        mutated_readme = "\n".join(mutated_lines)
+
+        with pytest.raises(AssertionError) as exc_info:
+            self._assert_skills_bijection(skills_dir, mutated_readme)
+
+        msg = str(exc_info.value)
+        assert "flow" in msg
+        assert "Shipped skills missing from README table" in msg
+
+    def test_mutation_proof_extra_skill_row_fails_naming_extra_skill(self) -> None:
+        """Mutation-prove that adding a non-existent skill row fails naming the extra skill."""
+        mc_dir = Path(__file__).resolve().parent.parent / "plugins" / "mission-control"
+        skills_dir = mc_dir / "skills"
+        readme_text = (mc_dir / "README.md").read_text(encoding="utf-8")
+
+        # Mutate by adding a phantom skill row
+        mutated_readme = readme_text.replace(
+            "| `board` |",
+            "| `phantom-skill` | Phantom activation |\n| `board` |",
+        )
+
+        with pytest.raises(AssertionError) as exc_info:
+            self._assert_skills_bijection(skills_dir, mutated_readme)
+
+        msg = str(exc_info.value)
+        assert "phantom-skill" in msg
+        assert "README table rows with no shipped skill directory" in msg
+
+    def test_mutation_proof_missing_skill_dir_fails_naming_missing_dir(
+        self, tmp_path: Path
+    ) -> None:
+        """Mutation-prove that a missing skill directory fails the guard naming the missing skill."""
+        mc_dir = Path(__file__).resolve().parent.parent / "plugins" / "mission-control"
+        readme_text = (mc_dir / "README.md").read_text(encoding="utf-8")
+
+        # Copy existing skills except one to tmp_path
+        fake_skills = tmp_path / "skills"
+        fake_skills.mkdir()
+        for d in (mc_dir / "skills").iterdir():
+            if d.is_dir() and d.name != "metrics":
+                (fake_skills / d.name).mkdir()
+
+        with pytest.raises(AssertionError) as exc_info:
+            self._assert_skills_bijection(fake_skills, readme_text)
+
+        msg = str(exc_info.value)
+        assert "metrics" in msg
+        assert "README table rows with no shipped skill directory" in msg

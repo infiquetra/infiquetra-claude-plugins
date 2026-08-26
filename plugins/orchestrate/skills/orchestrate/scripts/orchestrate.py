@@ -181,6 +181,34 @@ REVIEW_RESULT_SCHEMA = "review_result.v1"
 REVIEW_OUTCOMES = frozenset(
     {"accepted", "repairs_requested", "cycle_cap_best_available", "review_incomplete"}
 )
+_NON_CODE_REVIEW_CAPABILITIES = frozenset(
+    {
+        "brainstorm",
+        "ceo-review",
+        "delegation-audit",
+        "doc-review",
+        "engines",
+        "fleet-doctor",
+        "founder-review",
+        "handoff",
+        "ideate",
+        "investigate",
+        "loop",
+        "office-hours",
+        "optimize",
+        "outcome",
+        "plan",
+        "promote",
+        "pulse",
+        "qa",
+        "resume",
+        "retro",
+        "spec",
+        "strategy",
+        "tier",
+        "work",
+    }
+)
 
 
 # AccountMismatchError is defined by the ingested agent-launcher module.
@@ -649,6 +677,21 @@ def assert_single_review_controller(units: Sequence[Unit]) -> None:
         )
 
 
+def is_explicit_non_code_review_capability(task: str) -> bool:
+    """Whether task text begins with an explicit non-Code-Review Saga capability invocation.
+
+    Matches either namespaced capability invocations (e.g. ``/saga:plan``, ``$saga:doc-review``)
+    or bare capability commands for known non-Code-Review Saga capabilities (e.g. ``/doc-review``,
+    ``/founder-review``, ``/plan``). Does not match Code Review invocations, unknown capabilities,
+    or untyped prompts.
+    """
+    match = re.match(r"^\s*[/$](?:saga:)?([a-z0-9_-]+)\b", task, re.IGNORECASE)
+    if not match:
+        return False
+    cap = match.group(1).lower()
+    return cap in _NON_CODE_REVIEW_CAPABILITIES
+
+
 def is_standalone_review_prompt(unit: Unit) -> bool:
     """A review-shaped unit that declares no role, i.e. a bespoke review.
 
@@ -658,10 +701,15 @@ def is_standalone_review_prompt(unit: Unit) -> bool:
     signal: a reviewer seat, a work-fix worker, and an operator row each say what they
     are, so anything left over that talks about reviewing is the bespoke review the
     leaf refuses.
+
+    Explicit non-Code-Review Saga capabilities (such as leading ``/saga:plan`` or
+    ``/doc-review``) are not bespoke reviews even if they contain the word "review".
     """
     if is_code_review_task(unit.task):
         return False
     if unit.role is not None:
+        return False
+    if is_explicit_non_code_review_capability(unit.task):
         return False
     return bool(_REVIEW_SHAPED.search(unit.task))
 

@@ -3396,6 +3396,20 @@ class RemoteCleanReport:
     refused: list[tuple[str, str]] = field(default_factory=list)
 
 
+def is_protected_remote_branch(branch: str, r: Run) -> bool:
+    """Check if a branch is protected from remote deletion."""
+    norm = branch.removeprefix("refs/heads/").strip()
+    if not norm:
+        return True
+    if norm.lower() in {"main", "master", "head", "develop", "release", "trunk"}:
+        return True
+    if r.branch and norm == r.branch.removeprefix("refs/heads/").strip():
+        return True
+    if r.resolved_branch and norm == r.resolved_branch.removeprefix("refs/heads/").strip():
+        return True
+    return bool(r.base and norm == r.base.removeprefix("refs/heads/").strip())
+
+
 def prove_remote_branch_merged(
     branch: str,
     remote_sha: str,
@@ -3407,6 +3421,9 @@ def prove_remote_branch_merged(
 
     Returns (is_merged, evidence_or_refusal_reason).
     """
+    if is_protected_remote_branch(branch, r):
+        return False, f"protected: branch {branch!r} is protected from remote deletion"
+
     remote_ref = branch if branch.startswith("refs/") else f"refs/heads/{branch}"
     # 1. GitHub PR verification if gh is available
     pr_res = run(
@@ -3428,11 +3445,13 @@ def prove_remote_branch_merged(
             prs = json.loads(pr_res.stdout)
             if isinstance(prs, list) and prs:
                 for p in prs:
-                    if p.get("headRefName") == branch or p.get("headRefOid") == remote_sha:
+                    if p.get("headRefName") == branch:
                         state = (p.get("state") or "").upper()
                         if state == "OPEN":
                             return False, f"open (PR #{p.get('number')} is OPEN)"
-                        if state == "MERGED" or p.get("mergedAt"):
+                        if (state == "MERGED" or p.get("mergedAt")) and p.get(
+                            "headRefOid"
+                        ) == remote_sha:
                             return True, f"merged PR #{p.get('number')}"
                         if state == "CLOSED":
                             return (
@@ -3523,6 +3542,11 @@ def clean_remote_branches(
             unit_by_branch.setdefault(u.branch, []).append(u)
 
     for branch, units in unit_by_branch.items():
+        if is_protected_remote_branch(branch, r):
+            report.refused.append(
+                (branch, f"protected: branch {branch!r} is protected from remote deletion")
+            )
+            continue
         if scope is not None and not any(u.name in scope for u in units):
             report.refused.append((branch, "retained (unit not in clean scope)"))
             continue
@@ -3552,7 +3576,8 @@ def clean_remote_branches(
             report.refused.append((branch, evidence))
             continue
 
-        del_res = run(["git", "push", remote, "--delete", branch], check=False)
+        del_ref = branch if branch.startswith("refs/heads/") else f"refs/heads/{branch}"
+        del_res = run(["git", "push", remote, "--delete", "--", del_ref], check=False)
         if del_res.returncode != 0:
             err = (del_res.stderr or del_res.stdout or "").strip()
             report.refused.append((branch, f"deletion failed on {remote!r}: {err}"))

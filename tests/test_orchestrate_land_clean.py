@@ -889,6 +889,17 @@ def _remote_branch_exists(repo: Path, branch: str, remote: str = "origin") -> bo
     return got.returncode == 0 and bool(got.stdout.strip())
 
 
+def _mock_gh_empty(orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    original_run = orchestrate.run
+
+    def mock_run(argv: list[str], *a: Any, **kw: Any) -> subprocess.CompletedProcess[str]:
+        if len(argv) >= 2 and argv[0] == "gh" and argv[1] == "pr":
+            return subprocess.CompletedProcess(argv, 0, stdout="[]", stderr="")
+        return cast(subprocess.CompletedProcess[str], original_run(argv, *a, **kw))
+
+    monkeypatch.setattr(orchestrate, "run", mock_run)
+
+
 class TestCleanBranchesRemotePass:
     """Tests for opt-in remote branch cleanup during `clean --branches`."""
 
@@ -901,6 +912,7 @@ class TestCleanBranchesRemotePass:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         _remote_repo(tmp_path, repo)
+        _mock_gh_empty(orchestrate, monkeypatch)
         wt = _worktree(repo, "alpha")
         _commit(wt, "alpha.txt")
         _git(wt, "push", "-u", "origin", "orch/r1-alpha")
@@ -931,6 +943,7 @@ class TestCleanBranchesRemotePass:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         _remote_repo(tmp_path, repo)
+        _mock_gh_empty(orchestrate, monkeypatch)
         wt = _worktree(repo, "beta")
         _commit(wt, "beta.txt")
         _git(wt, "push", "-u", "origin", "orch/r1-beta")
@@ -956,6 +969,7 @@ class TestCleanBranchesRemotePass:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         _remote_repo(tmp_path, repo)
+        _mock_gh_empty(orchestrate, monkeypatch)
         wt_alpha = _worktree(repo, "alpha")
         _commit(wt_alpha, "alpha.txt")
         _git(wt_alpha, "push", "-u", "origin", "orch/r1-alpha")
@@ -993,6 +1007,7 @@ class TestCleanBranchesRemotePass:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         _remote_repo(tmp_path, repo)
+        _mock_gh_empty(orchestrate, monkeypatch)
         wt_silent = _worktree(repo, "silent")
         _git(wt_silent, "push", "-u", "origin", "orch/r1-silent")
         assert _remote_branch_exists(repo, "orch/r1-silent")
@@ -1064,6 +1079,7 @@ class TestCleanBranchesRemotePass:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         _remote_repo(tmp_path, repo)
+        _mock_gh_empty(orchestrate, monkeypatch)
         wt = _worktree(repo, "alpha")
         _commit(wt, "alpha.txt")
         _git(wt, "push", "-u", "origin", "orch/r1-alpha")
@@ -1208,3 +1224,76 @@ class TestCleanBranchesRemotePass:
         # Local branch was deleted
         assert not _branch_exists(repo, "orch/r1-alpha")
         assert "retained remote branch orch/r1-alpha: unknown / remote query failed" in out
+
+    def test_diverged_remote_head_after_merged_pr_is_refused_and_preserved(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _remote_repo(tmp_path, repo)
+        wt = _worktree(repo, "pr-diverged")
+        _commit(wt, "pr1.txt")
+        _git(wt, "push", "-u", "origin", "orch/r1-pr-diverged")
+        merged_head_oid = _git_out(wt, "rev-parse", "HEAD")
+
+        # Add a new unmerged commit on top of the remote branch
+        _commit(wt, "pr2.txt")
+        _git(wt, "push", "origin", "orch/r1-pr-diverged")
+        new_head_oid = _git_out(wt, "rev-parse", "HEAD")
+        assert merged_head_oid != new_head_oid
+        assert _remote_branch_exists(repo, "orch/r1-pr-diverged")
+
+        _write_run(repo, [_unit_row("pr-diverged", wt, "done")])
+        monkeypatch.chdir(repo)
+
+        original_run = orchestrate.run
+
+        def mock_run(argv: list[str], *a: Any, **kw: Any) -> subprocess.CompletedProcess[str]:
+            if len(argv) >= 2 and argv[0] == "gh" and argv[1] == "pr":
+                payload = [
+                    {
+                        "number": 201,
+                        "url": "https://github.com/org/repo/pull/201",
+                        "state": "MERGED",
+                        "mergedAt": "2026-08-26T12:00:00Z",
+                        "headRefName": "orch/r1-pr-diverged",
+                        "headRefOid": merged_head_oid,
+                    }
+                ]
+                return subprocess.CompletedProcess(argv, 0, stdout=json.dumps(payload), stderr="")
+            return cast(subprocess.CompletedProcess[str], original_run(argv, *a, **kw))
+
+        monkeypatch.setattr(orchestrate, "run", mock_run)
+
+        assert orchestrate.cmd_clean(_clean_args(merged=True, branches=True)) == 0
+        out = capsys.readouterr().out
+
+        assert _remote_branch_exists(repo, "orch/r1-pr-diverged")
+        assert "retained remote branch orch/r1-pr-diverged: diverged / unmerged: remote head" in out
+
+    def test_protected_branch_remote_deletion_is_denied(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _remote_repo(tmp_path, repo)
+        wt_alpha = _worktree(repo, "alpha")
+
+        # Create a unit row whose branch points to 'main'
+        _write_run(repo, [_unit_row("alpha", wt_alpha, "done", branch="main")])
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_clean(_clean_args(merged=True, branches=True)) == 0
+        out = capsys.readouterr().out
+
+        assert _remote_branch_exists(repo, "main")
+        assert (
+            "retained remote branch main: protected: branch 'main' is protected from remote deletion"
+            in out
+        )

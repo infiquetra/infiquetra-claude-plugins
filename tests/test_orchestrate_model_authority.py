@@ -5,20 +5,22 @@ from the installed `agents` wrapper and vendor-native live catalogs or help -- n
 Commons tier data or `~/.config/orchestrate/models.json`.
 
 Tests prove:
-1. Live-catalog models absent from Fleet Commons tier data resolve as supported.
-2. Live-catalog models absent from favourites resolve as supported.
+1. Live-catalog models absent from Fleet Commons tier data resolve as supported and pass validation.
+2. Live-catalog models absent from favourites resolve as supported and pass validation.
 3. Favourites file provides ordering only, never an allowlist or reachability constraint.
-4. OpenCode Muse provider/model routes stay distinct with variants intact (`opencode-go` is a provider).
-5. Launch receipts separate requested-only model facts from Herdr-confirmed runtime facts.
-6. Catalog drift fails precisely with no silent substitution of vendor, model, variant, or account.
-7. Internal Team Execution tier resolution in Fleet Commons remains intact and unaffected.
-8. Mutation proof: reintroducing the stale-authority condition fails, and live authority passes.
+4. Live vendor catalog listing queries vendor subcommands and returns empty for unlisted vendors without substitution.
+5. OpenCode Muse provider/model routes stay distinct with variants intact (`opencode-go` is a provider).
+6. Launch receipts separate requested-only model facts from Herdr-confirmed runtime facts.
+7. Refusal and no silent substitution: unavailable vendors and unadvertised variants fail fast.
+8. Internal Team Execution tier resolution in Fleet Commons remains intact and unaffected.
+9. Mutation proof: injecting a stale tier or favourites allowlist into launch validation fails; product passes.
 """
 
 from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -88,14 +90,15 @@ class TestModelAuthorityBoundary:
             effort="high",
         )
 
+        # 1. Validation succeeds without Fleet Commons gating
+        orchestrate.assert_vendors_available([unit])
+
+        # 2. Argument resolution emits requested model and effort
         argv = orchestrate.agent_argv(unit)
         assert "--model" in argv
         assert argv[argv.index("--model") + 1] == live_model
         assert "--effort" in argv
         assert argv[argv.index("--effort") + 1] == "high"
-
-        # assert_vendors_available succeeds without checking or requiring Fleet Commons tier tables
-        orchestrate.assert_vendors_available([unit])
 
     def test_live_catalog_model_absent_from_favourites_resolves_as_supported(
         self, orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -115,14 +118,16 @@ class TestModelAuthorityBoundary:
             model="gemini-3.7-flash-high",
             effort="high",
         )
+        orchestrate.assert_vendors_available([unit])
+
         argv = orchestrate.agent_argv(unit)
         assert "--model" in argv
         assert argv[argv.index("--model") + 1] == "gemini-3.7-flash-high"
 
-    def test_favourites_file_changes_ordering_only_and_never_acts_as_allowlist(
+    def test_favourites_file_is_ordering_only_and_never_gates_validation_or_reachability(
         self, orchestrate: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Reordering or truncating favourites changes preference order only, not reachability."""
+        """Reordering or truncating favourites changes preference order only, not reachability or gating."""
         faves_file = tmp_path / "models.json"
         faves_file.write_text(
             json.dumps(
@@ -145,19 +150,41 @@ class TestModelAuthorityBoundary:
         faves_file.write_text(json.dumps({"opencode": ["deepseek/deepseek-v4-pro"]}))
         assert orchestrate.favourites("opencode") == ["deepseek/deepseek-v4-pro"]
 
-        # An unlisted model remains fully reachable and generates correct argv
+        # An unlisted model remains fully reachable, passes validation, and generates correct argv
         unit_unlisted = orchestrate.Unit(
             name="unlisted-worker",
             vendor="opencode",
             task="do work",
             model="opencode/muse-spark-1.2-contributor-free",
         )
+        orchestrate.assert_vendors_available([unit_unlisted])
+
         argv_unlisted = orchestrate.agent_argv(unit_unlisted)
         assert "-m" in argv_unlisted
         assert (
             argv_unlisted[argv_unlisted.index("-m") + 1]
             == "opencode/muse-spark-1.2-contributor-free"
         )
+
+    def test_live_vendor_catalog_listing_and_unsupported_query_fallback(
+        self, orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Live model listing queries vendor subcommands and returns empty for unsupported query tools."""
+
+        def fake_run(cmd: list[str], *args: Any, **kwargs: Any) -> Any:
+            if cmd == ["grok", "models"]:
+                return subprocess.CompletedProcess(cmd, 0, stdout="grok-4.6\ngrok-3\n", stderr="")
+            raise FileNotFoundError(f"command not found: {cmd}")
+
+        monkeypatch.setattr(orchestrate, "run", fake_run)
+
+        # 1. Querying a vendor that supports live model listing returns its stdout lines
+        models = orchestrate.models("grok")
+        assert models == ["grok-4.6", "grok-3"]
+
+        # 2. Querying a vendor without live listing capability returns empty without error or substitution
+        assert orchestrate.models("codex") == []
+        assert orchestrate.models("unknown-vendor") == []
 
     def test_opencode_muse_routes_stay_distinct_with_variants_intact(
         self, orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch
@@ -265,10 +292,8 @@ class TestModelAuthorityBoundary:
         for confirmed_fact in ("pane", "kind", "working_directory", "readiness"):
             assert confirmed_fact in receipt["confirmed_against_herdr"]
 
-    def test_catalog_drift_fails_precisely_with_no_silent_substitution(
-        self, orchestrate: ModuleType
-    ) -> None:
-        """Catalog drift or unavailable options fail precisely with no silent fallback."""
+    def test_refusal_and_no_silent_substitution(self, orchestrate: ModuleType) -> None:
+        """Unavailable vendors and unadvertised variants fail fast with no silent substitution."""
         # 1. Unavailable vendor/tool fails fast naming unavailable identity
         bad_unit = orchestrate.Unit(
             name="bad-worker",
@@ -303,18 +328,15 @@ class TestModelAuthorityBoundary:
         assert mechanical.effort == "low"
 
     def test_mutation_proof_stale_authority_gate_fails_and_live_authority_passes(
-        self, orchestrate: ModuleType
+        self, orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """Mutation proof: gating against stale tier data rejects live models; live authority accepts."""
+        """Mutation proof: injecting stale tier or favourites allowlist into launch validation
+        rejects live models, while the unmodified product authority accepts them."""
         if str(FLEET_SCRIPTS) not in sys.path:
             sys.path.insert(0, str(FLEET_SCRIPTS))
         from fleet_commons import tier_palette
 
-        def _stale_authority_check(unit: Any) -> bool:
-            """Simulated mutant: gate external availability on Fleet Commons tier_palette.MODELS."""
-            return unit.model in tier_palette.MODELS
-
-        unit = orchestrate.Unit(
+        live_unit = orchestrate.Unit(
             name="agy-worker",
             vendor="agy",
             task="do work",
@@ -322,9 +344,52 @@ class TestModelAuthorityBoundary:
             effort="high",
         )
 
-        # Under the stale internal table authority, the live model fails
-        assert _stale_authority_check(unit) is False
+        # 1. Product baseline: assert_vendors_available and agent_argv succeed for live model
+        orchestrate.assert_vendors_available([live_unit])
+        argv = orchestrate.agent_argv(live_unit)
+        assert "--model" in argv
+        assert argv[argv.index("--model") + 1] == "gemini-3.7-flash-high"
 
-        # Under Orchestrate's live model authority, the model is valid and emitted
-        argv = orchestrate.agent_argv(unit)
-        assert "gemini-3.7-flash-high" in argv
+        # 2. Mutant A: inject Fleet Commons tier_palette.MODELS gating into assert_vendors_available
+        real_assert = orchestrate.assert_vendors_available
+
+        def mutant_tier_assert(units: list[Any]) -> None:
+            for u in units:
+                if u.model and u.model not in tier_palette.MODELS:
+                    raise SystemExit(f"stale tier gate rejected live model: {u.model}")
+            real_assert(units)
+
+        monkeypatch.setattr(orchestrate, "assert_vendors_available", mutant_tier_assert)
+
+        with pytest.raises(SystemExit) as excinfo_tier:
+            orchestrate.assert_vendors_available([live_unit])
+        assert "stale tier gate rejected live model: gemini-3.7-flash-high" in str(
+            excinfo_tier.value
+        )
+
+        # 3. Mutant B: inject models.json allowlist gating into assert_vendors_available
+        faves_file = tmp_path / "models.json"
+        faves_file.write_text(json.dumps({"opencode": ["deepseek/deepseek-v4-pro"]}))
+        monkeypatch.setattr(orchestrate, "FAVOURITES_PATH", faves_file)
+
+        def mutant_faves_assert(units: list[Any]) -> None:
+            for u in units:
+                allowed = orchestrate.favourites(u.vendor)
+                if allowed and u.model not in allowed:
+                    raise SystemExit(f"favourites allowlist rejected model: {u.model}")
+            real_assert(units)
+
+        unlisted_unit = orchestrate.Unit(
+            name="unlisted-worker",
+            vendor="opencode",
+            task="do work",
+            model="opencode-go/muse-spark-1.2-contributor",
+        )
+
+        monkeypatch.setattr(orchestrate, "assert_vendors_available", mutant_faves_assert)
+
+        with pytest.raises(SystemExit) as excinfo_faves:
+            orchestrate.assert_vendors_available([unlisted_unit])
+        assert "favourites allowlist rejected model: opencode-go/muse-spark-1.2-contributor" in str(
+            excinfo_faves.value
+        )

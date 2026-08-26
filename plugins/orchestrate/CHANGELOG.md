@@ -10,8 +10,8 @@
   data (`fleet_commons.tier_resolver`) or `~/.config/orchestrate/models.json`. Favourites provide
   ordering only and never act as an allowlist or reachability constraint. `opencode-go` is documented
   and handled as an OpenCode provider route, not an agent kind (`opencode`). Launch receipts separate
-  requested-only model facts from Herdr-confirmed runtime facts, and catalog drift fails precisely with
-  no silent substitution.
+  requested-only model facts from Herdr-confirmed runtime facts, and launch / variant validation refuses
+  unsupported vendors and unadvertised variants with no silent substitution.
 
 ## [3.0.1] - 2026-08-26
 

@@ -350,7 +350,7 @@ def test_atomic_claim_has_one_winner(tmp_path: Path) -> None:
         candidate = decision["reping"]
         assert isinstance(candidate, dict)
         generation = decision["generation"]
-        barrier.wait()
+        barrier.wait(timeout=5.0)
         try:
             _append(
                 ledger,
@@ -375,7 +375,7 @@ def test_atomic_claim_has_one_winner(tmp_path: Path) -> None:
     with ThreadPoolExecutor(max_workers=2) as pool:
         fut_a = pool.submit(compete, "claim-a", 0.0)
         fut_b = pool.submit(compete, "claim-b", 0.02)
-        results = [fut_a.result(), fut_b.result()]
+        results = [fut_a.result(timeout=5.0), fut_b.result(timeout=5.0)]
     assert sorted(results) == ["lost", "won"]
     assert sum(record["event"] == "reping-intent" for record in RL.read_facts(ledger)) == 1
 

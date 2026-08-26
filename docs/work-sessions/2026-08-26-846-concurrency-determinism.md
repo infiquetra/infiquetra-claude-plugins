@@ -9,13 +9,14 @@
 Repaired test synchronization in the two load-sensitive Orchestrate concurrency tests without changing production code or weakening test semantics:
 
 1. **`tests/test_liveness_events.py::test_atomic_claim_has_one_winner`**
-   - Synchronized both competing claim threads using `threading.Barrier(2)` after each contender has polled and observed the candidate `reping` fact and before either claims.
+   - Synchronized both competing claim threads using a timeout-bounded `threading.Barrier(2, timeout=5.0)` after each contender has polled and observed the candidate `reping` fact and before either claims.
+   - Bounded `Future.result(timeout=5.0)` retrieval to prevent test suite hangs and fail diagnostically on broken barriers or unexpected exceptions.
    - Introduced deliberate scheduling skew (`claim-b` delayed by 20ms before polling) to prove that uncoordinated execution in the old shape leads to candidate starvation, while the barrier ensures reliable observation and concurrent claim contention.
    - Verified that exactly one claim wins ("won") and the other catches the conflict `LivenessEventError` ("lost"), writing exactly one `reping-intent` record to the ledger.
 
 2. **`tests/test_orchestrate_wait_debounce.py::TestFallbackProcessContract::test_restarts_share_one_monotonic_deadline`**
-   - Asserted the shared monotonic deadline contract using elapsed-deadline bounds (`0.8 <= elapsed <= 2.5`) and verified that timeout values are bounded and strictly decreasing across restarts (`all(earlier > later for earlier, later in zip(timeout_values, timeout_values[1:], strict=False))`).
-   - Removed brittle scheduler-dependent minimum call count assertions (`2 <= len(wait_calls)`), replacing with an upper-bounded assertion `1 <= len(wait_calls) <= 10`.
+   - Adjusted `wait_delays="0.05"` and asserted `2 <= len(wait_calls) <= 10` alongside strictly decreasing timeouts (`strict=True`) and elapsed monotonic bounds (`0.8 <= elapsed <= 2.0`) to prove shrinking deadlines across actual restarts under load without brittle timing.
+   - Asserted `timeout_values[-1] < timeout_values[0]` directly verifying remaining budget attenuation across restarts.
 
 3. **`docs/engineering-journal/LEARNINGS.md`**
    - Appended a dated learning entry under `## 2026-08-26` capturing root causes, evidence, fixes, and the generalizable rule for rendezvous barrier testing.

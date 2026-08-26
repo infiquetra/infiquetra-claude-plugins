@@ -373,3 +373,155 @@ def test_stage_skills_do_not_invoke_retired_transport_as_launch_path() -> None:
         assert "HALT" in text
         assert "engine-registry.yaml" in text
         assert "capability metadata" in text
+
+
+def test_review_transport_admits_explicit_plan_unit_mentioning_review_records(
+    orchestrate: ModuleType,
+) -> None:
+    """A role-less /saga:plan unit mentioning review records is not a standalone review prompt (#837)."""
+    plan_unit = {
+        "name": "plan-fable",
+        "vendor": "claude",
+        "model": "opus",
+        "effort": "high",
+        "task": "/saga:plan #847: improve plugins and check the two review records",
+        "status": "done",
+    }
+    units = orchestrate.plan_units({"units": [plan_unit, _controller_row()]})
+    orchestrate.assert_review_transport(units)
+    assert units[0].name == "plan-fable"
+    assert units[0].role is None
+    assert units[1].name == "code-review-controller"
+    assert units[1].role == "review-controller"
+
+
+def test_review_transport_admits_explicit_doc_review_unit(
+    orchestrate: ModuleType,
+) -> None:
+    """A role-less $saga:doc-review unit reviewing a plan is not a standalone Code Review prompt (#837)."""
+    for task in (
+        "$saga:doc-review docs/plans/2026-08-25-voice-plan.md implementation plan",
+        "/doc-review docs/plans/2026-08-25-voice-plan.md implementation plan",
+        "/saga:doc-review docs/plans/2026-08-25-voice-plan.md implementation plan",
+    ):
+        doc_review_unit = {
+            "name": "docreview-grok",
+            "vendor": "grok",
+            "model": "grok-4.6",
+            "effort": "high",
+            "task": task,
+            "status": "done",
+        }
+        units = orchestrate.plan_units({"units": [doc_review_unit, _controller_row()]})
+        orchestrate.assert_review_transport(units)
+        assert units[0].name == "docreview-grok"
+        assert units[0].role is None
+        assert units[1].name == "code-review-controller"
+        assert units[1].role == "review-controller"
+
+
+def test_review_transport_voice_run_regression_preserves_loadability_and_rejects_untyped(
+    orchestrate: ModuleType,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Simulate orch-2026-08-25-voice: completed plan + doc-review units stay loadable (#837).
+
+    Appending exactly one typed review-controller allows status/go/expand to proceed without
+    raising plain review prompt, while genuine untyped prompts remain rejected before launch.
+    """
+    plan_unit = {
+        "name": "plan-fable",
+        "vendor": "claude",
+        "model": "opus",
+        "effort": "high",
+        "task": "/saga:plan #847: improve plugins and check the two review records",
+        "status": "done",
+    }
+    docreview_unit = {
+        "name": "docreview-grok",
+        "vendor": "grok",
+        "model": "grok-4.6",
+        "effort": "high",
+        "task": "$saga:doc-review docs/plans/2026-08-25-voice-plan.md",
+        "status": "done",
+    }
+    _write_run(repo, [plan_unit, docreview_unit, _controller_row()])
+    monkeypatch.chdir(repo)
+
+    # Run loads cleanly
+    run = orchestrate.Run.load()
+    assert len(run.units) == 3
+    orchestrate.assert_review_transport(run.units)
+
+    # Launching eligible units works without review-transport assertion failure
+    launched: list[str] = []
+    monkeypatch.setattr(
+        orchestrate,
+        "launch",
+        lambda unit, backend="inline", **_: launched.append(unit.name),
+    )
+    assert orchestrate.cmd_go(argparse.Namespace(limit=0)) == 0
+    assert launched == ["code-review-controller"]
+
+    # If a genuine untyped review prompt is added, it is still rejected before launch
+    untyped = _grok_seat_row(task="review this PR for bugs", role=None)
+    _write_run(repo, [plan_unit, docreview_unit, _controller_row(), untyped])
+    with pytest.raises(SystemExit, match="plain review prompt"):
+        orchestrate.cmd_go(argparse.Namespace(limit=0))
+
+
+@pytest.mark.parametrize(
+    "task",
+    [
+        "/saga:plan #847: check review records",
+        "$saga:plan #847: check review records",
+        "/plan #847: check review records",
+        "/saga:doc-review docs/plans/plan.md",
+        "$saga:doc-review docs/plans/plan.md",
+        "/doc-review docs/plans/plan.md",
+        "/saga:founder-review STRATEGY.md",
+        "/founder-review STRATEGY.md",
+        "/ceo-review STRATEGY.md",
+        "/saga:work 847-o2-837: fix review transport",
+        "/work 847-o2-837: address review findings",
+        "/qa #847: verify review fixes",
+        "/retro #847: review learnings",
+    ],
+)
+def test_review_transport_admits_explicit_non_code_review_capabilities(
+    orchestrate: ModuleType, task: str
+) -> None:
+    """Explicit non-Code-Review capabilities with the word 'review' are admitted (#837)."""
+    unit = {
+        "name": "explicit-unit",
+        "vendor": "claude",
+        "model": "opus",
+        "effort": "high",
+        "task": task,
+        "status": "pending",
+    }
+    units = orchestrate.plan_units({"units": [unit, _controller_row()]})
+    orchestrate.assert_review_transport(units)
+    assert units[0].role is None
+
+
+@pytest.mark.parametrize(
+    "task",
+    [
+        "/saga:review this PR for bugs",
+        "$saga:review this PR for bugs",
+        "/saga:not-a-real-capability review this PR for bugs",
+        "$saga:unknown-capability review this PR for bugs",
+        "/review this PR for bugs",
+        "$review this PR for bugs",
+        "/not-a-capability review this PR for bugs",
+    ],
+)
+def test_review_transport_refuses_non_allowlisted_namespaced_review_prompts(
+    orchestrate: ModuleType, task: str
+) -> None:
+    """Non-allowlisted namespaced or pseudo-capability review prompts are refused (#837)."""
+    unit = _grok_seat_row(task=task, role=None)
+    with pytest.raises(SystemExit, match="plain review prompt"):
+        orchestrate.plan_units({"units": [_controller_row(), unit]})

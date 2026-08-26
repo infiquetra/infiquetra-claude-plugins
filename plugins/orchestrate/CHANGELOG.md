@@ -1,5 +1,18 @@
 # Changelog
 
+## [3.0.3] - 2026-08-26
+
+### Fixed
+
+- **Distinguish explicit Saga capabilities from bespoke review prompts (#837).**
+  `is_standalone_review_prompt()` now recognizes leading explicit non-Code-Review Saga
+  capabilities (such as `/saga:plan`, `$saga:doc-review`, `/doc-review`, `/founder-review`,
+  `/work`, etc.) before evaluating bare-word review patterns. Incidental mentions of the word
+  `review` within planning or document review tasks no longer cause false-positive
+  rejections when a single typed `review-controller` is appended to the run. Genuine untyped
+  review prompts (such as `review this PR for bugs`) remain strictly rejected before any session
+  launches, preserving the single-controller and reviewer-seat contracts.
+
 ## [3.0.2] - 2026-08-26
 
 ### Fixed
